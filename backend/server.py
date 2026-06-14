@@ -867,7 +867,7 @@ async def admin_platform_stats(request: Request):
 # ============== ADMIN SETTINGS ==============
 
 class AdminSettings(BaseModel):
-    vip_threshold_usdt: float = 5000.0
+    vip_threshold_usdt: float = Field(default=5000.0, ge=0)
 
 
 @api_router.get("/admin/settings")
