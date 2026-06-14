@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 4 — Tested Push Notifications (Web Push + VAPID) and iOS Splash Screens + Resilience Brothers branding. Created /app/backend/tests/test_push_notifications.py with 17 new tests, all passing. Full suite now 69 passed / 1 skipped (the long-standing iter1 VIP balance order-sensitive skip — unchanged, not introduced by this iter). Frontend checked via Playwright: PushToggle renders on /dashboard sidebar with text 'Activar avisos', visible+enabled; logo /branding/logo-300.png loaded (naturalWidth=300) on Landing/Dashboard/AdminPanel/VIP section; static assets /splash/splash-1170x2532.png, /splash/splash-1290x2796.png, /icons/icon-192.png, /branding/logo-300.png all return 200 image/png; index.html has 10 apple-touch-startup-image links. update_order_status remains 200 OK even when subscriptions are fake (push wrapped in try/except). Dead subscriptions auto-deleted as designed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/orders/{id}/status", "issue": "Auto-deletion of 'dead' push subscriptions (server.py L451-457) is triggered for ANY send_push==False, but push_service.send_push returns False for both terminal (410/404 Gone) AND transient errors (network/timeout/encryption). Effect: a momentary push outage could wipe valid subscriptions. Recommended: push_service should return a tri-state (e.g., 'ok'/'dead'/'transient') and server should only delete on 'dead'."},
+      {"endpoint": "PUT /api/admin/redemptions/{rid}/status", "issue": "(carried over from iter3) reject-refund still goes to legacy vip_balance_usd only — inconsistent with multi-currency model."},
+      {"endpoint": "PUT /api/admin/withdrawals/{wid}/status", "issue": "(carried over from iter3) refund-on-reject always credits vip_balances.{currency} even when withdrawal was deducted from legacy vip_balance_usd."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_push_notifications.py",
+    "/app/backend/tests/test_p2p_backend.py",
+    "/app/backend/tests/test_email_and_closing.py",
+    "/app/backend/tests/test_multicurrency_and_stats.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Low) Make push_service.send_push return a tri-state so server.py only removes subs on terminal 410/404, not on transient errors. Today's behavior is acceptable for MVP but risks unintended unsubscription on outages.",
+    "(Low, carried over) Align redemption-reject and withdrawal-reject refunds with the source field they were deducted from (legacy vs dict vip_balances)."
+  ],
+  "critical_code_review_comments": [
+    "push_service.send_push collapses terminal (410/404) and transient errors into a single False return. Server then deletes the sub. Should be tri-state.",
+    "server.py is now 952 lines — still exceeds the 700-line guideline (was 875 in iter3). Worth splitting into routers (admin, vip, public, push).",
+    "PushSubscriptionCreate.subscription is typed as `dict` — Pydantic accepts anything. Could be a stricter model (endpoint required, keys.p256dh/auth required) instead of relying on a runtime check in the endpoint. Minor.",
+    "VAPID_PRIVATE_PATH is loaded once at import (push_service.py L17). If the file is missing, send_push silently returns False. There is no /api/push diagnostic to surface this state to admins.",
+    "Branding: /branding/logo-300.png is referenced from Landing, Dashboard sidebar, AdminPanel sidebar, and VIP section — confirmed 200 OK and naturalWidth>0 in all places."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_push_notifications.py (NEW — 17 tests covering VAPID key, subscribe/unsubscribe, upsert, push/test, order-approve-with-dummy-sub, splash/icon/logo assets)"
+  ],
+  "success_rate": {"backend": "98.6% (69/70, 1 unchanged skip from iter1)", "frontend": "100% (PushToggle renders, all logos and splash assets load 200 OK)"},
+  "test_credentials": "Sessions in mongo unchanged from iter1-3: admin=test_session_admin_X (user_test_admin01), vip=test_session_vip_X (user_test_vip01), normal=test_session_normal_X (user_test_normal01).",
+  "seed_data_creation": "Each push test cleans up its own subscriptions via pytest fixture (delete_many by endpoint regex). No persistent seed needed beyond the existing users.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Push notifications fully tested at the API level. Real-world push delivery to a live FCM/APNs endpoint was NOT tested (no live browser sub) — only that the endpoint contract holds and dead subs are pruned. Frontend permission prompt cannot be auto-accepted in headless Playwright; relied on verifying the button renders, is enabled, and has data-testid='push-toggle'. To run all backend tests: `pytest /app/backend/tests/ -v` → expect 69 passed / 1 skipped.",
+  "rca of the issue": "No new bugs surfaced in iteration 4. The only minor concern is the over-aggressive dead-sub deletion (push_service collapses transient and terminal errors into a single False return). RCA: push_service.send_push catches WebPushException with status_code in (404,410) -> returns False; catches OTHER WebPushException -> logs error, returns False; catches generic Exception -> returns False. Server-side, ANY False appends sub.id to dead_ids and calls delete_many. Mitigation: introduce tri-state ('ok'/'dead'/'transient') in send_push and only delete on 'dead'. Low priority — acceptable for MVP."
+}

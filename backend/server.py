@@ -19,6 +19,12 @@ load_dotenv(ROOT_DIR / '.env')
 
 from email_service import notify_order_approved, notify_order_rejected
 from pdf_service import generate_vip_closing_pdf
+from push_service import (
+    send_push,
+    build_order_approved_payload,
+    build_order_rejected_payload,
+    VAPID_PUBLIC_KEY,
+)
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -438,6 +444,19 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
                     notify_order_rejected(updated, target_user)
             except Exception as e:
                 logger.error(f"Email notification failed: {e}")
+            # Send web push to all user's devices
+            try:
+                payload = build_order_approved_payload(updated) if new_status == "approved" else build_order_rejected_payload(updated)
+                subs = await db.push_subscriptions.find({"user_id": order["user_id"]}, {"_id": 0}).to_list(50)
+                dead_ids = []
+                for s in subs:
+                    ok = send_push(s["subscription"], payload)
+                    if not ok:
+                        dead_ids.append(s["id"])
+                if dead_ids:
+                    await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
+            except Exception as e:
+                logger.error(f"Push notification failed: {e}")
     return updated
 
 # ============== PRODUCTS ==============
@@ -787,6 +806,72 @@ async def admin_platform_stats(request: Request):
         "vip_holdings": await _aggregate_vip_holdings(rates),
         "counters": await _platform_counters(),
     }
+
+
+# ============== PUSH NOTIFICATIONS ==============
+
+class PushSubscriptionCreate(BaseModel):
+    subscription: dict  # browser PushSubscription JSON
+    user_agent: Optional[str] = ""
+
+
+@api_router.get("/push/vapid-public-key")
+async def push_vapid_public_key():
+    return {"key": VAPID_PUBLIC_KEY}
+
+
+@api_router.post("/push/subscribe")
+async def push_subscribe(payload: PushSubscriptionCreate, request: Request):
+    user = await require_user(request)
+    endpoint = (payload.subscription or {}).get("endpoint", "")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Subscription inválida")
+    # Upsert by endpoint to avoid duplicates
+    await db.push_subscriptions.update_one(
+        {"endpoint": endpoint},
+        {"$set": {
+            "id": str(uuid.uuid4()),
+            "user_id": user["user_id"],
+            "endpoint": endpoint,
+            "subscription": payload.subscription,
+            "user_agent": payload.user_agent or "",
+            "created_at": iso(now_utc()),
+        }},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.post("/push/unsubscribe")
+async def push_unsubscribe(payload: dict, request: Request):
+    user = await require_user(request)
+    endpoint = payload.get("endpoint", "")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="endpoint requerido")
+    await db.push_subscriptions.delete_one({"endpoint": endpoint, "user_id": user["user_id"]})
+    return {"ok": True}
+
+
+@api_router.post("/push/test")
+async def push_test(request: Request):
+    """Send a test push to the current user's devices (helps the user verify it works)."""
+    user = await require_user(request)
+    subs = await db.push_subscriptions.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(50)
+    if not subs:
+        raise HTTPException(status_code=404, detail="No tienes dispositivos suscritos")
+    payload = {
+        "title": "Resilience Brothers",
+        "body": "Notificaciones activadas correctamente ✓",
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": "test-notification",
+        "url": "/dashboard",
+    }
+    delivered = 0
+    for s in subs:
+        if send_push(s["subscription"], payload):
+            delivered += 1
+    return {"delivered": delivered, "total": len(subs)}
 
 
 # ============== USERS (ADMIN) ==============

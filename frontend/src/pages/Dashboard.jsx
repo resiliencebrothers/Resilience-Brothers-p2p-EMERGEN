@@ -7,6 +7,7 @@ import OrdersView from "@/pages/dashboard/OrdersView";
 import VipView from "@/pages/dashboard/VipView";
 import MarketplaceView from "@/pages/dashboard/MarketplaceView";
 import OverviewView from "@/pages/dashboard/OverviewView";
+import PushToggle from "@/components/PushToggle";
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -76,6 +77,7 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          <div className="mb-2"><PushToggle /></div>
           <button
             data-testid="logout-btn"
             onClick={logout}
