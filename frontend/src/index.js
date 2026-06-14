@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@/index.css";
 import App from "@/App";
+import { registerSW } from "@/sw-register";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,3 +22,5 @@ root.render(
     </QueryClientProvider>
   </React.StrictMode>,
 );
+
+registerSW();

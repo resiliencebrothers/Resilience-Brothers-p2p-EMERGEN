@@ -7,6 +7,7 @@ import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
+import InstallPrompt from "@/components/InstallPrompt";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -48,6 +49,7 @@ function App() {
       <AuthProvider>
         <Toaster theme="dark" position="top-right" toastOptions={{ style: { background: "#141414", border: "1px solid rgba(255,255,255,0.1)", color: "#fff" } }} />
         <AppRouter />
+        <InstallPrompt />
       </AuthProvider>
     </BrowserRouter>
   );
