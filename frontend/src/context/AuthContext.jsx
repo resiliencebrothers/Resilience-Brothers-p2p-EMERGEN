@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { API } from "@/App";
 
@@ -12,7 +12,10 @@ export function AuthProvider({ children }) {
     try {
       const res = await axios.get(`${API}/auth/me`, { withCredentials: true });
       setUser(res.data);
-    } catch {
+    } catch (err) {
+      if (err?.response?.status !== 401) {
+        console.error("Auth check failed:", err);
+      }
       setUser(null);
     } finally {
       setLoading(false);
@@ -27,25 +30,28 @@ export function AuthProvider({ children }) {
     checkAuth();
   }, [checkAuth]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
-    } catch {}
+    } catch (err) {
+      console.error("Logout request failed:", err);
+    }
     setUser(null);
     window.location.href = "/";
-  };
+  }, []);
 
-  const login = () => {
+  const login = useCallback(() => {
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
     const redirectUrl = window.location.origin + "/dashboard";
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-  };
+  }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, setUser, loading, logout, login, refresh: checkAuth }}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({ user, setUser, loading, logout, login, refresh: checkAuth }),
+    [user, loading, logout, login, checkAuth]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

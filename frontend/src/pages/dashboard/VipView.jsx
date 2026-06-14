@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -46,15 +46,15 @@ export default function VipView() {
     }
   };
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [r, b] = await Promise.all([
       axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true }),
       axios.get(`${API}/vip/balances`, { withCredentials: true }),
     ]);
     setWithdrawals(r.data);
     setBalances(b.data);
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
     const amt = parseFloat(amount);
@@ -94,7 +94,7 @@ export default function VipView() {
           <Coins className="w-5 h-5 text-[#EAB308]" /> Saldo por moneda
         </h2>
         {balances.balances.length === 0 ? (
-          <p className="text-neutral-500 text-sm">Aún no tienes saldo acumulado. Crea órdenes con entrega "Acumular en saldo VIP".</p>
+          <p className="text-neutral-500 text-sm">Aún no tienes saldo acumulado. Crea órdenes con entrega &laquo;Acumular en saldo VIP&raquo;.</p>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {balances.balances.map((b) => (

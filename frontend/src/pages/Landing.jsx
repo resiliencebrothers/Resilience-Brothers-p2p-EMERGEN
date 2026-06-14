@@ -85,8 +85,8 @@ export default function Landing() {
               { v: "5%→0%", l: "Comisión VIP" },
               { v: "24h", l: "Settlement" },
               { v: "100%", l: "P2P" },
-            ].map((s, i) => (
-              <div key={i} className="tactile-card p-4">
+            ].map((s) => (
+              <div key={s.l} className="tactile-card p-4">
                 <div className="font-display text-2xl text-[#EAB308]">{s.v}</div>
                 <div className="micro-label text-neutral-500 mt-2">{s.l}</div>
               </div>
@@ -157,8 +157,8 @@ export default function Landing() {
               <h3 className="font-display text-3xl mb-4">Cripto ↔ Fiat</h3>
               <p className="text-neutral-400 mb-6">Intercambia USDT, BTC y más por dólares (Zelle), pesos cubanos, reales brasileños o pesos mexicanos.</p>
               <ul className="space-y-3 text-sm">
-                {["Tasas en vivo gestionadas por admin", "Sube comprobante de pago al instante", "Confirmación humana por equipo contable", "Entrega en transferencia, efectivo o cripto"].map((t, i) => (
-                  <li key={i} className="flex items-center gap-3 text-neutral-300">
+                {["Tasas en vivo gestionadas por admin", "Sube comprobante de pago al instante", "Confirmación humana por equipo contable", "Entrega en transferencia, efectivo o cripto"].map((t) => (
+                  <li key={t} className="flex items-center gap-3 text-neutral-300">
                     <BadgeCheck className="w-4 h-4 text-[#EAB308] shrink-0" />
                     {t}
                   </li>
@@ -178,8 +178,8 @@ export default function Landing() {
                 <h3 className="font-display text-3xl mb-4">Marketplace Físico</h3>
                 <p className="text-neutral-400 mb-6">Canjea tu saldo VIP acumulado por mercancía: arroz, harina, refrescos, aceite y más.</p>
                 <ul className="space-y-3 text-sm">
-                  {["Stock en tiempo real", "Sin comisión, sin mensajería para VIP", "Logística incluida", "Pedidos consolidados diarios"].map((t, i) => (
-                    <li key={i} className="flex items-center gap-3 text-neutral-300">
+                  {["Stock en tiempo real", "Sin comisión, sin mensajería para VIP", "Logística incluida", "Pedidos consolidados diarios"].map((t) => (
+                    <li key={t} className="flex items-center gap-3 text-neutral-300">
                       <BadgeCheck className="w-4 h-4 text-[#EAB308] shrink-0" />
                       {t}
                     </li>
@@ -230,8 +230,8 @@ export default function Landing() {
                 ["+5", "Pts mejor tasa"],
                 ["Sin costo", "Mensajería"],
                 ["Acumula", "Tu saldo"],
-              ].map(([v, l], i) => (
-                <div key={i} className="border border-white/10 p-4">
+              ].map(([v, l]) => (
+                <div key={l} className="border border-white/10 p-4">
                   <div className="font-display text-2xl text-[#EAB308]">{v}</div>
                   <div className="micro-label text-neutral-500 mt-1">{l}</div>
                 </div>

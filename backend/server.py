@@ -649,40 +649,43 @@ async def _build_rate_lookup() -> dict:
     return {(d["from_code"], d["to_code"]): float(d["rate_normal"]) for d in docs}
 
 
+def _convert_direct(amount: float, code: str, rates: dict) -> Optional[float]:
+    """Try direct or inverse conversion code↔USDT. Returns None if no path."""
+    if (code, "USDT") in rates:
+        return amount * rates[(code, "USDT")]
+    inverse = rates.get(("USDT", code))
+    if inverse and inverse > 0:
+        return amount / inverse
+    return None
+
+
+def _convert_via_usd(amount: float, code: str, rates: dict) -> Optional[float]:
+    """Convert code → USD → USDT. Returns None if no path."""
+    usd_val = None
+    if (code, "USD") in rates:
+        usd_val = amount * rates[(code, "USD")]
+    else:
+        inv = rates.get(("USD", code))
+        if inv and inv > 0:
+            usd_val = amount / inv
+    if usd_val is None:
+        return None
+    direct = _convert_direct(usd_val, "USD", rates)
+    if direct is not None:
+        return direct
+    return usd_val  # assume 1 USD ≈ 1 USDT if no rate found
+
+
 def _convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
     """Convert amount in `code` to USDT using available rates. Returns None if no path."""
     if amount == 0:
         return 0.0
     if code == "USDT":
         return amount
-    # Direct: code → USDT
-    if (code, "USDT") in rates:
-        return amount * rates[(code, "USDT")]
-    # Inverse: USDT → code  (1 USDT = X code → amount code = amount/X USDT)
-    if ("USDT", code) in rates:
-        r = rates[("USDT", code)]
-        if r > 0:
-            return amount / r
-    # Two-hop via USD
-    if code == "USD":
-        # USD → USDT direct
-        if ("USD", "USDT") in rates:
-            return amount * rates[("USD", "USDT")]
-        if ("USDT", "USD") in rates and rates[("USDT", "USD")] > 0:
-            return amount / rates[("USDT", "USD")]
-    # code → USD → USDT
-    usd_val = None
-    if (code, "USD") in rates:
-        usd_val = amount * rates[(code, "USD")]
-    elif ("USD", code) in rates and rates[("USD", code)] > 0:
-        usd_val = amount / rates[("USD", code)]
-    if usd_val is not None:
-        if ("USD", "USDT") in rates:
-            return usd_val * rates[("USD", "USDT")]
-        if ("USDT", "USD") in rates and rates[("USDT", "USD")] > 0:
-            return usd_val / rates[("USDT", "USD")]
-        return usd_val  # assume 1 USD ≈ 1 USDT if no rate found
-    return None
+    direct = _convert_direct(amount, code, rates)
+    if direct is not None:
+        return direct
+    return _convert_via_usd(amount, code, rates)
 
 
 @api_router.get("/vip/balances")
@@ -714,86 +717,75 @@ async def vip_balances(request: Request):
     return {"balances": items, "total_usdt": round(total_usdt, 4)}
 
 
-@api_router.get("/admin/stats")
-async def admin_platform_stats(request: Request):
-    await require_admin(request)
-
-    # Aggregate approved/completed orders
-    pipeline_in = [
+async def _aggregate_flow(group_field: str, rates: dict) -> dict:
+    """Aggregate approved/completed orders by a field with USDT conversion."""
+    pipeline = [
         {"$match": {"status": {"$in": ["approved", "completed"]}}},
-        {"$group": {"_id": "$from_code", "total": {"$sum": "$amount_from"}, "count": {"$sum": 1}}},
+        {"$group": {"_id": f"${group_field}", "total": {"$sum": "$amount_from" if group_field == "from_code" else "$amount_to"}, "count": {"$sum": 1}}},
         {"$sort": {"total": -1}},
     ]
-    pipeline_out = [
-        {"$match": {"status": {"$in": ["approved", "completed"]}}},
-        {"$group": {"_id": "$to_code", "total": {"$sum": "$amount_to"}, "count": {"$sum": 1}}},
-        {"$sort": {"total": -1}},
-    ]
-    inflow = await db.orders.aggregate(pipeline_in).to_list(100)
-    outflow = await db.orders.aggregate(pipeline_out).to_list(100)
-
-    rates = await _build_rate_lookup()
-
-    def to_items(rows):
-        items = []
-        total_usdt = 0.0
-        for row in rows:
-            code = row["_id"]
-            amt = float(row["total"] or 0.0)
-            usdt = _convert_to_usdt(amt, code, rates)
-            if usdt is not None:
-                total_usdt += usdt
-            items.append({
-                "currency": code,
-                "total": amt,
-                "count": row["count"],
-                "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
-            })
-        return items, round(total_usdt, 4)
-
-    inflow_items, inflow_usdt = to_items(inflow)
-    outflow_items, outflow_usdt = to_items(outflow)
-
-    # VIP accumulated balances across all users
-    users = await db.users.find({"role": {"$in": ["vip", "admin"]}}, {"_id": 0}).to_list(1000)
-    vip_totals = {}
-    for u in users:
-        for code, amt in (u.get("vip_balances") or {}).items():
-            vip_totals[code] = vip_totals.get(code, 0.0) + float(amt or 0.0)
-        legacy = float(u.get("vip_balance_usd") or 0.0)
-        if legacy > 0:
-            vip_totals["USD"] = vip_totals.get("USD", 0.0) + legacy
-    vip_items = []
-    vip_total_usdt = 0.0
-    for code, amt in vip_totals.items():
+    rows = await db.orders.aggregate(pipeline).to_list(100)
+    items = []
+    total_usdt = 0.0
+    for row in rows:
+        code = row["_id"]
+        amt = float(row["total"] or 0.0)
         usdt = _convert_to_usdt(amt, code, rates)
         if usdt is not None:
-            vip_total_usdt += usdt
-        vip_items.append({
+            total_usdt += usdt
+        items.append({
+            "currency": code,
+            "total": amt,
+            "count": row["count"],
+            "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
+        })
+    return {"items": items, "total_usdt": round(total_usdt, 4)}
+
+
+async def _aggregate_vip_holdings(rates: dict) -> dict:
+    """Sum vip_balances across all VIP/admin users and convert to USDT."""
+    users = await db.users.find({"role": {"$in": ["vip", "admin"]}}, {"_id": 0}).to_list(1000)
+    totals = {}
+    for u in users:
+        for code, amt in (u.get("vip_balances") or {}).items():
+            totals[code] = totals.get(code, 0.0) + float(amt or 0.0)
+        legacy = float(u.get("vip_balance_usd") or 0.0)
+        if legacy > 0:
+            totals["USD"] = totals.get("USD", 0.0) + legacy
+    items = []
+    total_usdt = 0.0
+    for code, amt in totals.items():
+        usdt = _convert_to_usdt(amt, code, rates)
+        if usdt is not None:
+            total_usdt += usdt
+        items.append({
             "currency": code,
             "total": amt,
             "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
         })
-    vip_items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
+    items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
+    return {"items": items, "total_usdt": round(total_usdt, 4)}
 
-    # Counters
-    total_users = await db.users.count_documents({})
-    total_vip = await db.users.count_documents({"role": "vip"})
-    total_orders = await db.orders.count_documents({})
-    pending_orders = await db.orders.count_documents({"status": "pending"})
-    pending_withdrawals = await db.withdrawals.count_documents({"status": "pending"})
 
+async def _platform_counters() -> dict:
     return {
-        "inflow": {"items": inflow_items, "total_usdt": inflow_usdt},
-        "outflow": {"items": outflow_items, "total_usdt": outflow_usdt},
-        "vip_holdings": {"items": vip_items, "total_usdt": round(vip_total_usdt, 4)},
-        "counters": {
-            "users_total": total_users,
-            "users_vip": total_vip,
-            "orders_total": total_orders,
-            "orders_pending": pending_orders,
-            "withdrawals_pending": pending_withdrawals,
-        },
+        "users_total": await db.users.count_documents({}),
+        "users_vip": await db.users.count_documents({"role": "vip"}),
+        "orders_total": await db.orders.count_documents({}),
+        "orders_pending": await db.orders.count_documents({"status": "pending"}),
+        "withdrawals_pending": await db.withdrawals.count_documents({"status": "pending"}),
+    }
+
+
+@api_router.get("/admin/stats")
+async def admin_platform_stats(request: Request):
+    await require_admin(request)
+    rates = await _build_rate_lookup()
+    return {
+        "inflow": await _aggregate_flow("from_code", rates),
+        "outflow": await _aggregate_flow("to_code", rates),
+        "vip_holdings": await _aggregate_vip_holdings(rates),
+        "counters": await _platform_counters(),
     }
 
 
