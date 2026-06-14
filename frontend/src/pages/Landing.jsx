@@ -18,7 +18,7 @@ export default function Landing() {
       <header className="fixed top-0 inset-x-0 z-50 glass-panel">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-[#EAB308] flex items-center justify-center font-display text-black text-lg">RB</div>
+            <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-12 w-12 object-contain" />
             <div>
               <div className="font-display text-sm leading-none">RESILIENCE</div>
               <div className="micro-label text-neutral-500 text-[0.6rem]">Brothers · P2P</div>
@@ -239,11 +239,13 @@ export default function Landing() {
             </div>
           </div>
           <div className="relative">
-            <img
-              src="https://images.unsplash.com/photo-1638262052640-82e94d64664a?crop=entropy&cs=srgb&fm=jpg&q=85"
-              alt="P2P trust"
-              className="w-full h-[480px] object-cover grayscale"
-            />
+            <div className="aspect-square bg-black flex items-center justify-center border border-[#EAB308]/20 overflow-hidden">
+              <img
+                src="/branding/logo-1200.png"
+                alt="Resilience Brothers"
+                className="w-4/5 h-4/5 object-contain"
+              />
+            </div>
             <div className="absolute bottom-0 left-0 right-0 p-6 glass-panel">
               <div className="micro-label text-[#EAB308] mb-2">Status: VIP Tier</div>
               <p className="font-display text-xl">Confianza verificada. Operación priorizada.</p>
@@ -272,7 +274,7 @@ export default function Landing() {
       <footer className="border-t border-white/5 py-8">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-7 h-7 bg-[#EAB308] flex items-center justify-center font-display text-black text-xs">RB</div>
+            <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-9 w-9 object-contain" />
             <span className="micro-label text-neutral-500">© Resilience Brothers · P2P Network</span>
           </div>
           <span className="micro-label text-neutral-600">Global Trade Infrastructure</span>

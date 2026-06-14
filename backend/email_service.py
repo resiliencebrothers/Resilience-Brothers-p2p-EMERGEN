@@ -12,6 +12,8 @@ APP_URL = os.environ.get("APP_PUBLIC_URL", "")
 
 
 def _base_template(title: str, body_html: str) -> str:
+    logo_url = f"{APP_URL}/branding/logo-300.png" if APP_URL else ""
+    logo_html = f'<img src="{logo_url}" alt="Resilience Brothers" width="48" height="48" style="display:block;border:0;outline:none;">' if logo_url else '<span style="display:inline-block;background:#EAB308;color:#000;font-weight:900;padding:6px 10px;letter-spacing:0.5px;">RB</span>'
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#0A0A0A;font-family:'Helvetica Neue',Arial,sans-serif;color:#FFFFFF;">
@@ -20,8 +22,8 @@ def _base_template(title: str, body_html: str) -> str:
       <table width="560" cellpadding="0" cellspacing="0" style="background:#141414;border:1px solid rgba(255,255,255,0.08);">
         <tr><td style="padding:24px 32px;border-bottom:1px solid rgba(255,255,255,0.08);">
           <table width="100%"><tr>
-            <td><span style="display:inline-block;background:#EAB308;color:#000;font-weight:900;padding:6px 10px;letter-spacing:0.5px;">RB</span>
-              <span style="font-weight:800;color:#fff;margin-left:8px;font-size:14px;letter-spacing:1px;">RESILIENCE BROTHERS</span></td>
+            <td style="vertical-align:middle;">{logo_html}</td>
+            <td style="vertical-align:middle;padding-left:12px;"><span style="font-weight:800;color:#fff;font-size:14px;letter-spacing:1px;">RESILIENCE BROTHERS</span></td>
             <td align="right"><span style="font-size:10px;color:#A3A3A3;letter-spacing:2px;text-transform:uppercase;">P2P · Notification</span></td>
           </tr></table>
         </td></tr>

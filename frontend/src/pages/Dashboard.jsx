@@ -28,7 +28,7 @@ export default function Dashboard() {
       {/* SIDEBAR */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
         <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3">
-          <div className="w-9 h-9 bg-[#EAB308] flex items-center justify-center font-display text-black">RB</div>
+          <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-10 w-10 object-contain" />
           <div>
             <div className="font-display text-sm">RESILIENCE</div>
             <div className="micro-label text-neutral-500 text-[0.6rem]">P2P Console</div>
@@ -90,7 +90,7 @@ export default function Dashboard() {
         {/* Mobile top bar */}
         <div className="lg:hidden sticky top-0 z-30 glass-panel h-14 px-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-[#EAB308] flex items-center justify-center font-display text-black text-xs">RB</div>
+            <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
             <span className="font-display text-sm">RESILIENCE</span>
           </div>
           <button onClick={logout} className="text-neutral-400" data-testid="logout-mobile-btn">

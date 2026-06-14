@@ -1,5 +1,6 @@
 """PDF generation for VIP daily closing."""
 from io import BytesIO
+from pathlib import Path
 from datetime import datetime, timezone
 from reportlab.lib.pagesizes import LETTER
 from reportlab.lib import colors
@@ -7,7 +8,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image
 )
 
 
@@ -19,6 +20,8 @@ TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")
 GREEN = colors.HexColor("#22C55E")
 
+LOGO_PATH = Path(__file__).parent / "assets" / "logo.png"
+
 
 def _header_footer(canvas, doc):
     canvas.saveState()
@@ -28,30 +31,32 @@ def _header_footer(canvas, doc):
     canvas.rect(0, 0, w, h, fill=1, stroke=0)
     # Header band
     canvas.setFillColor(PANEL)
-    canvas.rect(0, h - 60, w, 60, fill=1, stroke=0)
-    # Logo block
-    canvas.setFillColor(BRAND_YELLOW)
-    canvas.rect(36, h - 48, 28, 28, fill=1, stroke=0)
-    canvas.setFillColor(colors.black)
-    canvas.setFont("Helvetica-Bold", 12)
-    canvas.drawString(43, h - 40, "RB")
+    canvas.rect(0, h - 70, w, 70, fill=1, stroke=0)
+    # Logo image
+    if LOGO_PATH.exists():
+        try:
+            canvas.drawImage(str(LOGO_PATH), 32, h - 64, width=52, height=52,
+                             preserveAspectRatio=True, mask='auto')
+        except Exception:
+            pass
     canvas.setFillColor(TEXT)
-    canvas.setFont("Helvetica-Bold", 12)
-    canvas.drawString(74, h - 32, "RESILIENCE BROTHERS")
+    canvas.setFont("Helvetica-Bold", 13)
+    canvas.drawString(96, h - 32, "RESILIENCE BROTHERS")
     canvas.setFillColor(TEXT_MUTED)
     canvas.setFont("Helvetica", 8)
-    canvas.drawString(74, h - 44, "Global P2P Trade Infrastructure")
+    canvas.drawString(96, h - 46, "Global P2P Trade Infrastructure")
     # Top-right doc label
     canvas.setFillColor(BRAND_YELLOW)
-    canvas.setFont("Helvetica-Bold", 9)
+    canvas.setFont("Helvetica-Bold", 10)
     canvas.drawRightString(w - 36, h - 32, "CIERRE VIP")
     canvas.setFillColor(TEXT_MUTED)
     canvas.setFont("Helvetica", 7)
-    canvas.drawRightString(w - 36, h - 44, "DAILY CLOSING REPORT")
+    canvas.drawRightString(w - 36, h - 46, "DAILY CLOSING REPORT")
     # Footer
     canvas.setFillColor(TEXT_MUTED)
     canvas.setFont("Helvetica", 7)
     canvas.drawString(36, 24, f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    canvas.drawCentredString(w / 2, 24, "resiliencebrothers.com")
     canvas.drawRightString(w - 36, 24, f"Página {doc.page}")
     canvas.setStrokeColor(BORDER)
     canvas.line(36, 38, w - 36, 38)
@@ -67,7 +72,7 @@ def generate_vip_closing_pdf(
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=LETTER,
-        leftMargin=36, rightMargin=36, topMargin=80, bottomMargin=50,
+        leftMargin=36, rightMargin=36, topMargin=90, bottomMargin=50,
     )
 
     styles = getSampleStyleSheet()
