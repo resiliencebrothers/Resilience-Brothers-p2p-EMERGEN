@@ -25,6 +25,7 @@ from push_service import (
     build_order_rejected_payload,
     VAPID_PUBLIC_KEY,
 )
+from admin_alerts import notify_all_admins, get_vip_threshold
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -390,6 +391,16 @@ async def create_order(payload: OrderCreate, request: Request):
         proof_image=payload.proof_image,
     )
     await db.orders.insert_one(order.model_dump())
+    # Notify admins of new order (push + email)
+    try:
+        await notify_all_admins(
+            db,
+            title="Nueva orden P2P pendiente",
+            body=f"{user['name']} envió {order.amount_from} {order.from_code} → {order.amount_to} {order.to_code} ({user['role'].upper()}).",
+            url_path="/admin/orders",
+        )
+    except Exception as e:
+        logger.error(f"Admin notify (new order) failed: {e}")
     return order.model_dump()
 
 @api_router.get("/orders/mine")
@@ -432,6 +443,33 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
                 f"vip_balances.{order['to_code']}": order["amount_to"],
             }}
         )
+        # Check VIP threshold for admin alert
+        try:
+            threshold = await get_vip_threshold(db)
+            fresh_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
+            rates = await _build_rate_lookup()
+            balances = dict(fresh_user.get("vip_balances") or {})
+            legacy = float(fresh_user.get("vip_balance_usd") or 0.0)
+            if legacy > 0:
+                balances["USD"] = balances.get("USD", 0.0) + legacy
+            total_usdt = sum(
+                (_convert_to_usdt(amt, code, rates) or 0)
+                for code, amt in balances.items()
+            )
+            last_alert = fresh_user.get("last_vip_alert_threshold", 0)
+            if total_usdt >= threshold and total_usdt > last_alert:
+                await notify_all_admins(
+                    db,
+                    title="⚠️ Cliente VIP supera umbral",
+                    body=f"{fresh_user['name']} acumula ${total_usdt:,.2f} USDT (umbral ${threshold:,.0f}). Considera proponerle cierre o canje.",
+                    url_path="/admin/users",
+                )
+                await db.users.update_one(
+                    {"user_id": order["user_id"]},
+                    {"$set": {"last_vip_alert_threshold": total_usdt}}
+                )
+        except Exception as e:
+            logger.error(f"VIP threshold alert failed: {e}")
     # Send email notification on approve/reject
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if new_status in ("approved", "rejected") and order["status"] != new_status:
@@ -539,6 +577,15 @@ async def redeem_product(payload: RedemptionCreate, request: Request):
     await db.redemptions.insert_one(r.model_dump())
     await _decrement_balance(user["user_id"], "USD", total)
     await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -payload.quantity}})
+    try:
+        await notify_all_admins(
+            db,
+            title="Nuevo canje VIP",
+            body=f"{user['name']} solicitó {payload.quantity}× {product['name']} (${total:.2f}).",
+            url_path="/admin/withdrawals",
+        )
+    except Exception as e:
+        logger.error(f"Admin notify (redemption) failed: {e}")
     return r.model_dump()
 
 @api_router.get("/vip/redemptions/mine")
@@ -589,6 +636,15 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     )
     await db.withdrawals.insert_one(w.model_dump())
     await _decrement_balance(user["user_id"], currency, payload.amount_usd)
+    try:
+        await notify_all_admins(
+            db,
+            title="Nuevo retiro VIP",
+            body=f"{user['name']} solicitó retiro de {payload.amount_usd} {currency} ({payload.method}).",
+            url_path="/admin/withdrawals",
+        )
+    except Exception as e:
+        logger.error(f"Admin notify (withdrawal) failed: {e}")
     return w.model_dump()
 
 @api_router.get("/vip/withdrawals/mine")
@@ -806,6 +862,32 @@ async def admin_platform_stats(request: Request):
         "vip_holdings": await _aggregate_vip_holdings(rates),
         "counters": await _platform_counters(),
     }
+
+
+# ============== ADMIN SETTINGS ==============
+
+class AdminSettings(BaseModel):
+    vip_threshold_usdt: float = 5000.0
+
+
+@api_router.get("/admin/settings")
+async def get_admin_settings(request: Request):
+    await require_admin(request)
+    doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
+    if not doc:
+        return {"vip_threshold_usdt": float(os.environ.get("VIP_ALERT_THRESHOLD_USDT", 5000))}
+    return {"vip_threshold_usdt": float(doc.get("vip_threshold_usdt", 5000))}
+
+
+@api_router.put("/admin/settings")
+async def update_admin_settings(payload: AdminSettings, request: Request):
+    await require_admin(request)
+    await db.settings.update_one(
+        {"id": "global"},
+        {"$set": {"id": "global", "vip_threshold_usdt": payload.vip_threshold_usdt}},
+        upsert=True,
+    )
+    return {"ok": True, "vip_threshold_usdt": payload.vip_threshold_usdt}
 
 
 # ============== PUSH NOTIFICATIONS ==============

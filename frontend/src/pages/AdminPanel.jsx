@@ -8,6 +8,7 @@ import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
 import AdminOverview from "@/pages/admin/AdminOverview";
+import PushToggle from "@/components/PushToggle";
 
 export default function AdminPanel() {
   const { user, logout } = useAuth();
@@ -57,6 +58,7 @@ export default function AdminPanel() {
         <div className="p-4 border-t border-white/5">
           <div className="text-sm font-medium truncate">{user?.name}</div>
           <div className="micro-label text-[#EAB308] mb-3">ADMIN</div>
+          <div className="mb-2"><PushToggle /></div>
           <button data-testid="admin-logout" onClick={logout} className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 px-3 py-2">
             <LogOut className="w-4 h-4" /> Cerrar Sesión
           </button>
