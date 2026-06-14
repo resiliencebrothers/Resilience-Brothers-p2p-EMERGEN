@@ -450,8 +450,8 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
                 subs = await db.push_subscriptions.find({"user_id": order["user_id"]}, {"_id": 0}).to_list(50)
                 dead_ids = []
                 for s in subs:
-                    ok = send_push(s["subscription"], payload)
-                    if not ok:
+                    result = send_push(s["subscription"], payload)
+                    if result == "dead":
                         dead_ids.append(s["id"])
                 if dead_ids:
                     await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
@@ -869,7 +869,7 @@ async def push_test(request: Request):
     }
     delivered = 0
     for s in subs:
-        if send_push(s["subscription"], payload):
+        if send_push(s["subscription"], payload) == "ok":
             delivered += 1
     return {"delivered": delivered, "total": len(subs)}
 

@@ -17,10 +17,16 @@ if VAPID_PRIVATE_PATH and Path(VAPID_PRIVATE_PATH).exists():
     _PRIVATE_KEY = Path(VAPID_PRIVATE_PATH).read_text()
 
 
-def send_push(subscription: dict, payload: dict) -> bool:
-    """Send a single web push notification. Returns False if subscription is dead/invalid."""
-    if not _PRIVATE_KEY or not subscription:
-        return False
+def send_push(subscription: dict, payload: dict) -> str:
+    """Send a single web push notification.
+    Returns: 'ok' on success, 'dead' if subscription is expired/gone (delete it),
+    'transient' for network/encryption errors (keep subscription, retry later),
+    'disabled' if VAPID key not configured.
+    """
+    if not _PRIVATE_KEY:
+        return "disabled"
+    if not subscription:
+        return "dead"
     try:
         webpush(
             subscription_info=subscription,
@@ -29,18 +35,17 @@ def send_push(subscription: dict, payload: dict) -> bool:
             vapid_claims={"sub": VAPID_SUBJECT},
             ttl=86400,
         )
-        return True
+        return "ok"
     except WebPushException as e:
-        # 410 Gone or 404 = subscription expired/removed
         status = getattr(e.response, "status_code", None) if e.response else None
         if status in (404, 410):
             logger.info(f"Push subscription expired (status {status})")
-            return False
-        logger.error(f"Push failed: {e}")
-        return False
+            return "dead"
+        logger.error(f"Push transient failure (status {status}): {e}")
+        return "transient"
     except Exception as e:
         logger.error(f"Push exception: {e}")
-        return False
+        return "transient"
 
 
 def build_order_approved_payload(order: dict) -> dict:
