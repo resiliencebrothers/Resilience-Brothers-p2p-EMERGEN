@@ -9,7 +9,7 @@ import uuid
 import requests
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 
@@ -44,7 +44,8 @@ class User(BaseModel):
     name: str
     picture: Optional[str] = None
     role: Literal["normal", "vip", "admin"] = "normal"
-    vip_balance_usd: float = 0.0
+    vip_balance_usd: float = 0.0  # legacy USD balance, used for redemptions
+    vip_balances: Dict[str, float] = {}  # per-currency balances {"USD": 100, "CUP": 38000}
     created_at: str
 
 class Currency(BaseModel):
@@ -162,6 +163,7 @@ class WithdrawalRequest(BaseModel):
     user_email: str
     user_name: str
     amount_usd: float
+    currency: str = "USD"
     method: Literal["transfer", "cash", "crypto"]
     details: str
     status: Literal["pending", "approved", "paid", "rejected"] = "pending"
@@ -170,12 +172,14 @@ class WithdrawalRequest(BaseModel):
 
 class WithdrawalCreate(BaseModel):
     amount_usd: float
+    currency: str = "USD"
     method: Literal["transfer", "cash", "crypto"]
     details: str
 
 class UserUpdate(BaseModel):
     role: Optional[Literal["normal", "vip", "admin"]] = None
     vip_balance_usd: Optional[float] = None
+    vip_balances: Optional[Dict[str, float]] = None
 
 # ============== AUTH ==============
 
@@ -411,11 +415,16 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
         {"id": order_id},
         {"$set": {"status": new_status, "admin_note": note, "updated_at": iso(now_utc())}}
     )
-    # VIP accumulate: when approved & delivery_method == accumulate, add to balance
-    if new_status == "approved" and order["delivery_method"] == "accumulate" and order["user_role"] in ("vip", "admin"):
+    # VIP accumulate: when first approved & delivery_method == accumulate, add to per-currency balance
+    if (new_status == "approved"
+            and order["status"] != "approved"
+            and order["delivery_method"] == "accumulate"
+            and order["user_role"] in ("vip", "admin")):
         await db.users.update_one(
             {"user_id": order["user_id"]},
-            {"$inc": {"vip_balance_usd": order["amount_to"]}}
+            {"$inc": {
+                f"vip_balances.{order['to_code']}": order["amount_to"],
+            }}
         )
     # Send email notification on approve/reject
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
@@ -459,6 +468,32 @@ async def delete_product(product_id: str, request: Request):
 
 # ============== VIP - REDEMPTIONS & WITHDRAWALS ==============
 
+def _get_user_balance(user: dict, code: str) -> float:
+    """Get user's balance in a specific currency. Merges legacy vip_balance_usd into USD."""
+    bal = float((user.get("vip_balances") or {}).get(code, 0.0))
+    if code == "USD":
+        bal += float(user.get("vip_balance_usd") or 0.0)
+    return bal
+
+
+async def _decrement_balance(user_id: str, code: str, amount: float):
+    """Decrement a currency balance. For USD, prefer vip_balance_usd legacy field first."""
+    if code == "USD":
+        # Try legacy field first, then dict
+        user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        legacy = float(user.get("vip_balance_usd") or 0.0)
+        if legacy >= amount:
+            await db.users.update_one({"user_id": user_id}, {"$inc": {"vip_balance_usd": -amount}})
+            return
+        remainder = amount - legacy
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"vip_balance_usd": 0.0}, "$inc": {f"vip_balances.{code}": -remainder}}
+        )
+    else:
+        await db.users.update_one({"user_id": user_id}, {"$inc": {f"vip_balances.{code}": -amount}})
+
+
 @api_router.post("/vip/redeem")
 async def redeem_product(payload: RedemptionCreate, request: Request):
     user = await require_user(request)
@@ -470,8 +505,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request):
     if product["stock"] < payload.quantity:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
     total = product["price_usd"] * payload.quantity
-    if user["vip_balance_usd"] < total:
-        raise HTTPException(status_code=400, detail="Saldo insuficiente")
+    if _get_user_balance(user, "USD") < total:
+        raise HTTPException(status_code=400, detail="Saldo USD insuficiente")
     r = Redemption(
         user_id=user["user_id"],
         user_email=user["email"],
@@ -483,7 +518,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request):
         delivery_address=payload.delivery_address,
     )
     await db.redemptions.insert_one(r.model_dump())
-    await db.users.update_one({"user_id": user["user_id"]}, {"$inc": {"vip_balance_usd": -total}})
+    await _decrement_balance(user["user_id"], "USD", total)
     await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -payload.quantity}})
     return r.model_dump()
 
@@ -521,18 +556,20 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     user = await require_user(request)
     if user["role"] not in ("vip", "admin"):
         raise HTTPException(status_code=403, detail="Solo clientes VIP")
-    if user["vip_balance_usd"] < payload.amount_usd:
-        raise HTTPException(status_code=400, detail="Saldo insuficiente")
+    currency = payload.currency or "USD"
+    if _get_user_balance(user, currency) < payload.amount_usd:
+        raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
     w = WithdrawalRequest(
         user_id=user["user_id"],
         user_email=user["email"],
         user_name=user["name"],
         amount_usd=payload.amount_usd,
+        currency=currency,
         method=payload.method,
         details=payload.details,
     )
     await db.withdrawals.insert_one(w.model_dump())
-    await db.users.update_one({"user_id": user["user_id"]}, {"$inc": {"vip_balance_usd": -payload.amount_usd}})
+    await _decrement_balance(user["user_id"], currency, payload.amount_usd)
     return w.model_dump()
 
 @api_router.get("/vip/withdrawals/mine")
@@ -558,7 +595,11 @@ async def update_withdrawal(wid: str, payload: dict, request: Request):
     if not w:
         raise HTTPException(status_code=404, detail="No encontrado")
     if new_status == "rejected" and w["status"] != "rejected":
-        await db.users.update_one({"user_id": w["user_id"]}, {"$inc": {"vip_balance_usd": w["amount_usd"]}})
+        refund_currency = w.get("currency", "USD")
+        await db.users.update_one(
+            {"user_id": w["user_id"]},
+            {"$inc": {f"vip_balances.{refund_currency}": w["amount_usd"]}}
+        )
     await db.withdrawals.update_one({"id": wid}, {"$set": {"status": new_status, "admin_note": note}})
     return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
 
@@ -598,6 +639,162 @@ async def vip_daily_closing(request: Request, date: Optional[str] = None):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ============== VIP BALANCES & STATS ==============
+
+async def _build_rate_lookup() -> dict:
+    """Return rate lookup dict { (from,to): rate_normal } for conversion."""
+    docs = await db.rates.find({}, {"_id": 0}).to_list(1000)
+    return {(d["from_code"], d["to_code"]): float(d["rate_normal"]) for d in docs}
+
+
+def _convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
+    """Convert amount in `code` to USDT using available rates. Returns None if no path."""
+    if amount == 0:
+        return 0.0
+    if code == "USDT":
+        return amount
+    # Direct: code → USDT
+    if (code, "USDT") in rates:
+        return amount * rates[(code, "USDT")]
+    # Inverse: USDT → code  (1 USDT = X code → amount code = amount/X USDT)
+    if ("USDT", code) in rates:
+        r = rates[("USDT", code)]
+        if r > 0:
+            return amount / r
+    # Two-hop via USD
+    if code == "USD":
+        # USD → USDT direct
+        if ("USD", "USDT") in rates:
+            return amount * rates[("USD", "USDT")]
+        if ("USDT", "USD") in rates and rates[("USDT", "USD")] > 0:
+            return amount / rates[("USDT", "USD")]
+    # code → USD → USDT
+    usd_val = None
+    if (code, "USD") in rates:
+        usd_val = amount * rates[(code, "USD")]
+    elif ("USD", code) in rates and rates[("USD", code)] > 0:
+        usd_val = amount / rates[("USD", code)]
+    if usd_val is not None:
+        if ("USD", "USDT") in rates:
+            return usd_val * rates[("USD", "USDT")]
+        if ("USDT", "USD") in rates and rates[("USDT", "USD")] > 0:
+            return usd_val / rates[("USDT", "USD")]
+        return usd_val  # assume 1 USD ≈ 1 USDT if no rate found
+    return None
+
+
+@api_router.get("/vip/balances")
+async def vip_balances(request: Request):
+    user = await require_user(request)
+    if user["role"] not in ("vip", "admin"):
+        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    # Merge legacy USD into dict
+    balances = dict(user.get("vip_balances") or {})
+    legacy_usd = float(user.get("vip_balance_usd") or 0.0)
+    if legacy_usd > 0:
+        balances["USD"] = balances.get("USD", 0.0) + legacy_usd
+    rates = await _build_rate_lookup()
+    items = []
+    total_usdt = 0.0
+    for code, amount in balances.items():
+        amt = float(amount or 0.0)
+        if amt == 0:
+            continue
+        usdt = _convert_to_usdt(amt, code, rates)
+        if usdt is not None:
+            total_usdt += usdt
+        items.append({
+            "currency": code,
+            "amount": amt,
+            "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
+        })
+    items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
+    return {"balances": items, "total_usdt": round(total_usdt, 4)}
+
+
+@api_router.get("/admin/stats")
+async def admin_platform_stats(request: Request):
+    await require_admin(request)
+
+    # Aggregate approved/completed orders
+    pipeline_in = [
+        {"$match": {"status": {"$in": ["approved", "completed"]}}},
+        {"$group": {"_id": "$from_code", "total": {"$sum": "$amount_from"}, "count": {"$sum": 1}}},
+        {"$sort": {"total": -1}},
+    ]
+    pipeline_out = [
+        {"$match": {"status": {"$in": ["approved", "completed"]}}},
+        {"$group": {"_id": "$to_code", "total": {"$sum": "$amount_to"}, "count": {"$sum": 1}}},
+        {"$sort": {"total": -1}},
+    ]
+    inflow = await db.orders.aggregate(pipeline_in).to_list(100)
+    outflow = await db.orders.aggregate(pipeline_out).to_list(100)
+
+    rates = await _build_rate_lookup()
+
+    def to_items(rows):
+        items = []
+        total_usdt = 0.0
+        for row in rows:
+            code = row["_id"]
+            amt = float(row["total"] or 0.0)
+            usdt = _convert_to_usdt(amt, code, rates)
+            if usdt is not None:
+                total_usdt += usdt
+            items.append({
+                "currency": code,
+                "total": amt,
+                "count": row["count"],
+                "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
+            })
+        return items, round(total_usdt, 4)
+
+    inflow_items, inflow_usdt = to_items(inflow)
+    outflow_items, outflow_usdt = to_items(outflow)
+
+    # VIP accumulated balances across all users
+    users = await db.users.find({"role": {"$in": ["vip", "admin"]}}, {"_id": 0}).to_list(1000)
+    vip_totals = {}
+    for u in users:
+        for code, amt in (u.get("vip_balances") or {}).items():
+            vip_totals[code] = vip_totals.get(code, 0.0) + float(amt or 0.0)
+        legacy = float(u.get("vip_balance_usd") or 0.0)
+        if legacy > 0:
+            vip_totals["USD"] = vip_totals.get("USD", 0.0) + legacy
+    vip_items = []
+    vip_total_usdt = 0.0
+    for code, amt in vip_totals.items():
+        usdt = _convert_to_usdt(amt, code, rates)
+        if usdt is not None:
+            vip_total_usdt += usdt
+        vip_items.append({
+            "currency": code,
+            "total": amt,
+            "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
+        })
+    vip_items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
+
+    # Counters
+    total_users = await db.users.count_documents({})
+    total_vip = await db.users.count_documents({"role": "vip"})
+    total_orders = await db.orders.count_documents({})
+    pending_orders = await db.orders.count_documents({"status": "pending"})
+    pending_withdrawals = await db.withdrawals.count_documents({"status": "pending"})
+
+    return {
+        "inflow": {"items": inflow_items, "total_usdt": inflow_usdt},
+        "outflow": {"items": outflow_items, "total_usdt": outflow_usdt},
+        "vip_holdings": {"items": vip_items, "total_usdt": round(vip_total_usdt, 4)},
+        "counters": {
+            "users_total": total_users,
+            "users_vip": total_vip,
+            "orders_total": total_orders,
+            "orders_pending": pending_orders,
+            "withdrawals_pending": pending_withdrawals,
+        },
+    }
 
 
 # ============== USERS (ADMIN) ==============

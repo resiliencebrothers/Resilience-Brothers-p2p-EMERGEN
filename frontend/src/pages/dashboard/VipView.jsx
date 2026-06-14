@@ -8,12 +8,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Wallet, ArrowDownToLine, FileDown } from "lucide-react";
+import { Wallet, ArrowDownToLine, FileDown, Coins } from "lucide-react";
 
 export default function VipView() {
   const { user, refresh } = useAuth();
   const [withdrawals, setWithdrawals] = useState([]);
+  const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
   const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("USD");
   const [method, setMethod] = useState("transfer");
   const [details, setDetails] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,8 +47,12 @@ export default function VipView() {
   };
 
   const load = async () => {
-    const r = await axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true });
+    const [r, b] = await Promise.all([
+      axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true }),
+      axios.get(`${API}/vip/balances`, { withCredentials: true }),
+    ]);
     setWithdrawals(r.data);
+    setBalances(b.data);
   };
   useEffect(() => { load(); }, []);
 
@@ -56,7 +62,7 @@ export default function VipView() {
     if (!details) return toast.error("Detalles requeridos");
     setBusy(true);
     try {
-      await axios.post(`${API}/vip/withdraw`, { amount_usd: amt, method, details }, { withCredentials: true });
+      await axios.post(`${API}/vip/withdraw`, { amount_usd: amt, currency, method, details }, { withCredentials: true });
       toast.success("Solicitud de retiro enviada");
       setAmount(""); setDetails("");
       await load(); await refresh();
@@ -76,9 +82,34 @@ export default function VipView() {
 
       <div className="tactile-card p-8 glow-yellow">
         <Wallet className="w-8 h-8 text-[#EAB308] mb-3" />
-        <div className="micro-label text-neutral-500">Saldo disponible</div>
-        <div className="font-display text-5xl text-[#EAB308] mt-2">${(user?.vip_balance_usd || 0).toFixed(2)}</div>
-        <div className="text-sm text-neutral-500 mt-1">USD · Disponible para retiro o canje</div>
+        <div className="micro-label text-neutral-500">Valor total (USDT)</div>
+        <div className="font-display text-5xl text-[#EAB308] mt-2">
+          {balances.total_usdt?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || "0.00"} <span className="text-2xl text-neutral-400">USDT</span>
+        </div>
+        <div className="text-sm text-neutral-500 mt-1">Equivalente consolidado de todas tus monedas · usa tasa normal</div>
+      </div>
+
+      <div className="tactile-card p-6" data-testid="vip-balances-card">
+        <h2 className="font-display text-xl mb-4 flex items-center gap-2">
+          <Coins className="w-5 h-5 text-[#EAB308]" /> Saldo por moneda
+        </h2>
+        {balances.balances.length === 0 ? (
+          <p className="text-neutral-500 text-sm">Aún no tienes saldo acumulado. Crea órdenes con entrega "Acumular en saldo VIP".</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {balances.balances.map((b) => (
+              <div key={b.currency} className="border border-white/10 p-4 hover:border-[#EAB308]/40 transition-colors">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="micro-label text-neutral-500">{b.currency}</span>
+                  <span className="text-xs text-neutral-500">≈ {b.usdt_equivalent?.toFixed(2) ?? "—"} USDT</span>
+                </div>
+                <div className="font-display text-2xl text-white">
+                  {b.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="tactile-card p-6">
@@ -115,8 +146,21 @@ export default function VipView() {
           <h2 className="font-display text-xl mb-4 flex items-center gap-2"><ArrowDownToLine className="w-5 h-5 text-[#EAB308]" /> Solicitar Retiro</h2>
           <div className="space-y-4">
             <div>
-              <Label className="micro-label text-neutral-500">Monto USD</Label>
+              <Label className="micro-label text-neutral-500">Monto</Label>
               <Input data-testid="withdraw-amount" type="number" value={amount} onChange={e => setAmount(e.target.value)} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">Moneda</Label>
+              <Select value={currency} onValueChange={setCurrency}>
+                <SelectTrigger data-testid="withdraw-currency" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                  {(balances.balances.length > 0 ? balances.balances.map(b => b.currency) : ["USD"]).map(c => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="micro-label text-neutral-500">Método</Label>
@@ -149,7 +193,7 @@ export default function VipView() {
               <div key={w.id} className="border border-white/10 p-3 text-sm">
                 <div className="flex justify-between items-start">
                   <div>
-                    <div className="font-mono">${w.amount_usd} · {w.method}</div>
+                    <div className="font-mono">{w.amount_usd} {w.currency || "USD"} · {w.method}</div>
                     <div className="text-xs text-neutral-500 mt-1">{new Date(w.created_at).toLocaleString()}</div>
                   </div>
                   <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${

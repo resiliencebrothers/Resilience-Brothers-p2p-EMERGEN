@@ -9,10 +9,12 @@ export default function OverviewView() {
   const { user } = useAuth();
   const [rates, setRates] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [balances, setBalances] = useState(null);
 
   useEffect(() => {
     axios.get(`${API}/rates`).then(r => setRates(r.data)).catch(() => {});
     axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => setOrders(r.data)).catch(() => {});
+    axios.get(`${API}/vip/balances`, { withCredentials: true }).then(r => setBalances(r.data)).catch(() => {});
   }, []);
 
   const isVip = user?.role === "vip" || user?.role === "admin";
@@ -30,7 +32,7 @@ export default function OverviewView() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Wallet} label="Saldo VIP" value={`$${(user?.vip_balance_usd || 0).toFixed(2)}`} sub="USD acumulados" />
+        <StatCard icon={Wallet} label="Saldo Total" value={`${(balances?.total_usdt || 0).toFixed(2)}`} sub="USDT equivalente" />
         <StatCard icon={Clock} label="Pendientes" value={pending} sub="órdenes" />
         <StatCard icon={CheckCircle} label="Completadas" value={approved} sub="órdenes" />
         <StatCard icon={Activity} label="Estatus" value={user?.role?.toUpperCase()} sub="nivel" />

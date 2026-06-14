@@ -47,6 +47,7 @@ export default function AdminWithdrawals() {
               <tr className="text-left">
                 <th className="px-3 py-3 micro-label text-neutral-500">Usuario</th>
                 <th className="px-3 py-3 micro-label text-neutral-500">Monto</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">Moneda</th>
                 <th className="px-3 py-3 micro-label text-neutral-500">Método</th>
                 <th className="px-3 py-3 micro-label text-neutral-500">Detalles</th>
                 <th className="px-3 py-3 micro-label text-neutral-500">Estado</th>
@@ -58,7 +59,8 @@ export default function AdminWithdrawals() {
               {items.map(w => (
                 <tr key={w.id} className="border-b border-white/5">
                   <td className="px-3 py-3">{w.user_name}</td>
-                  <td className="px-3 py-3 font-mono text-[#EAB308]">${w.amount_usd}</td>
+                  <td className="px-3 py-3 font-mono text-[#EAB308]">{w.amount_usd}</td>
+                  <td className="px-3 py-3 font-mono">{w.currency || "USD"}</td>
                   <td className="px-3 py-3">{w.method}</td>
                   <td className="px-3 py-3 text-xs max-w-xs truncate">{w.details}</td>
                   <td className="px-3 py-3 text-xs uppercase">{w.status}</td>

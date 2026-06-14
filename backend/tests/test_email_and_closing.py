@@ -34,16 +34,18 @@ class TestEmailNotificationsAndStatusUpdate:
     def test_approve_does_not_break_endpoint_even_if_email_fails(self):
         order = _create_vip_order()
         oid = order["id"]
-        before_bal = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        me0 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        before_cup = float((me0.get("vip_balances") or {}).get("CUP", 0.0))
         r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "admin_note": "iter2 approve"})
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "approved"
         assert body["admin_note"] == "iter2 approve"
-        # Balance must have increased (accumulate)
-        after_bal = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
-        assert round(after_bal - before_bal, 4) == round(order["amount_to"], 4)
+        # Balance must have increased in vip_balances.CUP (multi-currency)
+        me1 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        after_cup = float((me1.get("vip_balances") or {}).get("CUP", 0.0))
+        assert round(after_cup - before_cup, 4) == round(order["amount_to"], 4)
 
     def test_reject_does_not_break_endpoint(self):
         order = _create_vip_order(amount=8, delivery_method="transfer")
@@ -72,26 +74,24 @@ class TestEmailNotificationsAndStatusUpdate:
     def test_double_approve_only_credits_once(self):
         order = _create_vip_order(amount=7)
         oid = order["id"]
-        bal0 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        me0 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        cup0 = float((me0.get("vip_balances") or {}).get("CUP", 0.0))
         # First approve
         r1 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                           headers=_h(ADMIN_TOKEN), json={"status": "approved"})
         assert r1.status_code == 200
-        bal1 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
-        # Second approve (same status). Code path re-runs balance accumulate even if status unchanged
-        # — checking server.py: condition is `new_status == "approved" and order["delivery_method"] == "accumulate"`
-        # without status-change guard. We'll just verify endpoint still returns 200, and report finding.
+        me1 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        cup1 = float((me1.get("vip_balances") or {}).get("CUP", 0.0))
+        # Second approve (same status) — iter3 guard must prevent double-credit
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                           headers=_h(ADMIN_TOKEN), json={"status": "approved"})
         assert r2.status_code == 200
-        bal2 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
-        # Document the actual behaviour rather than enforce it (issue to be reported if double-credit)
-        delta1 = round(bal1 - bal0, 4)
-        delta2 = round(bal2 - bal1, 4)
+        me2 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        cup2 = float((me2.get("vip_balances") or {}).get("CUP", 0.0))
+        delta1 = round(cup1 - cup0, 4)
+        delta2 = round(cup2 - cup1, 4)
         assert delta1 == round(order["amount_to"], 4)
-        # Flag double-credit explicitly in assertion message
-        if delta2 != 0:
-            pytest.fail(f"Double-approve credits balance twice (delta2={delta2}). Expected 0 (no double-credit). amount_to={order['amount_to']}")
+        assert delta2 == 0.0, f"Double-approve credited again (delta2={delta2}). Expected 0."
 
 
 # ----- VIP daily-closing PDF -----

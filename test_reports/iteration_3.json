@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 3 — Tested multi-currency vip_balances + new endpoints /api/vip/balances and /api/admin/stats + double-credit guard + currency withdrawals + UI rewrites. Backend: 52/53 pytest passed (1 skipped — VIP balance was zeroed by other tests, not a bug). Frontend Admin Overview works perfectly. VipView had a CRITICAL CRASH (`balances is not defined`) caused by missing useState declarations and missing `Coins` import — patched in-place by testing agent so flow could be verified; all VIP flows now work (multi-currency display 810.73 USDT total for 500 USD + 200 USDT + 38000 CUP, currency selector in withdraw form, PDF download). Iter2 HIGH bug (double-credit on duplicate approve) is FIXED and verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/redemptions/{rid}/status", "issue": "On reject-refund (server.py L549), the refund still goes to legacy `vip_balance_usd` only. If a redemption was paid from `vip_balances.USD` (because legacy was 0), the refund creates legacy balance instead of restoring dict.USD. Functionally OK since _get_user_balance merges both, but inconsistent with the new model."},
+      {"endpoint": "PUT /api/admin/withdrawals/{wid}/status", "issue": "Refund on reject always credits `vip_balances.{currency}` even when the withdrawal was originally taken from legacy vip_balance_usd. Same consistency note as redemptions."},
+      {"endpoint": "/api/vip/withdraw", "issue": "Test test_vip_withdraw_then_reject_refunds (iter1) was skipped because balance got zeroed by iter3 tests. Order of tests matters; consider per-test balance reset fixture."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "VipView.jsx", "issue": "Component crashed with `balances is not defined` ReferenceError (also setBalances, currency, setCurrency, Coins missing). Whole /dashboard/vip route was blank. Patched by testing agent: added useState for balances={balances:[],total_usdt:0} and currency='USD', added `Coins` to lucide-react import.", "selector": "[data-testid='vip-view']", "priority": "HIGH (was blocking)"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p2p_backend.py",
+    "/app/backend/tests/test_email_and_closing.py",
+    "/app/backend/tests/test_multicurrency_and_stats.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "VERIFY the VipView.jsx fix applied by testing agent is acceptable (added useState initial state + Coins import). Main agent should review and keep.",
+    "(Low) Make redemption-reject refund go to the same field it was deducted from (dict.USD vs legacy vip_balance_usd) for symmetry with _decrement_balance logic.",
+    "(Low) Make withdrawal-reject refund respect original deduction source (legacy vs dict) for the USD case."
+  ],
+  "critical_code_review_comments": [
+    "VipView.jsx was shipped with 4 undefined symbols (balances, setBalances, currency, setCurrency) and 1 missing import (Coins) — a sanity build/lint check would have caught this. Strongly recommend running `yarn lint` or eslint no-undef rule before commits.",
+    "server.py is now 875 lines — exceeds the 700-line guideline. Consider splitting routes into routers (admin, vip, public).",
+    "The iter3 double-credit fix is correct: `order['status'] != 'approved'` guard around the $inc (server.py L420). Verified via test_double_approve_does_not_double_credit_balance.",
+    "_convert_to_usdt has a generous fallback chain — good defensive design. Returns None only when no rate path exists.",
+    "Iter1 test test_order_vip_accumulate_approve_credits_balance and iter2 test_approve_does_not_break_endpoint were checking the now-wrong field (vip_balance_usd) for a CUP credit — updated to read vip_balances.CUP to align with the new model."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_multicurrency_and_stats.py (new — 14 tests)",
+    "/app/backend/tests/test_p2p_backend.py (updated test_order_vip_accumulate_approve_credits_balance to read vip_balances.CUP)",
+    "/app/backend/tests/test_email_and_closing.py (updated 2 tests to use vip_balances.CUP)",
+    "/app/frontend/src/pages/dashboard/VipView.jsx (added missing useState for balances+currency and Coins import to unblock testing)"
+  ],
+  "success_rate": {"backend": "98% (52/53, 1 skipped due to test data drift)", "frontend": "100% after VipView fix; would have been 0% on /dashboard/vip before the fix"},
+  "test_credentials": "Reused iter1/2 sessions: admin=test_session_admin_X, vip=test_session_vip_X, normal=test_session_normal_X.",
+  "seed_data_creation": "Set VIP user to vip_balance_usd=500, vip_balances={CUP:38000, USDT:200} via direct mongosh updateOne, then verified /api/vip/balances returns 510.20+200+100.53=810.73 USDT (matches expected from review brief: 500/0.98≈510.20 and 38000/378≈100.53).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/ -v` — 52 pass, 1 skip. The VipView.jsx fix added by testing agent is in place; if main agent reverts it, /dashboard/vip will crash again. To set up a VIP with multi-currency balances for UI tests: mongosh updateOne({user_id:'user_test_vip01'},{$set:{vip_balance_usd:500,vip_balances:{CUP:38000,USDT:200}}}).",
+  "rca of the issue": "VipView crash RCA: The component referenced `balances` (5x), `setBalances` (1x), `currency` (2x), `setCurrency` (1x) and `Coins` (1x) but only declared/imported a subset. React threw ReferenceError on first render, ErrorBoundary caught it and rendered blank. Repro: navigate to /dashboard/vip with any session — page is blank, console shows `balances is not defined`. Fix: add `const [balances,setBalances]=useState({balances:[],total_usdt:0})`, `const [currency,setCurrency]=useState('USD')` and `Coins` to the lucide-react import line. Applied by testing agent."
+}

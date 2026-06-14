@@ -159,9 +159,9 @@ class TestOrders:
         assert data["amount_to"] == round(100 * rate["rate_vip"], 4)
 
     def test_order_vip_accumulate_approve_credits_balance(self):
-        # Get VIP balance before
-        before = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
-        # Create order
+        # In iter3 multi-currency: USD->CUP accumulate credits vip_balances.CUP
+        me_before = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        before_cup = float((me_before.get("vip_balances") or {}).get("CUP", 0.0))
         payload = {"from_code": "USD", "to_code": "CUP", "amount_from": 10,
                    "delivery_method": "accumulate", "delivery_details": "",
                    "sender_name": "VIP", "proof_image": ""}
@@ -170,12 +170,12 @@ class TestOrders:
         order = r.json()
         oid = order["id"]
         amt_to = order["amount_to"]
-        # Admin approves
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                           headers=_h(ADMIN_TOKEN), json={"status": "approved", "admin_note": "ok"})
         assert r2.status_code == 200 and r2.json()["status"] == "approved"
-        after = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
-        assert round(after - before, 4) == round(amt_to, 4)
+        me_after = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+        after_cup = float((me_after.get("vip_balances") or {}).get("CUP", 0.0))
+        assert round(after_cup - before_cup, 4) == round(amt_to, 4)
 
     def test_orders_mine_isolation(self):
         r1 = requests.get(f"{BASE_URL}/api/orders/mine", headers=_h(NORMAL_TOKEN))
