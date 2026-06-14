@@ -1,0 +1,209 @@
+"""PDF generation for VIP daily closing."""
+from io import BytesIO
+from datetime import datetime, timezone
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch, mm
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+)
+
+
+BRAND_YELLOW = colors.HexColor("#EAB308")
+BG_DARK = colors.HexColor("#0A0A0A")
+PANEL = colors.HexColor("#141414")
+BORDER = colors.HexColor("#2a2a2a")
+TEXT_MUTED = colors.HexColor("#A3A3A3")
+TEXT = colors.HexColor("#FFFFFF")
+GREEN = colors.HexColor("#22C55E")
+
+
+def _header_footer(canvas, doc):
+    canvas.saveState()
+    w, h = LETTER
+    # Background dark
+    canvas.setFillColor(BG_DARK)
+    canvas.rect(0, 0, w, h, fill=1, stroke=0)
+    # Header band
+    canvas.setFillColor(PANEL)
+    canvas.rect(0, h - 60, w, 60, fill=1, stroke=0)
+    # Logo block
+    canvas.setFillColor(BRAND_YELLOW)
+    canvas.rect(36, h - 48, 28, 28, fill=1, stroke=0)
+    canvas.setFillColor(colors.black)
+    canvas.setFont("Helvetica-Bold", 12)
+    canvas.drawString(43, h - 40, "RB")
+    canvas.setFillColor(TEXT)
+    canvas.setFont("Helvetica-Bold", 12)
+    canvas.drawString(74, h - 32, "RESILIENCE BROTHERS")
+    canvas.setFillColor(TEXT_MUTED)
+    canvas.setFont("Helvetica", 8)
+    canvas.drawString(74, h - 44, "Global P2P Trade Infrastructure")
+    # Top-right doc label
+    canvas.setFillColor(BRAND_YELLOW)
+    canvas.setFont("Helvetica-Bold", 9)
+    canvas.drawRightString(w - 36, h - 32, "CIERRE VIP")
+    canvas.setFillColor(TEXT_MUTED)
+    canvas.setFont("Helvetica", 7)
+    canvas.drawRightString(w - 36, h - 44, "DAILY CLOSING REPORT")
+    # Footer
+    canvas.setFillColor(TEXT_MUTED)
+    canvas.setFont("Helvetica", 7)
+    canvas.drawString(36, 24, f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    canvas.drawRightString(w - 36, 24, f"Página {doc.page}")
+    canvas.setStrokeColor(BORDER)
+    canvas.line(36, 38, w - 36, 38)
+    canvas.restoreState()
+
+
+def generate_vip_closing_pdf(
+    user: dict,
+    orders: list,
+    date_label: str,
+    final_balance: float,
+) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=LETTER,
+        leftMargin=36, rightMargin=36, topMargin=80, bottomMargin=50,
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT, fontSize=22, leading=24, spaceAfter=4, fontName="Helvetica-Bold")
+    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_YELLOW, fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold")
+    sub = ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=10, leading=12, spaceAfter=18)
+    body = ParagraphStyle('body', parent=styles['Normal'], textColor=TEXT, fontSize=10, leading=14)
+    body_muted = ParagraphStyle('bodym', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=9, leading=12)
+
+    story = []
+
+    story.append(Paragraph("/ CIERRE DIARIO VIP", label))
+    story.append(Paragraph(f"Reporte del {date_label}", h1))
+    story.append(Paragraph(
+        f"Cliente: <font color='#FFFFFF'><b>{user.get('name','')}</b></font> · {user.get('email','')}", sub))
+
+    # Summary cards
+    total_received = sum(o.get("amount_to", 0) for o in orders if o.get("delivery_method") == "accumulate")
+    total_in_native = {}
+    for o in orders:
+        if o.get("delivery_method") != "accumulate":
+            total_in_native.setdefault(o["to_code"], 0)
+            total_in_native[o["to_code"]] += o.get("amount_to", 0)
+    total_orders = len(orders)
+    total_volume_from = sum(o.get("amount_from", 0) for o in orders)
+
+    summary_data = [
+        [Paragraph("Órdenes aprobadas", body_muted), Paragraph("Volumen total", body_muted), Paragraph("Acumulado USD", body_muted), Paragraph("Saldo al cierre", body_muted)],
+        [
+            Paragraph(f"<font size=18 color='#FFFFFF'><b>{total_orders}</b></font>", body),
+            Paragraph(f"<font size=14 color='#FFFFFF'><b>{total_volume_from:,.2f}</b></font>", body),
+            Paragraph(f"<font size=14 color='#EAB308'><b>${total_received:,.2f}</b></font>", body),
+            Paragraph(f"<font size=14 color='#22C55E'><b>${final_balance:,.2f}</b></font>", body),
+        ],
+    ]
+    tbl = Table(summary_data, colWidths=[1.85*inch]*4)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), PANEL),
+        ("BOX", (0,0), (-1,-1), 0.5, BORDER),
+        ("INNERGRID", (0,0), (-1,-1), 0.5, BORDER),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("LEFTPADDING", (0,0), (-1,-1), 12),
+        ("RIGHTPADDING", (0,0), (-1,-1), 12),
+        ("TOPPADDING", (0,0), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 14),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 18))
+
+    # Orders table
+    story.append(Paragraph("Órdenes aprobadas", label))
+    story.append(Spacer(1, 6))
+
+    headers = ["ID", "Hora", "Par", "Envió", "Recibió", "Tasa", "Entrega"]
+    data = [headers]
+    for o in orders:
+        try:
+            ts = o.get("updated_at") or o.get("created_at")
+            ts_fmt = datetime.fromisoformat(ts).strftime("%H:%M") if ts else "—"
+        except Exception:
+            ts_fmt = "—"
+        data.append([
+            o["id"][:6],
+            ts_fmt,
+            f"{o['from_code']}→{o['to_code']}",
+            f"{o['amount_from']:.2f} {o['from_code']}",
+            f"{o['amount_to']:.2f} {o['to_code']}",
+            f"{o['rate_applied']:.4f}",
+            o["delivery_method"],
+        ])
+
+    if len(data) == 1:
+        data.append(["—", "—", "—", "—", "—", "—", "—"])
+
+    orders_tbl = Table(data, colWidths=[0.7*inch, 0.6*inch, 1.0*inch, 1.2*inch, 1.3*inch, 0.9*inch, 1.0*inch])
+    orders_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), PANEL),
+        ("TEXTCOLOR", (0,0), (-1,0), BRAND_YELLOW),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,0), 8),
+        ("LEADING", (0,0), (-1,0), 10),
+        ("BACKGROUND", (0,1), (-1,-1), colors.HexColor("#0c0c0c")),
+        ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
+        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
+        ("FONTSIZE", (0,1), (-1,-1), 8.5),
+        ("TEXTCOLOR", (4,1), (4,-1), BRAND_YELLOW),
+        ("GRID", (0,0), (-1,-1), 0.4, BORDER),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ("ALIGN", (0,0), (-1,-1), "LEFT"),
+    ]))
+    story.append(orders_tbl)
+    story.append(Spacer(1, 18))
+
+    # Breakdown by destination currency
+    if total_in_native:
+        story.append(Paragraph("Recibido por moneda destino (no acumulado)", label))
+        story.append(Spacer(1, 4))
+        rows = [["Moneda", "Total recibido"]]
+        for code, total in total_in_native.items():
+            rows.append([code, f"{total:,.2f}"])
+        currency_tbl = Table(rows, colWidths=[2*inch, 2*inch])
+        currency_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), PANEL),
+            ("TEXTCOLOR", (0,0), (-1,0), BRAND_YELLOW),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE", (0,0), (-1,0), 8),
+            ("BACKGROUND", (0,1), (-1,-1), colors.HexColor("#0c0c0c")),
+            ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
+            ("FONTSIZE", (0,1), (-1,-1), 9),
+            ("GRID", (0,0), (-1,-1), 0.4, BORDER),
+            ("TOPPADDING", (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+            ("LEFTPADDING", (0,0), (-1,-1), 8),
+            ("RIGHTPADDING", (0,0), (-1,-1), 8),
+        ]))
+        story.append(currency_tbl)
+        story.append(Spacer(1, 20))
+
+    # Signature block
+    sig_data = [[
+        Paragraph("<font color='#A3A3A3' size=8>FIRMA / SELLO RESILIENCE BROTHERS</font><br/><br/><br/><font color='#525252' size=8>____________________________</font>", body_muted),
+        Paragraph("<font color='#A3A3A3' size=8>CLIENTE VIP — CONFORMIDAD</font><br/><br/><br/><font color='#525252' size=8>____________________________</font>", body_muted),
+    ]]
+    sig_tbl = Table(sig_data, colWidths=[3.6*inch, 3.6*inch])
+    sig_tbl.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("LEFTPADDING", (0,0), (-1,-1), 0),
+        ("RIGHTPADDING", (0,0), (-1,-1), 0),
+        ("TOPPADDING", (0,0), (-1,-1), 12),
+    ]))
+    story.append(sig_tbl)
+
+    doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes

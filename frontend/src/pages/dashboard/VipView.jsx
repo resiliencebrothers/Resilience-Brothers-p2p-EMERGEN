@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Wallet, ArrowDownToLine } from "lucide-react";
+import { Wallet, ArrowDownToLine, FileDown } from "lucide-react";
 
 export default function VipView() {
   const { user, refresh } = useAuth();
@@ -17,6 +17,32 @@ export default function VipView() {
   const [method, setMethod] = useState("transfer");
   const [details, setDetails] = useState("");
   const [busy, setBusy] = useState(false);
+  const [closingDate, setClosingDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadClosing = async () => {
+    setDownloading(true);
+    try {
+      const res = await axios.get(`${API}/vip/daily-closing`, {
+        params: { date: closingDate },
+        responseType: "blob",
+        withCredentials: true,
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cierre_vip_${closingDate}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Cierre descargado");
+    } catch (e) {
+      toast.error("Error al generar el cierre");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const load = async () => {
     const r = await axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true });
@@ -53,6 +79,35 @@ export default function VipView() {
         <div className="micro-label text-neutral-500">Saldo disponible</div>
         <div className="font-display text-5xl text-[#EAB308] mt-2">${(user?.vip_balance_usd || 0).toFixed(2)}</div>
         <div className="text-sm text-neutral-500 mt-1">USD · Disponible para retiro o canje</div>
+      </div>
+
+      <div className="tactile-card p-6">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="font-display text-xl flex items-center gap-2">
+              <FileDown className="w-5 h-5 text-[#EAB308]" /> Cierre Diario
+            </h2>
+            <p className="text-sm text-neutral-400 mt-1">Descarga el reporte PDF de tus órdenes aprobadas del día.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Input
+              data-testid="closing-date-input"
+              type="date"
+              value={closingDate}
+              onChange={(e) => setClosingDate(e.target.value)}
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-44"
+            />
+            <Button
+              data-testid="download-closing-btn"
+              onClick={downloadClosing}
+              disabled={downloading}
+              className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-semibold rounded-none h-11"
+            >
+              <FileDown className="w-4 h-4 mr-2" />
+              {downloading ? "Generando..." : "Descargar PDF"}
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">

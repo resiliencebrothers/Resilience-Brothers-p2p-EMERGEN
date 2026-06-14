@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Cookie, Response, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -11,10 +11,14 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
+from io import BytesIO
 
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+from email_service import notify_order_approved, notify_order_rejected
+from pdf_service import generate_vip_closing_pdf
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -413,7 +417,19 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
             {"user_id": order["user_id"]},
             {"$inc": {"vip_balance_usd": order["amount_to"]}}
         )
-    return await db.orders.find_one({"id": order_id}, {"_id": 0})
+    # Send email notification on approve/reject
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if new_status in ("approved", "rejected") and order["status"] != new_status:
+        target_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
+        if target_user:
+            try:
+                if new_status == "approved":
+                    notify_order_approved(updated, target_user)
+                else:
+                    notify_order_rejected(updated, target_user)
+            except Exception as e:
+                logger.error(f"Email notification failed: {e}")
+    return updated
 
 # ============== PRODUCTS ==============
 
@@ -545,6 +561,44 @@ async def update_withdrawal(wid: str, payload: dict, request: Request):
         await db.users.update_one({"user_id": w["user_id"]}, {"$inc": {"vip_balance_usd": w["amount_usd"]}})
     await db.withdrawals.update_one({"id": wid}, {"$set": {"status": new_status, "admin_note": note}})
     return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+
+# ============== VIP DAILY CLOSING PDF ==============
+
+@api_router.get("/vip/daily-closing")
+async def vip_daily_closing(request: Request, date: Optional[str] = None):
+    user = await require_user(request)
+    if user["role"] not in ("vip", "admin"):
+        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    # Date in YYYY-MM-DD (UTC). Defaults to today.
+    if not date:
+        date = now_utc().strftime("%Y-%m-%d")
+    try:
+        day_start = datetime.fromisoformat(f"{date}T00:00:00+00:00")
+        day_end = day_start + timedelta(days=1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Fecha inválida (usa YYYY-MM-DD)")
+
+    cursor = db.orders.find({
+        "user_id": user["user_id"],
+        "status": {"$in": ["approved", "completed"]},
+        "updated_at": {"$gte": day_start.isoformat(), "$lt": day_end.isoformat()},
+    }, {"_id": 0}).sort("updated_at", 1)
+    orders = await cursor.to_list(1000)
+
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    pdf_bytes = generate_vip_closing_pdf(
+        user=fresh,
+        orders=orders,
+        date_label=date,
+        final_balance=fresh.get("vip_balance_usd", 0),
+    )
+    filename = f"cierre_vip_{date}_{user['user_id']}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # ============== USERS (ADMIN) ==============
 

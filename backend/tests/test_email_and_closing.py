@@ -1,0 +1,150 @@
+"""Iteration 2 tests: email notifications (approve/reject) + VIP daily closing PDF."""
+import os
+import pytest
+import requests
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://p2p-exchange-hub-2.preview.emergentagent.com").rstrip("/")
+
+ADMIN_TOKEN = "test_session_admin_X"
+VIP_TOKEN = "test_session_vip_X"
+NORMAL_TOKEN = "test_session_normal_X"
+
+
+def _h(token=None):
+    h = {"Content-Type": "application/json"}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def _create_vip_order(amount=15, delivery_method="accumulate"):
+    payload = {"from_code": "USD", "to_code": "CUP", "amount_from": amount,
+               "delivery_method": delivery_method, "delivery_details": "x",
+               "sender_name": "VIP Test", "proof_image": ""}
+    r = requests.post(f"{BASE_URL}/api/orders", headers=_h(VIP_TOKEN), json=payload)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+# ----- Email notification on approve/reject -----
+class TestEmailNotificationsAndStatusUpdate:
+    def test_approve_does_not_break_endpoint_even_if_email_fails(self):
+        order = _create_vip_order()
+        oid = order["id"]
+        before_bal = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                         headers=_h(ADMIN_TOKEN), json={"status": "approved", "admin_note": "iter2 approve"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "approved"
+        assert body["admin_note"] == "iter2 approve"
+        # Balance must have increased (accumulate)
+        after_bal = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        assert round(after_bal - before_bal, 4) == round(order["amount_to"], 4)
+
+    def test_reject_does_not_break_endpoint(self):
+        order = _create_vip_order(amount=8, delivery_method="transfer")
+        oid = order["id"]
+        r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                         headers=_h(ADMIN_TOKEN), json={"status": "rejected", "admin_note": "iter2 reject"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "rejected"
+
+    def test_completed_status_does_not_break(self):
+        order = _create_vip_order(amount=6, delivery_method="transfer")
+        oid = order["id"]
+        r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                         headers=_h(ADMIN_TOKEN), json={"status": "completed"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "completed"
+
+    def test_pending_status_noop_no_email(self):
+        order = _create_vip_order(amount=4, delivery_method="transfer")
+        oid = order["id"]
+        r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                         headers=_h(ADMIN_TOKEN), json={"status": "pending"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "pending"
+
+    def test_double_approve_only_credits_once(self):
+        order = _create_vip_order(amount=7)
+        oid = order["id"]
+        bal0 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        # First approve
+        r1 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+        assert r1.status_code == 200
+        bal1 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        # Second approve (same status). Code path re-runs balance accumulate even if status unchanged
+        # — checking server.py: condition is `new_status == "approved" and order["delivery_method"] == "accumulate"`
+        # without status-change guard. We'll just verify endpoint still returns 200, and report finding.
+        r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+        assert r2.status_code == 200
+        bal2 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        # Document the actual behaviour rather than enforce it (issue to be reported if double-credit)
+        delta1 = round(bal1 - bal0, 4)
+        delta2 = round(bal2 - bal1, 4)
+        assert delta1 == round(order["amount_to"], 4)
+        # Flag double-credit explicitly in assertion message
+        if delta2 != 0:
+            pytest.fail(f"Double-approve credits balance twice (delta2={delta2}). Expected 0 (no double-credit). amount_to={order['amount_to']}")
+
+
+# ----- VIP daily-closing PDF -----
+class TestVipDailyClosing:
+    def test_unauth_401(self):
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing")
+        assert r.status_code == 401
+
+    def test_normal_403(self):
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing", headers=_h(NORMAL_TOKEN))
+        assert r.status_code == 403
+
+    def test_vip_returns_pdf(self):
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing", headers=_h(VIP_TOKEN))
+        assert r.status_code == 200
+        assert r.headers.get("content-type", "").startswith("application/pdf")
+        assert r.content[:4] == b"%PDF"
+        assert len(r.content) > 1000
+
+    def test_admin_returns_pdf(self):
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing", headers=_h(ADMIN_TOKEN))
+        assert r.status_code == 200
+        assert r.content[:4] == b"%PDF"
+        assert len(r.content) > 1000
+
+    def test_invalid_date_400(self):
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing?date=not-a-date", headers=_h(VIP_TOKEN))
+        assert r.status_code == 400
+
+    def test_valid_date_filter(self):
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing?date={today}", headers=_h(VIP_TOKEN))
+        assert r.status_code == 200
+        assert r.content[:4] == b"%PDF"
+
+    def test_closing_includes_approved_orders_today(self):
+        # Create + approve an order today
+        order = _create_vip_order(amount=20, delivery_method="accumulate")
+        oid = order["id"]
+        ra = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+        assert ra.status_code == 200
+        # Fetch closing
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing?date={today}", headers=_h(VIP_TOKEN))
+        assert r.status_code == 200
+        assert len(r.content) > 2000  # Should contain at least one row + summary
+        assert r.content[:4] == b"%PDF"
+
+    def test_closing_past_date_still_returns_pdf(self):
+        # Use a date with no orders — PDF should still build with placeholder row
+        r = requests.get(f"{BASE_URL}/api/vip/daily-closing?date=2020-01-01", headers=_h(VIP_TOKEN))
+        assert r.status_code == 200
+        assert r.content[:4] == b"%PDF"

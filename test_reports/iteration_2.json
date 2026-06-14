@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 2 — Tested Resend email notifications (approve/reject) + VIP daily-closing PDF. Backend: 37/38 pytest passed (25 regression + 12 new). 1 real bug found via the double-approve test. Frontend VIP /dashboard/vip 'Cierre Diario' card renders correctly, date input prefilled with today (2026-06-14), and PDF downloads work for both today and a custom past date (2025-12-15). PDFs validated: %PDF magic + size 2.7–3.4 KB. No console errors.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/admin/orders/{order_id}/status",
+        "issue": "DOUBLE-CREDIT BUG: When admin approves an order with delivery_method='accumulate' twice (e.g. via duplicate click or status reapplied), vip_balance_usd is incremented twice. The accumulate $inc block (server.py ~L415-419) has no `order['status'] != new_status` guard, while the email-notification block (L422) correctly does. Reproduced: order amount_to=2765 USD credited twice → +5530 USD instead of +2765. Fix: wrap the $inc inside `if order['status'] != 'approved':`.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/vip/daily-closing",
+        "issue": "PDF for an empty date (e.g. 2020-01-01) renders a placeholder row of em-dashes — acceptable but could show a clearer empty state."
+      },
+      {
+        "endpoint": "Resend email integration",
+        "issue": "Sender is onboarding@resend.dev (no verified domain). Resend free tier may restrict delivery to the account owner's email; production-ready setup requires verifying notificacionesresiliencebrothe@gmail.com domain or adding it as a verified recipient. Endpoint behaviour is correct (try/except wraps the send, so 200 is returned regardless)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "VIP > Cierre Diario card", "issues": ["Native browser date picker is used (matches the rest of the app's <Input type=\"date\">) — visually fine in dark theme but inconsistent with shadcn Calendar if that's desired elsewhere. Low priority."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_email_and_closing.py",
+    "/app/backend/tests/test_p2p_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "FIX (HIGH): Add `if order['status'] != 'approved':` guard around the accumulate $inc in PUT /api/admin/orders/{id}/status to prevent double-crediting VIP balance on duplicate approve clicks.",
+    "(Optional) Verify a real sender domain in Resend so production emails are delivered to clients (currently using onboarding@resend.dev).",
+    "(Optional) Show a friendlier 'Sin órdenes aprobadas hoy' message in the PDF when the day has zero approved orders, instead of em-dashes."
+  ],
+  "critical_code_review_comments": [
+    "server.py update_order_status: balance-accumulate is not idempotent (HIGH — see above). The status-change guard exists for email but not for balance.",
+    "server.py now ~680 lines — still acceptable but the new endpoints push it close to the 700-line guideline. Consider extracting `/admin/orders/*`, `/vip/*` (closing + withdrawals + redemptions) into routers.",
+    "email_service._send correctly wraps resend.Emails.send in try/except and logs failures. Good defensive design.",
+    "pdf_service.generate_vip_closing_pdf handles the no-orders case (placeholder row) and uses iso-aware date parsing — robust.",
+    "/api/vip/daily-closing correctly uses UTC day boundaries with `updated_at` ISO-string comparison. Note: relies on `updated_at` lexicographic ordering matching chronological — works because the format is ISO-8601 with fixed tz offset. Good.",
+    "logger usage at server.py L431 references module-level `logger` defined at L673 — works due to late binding, but cleaner to define logger near top of file before first use.",
+    "Frontend VipView uses axios with responseType='blob' and creates an object URL for download — standard pattern, works in tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_email_and_closing.py (new — 13 tests covering email-safe status updates + PDF closing)"
+  ],
+  "success_rate": {"backend": "97% (37/38) — 1 failure is a real production bug, not a test issue", "frontend": "100% on tested VIP closing flow"},
+  "test_credentials": "Reused iteration 1 sessions: admin=test_session_admin_X, vip=test_session_vip_X, normal=test_session_normal_X (in MongoDB).",
+  "seed_data_creation": "No new seed. Reused existing seed and created ~4 VIP transient orders during testing (approved/rejected/completed/pending).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/ -v` to execute both suites. The single failing test `test_double_approve_only_credits_once` documents a real bug — once main agent adds the status-change guard around the accumulate $inc, this test will pass. Frontend VIP closing PDF download works end-to-end via the preview URL.",
+  "rca of the issue": "Double-credit RCA: in PUT /api/admin/orders/{id}/status, the balance increment runs on every call where new_status=='approved' and delivery_method=='accumulate', without checking the prior status. Email block correctly uses `order['status'] != new_status` guard. Reproduction: create VIP accumulate order → PUT status=approved twice → vip_balance_usd grows by 2*amount_to. Mitigation: wrap the $inc in the same guard used for email (`if order['status'] != 'approved'`)."
+}
