@@ -1,72 +1,610 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Cookie, Response, Request
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import uuid
+import requests
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
+from typing import List, Optional, Literal
+from datetime import datetime, timezone, timedelta
 
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
-
-# Create a router with the /api prefix
+app = FastAPI(title="Resilience Brothers P2P")
 api_router = APIRouter(prefix="/api")
 
+ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
+# ============== MODELS ==============
+
+def now_utc():
+    return datetime.now(timezone.utc)
+
+def iso(dt):
+    return dt.isoformat() if isinstance(dt, datetime) else dt
+
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    user_id: str
+    email: str
+    name: str
+    picture: Optional[str] = None
+    role: Literal["normal", "vip", "admin"] = "normal"
+    vip_balance_usd: float = 0.0
+    created_at: str
+
+class Currency(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    code: str  # USDT, BTC, USD, CUP, BRL, MXN
+    name: str
+    type: Literal["crypto", "fiat"]
+    symbol: Optional[str] = ""
+    country: Optional[str] = ""
+    is_active: bool = True
+    payment_account: Optional[str] = ""  # Account info for deposits (Zelle, bank, etc)
+    created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+class CurrencyCreate(BaseModel):
+    code: str
+    name: str
+    type: Literal["crypto", "fiat"]
+    symbol: Optional[str] = ""
+    country: Optional[str] = ""
+    is_active: bool = True
+    payment_account: Optional[str] = ""
 
-# Add your routes to the router instead of directly to app
+class ExchangeRate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    from_code: str
+    to_code: str
+    rate_normal: float
+    rate_vip: float
+    updated_at: str = Field(default_factory=lambda: iso(now_utc()))
+
+class ExchangeRateCreate(BaseModel):
+    from_code: str
+    to_code: str
+    rate_normal: float
+    rate_vip: float
+
+class Order(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    user_email: str
+    user_name: str
+    user_role: str
+    from_code: str
+    to_code: str
+    amount_from: float
+    amount_to: float
+    rate_applied: float
+    commission_percent: float
+    delivery_method: Literal["transfer", "cash", "crypto", "accumulate"]
+    delivery_details: str = ""  # bank info, address, wallet
+    sender_name: str = ""  # name of person who sent payment
+    proof_image: str = ""  # base64 data URL
+    status: Literal["pending", "approved", "rejected", "completed"] = "pending"
+    admin_note: str = ""
+    created_at: str = Field(default_factory=lambda: iso(now_utc()))
+    updated_at: str = Field(default_factory=lambda: iso(now_utc()))
+
+class OrderCreate(BaseModel):
+    from_code: str
+    to_code: str
+    amount_from: float
+    delivery_method: Literal["transfer", "cash", "crypto", "accumulate"]
+    delivery_details: str = ""
+    sender_name: str = ""
+    proof_image: str = ""
+
+class Product(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str = ""
+    image_url: str = ""
+    price_usd: float
+    stock: int = 0
+    category: str = "general"
+    is_active: bool = True
+    created_at: str = Field(default_factory=lambda: iso(now_utc()))
+
+class ProductCreate(BaseModel):
+    name: str
+    description: str = ""
+    image_url: str = ""
+    price_usd: float
+    stock: int = 0
+    category: str = "general"
+    is_active: bool = True
+
+class Redemption(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    user_email: str
+    user_name: str
+    product_id: str
+    product_name: str
+    quantity: int
+    total_usd: float
+    delivery_address: str = ""
+    status: Literal["pending", "approved", "delivered", "rejected"] = "pending"
+    admin_note: str = ""
+    created_at: str = Field(default_factory=lambda: iso(now_utc()))
+
+class RedemptionCreate(BaseModel):
+    product_id: str
+    quantity: int
+    delivery_address: str = ""
+
+class WithdrawalRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    user_email: str
+    user_name: str
+    amount_usd: float
+    method: Literal["transfer", "cash", "crypto"]
+    details: str
+    status: Literal["pending", "approved", "paid", "rejected"] = "pending"
+    admin_note: str = ""
+    created_at: str = Field(default_factory=lambda: iso(now_utc()))
+
+class WithdrawalCreate(BaseModel):
+    amount_usd: float
+    method: Literal["transfer", "cash", "crypto"]
+    details: str
+
+class UserUpdate(BaseModel):
+    role: Optional[Literal["normal", "vip", "admin"]] = None
+    vip_balance_usd: Optional[float] = None
+
+# ============== AUTH ==============
+
+async def get_session_user(request: Request) -> Optional[dict]:
+    token = request.cookies.get("session_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        return None
+    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not sess:
+        return None
+    expires_at = sess.get("expires_at")
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now_utc():
+        return None
+    user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    return user
+
+async def require_user(request: Request) -> dict:
+    user = await get_session_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+async def require_admin(request: Request) -> dict:
+    user = await require_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+@api_router.post("/auth/session")
+async def auth_session(payload: dict, response: Response):
+    session_id = payload.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    resp = requests.get(
+        "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+        headers={"X-Session-ID": session_id},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    data = resp.json()
+    email = data["email"].lower()
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+        # Update name/picture
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": data.get("name", existing["name"]), "picture": data.get("picture", existing.get("picture", ""))}}
+        )
+        user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        role = "admin" if email in ADMIN_EMAILS else "normal"
+        # If this is the first user, make them admin
+        count = await db.users.count_documents({})
+        if count == 0:
+            role = "admin"
+        user_doc = {
+            "user_id": user_id,
+            "email": email,
+            "name": data.get("name", ""),
+            "picture": data.get("picture", ""),
+            "role": role,
+            "vip_balance_usd": 0.0,
+            "created_at": iso(now_utc()),
+        }
+        await db.users.insert_one(user_doc)
+
+    session_token = data["session_token"]
+    expires_at = now_utc() + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_doc["user_id"],
+        "session_token": session_token,
+        "expires_at": iso(expires_at),
+        "created_at": iso(now_utc()),
+    })
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=7 * 24 * 3600,
+    )
+    user_doc.pop("_id", None)
+    return user_doc
+
+@api_router.get("/auth/me")
+async def auth_me(request: Request):
+    user = await require_user(request)
+    user.pop("_id", None)
+    return user
+
+@api_router.post("/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    token = request.cookies.get("session_token")
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/")
+    return {"ok": True}
+
+# ============== CURRENCIES ==============
+
+@api_router.get("/currencies")
+async def list_currencies():
+    docs = await db.currencies.find({}, {"_id": 0}).to_list(500)
+    return docs
+
+@api_router.post("/admin/currencies")
+async def create_currency(payload: CurrencyCreate, request: Request):
+    await require_admin(request)
+    c = Currency(**payload.model_dump())
+    await db.currencies.insert_one(c.model_dump())
+    return c.model_dump()
+
+@api_router.put("/admin/currencies/{currency_id}")
+async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request):
+    await require_admin(request)
+    await db.currencies.update_one({"id": currency_id}, {"$set": payload.model_dump()})
+    doc = await db.currencies.find_one({"id": currency_id}, {"_id": 0})
+    return doc
+
+@api_router.delete("/admin/currencies/{currency_id}")
+async def delete_currency(currency_id: str, request: Request):
+    await require_admin(request)
+    await db.currencies.delete_one({"id": currency_id})
+    return {"ok": True}
+
+# ============== EXCHANGE RATES ==============
+
+@api_router.get("/rates")
+async def list_rates():
+    docs = await db.rates.find({}, {"_id": 0}).to_list(500)
+    return docs
+
+@api_router.post("/admin/rates")
+async def create_rate(payload: ExchangeRateCreate, request: Request):
+    await require_admin(request)
+    existing = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
+    if existing:
+        await db.rates.update_one(
+            {"id": existing["id"]},
+            {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}}
+        )
+        return await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
+    r = ExchangeRate(**payload.model_dump())
+    await db.rates.insert_one(r.model_dump())
+    return r.model_dump()
+
+@api_router.put("/admin/rates/{rate_id}")
+async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
+    await require_admin(request)
+    await db.rates.update_one(
+        {"id": rate_id},
+        {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}}
+    )
+    return await db.rates.find_one({"id": rate_id}, {"_id": 0})
+
+@api_router.delete("/admin/rates/{rate_id}")
+async def delete_rate(rate_id: str, request: Request):
+    await require_admin(request)
+    await db.rates.delete_one({"id": rate_id})
+    return {"ok": True}
+
+# ============== ORDERS ==============
+
+@api_router.post("/orders")
+async def create_order(payload: OrderCreate, request: Request):
+    user = await require_user(request)
+    rate_doc = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
+    if not rate_doc:
+        raise HTTPException(status_code=400, detail="Tasa de cambio no disponible para ese par")
+    is_vip = user["role"] in ("vip", "admin")
+    rate = rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"]
+    commission = 0.0 if is_vip else 5.0
+    gross = payload.amount_from * rate
+    amount_to = gross * (1 - commission / 100)
+    order = Order(
+        user_id=user["user_id"],
+        user_email=user["email"],
+        user_name=user["name"],
+        user_role=user["role"],
+        from_code=payload.from_code,
+        to_code=payload.to_code,
+        amount_from=payload.amount_from,
+        amount_to=round(amount_to, 4),
+        rate_applied=rate,
+        commission_percent=commission,
+        delivery_method=payload.delivery_method,
+        delivery_details=payload.delivery_details,
+        sender_name=payload.sender_name,
+        proof_image=payload.proof_image,
+    )
+    await db.orders.insert_one(order.model_dump())
+    return order.model_dump()
+
+@api_router.get("/orders/mine")
+async def my_orders(request: Request):
+    user = await require_user(request)
+    docs = await db.orders.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+@api_router.get("/admin/orders")
+async def all_orders(request: Request, status: Optional[str] = None):
+    await require_admin(request)
+    q = {}
+    if status:
+        q["status"] = status
+    docs = await db.orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+@api_router.put("/admin/orders/{order_id}/status")
+async def update_order_status(order_id: str, payload: dict, request: Request):
+    await require_admin(request)
+    new_status = payload.get("status")
+    note = payload.get("admin_note", "")
+    if new_status not in ("approved", "rejected", "completed", "pending"):
+        raise HTTPException(status_code=400, detail="status inválido")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {"status": new_status, "admin_note": note, "updated_at": iso(now_utc())}}
+    )
+    # VIP accumulate: when approved & delivery_method == accumulate, add to balance
+    if new_status == "approved" and order["delivery_method"] == "accumulate" and order["user_role"] in ("vip", "admin"):
+        await db.users.update_one(
+            {"user_id": order["user_id"]},
+            {"$inc": {"vip_balance_usd": order["amount_to"]}}
+        )
+    return await db.orders.find_one({"id": order_id}, {"_id": 0})
+
+# ============== PRODUCTS ==============
+
+@api_router.get("/products")
+async def list_products():
+    docs = await db.products.find({"is_active": True}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+@api_router.post("/admin/products")
+async def create_product(payload: ProductCreate, request: Request):
+    await require_admin(request)
+    p = Product(**payload.model_dump())
+    await db.products.insert_one(p.model_dump())
+    return p.model_dump()
+
+@api_router.put("/admin/products/{product_id}")
+async def update_product(product_id: str, payload: ProductCreate, request: Request):
+    await require_admin(request)
+    await db.products.update_one({"id": product_id}, {"$set": payload.model_dump()})
+    return await db.products.find_one({"id": product_id}, {"_id": 0})
+
+@api_router.delete("/admin/products/{product_id}")
+async def delete_product(product_id: str, request: Request):
+    await require_admin(request)
+    await db.products.delete_one({"id": product_id})
+    return {"ok": True}
+
+# ============== VIP - REDEMPTIONS & WITHDRAWALS ==============
+
+@api_router.post("/vip/redeem")
+async def redeem_product(payload: RedemptionCreate, request: Request):
+    user = await require_user(request)
+    if user["role"] not in ("vip", "admin"):
+        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if product["stock"] < payload.quantity:
+        raise HTTPException(status_code=400, detail="Stock insuficiente")
+    total = product["price_usd"] * payload.quantity
+    if user["vip_balance_usd"] < total:
+        raise HTTPException(status_code=400, detail="Saldo insuficiente")
+    r = Redemption(
+        user_id=user["user_id"],
+        user_email=user["email"],
+        user_name=user["name"],
+        product_id=product["id"],
+        product_name=product["name"],
+        quantity=payload.quantity,
+        total_usd=total,
+        delivery_address=payload.delivery_address,
+    )
+    await db.redemptions.insert_one(r.model_dump())
+    await db.users.update_one({"user_id": user["user_id"]}, {"$inc": {"vip_balance_usd": -total}})
+    await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -payload.quantity}})
+    return r.model_dump()
+
+@api_router.get("/vip/redemptions/mine")
+async def my_redemptions(request: Request):
+    user = await require_user(request)
+    docs = await db.redemptions.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+@api_router.get("/admin/redemptions")
+async def all_redemptions(request: Request):
+    await require_admin(request)
+    docs = await db.redemptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+@api_router.put("/admin/redemptions/{rid}/status")
+async def update_redemption(rid: str, payload: dict, request: Request):
+    await require_admin(request)
+    new_status = payload.get("status")
+    note = payload.get("admin_note", "")
+    if new_status not in ("approved", "delivered", "rejected", "pending"):
+        raise HTTPException(status_code=400, detail="status inválido")
+    r = await db.redemptions.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    # If rejected, refund balance + stock
+    if new_status == "rejected" and r["status"] != "rejected":
+        await db.users.update_one({"user_id": r["user_id"]}, {"$inc": {"vip_balance_usd": r["total_usd"]}})
+        await db.products.update_one({"id": r["product_id"]}, {"$inc": {"stock": r["quantity"]}})
+    await db.redemptions.update_one({"id": rid}, {"$set": {"status": new_status, "admin_note": note}})
+    return await db.redemptions.find_one({"id": rid}, {"_id": 0})
+
+@api_router.post("/vip/withdraw")
+async def create_withdrawal(payload: WithdrawalCreate, request: Request):
+    user = await require_user(request)
+    if user["role"] not in ("vip", "admin"):
+        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    if user["vip_balance_usd"] < payload.amount_usd:
+        raise HTTPException(status_code=400, detail="Saldo insuficiente")
+    w = WithdrawalRequest(
+        user_id=user["user_id"],
+        user_email=user["email"],
+        user_name=user["name"],
+        amount_usd=payload.amount_usd,
+        method=payload.method,
+        details=payload.details,
+    )
+    await db.withdrawals.insert_one(w.model_dump())
+    await db.users.update_one({"user_id": user["user_id"]}, {"$inc": {"vip_balance_usd": -payload.amount_usd}})
+    return w.model_dump()
+
+@api_router.get("/vip/withdrawals/mine")
+async def my_withdrawals(request: Request):
+    user = await require_user(request)
+    docs = await db.withdrawals.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+@api_router.get("/admin/withdrawals")
+async def all_withdrawals(request: Request):
+    await require_admin(request)
+    docs = await db.withdrawals.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+@api_router.put("/admin/withdrawals/{wid}/status")
+async def update_withdrawal(wid: str, payload: dict, request: Request):
+    await require_admin(request)
+    new_status = payload.get("status")
+    note = payload.get("admin_note", "")
+    if new_status not in ("approved", "paid", "rejected", "pending"):
+        raise HTTPException(status_code=400, detail="status inválido")
+    w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    if not w:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    if new_status == "rejected" and w["status"] != "rejected":
+        await db.users.update_one({"user_id": w["user_id"]}, {"$inc": {"vip_balance_usd": w["amount_usd"]}})
+    await db.withdrawals.update_one({"id": wid}, {"$set": {"status": new_status, "admin_note": note}})
+    return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+
+# ============== USERS (ADMIN) ==============
+
+@api_router.get("/admin/users")
+async def list_users(request: Request):
+    await require_admin(request)
+    docs = await db.users.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return docs
+
+@api_router.put("/admin/users/{user_id}")
+async def update_user(user_id: str, payload: UserUpdate, request: Request):
+    await require_admin(request)
+    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nada para actualizar")
+    await db.users.update_one({"user_id": user_id}, {"$set": update})
+    return await db.users.find_one({"user_id": user_id}, {"_id": 0})
+
+# ============== SEED ==============
+
+@api_router.post("/admin/seed")
+async def seed_data(request: Request):
+    await require_admin(request)
+    # Seed currencies if empty
+    if await db.currencies.count_documents({}) == 0:
+        defaults = [
+            {"code": "USDT", "name": "Tether", "type": "crypto", "symbol": "₮", "country": "", "is_active": True, "payment_account": "Wallet TRC20: TXxxxxxxxxxxxx"},
+            {"code": "BTC", "name": "Bitcoin", "type": "crypto", "symbol": "₿", "country": "", "is_active": True, "payment_account": "Wallet: bc1qxxxxxxxx"},
+            {"code": "USD", "name": "US Dollar (Zelle)", "type": "fiat", "symbol": "$", "country": "USA", "is_active": True, "payment_account": "Zelle: pagos@resilience.com"},
+            {"code": "CUP", "name": "Peso Cubano", "type": "fiat", "symbol": "₱", "country": "Cuba", "is_active": True, "payment_account": ""},
+            {"code": "BRL", "name": "Real Brasileño", "type": "fiat", "symbol": "R$", "country": "Brasil", "is_active": True, "payment_account": ""},
+            {"code": "MXN", "name": "Peso Mexicano", "type": "fiat", "symbol": "$", "country": "México", "is_active": True, "payment_account": ""},
+        ]
+        for d in defaults:
+            await db.currencies.insert_one(Currency(**d).model_dump())
+    if await db.rates.count_documents({}) == 0:
+        rates_default = [
+            {"from_code": "USD", "to_code": "CUP", "rate_normal": 380, "rate_vip": 395},
+            {"from_code": "USD", "to_code": "BRL", "rate_normal": 4.9, "rate_vip": 5.05},
+            {"from_code": "USD", "to_code": "MXN", "rate_normal": 17.2, "rate_vip": 17.6},
+            {"from_code": "USDT", "to_code": "CUP", "rate_normal": 378, "rate_vip": 393},
+            {"from_code": "USDT", "to_code": "USD", "rate_normal": 0.98, "rate_vip": 0.99},
+        ]
+        for d in rates_default:
+            await db.rates.insert_one(ExchangeRate(**d).model_dump())
+    if await db.products.count_documents({}) == 0:
+        prods = [
+            {"name": "Contenedor de Arroz (40 sacos)", "description": "Saco de 25kg, arroz blanco grado A.", "image_url": "https://images.unsplash.com/photo-1586201375761-83865001e31c?w=600", "price_usd": 1800, "stock": 5, "category": "alimentos"},
+            {"name": "Contenedor de Harina (30 sacos)", "description": "Harina de trigo refinada, 25kg.", "image_url": "https://images.unsplash.com/photo-1574323347407-f5e1ad6d020b?w=600", "price_usd": 1200, "stock": 8, "category": "alimentos"},
+            {"name": "Pallet de Refrescos (200 cajas)", "description": "Refrescos surtidos, lata 355ml.", "image_url": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=600", "price_usd": 900, "stock": 15, "category": "bebidas"},
+            {"name": "Aceite Vegetal (Pallet 120L)", "description": "Aceite refinado en bidones.", "image_url": "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=600", "price_usd": 550, "stock": 20, "category": "alimentos"},
+        ]
+        for d in prods:
+            await db.products.insert_one(Product(**d).model_dump())
+    return {"ok": True, "message": "Seed completado"}
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"service": "Resilience Brothers P2P", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
 app.include_router(api_router)
 
 app.add_middleware(
@@ -77,11 +615,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
