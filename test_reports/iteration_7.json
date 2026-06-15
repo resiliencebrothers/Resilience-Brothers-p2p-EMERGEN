@@ -1,0 +1,53 @@
+{
+  "summary": "Iter7 — Validated cost_usd on Product (POST/PUT/GET defaults), cost snapshot on Redemption (incl. legacy product without cost_usd field defaulting to 0), marketplace section on /api/admin/revenue (delivered-only, items list with units/redemptions/revenue/cost/profit/margin_pct), and negative-margin alert hooks on order create + rate update. Wrote /app/backend/tests/test_marketplace_profit_and_margin.py (13 tests, all pass). Full backend regression: 119 passed / 1 skipped (the unchanged iter1 VIP withdraw-refund skip). Frontend Playwright verified: AdminProducts dialog has 2-col grid with data-testid='prod-price' and 'prod-cost'; 12 'Margen: $X/u' green badges render on product cards; AdminRevenue shows 4 top cards (Ganancia total highlighted, Ganancia P2P, Ganancia Marketplace, Volumen P2P) and a 'revenue-marketplace' table with product/units/redemptions/revenue/cost/profit/margin — verified end-to-end ($1650 rev / $1500 cost / $150 profit / 9.09% margin for the 3-unit redeem). notify_all_admins is firing (confirmed via supervisor log showing Resend email calls per admin) — Resend sandbox 403s are unrelated to our code.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/redemptions/{rid}/status", "issue": "When transitioning to 'delivered' from 'approved'/'pending', stock is not re-decremented (already done at redeem). OK as-is, but the reject path refunds vip_balance_usd directly bypassing balances[currency] — pre-existing carry-over from prior iterations."},
+      {"endpoint": "admin_alerts.notify_all_admins", "issue": "Resend sandbox rejects emails to non-owner addresses (3rd-party config, not a code bug). In production a verified domain is required. Push channel works through send_push; push 'dead' subs are pruned correctly."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AdminRevenue / Ingresos", "issues": ["'Ganancia Marketplace' card shows 300 USDT but does not visually highlight loss vs gain (color stays the same as P2P card even when P2P is negative); consider tinting negative cards red — current behavior is acceptable."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_marketplace_profit_and_margin.py",
+    "/app/backend/tests/test_employee_and_revenue.py",
+    "/app/backend/tests/test_p2p_backend.py",
+    "/app/backend/tests/test_admin_alerts.py",
+    "/app/backend/tests/test_email_and_closing.py",
+    "/app/backend/tests/test_multicurrency_and_stats.py",
+    "/app/backend/tests/test_push_notifications.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(MINOR) Carry-over: AdminRates table still has no 'Real' column (data is in GET /api/rates as real_rate; dialog has rate-real input). Add `<th>Real</th>` between VIP and Actualizada in /app/frontend/src/pages/admin/AdminRates.jsx.",
+    "(LOW) /app/backend/server.py is now 1289 lines — refactor into routers (auth/orders/withdrawals/redemptions/admin/products/revenue/push) to honor the 700-line guideline.",
+    "(LOW) Consider verified domain for Resend so admin email alerts actually deliver in production.",
+    "(LOW) Consider visual highlight of negative cards (red) on AdminRevenue when ganancia_p2p < 0 or marketplace_profit < 0."
+  ],
+  "critical_code_review_comments": [
+    "Product.cost_usd default=0.0 on model and POST without cost_usd correctly returns 0.0 — verified.",
+    "Redemption stores snapshot via `cost = float(product.get('cost_usd') or 0) * payload.quantity` — robust against legacy products missing the field (test_redemption_defaults_cost_when_product_missing_cost passes).",
+    "_compute_marketplace_revenue filters by status='delivered' only — verified pending redemptions are NOT counted (test_pending_redemption_not_counted passes).",
+    "_check_negative_margin_alert in try/except inside create_order — endpoint stays 200 even if alert path fails (test_order_creation_returns_200_with_alert_path).",
+    "update_rate scans pending orders only when real_rate actually changed (`fresh['real_rate'] != old_rr`) — good, avoids spurious alerts on PUTs that don't touch real_rate.",
+    "margin_pct in _compute_marketplace_revenue is profit/revenue (not profit/cost), matching the test expectation 50/550 = 9.09%. Document choice in API/UI.",
+    "AdminProducts.jsx: dialog grid grid-cols-2 with both prod-price and prod-cost inputs; cards show green 'Margen: $X/u' only when cost_usd > 0 — verified visually.",
+    "AdminRevenue.jsx: 4 top cards present (Ganancia total/P2P/Marketplace/Volumen P2P) and data-testid='revenue-marketplace' table renders correctly with empty-state copy 'Sin canjes entregados aún en este período.'"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_marketplace_profit_and_margin.py (NEW — 13 tests across 6 classes: TestProductCostUsd (3), TestRedemptionSnapshot (3 incl. legacy doc default), TestRevenueMarketplaceSection (3 incl. delivered=150 profit math), TestNegativeMarginOrderCreate (2), TestNegativeMarginOnRateUpdate (1), TestOrderEndpointRobust (1))."
+  ],
+  "success_rate": {"backend": "100% (13/13 new + 106/106 carried over; 1 unchanged pre-existing skip = 119 passed / 1 skipped)", "frontend": "100% (AdminProducts cost/price 2-col layout + margen badges; AdminRevenue 4 cards + marketplace table verified end-to-end via Playwright)"},
+  "test_credentials": "Admin: test_session_admin_X (user_test_admin01). VIP: test_session_vip_X (user_test_vip01). Normal: test_session_normal_X. Employee: test_session_employee_X (carry-over from iter6).",
+  "seed_data_creation": "Tests insert TEST_-prefixed Products via POST /api/admin/products and create redemptions via POST /api/vip/redeem; one legacy product without cost_usd is inserted directly via pymongo to verify default-0 behavior. VIP balance is topped up via direct $set on db.users.vip_balance_usd before each redeem test. Rates are upserted via POST /api/admin/rates for USD→CUP at various rate_normal/rate_vip/real_rate combos.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter7 final regression: 119 passed / 1 skipped. New file: test_marketplace_profit_and_margin.py (~13s). Re-run with: `pytest /app/backend/tests/test_marketplace_profit_and_margin.py -v` for iter7-only; full regression takes ~3 min (180s — exceeds 120s bash timeout; run in background or in smaller chunks). notify_all_admins is now wired into 6 hooks in server.py (new-order/order-approve/order-reject/large-vip-withdraw/new-redemption/rate-update-margin-scan/new-order-margin-check). Frontend AdminRevenue page exposes data-testid='revenue-marketplace'; AdminProducts dialog exposes data-testid='prod-price' and 'prod-cost'. No critical or blocking issues found.",
+  "rca of the issue": "N/A — no functional bugs. The 'Resend email failed' lines in /var/log/supervisor/backend.err.log are a third-party sandbox limitation (Resend allows test API keys to send only to the account owner's verified address) and confirm that the notify_all_admins() call chain is reaching email_service for every alert (order create / rate update). Push delivery follows the same path; dead subs are pruned. Endpoint behavior is unaffected — all alert calls are inside try/except blocks (server.py L437/447/516/670/729 and update_rate L370-397)."
+}

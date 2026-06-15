@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function AdminRevenue() {
@@ -66,21 +66,21 @@ export default function AdminRevenue() {
         />
         <BigStat
           icon={TrendingUp}
-          label="Margen promedio"
-          value={`${data.profit_margin_pct}`}
-          unit="%"
-        />
-        <BigStat
-          icon={Users}
-          label="Volumen total"
-          value={`${fmt(data.total_volume_usdt)}`}
+          label="Ganancia P2P"
+          value={`${fmt(data.p2p_profit_usdt)}`}
           unit="USDT"
         />
         <BigStat
-          icon={AlertCircle}
-          label="Órdenes contabilizadas"
-          value={data.orders_total}
-          unit=""
+          icon={Boxes}
+          label="Ganancia Marketplace"
+          value={`${fmt(data.marketplace_profit_usdt)}`}
+          unit="USDT"
+        />
+        <BigStat
+          icon={Users}
+          label="Volumen P2P"
+          value={`${fmt(data.total_volume_usdt)}`}
+          unit="USDT"
         />
       </div>
 
@@ -98,7 +98,7 @@ export default function AdminRevenue() {
                 <span key={p} className="bg-black/40 border border-white/10 px-2 py-1">{p}</span>
               ))}
             </div>
-            <p className="text-xs text-neutral-500 mt-2">Configúralas en la sección Tasas → editar par → "Tasa Real de Salida".</p>
+            <p className="text-xs text-neutral-500 mt-2">Configúralas en la sección Tasas → editar par → &laquo;Tasa Real de Salida&raquo;.</p>
           </div>
         </div>
       )}
@@ -122,8 +122,8 @@ export default function AdminRevenue() {
       {/* BY PAIR */}
       <div className="tactile-card overflow-hidden">
         <div className="px-6 py-4 border-b border-white/10">
-          <h2 className="font-display text-lg">Ganancia por par</h2>
-          <p className="text-xs text-neutral-500 mt-1">Ordenado por contribución a la ganancia.</p>
+          <h2 className="font-display text-lg">Ganancia P2P por par</h2>
+          <p className="text-xs text-neutral-500 mt-1">Ordenado por contribución a la ganancia. Margen promedio: {data.profit_margin_pct}% · {data.orders_total} órdenes.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -162,6 +162,60 @@ export default function AdminRevenue() {
           </table>
         </div>
       </div>
+      {/* MARKETPLACE */}
+      <div className="tactile-card overflow-hidden" data-testid="revenue-marketplace">
+        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h2 className="font-display text-lg flex items-center gap-2"><Boxes className="w-5 h-5 text-[#EAB308]" /> Ganancia del Marketplace</h2>
+            <p className="text-xs text-neutral-500 mt-1">Solo redenciones entregadas (status=delivered). Configura el campo &laquo;Costo&raquo; en cada producto.</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="micro-label text-neutral-500">Ingreso</div>
+              <div className="font-mono font-semibold">${fmt(data.marketplace.total_revenue_usd)}</div>
+            </div>
+            <div className="text-right">
+              <div className="micro-label text-neutral-500">Costo</div>
+              <div className="font-mono">${fmt(data.marketplace.total_cost_usd)}</div>
+            </div>
+            <div className="text-right">
+              <div className="micro-label text-[#22C55E]">Ganancia neta</div>
+              <div className="font-mono text-[#22C55E] font-bold">${fmt(data.marketplace.total_profit_usd)}</div>
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[#0a0a0a]">
+              <tr className="text-left">
+                <th className="px-4 py-3 micro-label text-neutral-500">Producto</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Unidades</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Canjes</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Ingreso</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Costo</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Ganancia</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Margen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.marketplace.items.length === 0 && (
+                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Sin canjes entregados aún en este período.</td></tr>
+              )}
+              {data.marketplace.items.map(p => (
+                <tr key={p.product} className="border-b border-white/5">
+                  <td className="px-4 py-3">{p.product}</td>
+                  <td className="px-4 py-3 font-mono">{p.units}</td>
+                  <td className="px-4 py-3 font-mono">{p.redemptions}</td>
+                  <td className="px-4 py-3 font-mono">${fmt(p.revenue_usd)}</td>
+                  <td className="px-4 py-3 font-mono text-neutral-400">${fmt(p.cost_usd)}</td>
+                  <td className="px-4 py-3 font-mono text-[#22C55E]">${fmt(p.profit_usd)}</td>
+                  <td className="px-4 py-3 font-mono text-[#22C55E]">{p.margin_pct}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -177,6 +231,7 @@ function BigStat({ icon: Icon, label, value, unit, highlight }) {
     </div>
   );
 }
+
 
 function RoleCard({ title, subtitle, data, accent }) {
   return (

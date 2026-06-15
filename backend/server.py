@@ -131,6 +131,7 @@ class Product(BaseModel):
     description: str = ""
     image_url: str = ""
     price_usd: float
+    cost_usd: float = 0.0  # admin's acquisition cost; price_usd - cost_usd = profit per unit
     stock: int = 0
     category: str = "general"
     is_active: bool = True
@@ -141,6 +142,7 @@ class ProductCreate(BaseModel):
     description: str = ""
     image_url: str = ""
     price_usd: float
+    cost_usd: float = 0.0
     stock: int = 0
     category: str = "general"
     is_active: bool = True
@@ -155,6 +157,7 @@ class Redemption(BaseModel):
     product_name: str
     quantity: int
     total_usd: float
+    cost_usd: float = 0.0  # snapshot of admin cost at redemption time
     delivery_address: str = ""
     status: Literal["pending", "approved", "delivered", "rejected"] = "pending"
     admin_note: str = ""
@@ -358,11 +361,41 @@ async def create_rate(payload: ExchangeRateCreate, request: Request):
 @api_router.put("/admin/rates/{rate_id}")
 async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
     await require_staff(request)
+    old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
     await db.rates.update_one(
         {"id": rate_id},
         {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}}
     )
-    return await db.rates.find_one({"id": rate_id}, {"_id": 0})
+    fresh = await db.rates.find_one({"id": rate_id}, {"_id": 0})
+    # If real_rate changed, scan pending orders for negative margin
+    try:
+        old_rr = old.get("real_rate") if old else None
+        if fresh and fresh.get("real_rate") is not None and fresh.get("real_rate") != old_rr:
+            pending = await db.orders.find(
+                {"from_code": fresh["from_code"], "to_code": fresh["to_code"], "status": "pending"},
+                {"_id": 0},
+            ).to_list(500)
+            losers = []
+            total_loss = 0.0
+            for o in pending:
+                p = await _compute_order_profit(o, fresh)
+                if p and p["amount"] < 0:
+                    losers.append(o)
+                    total_loss += abs(p["amount"])
+            if losers:
+                await notify_all_admins(
+                    db,
+                    title=f"⚠️ {len(losers)} órdenes pendientes en pérdida",
+                    body=(
+                        f"Actualizaste la tasa real de {fresh['from_code']}→{fresh['to_code']} a "
+                        f"{fresh['real_rate']}. {len(losers)} órdenes pendientes generarían pérdida total "
+                        f"≈ {total_loss:.2f} {fresh['to_code']}."
+                    ),
+                    url_path="/admin/orders",
+                )
+    except Exception as e:
+        logger.error(f"Rate update margin scan failed: {e}")
+    return fresh
 
 @api_router.delete("/admin/rates/{rate_id}")
 async def delete_rate(rate_id: str, request: Request):
@@ -410,7 +443,34 @@ async def create_order(payload: OrderCreate, request: Request):
         )
     except Exception as e:
         logger.error(f"Admin notify (new order) failed: {e}")
+    # Negative margin alert
+    try:
+        await _check_negative_margin_alert(order.model_dump())
+    except Exception as e:
+        logger.error(f"Negative margin check failed: {e}")
     return order.model_dump()
+
+
+async def _check_negative_margin_alert(order: dict):
+    """Notify admins if an order would generate a loss given the current real_rate."""
+    rate_doc = await db.rates.find_one(
+        {"from_code": order["from_code"], "to_code": order["to_code"]}, {"_id": 0}
+    )
+    if not rate_doc or rate_doc.get("real_rate") is None:
+        return
+    profit = await _compute_order_profit(order, rate_doc)
+    if profit and profit["amount"] < 0:
+        loss_amount = abs(profit["amount"])
+        await notify_all_admins(
+            db,
+            title="🚨 Orden con margen negativo",
+            body=(
+                f"Orden #{order['id'][:8]} de {order.get('user_name', '')} "
+                f"({order['from_code']}→{order['to_code']}) generaría pérdida estimada "
+                f"de {loss_amount:.2f} {order['to_code']} ({profit['pct']:.2f}%). Revisa antes de aprobar."
+            ),
+            url_path="/admin/orders",
+        )
 
 @api_router.get("/orders/mine")
 async def my_orders(request: Request):
@@ -590,6 +650,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request):
     if product["stock"] < payload.quantity:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
     total = product["price_usd"] * payload.quantity
+    cost = float(product.get("cost_usd") or 0) * payload.quantity
     if _get_user_balance(user, "USD") < total:
         raise HTTPException(status_code=400, detail="Saldo USD insuficiente")
     r = Redemption(
@@ -600,6 +661,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request):
         product_name=product["name"],
         quantity=payload.quantity,
         total_usd=total,
+        cost_usd=cost,
         delivery_address=payload.delivery_address,
     )
     await db.redemptions.insert_one(r.model_dump())
@@ -1082,14 +1144,67 @@ async def admin_revenue(request: Request, days: Optional[int] = None):
         r["profit_usdt"] = round(r["profit_usdt"], 4)
         r["volume_usdt"] = round(r["volume_usdt"], 4)
 
+    marketplace = await _compute_marketplace_revenue(days)
+
     return {
-        "total_profit_usdt": round(total_profit_usdt, 4),
+        "total_profit_usdt": round(total_profit_usdt + marketplace["total_profit_usd"], 4),
+        "p2p_profit_usdt": round(total_profit_usdt, 4),
+        "marketplace_profit_usdt": round(marketplace["total_profit_usd"], 4),
         "total_volume_usdt": round(total_volume_usdt, 4),
         "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
         "by_pair": pair_items,
         "by_role": by_role,
+        "marketplace": marketplace,
         "missing_real_rate_pairs": sorted(missing_rate_pairs),
         "orders_total": len(orders),
+    }
+
+
+async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
+    """Profit from delivered redemptions: total_usd - cost_usd. USD ≈ USDT for simplicity."""
+    q = {"status": "delivered"}
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["created_at"] = {"$gte": cutoff}
+    rows = await db.redemptions.find(q, {"_id": 0}).to_list(5000)
+    total_revenue = 0.0
+    total_cost = 0.0
+    by_product: dict = {}
+    for r in rows:
+        rev = float(r.get("total_usd") or 0.0)
+        cost = float(r.get("cost_usd") or 0.0)
+        total_revenue += rev
+        total_cost += cost
+        key = r.get("product_name", "—")
+        if key not in by_product:
+            by_product[key] = {
+                "product": key,
+                "units": 0,
+                "revenue_usd": 0.0,
+                "cost_usd": 0.0,
+                "profit_usd": 0.0,
+                "redemptions": 0,
+            }
+        bp = by_product[key]
+        bp["units"] += int(r.get("quantity") or 0)
+        bp["revenue_usd"] += rev
+        bp["cost_usd"] += cost
+        bp["profit_usd"] += (rev - cost)
+        bp["redemptions"] += 1
+    items = []
+    for v in by_product.values():
+        v["revenue_usd"] = round(v["revenue_usd"], 2)
+        v["cost_usd"] = round(v["cost_usd"], 2)
+        v["profit_usd"] = round(v["profit_usd"], 2)
+        v["margin_pct"] = round((v["profit_usd"] / v["revenue_usd"] * 100), 2) if v["revenue_usd"] > 0 else 0.0
+        items.append(v)
+    items.sort(key=lambda x: -x["profit_usd"])
+    return {
+        "total_revenue_usd": round(total_revenue, 2),
+        "total_cost_usd": round(total_cost, 2),
+        "total_profit_usd": round(total_revenue - total_cost, 2),
+        "items": items,
+        "deliveries": len(rows),
     }
 
 
