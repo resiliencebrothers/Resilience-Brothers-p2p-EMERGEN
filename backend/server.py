@@ -27,6 +27,9 @@ from push_service import (
 )
 from admin_alerts import notify_all_admins, get_vip_threshold
 from audit_log import log_action
+from audit_pdf import generate_audit_pdf
+import csv
+import json as _json
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -1095,6 +1098,65 @@ async def list_audit_log(request: Request, limit: int = 100, action: Optional[st
     limit = max(1, min(limit, 500))
     docs = await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
+
+
+async def _fetch_audit_entries(action: Optional[str], actor_id: Optional[str], limit: int) -> list:
+    q = {}
+    if action:
+        q["action"] = action
+    if actor_id:
+        q["actor_id"] = actor_id
+    limit = max(1, min(limit, 5000))
+    return await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+
+
+@api_router.get("/admin/audit/export.csv")
+async def export_audit_csv(request: Request, action: Optional[str] = None, actor_id: Optional[str] = None, limit: int = 5000):
+    await require_admin(request)
+    entries = await _fetch_audit_entries(action, actor_id, limit)
+    buf = BytesIO()
+    # csv writer needs text mode; we'll write to a StringIO-like via bytes encode at the end
+    import io
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow(["created_at", "actor_id", "actor_email", "actor_name", "actor_role",
+                     "action", "entity_type", "entity_id", "summary", "details"])
+    for e in entries:
+        writer.writerow([
+            e.get("created_at", ""),
+            e.get("actor_id", ""),
+            e.get("actor_email", ""),
+            e.get("actor_name", ""),
+            e.get("actor_role", ""),
+            e.get("action", ""),
+            e.get("entity_type", ""),
+            e.get("entity_id", ""),
+            e.get("summary", ""),
+            _json.dumps(e.get("details") or {}, ensure_ascii=False),
+        ])
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))  # BOM for Excel compatibility
+    buf.seek(0)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"audit_log_{ts}.csv"
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/admin/audit/export.pdf")
+async def export_audit_pdf(request: Request, action: Optional[str] = None, actor_id: Optional[str] = None, limit: int = 2000):
+    await require_admin(request)
+    entries = await _fetch_audit_entries(action, actor_id, limit)
+    pdf_bytes = generate_audit_pdf(entries, {"action": action, "actor_id": actor_id})
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"audit_log_{ts}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ============== REVENUE (ADMIN ONLY) ==============

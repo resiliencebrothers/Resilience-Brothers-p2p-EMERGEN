@@ -3,8 +3,9 @@ import axios from "axios";
 import { API } from "@/App";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Shield, Filter } from "lucide-react";
+import { Shield, Download, FileText } from "lucide-react";
 
 const ACTION_BADGE = {
   "order.approved": "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -38,6 +39,28 @@ export default function AdminAudit() {
   }, [actionFilter, actorFilter]);
   useEffect(() => { load(); }, [load]);
 
+  const downloadExport = async (kind) => {
+    try {
+      const params = new URLSearchParams();
+      if (actionFilter !== "all") params.set("action", actionFilter);
+      if (actorFilter) params.set("actor_id", actorFilter);
+      const url = `${API}/admin/audit/export.${kind}?${params.toString()}`;
+      const r = await axios.get(url, { responseType: "blob", withCredentials: true });
+      const blobUrl = URL.createObjectURL(new Blob([r.data], { type: r.headers["content-type"] }));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      a.download = `audit_log_${ts}.${kind}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast.success(`Audit log exportado (${kind.toUpperCase()})`);
+    } catch (e) {
+      toast.error(`Error al exportar ${kind.toUpperCase()}`);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="admin-audit">
       <div>
@@ -50,33 +73,51 @@ export default function AdminAudit() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <div className="micro-label text-neutral-500 mb-1">Filtrar acción</div>
-          <Select value={actionFilter} onValueChange={setActionFilter}>
-            <SelectTrigger data-testid="audit-action-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-52">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todas las acciones</SelectItem>
-              <SelectItem value="order.approved">Órdenes aprobadas</SelectItem>
-              <SelectItem value="order.rejected">Órdenes rechazadas</SelectItem>
-              <SelectItem value="order.completed">Órdenes completadas</SelectItem>
-              <SelectItem value="rate.update">Tasas actualizadas</SelectItem>
-              <SelectItem value="user.update">Cambios de usuario</SelectItem>
-              <SelectItem value="settings.update">Settings</SelectItem>
-            </SelectContent>
-          </Select>
+      <div className="flex flex-wrap gap-3 items-end justify-between">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <div className="micro-label text-neutral-500 mb-1">Filtrar acción</div>
+            <Select value={actionFilter} onValueChange={setActionFilter}>
+              <SelectTrigger data-testid="audit-action-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-52">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                <SelectItem value="all">Todas las acciones</SelectItem>
+                <SelectItem value="order.approved">Órdenes aprobadas</SelectItem>
+                <SelectItem value="order.rejected">Órdenes rechazadas</SelectItem>
+                <SelectItem value="order.completed">Órdenes completadas</SelectItem>
+                <SelectItem value="rate.update">Tasas actualizadas</SelectItem>
+                <SelectItem value="user.update">Cambios de usuario</SelectItem>
+                <SelectItem value="settings.update">Settings</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div className="micro-label text-neutral-500 mb-1">Actor (user_id)</div>
+            <Input
+              data-testid="audit-actor-filter"
+              value={actorFilter}
+              onChange={(e) => setActorFilter(e.target.value)}
+              placeholder="user_xxxxxx"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-64 font-mono text-xs"
+            />
+          </div>
         </div>
-        <div>
-          <div className="micro-label text-neutral-500 mb-1">Actor (user_id)</div>
-          <Input
-            data-testid="audit-actor-filter"
-            value={actorFilter}
-            onChange={(e) => setActorFilter(e.target.value)}
-            placeholder="user_xxxxxx"
-            className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-64 font-mono text-xs"
-          />
+        <div className="flex gap-2">
+          <Button
+            data-testid="audit-export-csv"
+            onClick={() => downloadExport("csv")}
+            className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider"
+          >
+            <Download className="w-3.5 h-3.5 mr-2" /> CSV
+          </Button>
+          <Button
+            data-testid="audit-export-pdf"
+            onClick={() => downloadExport("pdf")}
+            className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold"
+          >
+            <FileText className="w-3.5 h-3.5 mr-2" /> PDF
+          </Button>
         </div>
       </div>
 
