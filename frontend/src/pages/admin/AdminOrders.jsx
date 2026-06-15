@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Pagination } from "@/components/Pagination";
 import { Eye } from "lucide-react";
 import { toast } from "sonner";
 
@@ -15,17 +16,35 @@ const STATUS_STYLES = {
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
 };
 
+const PAGE_SIZE = 50;
+
 export default function AdminOrders() {
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
 
-  const load = async () => {
-    const r = await axios.get(`${API}/admin/orders`, { withCredentials: true });
-    setOrders(r.data);
-  };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(0); }, [filter]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
+      if (filter !== "all") params.status = filter;
+      const r = await axios.get(`${API}/admin/orders`, { params, withCredentials: true });
+      setOrders(r.data);
+      const t = Number(r.headers["x-total-count"]);
+      setTotal(Number.isFinite(t) ? t : r.data.length);
+    } catch (e) {
+      toast.error("Error al cargar órdenes");
+    } finally {
+      setLoading(false);
+    }
+  }, [filter, page]);
+  useEffect(() => { load(); }, [load]);
 
   const updateStatus = async (status) => {
     if (!open) return;
@@ -34,16 +53,14 @@ export default function AdminOrders() {
     setOpen(null); setNote(""); load();
   };
 
-  const filtered = filter === "all" ? orders : orders.filter(o => o.status === filter);
-
   return (
-    <div data-testid="admin-orders">
+    <div data-testid="admin-orders" className="space-y-4">
       <div className="mb-6">
         <div className="micro-label text-[#EAB308] mb-2">/ Órdenes</div>
         <h1 className="font-display text-3xl">Cola de Operaciones P2P</h1>
       </div>
       <div className="flex gap-2 mb-4">
-        {["all", "pending", "approved", "rejected", "completed"].map(f => (
+        {["all", "pending", "requires_double_approval", "approved", "rejected", "completed"].map(f => (
           <button key={f} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#EAB308] text-black border-[#EAB308]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
             {f}
           </button>
@@ -66,8 +83,9 @@ export default function AdminOrders() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">Sin órdenes</td></tr>}
-              {filtered.map(o => (
+              {loading && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
+              {!loading && orders.length === 0 && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">Sin órdenes</td></tr>}
+              {orders.map(o => (
                 <tr key={o.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="px-3 py-3 font-mono text-xs">{o.id.slice(0,6)}</td>
                   <td className="px-3 py-3">{o.user_name}</td>
@@ -84,6 +102,15 @@ export default function AdminOrders() {
           </table>
         </div>
       </div>
+
+      <Pagination
+        page={page}
+        total={total}
+        pageSize={PAGE_SIZE}
+        loading={loading}
+        onPageChange={setPage}
+        testidPrefix="orders-pagination"
+      />
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
         <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">

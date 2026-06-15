@@ -502,13 +502,25 @@ async def my_orders(request: Request):
     return docs
 
 @api_router.get("/admin/orders")
-async def all_orders(request: Request, status: Optional[str] = None):
+async def all_orders(request: Request, status: Optional[str] = None,
+                     limit: int = 1000, offset: int = 0):
     await require_staff(request)
     q = {}
     if status:
         q["status"] = status
-    docs = await db.orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return docs
+    limit = max(1, min(limit, 1000))
+    offset = max(0, offset)
+    total = await db.orders.count_documents(q)
+    docs = await db.orders.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
+    return JSONResponse(
+        content=docs,
+        headers={
+            "X-Total-Count": str(total),
+            "X-Offset": str(offset),
+            "X-Limit": str(limit),
+            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
+        },
+    )
 
 
 async def _accumulate_vip_balance(order: dict):
@@ -1380,10 +1392,27 @@ async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
 # ============== USERS (ADMIN) ==============
 
 @api_router.get("/admin/users")
-async def list_users(request: Request):
+async def list_users(request: Request, q: Optional[str] = None,
+                     limit: int = 1000, offset: int = 0):
     await require_staff(request)
-    docs = await db.users.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return docs
+    mongo_q = {}
+    if q:
+        # case-insensitive search by name or email
+        rx = {"$regex": q, "$options": "i"}
+        mongo_q["$or"] = [{"name": rx}, {"email": rx}]
+    limit = max(1, min(limit, 1000))
+    offset = max(0, offset)
+    total = await db.users.count_documents(mongo_q)
+    docs = await db.users.find(mongo_q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
+    return JSONResponse(
+        content=docs,
+        headers={
+            "X-Total-Count": str(total),
+            "X-Offset": str(offset),
+            "X-Limit": str(limit),
+            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
+        },
+    )
 
 @api_router.put("/admin/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate, request: Request):

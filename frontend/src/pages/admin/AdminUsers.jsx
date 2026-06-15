@@ -1,22 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Pagination } from "@/components/Pagination";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { Search } from "lucide-react";
+
+const PAGE_SIZE = 50;
 
 export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [editing, setEditing] = useState({});
+  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
 
-  const load = async () => {
-    const r = await axios.get(`${API}/admin/users`, { withCredentials: true });
-    setUsers(r.data);
-  };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(0); }, [search]);
+
+  // Debounce search input → 300ms
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
+      if (search) params.q = search;
+      const r = await axios.get(`${API}/admin/users`, { params, withCredentials: true });
+      setUsers(r.data);
+      const t = Number(r.headers["x-total-count"]);
+      setTotal(Number.isFinite(t) ? t : r.data.length);
+    } catch (e) {
+      toast.error("Error al cargar usuarios");
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search]);
+  useEffect(() => { load(); }, [load]);
 
   const saveRole = async (user_id, role) => {
     try {
@@ -40,10 +68,34 @@ export default function AdminUsers() {
     : ["normal", "vip"];
 
   return (
-    <div data-testid="admin-users">
+    <div data-testid="admin-users" className="space-y-4">
       <div className="mb-6">
         <div className="micro-label text-[#EAB308] mb-2">/ Usuarios</div>
         <h1 className="font-display text-3xl">Gestión de Clientes</h1>
+      </div>
+      <div className="flex items-end gap-3 mb-4">
+        <div>
+          <div className="micro-label text-neutral-500 mb-1">Buscar (nombre o email)</div>
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
+            <Input
+              data-testid="users-search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="ej. ana@..."
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-80 pl-9 font-mono text-xs"
+            />
+          </div>
+        </div>
+        {searchInput && (
+          <button
+            data-testid="users-clear-search"
+            onClick={() => setSearchInput("")}
+            className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10"
+          >
+            limpiar
+          </button>
+        )}
       </div>
       <div className="tactile-card overflow-hidden">
         <table className="w-full text-sm">
@@ -57,6 +109,8 @@ export default function AdminUsers() {
             </tr>
           </thead>
           <tbody>
+            {loading && <tr><td colSpan="5" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
+            {!loading && users.length === 0 && <tr><td colSpan="5" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
             {users.map(u => (
               <tr key={u.user_id} className="border-b border-white/5">
                 <td className="px-4 py-3 flex items-center gap-2">
@@ -103,6 +157,15 @@ export default function AdminUsers() {
           </tbody>
         </table>
       </div>
+
+      <Pagination
+        page={page}
+        total={total}
+        pageSize={PAGE_SIZE}
+        loading={loading}
+        onPageChange={setPage}
+        testidPrefix="users-pagination"
+      />
     </div>
   );
 }

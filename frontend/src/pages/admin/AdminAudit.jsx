@@ -5,7 +5,8 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Shield, Download, FileText, ChevronLeft, ChevronRight } from "lucide-react";
+import { Pagination } from "@/components/Pagination";
+import { Shield, Download, FileText } from "lucide-react";
 
 const ACTION_BADGE = {
   "order.approved": "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -209,34 +210,14 @@ export default function AdminAudit() {
       </div>
 
       {total > 0 && (
-        <div className="flex items-center justify-between text-xs text-neutral-400" data-testid="audit-pagination">
-          <div className="font-mono">
-            {total === 0
-              ? "0 registros"
-              : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} de ${total}`}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              data-testid="audit-page-prev"
-              disabled={page === 0 || loading}
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
-            >
-              <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Anterior
-            </Button>
-            <span className="font-mono text-neutral-500 px-2" data-testid="audit-page-indicator">
-              Página {page + 1} de {Math.max(1, Math.ceil(total / PAGE_SIZE))}
-            </span>
-            <Button
-              data-testid="audit-page-next"
-              disabled={(page + 1) * PAGE_SIZE >= total || loading}
-              onClick={() => setPage((p) => p + 1)}
-              className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
-            >
-              Siguiente <ChevronRight className="w-3.5 h-3.5 ml-1" />
-            </Button>
-          </div>
-        </div>
+        <Pagination
+          page={page}
+          total={total}
+          pageSize={PAGE_SIZE}
+          loading={loading}
+          onPageChange={setPage}
+          testidPrefix="audit-pagination"
+        />
       )}
     </div>
   );
