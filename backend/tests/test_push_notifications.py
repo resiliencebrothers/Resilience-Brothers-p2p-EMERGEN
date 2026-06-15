@@ -2,18 +2,12 @@
 import os
 import pytest
 import requests
-from pathlib import Path
-from dotenv import load_dotenv
 from pymongo import MongoClient
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://p2p-exchange-hub-2.preview.emergentagent.com").rstrip("/")
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
-
-ADMIN_TOKEN = "test_session_admin_X"
-VIP_TOKEN = "test_session_vip_X"
-NORMAL_TOKEN = "test_session_normal_X"
 VIP_USER_ID = "user_test_vip01"
 
 

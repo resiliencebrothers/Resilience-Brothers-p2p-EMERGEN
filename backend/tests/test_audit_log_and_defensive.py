@@ -8,23 +8,11 @@ Covers:
 - Defensive mode disabled when defensive_margin_pct is null
 - Regressions: VIP accumulate flow + /api/admin/revenue excludes requires_double_approval
 """
-import os
 import time
-import uuid
 import pytest
 import requests
-from pathlib import Path
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-load_dotenv(Path(__file__).resolve().parents[2] / "frontend" / ".env")
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
-assert BASE_URL, "REACT_APP_BACKEND_URL not set"
-
-ADMIN = "test_session_admin_X"
-VIP = "test_session_vip_X"
-NORMAL = "test_session_normal_X"
-EMP = "test_session_employee_X"
+from conftest import BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL, EMPLOYEE_TOKEN as EMP
 
 
 def _h(t=None):

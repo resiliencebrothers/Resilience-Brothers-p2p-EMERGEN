@@ -2,21 +2,12 @@
 import os
 import pytest
 import requests
-from pathlib import Path
-from dotenv import load_dotenv
 from pymongo import MongoClient
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-load_dotenv(Path(__file__).resolve().parents[2] / "frontend" / ".env")
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
-assert BASE_URL, "REACT_APP_BACKEND_URL not set"
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME")
-
-ADMIN_TOKEN = "test_session_admin_X"
-VIP_TOKEN = "test_session_vip_X"
-NORMAL_TOKEN = "test_session_normal_X"
 
 
 def _h(token=None):

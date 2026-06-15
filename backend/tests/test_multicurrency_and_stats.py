@@ -1,16 +1,8 @@
 """Iteration 3 tests: multi-currency vip_balances, /api/vip/balances, /api/admin/stats, currency withdrawals, redemption USD merge."""
-import os
 import pytest
 import requests
-from pathlib import Path
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://p2p-exchange-hub-2.preview.emergentagent.com").rstrip("/")
-
-ADMIN_TOKEN = "test_session_admin_X"
-VIP_TOKEN = "test_session_vip_X"
-NORMAL_TOKEN = "test_session_normal_X"
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 
 def _h(token=None):
