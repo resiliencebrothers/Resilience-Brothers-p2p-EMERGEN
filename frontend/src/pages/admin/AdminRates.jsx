@@ -64,6 +64,7 @@ export default function AdminRates() {
               <th className="px-4 py-3 micro-label text-neutral-500">Par</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Normal</th>
               <th className="px-4 py-3 micro-label text-neutral-500">VIP</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Real</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Actualizada</th>
               <th className="px-4 py-3"></th>
             </tr>
@@ -74,9 +75,10 @@ export default function AdminRates() {
                 <td className="px-4 py-3 font-mono font-semibold">{r.from_code} → {r.to_code}</td>
                 <td className="px-4 py-3 font-mono">{r.rate_normal}</td>
                 <td className="px-4 py-3 font-mono text-[#EAB308]">{r.rate_vip}</td>
+                <td className="px-4 py-3 font-mono text-[#22C55E]">{r.real_rate ?? "—"}</td>
                 <td className="px-4 py-3 text-xs text-neutral-500">{new Date(r.updated_at).toLocaleString()}</td>
                 <td className="px-4 py-3 text-right">
-                  <button onClick={() => { setEditing(r); setForm(r); setOpen(true); }} className="text-neutral-400 hover:text-[#EAB308] mr-3"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "" }); setOpen(true); }} className="text-neutral-400 hover:text-[#EAB308] mr-3"><Edit2 className="w-4 h-4" /></button>
                   <button onClick={() => remove(r.id)} className="text-neutral-400 hover:text-[#EF4444]"><Trash2 className="w-4 h-4" /></button>
                 </td>
               </tr>
