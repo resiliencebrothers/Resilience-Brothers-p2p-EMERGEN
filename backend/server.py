@@ -418,6 +418,73 @@ async def all_orders(request: Request, status: Optional[str] = None):
     docs = await db.orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
+
+async def _accumulate_vip_balance(order: dict):
+    """Increment VIP per-currency balance for an approved accumulate order."""
+    await db.users.update_one(
+        {"user_id": order["user_id"]},
+        {"$inc": {f"vip_balances.{order['to_code']}": order["amount_to"]}}
+    )
+
+
+async def _compute_total_usdt(user_doc: dict) -> float:
+    rates = await _build_rate_lookup()
+    balances = dict(user_doc.get("vip_balances") or {})
+    legacy = float(user_doc.get("vip_balance_usd") or 0.0)
+    if legacy > 0:
+        balances["USD"] = balances.get("USD", 0.0) + legacy
+    return sum((_convert_to_usdt(amt, code, rates) or 0) for code, amt in balances.items())
+
+
+async def _check_vip_threshold_alert(order: dict):
+    """If user's total_usdt crossed the configured threshold, notify admins once."""
+    try:
+        threshold = await get_vip_threshold(db)
+        fresh = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
+        if not fresh:
+            return
+        total_usdt = await _compute_total_usdt(fresh)
+        last_alert = fresh.get("last_vip_alert_threshold", 0)
+        if total_usdt >= threshold and total_usdt > last_alert:
+            await notify_all_admins(
+                db,
+                title="⚠️ Cliente VIP supera umbral",
+                body=f"{fresh['name']} acumula ${total_usdt:,.2f} USDT (umbral ${threshold:,.0f}). Considera proponerle cierre o canje.",
+                url_path="/admin/users",
+            )
+            await db.users.update_one(
+                {"user_id": order["user_id"]},
+                {"$set": {"last_vip_alert_threshold": total_usdt}}
+            )
+    except Exception as e:
+        logger.error(f"VIP threshold alert failed: {e}")
+
+
+async def _send_client_order_email(order: dict, new_status: str, target_user: dict):
+    try:
+        if new_status == "approved":
+            notify_order_approved(order, target_user)
+        else:
+            notify_order_rejected(order, target_user)
+    except Exception as e:
+        logger.error(f"Email notification failed: {e}")
+
+
+async def _send_client_order_push(order: dict, new_status: str):
+    try:
+        push_payload = (
+            build_order_approved_payload(order)
+            if new_status == "approved"
+            else build_order_rejected_payload(order)
+        )
+        subs = await db.push_subscriptions.find({"user_id": order["user_id"]}, {"_id": 0}).to_list(50)
+        dead_ids = [s["id"] for s in subs if send_push(s["subscription"], push_payload) == "dead"]
+        if dead_ids:
+            await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
+    except Exception as e:
+        logger.error(f"Push notification failed: {e}")
+
+
 @api_router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request):
     await require_admin(request)
@@ -428,73 +495,25 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+
     await db.orders.update_one(
         {"id": order_id},
         {"$set": {"status": new_status, "admin_note": note, "updated_at": iso(now_utc())}}
     )
-    # VIP accumulate: when first approved & delivery_method == accumulate, add to per-currency balance
-    if (new_status == "approved"
-            and order["status"] != "approved"
+
+    is_first_approval = new_status == "approved" and order["status"] != "approved"
+    if (is_first_approval
             and order["delivery_method"] == "accumulate"
             and order["user_role"] in ("vip", "admin")):
-        await db.users.update_one(
-            {"user_id": order["user_id"]},
-            {"$inc": {
-                f"vip_balances.{order['to_code']}": order["amount_to"],
-            }}
-        )
-        # Check VIP threshold for admin alert
-        try:
-            threshold = await get_vip_threshold(db)
-            fresh_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
-            rates = await _build_rate_lookup()
-            balances = dict(fresh_user.get("vip_balances") or {})
-            legacy = float(fresh_user.get("vip_balance_usd") or 0.0)
-            if legacy > 0:
-                balances["USD"] = balances.get("USD", 0.0) + legacy
-            total_usdt = sum(
-                (_convert_to_usdt(amt, code, rates) or 0)
-                for code, amt in balances.items()
-            )
-            last_alert = fresh_user.get("last_vip_alert_threshold", 0)
-            if total_usdt >= threshold and total_usdt > last_alert:
-                await notify_all_admins(
-                    db,
-                    title="⚠️ Cliente VIP supera umbral",
-                    body=f"{fresh_user['name']} acumula ${total_usdt:,.2f} USDT (umbral ${threshold:,.0f}). Considera proponerle cierre o canje.",
-                    url_path="/admin/users",
-                )
-                await db.users.update_one(
-                    {"user_id": order["user_id"]},
-                    {"$set": {"last_vip_alert_threshold": total_usdt}}
-                )
-        except Exception as e:
-            logger.error(f"VIP threshold alert failed: {e}")
-    # Send email notification on approve/reject
+        await _accumulate_vip_balance(order)
+        await _check_vip_threshold_alert(order)
+
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if new_status in ("approved", "rejected") and order["status"] != new_status:
         target_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
         if target_user:
-            try:
-                if new_status == "approved":
-                    notify_order_approved(updated, target_user)
-                else:
-                    notify_order_rejected(updated, target_user)
-            except Exception as e:
-                logger.error(f"Email notification failed: {e}")
-            # Send web push to all user's devices
-            try:
-                payload = build_order_approved_payload(updated) if new_status == "approved" else build_order_rejected_payload(updated)
-                subs = await db.push_subscriptions.find({"user_id": order["user_id"]}, {"_id": 0}).to_list(50)
-                dead_ids = []
-                for s in subs:
-                    result = send_push(s["subscription"], payload)
-                    if result == "dead":
-                        dead_ids.append(s["id"])
-                if dead_ids:
-                    await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
-            except Exception as e:
-                logger.error(f"Push notification failed: {e}")
+            await _send_client_order_email(updated, new_status, target_user)
+            await _send_client_order_push(updated, new_status)
     return updated
 
 # ============== PRODUCTS ==============

@@ -27,6 +27,8 @@ export default function ExchangeView() {
 
   const isVip = user?.role === "vip" || user?.role === "admin";
 
+  // Static one-shot load on mount — API/axios are stable module imports
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     axios.get(`${API}/currencies`).then(r => setCurrencies(r.data.filter(c => c.is_active)));
     axios.get(`${API}/rates`).then(r => setRates(r.data));

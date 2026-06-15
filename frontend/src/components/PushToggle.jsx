@@ -17,6 +17,8 @@ export default function PushToggle() {
   const [status, setStatus] = useState("loading"); // loading | unsupported | denied | subscribed | unsubscribed
   const [busy, setBusy] = useState(false);
 
+  // One-shot subscription status detection on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
