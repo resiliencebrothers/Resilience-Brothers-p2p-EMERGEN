@@ -1129,14 +1129,24 @@ def _build_audit_query(action: Optional[str], actor_id: Optional[str],
 
 
 @api_router.get("/admin/audit")
-async def list_audit_log(request: Request, limit: int = 100,
+async def list_audit_log(request: Request, limit: int = 100, offset: int = 0,
                          action: Optional[str] = None, actor_id: Optional[str] = None,
                          since: Optional[str] = None, until: Optional[str] = None):
     await require_admin(request)
     q = _build_audit_query(action, actor_id, since, until)
     limit = max(1, min(limit, 500))
-    docs = await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    return docs
+    offset = max(0, offset)
+    total = await db.audit_log.count_documents(q)
+    docs = await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
+    return JSONResponse(
+        content=docs,
+        headers={
+            "X-Total-Count": str(total),
+            "X-Offset": str(offset),
+            "X-Limit": str(limit),
+            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
+        },
+    )
 
 
 async def _fetch_audit_entries(action: Optional[str], actor_id: Optional[str],

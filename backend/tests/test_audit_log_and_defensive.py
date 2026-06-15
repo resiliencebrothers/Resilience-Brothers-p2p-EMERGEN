@@ -232,6 +232,36 @@ class TestAuditQueryOptions:
         for e in r.json():
             assert e["actor_id"] == "user_test_admin01"
 
+    def test_pagination_headers_and_offset(self):
+        # Total count + offset windowing
+        r1 = requests.get(
+            f"{BASE_URL}/api/admin/audit",
+            headers=_h(ADMIN),
+            params={"limit": 5, "offset": 0},
+        )
+        assert r1.status_code == 200
+        total = int(r1.headers.get("X-Total-Count", "0"))
+        assert int(r1.headers.get("X-Offset", "-1")) == 0
+        assert int(r1.headers.get("X-Limit", "0")) == 5
+        page1 = r1.json()
+        assert len(page1) <= 5
+        if total <= 5:
+            pytest.skip(f"only {total} audit entries — cannot validate offset paging")
+        r2 = requests.get(
+            f"{BASE_URL}/api/admin/audit",
+            headers=_h(ADMIN),
+            params={"limit": 5, "offset": 5},
+        )
+        assert r2.status_code == 200
+        assert int(r2.headers.get("X-Offset", "-1")) == 5
+        page2 = r2.json()
+        # No overlap between page 1 and page 2
+        ids1 = {e["id"] for e in page1}
+        ids2 = {e["id"] for e in page2}
+        assert ids1.isdisjoint(ids2), "pagination overlap detected"
+        # Total header is consistent across pages
+        assert int(r2.headers.get("X-Total-Count", "0")) == total
+
 
 # ---------------- DEFENSIVE MODE on order create ----------------
 class TestDefensiveModeAutoFlag:

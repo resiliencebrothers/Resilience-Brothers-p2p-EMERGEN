@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Shield, Download, FileText } from "lucide-react";
+import { Shield, Download, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 
 const ACTION_BADGE = {
   "order.approved": "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -17,30 +17,41 @@ const ACTION_BADGE = {
   "settings.update": "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
 };
 
+const PAGE_SIZE = 50;
+
 export default function AdminAudit() {
   const [entries, setEntries] = useState([]);
   const [actionFilter, setActionFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState("");
   const [sinceFilter, setSinceFilter] = useState("");
   const [untilFilter, setUntilFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+
+  // Reset to first page whenever filters change
+  useEffect(() => {
+    setPage(0);
+  }, [actionFilter, actorFilter, sinceFilter, untilFilter]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { limit: 200 };
+      const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
       if (actionFilter !== "all") params.action = actionFilter;
       if (actorFilter) params.actor_id = actorFilter;
       if (sinceFilter) params.since = sinceFilter;
       if (untilFilter) params.until = untilFilter;
       const r = await axios.get(`${API}/admin/audit`, { params, withCredentials: true });
       setEntries(r.data);
+      const headerTotal = Number(r.headers["x-total-count"]);
+      setTotal(Number.isFinite(headerTotal) ? headerTotal : r.data.length);
     } catch (e) {
       toast.error("Error al cargar audit log");
     } finally {
       setLoading(false);
     }
-  }, [actionFilter, actorFilter, sinceFilter, untilFilter]);
+  }, [actionFilter, actorFilter, sinceFilter, untilFilter, page]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
@@ -196,6 +207,37 @@ export default function AdminAudit() {
           </table>
         </div>
       </div>
+
+      {total > 0 && (
+        <div className="flex items-center justify-between text-xs text-neutral-400" data-testid="audit-pagination">
+          <div className="font-mono">
+            {total === 0
+              ? "0 registros"
+              : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} de ${total}`}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              data-testid="audit-page-prev"
+              disabled={page === 0 || loading}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
+            >
+              <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Anterior
+            </Button>
+            <span className="font-mono text-neutral-500 px-2" data-testid="audit-page-indicator">
+              Página {page + 1} de {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+            </span>
+            <Button
+              data-testid="audit-page-next"
+              disabled={(page + 1) * PAGE_SIZE >= total || loading}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
+            >
+              Siguiente <ChevronRight className="w-3.5 h-3.5 ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
