@@ -29,27 +29,35 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
 - Client dashboard: Overview (live rates + stats), Exchange (full P2P flow with proof upload), Orders history with modal detail, VIP Balance + withdrawals, Marketplace + redemptions.
-- Admin panel: Overview stats + seed button, Orders (filter + approve/reject/complete), Withdrawals + Redemptions management, Currencies CRUD, Rates CRUD, Products CRUD, Users (role + balance editor).
+- Admin panel: Overview stats + seed button, Orders (filter + approve/reject/complete), Withdrawals + Redemptions management, Currencies CRUD, Rates CRUD, Products CRUD, Users (role + balance editor), Revenue (P2P + Marketplace profit), Audit Log.
 - Order math: VIP uses rate_vip + 0% commission; Normal uses rate_normal + 5% commission.
-- Accumulate-on-approve balance credit for VIP.
+- Multi-currency VIP balances (`vip_balances` dict, accumulate-on-approve).
 - Refund-on-reject for withdrawals + redemptions (balance + stock).
-- 25/25 backend integration tests passed. Frontend E2E flows verified.
+- PWA: manifest, service worker, install prompt, iOS splash, company logo.
+- Push notifications via PyWebPush (VAPID).
+- Email notifications via Resend (sandbox while DNS pending verification).
+- PDF daily closing for VIPs (reportlab).
+- Employee role (staff sub-tier, no Revenue/Audit, no admin role assignment).
+- Automated admin alerts: VIP threshold breach, negative margin on order create + rate update.
+- Audit Log: every staff action (rate.update, order.approved/rejected, settings.update, user.update) persisted; admin-only viewer at /admin/audit with action + actor filters. **(Feb 15, 2026 — iter8)**
+- Defensive Mode: orders with profit % below `defensive_margin_pct` auto-flagged `requires_double_approval`; only an admin (not employee) can approve. **(Feb 15, 2026 — iter8)**
+- 60/60 backend tests passing across iter6/iter7/iter8 (audit + defensive + revenue + alerts + multicurrency + push + email + closing).
 
 ## Prioritized Backlog
-### P0 — Nice next iteration
-- Replace base64 image storage with Emergent Object Storage (lighter MongoDB documents, real CDN URLs).
-- Daily summary closing for VIP clients ("cierre diario") with downloadable PDF receipt.
-- Notifications (email/Telegram) on order status change.
+### P0 — Waiting on user
+- Verify `resiliencebrothers.com` DNS in Resend so admin alerts + client emails deliver in production (currently sandbox 403s to non-owner addresses).
 
 ### P1
-- Multi-currency display of VIP balance (besides USD).
-- Search + pagination in admin tables when data grows.
-- Audit log of admin actions.
+- Multi-currency display of VIP balance across UI (legacy single-USD widgets if any remain).
+- Search + pagination in admin tables (audit, orders, users) when data grows.
+- Visual highlight (red tint) of negative-profit cards on AdminRevenue.
+- Add `<th>Real</th>` column in AdminRates table (data already exposed via GET /api/rates).
 
 ### P2
-- Real crypto wallet integration (live USDT/BTC verification on-chain).
+- Real crypto wallet integration (on-chain USDT/BTC verification).
 - Stripe / Zelle webhooks for auto-confirmation.
-- Mobile PWA wrapper.
+- Refactor `/app/backend/server.py` (~1345 lines) into routers (auth/orders/withdrawals/redemptions/admin/products/revenue/push/audit).
+- Replace base64 proof storage with Emergent Object Storage.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md` and `/app/auth_testing.md`.
