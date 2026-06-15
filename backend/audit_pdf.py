@@ -69,10 +69,14 @@ def generate_audit_pdf(entries: list, filters: dict) -> bytes:
 
     f_action = filters.get("action") or "todas"
     f_actor = filters.get("actor_id") or "todos"
+    f_since = filters.get("since") or "—"
+    f_until = filters.get("until") or "—"
     story.append(Paragraph(
-        f"Filtros aplicados → Acción: <font color='#FFFFFF'><b>{f_action}</b></font> · "
+        f"Filtros → Acción: <font color='#FFFFFF'><b>{f_action}</b></font> · "
         f"Actor: <font color='#FFFFFF'><b>{f_actor}</b></font> · "
-        f"Total entradas: <font color='#EAB308'><b>{len(entries)}</b></font>",
+        f"Desde: <font color='#FFFFFF'><b>{f_since}</b></font> · "
+        f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font> · "
+        f"Total: <font color='#EAB308'><b>{len(entries)}</b></font>",
         sub,
     ))
 

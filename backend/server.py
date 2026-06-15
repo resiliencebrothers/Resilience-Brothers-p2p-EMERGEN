@@ -1087,33 +1087,73 @@ async def push_test(request: Request):
 
 # ============== AUDIT LOG (ADMIN ONLY) ==============
 
-@api_router.get("/admin/audit")
-async def list_audit_log(request: Request, limit: int = 100, action: Optional[str] = None, actor_id: Optional[str] = None):
-    await require_admin(request)
+def _normalize_audit_date(value: Optional[str], end_of_day: bool = False) -> Optional[str]:
+    """Accept YYYY-MM-DD or full ISO; return ISO UTC string suitable for string compare."""
+    if not value:
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    # Pure date → expand
+    if len(v) == 10 and v[4] == "-" and v[7] == "-":
+        try:
+            datetime.fromisoformat(v)  # validate
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Fecha inválida: {value} (usa YYYY-MM-DD)")
+        return f"{v}T23:59:59.999999+00:00" if end_of_day else f"{v}T00:00:00+00:00"
+    # Otherwise assume ISO
+    try:
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Fecha inválida: {value}")
+    return v
+
+
+def _build_audit_query(action: Optional[str], actor_id: Optional[str],
+                       since: Optional[str], until: Optional[str]) -> dict:
     q = {}
     if action:
         q["action"] = action
     if actor_id:
         q["actor_id"] = actor_id
+    s = _normalize_audit_date(since, end_of_day=False)
+    u = _normalize_audit_date(until, end_of_day=True)
+    if s or u:
+        rng = {}
+        if s:
+            rng["$gte"] = s
+        if u:
+            rng["$lte"] = u
+        q["created_at"] = rng
+    return q
+
+
+@api_router.get("/admin/audit")
+async def list_audit_log(request: Request, limit: int = 100,
+                         action: Optional[str] = None, actor_id: Optional[str] = None,
+                         since: Optional[str] = None, until: Optional[str] = None):
+    await require_admin(request)
+    q = _build_audit_query(action, actor_id, since, until)
     limit = max(1, min(limit, 500))
     docs = await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
 
 
-async def _fetch_audit_entries(action: Optional[str], actor_id: Optional[str], limit: int) -> list:
-    q = {}
-    if action:
-        q["action"] = action
-    if actor_id:
-        q["actor_id"] = actor_id
+async def _fetch_audit_entries(action: Optional[str], actor_id: Optional[str],
+                               since: Optional[str], until: Optional[str],
+                               limit: int) -> list:
+    q = _build_audit_query(action, actor_id, since, until)
     limit = max(1, min(limit, 5000))
     return await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
 
 
 @api_router.get("/admin/audit/export.csv")
-async def export_audit_csv(request: Request, action: Optional[str] = None, actor_id: Optional[str] = None, limit: int = 5000):
+async def export_audit_csv(request: Request, action: Optional[str] = None,
+                           actor_id: Optional[str] = None,
+                           since: Optional[str] = None, until: Optional[str] = None,
+                           limit: int = 5000):
     await require_admin(request)
-    entries = await _fetch_audit_entries(action, actor_id, limit)
+    entries = await _fetch_audit_entries(action, actor_id, since, until, limit)
     buf = BytesIO()
     # csv writer needs text mode; we'll write to a StringIO-like via bytes encode at the end
     import io
@@ -1146,10 +1186,16 @@ async def export_audit_csv(request: Request, action: Optional[str] = None, actor
 
 
 @api_router.get("/admin/audit/export.pdf")
-async def export_audit_pdf(request: Request, action: Optional[str] = None, actor_id: Optional[str] = None, limit: int = 2000):
+async def export_audit_pdf(request: Request, action: Optional[str] = None,
+                           actor_id: Optional[str] = None,
+                           since: Optional[str] = None, until: Optional[str] = None,
+                           limit: int = 2000):
     await require_admin(request)
-    entries = await _fetch_audit_entries(action, actor_id, limit)
-    pdf_bytes = generate_audit_pdf(entries, {"action": action, "actor_id": actor_id})
+    entries = await _fetch_audit_entries(action, actor_id, since, until, limit)
+    pdf_bytes = generate_audit_pdf(
+        entries,
+        {"action": action, "actor_id": actor_id, "since": since, "until": until},
+    )
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     filename = f"audit_log_{ts}.pdf"
     return StreamingResponse(

@@ -21,6 +21,8 @@ export default function AdminAudit() {
   const [entries, setEntries] = useState([]);
   const [actionFilter, setActionFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState("");
+  const [sinceFilter, setSinceFilter] = useState("");
+  const [untilFilter, setUntilFilter] = useState("");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -29,6 +31,8 @@ export default function AdminAudit() {
       const params = { limit: 200 };
       if (actionFilter !== "all") params.action = actionFilter;
       if (actorFilter) params.actor_id = actorFilter;
+      if (sinceFilter) params.since = sinceFilter;
+      if (untilFilter) params.until = untilFilter;
       const r = await axios.get(`${API}/admin/audit`, { params, withCredentials: true });
       setEntries(r.data);
     } catch (e) {
@@ -36,7 +40,7 @@ export default function AdminAudit() {
     } finally {
       setLoading(false);
     }
-  }, [actionFilter, actorFilter]);
+  }, [actionFilter, actorFilter, sinceFilter, untilFilter]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
@@ -44,6 +48,8 @@ export default function AdminAudit() {
       const params = new URLSearchParams();
       if (actionFilter !== "all") params.set("action", actionFilter);
       if (actorFilter) params.set("actor_id", actorFilter);
+      if (sinceFilter) params.set("since", sinceFilter);
+      if (untilFilter) params.set("until", untilFilter);
       const url = `${API}/admin/audit/export.${kind}?${params.toString()}`;
       const r = await axios.get(url, { responseType: "blob", withCredentials: true });
       const blobUrl = URL.createObjectURL(new Blob([r.data], { type: r.headers["content-type"] }));
@@ -60,6 +66,8 @@ export default function AdminAudit() {
       toast.error(`Error al exportar ${kind.toUpperCase()}`);
     }
   };
+
+  const clearDates = () => { setSinceFilter(""); setUntilFilter(""); };
 
   return (
     <div className="space-y-6" data-testid="admin-audit">
@@ -102,6 +110,35 @@ export default function AdminAudit() {
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-64 font-mono text-xs"
             />
           </div>
+          <div>
+            <div className="micro-label text-neutral-500 mb-1">Desde</div>
+            <Input
+              type="date"
+              data-testid="audit-since-filter"
+              value={sinceFilter}
+              onChange={(e) => setSinceFilter(e.target.value)}
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs"
+            />
+          </div>
+          <div>
+            <div className="micro-label text-neutral-500 mb-1">Hasta</div>
+            <Input
+              type="date"
+              data-testid="audit-until-filter"
+              value={untilFilter}
+              onChange={(e) => setUntilFilter(e.target.value)}
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs"
+            />
+          </div>
+          {(sinceFilter || untilFilter) && (
+            <button
+              data-testid="audit-clear-dates"
+              onClick={clearDates}
+              className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10"
+            >
+              limpiar fechas
+            </button>
+          )}
         </div>
         <div className="flex gap-2">
           <Button
