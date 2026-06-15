@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 const STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  requires_double_approval: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/40",
   approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   completed: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",

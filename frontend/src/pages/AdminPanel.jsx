@@ -1,6 +1,6 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield } from "lucide-react";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
 import AdminUsers from "@/pages/admin/AdminUsers";
@@ -9,6 +9,7 @@ import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
 import AdminOverview from "@/pages/admin/AdminOverview";
 import AdminRevenue from "@/pages/admin/AdminRevenue";
+import AdminAudit from "@/pages/admin/AdminAudit";
 import PushToggle from "@/components/PushToggle";
 
 export default function AdminPanel() {
@@ -25,6 +26,7 @@ export default function AdminPanel() {
     { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
     ...(user?.role === "admin" ? [
       { to: "/admin/revenue", icon: Banknote, label: "Ingresos", id: "admin-nav-revenue", highlight: true },
+      { to: "/admin/audit", icon: Shield, label: "Auditoría", id: "admin-nav-audit" },
     ] : []),
   ];
 
@@ -95,6 +97,7 @@ export default function AdminPanel() {
             <Route path="products" element={<AdminProducts />} />
             <Route path="users" element={<AdminUsers />} />
             {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
+            {user?.role === "admin" && <Route path="audit" element={<AdminAudit />} />}
           </Routes>
         </div>
       </main>

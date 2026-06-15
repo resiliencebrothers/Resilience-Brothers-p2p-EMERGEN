@@ -26,6 +26,7 @@ from push_service import (
     VAPID_PUBLIC_KEY,
 )
 from admin_alerts import notify_all_admins, get_vip_threshold
+from audit_log import log_action
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -110,7 +111,7 @@ class Order(BaseModel):
     delivery_details: str = ""  # bank info, address, wallet
     sender_name: str = ""  # name of person who sent payment
     proof_image: str = ""  # base64 data URL
-    status: Literal["pending", "approved", "rejected", "completed"] = "pending"
+    status: Literal["pending", "requires_double_approval", "approved", "rejected", "completed"] = "pending"
     admin_note: str = ""
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
     updated_at: str = Field(default_factory=lambda: iso(now_utc()))
@@ -360,7 +361,7 @@ async def create_rate(payload: ExchangeRateCreate, request: Request):
 
 @api_router.put("/admin/rates/{rate_id}")
 async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
     old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
     await db.rates.update_one(
         {"id": rate_id},
@@ -395,6 +396,9 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
                 )
     except Exception as e:
         logger.error(f"Rate update margin scan failed: {e}")
+    await log_action(db, actor, "rate.update", "rate", rate_id,
+                     summary=f"Tasa {fresh['from_code']}→{fresh['to_code']} actualizada",
+                     details={"old": old, "new": fresh})
     return fresh
 
 @api_router.delete("/admin/rates/{rate_id}")
@@ -433,6 +437,22 @@ async def create_order(payload: OrderCreate, request: Request):
         proof_image=payload.proof_image,
     )
     await db.orders.insert_one(order.model_dump())
+    # Defensive mode: if profit pct below configured threshold, mark for double approval
+    try:
+        rate_doc = await db.rates.find_one(
+            {"from_code": order.from_code, "to_code": order.to_code}, {"_id": 0}
+        )
+        settings_doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
+        defensive_pct = settings_doc.get("defensive_margin_pct") if settings_doc else None
+        if defensive_pct is not None and rate_doc and rate_doc.get("real_rate"):
+            p = await _compute_order_profit(order.model_dump(), rate_doc)
+            if p and p["pct"] < float(defensive_pct):
+                await db.orders.update_one(
+                    {"id": order.id},
+                    {"$set": {"status": "requires_double_approval"}}
+                )
+    except Exception as e:
+        logger.error(f"Defensive mode check failed: {e}")
     # Notify admins of new order (push + email)
     try:
         await notify_all_admins(
@@ -448,7 +468,7 @@ async def create_order(payload: OrderCreate, request: Request):
         await _check_negative_margin_alert(order.model_dump())
     except Exception as e:
         logger.error(f"Negative margin check failed: {e}")
-    return order.model_dump()
+    return await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
 
 
 async def _check_negative_margin_alert(order: dict):
@@ -556,14 +576,19 @@ async def _send_client_order_push(order: dict, new_status: str):
 
 @api_router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
-    if new_status not in ("approved", "rejected", "completed", "pending"):
+    if new_status not in ("approved", "rejected", "completed", "pending", "requires_double_approval"):
         raise HTTPException(status_code=400, detail="status inválido")
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+    # Defensive: only admin can approve orders that require double-approval
+    if (order.get("status") == "requires_double_approval"
+            and new_status == "approved"
+            and actor.get("role") != "admin"):
+        raise HTTPException(status_code=403, detail="Solo un admin puede aprobar órdenes con margen bajo")
 
     await db.orders.update_one(
         {"id": order_id},
@@ -583,6 +608,10 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
         if target_user:
             await _send_client_order_email(updated, new_status, target_user)
             await _send_client_order_push(updated, new_status)
+    await log_action(db, actor, f"order.{new_status}", "order", order_id,
+                     summary=f"Orden {order['from_code']}→{order['to_code']} {new_status}",
+                     details={"prev": order["status"], "new": new_status, "note": note,
+                              "amount_from": order["amount_from"], "amount_to": order["amount_to"]})
     return updated
 
 # ============== PRODUCTS ==============
@@ -958,6 +987,7 @@ async def admin_platform_stats(request: Request):
 
 class AdminSettings(BaseModel):
     vip_threshold_usdt: float = Field(default=5000.0, ge=0)
+    defensive_margin_pct: Optional[float] = Field(default=None)  # null = disabled. Otherwise orders with profit_pct < this require admin double-approval
 
 
 @api_router.get("/admin/settings")
@@ -965,19 +995,25 @@ async def get_admin_settings(request: Request):
     await require_staff(request)
     doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
     if not doc:
-        return {"vip_threshold_usdt": float(os.environ.get("VIP_ALERT_THRESHOLD_USDT", 5000))}
-    return {"vip_threshold_usdt": float(doc.get("vip_threshold_usdt", 5000))}
+        return {
+            "vip_threshold_usdt": float(os.environ.get("VIP_ALERT_THRESHOLD_USDT", 5000)),
+            "defensive_margin_pct": None,
+        }
+    return {
+        "vip_threshold_usdt": float(doc.get("vip_threshold_usdt", 5000)),
+        "defensive_margin_pct": doc.get("defensive_margin_pct"),
+    }
 
 
 @api_router.put("/admin/settings")
 async def update_admin_settings(payload: AdminSettings, request: Request):
-    await require_admin(request)
-    await db.settings.update_one(
-        {"id": "global"},
-        {"$set": {"id": "global", "vip_threshold_usdt": payload.vip_threshold_usdt}},
-        upsert=True,
-    )
-    return {"ok": True, "vip_threshold_usdt": payload.vip_threshold_usdt}
+    actor = await require_admin(request)
+    data = payload.model_dump()
+    data["id"] = "global"
+    await db.settings.update_one({"id": "global"}, {"$set": data}, upsert=True)
+    await log_action(db, actor, "settings.update", "settings", "global",
+                     summary=f"Settings actualizados", details=data)
+    return {"ok": True, **data}
 
 
 # ============== PUSH NOTIFICATIONS ==============
@@ -1044,6 +1080,21 @@ async def push_test(request: Request):
         if send_push(s["subscription"], payload) == "ok":
             delivered += 1
     return {"delivered": delivered, "total": len(subs)}
+
+
+# ============== AUDIT LOG (ADMIN ONLY) ==============
+
+@api_router.get("/admin/audit")
+async def list_audit_log(request: Request, limit: int = 100, action: Optional[str] = None, actor_id: Optional[str] = None):
+    await require_admin(request)
+    q = {}
+    if action:
+        q["action"] = action
+    if actor_id:
+        q["actor_id"] = actor_id
+    limit = max(1, min(limit, 500))
+    docs = await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return docs
 
 
 # ============== REVENUE (ADMIN ONLY) ==============
@@ -1225,8 +1276,13 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request):
     # Employees can only assign 'normal' or 'vip' roles, not admin/employee
     if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
+    old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
-    return await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    await log_action(db, requester, "user.update", "user", user_id,
+                     summary=f"Usuario {new_user.get('email', '')} actualizado",
+                     details={"changes": update, "prev_role": old_user.get("role") if old_user else None})
+    return new_user
 
 # ============== SEED ==============
 

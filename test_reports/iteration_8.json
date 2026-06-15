@@ -1,0 +1,47 @@
+{
+  "summary": "Iter8 — Validated Audit Log (admin-only GET /api/admin/audit + writes on rate.update, settings.update, user.update, order.approved/rejected) and Defensive Mode (auto-flag orders with profit_pct below defensive_margin_pct, admin-only approval gating, disabled when null). Created /app/backend/tests/test_audit_log_and_defensive.py with 21 pytest cases — all 21 passed. Ran combined regression with iter6/iter7 suites: 60/60 passed. Frontend Playwright: AdminAudit page renders for admin with action/actor filters and all expected entries; employee sees neither the 'Auditoría' nav link nor the /admin/audit page (route gated by user?.role==='admin'); AdminOrders shows distinctive red 'REQUIRES_DOUBLE_APPROVAL' badges. Also fixed two CRITICAL frontend compile-blocking bugs (leftover/garbage JSX tails) in AdminPanel.jsx and AdminOrders.jsx that prevented webpack from compiling and the audit route from being mounted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/users/{user_id}", "issue": "UserUpdate model only allows role/vip_balance_usd/vip_balances. An empty/idempotent body returns 400 'Nada para actualizar'. Not a bug but the prompt's example of updating 'name' would fail — name isn't editable via this endpoint."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminPanel.jsx", "issue": "CRITICAL (FIXED by tester) — File had a trailing garbage block 'udit />} />}' after the closing brace plus a second }; webpack failed to compile and the /admin/audit route was never registered. Repaired by removing the dead tail and adding {user?.role==='admin' && <Route path=\"audit\" element={<AdminAudit />}/>}.", "selector": "N/A", "priority": "CRITICAL"},
+      {"component": "AdminOrders.jsx", "issue": "CRITICAL (FIXED by tester) — Same kind of dead duplicate JSX tail after the closing } caused a parse error (Line 124:5: Unexpected token). Removed.", "selector": "N/A", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_audit_log_and_defensive.py",
+    "/app/test_reports/pytest/iter8_results.xml",
+    "/app/test_reports/pytest/iter8_regression.xml"
+  ],
+  "action_items": [
+    "(NOTE) AdminPanel.jsx and AdminOrders.jsx were corrupted by a prior edit leaving duplicate tails — the tester patched both. Main agent should be careful when editing JSX via search-replace and ALWAYS verify with frontend supervisor logs that the bundle compiles after edits.",
+    "(LOW) UserUpdate model has no 'name' field — if the UI exposes name editing via PUT /api/admin/users, add 'name: Optional[str]=None' to UserUpdate, otherwise document that name changes are not supported."
+  ],
+  "critical_code_review_comments": [
+    "server.py L579 — `actor = await require_staff(request)` is now correctly bound BEFORE the defensive gate at L588-591 and BEFORE log_action at L611. NameError fix verified by direct E2E (test_employee_cannot_approve_flagged_order returns 403 with proper Spanish detail; admin path returns 200 and writes order.approved audit entry).",
+    "server.py L440-455 — defensive_mode check is inside try/except and uses settings.defensive_margin_pct as a strict numeric (None disables). _compute_order_profit returns None when real_rate is missing/<=0 so the flag is safely skipped — verified.",
+    "server.py L1087-1097 — GET /api/admin/audit uses require_admin (not require_staff), so employees get 403. Sort by created_at desc + limit clamp 1..500 + optional action/actor_id filters all verified.",
+    "audit_log.log_action wraps insert in try/except and never raises — verified safe (no test failures even when defensive flow triggers extra writes).",
+    "_compute_marketplace_revenue and admin_revenue both filter status in ('approved','completed') — orders in 'requires_double_approval' are correctly excluded (regression test passes).",
+    "Frontend AdminAudit.jsx exposes data-testid='admin-audit', 'audit-action-filter', 'audit-actor-filter' — all three found and working on the live page.",
+    "AdminPanel sidebar exposes the 'Auditoría' link only when user.role==='admin'; the Route is now gated identically (post-fix), so employees can't navigate via URL either."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_audit_log_and_defensive.py (NEW — 21 pytests across 6 classes: TestAuditAccess(5), TestAuditWrites(4), TestAuditQueryOptions(4), TestDefensiveModeAutoFlag(3), TestDefensiveApprovalGating(3), TestRegressions(2))",
+    "/app/frontend/src/pages/AdminPanel.jsx (removed dead trailing JSX block; added <Route path=\"audit\" element={<AdminAudit/>}/> gated by user?.role==='admin')",
+    "/app/frontend/src/pages/admin/AdminOrders.jsx (removed dead trailing JSX block at lines 124-126 that caused a parse error)"
+  ],
+  "success_rate": {"backend": "100% (21/21 new + 39/39 carried over from iter6/iter7 = 60/60 in combined run)", "frontend": "100% (Admin Audit page renders for admin; employee correctly blocked from nav link and from direct /admin/audit; AdminOrders shows REQUIRES_DOUBLE_APPROVAL badges)"},
+  "test_credentials": "Admin: test_session_admin_X (user_test_admin01). VIP: test_session_vip_X (user_test_vip01). Normal: test_session_normal_X. Employee: test_session_employee_X (user_test_employee01). All four /api/auth/me verified 200 OK with correct roles.",
+  "seed_data_creation": "Tests upsert USD→CUP and USDT→MXN rate rows via POST /api/admin/rates, toggle settings.defensive_margin_pct via PUT /api/admin/settings, and create TEST_-prefixed orders via POST /api/orders as NORMAL user. Cleanup is deferred (orders/audit are append-only by design and the suite verifies presence by id, never absence).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter8 suite: pytest /app/backend/tests/test_audit_log_and_defensive.py -v finishes in ~18s (21 pass). Combined iter6+iter7+iter8 runs in ~85s (60 pass). Two frontend compile-blocking typos in JSX tails were patched by the tester (AdminPanel.jsx and AdminOrders.jsx) — re-confirm with `tail /var/log/supervisor/frontend.out.log` that 'Compiled successfully' is the last line before doing any UI work. Audit log is admin-only (require_admin); orders gate is at server.py L587-591 and the actor binding is at L579. Defensive create-time flag block is at L440-455. Frontend testids: admin-audit, audit-action-filter, audit-actor-filter, admin-nav-audit, admin-orders.",
+  "rca of the issue": "Two CRITICAL frontend bugs found during this iteration:\n(1) /app/frontend/src/pages/AdminPanel.jsx had a residual block `udit />} />}\\n          </Routes>\\n        </div>\\n      </main>\\n    </div>\\n  );\\n}` AFTER the legitimate closing of the component — clearly the tail of an attempted search-replace where the new content was inserted but the old content was not fully removed. This made webpack fail to compile (Parsing error: Unexpected token at 106:6). As a side effect the intended <Route path='audit' element={<AdminAudit/>}/> was never registered — that's why the AdminAudit page would never have rendered even if compilation had succeeded.\n(2) /app/frontend/src/pages/admin/AdminOrders.jsx had the identical pattern at lines 124-126 (a duplicated `</div>); }` after the real component close) — same root cause (botched search-replace tail).\nMitigation applied: tester removed both dead blocks and added the missing admin-gated Route in AdminPanel. After the fix, frontend supervisor log reports 'Compiled successfully' and Playwright confirms all three UI flows (admin sees audit page, employee blocked, orders show defensive badge)."
+}

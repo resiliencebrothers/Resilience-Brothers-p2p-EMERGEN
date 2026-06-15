@@ -10,6 +10,7 @@ export default function AdminOverview() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [threshold, setThreshold] = useState("");
+  const [defensivePct, setDefensivePct] = useState("");
   const [savingThreshold, setSavingThreshold] = useState(false);
 
   const load = async () => {
@@ -21,6 +22,7 @@ export default function AdminOverview() {
       ]);
       setStats(s.data);
       setThreshold(String(set.data.vip_threshold_usdt));
+      setDefensivePct(set.data.defensive_margin_pct == null ? "" : String(set.data.defensive_margin_pct));
     } catch (e) {
       toast.error("Error al cargar estadísticas");
     } finally {
@@ -32,10 +34,11 @@ export default function AdminOverview() {
   const saveThreshold = async () => {
     const v = parseFloat(threshold);
     if (!v || v < 0) return toast.error("Umbral inválido");
+    const def = defensivePct === "" ? null : parseFloat(defensivePct);
     setSavingThreshold(true);
     try {
-      await axios.put(`${API}/admin/settings`, { vip_threshold_usdt: v }, { withCredentials: true });
-      toast.success("Umbral actualizado");
+      await axios.put(`${API}/admin/settings`, { vip_threshold_usdt: v, defensive_margin_pct: def }, { withCredentials: true });
+      toast.success("Configuración guardada");
     } catch (e) {
       toast.error("Error al guardar");
     } finally {
