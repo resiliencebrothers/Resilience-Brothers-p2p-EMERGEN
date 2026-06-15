@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { from_code: "", to_code: "", rate_normal: 0, rate_vip: 0 };
+const empty = { from_code: "", to_code: "", rate_normal: 0, rate_vip: 0, real_rate: "" };
 
 export default function AdminRates() {
   const [rates, setRates] = useState([]);
@@ -26,7 +26,12 @@ export default function AdminRates() {
 
   const save = async () => {
     try {
-      const payload = { ...form, rate_normal: parseFloat(form.rate_normal), rate_vip: parseFloat(form.rate_vip) };
+      const payload = {
+        ...form,
+        rate_normal: parseFloat(form.rate_normal),
+        rate_vip: parseFloat(form.rate_vip),
+        real_rate: form.real_rate === "" || form.real_rate === null ? null : parseFloat(form.real_rate),
+      };
       if (editing) await axios.put(`${API}/admin/rates/${editing.id}`, payload, { withCredentials: true });
       else await axios.post(`${API}/admin/rates`, payload, { withCredentials: true });
       toast.success("Tasa guardada");
@@ -104,6 +109,11 @@ export default function AdminRates() {
             </div>
             <div><Label className="micro-label text-neutral-500">Tasa Normal</Label><Input data-testid="rate-normal" type="number" step="any" value={form.rate_normal} onChange={e => setForm({ ...form, rate_normal: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" /></div>
             <div><Label className="micro-label text-neutral-500">Tasa VIP</Label><Input data-testid="rate-vip" type="number" step="any" value={form.rate_vip} onChange={e => setForm({ ...form, rate_vip: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" /></div>
+            <div>
+              <Label className="micro-label text-neutral-500">Tasa Real de Salida (mercado)</Label>
+              <Input data-testid="rate-real" type="number" step="any" value={form.real_rate} onChange={e => setForm({ ...form, real_rate: e.target.value })} placeholder="ej: 905 (USDT→CUP)" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+              <p className="text-[0.65rem] text-neutral-500 mt-1">Usada solo para calcular ingresos del negocio. Opcional.</p>
+            </div>
             <Button data-testid="save-rate-btn" onClick={save} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">Guardar</Button>
           </div>
         </DialogContent>

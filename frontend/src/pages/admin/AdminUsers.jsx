@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
 
 export default function AdminUsers() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [editing, setEditing] = useState({});
 
@@ -17,8 +19,12 @@ export default function AdminUsers() {
   useEffect(() => { load(); }, []);
 
   const saveRole = async (user_id, role) => {
-    await axios.put(`${API}/admin/users/${user_id}`, { role }, { withCredentials: true });
-    toast.success("Rol actualizado"); load();
+    try {
+      await axios.put(`${API}/admin/users/${user_id}`, { role }, { withCredentials: true });
+      toast.success("Rol actualizado"); load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    }
   };
 
   const saveBalance = async (user_id) => {
@@ -27,6 +33,11 @@ export default function AdminUsers() {
     await axios.put(`${API}/admin/users/${user_id}`, { vip_balance_usd: val }, { withCredentials: true });
     toast.success("Saldo actualizado"); setEditing({ ...editing, [user_id]: undefined }); load();
   };
+
+  const isAdmin = currentUser?.role === "admin";
+  const allowedRoles = isAdmin
+    ? ["normal", "vip", "employee", "admin"]
+    : ["normal", "vip"];
 
   return (
     <div data-testid="admin-users">
@@ -54,12 +65,24 @@ export default function AdminUsers() {
                 </td>
                 <td className="px-4 py-3 text-neutral-400">{u.email}</td>
                 <td className="px-4 py-3">
-                  <Select value={u.role} onValueChange={(v) => saveRole(u.user_id, v)}>
+                  <Select
+                    value={u.role}
+                    onValueChange={(v) => saveRole(u.user_id, v)}
+                    disabled={!isAdmin && (u.role === "admin" || u.role === "employee")}
+                  >
                     <SelectTrigger data-testid={`role-${u.user_id}`} className="rounded-none w-32 h-9 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
-                      <SelectItem value="normal">Normal</SelectItem>
-                      <SelectItem value="vip">VIP</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
+                      {allowedRoles.map(role => (
+                        <SelectItem key={role} value={role}>
+                          {role === "normal" ? "Normal" : role === "vip" ? "VIP" : role === "employee" ? "Empleado" : "Admin"}
+                        </SelectItem>
+                      ))}
+                      {/* Show current role if not in allowedRoles (for employees viewing admins) */}
+                      {!allowedRoles.includes(u.role) && (
+                        <SelectItem key={u.role} value={u.role} disabled>
+                          {u.role === "admin" ? "Admin" : "Empleado"}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </td>

@@ -24,12 +24,12 @@ function AppRouter() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/dashboard/*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/admin/*" element={<ProtectedRoute adminOnly><AdminPanel /></ProtectedRoute>} />
+      <Route path="/admin/*" element={<ProtectedRoute staffOnly><AdminPanel /></ProtectedRoute>} />
     </Routes>
   );
 }
 
-function ProtectedRoute({ children, adminOnly = false }) {
+function ProtectedRoute({ children, staffOnly = false }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
@@ -39,7 +39,7 @@ function ProtectedRoute({ children, adminOnly = false }) {
     );
   }
   if (!user) return <Navigate to="/" replace />;
-  if (adminOnly && user.role !== "admin") return <Navigate to="/dashboard" replace />;
+  if (staffOnly && !["admin", "employee"].includes(user.role)) return <Navigate to="/dashboard" replace />;
   return children;
 }
 

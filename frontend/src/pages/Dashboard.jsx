@@ -52,14 +52,14 @@ export default function Dashboard() {
               {item.label}
             </NavLink>
           ))}
-          {user?.role === "admin" && (
+          {(user?.role === "admin" || user?.role === "employee") && (
             <NavLink
               to="/admin"
               data-testid="nav-admin"
               className="flex items-center gap-3 px-3 py-2.5 text-sm transition-colors mt-4 border border-[#EAB308]/40 text-[#EAB308] hover:bg-[#EAB308]/10"
             >
               <Shield className="w-4 h-4" />
-              Panel Admin
+              {user?.role === "admin" ? "Panel Admin" : "Panel Equipo"}
             </NavLink>
           )}
         </nav>
@@ -73,7 +73,7 @@ export default function Dashboard() {
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">{user?.name}</div>
               <div className="micro-label text-neutral-500">
-                {user?.role === "vip" ? "VIP" : user?.role === "admin" ? "Admin" : "Cliente"}
+                {user?.role === "vip" ? "VIP" : user?.role === "admin" ? "Admin" : user?.role === "employee" ? "Empleado" : "Cliente"}
               </div>
             </div>
           </div>

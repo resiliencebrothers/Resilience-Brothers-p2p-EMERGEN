@@ -50,7 +50,7 @@ class User(BaseModel):
     email: str
     name: str
     picture: Optional[str] = None
-    role: Literal["normal", "vip", "admin"] = "normal"
+    role: Literal["normal", "vip", "employee", "admin"] = "normal"
     vip_balance_usd: float = 0.0  # legacy USD balance, used for redemptions
     vip_balances: Dict[str, float] = {}  # per-currency balances {"USD": 100, "CUP": 38000}
     created_at: str
@@ -83,6 +83,7 @@ class ExchangeRate(BaseModel):
     to_code: str
     rate_normal: float
     rate_vip: float
+    real_rate: Optional[float] = None  # real market exit rate; used to compute revenue
     updated_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 class ExchangeRateCreate(BaseModel):
@@ -90,6 +91,7 @@ class ExchangeRateCreate(BaseModel):
     to_code: str
     rate_normal: float
     rate_vip: float
+    real_rate: Optional[float] = None
 
 class Order(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -184,7 +186,7 @@ class WithdrawalCreate(BaseModel):
     details: str
 
 class UserUpdate(BaseModel):
-    role: Optional[Literal["normal", "vip", "admin"]] = None
+    role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
     vip_balance_usd: Optional[float] = None
     vip_balances: Optional[Dict[str, float]] = None
 
@@ -221,6 +223,13 @@ async def require_admin(request: Request) -> dict:
     user = await require_user(request)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+async def require_staff(request: Request) -> dict:
+    """Allow both admin and employee roles for most management endpoints."""
+    user = await require_user(request)
+    if user.get("role") not in ("admin", "employee"):
+        raise HTTPException(status_code=403, detail="Staff only")
     return user
 
 @api_router.post("/auth/session")
@@ -307,21 +316,21 @@ async def list_currencies():
 
 @api_router.post("/admin/currencies")
 async def create_currency(payload: CurrencyCreate, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     c = Currency(**payload.model_dump())
     await db.currencies.insert_one(c.model_dump())
     return c.model_dump()
 
 @api_router.put("/admin/currencies/{currency_id}")
 async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     await db.currencies.update_one({"id": currency_id}, {"$set": payload.model_dump()})
     doc = await db.currencies.find_one({"id": currency_id}, {"_id": 0})
     return doc
 
 @api_router.delete("/admin/currencies/{currency_id}")
 async def delete_currency(currency_id: str, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     await db.currencies.delete_one({"id": currency_id})
     return {"ok": True}
 
@@ -334,7 +343,7 @@ async def list_rates():
 
 @api_router.post("/admin/rates")
 async def create_rate(payload: ExchangeRateCreate, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     existing = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
     if existing:
         await db.rates.update_one(
@@ -348,7 +357,7 @@ async def create_rate(payload: ExchangeRateCreate, request: Request):
 
 @api_router.put("/admin/rates/{rate_id}")
 async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     await db.rates.update_one(
         {"id": rate_id},
         {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}}
@@ -357,7 +366,7 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
 
 @api_router.delete("/admin/rates/{rate_id}")
 async def delete_rate(rate_id: str, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     await db.rates.delete_one({"id": rate_id})
     return {"ok": True}
 
@@ -411,7 +420,7 @@ async def my_orders(request: Request):
 
 @api_router.get("/admin/orders")
 async def all_orders(request: Request, status: Optional[str] = None):
-    await require_admin(request)
+    await require_staff(request)
     q = {}
     if status:
         q["status"] = status
@@ -487,7 +496,7 @@ async def _send_client_order_push(order: dict, new_status: str):
 
 @api_router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in ("approved", "rejected", "completed", "pending"):
@@ -525,20 +534,20 @@ async def list_products():
 
 @api_router.post("/admin/products")
 async def create_product(payload: ProductCreate, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     p = Product(**payload.model_dump())
     await db.products.insert_one(p.model_dump())
     return p.model_dump()
 
 @api_router.put("/admin/products/{product_id}")
 async def update_product(product_id: str, payload: ProductCreate, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     await db.products.update_one({"id": product_id}, {"$set": payload.model_dump()})
     return await db.products.find_one({"id": product_id}, {"_id": 0})
 
 @api_router.delete("/admin/products/{product_id}")
 async def delete_product(product_id: str, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     await db.products.delete_one({"id": product_id})
     return {"ok": True}
 
@@ -615,13 +624,13 @@ async def my_redemptions(request: Request):
 
 @api_router.get("/admin/redemptions")
 async def all_redemptions(request: Request):
-    await require_admin(request)
+    await require_staff(request)
     docs = await db.redemptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 @api_router.put("/admin/redemptions/{rid}/status")
 async def update_redemption(rid: str, payload: dict, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in ("approved", "delivered", "rejected", "pending"):
@@ -674,13 +683,13 @@ async def my_withdrawals(request: Request):
 
 @api_router.get("/admin/withdrawals")
 async def all_withdrawals(request: Request):
-    await require_admin(request)
+    await require_staff(request)
     docs = await db.withdrawals.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 @api_router.put("/admin/withdrawals/{wid}/status")
 async def update_withdrawal(wid: str, payload: dict, request: Request):
-    await require_admin(request)
+    await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in ("approved", "paid", "rejected", "pending"):
@@ -873,7 +882,7 @@ async def _platform_counters() -> dict:
 
 @api_router.get("/admin/stats")
 async def admin_platform_stats(request: Request):
-    await require_admin(request)
+    await require_staff(request)
     rates = await _build_rate_lookup()
     return {
         "inflow": await _aggregate_flow("from_code", rates),
@@ -891,7 +900,7 @@ class AdminSettings(BaseModel):
 
 @api_router.get("/admin/settings")
 async def get_admin_settings(request: Request):
-    await require_admin(request)
+    await require_staff(request)
     doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
     if not doc:
         return {"vip_threshold_usdt": float(os.environ.get("VIP_ALERT_THRESHOLD_USDT", 5000))}
@@ -975,20 +984,132 @@ async def push_test(request: Request):
     return {"delivered": delivered, "total": len(subs)}
 
 
+# ============== REVENUE (ADMIN ONLY) ==============
+
+async def _compute_order_profit(order: dict, rate_doc: Optional[dict]) -> Optional[dict]:
+    """Compute profit for a single approved/completed order in to_code currency.
+    Profit logic: we receive amount_from in F, deliver amount_to in T.
+    Real value of incoming = amount_from * real_rate (in T units).
+    Profit (in T) = (amount_from * real_rate) - amount_to.
+    """
+    if not rate_doc or rate_doc.get("real_rate") is None:
+        return None
+    real_rate = float(rate_doc["real_rate"])
+    if real_rate <= 0:
+        return None
+    real_value = order["amount_from"] * real_rate  # in to_code units
+    profit_to = real_value - order["amount_to"]
+    profit_pct = (profit_to / real_value * 100) if real_value > 0 else 0.0
+    return {
+        "amount": profit_to,
+        "currency": order["to_code"],
+        "pct": round(profit_pct, 3),
+    }
+
+
+@api_router.get("/admin/revenue")
+async def admin_revenue(request: Request, days: Optional[int] = None):
+    await require_admin(request)
+    q = {"status": {"$in": ["approved", "completed"]}}
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["updated_at"] = {"$gte": cutoff}
+
+    orders = await db.orders.find(q, {"_id": 0}).to_list(5000)
+    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
+    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
+    fx = await _build_rate_lookup()
+
+    by_pair: dict = {}
+    by_role = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
+               "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
+    missing_rate_pairs = set()
+    total_profit_usdt = 0.0
+    total_volume_usdt = 0.0
+
+    for o in orders:
+        pair_key = (o["from_code"], o["to_code"])
+        rate_doc = rate_by_pair.get(pair_key)
+        profit = await _compute_order_profit(o, rate_doc)
+        # Volume always counted
+        volume_usdt = _convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
+        total_volume_usdt += volume_usdt
+        role_bucket = "vip" if o.get("user_role") in ("vip", "admin") else "normal"
+        by_role[role_bucket]["orders"] += 1
+        by_role[role_bucket]["volume_usdt"] += volume_usdt
+
+        if profit is None:
+            missing_rate_pairs.add(f"{o['from_code']}→{o['to_code']}")
+            continue
+        profit_usdt = _convert_to_usdt(profit["amount"], profit["currency"], fx) or 0.0
+        total_profit_usdt += profit_usdt
+        by_role[role_bucket]["profit_usdt"] += profit_usdt
+
+        key = f"{o['from_code']}→{o['to_code']}"
+        if key not in by_pair:
+            by_pair[key] = {
+                "pair": key,
+                "from_code": o["from_code"],
+                "to_code": o["to_code"],
+                "orders": 0,
+                "volume_from": 0.0,
+                "volume_to": 0.0,
+                "profit_to": 0.0,
+                "profit_usdt": 0.0,
+                "real_rate": rate_doc.get("real_rate"),
+                "rate_normal": rate_doc.get("rate_normal"),
+                "rate_vip": rate_doc.get("rate_vip"),
+                "avg_profit_pct": 0.0,
+            }
+        bucket = by_pair[key]
+        bucket["orders"] += 1
+        bucket["volume_from"] += o["amount_from"]
+        bucket["volume_to"] += o["amount_to"]
+        bucket["profit_to"] += profit["amount"]
+        bucket["profit_usdt"] += profit_usdt
+
+    pair_items = []
+    for k, b in by_pair.items():
+        if b["volume_to"] > 0 and b["real_rate"]:
+            real_value = b["volume_from"] * float(b["real_rate"])
+            b["avg_profit_pct"] = round((real_value - b["volume_to"]) / real_value * 100, 3) if real_value > 0 else 0.0
+        b["profit_to"] = round(b["profit_to"], 4)
+        b["profit_usdt"] = round(b["profit_usdt"], 4)
+        pair_items.append(b)
+    pair_items.sort(key=lambda x: -x["profit_usdt"])
+
+    for r in by_role.values():
+        r["profit_usdt"] = round(r["profit_usdt"], 4)
+        r["volume_usdt"] = round(r["volume_usdt"], 4)
+
+    return {
+        "total_profit_usdt": round(total_profit_usdt, 4),
+        "total_volume_usdt": round(total_volume_usdt, 4),
+        "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
+        "by_pair": pair_items,
+        "by_role": by_role,
+        "missing_real_rate_pairs": sorted(missing_rate_pairs),
+        "orders_total": len(orders),
+    }
+
+
 # ============== USERS (ADMIN) ==============
 
 @api_router.get("/admin/users")
 async def list_users(request: Request):
-    await require_admin(request)
+    await require_staff(request)
     docs = await db.users.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 @api_router.put("/admin/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate, request: Request):
-    await require_admin(request)
+    requester = await require_staff(request)
     update = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
+    # Employees can only assign 'normal' or 'vip' roles, not admin/employee
+    if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
+        raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     return await db.users.find_one({"user_id": user_id}, {"_id": 0})
 
@@ -996,7 +1117,7 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request):
 
 @api_router.post("/admin/seed")
 async def seed_data(request: Request):
-    await require_admin(request)
+    await require_staff(request)
     # Seed currencies if empty
     if await db.currencies.count_documents({}) == 0:
         defaults = [

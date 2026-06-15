@@ -1,6 +1,6 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote } from "lucide-react";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
 import AdminUsers from "@/pages/admin/AdminUsers";
@@ -8,6 +8,7 @@ import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
 import AdminOverview from "@/pages/admin/AdminOverview";
+import AdminRevenue from "@/pages/admin/AdminRevenue";
 import PushToggle from "@/components/PushToggle";
 
 export default function AdminPanel() {
@@ -22,6 +23,9 @@ export default function AdminPanel() {
     { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
     { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
     { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
+    ...(user?.role === "admin" ? [
+      { to: "/admin/revenue", icon: Banknote, label: "Ingresos", id: "admin-nav-revenue", highlight: true },
+    ] : []),
   ];
 
   return (
@@ -90,6 +94,7 @@ export default function AdminPanel() {
             <Route path="rates" element={<AdminRates />} />
             <Route path="products" element={<AdminProducts />} />
             <Route path="users" element={<AdminUsers />} />
+            {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
           </Routes>
         </div>
       </main>
