@@ -91,7 +91,7 @@ class TestAlertHooksNonBreaking:
         db.users.update_one({"user_id": "user_test_vip01"},
                             {"$set": {"vip_balance_usd": 100.0}})
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 5, "method": "transfer", "details": "Bank Y"})
+                          json={"amount_usd": 5, "method": "transfer", "details": "Bank Y", "beneficiary_name": "Test Holder"})
         assert r.status_code == 200, r.text
 
     def test_vip_redeem_still_200(self, db):

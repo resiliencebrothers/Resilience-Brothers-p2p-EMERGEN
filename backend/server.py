@@ -28,6 +28,7 @@ from push_service import (
 from admin_alerts import notify_all_admins, get_vip_threshold
 from audit_log import log_action
 from audit_pdf import generate_audit_pdf
+from transactions_pdf import generate_transactions_pdf
 import csv
 import json as _json
 
@@ -125,7 +126,7 @@ class OrderCreate(BaseModel):
     amount_from: float
     delivery_method: Literal["transfer", "cash", "crypto", "accumulate"]
     delivery_details: str = ""
-    sender_name: str = ""
+    sender_name: str = Field(..., min_length=2, description="Nombre del titular de la cuenta que hizo la transferencia")
     proof_image: str = ""
 
 class Product(BaseModel):
@@ -182,6 +183,7 @@ class WithdrawalRequest(BaseModel):
     currency: str = "USD"
     method: Literal["transfer", "cash", "crypto"]
     details: str
+    beneficiary_name: str = ""  # holder name of the receiving account
     status: Literal["pending", "approved", "paid", "rejected"] = "pending"
     admin_note: str = ""
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
@@ -191,6 +193,7 @@ class WithdrawalCreate(BaseModel):
     currency: str = "USD"
     method: Literal["transfer", "cash", "crypto"]
     details: str
+    beneficiary_name: str = Field(..., min_length=2, description="Nombre del titular de la cuenta beneficiaria")
 
 class UserUpdate(BaseModel):
     role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
@@ -767,6 +770,7 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
         currency=currency,
         method=payload.method,
         details=payload.details,
+        beneficiary_name=payload.beneficiary_name,
     )
     await db.withdrawals.insert_one(w.model_dump())
     await _decrement_balance(user["user_id"], currency, payload.amount_usd)
@@ -1220,6 +1224,202 @@ async def export_audit_pdf(request: Request, action: Optional[str] = None,
     )
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     filename = f"audit_log_{ts}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ============== TRANSACTIONS REGISTRY (ADMIN ONLY — accounting) ==============
+
+def _date_range_query(since: Optional[str], until: Optional[str]) -> dict:
+    """Build a created_at range filter using the same helper as audit log."""
+    s = _normalize_audit_date(since, end_of_day=False)
+    u = _normalize_audit_date(until, end_of_day=True)
+    if not s and not u:
+        return {}
+    rng = {}
+    if s:
+        rng["$gte"] = s
+    if u:
+        rng["$lte"] = u
+    return {"created_at": rng}
+
+
+async def _build_transactions(direction: Optional[str], currency: Optional[str],
+                              holder: Optional[str], since: Optional[str],
+                              until: Optional[str]) -> list:
+    """Unified transaction list from approved/completed orders + approved/paid withdrawals.
+
+    Each entry: {direction: 'in'|'out', currency, amount, holder_name, client_name,
+                 method, status, ref_id, created_at}
+    Only records with a non-empty holder/sender field are included (we omit pre-feature data).
+    """
+    items: list = []
+    date_q = _date_range_query(since, until)
+
+    # ENTRADAS (orders): approved/completed only, sender_name required
+    if direction in (None, "all", "in"):
+        order_q: dict = {
+            "status": {"$in": ["approved", "completed"]},
+            "sender_name": {"$nin": [None, ""]},
+            **date_q,
+        }
+        if currency:
+            order_q["from_code"] = currency
+        if holder:
+            order_q["sender_name"] = {"$regex": holder, "$options": "i"}
+        orders = await db.orders.find(order_q, {"_id": 0}).to_list(5000)
+        for o in orders:
+            items.append({
+                "direction": "in",
+                "currency": o["from_code"],
+                "amount": float(o.get("amount_from", 0.0)),
+                "holder_name": o.get("sender_name", ""),
+                "client_name": o.get("user_name", ""),
+                "client_email": o.get("user_email", ""),
+                "method": o.get("delivery_method", ""),
+                "status": o.get("status", ""),
+                "ref_id": o.get("id", ""),
+                "ref_type": "order",
+                "created_at": o.get("created_at", ""),
+            })
+
+    # SALIDAS (withdrawals): approved/paid only, beneficiary_name required
+    if direction in (None, "all", "out"):
+        with_q: dict = {
+            "status": {"$in": ["approved", "paid"]},
+            "beneficiary_name": {"$nin": [None, ""]},
+            **date_q,
+        }
+        if currency:
+            with_q["currency"] = currency
+        if holder:
+            with_q["beneficiary_name"] = {"$regex": holder, "$options": "i"}
+        withdrawals = await db.withdrawals.find(with_q, {"_id": 0}).to_list(5000)
+        for w in withdrawals:
+            items.append({
+                "direction": "out",
+                "currency": w.get("currency", "USD"),
+                "amount": float(w.get("amount_usd", 0.0)),
+                "holder_name": w.get("beneficiary_name", ""),
+                "client_name": w.get("user_name", ""),
+                "client_email": w.get("user_email", ""),
+                "method": w.get("method", ""),
+                "status": w.get("status", ""),
+                "ref_id": w.get("id", ""),
+                "ref_type": "withdrawal",
+                "created_at": w.get("created_at", ""),
+            })
+
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return items
+
+
+def _compute_transaction_totals(items: list) -> dict:
+    by_currency: dict = {}
+    for it in items:
+        cur = it["currency"]
+        slot = by_currency.setdefault(cur, {"in": 0.0, "out": 0.0, "count": 0})
+        slot[it["direction"]] += it["amount"]
+        slot["count"] += 1
+    # Round
+    for v in by_currency.values():
+        v["in"] = round(v["in"], 4)
+        v["out"] = round(v["out"], 4)
+    return {
+        "by_currency": by_currency,
+        "total_count": len(items),
+    }
+
+
+@api_router.get("/admin/transactions")
+async def list_transactions(request: Request,
+                            direction: Optional[str] = None,
+                            currency: Optional[str] = None,
+                            holder: Optional[str] = None,
+                            since: Optional[str] = None,
+                            until: Optional[str] = None,
+                            limit: int = 100, offset: int = 0):
+    await require_admin(request)
+    if direction and direction not in ("in", "out", "all"):
+        raise HTTPException(status_code=400, detail="direction debe ser 'in', 'out' o 'all'")
+    items = await _build_transactions(direction, currency, holder, since, until)
+    totals = _compute_transaction_totals(items)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    window = items[offset:offset + limit]
+    return JSONResponse(
+        content={"items": window, "totals": totals},
+        headers={
+            "X-Total-Count": str(len(items)),
+            "X-Offset": str(offset),
+            "X-Limit": str(limit),
+            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
+        },
+    )
+
+
+@api_router.get("/admin/transactions/export.csv")
+async def export_transactions_csv(request: Request,
+                                  direction: Optional[str] = None,
+                                  currency: Optional[str] = None,
+                                  holder: Optional[str] = None,
+                                  since: Optional[str] = None,
+                                  until: Optional[str] = None):
+    await require_admin(request)
+    items = await _build_transactions(direction, currency, holder, since, until)
+    import io
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow(["created_at", "direction", "currency", "amount",
+                     "holder_name", "client_name", "client_email",
+                     "method", "status", "ref_type", "ref_id"])
+    for it in items:
+        writer.writerow([
+            it.get("created_at", ""),
+            it.get("direction", ""),
+            it.get("currency", ""),
+            f"{it.get('amount', 0):.4f}",
+            it.get("holder_name", ""),
+            it.get("client_name", ""),
+            it.get("client_email", ""),
+            it.get("method", ""),
+            it.get("status", ""),
+            it.get("ref_type", ""),
+            it.get("ref_id", ""),
+        ])
+    buf = BytesIO()
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))  # BOM for Excel
+    buf.seek(0)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"transacciones_{ts}.csv"
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/admin/transactions/export.pdf")
+async def export_transactions_pdf(request: Request,
+                                  direction: Optional[str] = None,
+                                  currency: Optional[str] = None,
+                                  holder: Optional[str] = None,
+                                  since: Optional[str] = None,
+                                  until: Optional[str] = None):
+    await require_admin(request)
+    items = await _build_transactions(direction, currency, holder, since, until)
+    totals = _compute_transaction_totals(items)
+    pdf_bytes = generate_transactions_pdf(
+        items,
+        {"direction": direction, "currency": currency, "holder": holder,
+         "since": since, "until": until},
+        totals,
+    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"transacciones_{ts}.pdf"
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",

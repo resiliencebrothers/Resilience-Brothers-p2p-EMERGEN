@@ -18,6 +18,7 @@ export default function VipView() {
   const [currency, setCurrency] = useState("USD");
   const [method, setMethod] = useState("transfer");
   const [details, setDetails] = useState("");
+  const [beneficiaryName, setBeneficiaryName] = useState("");
   const [busy, setBusy] = useState(false);
   const [closingDate, setClosingDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [downloading, setDownloading] = useState(false);
@@ -60,11 +61,20 @@ export default function VipView() {
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return toast.error("Monto inválido");
     if (!details) return toast.error("Detalles requeridos");
+    if (!beneficiaryName || beneficiaryName.trim().length < 2) {
+      return toast.error("Nombre del titular beneficiario requerido");
+    }
     setBusy(true);
     try {
-      await axios.post(`${API}/vip/withdraw`, { amount_usd: amt, currency, method, details }, { withCredentials: true });
+      await axios.post(`${API}/vip/withdraw`, {
+        amount_usd: amt,
+        currency,
+        method,
+        details,
+        beneficiary_name: beneficiaryName.trim(),
+      }, { withCredentials: true });
       toast.success("Solicitud de retiro enviada");
-      setAmount(""); setDetails("");
+      setAmount(""); setDetails(""); setBeneficiaryName("");
       await load(); await refresh();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
@@ -178,6 +188,22 @@ export default function VipView() {
             <div>
               <Label className="micro-label text-neutral-500">Detalles</Label>
               <Textarea data-testid="withdraw-details" value={details} onChange={e => setDetails(e.target.value)} rows={3} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10" />
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">
+                Titular de la cuenta beneficiaria <span className="text-[#EAB308]">*</span>
+              </Label>
+              <Input
+                data-testid="withdraw-beneficiary"
+                value={beneficiaryName}
+                onChange={(e) => setBeneficiaryName(e.target.value)}
+                placeholder="Nombre completo de quien recibe"
+                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
+                required
+              />
+              <p className="text-[0.65rem] text-neutral-600 mt-1">
+                Obligatorio · queda registrado en contabilidad
+              </p>
             </div>
             <Button data-testid="submit-withdraw-btn" onClick={submit} disabled={busy} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12">
               {busy ? "Enviando..." : "Solicitar Retiro"}

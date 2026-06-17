@@ -213,7 +213,8 @@ class TestRevenueCalculation:
         # Create order as VIP user, USD -> CUP, amount=100
         order_payload = {"from_code": "USD", "to_code": "CUP", "amount_from": 100,
                          "delivery_method": "transfer",
-                         "delivery_details": "Acc 1234"}
+                         "delivery_details": "Acc 1234",
+                         "sender_name": "Test Holder"}
         r = requests.post(f"{BASE_URL}/api/orders", json=order_payload, headers=_h(VIP))
         assert r.status_code in (200, 201), r.text
         order = r.json()
@@ -258,7 +259,7 @@ class TestRevenueCalculation:
 
         # Create order
         order_payload = {"from_code": "USD", "to_code": "CUP", "amount_from": 50,
-                         "delivery_method": "transfer", "delivery_details": "x"}
+                         "delivery_method": "transfer", "delivery_details": "x", "sender_name": "Test Holder"}
         cr = requests.post(f"{BASE_URL}/api/orders", json=order_payload, headers=_h(VIP))
         if cr.status_code not in (200, 201):
             pytest.skip(f"order create failed: {cr.text}")

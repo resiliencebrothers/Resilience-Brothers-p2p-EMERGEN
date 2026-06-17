@@ -192,14 +192,20 @@ export default function ExchangeView() {
         )}
 
         <div>
-          <Label className="micro-label text-neutral-500">Nombre del titular que envía el pago</Label>
+          <Label className="micro-label text-neutral-500">
+            Nombre del titular que envía el pago <span className="text-[#EAB308]">*</span>
+          </Label>
           <Input
             data-testid="sender-name-input"
             value={senderName}
             onChange={(e) => setSenderName(e.target.value)}
             placeholder="Nombre completo en cuenta zelle/banco"
             className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
+            required
           />
+          <p className="text-[0.65rem] text-neutral-600 mt-1">
+            Obligatorio · queda registrado en el comprobante contable y auditoría
+          </p>
         </div>
 
         <div>

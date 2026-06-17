@@ -138,7 +138,7 @@ class TestAuditWrites:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_audit_approve",
+                "delivery_details": "TEST_audit_approve", "sender_name": "Test Holder",
             },
         )
         assert c1.status_code == 200, c1.text
@@ -156,7 +156,7 @@ class TestAuditWrites:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 5.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_audit_reject",
+                "delivery_details": "TEST_audit_reject", "sender_name": "Test Holder",
             },
         )
         assert c2.status_code == 200, c2.text
@@ -278,7 +278,7 @@ class TestDefensiveModeAutoFlag:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_defensive_low_margin",
+                "delivery_details": "TEST_defensive_low_margin", "sender_name": "Test Holder",
             },
         )
         assert r.status_code == 200, r.text
@@ -301,7 +301,7 @@ class TestDefensiveModeAutoFlag:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_defensive_high_margin",
+                "delivery_details": "TEST_defensive_high_margin", "sender_name": "Test Holder",
             },
         )
         assert r.status_code == 200, r.text
@@ -322,7 +322,7 @@ class TestDefensiveModeAutoFlag:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_defensive_disabled",
+                "delivery_details": "TEST_defensive_disabled", "sender_name": "Test Holder",
             },
         )
         assert r.status_code == 200, r.text
@@ -346,6 +346,7 @@ class TestDefensiveApprovalGating:
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
                 "delivery_details": f"TEST_gate_{label}",
+                "sender_name": "Test Holder",
             },
         )
         assert r.status_code == 200, r.text
@@ -393,7 +394,7 @@ class TestDefensiveApprovalGating:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_gate_emp_normal",
+                "delivery_details": "TEST_gate_emp_normal", "sender_name": "Test Holder",
             },
         )
         assert c.status_code == 200, c.text
@@ -423,7 +424,7 @@ class TestRegressions:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 4.0,
                 "delivery_method": "accumulate",
-                "delivery_details": "TEST_vip_accumulate",
+                "delivery_details": "TEST_vip_accumulate", "sender_name": "Test Holder",
             },
         )
         assert c.status_code == 200, c.text
@@ -453,7 +454,7 @@ class TestRegressions:
             json={
                 "from_code": "USD", "to_code": "CUP", "amount_from": 10.0,
                 "delivery_method": "transfer",
-                "delivery_details": "TEST_revenue_excl_flagged",
+                "delivery_details": "TEST_revenue_excl_flagged", "sender_name": "Test Holder",
             },
         )
         assert c.status_code == 200, c.text

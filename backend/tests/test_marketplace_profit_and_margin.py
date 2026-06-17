@@ -278,7 +278,7 @@ class TestNegativeMarginOrderCreate:
             f"{BASE_URL}/api/orders", headers=_h(NORMAL),
             json={"from_code": "USD", "to_code": "CUP", "amount_from": 100,
                   "delivery_method": "cash", "delivery_details": "t",
-                  "sender_name": "t", "proof_image": ""},
+                  "sender_name": "tester", "proof_image": ""},
         )
         assert r.status_code == 200, r.text
         time.sleep(0.5)
@@ -293,7 +293,7 @@ class TestNegativeMarginOrderCreate:
             f"{BASE_URL}/api/orders", headers=_h(NORMAL),
             json={"from_code": "USD", "to_code": "CUP", "amount_from": 100,
                   "delivery_method": "cash", "delivery_details": "t",
-                  "sender_name": "t", "proof_image": ""},
+                  "sender_name": "tester", "proof_image": ""},
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -315,7 +315,7 @@ class TestNegativeMarginOnRateUpdate:
             f"{BASE_URL}/api/orders", headers=_h(NORMAL),
             json={"from_code": "USD", "to_code": "CUP", "amount_from": 50,
                   "delivery_method": "cash", "delivery_details": "t",
-                  "sender_name": "t", "proof_image": ""},
+                  "sender_name": "tester", "proof_image": ""},
         )
         assert r.status_code == 200, r.text
         rate = _get_rate("USD", "CUP")
@@ -339,7 +339,7 @@ class TestOrderEndpointRobust:
             f"{BASE_URL}/api/orders", headers=_h(NORMAL),
             json={"from_code": "USD", "to_code": "CUP", "amount_from": 25,
                   "delivery_method": "cash", "delivery_details": "z",
-                  "sender_name": "z", "proof_image": ""},
+                  "sender_name": "zoe", "proof_image": ""},
         )
         assert r.status_code == 200, r.text
         body = r.json()

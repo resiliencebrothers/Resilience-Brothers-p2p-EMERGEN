@@ -196,7 +196,7 @@ class TestOrders:
 class TestWithdrawals:
     def test_normal_cannot_withdraw(self):
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(NORMAL_TOKEN),
-                          json={"amount_usd": 10, "method": "transfer", "details": "x"})
+                          json={"amount_usd": 10, "method": "transfer", "details": "x", "beneficiary_name": "Test Holder"})
         assert r.status_code == 403
 
     def test_vip_withdraw_then_reject_refunds(self):
@@ -204,7 +204,7 @@ class TestWithdrawals:
         if bal < 5:
             pytest.skip("VIP balance too low")
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                         json={"amount_usd": 5, "method": "transfer", "details": "Bank Y"})
+                         json={"amount_usd": 5, "method": "transfer", "details": "Bank Y", "beneficiary_name": "Test Holder"})
         assert r.status_code == 200
         wid = r.json()["id"]
         after = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
