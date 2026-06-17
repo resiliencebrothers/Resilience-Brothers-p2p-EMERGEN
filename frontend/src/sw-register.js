@@ -21,6 +21,7 @@ export function registerSW() {
           });
         });
       })
+      // eslint-disable-next-line no-console -- intentional: SW registration failures must be visible for PWA debugging
       .catch((err) => console.error("SW registration failed:", err));
   });
 }

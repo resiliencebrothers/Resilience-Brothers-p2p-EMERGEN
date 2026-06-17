@@ -60,9 +60,11 @@ export default function PushToggle() {
       try {
         await axios.post(`${API}/push/test`, {}, { withCredentials: true });
       } catch (err) {
+        // eslint-disable-next-line no-console -- benign: first device may not have receivers yet
         console.warn("Push test failed (no devices yet):", err?.response?.status);
       }
     } catch (e) {
+      // eslint-disable-next-line no-console -- intentional: surface push setup errors in production
       console.error(e);
       toast.error("Error al activar notificaciones");
     } finally {
