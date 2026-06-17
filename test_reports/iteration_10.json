@@ -1,0 +1,45 @@
+{
+  "summary": "Iter10 — E2E validation of mobile hamburger menus (Dashboard + Admin), reusable Pagination, AdminAudit CSV/PDF export + date filters, AdminUsers debounced search + pagination, AdminOrders server-side filter + pagination. Created /app/backend/tests/test_audit_export_and_dates.py (16 new tests, all PASS) covering audit pagination headers, CSV/PDF export format and access control, since/until date parsing and propagation to exports. Full backend regression: 164 passed, 1 known skipped (vip_withdraw_then_reject_refunds) in 137s. Frontend Playwright on 390x844 confirmed: dashboard-mobile-menu-trigger and admin-mobile-menu-trigger visible, sheets open and contain all expected nav items (nav-admin, admin-nav-users/revenue/audit), nav-admin click navigates to /admin, users-search debounce + users-clear-search work, audit-export-csv and audit-export-pdf both fire browser downloads with proper audit_log_*.csv/.pdf filenames, AdminOrders shows 50 view-order-* buttons with a working order modal, desktop 1920x800 regression confirms sidebars render and mobile triggers stay hidden. Two minor frontend issues found (a11y warning + missing testids on order filter chips). All flows GREEN.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminOrders.jsx (L62-68)", "issue": "Status filter buttons ('all','pending','requires_double_approval','approved','rejected','completed') do NOT have data-testid attributes. Recommended: data-testid={`orders-filter-${f}`}. The chips render and function (server-side filter API works fine in the network), but cannot be reliably targeted by Playwright.", "selector": "div.flex.gap-2 > button", "priority": "LOW"},
+      {"component": "Sheet (shadcn DialogContent) — dashboard-mobile-menu + admin-mobile-menu", "issue": "Radix UI runtime accessibility warning fired in console.error every time the sheet opens: 'DialogContent requires a DialogTitle for the component to be accessible for screen reader users' + missing aria-describedby. Fix by adding a VisuallyHidden DialogTitle/Description inside both <SheetContent> blocks in Dashboard.jsx and AdminPanel.jsx. Functionality not affected.", "selector": "[data-testid='dashboard-mobile-menu'], [data-testid='admin-mobile-menu']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_audit_export_and_dates.py",
+    "/app/test_reports/pytest/iter10_results.xml",
+    "/app/test_reports/pytest/iter10_regression.xml"
+  ],
+  "action_items": [
+    "(LOW) Wrap a VisuallyHidden DialogTitle (and optionally DialogDescription) inside both mobile <SheetContent> blocks to silence the Radix a11y console.error warnings (Dashboard.jsx ~L125, AdminPanel.jsx ~L114).",
+    "(LOW) Add data-testid={`orders-filter-${f}`} to each status filter button in /app/frontend/src/pages/admin/AdminOrders.jsx (L63-66) so the server-side status filter chips are reliably targetable by E2E tests."
+  ],
+  "critical_code_review_comments": [
+    "server.py _normalize_audit_date (L1102-1121) — solid: YYYY-MM-DD is validated then expanded to T00:00:00+00:00 / T23:59:59.999999+00:00; full ISO is validated via fromisoformat; invalid values raise HTTPException(400) BEFORE reaching mongo — confirmed by test_invalid_date_400.",
+    "GET /api/admin/audit (L1143-1161) uses require_admin (employees correctly 403'd), enforces limit clamp 1..500, exposes X-Total-Count/X-Offset/X-Limit AND Access-Control-Expose-Headers — CORS-friendly. Pages are disjoint (verified by test_pages_are_disjoint).",
+    "CSV export (L1172-1207) writes UTF-8 BOM prefix via 'utf-8-sig' (Excel-compatible) and 10-column header in the exact required order. csv.QUOTE_ALL prevents commas in summaries from breaking parsing. Details are json.dumps'd with ensure_ascii=False (preserves Spanish accents).",
+    "PDF export (L1210-1227) returns application/pdf with proper attachment Content-Disposition; bytes start with %PDF-1.4 and end with %%EOF.",
+    "Both export endpoints reuse _fetch_audit_entries which calls _build_audit_query → date+action+actor_id filters propagate identically to JSON list + CSV + PDF. test_csv_respects_action_filter and test_date_filter_propagates_to_csv/pdf confirmed.",
+    "AdminOrders pagination (admin and employee both allowed via require_staff) + AdminUsers pagination/search (admin-only require_admin, case-insensitive regex on name/email) — all 7 tests in test_admin_pagination.py PASS.",
+    "Frontend Dashboard.jsx nav-admin button uses yellow border styling (border-[#EAB308]/40 text-[#EAB308]) — visually confirmed in screenshot; my initial selector check looked for the wrong literal class name. No bug.",
+    "Pagination component is reused on /admin/users, /admin/orders, /admin/audit — orders-pagination renders correctly at 272 orders (>50), users-pagination correctly hidden at 7 users (≤50), audit-pagination present.",
+    "Console.error eslint-disable comments are properly scoped and intentional per the change description."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_audit_export_and_dates.py (NEW — 16 pytests across 4 classes: TestAuditPagination(2), TestAuditCSVExport(4), TestAuditPDFExport(3), TestAuditDateFilters(7))"
+  ],
+  "success_rate": {"backend": "100% (16/16 new + 23/23 iter10 admin_pagination + entire regression 164/164 non-skipped pass)", "frontend": "100% (all mobile and desktop testids resolved, downloads fire, navigation works, modal opens)"},
+  "test_credentials": "Admin: test_session_admin_X (user_test_admin01). Employee: test_session_employee_X. VIP: test_session_vip_X. Normal: test_session_normal_X. All verified via /api/auth/me 200 OK.",
+  "seed_data_creation": "None this iteration — existing seeded sessions + 272 historical orders + 7 users + audit rows were sufficient to validate pagination, search, and exports.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter10 added test_audit_export_and_dates.py (CSV/PDF export + date filter coverage). Full backend suite is 164 pass / 1 skip (~137s — exceeds the 120s tool timeout; run subsuites in parallel or use --timeout). Mobile sheet content is rendered via Radix portal; when targeting nav items inside the sheet you MUST scope the selector ('[data-testid=\"admin-mobile-menu\"] [data-testid=\"admin-nav-users\"]') because the desktop sidebar duplicates the same testids (md:hidden) and a bare selector picks up the hidden desktop copy. Mobile viewport must be set with set_viewport_size({width:390,height:844}) BEFORE page.goto.",
+  "rca of the issue": "No new bugs introduced. Two minor pre-existing issues surfaced: (1) Sheet a11y — shadcn Sheet (Radix Dialog) requires DialogTitle for screen readers; the menu sheets are decorative-nav, so the fix is to add <SheetHeader><SheetTitle className=\"sr-only\">Menú</SheetTitle></SheetHeader>. (2) AdminOrders status filter chips were refactored to server-side but the buttons were never given testids, so E2E cannot click chips by id. Both are LOW priority and do not block production."
+}
