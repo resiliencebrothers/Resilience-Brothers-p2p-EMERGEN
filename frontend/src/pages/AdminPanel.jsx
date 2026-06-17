@@ -2,7 +2,8 @@ import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X } from "lucide-react";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
 import AdminUsers from "@/pages/admin/AdminUsers";
@@ -114,6 +115,7 @@ export default function AdminPanel() {
               data-testid="admin-mobile-menu"
               className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
             >
+              <VisuallyHidden><SheetTitle>Menú de navegación admin</SheetTitle></VisuallyHidden>
               <div className="h-16 border-b border-white/5 flex items-center justify-between px-5">
                 <div className="flex items-center gap-3">
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />

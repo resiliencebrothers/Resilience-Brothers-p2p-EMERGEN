@@ -61,7 +61,7 @@ export default function AdminOrders() {
       </div>
       <div className="flex gap-2 mb-4">
         {["all", "pending", "requires_double_approval", "approved", "rejected", "completed"].map(f => (
-          <button key={f} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#EAB308] text-black border-[#EAB308]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
+          <button key={f} data-testid={`orders-filter-${f}`} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#EAB308] text-black border-[#EAB308]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
             {f}
           </button>
         ))}

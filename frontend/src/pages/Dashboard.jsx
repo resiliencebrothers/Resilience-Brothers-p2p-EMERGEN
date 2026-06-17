@@ -2,7 +2,8 @@ import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, X } from "lucide-react";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
 import OrdersView from "@/pages/dashboard/OrdersView";
 import VipView from "@/pages/dashboard/VipView";
@@ -125,6 +126,7 @@ export default function Dashboard() {
               data-testid="dashboard-mobile-menu"
               className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
             >
+              <VisuallyHidden><SheetTitle>Menú de navegación</SheetTitle></VisuallyHidden>
               <div className="h-16 border-b border-white/5 flex items-center justify-between px-5">
                 <div className="flex items-center gap-3">
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
