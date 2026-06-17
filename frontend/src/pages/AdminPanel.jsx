@@ -1,6 +1,8 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
+import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X } from "lucide-react";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
 import AdminUsers from "@/pages/admin/AdminUsers";
@@ -15,6 +17,7 @@ import PushToggle from "@/components/PushToggle";
 export default function AdminPanel() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const items = [
     { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
@@ -30,8 +33,44 @@ export default function AdminPanel() {
     ] : []),
   ];
 
+  const navLinkClass = ({ isActive }) =>
+    `flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
+      isActive
+        ? "bg-[#EAB308] text-black font-semibold"
+        : "text-neutral-400 hover:bg-white/5 hover:text-white"
+    }`;
+
+  const renderNavLinks = (onItemClick) => (
+    <>
+      {items.map((it) => (
+        <NavLink
+          key={it.to}
+          to={it.to}
+          end={it.end}
+          data-testid={it.id}
+          onClick={onItemClick}
+          className={navLinkClass}
+        >
+          <it.icon className="w-4 h-4" />
+          {it.label}
+          {it.highlight && (
+            <span className="ml-auto text-[0.6rem] bg-[#EAB308]/20 text-[#EAB308] px-1.5 py-0.5">ADMIN</span>
+          )}
+        </NavLink>
+      ))}
+      <button
+        data-testid="back-to-dashboard"
+        onClick={() => { onItemClick?.(); navigate("/dashboard"); }}
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-neutral-500 hover:text-white mt-4"
+      >
+        <ArrowLeft className="w-4 h-4" /> Volver al cliente
+      </button>
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white flex">
+      {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
         <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3">
           <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-10 w-10 object-contain" />
@@ -40,30 +79,12 @@ export default function AdminPanel() {
             <div className="micro-label text-[#EAB308] text-[0.6rem]">Control Room</div>
           </div>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
-          {items.map(it => (
-            <NavLink
-              key={it.to}
-              to={it.to}
-              end={it.end}
-              data-testid={it.id}
-              className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${isActive ? "bg-[#EAB308] text-black font-semibold" : "text-neutral-400 hover:bg-white/5 hover:text-white"}`}
-            >
-              <it.icon className="w-4 h-4" />
-              {it.label}
-            </NavLink>
-          ))}
-          <button
-            data-testid="back-to-dashboard"
-            onClick={() => navigate("/dashboard")}
-            className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-neutral-500 hover:text-white mt-4"
-          >
-            <ArrowLeft className="w-4 h-4" /> Volver al cliente
-          </button>
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {renderNavLinks()}
         </nav>
         <div className="p-4 border-t border-white/5">
           <div className="text-sm font-medium truncate">{user?.name}</div>
-          <div className="micro-label text-[#EAB308] mb-3">ADMIN</div>
+          <div className="micro-label text-[#EAB308] mb-3">{user?.role?.toUpperCase()}</div>
           <div className="mb-2"><PushToggle /></div>
           <button data-testid="admin-logout" onClick={logout} className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 px-3 py-2">
             <LogOut className="w-4 h-4" /> Cerrar Sesión
@@ -72,21 +93,62 @@ export default function AdminPanel() {
       </aside>
 
       <main className="flex-1 lg:ml-64">
-        <div className="lg:hidden sticky top-0 z-30 glass-panel h-14 px-4 flex items-center justify-between">
+        {/* Mobile top bar with hamburger menu */}
+        <div className="lg:hidden sticky top-0 z-30 glass-panel h-14 px-4 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-2">
             <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
             <span className="font-display text-sm">ADMIN</span>
+            <span className="micro-label text-[#EAB308] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
           </div>
-          <button onClick={logout}><LogOut className="w-5 h-5" /></button>
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <button
+                data-testid="admin-mobile-menu-trigger"
+                className="flex items-center gap-2 border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#EAB308] px-3 py-1.5 text-xs uppercase tracking-wider font-mono"
+              >
+                <Menu className="w-4 h-4" /> Menú
+              </button>
+            </SheetTrigger>
+            <SheetContent
+              side="right"
+              data-testid="admin-mobile-menu"
+              className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
+            >
+              <div className="h-16 border-b border-white/5 flex items-center justify-between px-5">
+                <div className="flex items-center gap-3">
+                  <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
+                  <div>
+                    <div className="font-display text-sm">ADMIN</div>
+                    <div className="micro-label text-[#EAB308] text-[0.55rem]">Control Room</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setMobileOpen(false)}
+                  data-testid="admin-mobile-menu-close"
+                  className="text-neutral-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+                {renderNavLinks(() => setMobileOpen(false))}
+              </nav>
+              <div className="p-4 border-t border-white/5">
+                <div className="text-sm font-medium truncate">{user?.name}</div>
+                <div className="micro-label text-[#EAB308] mb-3">{user?.role?.toUpperCase()}</div>
+                <div className="mb-2"><PushToggle /></div>
+                <button
+                  data-testid="admin-mobile-logout"
+                  onClick={logout}
+                  className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 px-3 py-2"
+                >
+                  <LogOut className="w-4 h-4" /> Cerrar Sesión
+                </button>
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
-        <div className="lg:hidden flex overflow-x-auto border-b border-white/5 bg-[#0c0c0c]">
-          {items.map(it => (
-            <NavLink key={it.to} to={it.to} end={it.end}
-              className={({ isActive }) => `flex-shrink-0 px-4 py-3 text-xs uppercase tracking-wider ${isActive ? "text-[#EAB308] border-b-2 border-[#EAB308]" : "text-neutral-500"}`}>
-              {it.label}
-            </NavLink>
-          ))}
-        </div>
+
         <div className="p-6 lg:p-10">
           <Routes>
             <Route index element={<AdminOverview />} />
