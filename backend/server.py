@@ -30,6 +30,7 @@ from audit_log import log_action
 import totp_service
 from audit_pdf import generate_audit_pdf
 from transactions_pdf import generate_transactions_pdf
+from revenue_report import build_buckets, revenue_monthly_csv, revenue_monthly_pdf
 import csv
 import json as _json
 
@@ -1894,6 +1895,94 @@ async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
         "items": items,
         "deliveries": len(rows),
     }
+
+
+# ============== REVENUE TIME SERIES (daily/monthly) ==============
+
+async def _build_revenue_timeseries(granularity: str, days: Optional[int] = None,
+                                      year: Optional[int] = None, month: Optional[int] = None):
+    """Build per-day or per-month buckets for the admin revenue dashboard.
+
+    Filters:
+      - `days`: restrict to last N days (preferred for daily charts).
+      - `year`/`month`: restrict to a specific calendar month (used for the monthly export).
+    """
+    order_q: dict = {"status": {"$in": ["approved", "completed"]}}
+    redemption_q: dict = {"status": "delivered"}
+
+    if year and month:
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        if month == 12:
+            end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+        order_q["updated_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
+        redemption_q["created_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
+    elif days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        order_q["updated_at"] = {"$gte": cutoff}
+        redemption_q["created_at"] = {"$gte": cutoff}
+
+    orders = await db.orders.find(order_q, {"_id": 0}).to_list(5000)
+    redemptions = await db.redemptions.find(redemption_q, {"_id": 0}).to_list(5000)
+    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
+    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
+    fx = await _build_rate_lookup()
+
+    # Pre-compute USDT volume + USDT profit per order so bucket aggregator stays simple.
+    profit_map: dict = {}
+    for o in orders:
+        o["_volume_usdt"] = _convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
+        rate_doc = rate_by_pair.get((o["from_code"], o["to_code"]))
+        prof = await _compute_order_profit(o, rate_doc)
+        if prof is None:
+            continue
+        prof_usdt = _convert_to_usdt(prof["amount"], prof["currency"], fx) or 0.0
+        profit_map[o["id"]] = prof_usdt
+
+    return build_buckets(orders, redemptions, profit_map, granularity)
+
+
+@api_router.get("/admin/revenue/timeseries")
+async def admin_revenue_timeseries(request: Request, granularity: str = "day",
+                                     days: Optional[int] = None):
+    """Daily or monthly profit buckets. Used by the Ingresos page."""
+    await require_admin(request)
+    if granularity not in ("day", "month"):
+        raise HTTPException(status_code=400, detail="granularity inválida (day|month)")
+    rows = await _build_revenue_timeseries(granularity, days=days)
+    return {"granularity": granularity, "rows": rows}
+
+
+@api_router.get("/admin/revenue/monthly/export")
+async def admin_revenue_monthly_export(request: Request, year: int, month: int,
+                                          format: str = "csv"):
+    """Export the daily breakdown of a calendar month as CSV or PDF."""
+    await require_admin(request)
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="mes inválido")
+    if format not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="formato inválido (csv|pdf)")
+
+    rows = await _build_revenue_timeseries("day", year=year, month=month)
+    rows_asc = sorted(rows, key=lambda x: x["bucket"])
+    period_label = f"{year}-{month:02d}"
+
+    if format == "csv":
+        payload = revenue_monthly_csv(rows_asc, period_label)
+        headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.csv"'}
+        return Response(content=payload, media_type="text/csv; charset=utf-8", headers=headers)
+
+    totals = {
+        "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
+        "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
+        "total": sum(r["total_profit_usdt"] for r in rows_asc),
+        "volume": sum(r["volume_usdt"] for r in rows_asc),
+        "orders": sum(r["orders"] for r in rows_asc),
+    }
+    payload = revenue_monthly_pdf(rows_asc, period_label, totals)
+    headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.pdf"'}
+    return Response(content=payload, media_type="application/pdf", headers=headers)
 
 
 # ============== USERS (ADMIN) ==============

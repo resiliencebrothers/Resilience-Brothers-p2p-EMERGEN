@@ -2,20 +2,31 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Calendar, Download, FileText } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 export default function AdminRevenue() {
   const [data, setData] = useState(null);
   const [days, setDays] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [daily, setDaily] = useState([]);
+  const [monthly, setMonthly] = useState([]);
+  const [dailyRange, setDailyRange] = useState("30");
+  const [exporting, setExporting] = useState(null); // `${YYYY-MM}-${csv|pdf}`
 
   const load = async () => {
     setLoading(true);
     try {
       const params = days === "all" ? {} : { days: parseInt(days) };
-      const r = await axios.get(`${API}/admin/revenue`, { params, withCredentials: true });
+      const [r, d, m] = await Promise.all([
+        axios.get(`${API}/admin/revenue`, { params, withCredentials: true }),
+        axios.get(`${API}/admin/revenue/timeseries`, { params: { granularity: "day", days: parseInt(dailyRange) }, withCredentials: true }),
+        axios.get(`${API}/admin/revenue/timeseries`, { params: { granularity: "month" }, withCredentials: true }),
+      ]);
       setData(r.data);
+      setDaily(d.data.rows || []);
+      setMonthly(m.data.rows || []);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
     } finally {
@@ -23,7 +34,35 @@ export default function AdminRevenue() {
     }
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [days]);
+  useEffect(() => { load(); }, [days, dailyRange]);
+
+  const downloadMonth = async (bucket, format) => {
+    const [year, month] = bucket.split("-");
+    setExporting(`${bucket}-${format}`);
+    try {
+      const res = await axios.get(
+        `${API}/admin/revenue/monthly/export`,
+        {
+          params: { year: parseInt(year), month: parseInt(month), format },
+          withCredentials: true,
+          responseType: "blob",
+        }
+      );
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ganancia-${bucket}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Descargado ${format.toUpperCase()}`);
+    } catch (e) {
+      toast.error("Error al exportar");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   if (loading || !data) return <div className="text-neutral-400 micro-label">Cargando ingresos...</div>;
 
@@ -162,6 +201,121 @@ export default function AdminRevenue() {
           </table>
         </div>
       </div>
+      {/* DAILY REGISTRY */}
+      <div className="tactile-card overflow-hidden" data-testid="revenue-daily-card">
+        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 className="font-display text-lg flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-[#EAB308]" /> Registro Diario
+            </h2>
+            <p className="text-xs text-neutral-500 mt-1">Ganancia consolidada por día (P2P + Marketplace, en USDT).</p>
+          </div>
+          <Select value={dailyRange} onValueChange={setDailyRange}>
+            <SelectTrigger data-testid="daily-range" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectItem value="7">Últimos 7 días</SelectItem>
+              <SelectItem value="14">Últimos 14 días</SelectItem>
+              <SelectItem value="30">Últimos 30 días</SelectItem>
+              <SelectItem value="60">Últimos 60 días</SelectItem>
+              <SelectItem value="90">Últimos 90 días</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[#0a0a0a]">
+              <tr className="text-left">
+                <th className="px-4 py-3 micro-label text-neutral-500">Fecha</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Órdenes</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Volumen</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">P2P</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Marketplace</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Total</th>
+              </tr>
+            </thead>
+            <tbody data-testid="daily-rows">
+              {daily.length === 0 && (
+                <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Sin movimientos en este rango.</td></tr>
+              )}
+              {daily.map(d => (
+                <tr key={d.bucket} className="border-b border-white/5">
+                  <td className="px-4 py-3 font-mono">{d.bucket}</td>
+                  <td className="px-4 py-3 font-mono">{d.orders}</td>
+                  <td className="px-4 py-3 font-mono text-neutral-400">{fmt(d.volume_usdt)} USDT</td>
+                  <td className="px-4 py-3 font-mono">{fmt(d.p2p_profit_usdt)} USDT</td>
+                  <td className="px-4 py-3 font-mono">{fmt(d.marketplace_profit_usdt)} USDT</td>
+                  <td className="px-4 py-3 font-mono text-[#22C55E] font-bold">{fmt(d.total_profit_usdt)} USDT</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MONTHLY REGISTRY */}
+      <div className="tactile-card overflow-hidden" data-testid="revenue-monthly-card">
+        <div className="px-6 py-4 border-b border-white/10">
+          <h2 className="font-display text-lg flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-[#EAB308]" /> Registro Mensual
+          </h2>
+          <p className="text-xs text-neutral-500 mt-1">Descarga el detalle diario de cada mes en CSV o PDF para auditoría/contabilidad.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-[#0a0a0a]">
+              <tr className="text-left">
+                <th className="px-4 py-3 micro-label text-neutral-500">Mes</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Órdenes</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Volumen</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">P2P</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Marketplace</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Total</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Exportar</th>
+              </tr>
+            </thead>
+            <tbody data-testid="monthly-rows">
+              {monthly.length === 0 && (
+                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Aún no hay meses con datos.</td></tr>
+              )}
+              {monthly.map(m => (
+                <tr key={m.bucket} className="border-b border-white/5">
+                  <td className="px-4 py-3 font-mono font-semibold">{m.bucket}</td>
+                  <td className="px-4 py-3 font-mono">{m.orders}</td>
+                  <td className="px-4 py-3 font-mono text-neutral-400">{fmt(m.volume_usdt)} USDT</td>
+                  <td className="px-4 py-3 font-mono">{fmt(m.p2p_profit_usdt)} USDT</td>
+                  <td className="px-4 py-3 font-mono">{fmt(m.marketplace_profit_usdt)} USDT</td>
+                  <td className="px-4 py-3 font-mono text-[#22C55E] font-bold">{fmt(m.total_profit_usdt)} USDT</td>
+                  <td className="px-4 py-3">
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        data-testid={`export-csv-${m.bucket}`}
+                        disabled={exporting === `${m.bucket}-csv`}
+                        onClick={() => downloadMonth(m.bucket, "csv")}
+                        className="rounded-none bg-transparent border border-white/10 hover:bg-white/5 h-8 text-xs"
+                      >
+                        <FileText className="w-3 h-3 mr-1" /> CSV
+                      </Button>
+                      <Button
+                        size="sm"
+                        data-testid={`export-pdf-${m.bucket}`}
+                        disabled={exporting === `${m.bucket}-pdf`}
+                        onClick={() => downloadMonth(m.bucket, "pdf")}
+                        className="rounded-none bg-[#EAB308] hover:bg-[#FACC15] text-black h-8 text-xs"
+                      >
+                        <Download className="w-3 h-3 mr-1" /> PDF
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* MARKETPLACE */}
       <div className="tactile-card overflow-hidden" data-testid="revenue-marketplace">
         <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-2">
