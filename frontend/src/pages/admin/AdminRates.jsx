@@ -2,19 +2,29 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import { Plus, Edit2, Trash2 } from "lucide-react";
+import { Plus, Edit2, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 const empty = { from_code: "", to_code: "", rate_normal: 0, rate_vip: 0, real_rate: "" };
 
 export default function AdminRates() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === "admin";
+  const allowedCurrencies = currentUser?.allowed_currencies || [];
+  const isScoped = !isAdmin && allowedCurrencies.length > 0;
+
+  // Iter14: employees with allowed_currencies can only manage rates that involve one of those currencies
+  const canEditRate = (r) =>
+    isAdmin || !isScoped || allowedCurrencies.includes(r.from_code) || allowedCurrencies.includes(r.to_code);
+
   const [rates, setRates] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [open, setOpen] = useState(false);
@@ -97,19 +107,30 @@ export default function AdminRates() {
             </tr>
           </thead>
           <tbody>
-            {rates.map(r => (
-              <tr key={r.id} className="border-b border-white/5">
-                <td className="px-4 py-3 font-mono font-semibold">{r.from_code} → {r.to_code}</td>
-                <td className="px-4 py-3 font-mono">{r.rate_normal}</td>
-                <td className="px-4 py-3 font-mono text-[#EAB308]">{r.rate_vip}</td>
-                <td className="px-4 py-3 font-mono text-[#22C55E]">{r.real_rate ?? "—"}</td>
-                <td className="px-4 py-3 text-xs text-neutral-500">{new Date(r.updated_at).toLocaleString()}</td>
-                <td className="px-4 py-3 text-right">
-                  <button onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "" }); setOpen(true); }} className="text-neutral-400 hover:text-[#EAB308] mr-3"><Edit2 className="w-4 h-4" /></button>
-                  <button onClick={() => remove(r.id)} className="text-neutral-400 hover:text-[#EF4444]"><Trash2 className="w-4 h-4" /></button>
-                </td>
-              </tr>
-            ))}
+            {rates.map(r => {
+              const editable = canEditRate(r);
+              return (
+                <tr key={r.id} className={`border-b border-white/5 ${editable ? "" : "opacity-60"}`} data-testid={`rate-row-${r.id}`}>
+                  <td className="px-4 py-3 font-mono font-semibold">{r.from_code} → {r.to_code}</td>
+                  <td className="px-4 py-3 font-mono">{r.rate_normal}</td>
+                  <td className="px-4 py-3 font-mono text-[#EAB308]">{r.rate_vip}</td>
+                  <td className="px-4 py-3 font-mono text-[#22C55E]">{r.real_rate ?? "—"}</td>
+                  <td className="px-4 py-3 text-xs text-neutral-500">{new Date(r.updated_at).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">
+                    {editable ? (
+                      <>
+                        <button data-testid={`edit-rate-${r.id}`} onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "" }); setOpen(true); }} className="text-neutral-400 hover:text-[#EAB308] mr-3"><Edit2 className="w-4 h-4" /></button>
+                        <button data-testid={`delete-rate-${r.id}`} onClick={() => remove(r.id)} className="text-neutral-400 hover:text-[#EF4444]"><Trash2 className="w-4 h-4" /></button>
+                      </>
+                    ) : (
+                      <span title="Fuera de tu scope de monedas" className="inline-flex items-center gap-1 text-neutral-600 text-xs">
+                        <Lock className="w-3 h-3" /> sin acceso
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

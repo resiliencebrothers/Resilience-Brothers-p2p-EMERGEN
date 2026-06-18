@@ -146,6 +146,46 @@ class TestEmployeeAllowedCurrencies:
                 f"Order {o['id']} ({o['from_code']}→{o['to_code']}) leaked through"
             )
 
+    def test_cannot_update_unauthorized_rate(self):
+        """Iter14 extension: employees may only edit rates that touch their scope."""
+        all_rates = requests.get(f"{BASE_URL}/api/rates").json()
+        target = next(
+            (r for r in all_rates if "BRL" not in (r["from_code"], r["to_code"])),
+            None,
+        )
+        if not target:
+            pytest.skip("No non-BRL rates")
+        r = requests.put(
+            f"{BASE_URL}/api/admin/rates/{target['id']}",
+            headers=_h(EMPLOYEE_TOKEN),
+            json={**target, "totp_code": make_employee_totp()},
+        )
+        assert r.status_code == 403
+
+    def test_can_update_authorized_rate(self):
+        """Employee with BRL scope can still edit a USDT->BRL rate (BRL is in scope)."""
+        all_rates = requests.get(f"{BASE_URL}/api/rates").json()
+        target = next(
+            (r for r in all_rates if "BRL" in (r["from_code"], r["to_code"])),
+            None,
+        )
+        if not target:
+            pytest.skip("No BRL rates to test against")
+        body = {
+            "from_code": target["from_code"],
+            "to_code": target["to_code"],
+            "rate_normal": target["rate_normal"],
+            "rate_vip": target["rate_vip"],
+            "real_rate": target.get("real_rate"),
+            "totp_code": make_employee_totp(),
+        }
+        r = requests.put(
+            f"{BASE_URL}/api/admin/rates/{target['id']}",
+            headers=_h(EMPLOYEE_TOKEN),
+            json=body,
+        )
+        assert r.status_code == 200, r.text
+
     def test_cannot_update_unauthorized_order(self):
         # Pick any non-BRL order
         all_orders = requests.get(

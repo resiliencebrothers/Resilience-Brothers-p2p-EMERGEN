@@ -252,6 +252,24 @@ async def require_staff(request: Request) -> dict:
         raise HTTPException(status_code=403, detail="Staff only")
     return user
 
+
+def _enforce_employee_currency_scope(actor: dict, *codes: str) -> None:
+    """Iter14: employees may only act on entities involving currencies they're
+    authorized for. Admins bypass. Empty `allowed_currencies` = unrestricted."""
+    if actor.get("role") != "employee":
+        return
+    allowed = actor.get("allowed_currencies") or []
+    if not allowed:
+        return
+    codes = [c for c in codes if c]
+    if not codes:
+        return
+    if not any(c in allowed for c in codes):
+        raise HTTPException(
+            status_code=403,
+            detail=f"No estás autorizado a gestionar las monedas: {', '.join(codes)}",
+        )
+
 @api_router.post("/auth/session")
 async def auth_session(payload: dict, response: Response):
     session_id = payload.get("session_id")
@@ -363,7 +381,8 @@ async def list_rates():
 
 @api_router.post("/admin/rates")
 async def create_rate(payload: ExchangeRateCreate, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
+    _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
     existing = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
     if existing:
         await db.rates.update_one(
@@ -379,7 +398,10 @@ async def create_rate(payload: ExchangeRateCreate, request: Request):
 async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
     actor = await require_staff(request)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar tasa")
+    _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
     old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
+    if old:
+        _enforce_employee_currency_scope(actor, old["from_code"], old["to_code"])
     rate_data = payload.model_dump(exclude={"totp_code"})
     await db.rates.update_one(
         {"id": rate_id},
@@ -421,7 +443,10 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
 
 @api_router.delete("/admin/rates/{rate_id}")
 async def delete_rate(rate_id: str, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
+    existing = await db.rates.find_one({"id": rate_id}, {"_id": 0})
+    if existing:
+        _enforce_employee_currency_scope(actor, existing["from_code"], existing["to_code"])
     await db.rates.delete_one({"id": rate_id})
     return {"ok": True}
 
@@ -628,14 +653,7 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
             detail="Esta transferencia ya fue confirmada. Solo un admin puede cambiar su estado.",
         )
     # iter14: employee currency scope — only act on orders touching authorized currencies
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed:
-            if order["from_code"] not in allowed and order["to_code"] not in allowed:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"No estás autorizado a gestionar {order['from_code']}→{order['to_code']}",
-                )
+    _enforce_employee_currency_scope(actor, order["from_code"], order["to_code"])
     # Defensive: only admin can approve orders that require double-approval
     if (order.get("status") == "requires_double_approval"
             and new_status == "approved"
@@ -1016,13 +1034,7 @@ async def update_withdrawal(wid: str, payload: dict, request: Request):
             detail="Este retiro ya fue entregado. Solo un admin puede modificarlo.",
         )
     # iter14: employees only act on currencies they're authorized for
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed and w.get("currency") not in allowed:
-            raise HTTPException(
-                status_code=403,
-                detail=f"No estás autorizado a gestionar retiros en {w.get('currency')}",
-            )
+    _enforce_employee_currency_scope(actor, w.get("currency"))
     if new_status == "rejected" and w["status"] != "rejected":
         refund_currency = w.get("currency", "USD")
         await db.users.update_one(
