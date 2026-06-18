@@ -1,7 +1,7 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt, Inbox, Wallet } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -14,6 +14,8 @@ import AdminOverview from "@/pages/admin/AdminOverview";
 import AdminRevenue from "@/pages/admin/AdminRevenue";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import AdminTransactions from "@/pages/admin/AdminTransactions";
+import AdminQueue from "@/pages/admin/AdminQueue";
+import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import PushToggle from "@/components/PushToggle";
 
 export default function AdminPanel() {
@@ -24,12 +26,14 @@ export default function AdminPanel() {
 
   const items = [
     { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
+    { to: "/admin/queue", icon: Inbox, label: "Mi Cola", id: "admin-nav-queue", highlight: true },
     { to: "/admin/orders", icon: ListChecks, label: "Órdenes", id: "admin-nav-orders" },
     { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros", id: "admin-nav-withdrawals" },
     { to: "/admin/currencies", icon: Coins, label: "Monedas", id: "admin-nav-currencies" },
     { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
     { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
     { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
+    { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
     ...(isStaff ? [
       { to: "/admin/transactions", icon: Receipt, label: "Transacciones", id: "admin-nav-transactions", highlight: true },
     ] : []),
@@ -159,6 +163,8 @@ export default function AdminPanel() {
         <div className="p-6 lg:p-10">
           <Routes>
             <Route index element={<AdminOverview />} />
+            <Route path="queue" element={<AdminQueue />} />
+            <Route path="company-funds" element={<AdminCompanyFunds />} />
             <Route path="orders" element={<AdminOrders />} />
             <Route path="withdrawals" element={<AdminWithdrawals />} />
             <Route path="currencies" element={<AdminCurrencies />} />
