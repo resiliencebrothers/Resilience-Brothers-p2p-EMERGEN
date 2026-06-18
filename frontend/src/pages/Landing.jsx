@@ -40,7 +40,7 @@ export default function Landing() {
           </nav>
           <Button
             data-testid="header-login-btn"
-            onClick={handleEnter}
+            onClick={user ? handleEnter : handleEmailAuth}
             className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-semibold rounded-none px-5 h-10"
           >
             {user ? "Entrar al Panel" : "Iniciar Sesión"} <ArrowUpRight className="w-4 h-4 ml-1" />
