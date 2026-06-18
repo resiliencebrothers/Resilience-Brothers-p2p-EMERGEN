@@ -41,7 +41,10 @@ export default function ExchangeView() {
   const fromCurr = currencies.find(c => c.code === fromCode);
   const toCurr = currencies.find(c => c.code === toCode);
 
-  const rate = selectedRate ? (isVip ? selectedRate.rate_vip : selectedRate.rate_normal) : 0;
+  let rate = 0;
+  if (selectedRate) {
+    rate = isVip ? selectedRate.rate_vip : selectedRate.rate_normal;
+  }
   const commission = isVip ? 0 : 5;
   const amt = parseFloat(amount) || 0;
   const gross = amt * rate;

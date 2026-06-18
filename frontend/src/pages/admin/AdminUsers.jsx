@@ -11,6 +11,13 @@ import { Search } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
+const ROLE_LABELS = {
+  normal: "Normal",
+  vip: "VIP",
+  employee: "Empleado",
+  admin: "Admin",
+};
+
 export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
@@ -128,13 +135,13 @@ export default function AdminUsers() {
                     <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
                       {allowedRoles.map(role => (
                         <SelectItem key={role} value={role}>
-                          {role === "normal" ? "Normal" : role === "vip" ? "VIP" : role === "employee" ? "Empleado" : "Admin"}
+                          {ROLE_LABELS[role] || role}
                         </SelectItem>
                       ))}
                       {/* Show current role if not in allowedRoles (for employees viewing admins) */}
                       {!allowedRoles.includes(u.role) && (
                         <SelectItem key={u.role} value={u.role} disabled>
-                          {u.role === "admin" ? "Admin" : "Empleado"}
+                          {ROLE_LABELS[u.role] || u.role}
                         </SelectItem>
                       )}
                     </SelectContent>

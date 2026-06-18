@@ -10,6 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Wallet, ArrowDownToLine, FileDown, Coins } from "lucide-react";
 
+const WITHDRAWAL_STATUS_STYLES = {
+  paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
+  approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
+  rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
+  pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+};
+
 export default function VipView() {
   const { user, refresh } = useAuth();
   const [withdrawals, setWithdrawals] = useState([]);
@@ -223,9 +230,7 @@ export default function VipView() {
                     <div className="text-xs text-neutral-500 mt-1">{new Date(w.created_at).toLocaleString()}</div>
                   </div>
                   <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${
-                    w.status === "paid" ? "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" :
-                    w.status === "rejected" ? "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" :
-                    "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30"
+                    WITHDRAWAL_STATUS_STYLES[w.status] || WITHDRAWAL_STATUS_STYLES.pending
                   }`}>{w.status}</span>
                 </div>
               </div>

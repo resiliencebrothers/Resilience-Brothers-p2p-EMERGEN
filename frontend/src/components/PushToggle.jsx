@@ -93,7 +93,9 @@ export default function PushToggle() {
   if (status === "unsupported") return null;
 
   const isOn = status === "subscribed";
-  const Icon = isOn ? BellRing : status === "denied" ? BellOff : Bell;
+  let Icon = Bell;
+  if (isOn) Icon = BellRing;
+  else if (status === "denied") Icon = BellOff;
 
   return (
     <button
@@ -103,7 +105,11 @@ export default function PushToggle() {
           toast.error("Las notificaciones están bloqueadas. Habilítalas desde la configuración del navegador.");
           return;
         }
-        isOn ? unsubscribe() : subscribe();
+        if (isOn) {
+          unsubscribe();
+        } else {
+          subscribe();
+        }
       }}
       disabled={busy}
       title={isOn ? "Desactivar notificaciones" : "Activar notificaciones"}

@@ -11,6 +11,13 @@ import MarketplaceView from "@/pages/dashboard/MarketplaceView";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import PushToggle from "@/components/PushToggle";
 
+const ROLE_LABELS = {
+  normal: "Cliente",
+  vip: "VIP",
+  admin: "Admin",
+  employee: "Empleado",
+};
+
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -72,7 +79,7 @@ export default function Dashboard() {
         <div className="min-w-0">
           <div className="text-sm font-medium truncate">{user?.name}</div>
           <div className="micro-label text-neutral-500">
-            {user?.role === "vip" ? "VIP" : user?.role === "admin" ? "Admin" : user?.role === "employee" ? "Empleado" : "Cliente"}
+            {ROLE_LABELS[user?.role] || "Cliente"}
           </div>
         </div>
       </div>
