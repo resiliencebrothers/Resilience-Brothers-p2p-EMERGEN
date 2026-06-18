@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import axios from "axios";
 import { API } from "@/App";
@@ -11,8 +11,11 @@ export default function VerifyEmail() {
   const { setUser } = useAuth();
   const [state, setState] = useState("loading"); // loading | ok | err
   const [msg, setMsg] = useState("");
+  const didRun = useRef(false);
 
   useEffect(() => {
+    if (didRun.current) return;
+    didRun.current = true;
     axios.get(`${API}/auth/verify-email/${token}`, { withCredentials: true })
       .then((r) => { setUser(r.data); setState("ok");
         setTimeout(() => navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard"), 1800);
