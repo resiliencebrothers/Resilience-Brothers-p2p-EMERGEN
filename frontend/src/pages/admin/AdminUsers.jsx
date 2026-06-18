@@ -29,6 +29,7 @@ export default function AdminUsers() {
   const [editingCurrencies, setEditingCurrencies] = useState({});
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -36,7 +37,7 @@ export default function AdminUsers() {
   // Pending 2FA: { user_id, payload, label }
   const [pendingTotp, setPendingTotp] = useState(null);
 
-  useEffect(() => { setPage(0); }, [search]);
+  useEffect(() => { setPage(0); }, [search, roleFilter]);
 
   // Debounce search input → 300ms
   useEffect(() => {
@@ -49,6 +50,7 @@ export default function AdminUsers() {
     try {
       const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
       if (search) params.q = search;
+      if (roleFilter !== "all") params.role = roleFilter;
       const r = await axios.get(`${API}/admin/users`, { params, withCredentials: true });
       setUsers(r.data);
       const t = Number(r.headers["x-total-count"]);
@@ -58,7 +60,7 @@ export default function AdminUsers() {
     } finally {
       setLoading(false);
     }
-  }, [page, search]);
+  }, [page, search, roleFilter]);
   useEffect(() => { load(); }, [load]);
 
   // Load active currencies once (for employee allowed_currencies UI)
@@ -115,7 +117,7 @@ export default function AdminUsers() {
         <div className="micro-label text-[#EAB308] mb-2">/ Usuarios</div>
         <h1 className="font-display text-3xl">Gestión de Clientes</h1>
       </div>
-      <div className="flex items-end gap-3 mb-4">
+      <div className="flex items-end gap-3 mb-4 flex-wrap">
         <div>
           <div className="micro-label text-neutral-500 mb-1">Buscar (nombre o email)</div>
           <div className="relative">
@@ -129,15 +131,33 @@ export default function AdminUsers() {
             />
           </div>
         </div>
-        {searchInput && (
+        <div>
+          <div className="micro-label text-neutral-500 mb-1">Rol</div>
+          <Select value={roleFilter} onValueChange={setRoleFilter}>
+            <SelectTrigger data-testid="users-role-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectItem value="all">Todos los roles</SelectItem>
+              <SelectItem value="normal">Cliente Normal</SelectItem>
+              <SelectItem value="vip">VIP</SelectItem>
+              <SelectItem value="employee">Staff Member</SelectItem>
+              <SelectItem value="admin">Admin</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {(searchInput || roleFilter !== "all") && (
           <button
             data-testid="users-clear-search"
-            onClick={() => setSearchInput("")}
+            onClick={() => { setSearchInput(""); setRoleFilter("all"); }}
             className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10"
           >
-            limpiar
+            limpiar filtros
           </button>
         )}
+        <div className="ml-auto text-xs text-neutral-500" data-testid="users-result-count">
+          {total} {total === 1 ? "resultado" : "resultados"}
+        </div>
       </div>
       <div className="tactile-card overflow-hidden">
         <table className="w-full text-sm">

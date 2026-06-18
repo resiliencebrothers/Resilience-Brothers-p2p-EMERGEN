@@ -2110,6 +2110,7 @@ async def admin_revenue_send_now(payload: dict, request: Request):
 
 @api_router.get("/admin/users")
 async def list_users(request: Request, q: Optional[str] = None,
+                     role: Optional[str] = None,
                      limit: int = 1000, offset: int = 0):
     await require_staff(request)
     mongo_q = {}
@@ -2117,6 +2118,8 @@ async def list_users(request: Request, q: Optional[str] = None,
         # case-insensitive search by name or email
         rx = {"$regex": q, "$options": "i"}
         mongo_q["$or"] = [{"name": rx}, {"email": rx}]
+    if role and role in ("normal", "vip", "employee", "admin"):
+        mongo_q["role"] = role
     limit = max(1, min(limit, 1000))
     offset = max(0, offset)
     total = await db.users.count_documents(mongo_q)
