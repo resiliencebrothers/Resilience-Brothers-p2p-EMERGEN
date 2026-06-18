@@ -1284,6 +1284,9 @@ async def _build_transactions(direction: Optional[str], currency: Optional[str],
                 "ref_id": o.get("id", ""),
                 "ref_type": "order",
                 "created_at": o.get("created_at", ""),
+                "proof_image": o.get("proof_image", ""),
+                "delivery_details": o.get("delivery_details", ""),
+                "admin_note": o.get("admin_note", ""),
             })
 
     # SALIDAS (withdrawals): approved/paid only, beneficiary_name required
@@ -1311,6 +1314,9 @@ async def _build_transactions(direction: Optional[str], currency: Optional[str],
                 "ref_id": w.get("id", ""),
                 "ref_type": "withdrawal",
                 "created_at": w.get("created_at", ""),
+                "proof_image": "",
+                "delivery_details": w.get("details", ""),
+                "admin_note": w.get("admin_note", ""),
             })
 
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
