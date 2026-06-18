@@ -25,7 +25,7 @@ export default function AdminPanel() {
   const items = [
     { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
     { to: "/admin/orders", icon: ListChecks, label: "Órdenes", id: "admin-nav-orders" },
-    { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros VIP", id: "admin-nav-withdrawals" },
+    { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros", id: "admin-nav-withdrawals" },
     { to: "/admin/currencies", icon: Coins, label: "Monedas", id: "admin-nav-currencies" },
     { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
     { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },

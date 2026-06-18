@@ -18,6 +18,8 @@ export default function OverviewView() {
   }, []);
 
   const isVip = user?.role === "vip" || user?.role === "admin";
+  const isStaff = user?.role === "admin" || user?.role === "employee";
+  const isClient = user && !isStaff;
   const pending = orders.filter(o => o.status === "pending").length;
   const approved = orders.filter(o => o.status === "approved" || o.status === "completed").length;
 
@@ -84,7 +86,7 @@ export default function OverviewView() {
               </div>
               <div className="micro-label text-neutral-500 mt-1">Historial completo</div>
             </Link>
-            {isVip && (
+            {isClient && (
               <Link to="/dashboard/marketplace" data-testid="quick-marketplace" className="block border border-white/10 hover:border-[#EAB308] p-4 transition-colors group">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">Marketplace</span>

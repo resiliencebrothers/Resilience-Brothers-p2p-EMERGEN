@@ -24,12 +24,13 @@ export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
-  const [editing, setEditing] = useState({});
+  const [editingCurrencies, setEditingCurrencies] = useState({});
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [currencies, setCurrencies] = useState([]);
   // Pending 2FA: { user_id, payload, label }
   const [pendingTotp, setPendingTotp] = useState(null);
 
@@ -58,6 +59,11 @@ export default function AdminUsers() {
   }, [page, search]);
   useEffect(() => { load(); }, [load]);
 
+  // Load active currencies once (for employee allowed_currencies UI)
+  useEffect(() => {
+    axios.get(`${API}/currencies`).then(r => setCurrencies(r.data || [])).catch(() => {});
+  }, []);
+
   const saveRole = (user_id, role) => {
     setPendingTotp({
       user_id,
@@ -66,13 +72,15 @@ export default function AdminUsers() {
     });
   };
 
-  const saveBalance = (user_id) => {
-    const val = parseFloat(editing[user_id]);
-    if (isNaN(val)) return toast.error("Valor inválido");
+  const saveAllowedCurrencies = (user_id, listText) => {
+    const list = listText
+      .split(",")
+      .map((c) => c.trim().toUpperCase())
+      .filter(Boolean);
     setPendingTotp({
       user_id,
-      payload: { vip_balance_usd: val },
-      label: "actualizar saldo VIP",
+      payload: { allowed_currencies: list },
+      label: list.length ? `asignar monedas (${list.join(", ")})` : "quitar restricción de monedas",
     });
   };
 
@@ -85,8 +93,8 @@ export default function AdminUsers() {
         { withCredentials: true }
       );
       toast.success("Usuario actualizado");
-      if ("vip_balance_usd" in payload) {
-        setEditing((prev) => ({ ...prev, [user_id]: undefined }));
+      if ("allowed_currencies" in payload) {
+        setEditingCurrencies((prev) => ({ ...prev, [user_id]: undefined }));
       }
       setPendingTotp(null);
       load();
@@ -137,13 +145,14 @@ export default function AdminUsers() {
               <th className="px-4 py-3 micro-label text-neutral-500">Usuario</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Email</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Saldo VIP</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Saldo (USDT eq.)</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Monedas autorizadas</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan="5" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
-            {!loading && users.length === 0 && <tr><td colSpan="5" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
+            {loading && <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
+            {!loading && users.length === 0 && <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
             {users.map(u => (
               <tr key={u.user_id} className="border-b border-white/5">
                 <td className="px-4 py-3 flex items-center gap-2">
@@ -173,16 +182,37 @@ export default function AdminUsers() {
                     </SelectContent>
                   </Select>
                 </td>
+                <td className="px-4 py-3 font-mono text-neutral-300" data-testid={`balance-${u.user_id}`}>
+                  {(() => {
+                    const legacy = Number(u.vip_balance_usd || 0);
+                    const dict = u.vip_balances || {};
+                    const parts = [];
+                    if (legacy > 0) parts.push(`${legacy.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD`);
+                    Object.entries(dict).filter(([, v]) => Number(v) > 0).forEach(([k, v]) => parts.push(`${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${k}`));
+                    return parts.length ? parts.join(" · ") : <span className="text-neutral-600">—</span>;
+                  })()}
+                </td>
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      defaultValue={u.vip_balance_usd}
-                      onChange={e => setEditing({ ...editing, [u.user_id]: e.target.value })}
-                      className="rounded-none w-28 h-9 bg-[#0a0a0a] border-white/10 font-mono"
-                    />
-                    <Button size="sm" onClick={() => saveBalance(u.user_id)} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-9">OK</Button>
-                  </div>
+                  {u.role === "employee" ? (
+                    <div className="flex items-center gap-2" data-testid={`allowed-currencies-row-${u.user_id}`}>
+                      <Input
+                        defaultValue={(u.allowed_currencies || []).join(", ")}
+                        placeholder={currencies.length ? "todas" : "ej. USDT, BRL"}
+                        onChange={(e) => setEditingCurrencies({ ...editingCurrencies, [u.user_id]: e.target.value })}
+                        className="rounded-none w-44 h-9 bg-[#0a0a0a] border-white/10 font-mono text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        data-testid={`save-currencies-${u.user_id}`}
+                        onClick={() => saveAllowedCurrencies(u.user_id, editingCurrencies[u.user_id] ?? (u.allowed_currencies || []).join(", "))}
+                        className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-9"
+                      >
+                        OK
+                      </Button>
+                    </div>
+                  ) : (
+                    <span className="text-neutral-600 text-xs">— sin restricción —</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500">{new Date(u.created_at).toLocaleDateString()}</td>
               </tr>

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,10 +19,21 @@ const STATUS_STYLES = {
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
 };
 
+// Iter14 — labels for order status (user requested: "Aprobado" → "Confirmado")
+const STATUS_LABELS = {
+  pending: "pendiente",
+  requires_double_approval: "doble aprobación",
+  approved: "confirmado",
+  completed: "completado",
+  rejected: "rechazado",
+};
+
 const PAGE_SIZE = 50;
 
 export default function AdminOrders() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
+  const isAdmin = currentUser?.role === "admin";
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
@@ -112,7 +124,7 @@ export default function AdminOrders() {
                   <td className="px-3 py-3 font-mono">{o.amount_from}</td>
                   <td className="px-3 py-3 font-mono text-[#EAB308]">{o.amount_to}</td>
                   <td className="px-3 py-3 text-xs">{o.delivery_method}</td>
-                  <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{o.status}</span></td>
+                  <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
                   <td className="px-3 py-3"><button onClick={() => { setOpen(o); setNote(o.admin_note || ""); }} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#EAB308]"><Eye className="w-4 h-4" /></button></td>
                 </tr>
               ))}
@@ -155,10 +167,36 @@ export default function AdminOrders() {
               )}
               <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota administrativa..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
               <div className="grid grid-cols-3 gap-2">
-                <Button data-testid="approve-order" onClick={() => updateStatus("approved")} className="bg-[#22C55E] hover:bg-[#16A34A] text-black rounded-none">Aprobar</Button>
-                <Button data-testid="complete-order" onClick={() => updateStatus("completed")} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">Completar</Button>
-                <Button data-testid="reject-order" onClick={() => updateStatus("rejected")} className="bg-[#EF4444] hover:bg-[#DC2626] text-white rounded-none">Rechazar</Button>
+                <Button
+                  data-testid="approve-order"
+                  onClick={() => updateStatus("approved")}
+                  disabled={!isAdmin && (open?.status === "approved" || open?.status === "completed" || open?.status === "rejected")}
+                  className="bg-[#22C55E] hover:bg-[#16A34A] text-black rounded-none disabled:opacity-40"
+                >
+                  Confirmar
+                </Button>
+                <Button
+                  data-testid="complete-order"
+                  onClick={() => updateStatus("completed")}
+                  disabled={!isAdmin && (open?.status === "completed" || open?.status === "rejected")}
+                  className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none disabled:opacity-40"
+                >
+                  Completar
+                </Button>
+                <Button
+                  data-testid="reject-order"
+                  onClick={() => updateStatus("rejected")}
+                  disabled={!isAdmin && (open?.status === "approved" || open?.status === "completed" || open?.status === "rejected")}
+                  className="bg-[#EF4444] hover:bg-[#DC2626] text-white rounded-none disabled:opacity-40"
+                >
+                  Rechazar
+                </Button>
               </div>
+              {!isAdmin && (open?.status === "approved" || open?.status === "completed") && (
+                <p className="text-[0.65rem] text-neutral-500 italic">
+                  Esta orden ya fue {STATUS_LABELS[open.status]}. Sólo un admin puede revertir su estado.
+                </p>
+              )}
             </div>
           )}
         </DialogContent>

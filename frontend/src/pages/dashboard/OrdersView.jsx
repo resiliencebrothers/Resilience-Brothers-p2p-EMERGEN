@@ -10,6 +10,14 @@ const STATUS_STYLES = {
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
 };
 
+const STATUS_LABELS = {
+  pending: "Pendiente",
+  approved: "Confirmado",
+  completed: "Completado",
+  rejected: "Rechazado",
+  requires_double_approval: "Doble aprobación",
+};
+
 export default function OrdersView() {
   const [orders, setOrders] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -48,7 +56,7 @@ export default function OrdersView() {
                   <td className="px-4 py-4 font-mono text-sm">{o.amount_from}</td>
                   <td className="px-4 py-4 font-mono text-sm text-[#EAB308]">{o.amount_to}</td>
                   <td className="px-4 py-4">
-                    <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[o.status]}`}>{o.status}</span>
+                    <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span>
                   </td>
                   <td className="px-4 py-4 text-xs text-neutral-400">{new Date(o.created_at).toLocaleString()}</td>
                 </tr>
@@ -74,7 +82,7 @@ export default function OrdersView() {
               <Row label="Entrega" value={selected.delivery_method} />
               <Row label="Detalles" value={selected.delivery_details || "—"} />
               <Row label="Titular" value={selected.sender_name} />
-              <Row label="Estado" value={selected.status} />
+              <Row label="Estado" value={STATUS_LABELS[selected.status] || selected.status} />
               {selected.admin_note && <Row label="Nota admin" value={selected.admin_note} />}
             </div>
             {selected.proof_image && (

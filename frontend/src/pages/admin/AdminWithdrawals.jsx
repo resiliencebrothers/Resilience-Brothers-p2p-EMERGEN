@@ -1,12 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
+import { Upload } from "lucide-react";
+
+const STATUS_LABEL = (status, method) => {
+  if (method === "cash") {
+    return ({ paid: "Entregado", approved: "En progreso", pending: "Pendiente", rejected: "Rechazado" })[status] || status;
+  }
+  return ({ paid: "Pagado", approved: "Confirmado", pending: "Pendiente", rejected: "Rechazado" })[status] || status;
+};
+
+const STATUS_STYLES = {
+  paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
+  approved: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
+  pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
+};
 
 export default function AdminWithdrawals() {
   const navigate = useNavigate();
@@ -14,7 +30,10 @@ export default function AdminWithdrawals() {
   const [redemptions, setRedemptions] = useState([]);
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
-  const [pendingStatus, setPendingStatus] = useState(null); // status string awaiting 2FA
+  const [payoutProof, setPayoutProof] = useState(""); // base64 preview
+  const [payoutHash, setPayoutHash] = useState("");
+  const fileRef = useRef(null);
+  const [pendingStatus, setPendingStatus] = useState(null); // status awaiting 2FA
 
   const load = async () => {
     const [w, r] = await Promise.all([
@@ -25,18 +44,52 @@ export default function AdminWithdrawals() {
   };
   useEffect(() => { load(); }, []);
 
+  const openDialog = (w) => {
+    setOpen(w);
+    setNote(w.admin_note || "");
+    setPayoutProof(w.payout_proof_image || "");
+    setPayoutHash(w.payout_tx_hash || "");
+  };
+
+  const handleProofUpload = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { toast.error("Máx 4MB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setPayoutProof(reader.result);
+    reader.readAsDataURL(f);
+  };
+
   const confirmWithTotp = async (code) => {
     try {
+      const body = { status: pendingStatus, admin_note: note, totp_code: code };
+      if (payoutProof && payoutProof !== open.payout_proof_image) body.payout_proof_image = payoutProof;
+      if (payoutHash && payoutHash !== open.payout_tx_hash) body.payout_tx_hash = payoutHash;
       await axios.put(
         `${API}/admin/withdrawals/${open.id}/status`,
-        { status: pendingStatus, admin_note: note, totp_code: code },
+        body,
         { withCredentials: true }
       );
-      toast.success(`Retiro ${pendingStatus}`);
-      setPendingStatus(null); setOpen(null); setNote(""); load();
+      toast.success(`Retiro actualizado`);
+      setPendingStatus(null); setOpen(null); setNote("");
+      setPayoutProof(""); setPayoutHash("");
+      load();
     } catch (e) {
       if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
     }
+  };
+
+  const askChange = (status) => {
+    // For "paid" require proof up front (UX hint — backend also enforces)
+    if (status === "paid" && open?.method === "transfer" && !payoutProof) {
+      toast.error("Adjunta la captura de la transferencia antes de marcar como pagado");
+      return;
+    }
+    if (status === "paid" && open?.method === "crypto" && !payoutProof && !payoutHash) {
+      toast.error("Adjunta hash de transacción o captura antes de marcar como entregado");
+      return;
+    }
+    setPendingStatus(status);
   };
 
   const updateR = async (id, status) => {
@@ -47,7 +100,7 @@ export default function AdminWithdrawals() {
   return (
     <div data-testid="admin-withdrawals" className="space-y-8">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Retiros VIP</div>
+        <div className="micro-label text-[#EAB308] mb-2">/ Retiros</div>
         <h1 className="font-display text-3xl">Retiros & Canjes</h1>
       </div>
 
@@ -67,7 +120,7 @@ export default function AdminWithdrawals() {
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && <tr><td colSpan="6" className="text-center text-neutral-500 py-6">Sin retiros</td></tr>}
+              {items.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-6">Sin retiros</td></tr>}
               {items.map(w => (
                 <tr key={w.id} className="border-b border-white/5">
                   <td className="px-3 py-3">{w.user_name}</td>
@@ -75,8 +128,14 @@ export default function AdminWithdrawals() {
                   <td className="px-3 py-3 font-mono">{w.currency || "USD"}</td>
                   <td className="px-3 py-3">{w.method}</td>
                   <td className="px-3 py-3 text-xs max-w-xs truncate">{w.details}</td>
-                  <td className="px-3 py-3 text-xs uppercase">{w.status}</td>
-                  <td className="px-3 py-3"><Button size="sm" onClick={() => { setOpen(w); setNote(w.admin_note || ""); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-8">Gestionar</Button></td>
+                  <td className="px-3 py-3">
+                    <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[w.status] || STATUS_STYLES.pending}`}>
+                      {STATUS_LABEL(w.status, w.method)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <Button size="sm" onClick={() => openDialog(w)} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-8" data-testid={`manage-withdrawal-${w.id}`}>Gestionar</Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -124,21 +183,65 @@ export default function AdminWithdrawals() {
       </div>
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg">
           <DialogHeader><DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle></DialogHeader>
           {open && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="font-mono text-sm space-y-1">
                 <div><span className="text-neutral-500">Cliente:</span> {open.user_name}</div>
-                <div><span className="text-neutral-500">Monto:</span> ${open.amount_usd}</div>
+                <div><span className="text-neutral-500">Monto:</span> {open.amount_usd} {open.currency || "USD"}</div>
                 <div><span className="text-neutral-500">Método:</span> {open.method}</div>
                 <div><span className="text-neutral-500">Detalles:</span> {open.details}</div>
+                <div><span className="text-neutral-500">Beneficiario:</span> {open.beneficiary_name || "—"}</div>
+                <div><span className="text-neutral-500">Estado:</span> <span className="uppercase tracking-wider">{STATUS_LABEL(open.status, open.method)}</span></div>
               </div>
               <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
+
+              {/* Iter14: payout proof / tx_hash */}
+              <div className="border border-white/10 p-3 space-y-3 bg-[#0a0a0a]/50">
+                <div className="micro-label text-[#EAB308]">Evidencia de pago al cliente</div>
+                {open.method === "crypto" && (
+                  <div>
+                    <label className="micro-label text-neutral-500">Hash de transacción</label>
+                    <Input
+                      data-testid="payout-tx-hash"
+                      value={payoutHash}
+                      onChange={(e) => setPayoutHash(e.target.value)}
+                      placeholder="0x... (cripto)"
+                      className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono text-xs"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="micro-label text-neutral-500">
+                    {open.method === "crypto"
+                      ? "Captura del envío a wallet (opcional si hay hash)"
+                      : "Captura de la transferencia bancaria realizada"}
+                  </label>
+                  <input
+                    ref={fileRef}
+                    data-testid="payout-proof-input"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleProofUpload}
+                    className="block mt-1 text-xs text-neutral-400"
+                  />
+                  {payoutProof && (
+                    <div className="mt-2">
+                      <img src={payoutProof} alt="proof" className="max-h-40 border border-white/10" data-testid="payout-proof-preview" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="grid grid-cols-3 gap-2">
-                <Button onClick={() => setPendingStatus("approved")} className="bg-[#22C55E] text-black rounded-none">Aprobar</Button>
-                <Button onClick={() => setPendingStatus("paid")} className="bg-[#EAB308] text-black rounded-none">Pagado</Button>
-                <Button onClick={() => setPendingStatus("rejected")} className="bg-[#EF4444] text-white rounded-none">Rechazar</Button>
+                <Button data-testid="withdrawal-approve" onClick={() => askChange("approved")} className="bg-[#22C55E] text-black rounded-none">
+                  {open.method === "cash" ? "En progreso" : "Confirmar"}
+                </Button>
+                <Button data-testid="withdrawal-pay" onClick={() => askChange("paid")} className="bg-[#EAB308] text-black rounded-none">
+                  {open.method === "cash" ? "Entregado" : "Pagado"}
+                </Button>
+                <Button data-testid="withdrawal-reject" onClick={() => askChange("rejected")} className="bg-[#EF4444] text-white rounded-none">Rechazar</Button>
               </div>
             </div>
           )}

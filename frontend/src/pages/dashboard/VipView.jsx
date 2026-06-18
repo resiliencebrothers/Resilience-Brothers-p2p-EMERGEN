@@ -110,8 +110,8 @@ export default function VipView() {
   return (
     <div className="space-y-8" data-testid="vip-view">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Saldo VIP</div>
-        <h1 className="font-display text-3xl">Tu tesorería acumulada</h1>
+        <div className="micro-label text-[#EAB308] mb-2">/ Saldo y Retiros</div>
+        <h1 className="font-display text-3xl">Tu balance acumulado</h1>
       </div>
 
       <div className="tactile-card p-8 glow-yellow">
@@ -203,11 +203,16 @@ export default function VipView() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
-                  <SelectItem value="transfer">Transferencia</SelectItem>
-                  <SelectItem value="cash">Efectivo</SelectItem>
-                  <SelectItem value="crypto">Cripto</SelectItem>
+                  <SelectItem value="transfer">Transferencia bancaria</SelectItem>
+                  <SelectItem value="cash">Efectivo (CUP/USD)</SelectItem>
+                  <SelectItem value="crypto">Wallet Cripto</SelectItem>
                 </SelectContent>
               </Select>
+              {method === "cash" && (
+                <p className="text-[0.65rem] text-[#EAB308] mt-1">
+                  Recogida en efectivo: estará <strong>En progreso</strong> hasta que el equipo lo marque como <strong>Entregado</strong>.
+                </p>
+              )}
             </div>
             <div>
               <Label className="micro-label text-neutral-500">Detalles</Label>
@@ -258,19 +263,45 @@ export default function VipView() {
           <h2 className="font-display text-xl mb-4">Historial de Retiros</h2>
           <div className="space-y-2 max-h-[400px] overflow-y-auto">
             {withdrawals.length === 0 && <p className="text-neutral-500 text-sm">Sin retiros aún.</p>}
-            {withdrawals.map(w => (
-              <div key={w.id} className="border border-white/10 p-3 text-sm">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-mono">{w.amount_usd} {w.currency || "USD"} · {w.method}</div>
-                    <div className="text-xs text-neutral-500 mt-1">{new Date(w.created_at).toLocaleString()}</div>
+            {withdrawals.map(w => {
+              const label = w.method === "cash"
+                ? { paid: "Entregado", approved: "En progreso", pending: "Pendiente", rejected: "Rechazado" }[w.status] || w.status
+                : { paid: "Pagado", approved: "Confirmado", pending: "Pendiente", rejected: "Rechazado" }[w.status] || w.status;
+              return (
+                <div key={w.id} className="border border-white/10 p-3 text-sm" data-testid={`withdrawal-row-${w.id}`}>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-mono">{w.amount_usd} {w.currency || "USD"} · {w.method}</div>
+                      <div className="text-xs text-neutral-500 mt-1">{new Date(w.created_at).toLocaleString()}</div>
+                    </div>
+                    <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${
+                      WITHDRAWAL_STATUS_STYLES[w.status] || WITHDRAWAL_STATUS_STYLES.pending
+                    }`}>{label}</span>
                   </div>
-                  <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${
-                    WITHDRAWAL_STATUS_STYLES[w.status] || WITHDRAWAL_STATUS_STYLES.pending
-                  }`}>{w.status}</span>
+                  {(w.payout_proof_image || w.payout_tx_hash) && (
+                    <div className="mt-3 border-t border-white/5 pt-2 space-y-1">
+                      {w.payout_tx_hash && (
+                        <div className="text-[0.65rem] text-neutral-400 break-all" data-testid={`payout-hash-${w.id}`}>
+                          <span className="text-neutral-600">Hash: </span>
+                          <span className="font-mono text-[#22C55E]">{w.payout_tx_hash}</span>
+                        </div>
+                      )}
+                      {w.payout_proof_image && (
+                        <a
+                          href={w.payout_proof_image}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-[#EAB308] underline underline-offset-4"
+                          data-testid={`payout-proof-${w.id}`}
+                        >
+                          Ver captura de la transferencia
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

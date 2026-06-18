@@ -1,0 +1,44 @@
+{
+  "summary": "Iter14 corrections (Spanish UI) — backend + frontend smoke. Ran full pytest suite at /app/backend/tests/ → 229 passed, 1 skipped (matches expected). All 9 new iter14 tests in test_iter14_corrections.py pass (normal user can withdraw, employee cannot, confirmed-order lock, paid-withdrawal lock, payout_proof_image required for transfer, allowed_currencies filtering). Playwright smoke against deployed REACT_APP_BACKEND_URL verified the 5 user-requested UI behaviors: (1) /admin/users — Saldo cell is read-only ('50 USD' text, no input), allowed-currencies-row + OK button present for employee row; (2) admin dashboard sidebar does NOT contain nav-vip; (3) normal user sidebar shows nav-vip with label 'Saldo y Retiros'; (4) /admin/withdrawals — status badges use Spanish 'Confirmado / Pagado / Pendiente / Rechazado' (no 'APPROVED'/'PAID' leakage), dialog has withdrawal-approve='Confirmar', withdrawal-pay='Pagado', withdrawal-reject + payout-proof-input file field (payout-tx-hash correctly hidden for transfer method); (5) /admin/orders dialog approve-order button text is 'Confirmar' and status column shows lowercase 'confirmado'. VipView header renders '/ Saldo y Retiros' for normal users. ONE backend regression vs iter14 spec found: GET /api/vip/balances still returns 403 for role=normal even though iter14 enables them to accumulate balance — causes a visible React error overlay on /dashboard/vip for normal users.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/vip/balances", "issue": "Returns 403 for role=normal (server.py L1147 still gates on role in ('vip','admin')). Iter14 spec says normal users can accumulate balance, so this guard now contradicts the feature. Causes axios 403 → React dev error overlay on /dashboard/vip for normal users even though page content renders. Fix is one-line: include 'normal' in the allowlist. Also requires updating legacy test tests/test_multicurrency_and_stats.py::TestVipBalancesEndpoint::test_normal_403 (currently asserts 403 → flip to 200)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "VipView (/dashboard/vip) for normal users", "issue": "React dev error overlay 'Uncaught runtime errors: Request failed with status code 403' shown on load because /api/vip/balances returns 403. Page itself renders OK ('Sin retiros aún', 'Aún no tienes saldo acumulado') but UX is broken by the overlay. Root cause is the backend guard above.", "selector": "data-testid='vip-view'", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Normal user view of 'Saldo y Retiros'", "issue": "Promise.all in VipView.jsx (axios.get(`${API}/vip/balances`)) rejects for normal users, surfacing as unhandled error. Either relax the backend guard OR wrap the balances call in its own try/catch with .catch(()=>setBalances({balances:[],total_usdt:0})) like Marketplace/OverviewView already do.", "affected_selectors": ["[data-testid='vip-balances-card']"]}
+    ],
+    "design_issues": [
+      {"screen": "Several dialogs (AdminWithdrawals, AdminOrders)", "issues": ["React warning: 'Missing Description or aria-describedby for DialogContent' — accessibility hygiene, add DialogDescription to each."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/",
+    "/app/backend/tests/test_iter14_corrections.py",
+    "/app/test_reports/pytest/pytest_results_iter12.xml"
+  ],
+  "action_items": [
+    "Backend: relax /api/vip/balances guard to include role 'normal' (server.py L1147) so iter14's 'normal can accumulate balance' feature is fully usable; then update tests/test_multicurrency_and_stats.py::TestVipBalancesEndpoint::test_normal_403 to expect 200 (or rename to test_normal_200).",
+    "Frontend: as a defensive fallback, wrap the /vip/balances axios call in VipView.jsx with its own .catch so a 403 does not surface as an Uncaught runtime error overlay (matches the pattern used in OverviewView.jsx).",
+    "Frontend: add DialogDescription (or aria-describedby) to AdminWithdrawals and AdminOrders manage-dialogs to clear the React a11y warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py is still ~2200 lines — past the 700-line guideline. Recommend extracting routers (admin_orders, admin_withdrawals, vip, totp, marketplace, audit) into /app/backend/routers/* in a future refactor.",
+    "Role guards are scattered as inline `if user['role'] not in (...)` checks across many endpoints. Centralising via a `require_roles(*allowed)` dependency would have caught the /vip/balances regression noticed in this iteration.",
+    "Both AdminWithdrawals.jsx and VipView.jsx duplicate the status-label maps (cash → Entregado/En progreso, transfer/crypto → Pagado/Confirmado). Extract to a single helper in /app/frontend/src/lib/withdrawalStatus.js to honour DRY.",
+    "TotpPromptDialog is imported into AdminUsers/AdminWithdrawals/AdminOrders/VipView — good reuse. Confirm it always strips the TOTP code from state after submit so it is not held in memory longer than needed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (229/229 active tests pass, 1 expected skip)", "frontend": "5 of 5 iter14 user-requested UI behaviors verified; 1 secondary regression discovered (/vip/balances 403 → React error overlay for normal users)"},
+  "test_credentials": "Used session-cookie injection of test_session_admin_X and test_session_normal_X (per /app/memory/test_credentials.md and conftest.py). TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP seeded on admin/employee/vip/normal by conftest helpers.",
+  "seed_data_creation": "No new seed data. pytest conftest auto-enables TOTP idempotently and a single normal-user balance row is set + cleaned up by test_iter14_corrections.py.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter14 (Spanish UI) is feature-complete on the backend and the 5 user-requested UI behaviors all verified via Playwright with cookie injection. The only outstanding gap is GET /api/vip/balances still 403'ing for normal users — this is a one-line server.py fix plus a stale test in test_multicurrency_and_stats.py::test_normal_403 that needs to flip from 403→200. After that, re-run /dashboard/vip with token test_session_normal_X and confirm there is no 'Uncaught runtime errors' overlay. Cookie injection pattern that worked: `await page.context.add_cookies([{name:'session_token', value:'test_session_X_X', url:'<REACT_APP_BACKEND_URL>', secure:True, sameSite:'Lax'}])`.",
+  "rca of the issue": "Iter14 expanded normal users' capabilities to accumulate balance and request withdrawals. POST /api/vip/withdraw and GET /api/vip/withdrawals/mine were correctly relaxed (the former opens to non-employees, the latter uses require_user with no role gate). However GET /api/vip/balances still enforces `user['role'] not in ('vip','admin') → 403`, so a normal user with accumulated balance cannot see it. Because VipView.jsx fires /vip/balances + /vip/withdrawals/mine in Promise.all without per-call .catch, the rejected balances promise surfaces as a React Uncaught runtime error overlay even though the rest of the page degrades to the empty state. Mitigation: (a) include 'normal' in the role allowlist on server.py L1147 and update the legacy test_normal_403 assertion; (b) optionally harden VipView to swallow that 403 locally."
+}

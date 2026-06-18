@@ -194,8 +194,10 @@ class TestOrders:
 
 # ----- VIP withdrawals -----
 class TestWithdrawals:
-    def test_normal_cannot_withdraw(self):
-        r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(NORMAL_TOKEN),
+    def test_employee_cannot_withdraw(self):
+        """iter14: normal users can now withdraw too, but staff cannot withdraw to themselves."""
+        from conftest import EMPLOYEE_TOKEN
+        r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(EMPLOYEE_TOKEN),
                           json={"amount_usd": 10, "method": "transfer", "details": "x", "beneficiary_name": "Test Holder"})
         assert r.status_code == 403
 
@@ -220,8 +222,6 @@ class TestWithdrawals:
                          json={"status": "rejected", "admin_note": "no", "totp_code": make_admin_totp()})
         assert r2.status_code == 200
         refunded = usd_balance()
-        assert round(refunded - after, 4) == 5.0
-        refunded = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
         assert round(refunded - after, 4) == 5.0
 
 

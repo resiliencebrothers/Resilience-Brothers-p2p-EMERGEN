@@ -190,6 +190,9 @@ class WithdrawalRequest(BaseModel):
     beneficiary_name: str = ""  # holder name of the receiving account
     status: Literal["pending", "approved", "paid", "rejected"] = "pending"
     admin_note: str = ""
+    # Iter14 — fulfillment evidence (uploaded when admin marks paid/entregado)
+    payout_proof_image: str = ""  # base64 image of the bank/crypto transfer made BY the platform
+    payout_tx_hash: str = ""      # blockchain hash for crypto payouts
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 class WithdrawalCreate(BaseModel):
@@ -202,8 +205,9 @@ class WithdrawalCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
-    vip_balance_usd: Optional[float] = None
+    vip_balance_usd: Optional[float] = None  # admin-only correction (not editable from new UI)
     vip_balances: Optional[Dict[str, float]] = None
+    allowed_currencies: Optional[List[str]] = None   # iter14 — employee currency scope
     totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
 # ============== AUTH ==============
@@ -515,10 +519,15 @@ async def my_orders(request: Request):
 @api_router.get("/admin/orders")
 async def all_orders(request: Request, status: Optional[str] = None,
                      limit: int = 1000, offset: int = 0):
-    await require_staff(request)
+    actor = await require_staff(request)
     q = {}
     if status:
         q["status"] = status
+    # iter14: employee currency scope — restrict listing to allowed currencies
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            q["$or"] = [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]
     limit = max(1, min(limit, 1000))
     offset = max(0, offset)
     total = await db.orders.count_documents(q)
@@ -610,6 +619,23 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+    # iter14: once an order is confirmed (approved), only an admin can change its status
+    if (order.get("status") == "approved"
+            and new_status != "approved"
+            and actor.get("role") != "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Esta transferencia ya fue confirmada. Solo un admin puede cambiar su estado.",
+        )
+    # iter14: employee currency scope — only act on orders touching authorized currencies
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            if order["from_code"] not in allowed and order["to_code"] not in allowed:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"No estás autorizado a gestionar {order['from_code']}→{order['to_code']}",
+                )
     # Defensive: only admin can approve orders that require double-approval
     if (order.get("status") == "requires_double_approval"
             and new_status == "approved"
@@ -627,10 +653,11 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
 
     is_first_approval = new_status == "approved" and order["status"] != "approved"
     if (is_first_approval
-            and order["delivery_method"] == "accumulate"
-            and order["user_role"] in ("vip", "admin")):
+            and order["delivery_method"] == "accumulate"):
+        # iter14: normal users may also accumulate balance (no longer VIP-only)
         await _accumulate_vip_balance(order)
-        await _check_vip_threshold_alert(order)
+        if order["user_role"] in ("vip", "admin"):
+            await _check_vip_threshold_alert(order)
 
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     if new_status in ("approved", "rejected") and order["status"] != new_status:
@@ -769,8 +796,9 @@ async def update_redemption(rid: str, payload: dict, request: Request):
 @api_router.post("/vip/withdraw")
 async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     user = await require_user(request)
-    if user["role"] not in ("vip", "admin"):
-        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    # iter14: opens to all client roles (normal + vip + admin). Staff cannot withdraw to themselves.
+    if user["role"] == "employee":
+        raise HTTPException(status_code=403, detail="Empleados no pueden retirar")
     # 2FA mandatory: must be set up AND a valid code provided
     await _enforce_totp_step_up(user, payload.totp_code, action_label="retiro")
     currency = payload.currency or "USD"
@@ -791,7 +819,7 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     try:
         await notify_all_admins(
             db,
-            title="Nuevo retiro VIP",
+            title="Nuevo retiro",
             body=f"{user['name']} solicitó retiro de {payload.amount_usd} {currency} ({payload.method}).",
             url_path="/admin/withdrawals",
         )
@@ -959,8 +987,13 @@ async def my_withdrawals(request: Request):
 
 @api_router.get("/admin/withdrawals")
 async def all_withdrawals(request: Request):
-    await require_staff(request)
-    docs = await db.withdrawals.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    actor = await require_staff(request)
+    q = {}
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            q["currency"] = {"$in": allowed}
+    docs = await db.withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 @api_router.put("/admin/withdrawals/{wid}/status")
@@ -976,13 +1009,51 @@ async def update_withdrawal(wid: str, payload: dict, request: Request):
     w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     if not w:
         raise HTTPException(status_code=404, detail="No encontrado")
+    # iter14: once a withdrawal is paid (entregado), only an admin can re-open it
+    if w["status"] == "paid" and new_status != "paid" and actor.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Este retiro ya fue entregado. Solo un admin puede modificarlo.",
+        )
+    # iter14: employees only act on currencies they're authorized for
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed and w.get("currency") not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"No estás autorizado a gestionar retiros en {w.get('currency')}",
+            )
     if new_status == "rejected" and w["status"] != "rejected":
         refund_currency = w.get("currency", "USD")
         await db.users.update_one(
             {"user_id": w["user_id"]},
             {"$inc": {f"vip_balances.{refund_currency}": w["amount_usd"]}}
         )
-    await db.withdrawals.update_one({"id": wid}, {"$set": {"status": new_status, "admin_note": note}})
+    update_doc = {"status": new_status, "admin_note": note}
+    # iter14: capture fulfillment proof when marking as paid/entregado
+    proof = payload.get("payout_proof_image")
+    if proof:
+        update_doc["payout_proof_image"] = proof
+    tx_hash = payload.get("payout_tx_hash")
+    if tx_hash:
+        update_doc["payout_tx_hash"] = tx_hash
+    # Require proof when marking as paid (entregado) for transfer/crypto methods
+    if new_status == "paid" and w["status"] != "paid":
+        method = w.get("method")
+        existing_proof = w.get("payout_proof_image") or update_doc.get("payout_proof_image")
+        if method == "transfer" and not existing_proof:
+            raise HTTPException(
+                status_code=400,
+                detail="Adjunta la captura de la transferencia realizada al cliente antes de marcar como entregado",
+            )
+        if method == "crypto":
+            existing_hash = w.get("payout_tx_hash") or update_doc.get("payout_tx_hash")
+            if not existing_hash and not existing_proof:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Adjunta hash de transacción y/o captura del envío antes de marcar como entregado",
+                )
+    await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
 
 # ============== VIP DAILY CLOSING PDF ==============

@@ -23,8 +23,9 @@ const ROLE_LABELS = {
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const isVip = user?.role === "vip" || user?.role === "admin";
   const isStaff = user?.role === "admin" || user?.role === "employee";
+  // iter14: any non-staff client (normal + vip) may see balance & withdraw panel.
+  const isClient = user && !isStaff;
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navItems = [
@@ -33,8 +34,8 @@ export default function Dashboard() {
     { to: "/dashboard/orders", icon: ListOrdered, label: "Mis Órdenes", id: "nav-orders" },
     { to: "/dashboard/transactions", icon: Receipt, label: "Mi Historial", id: "nav-transactions" },
     { to: "/dashboard/security", icon: ShieldCheck, label: "Seguridad", id: "nav-security" },
-    ...(isVip ? [
-      { to: "/dashboard/vip", icon: Star, label: "Saldo VIP", id: "nav-vip" },
+    ...(isClient ? [
+      { to: "/dashboard/vip", icon: Star, label: "Saldo y Retiros", id: "nav-vip" },
       { to: "/dashboard/marketplace", icon: Boxes, label: "Marketplace", id: "nav-marketplace" },
     ] : []),
   ];

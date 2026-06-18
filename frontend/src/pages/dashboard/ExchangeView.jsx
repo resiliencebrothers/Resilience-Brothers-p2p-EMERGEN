@@ -26,6 +26,7 @@ export default function ExchangeView() {
   const [copied, setCopied] = useState(false);
 
   const isVip = user?.role === "vip" || user?.role === "admin";
+  const isStaff = user?.role === "admin" || user?.role === "employee";
 
   // Static one-shot load on mount — API/axios are stable module imports
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,7 +238,7 @@ export default function ExchangeView() {
               <SelectItem value="transfer">Transferencia bancaria</SelectItem>
               <SelectItem value="cash">Efectivo (a domicilio)</SelectItem>
               <SelectItem value="crypto">Cripto (wallet)</SelectItem>
-              {isVip && <SelectItem value="accumulate">Acumular en saldo VIP</SelectItem>}
+              {!isStaff && <SelectItem value="accumulate">Acumular en saldo</SelectItem>}
             </SelectContent>
           </Select>
         </div>
