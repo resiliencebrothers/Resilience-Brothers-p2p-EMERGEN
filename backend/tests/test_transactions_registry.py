@@ -56,9 +56,10 @@ class TestTransactionsAccess:
     def test_unauth_401(self):
         assert requests.get(f"{BASE_URL}/api/admin/transactions").status_code == 401
 
-    def test_employee_forbidden(self):
+    def test_employee_now_allowed(self):
+        # As of iter12 employees can see admin transactions for accounting
         r = requests.get(f"{BASE_URL}/api/admin/transactions", headers=_h(EMP))
-        assert r.status_code == 403
+        assert r.status_code == 200
 
     def test_admin_ok(self):
         r = requests.get(f"{BASE_URL}/api/admin/transactions", headers=_h(ADMIN))
@@ -252,9 +253,77 @@ class TestTransactionsExports:
     def test_csv_employee_forbidden(self):
         r = requests.get(f"{BASE_URL}/api/admin/transactions/export.csv",
                          headers=_h(EMP))
-        assert r.status_code == 403
+        assert r.status_code == 200  # employees now have access (iter12)
 
     def test_pdf_employee_forbidden(self):
         r = requests.get(f"{BASE_URL}/api/admin/transactions/export.pdf",
                          headers=_h(EMP))
-        assert r.status_code == 403
+        assert r.status_code == 200  # employees now have access (iter12)
+
+
+# ---------- /api/me/transactions (per-user self-service) ----------
+class TestMyTransactions:
+    def test_unauth_401(self):
+        assert requests.get(f"{BASE_URL}/api/me/transactions").status_code == 401
+
+    def test_vip_returns_only_own(self):
+        from conftest import VIP_TOKEN, NORMAL_TOKEN
+        r_vip = requests.get(f"{BASE_URL}/api/me/transactions", headers=_h(VIP_TOKEN))
+        assert r_vip.status_code == 200
+        # Every item returned must belong to vip user
+        # (we don't expose user_id but it's filtered server-side; just verify list shape)
+        body = r_vip.json()
+        assert "items" in body
+        assert "X-Total-Count" in r_vip.headers
+        # Normal user gets their own (likely empty until they have approved orders)
+        r_normal = requests.get(f"{BASE_URL}/api/me/transactions", headers=_h(NORMAL_TOKEN))
+        assert r_normal.status_code == 200
+
+    def test_self_isolation(self):
+        """Two different users see different sets — vip never sees normal's data and vice-versa."""
+        from conftest import VIP_TOKEN, NORMAL_TOKEN
+        r_vip = requests.get(f"{BASE_URL}/api/me/transactions",
+                             headers=_h(VIP_TOKEN), params={"limit": 500})
+        r_normal = requests.get(f"{BASE_URL}/api/me/transactions",
+                                headers=_h(NORMAL_TOKEN), params={"limit": 500})
+        vip_ids = {it["ref_id"] for it in r_vip.json()["items"]}
+        normal_ids = {it["ref_id"] for it in r_normal.json()["items"]}
+        # No overlap — strict isolation
+        assert vip_ids.isdisjoint(normal_ids)
+
+    def test_filters_work(self):
+        from conftest import VIP_TOKEN
+        r = requests.get(f"{BASE_URL}/api/me/transactions",
+                         headers=_h(VIP_TOKEN),
+                         params={"direction": "in", "min_amount": 1})
+        assert r.status_code == 200
+        for it in r.json()["items"]:
+            assert it["direction"] == "in"
+            assert it["amount"] >= 1
+
+    def test_csv_export(self):
+        from conftest import VIP_TOKEN
+        r = requests.get(f"{BASE_URL}/api/me/transactions/export.csv",
+                         headers=_h(VIP_TOKEN))
+        assert r.status_code == 200
+        assert "text/csv" in r.headers.get("Content-Type", "")
+        assert r.content[:3] == b"\xef\xbb\xbf"
+        first = r.content.decode("utf-8-sig").splitlines()[0]
+        # /me CSV should NOT expose other_client_email
+        assert "client_email" not in first
+        for col in ("created_at", "direction", "currency", "amount", "holder_name"):
+            assert col in first
+
+    def test_pdf_export(self):
+        from conftest import VIP_TOKEN
+        r = requests.get(f"{BASE_URL}/api/me/transactions/export.pdf",
+                         headers=_h(VIP_TOKEN))
+        assert r.status_code == 200
+        assert r.headers.get("Content-Type", "").startswith("application/pdf")
+        assert r.content.startswith(b"%PDF-")
+
+    def test_invalid_direction_400(self):
+        from conftest import VIP_TOKEN
+        r = requests.get(f"{BASE_URL}/api/me/transactions",
+                         headers=_h(VIP_TOKEN), params={"direction": "sideways"})
+        assert r.status_code == 400

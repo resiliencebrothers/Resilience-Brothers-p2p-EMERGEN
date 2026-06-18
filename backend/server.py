@@ -1251,12 +1251,14 @@ async def _build_transactions(direction: Optional[str], currency: Optional[str],
                               holder: Optional[str], since: Optional[str],
                               until: Optional[str],
                               min_amount: Optional[float] = None,
-                              max_amount: Optional[float] = None) -> list:
+                              max_amount: Optional[float] = None,
+                              user_id: Optional[str] = None) -> list:
     """Unified transaction list from approved/completed orders + approved/paid withdrawals.
 
     Each entry: {direction: 'in'|'out', currency, amount, holder_name, client_name,
                  method, status, ref_id, created_at}
     Only records with a non-empty holder/sender field are included (we omit pre-feature data).
+    If user_id is provided, restricts to transactions owned by that user.
     """
     items: list = []
     date_q = _date_range_query(since, until)
@@ -1268,6 +1270,8 @@ async def _build_transactions(direction: Optional[str], currency: Optional[str],
             "sender_name": {"$nin": [None, ""]},
             **date_q,
         }
+        if user_id:
+            order_q["user_id"] = user_id
         if currency:
             order_q["from_code"] = currency
         if holder:
@@ -1298,6 +1302,8 @@ async def _build_transactions(direction: Optional[str], currency: Optional[str],
             "beneficiary_name": {"$nin": [None, ""]},
             **date_q,
         }
+        if user_id:
+            with_q["user_id"] = user_id
         if currency:
             with_q["currency"] = currency
         if holder:
@@ -1357,7 +1363,7 @@ async def list_transactions(request: Request,
                             min_amount: Optional[float] = None,
                             max_amount: Optional[float] = None,
                             limit: int = 100, offset: int = 0):
-    await require_admin(request)
+    await require_staff(request)
     if direction and direction not in ("in", "out", "all"):
         raise HTTPException(status_code=400, detail="direction debe ser 'in', 'out' o 'all'")
     if min_amount is not None and min_amount < 0:
@@ -1391,7 +1397,7 @@ async def export_transactions_csv(request: Request,
                                   until: Optional[str] = None,
                                   min_amount: Optional[float] = None,
                                   max_amount: Optional[float] = None):
-    await require_admin(request)
+    await require_staff(request)
     items = await _build_transactions(direction, currency, holder, since, until, min_amount, max_amount)
     import io
     text_buf = io.StringIO()
@@ -1434,7 +1440,7 @@ async def export_transactions_pdf(request: Request,
                                   until: Optional[str] = None,
                                   min_amount: Optional[float] = None,
                                   max_amount: Optional[float] = None):
-    await require_admin(request)
+    await require_staff(request)
     items = await _build_transactions(direction, currency, holder, since, until, min_amount, max_amount)
     totals = _compute_transaction_totals(items)
     pdf_bytes = generate_transactions_pdf(
@@ -1446,6 +1452,112 @@ async def export_transactions_pdf(request: Request,
     )
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     filename = f"transacciones_{ts}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ============== MY TRANSACTIONS (any authenticated user — own data only) ==============
+
+@api_router.get("/me/transactions")
+async def list_my_transactions(request: Request,
+                               direction: Optional[str] = None,
+                               currency: Optional[str] = None,
+                               since: Optional[str] = None,
+                               until: Optional[str] = None,
+                               min_amount: Optional[float] = None,
+                               max_amount: Optional[float] = None,
+                               limit: int = 100, offset: int = 0):
+    user = await require_user(request)
+    if direction and direction not in ("in", "out", "all"):
+        raise HTTPException(status_code=400, detail="direction debe ser 'in', 'out' o 'all'")
+    if min_amount is not None and min_amount < 0:
+        raise HTTPException(status_code=400, detail="min_amount debe ser >= 0")
+    if max_amount is not None and max_amount < 0:
+        raise HTTPException(status_code=400, detail="max_amount debe ser >= 0")
+    if min_amount is not None and max_amount is not None and min_amount > max_amount:
+        raise HTTPException(status_code=400, detail="min_amount no puede ser mayor que max_amount")
+    items = await _build_transactions(direction, currency, None, since, until,
+                                       min_amount, max_amount, user_id=user["user_id"])
+    totals = _compute_transaction_totals(items)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    window = items[offset:offset + limit]
+    return JSONResponse(
+        content={"items": window, "totals": totals},
+        headers={
+            "X-Total-Count": str(len(items)),
+            "X-Offset": str(offset),
+            "X-Limit": str(limit),
+            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
+        },
+    )
+
+
+@api_router.get("/me/transactions/export.csv")
+async def export_my_transactions_csv(request: Request,
+                                     direction: Optional[str] = None,
+                                     currency: Optional[str] = None,
+                                     since: Optional[str] = None,
+                                     until: Optional[str] = None,
+                                     min_amount: Optional[float] = None,
+                                     max_amount: Optional[float] = None):
+    user = await require_user(request)
+    items = await _build_transactions(direction, currency, None, since, until,
+                                       min_amount, max_amount, user_id=user["user_id"])
+    import io
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow(["created_at", "direction", "currency", "amount",
+                     "holder_name", "method", "status", "ref_type", "ref_id"])
+    for it in items:
+        writer.writerow([
+            it.get("created_at", ""),
+            it.get("direction", ""),
+            it.get("currency", ""),
+            f"{it.get('amount', 0):.4f}",
+            it.get("holder_name", ""),
+            it.get("method", ""),
+            it.get("status", ""),
+            it.get("ref_type", ""),
+            it.get("ref_id", ""),
+        ])
+    buf = BytesIO()
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))
+    buf.seek(0)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"mis_transacciones_{ts}.csv"
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/me/transactions/export.pdf")
+async def export_my_transactions_pdf(request: Request,
+                                     direction: Optional[str] = None,
+                                     currency: Optional[str] = None,
+                                     since: Optional[str] = None,
+                                     until: Optional[str] = None,
+                                     min_amount: Optional[float] = None,
+                                     max_amount: Optional[float] = None):
+    user = await require_user(request)
+    items = await _build_transactions(direction, currency, None, since, until,
+                                       min_amount, max_amount, user_id=user["user_id"])
+    totals = _compute_transaction_totals(items)
+    pdf_bytes = generate_transactions_pdf(
+        items,
+        {"direction": direction, "currency": currency,
+         "holder": f"Cliente: {user.get('name', '')}",
+         "since": since, "until": until,
+         "min_amount": min_amount, "max_amount": max_amount},
+        totals,
+    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"mis_transacciones_{ts}.pdf"
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",

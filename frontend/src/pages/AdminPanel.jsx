@@ -20,6 +20,7 @@ export default function AdminPanel() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isStaff = user?.role === "admin" || user?.role === "employee";
 
   const items = [
     { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
@@ -29,9 +30,11 @@ export default function AdminPanel() {
     { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
     { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
     { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
+    ...(isStaff ? [
+      { to: "/admin/transactions", icon: Receipt, label: "Transacciones", id: "admin-nav-transactions", highlight: true },
+    ] : []),
     ...(user?.role === "admin" ? [
       { to: "/admin/revenue", icon: Banknote, label: "Ingresos", id: "admin-nav-revenue", highlight: true },
-      { to: "/admin/transactions", icon: Receipt, label: "Transacciones", id: "admin-nav-transactions", highlight: true },
       { to: "/admin/audit", icon: Shield, label: "Auditoría", id: "admin-nav-audit" },
     ] : []),
   ];
@@ -163,7 +166,7 @@ export default function AdminPanel() {
             <Route path="products" element={<AdminProducts />} />
             <Route path="users" element={<AdminUsers />} />
             {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
-            {user?.role === "admin" && <Route path="transactions" element={<AdminTransactions />} />}
+            {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
             {user?.role === "admin" && <Route path="audit" element={<AdminAudit />} />}
           </Routes>
         </div>
