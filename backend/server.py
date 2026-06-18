@@ -543,16 +543,34 @@ async def my_orders(request: Request):
 
 @api_router.get("/admin/orders")
 async def all_orders(request: Request, status: Optional[str] = None,
+                     user_q: Optional[str] = None, currency: Optional[str] = None,
                      limit: int = 1000, offset: int = 0):
     actor = await require_staff(request)
     q = {}
     if status:
         q["status"] = status
+    if currency:
+        currency = currency.upper()
+        q["$or"] = [{"from_code": currency}, {"to_code": currency}]
+    if user_q:
+        rx = {"$regex": user_q, "$options": "i"}
+        # Combine with currency filter via $and if both present
+        user_clause = {"$or": [{"user_name": rx}, {"user_email": rx}]}
+        if "$or" in q:
+            q["$and"] = [{"$or": q.pop("$or")}, user_clause]
+        else:
+            q["$or"] = user_clause["$or"]
     # iter14: employee currency scope — restrict listing to allowed currencies
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
         if allowed:
-            q["$or"] = [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]
+            scope_clause = {"$or": [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]}
+            if "$and" in q:
+                q["$and"].append(scope_clause)
+            elif "$or" in q:
+                q["$and"] = [{"$or": q.pop("$or")}, scope_clause]
+            else:
+                q["$or"] = scope_clause["$or"]
     limit = max(1, min(limit, 1000))
     offset = max(0, offset)
     total = await db.orders.count_documents(q)
@@ -1004,13 +1022,29 @@ async def my_withdrawals(request: Request):
     return docs
 
 @api_router.get("/admin/withdrawals")
-async def all_withdrawals(request: Request):
+async def all_withdrawals(request: Request,
+                          status: Optional[str] = None,
+                          user_q: Optional[str] = None,
+                          currency: Optional[str] = None):
     actor = await require_staff(request)
     q = {}
+    if status:
+        q["status"] = status
+    if currency:
+        q["currency"] = currency.upper()
+    if user_q:
+        rx = {"$regex": user_q, "$options": "i"}
+        q["$or"] = [{"user_name": rx}, {"user_email": rx}]
+    # iter14: employee scope — narrow currency to allowed list (intersect with explicit filter)
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
         if allowed:
-            q["currency"] = {"$in": allowed}
+            if "currency" in q:
+                # If admin filtered by currency outside their scope, return empty
+                if q["currency"] not in allowed:
+                    return []
+            else:
+                q["currency"] = {"$in": allowed}
     docs = await db.withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 

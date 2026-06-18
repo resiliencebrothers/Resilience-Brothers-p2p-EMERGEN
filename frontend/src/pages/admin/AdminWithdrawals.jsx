@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
-import { Upload } from "lucide-react";
+import { Search } from "lucide-react";
 
 const STATUS_LABEL = (status, method) => {
   if (method === "cash") {
@@ -34,15 +35,35 @@ export default function AdminWithdrawals() {
   const [payoutHash, setPayoutHash] = useState("");
   const fileRef = useRef(null);
   const [pendingStatus, setPendingStatus] = useState(null); // status awaiting 2FA
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [currencyFilter, setCurrencyFilter] = useState("all");
+  const [currencies, setCurrencies] = useState([]);
+  const [userInput, setUserInput] = useState("");
+  const [userQuery, setUserQuery] = useState("");
 
-  const load = async () => {
+  // Debounced user query
+  useEffect(() => {
+    const t = setTimeout(() => setUserQuery(userInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [userInput]);
+
+  // Load currencies once
+  useEffect(() => {
+    axios.get(`${API}/currencies`).then((r) => setCurrencies(r.data || [])).catch(() => {});
+  }, []);
+
+  const load = useCallback(async () => {
+    const params = {};
+    if (statusFilter !== "all") params.status = statusFilter;
+    if (currencyFilter !== "all") params.currency = currencyFilter;
+    if (userQuery) params.user_q = userQuery;
     const [w, r] = await Promise.all([
-      axios.get(`${API}/admin/withdrawals`, { withCredentials: true }),
+      axios.get(`${API}/admin/withdrawals`, { params, withCredentials: true }),
       axios.get(`${API}/admin/redemptions`, { withCredentials: true }),
     ]);
     setItems(w.data); setRedemptions(r.data);
-  };
-  useEffect(() => { load(); }, []);
+  }, [statusFilter, currencyFilter, userQuery]);
+  useEffect(() => { load(); }, [load]);
 
   const openDialog = (w) => {
     setOpen(w);
@@ -106,6 +127,53 @@ export default function AdminWithdrawals() {
 
       <div>
         <h2 className="font-display text-xl mb-3">Retiros</h2>
+        <div className="flex flex-wrap gap-2 mb-3 items-end">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
+            <Input
+              data-testid="withdrawals-user-search"
+              value={userInput}
+              onChange={(e) => setUserInput(e.target.value)}
+              placeholder="Buscar usuario..."
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-60 pl-9 text-xs"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger data-testid="withdrawals-status-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectItem value="all">Todos los estados</SelectItem>
+              <SelectItem value="pending">Pendiente</SelectItem>
+              <SelectItem value="approved">Confirmado / En progreso</SelectItem>
+              <SelectItem value="paid">Pagado / Entregado</SelectItem>
+              <SelectItem value="rejected">Rechazado</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
+            <SelectTrigger data-testid="withdrawals-currency-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectItem value="all">Todas las monedas</SelectItem>
+              {currencies.map((c) => (
+                <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {(userInput || statusFilter !== "all" || currencyFilter !== "all") && (
+            <button
+              data-testid="withdrawals-clear-filters"
+              onClick={() => { setUserInput(""); setStatusFilter("all"); setCurrencyFilter("all"); }}
+              className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-9"
+            >
+              limpiar
+            </button>
+          )}
+          <div className="ml-auto text-xs text-neutral-500" data-testid="withdrawals-result-count">
+            {items.length} {items.length === 1 ? "retiro" : "retiros"}
+          </div>
+        </div>
         <div className="tactile-card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">

@@ -4,11 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import { Eye } from "lucide-react";
+import { Eye, Search } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_STYLES = {
@@ -36,6 +38,10 @@ export default function AdminOrders() {
   const isAdmin = currentUser?.role === "admin";
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("all");
+  const [userQuery, setUserQuery] = useState("");
+  const [userInput, setUserInput] = useState("");
+  const [currencyFilter, setCurrencyFilter] = useState("all");
+  const [currencies, setCurrencies] = useState([]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -43,13 +49,26 @@ export default function AdminOrders() {
   const [note, setNote] = useState("");
   const [pendingStatus, setPendingStatus] = useState(null); // status waiting for 2FA (low-margin orders)
 
-  useEffect(() => { setPage(0); }, [filter]);
+  useEffect(() => { setPage(0); }, [filter, userQuery, currencyFilter]);
+
+  // Debounce user query input
+  useEffect(() => {
+    const t = setTimeout(() => setUserQuery(userInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [userInput]);
+
+  // Load currencies once for the filter dropdown
+  useEffect(() => {
+    axios.get(`${API}/currencies`).then((r) => setCurrencies(r.data || [])).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
       if (filter !== "all") params.status = filter;
+      if (userQuery) params.user_q = userQuery;
+      if (currencyFilter !== "all") params.currency = currencyFilter;
       const r = await axios.get(`${API}/admin/orders`, { params, withCredentials: true });
       setOrders(r.data);
       const t = Number(r.headers["x-total-count"]);
@@ -59,7 +78,7 @@ export default function AdminOrders() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page]);
+  }, [filter, page, userQuery, currencyFilter]);
   useEffect(() => { load(); }, [load]);
 
   const updateStatus = async (status, totpCode = null) => {
@@ -89,7 +108,42 @@ export default function AdminOrders() {
         <div className="micro-label text-[#EAB308] mb-2">/ Órdenes</div>
         <h1 className="font-display text-3xl">Cola de Operaciones P2P</h1>
       </div>
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-3 flex-wrap items-end">
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
+          <Input
+            data-testid="orders-user-search"
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            placeholder="Buscar usuario..."
+            className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-60 pl-9 text-xs"
+          />
+        </div>
+        <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
+          <SelectTrigger data-testid="orders-currency-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectItem value="all">Todas las monedas</SelectItem>
+            {currencies.map((c) => (
+              <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {(userInput || currencyFilter !== "all") && (
+          <button
+            data-testid="orders-clear-filters"
+            onClick={() => { setUserInput(""); setCurrencyFilter("all"); }}
+            className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-9"
+          >
+            limpiar
+          </button>
+        )}
+        <div className="ml-auto text-xs text-neutral-500" data-testid="orders-result-count">
+          {total} {total === 1 ? "orden" : "órdenes"}
+        </div>
+      </div>
+      <div className="flex gap-2 mb-4 flex-wrap">
         {["all", "pending", "requires_double_approval", "approved", "rejected", "completed"].map(f => (
           <button key={f} data-testid={`orders-filter-${f}`} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#EAB308] text-black border-[#EAB308]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
             {f}
