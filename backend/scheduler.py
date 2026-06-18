@@ -1,0 +1,91 @@
+"""Background scheduler for periodic admin tasks.
+
+Currently handles: monthly revenue PDF email to all admins on day 1 at 09:00 UTC.
+"""
+import logging
+from datetime import datetime, timezone, timedelta
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+import email_service
+from revenue_report import revenue_monthly_pdf
+
+logger = logging.getLogger(__name__)
+
+_scheduler: AsyncIOScheduler = None
+
+
+def _previous_month(now: datetime):
+    """Return (year, month, label) for the month before `now`."""
+    first_of_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_of_prev = first_of_this_month - timedelta(days=1)
+    return last_of_prev.year, last_of_prev.month, f"{last_of_prev.year}-{last_of_prev.month:02d}"
+
+
+async def run_monthly_revenue_email(db, build_timeseries):
+    """Generate previous month's PDF and email it to every admin.
+
+    `build_timeseries` is an async callable `(granularity, year, month) -> rows`.
+    Passed in to avoid an import cycle with server.py.
+    """
+    year, month, label = _previous_month(datetime.now(timezone.utc))
+    try:
+        rows = await build_timeseries("day", year=year, month=month)
+    except Exception:
+        logger.exception("Monthly revenue: failed to build timeseries for %s", label)
+        return
+
+    rows_asc = sorted(rows, key=lambda x: x["bucket"])
+    totals = {
+        "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
+        "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
+        "total": sum(r["total_profit_usdt"] for r in rows_asc),
+        "volume": sum(r["volume_usdt"] for r in rows_asc),
+        "orders": sum(r["orders"] for r in rows_asc),
+    }
+    try:
+        pdf_bytes = revenue_monthly_pdf(rows_asc, label, totals)
+    except Exception:
+        logger.exception("Monthly revenue: PDF generation failed for %s", label)
+        return
+
+    admins = await db.users.find({"role": "admin"},
+                                 {"_id": 0, "email": 1, "name": 1}).to_list(200)
+    sent = 0
+    for a in admins:
+        if a.get("email") and email_service.notify_monthly_revenue(
+            a["email"], label, totals, pdf_bytes
+        ):
+            sent += 1
+    logger.info("Monthly revenue email %s: sent to %s/%s admins", label, sent, len(admins))
+
+
+def start_scheduler(db, build_timeseries):
+    """Start APScheduler with the monthly revenue job (day 1 09:00 UTC).
+
+    Idempotent — safe to call once on FastAPI startup.
+    """
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        return _scheduler
+    _scheduler = AsyncIOScheduler(timezone="UTC")
+    _scheduler.add_job(
+        run_monthly_revenue_email,
+        CronTrigger(day=1, hour=9, minute=0, timezone="UTC"),
+        kwargs={"db": db, "build_timeseries": build_timeseries},
+        id="monthly_revenue_email",
+        replace_existing=True,
+        misfire_grace_time=3600,  # if container was down, run within 1h of catch-up
+        coalesce=True,
+    )
+    _scheduler.start()
+    logger.info("Scheduler started: monthly_revenue_email (day 1 @ 09:00 UTC)")
+    return _scheduler
+
+
+def stop_scheduler():
+    global _scheduler
+    if _scheduler and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped")

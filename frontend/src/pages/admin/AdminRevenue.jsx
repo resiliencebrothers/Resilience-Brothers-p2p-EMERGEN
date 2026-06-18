@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Calendar, Download, FileText } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Calendar, Download, FileText, Send } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 
 export default function AdminRevenue() {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [days, setDays] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -14,6 +17,8 @@ export default function AdminRevenue() {
   const [monthly, setMonthly] = useState([]);
   const [dailyRange, setDailyRange] = useState("30");
   const [exporting, setExporting] = useState(null); // `${YYYY-MM}-${csv|pdf}`
+  const [sendingTotp, setSendingTotp] = useState(null); // { year, month, label }
+  const [sendingBusy, setSendingBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -61,6 +66,30 @@ export default function AdminRevenue() {
       toast.error("Error al exportar");
     } finally {
       setExporting(null);
+    }
+  };
+
+  const askSendMonth = (bucket) => {
+    const [year, month] = bucket.split("-");
+    setSendingTotp({ year: parseInt(year), month: parseInt(month), label: bucket });
+  };
+
+  const sendMonthEmail = async (totpCode) => {
+    if (!sendingTotp) return;
+    setSendingBusy(true);
+    try {
+      const res = await axios.post(
+        `${API}/admin/revenue/monthly/send-now`,
+        { year: sendingTotp.year, month: sendingTotp.month, totp_code: totpCode },
+        { withCredentials: true }
+      );
+      const { sent, total_admins } = res.data || {};
+      toast.success(`Reporte enviado a ${sent}/${total_admins} admins`);
+      setSendingTotp(null);
+    } catch (e) {
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+    } finally {
+      setSendingBusy(false);
     }
   };
 
@@ -260,7 +289,10 @@ export default function AdminRevenue() {
           <h2 className="font-display text-lg flex items-center gap-2">
             <Calendar className="w-5 h-5 text-[#EAB308]" /> Registro Mensual
           </h2>
-          <p className="text-xs text-neutral-500 mt-1">Descarga el detalle diario de cada mes en CSV o PDF para auditoría/contabilidad.</p>
+          <p className="text-xs text-neutral-500 mt-1">
+            Descarga el detalle diario de cada mes en CSV o PDF.
+            El día 1 de cada mes a las 09:00 UTC el PDF del mes anterior se envía automáticamente a todos los admins.
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -288,7 +320,7 @@ export default function AdminRevenue() {
                   <td className="px-4 py-3 font-mono">{fmt(m.marketplace_profit_usdt)} USDT</td>
                   <td className="px-4 py-3 font-mono text-[#22C55E] font-bold">{fmt(m.total_profit_usdt)} USDT</td>
                   <td className="px-4 py-3">
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <Button
                         size="sm"
                         data-testid={`export-csv-${m.bucket}`}
@@ -306,6 +338,14 @@ export default function AdminRevenue() {
                         className="rounded-none bg-[#EAB308] hover:bg-[#FACC15] text-black h-8 text-xs"
                       >
                         <Download className="w-3 h-3 mr-1" /> PDF
+                      </Button>
+                      <Button
+                        size="sm"
+                        data-testid={`send-now-${m.bucket}`}
+                        onClick={() => askSendMonth(m.bucket)}
+                        className="rounded-none bg-transparent border border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10 h-8 text-xs"
+                      >
+                        <Send className="w-3 h-3 mr-1" /> Enviar
                       </Button>
                     </div>
                   </td>
@@ -370,6 +410,15 @@ export default function AdminRevenue() {
           </table>
         </div>
       </div>
+
+      <TotpPromptDialog
+        open={!!sendingTotp}
+        title={`Enviar reporte mensual ${sendingTotp?.label ?? ""}`}
+        description="Se enviará el PDF del mes seleccionado por correo a TODOS los administradores. Ingresa tu código 2FA."
+        busy={sendingBusy}
+        onConfirm={sendMonthEmail}
+        onCancel={() => setSendingTotp(null)}
+      />
     </div>
   );
 }

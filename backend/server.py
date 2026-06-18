@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from email_service import notify_order_approved, notify_order_rejected
+import email_service
 from pdf_service import generate_vip_closing_pdf
 from push_service import (
     send_push,
@@ -1985,6 +1986,42 @@ async def admin_revenue_monthly_export(request: Request, year: int, month: int,
     return Response(content=payload, media_type="application/pdf", headers=headers)
 
 
+@api_router.post("/admin/revenue/monthly/send-now")
+async def admin_revenue_send_now(payload: dict, request: Request):
+    """Manually trigger the monthly revenue email for testing / on-demand sending.
+
+    Body: {"year": YYYY, "month": MM, "totp_code": "123456"}.
+    Sends the PDF to every admin via email_service.notify_monthly_revenue.
+    """
+    actor = await require_admin(request)
+    await _enforce_totp_step_up(actor, payload.get("totp_code"),
+                                 action_label="enviar reporte mensual")
+    year = int(payload.get("year") or 0)
+    month = int(payload.get("month") or 0)
+    if month < 1 or month > 12 or year < 2020:
+        raise HTTPException(status_code=400, detail="año/mes inválido")
+    rows = await _build_revenue_timeseries("day", year=year, month=month)
+    rows_asc = sorted(rows, key=lambda x: x["bucket"])
+    totals = {
+        "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
+        "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
+        "total": sum(r["total_profit_usdt"] for r in rows_asc),
+        "volume": sum(r["volume_usdt"] for r in rows_asc),
+        "orders": sum(r["orders"] for r in rows_asc),
+    }
+    pdf_bytes = revenue_monthly_pdf(rows_asc, f"{year}-{month:02d}", totals)
+    admins = await db.users.find({"role": "admin"},
+                                  {"_id": 0, "email": 1}).to_list(200)
+    sent = 0
+    for a in admins:
+        if a.get("email") and email_service.notify_monthly_revenue(
+            a["email"], f"{year}-{month:02d}", totals, pdf_bytes
+        ):
+            sent += 1
+    return {"ok": True, "sent": sent, "total_admins": len(admins),
+            "period": f"{year}-{month:02d}"}
+
+
 # ============== USERS (ADMIN) ==============
 
 @api_router.get("/admin/users")
@@ -2083,6 +2120,20 @@ app.add_middleware(
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+@app.on_event("startup")
+async def start_background_jobs():
+    """Wire up APScheduler. Wrap build_timeseries to expose it to scheduler.py
+    without importing server.py (which would be circular)."""
+    from scheduler import start_scheduler
+
+    async def _build_timeseries(granularity, year=None, month=None, days=None):
+        return await _build_revenue_timeseries(granularity, days=days, year=year, month=month)
+
+    start_scheduler(db, _build_timeseries)
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    from scheduler import stop_scheduler
+    stop_scheduler()
     client.close()

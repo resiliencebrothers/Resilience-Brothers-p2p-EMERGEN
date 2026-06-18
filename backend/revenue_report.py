@@ -9,6 +9,10 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.graphics.shapes import Drawing, Line, String, Rect
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.lineplots import LinePlot
+from reportlab.graphics.widgets.markers import makeMarker
 
 
 BRAND_YELLOW = colors.HexColor("#EAB308")
@@ -193,6 +197,13 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
     story.append(tbl)
     story.append(Spacer(1, 16))
 
+    # Chart: daily bars + cumulative line (only when there is data)
+    if rows:
+        story.append(Paragraph("Tendencia diaria · Barras = ganancia del día · Línea = acumulado", meta))
+        story.append(Spacer(1, 6))
+        story.append(_revenue_chart(rows))
+        story.append(Spacer(1, 14))
+
     # Daily table
     head = ["Fecha", "Órdenes", "Volumen USDT", "P2P", "Marketplace", "Total"]
     data = [head]
@@ -226,3 +237,86 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
     story.append(tbl2)
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     return buf.getvalue()
+
+
+def _revenue_chart(rows) -> Drawing:
+    """Combined chart: vertical bars (daily profit) + cumulative line.
+
+    Sorted by date ascending. X-axis labels show day-of-month (DD).
+    """
+    sorted_rows = sorted(rows, key=lambda x: x["bucket"])
+    daily = [r["total_profit_usdt"] for r in sorted_rows]
+    labels = [r["bucket"][-2:] for r in sorted_rows]  # DD only
+    # Cumulative
+    cum = []
+    running = 0.0
+    for v in daily:
+        running += v
+        cum.append(running)
+
+    width = 7.0 * inch
+    height = 2.4 * inch
+    d = Drawing(width, height)
+    # Background
+    d.add(Rect(0, 0, width, height, fillColor=PANEL, strokeColor=BORDER, strokeWidth=0.5))
+
+    # --- Bars ---
+    bar = VerticalBarChart()
+    bar.x = 40
+    bar.y = 28
+    bar.width = width - 70
+    bar.height = height - 50
+    bar.data = [daily]
+    bar.categoryAxis.categoryNames = labels
+    bar.categoryAxis.labels.fontSize = 6
+    bar.categoryAxis.labels.fillColor = TEXT_MUTED
+    bar.valueAxis.labels.fontSize = 6
+    bar.valueAxis.labels.fillColor = TEXT_MUTED
+    bar.bars[0].fillColor = BRAND_YELLOW
+    bar.bars[0].strokeColor = None
+    bar.barWidth = max(2, (bar.width / max(1, len(daily))) * 0.6)
+    bar.valueAxis.gridStrokeColor = BORDER
+    bar.valueAxis.gridStrokeWidth = 0.25
+    bar.valueAxis.visibleGrid = True
+    d.add(bar)
+
+    # --- Cumulative line (overlaid, separate axis scale) ---
+    # Map cumulative values onto bar.y / bar.height using its own min/max
+    if cum:
+        cmin = min(0.0, min(cum))
+        cmax = max(0.0, max(cum)) or 1.0
+        span = cmax - cmin or 1.0
+        n = len(cum)
+        line = LinePlot()
+        line.x = bar.x
+        line.y = bar.y
+        line.width = bar.width
+        line.height = bar.height
+        # X positions: center of each bar slot
+        step = bar.width / max(1, n)
+        pts = []
+        for i, v in enumerate(cum):
+            px = (i + 0.5) * step
+            py = ((v - cmin) / span) * bar.height
+            pts.append((px, py))
+        # Use absolute coords by setting plot ranges
+        line.data = [pts]
+        line.xValueAxis.valueMin = 0
+        line.xValueAxis.valueMax = bar.width
+        line.yValueAxis.valueMin = 0
+        line.yValueAxis.valueMax = bar.height
+        line.xValueAxis.visible = False
+        line.yValueAxis.visible = False
+        line.lines[0].strokeColor = GREEN
+        line.lines[0].strokeWidth = 1.5
+        line.lines[0].symbol = makeMarker("Circle", size=2, fillColor=GREEN, strokeColor=None)
+        d.add(line)
+
+    # Legend
+    d.add(Rect(50, height - 18, 12, 6, fillColor=BRAND_YELLOW, strokeColor=None))
+    d.add(String(66, height - 14, "Ganancia diaria",
+                  fontSize=7, fillColor=TEXT_MUTED))
+    d.add(Line(150, height - 15, 162, height - 15, strokeColor=GREEN, strokeWidth=1.5))
+    d.add(String(166, height - 14, "Acumulado",
+                  fontSize=7, fillColor=TEXT_MUTED))
+    return d

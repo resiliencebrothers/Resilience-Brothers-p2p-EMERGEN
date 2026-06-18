@@ -1,5 +1,6 @@
 """Email notifications via Resend."""
 import os
+import base64
 import logging
 import resend
 
@@ -41,7 +42,7 @@ def _base_template(title: str, body_html: str) -> str:
 </body></html>"""
 
 
-def _send(to: str, subject: str, html: str) -> bool:
+def _send(to: str, subject: str, html: str, attachments: list = None) -> bool:
     if not resend.api_key:
         logger.warning("RESEND_API_KEY not set, skipping email")
         return False
@@ -51,12 +52,45 @@ def _send(to: str, subject: str, html: str) -> bool:
         params = {"from": SENDER, "to": [to], "subject": subject, "html": html}
         if REPLY_TO:
             params["reply_to"] = REPLY_TO
+        if attachments:
+            params["attachments"] = attachments
         resp = resend.Emails.send(params)
         logger.info(f"Email sent to {to}: id={resp.get('id')}")
         return True
     except Exception as e:
         logger.error(f"Resend email failed for {to}: {e}")
         return False
+
+
+def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: bytes) -> bool:
+    """Email the monthly revenue PDF to an admin."""
+    subject = f"Reporte mensual de ganancias · {period_label}"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">
+        Reporte automático del cierre mensual de <strong style="color:#fff;">{period_label}</strong>.
+        Adjunto encontrarás el PDF con desglose diario, totales y gráfico de tendencia.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:20px;">
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Ganancia P2P</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals['p2p']:.2f} USDT</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Ganancia Marketplace</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals['marketplace']:.2f} USDT</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Ganancia TOTAL</td>
+            <td style="padding:6px 0;color:#22C55E;font-family:monospace;text-align:right;font-weight:bold;font-size:15px;">{totals['total']:.2f} USDT</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Volumen P2P</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals['volume']:.2f} USDT</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Órdenes</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals['orders']}</td></tr>
+      </table>
+      <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">
+        También puedes descargarlo desde la sección <em>Ingresos</em> del panel admin.
+      </p>
+    """
+    attachment = {
+        "filename": f"ganancia-{period_label}.pdf",
+        "content": base64.b64encode(pdf_bytes).decode("ascii"),
+    }
+    return _send(to, subject, _base_template("Cierre mensual", body), attachments=[attachment])
 
 
 def notify_order_approved(order: dict, user: dict) -> bool:
