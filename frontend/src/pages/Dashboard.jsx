@@ -17,7 +17,7 @@ const ROLE_LABELS = {
   normal: "Cliente",
   vip: "VIP",
   admin: "Admin",
-  employee: "Empleado",
+  employee: "Staff Member",
 };
 
 export default function Dashboard() {
