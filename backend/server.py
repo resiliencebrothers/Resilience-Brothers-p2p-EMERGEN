@@ -447,6 +447,7 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
     role = "admin" if email in ADMIN_EMAILS else "normal"
     if await db.users.count_documents({}) == 0:
         role = "admin"
+    verification_token = uuid.uuid4().hex + uuid.uuid4().hex
     user_doc = {
         "user_id": user_id,
         "email": email,
@@ -455,20 +456,46 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
         "role": role,
         "auth_provider": "password",
         "password_hash": _hash_password(payload.password),
+        "email_verified": False,
+        "verification_token": verification_token,
+        "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
         "vip_balance_usd": 0.0,
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
-    await _create_session(user_id, response)
-    user_doc.pop("_id", None)
-    user_doc.pop("password_hash", None)
-    return user_doc
+    # Send verification email (best effort)
+    try:
+        email_service.notify_email_verification(email, payload.name.strip(), verification_token)
+    except Exception as e:
+        logger.error(f"Verification email failed: {e}")
+    return {
+        "ok": True,
+        "email": email,
+        "message": "Cuenta creada. Revisa tu correo para verificar tu email antes de iniciar sesión.",
+    }
+
+
+@api_router.get("/auth/verify-email/{token}")
+async def auth_verify_email(token: str, response: Response):
+    user = await db.users.find_one({"verification_token": token}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Token inválido o ya usado")
+    expires = user.get("verification_expires_at")
+    if expires and expires < iso(now_utc()):
+        raise HTTPException(status_code=400, detail="El enlace expiró. Solicita uno nuevo.")
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"email_verified": True},
+         "$unset": {"verification_token": "", "verification_expires_at": ""}},
+    )
+    await _create_session(user["user_id"], response)
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
+    return fresh
 
 
 @api_router.post("/auth/login")
 async def auth_login(payload: AuthLoginPayload, request: Request, response: Response):
     email = payload.email.lower().strip()
-    # iter16: per-email rate limit (5 fails / 15min) — survives behind proxies
     identifier = email
     if await _too_many_failed_attempts(identifier):
         raise HTTPException(
@@ -482,10 +509,68 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
     if not _verify_password(payload.password, user["password_hash"]):
         await _record_login_attempt(identifier, False)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    # Iter17: block password login until email is verified
+    if user.get("auth_provider") == "password" and not user.get("email_verified", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "EMAIL_NOT_VERIFIED",
+                    "message": "Verifica tu correo antes de iniciar sesión. Revisa tu bandeja."},
+        )
     await _record_login_attempt(identifier, True)
     await _create_session(user["user_id"], response)
     user.pop("password_hash", None)
+    user.pop("verification_token", None)
     return user
+
+
+class ForgotPasswordPayload(BaseModel):
+    email: EmailStr
+
+
+@api_router.post("/auth/forgot-password")
+async def auth_forgot_password(payload: ForgotPasswordPayload):
+    """Send reset link if account exists. Always returns 200 to avoid email enumeration."""
+    email = payload.email.lower().strip()
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if user and user.get("password_hash"):
+        token = uuid.uuid4().hex + uuid.uuid4().hex
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {
+                "password_reset_token": token,
+                "password_reset_expires_at": iso(now_utc() + timedelta(hours=2)),
+            }},
+        )
+        try:
+            email_service.notify_password_reset(email, user.get("name", ""), token)
+        except Exception as e:
+            logger.error(f"Password reset email failed: {e}")
+    return {"ok": True, "message": "Si la cuenta existe, recibirás un correo con el enlace."}
+
+
+class ResetPasswordPayload(BaseModel):
+    token: str
+    password: str = Field(..., min_length=8, max_length=200)
+
+
+@api_router.post("/auth/reset-password")
+async def auth_reset_password(payload: ResetPasswordPayload, response: Response):
+    user = await db.users.find_one({"password_reset_token": payload.token}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Token inválido")
+    expires = user.get("password_reset_expires_at")
+    if expires and expires < iso(now_utc()):
+        raise HTTPException(status_code=400, detail="El enlace expiró. Solicita uno nuevo.")
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {
+            "password_hash": _hash_password(payload.password),
+            "email_verified": True,  # password reset via email proves ownership
+        },
+         "$unset": {"password_reset_token": "", "password_reset_expires_at": ""}},
+    )
+    await _create_session(user["user_id"], response)
+    return {"ok": True, "message": "Contraseña actualizada"}
 
 
 # ============== CURRENCIES ==============

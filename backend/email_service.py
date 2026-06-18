@@ -93,6 +93,56 @@ def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: 
     return _send(to, subject, _base_template("Cierre mensual", body), attachments=[attachment])
 
 
+# ============== iter17 — email verification & password reset ==============
+
+def _app_url() -> str:
+    return APP_URL.rstrip("/") if APP_URL else "https://p2p.resiliencebrothers.com"
+
+
+def notify_email_verification(to: str, name: str, token: str) -> bool:
+    link = f"{_app_url()}/auth/verify-email/{token}"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 24px;">
+        ¡Hola {name or 'usuario'}! 👋<br><br>
+        Gracias por crear tu cuenta en Resilience Brothers. Para empezar a operar
+        necesitamos confirmar que este correo te pertenece.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0 24px;">
+          <a href="{link}" style="background:#EAB308;color:#000;text-decoration:none;
+             padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
+             display:inline-block;">VERIFICAR MI EMAIL</a>
+        </td></tr>
+      </table>
+      <p style="color:#666;font-size:12px;margin:0 0 6px;">El enlace expira en 24 horas.</p>
+      <p style="color:#666;font-size:11px;word-break:break-all;">O copia: {link}</p>
+    """
+    return _send(to, "Verifica tu correo · Resilience Brothers",
+                 _base_template("Verifica tu cuenta", body))
+
+
+def notify_password_reset(to: str, name: str, token: str) -> bool:
+    link = f"{_app_url()}/auth/reset-password/{token}"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 24px;">
+        Hola {name or 'usuario'},<br><br>
+        Recibimos una solicitud para restablecer la contraseña de tu cuenta en
+        Resilience Brothers. Si fuiste tú, haz clic abajo. Si no, ignora este correo.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0 24px;">
+          <a href="{link}" style="background:#EAB308;color:#000;text-decoration:none;
+             padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
+             display:inline-block;">CREAR NUEVA CONTRASEÑA</a>
+        </td></tr>
+      </table>
+      <p style="color:#666;font-size:12px;margin:0 0 6px;">El enlace expira en 2 horas.</p>
+      <p style="color:#666;font-size:11px;word-break:break-all;">O copia: {link}</p>
+    """
+    return _send(to, "Restablecer contraseña · Resilience Brothers",
+                 _base_template("Recuperar contraseña", body))
+
+
 def notify_order_approved(order: dict, user: dict) -> bool:
     name = user.get("name") or "Cliente"
     subject = f"Tu orden #{order['id'][:8]} fue aprobada"

@@ -13,14 +13,15 @@ import { toast } from "sonner";
 export default function EmailAuthDialog({ open, onClose }) {
   const navigate = useNavigate();
   const { setUser, login } = useAuth();
-  const [mode, setMode] = useState("login"); // "login" | "register"
+  const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState(""); // post-register / forgot confirmation
 
   const reset = () => {
-    setEmail(""); setPassword(""); setName(""); setLoading(false);
+    setEmail(""); setPassword(""); setName(""); setLoading(false); setSuccessMsg(""); setMode("login");
   };
 
   const submit = async (e) => {
@@ -28,22 +29,35 @@ export default function EmailAuthDialog({ open, onClose }) {
     if (loading) return;
     setLoading(true);
     try {
+      if (mode === "forgot") {
+        await axios.post(`${API}/auth/forgot-password`, { email: email.trim() });
+        setSuccessMsg("Si la cuenta existe, recibirás un correo con el enlace para crear una nueva contraseña.");
+        return;
+      }
       const url = mode === "register" ? "/auth/register" : "/auth/login";
       const body = mode === "register"
         ? { email: email.trim(), password, name: name.trim() }
         : { email: email.trim(), password };
       const r = await axios.post(`${API}${url}`, body, { withCredentials: true });
+      if (mode === "register") {
+        // iter17: registration no longer logs in — must verify email first
+        setSuccessMsg(r.data.message || "Cuenta creada. Revisa tu correo para verificar.");
+        return;
+      }
       setUser(r.data);
-      toast.success(mode === "register" ? "Cuenta creada" : "Sesión iniciada");
-      onClose?.();
-      reset();
+      toast.success("Sesión iniciada");
+      onClose?.(); reset();
       navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard");
     } catch (err) {
       const detail = err.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "Error de autenticación");
-    } finally {
-      setLoading(false);
-    }
+      const code = typeof detail === "object" ? detail?.code : null;
+      const message = typeof detail === "object" ? detail?.message : detail;
+      if (code === "EMAIL_NOT_VERIFIED") {
+        setSuccessMsg(message || "Verifica tu correo antes de iniciar sesión.");
+      } else {
+        toast.error(typeof message === "string" ? message : "Error de autenticación");
+      }
+    } finally { setLoading(false); }
   };
 
   return (
@@ -54,14 +68,27 @@ export default function EmailAuthDialog({ open, onClose }) {
       >
         <DialogHeader>
           <DialogTitle className="font-display text-2xl">
-            {mode === "register" ? "Crear cuenta" : "Iniciar con email"}
+            {mode === "register" ? "Crear cuenta"
+              : mode === "forgot" ? "Recuperar contraseña"
+              : "Iniciar con email"}
           </DialogTitle>
           <DialogDescription className="text-neutral-500 text-xs">
-            {mode === "register"
-              ? "Para usuarios en regiones con restricciones de Google."
+            {mode === "register" ? "¿Aún no tienes cuenta en Resilience? Regístrate con tu email."
+              : mode === "forgot" ? "Te enviaremos un enlace para crear una nueva contraseña."
               : "Acceso con email y contraseña."}
           </DialogDescription>
         </DialogHeader>
+        {successMsg ? (
+          <div className="py-4 text-center" data-testid="auth-success-state">
+            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#22C55E]/10 flex items-center justify-center">
+              <Mail className="w-6 h-6 text-[#22C55E]" />
+            </div>
+            <p className="text-sm text-neutral-300 mb-5">{successMsg}</p>
+            <Button onClick={() => { onClose?.(); reset(); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
+              Entendido
+            </Button>
+          </div>
+        ) : (
         <form onSubmit={submit} className="space-y-4">
           <button
             type="button"
@@ -115,40 +142,60 @@ export default function EmailAuthDialog({ open, onClose }) {
               />
             </div>
           </div>
-          <div>
-            <Label className="micro-label text-neutral-500">Contraseña</Label>
-            <div className="relative mt-1">
-              <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-              <Input
-                data-testid="auth-password-input"
-                type="password"
-                required
-                minLength={mode === "register" ? 8 : 1}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={mode === "register" ? "mín. 8 caracteres" : "Tu contraseña"}
-                autoComplete={mode === "register" ? "new-password" : "current-password"}
-                className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
-              />
+          {mode !== "forgot" && (
+            <div>
+              <Label className="micro-label text-neutral-500">Contraseña</Label>
+              <div className="relative mt-1">
+                <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                <Input
+                  data-testid="auth-password-input"
+                  type="password"
+                  required
+                  minLength={mode === "register" ? 8 : 1}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={mode === "register" ? "mín. 8 caracteres" : "Tu contraseña"}
+                  autoComplete={mode === "register" ? "new-password" : "current-password"}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
+                />
+              </div>
             </div>
-          </div>
+          )}
           <Button
             type="submit"
             data-testid="auth-submit"
             disabled={loading}
             className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12"
           >
-            {loading ? "..." : mode === "register" ? "Crear cuenta" : "Iniciar sesión"}
+            {loading ? "..."
+              : mode === "register" ? "Crear cuenta"
+              : mode === "forgot" ? "Enviar enlace"
+              : "Iniciar sesión"}
           </Button>
-          <button
-            type="button"
-            data-testid="auth-toggle-mode"
-            onClick={() => setMode(mode === "login" ? "register" : "login")}
-            className="w-full text-xs text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
-          >
-            {mode === "login" ? "¿No tienes cuenta? Crear una" : "Ya tengo cuenta, iniciar sesión"}
-          </button>
+          <div className="flex flex-col gap-2 items-center">
+            <button
+              type="button"
+              data-testid="auth-toggle-mode"
+              onClick={() => setMode(mode === "login" ? "register" : "login")}
+              className="text-xs text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
+            >
+              {mode === "register" ? "Ya tengo cuenta, iniciar sesión"
+                : mode === "forgot" ? "Volver a iniciar sesión"
+                : "¿No tienes cuenta? Crear una"}
+            </button>
+            {mode === "login" && (
+              <button
+                type="button"
+                data-testid="auth-forgot-link"
+                onClick={() => setMode("forgot")}
+                className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4"
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
+            )}
+          </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

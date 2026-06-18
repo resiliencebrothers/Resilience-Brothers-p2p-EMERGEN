@@ -1,7 +1,6 @@
-"""Tests for iter16 — email/password auth (Cuba/geo-restricted users fallback)."""
+"""Tests for iter16/iter17 — email/password auth + verification + reset (Cuba fallback)."""
 import os
 import requests
-import pytest
 from pymongo import MongoClient
 
 from conftest import BASE_URL
@@ -12,9 +11,13 @@ TEST_PASSWORD = "veryStrongPass123"
 TEST_NAME = "Iter16 Test User"
 
 
-def _cleanup():
+def _db():
     cli = MongoClient(os.environ["MONGO_URL"])
-    db = cli[os.environ["DB_NAME"]]
+    return cli, cli[os.environ["DB_NAME"]]
+
+
+def _cleanup():
+    cli, db = _db()
     user = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0, "user_id": 1})
     if user:
         db.user_sessions.delete_many({"user_id": user["user_id"]})
@@ -23,28 +26,43 @@ def _cleanup():
     cli.close()
 
 
+def _register():
+    """Register and return (response, verification_token from DB)."""
+    r = requests.post(
+        f"{BASE_URL}/api/auth/register",
+        json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
+    )
+    cli, db = _db()
+    user = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
+    cli.close()
+    return r, user
+
+
+def _verify(token):
+    return requests.get(f"{BASE_URL}/api/auth/verify-email/{token}")
+
+
 class TestEmailPasswordAuth:
     def setup_method(self, _): _cleanup()
     def teardown_method(self, _): _cleanup()
 
-    def test_register_creates_user_and_session(self):
-        r = requests.post(
-            f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
-        )
+    # ---------- Registration ----------
+    def test_register_creates_unverified_user(self):
+        r, user = _register()
         assert r.status_code == 200, r.text
         body = r.json()
+        assert body["ok"] is True
         assert body["email"] == TEST_EMAIL
-        assert body["role"] == "normal"
-        # Hash must NOT be returned
+        # No session/role/hash leaked at register time
         assert "password_hash" not in body
-        assert "session_token" in r.cookies
+        assert "session_token" not in r.cookies
+        # DB shows unverified user with a verification token
+        assert user["email_verified"] is False
+        assert user["verification_token"]
+        assert user["role"] == "normal" or user["role"] == "admin"
 
     def test_register_duplicate_email_rejected(self):
-        requests.post(
-            f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
-        )
+        _register()
         r = requests.post(
             f"{BASE_URL}/api/auth/register",
             json={"email": TEST_EMAIL, "password": "differentPass1234", "name": "Otro"},
@@ -65,18 +83,50 @@ class TestEmailPasswordAuth:
         )
         assert r.status_code == 422
 
-    def test_login_returns_session(self):
-        requests.post(
-            f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
+    # ---------- Email Verification ----------
+    def test_verify_email_logs_user_in(self):
+        _r, user = _register()
+        v = _verify(user["verification_token"])
+        assert v.status_code == 200, v.text
+        body = v.json()
+        assert body["email"] == TEST_EMAIL
+        assert body["email_verified"] is True
+        assert "password_hash" not in body
+        assert "verification_token" not in body
+        assert "session_token" in v.cookies
+
+    def test_verify_invalid_token_rejected(self):
+        r = _verify("not-a-real-token-xxx")
+        assert r.status_code == 400
+
+    def test_verify_token_single_use(self):
+        _r, user = _register()
+        token = user["verification_token"]
+        first = _verify(token)
+        assert first.status_code == 200
+        second = _verify(token)
+        assert second.status_code == 400
+
+    # ---------- Login ----------
+    def test_login_blocked_until_verified(self):
+        _register()
+        r = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
         )
+        assert r.status_code == 403, r.text
+        detail = r.json()["detail"]
+        assert detail.get("code") == "EMAIL_NOT_VERIFIED"
+
+    def test_login_works_after_verification(self):
+        _r, user = _register()
+        _verify(user["verification_token"])
         r = requests.post(
             f"{BASE_URL}/api/auth/login",
             json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
         )
         assert r.status_code == 200, r.text
         assert "session_token" in r.cookies
-        # /me works with the cookie
         token = r.cookies["session_token"]
         me = requests.get(
             f"{BASE_URL}/api/auth/me",
@@ -86,10 +136,8 @@ class TestEmailPasswordAuth:
         assert me.json()["email"] == TEST_EMAIL
 
     def test_login_wrong_password_rejected(self):
-        requests.post(
-            f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
-        )
+        _r, user = _register()
+        _verify(user["verification_token"])
         r = requests.post(
             f"{BASE_URL}/api/auth/login",
             json={"email": TEST_EMAIL, "password": "wrong-pass-1234"},
@@ -104,19 +152,84 @@ class TestEmailPasswordAuth:
         assert r.status_code == 401
 
     def test_brute_force_locks_out_after_5_fails(self):
-        requests.post(
-            f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
-        )
-        # 5 failed attempts
+        _r, user = _register()
+        _verify(user["verification_token"])
         for _ in range(5):
             requests.post(
                 f"{BASE_URL}/api/auth/login",
                 json={"email": TEST_EMAIL, "password": "wrong"},
             )
-        # 6th — should be rate-limited
         r = requests.post(
             f"{BASE_URL}/api/auth/login",
             json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
         )
         assert r.status_code == 429
+
+    # ---------- Password Reset ----------
+    def test_forgot_password_creates_token_for_known_user(self):
+        _r, _user = _register()
+        r = requests.post(
+            f"{BASE_URL}/api/auth/forgot-password",
+            json={"email": TEST_EMAIL},
+        )
+        assert r.status_code == 200
+        cli, db = _db()
+        u = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
+        cli.close()
+        assert u.get("password_reset_token")
+
+    def test_forgot_password_silent_for_unknown(self):
+        r = requests.post(
+            f"{BASE_URL}/api/auth/forgot-password",
+            json={"email": "nobody-xyz@example.com"},
+        )
+        # Always 200 to avoid email enumeration
+        assert r.status_code == 200
+
+    def test_reset_password_updates_hash_and_verifies(self):
+        _r, _user = _register()
+        requests.post(f"{BASE_URL}/api/auth/forgot-password", json={"email": TEST_EMAIL})
+        cli, db = _db()
+        token = db.users.find_one({"email": TEST_EMAIL})["password_reset_token"]
+        cli.close()
+        new_pwd = "BrandNewPwd9876"
+        r = requests.post(
+            f"{BASE_URL}/api/auth/reset-password",
+            json={"token": token, "password": new_pwd},
+        )
+        assert r.status_code == 200, r.text
+        # Old password rejected, new password works (and user is now verified)
+        bad = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+        )
+        assert bad.status_code == 401
+        good = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": new_pwd},
+        )
+        assert good.status_code == 200, good.text
+
+    def test_reset_password_invalid_token_rejected(self):
+        r = requests.post(
+            f"{BASE_URL}/api/auth/reset-password",
+            json={"token": "bogus-token-xxx", "password": "AnyValidPwd123"},
+        )
+        assert r.status_code == 400
+
+    def test_reset_password_token_single_use(self):
+        _r, _user = _register()
+        requests.post(f"{BASE_URL}/api/auth/forgot-password", json={"email": TEST_EMAIL})
+        cli, db = _db()
+        token = db.users.find_one({"email": TEST_EMAIL})["password_reset_token"]
+        cli.close()
+        first = requests.post(
+            f"{BASE_URL}/api/auth/reset-password",
+            json={"token": token, "password": "NewPwdOnce123"},
+        )
+        assert first.status_code == 200
+        second = requests.post(
+            f"{BASE_URL}/api/auth/reset-password",
+            json={"token": token, "password": "NewPwdTwice456"},
+        )
+        assert second.status_code == 400

@@ -4,6 +4,8 @@ import { BrowserRouter, Routes, Route, useLocation, useNavigate, Navigate } from
 import { Toaster } from "sonner";
 import axios from "axios";
 import Landing from "@/pages/Landing";
+import VerifyEmail from "@/pages/VerifyEmail";
+import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
@@ -23,6 +25,8 @@ function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
+      <Route path="/auth/verify-email/:token" element={<VerifyEmail />} />
+      <Route path="/auth/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard/*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/admin/*" element={<ProtectedRoute staffOnly><AdminPanel /></ProtectedRoute>} />
     </Routes>
