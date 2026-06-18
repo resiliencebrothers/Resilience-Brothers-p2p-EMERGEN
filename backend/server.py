@@ -1144,8 +1144,9 @@ def _convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
 @api_router.get("/vip/balances")
 async def vip_balances(request: Request):
     user = await require_user(request)
-    if user["role"] not in ("vip", "admin"):
-        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    if user["role"] == "employee":
+        raise HTTPException(status_code=403, detail="Empleados no tienen saldo de cliente")
+    # iter14: normal users may also accumulate balance — only employees blocked.
     # Merge legacy USD into dict
     balances = dict(user.get("vip_balances") or {})
     legacy_usd = float(user.get("vip_balance_usd") or 0.0)

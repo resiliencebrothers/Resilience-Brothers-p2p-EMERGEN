@@ -58,12 +58,15 @@ export default function VipView() {
   };
 
   const load = useCallback(async () => {
-    const [r, b] = await Promise.all([
-      axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true }),
-      axios.get(`${API}/vip/balances`, { withCredentials: true }),
-    ]);
-    setWithdrawals(r.data);
-    setBalances(b.data);
+    // Each call independent so a 403 on one (e.g. legacy guard) doesn't break the page
+    try {
+      const r = await axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true });
+      setWithdrawals(r.data);
+    } catch (_) { setWithdrawals([]); }
+    try {
+      const b = await axios.get(`${API}/vip/balances`, { withCredentials: true });
+      setBalances(b.data);
+    } catch (_) { setBalances({ balances: [], total_usdt: 0 }); }
   }, []);
   useEffect(() => { load(); }, [load]);
 

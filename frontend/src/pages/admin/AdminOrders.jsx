@@ -5,7 +5,7 @@ import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { Eye } from "lucide-react";
@@ -144,7 +144,12 @@ export default function AdminOrders() {
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
         <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display">Orden #{open?.id?.slice(0,8)}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display">Orden #{open?.id?.slice(0,8)}</DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs">
+              Revisa la captura de pago y confirma o rechaza la operación.
+            </DialogDescription>
+          </DialogHeader>
           {open && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2 font-mono text-sm">

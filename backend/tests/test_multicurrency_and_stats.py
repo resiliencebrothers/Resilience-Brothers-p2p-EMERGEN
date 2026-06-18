@@ -34,9 +34,12 @@ class TestVipBalancesEndpoint:
         r = requests.get(f"{BASE_URL}/api/vip/balances")
         assert r.status_code == 401
 
-    def test_normal_403(self):
+    def test_normal_200(self):
+        # iter14: normal users can now have a balance (accumulate flow) — endpoint must allow them.
         r = requests.get(f"{BASE_URL}/api/vip/balances", headers=_h(NORMAL_TOKEN))
-        assert r.status_code == 403
+        assert r.status_code == 200
+        data = r.json()
+        assert "balances" in data and "total_usdt" in data
 
     def test_admin_200(self):
         r = requests.get(f"{BASE_URL}/api/vip/balances", headers=_h(ADMIN_TOKEN))

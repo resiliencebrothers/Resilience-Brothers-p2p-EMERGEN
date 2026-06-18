@@ -5,7 +5,7 @@ import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
@@ -184,7 +184,12 @@ export default function AdminWithdrawals() {
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
         <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg">
-          <DialogHeader><DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs">
+              Gestiona el retiro y adjunta la evidencia de pago al cliente.
+            </DialogDescription>
+          </DialogHeader>
           {open && (
             <div className="space-y-4">
               <div className="font-mono text-sm space-y-1">
