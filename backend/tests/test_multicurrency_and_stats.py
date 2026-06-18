@@ -2,7 +2,7 @@
 import pytest
 import requests
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import make_vip_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 
 def _h(token=None):
@@ -126,7 +126,7 @@ class TestCurrencyWithdrawals:
         # Set CUP balance to 50000
         _set_user_balances(uid, vip_balances={"CUP": 50000.0})
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 10000, "currency": "CUP", "method": "transfer", "details": "Bank CUP", "beneficiary_name": "Test Holder"})
+                          json={"amount_usd": 10000, "currency": "CUP", "method": "transfer", "details": "Bank CUP", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["currency"] == "CUP"
@@ -147,7 +147,7 @@ class TestCurrencyWithdrawals:
         uid = me["user_id"]
         _set_user_balances(uid, vip_balances={"CUP": 100.0})
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 5000, "currency": "CUP", "method": "transfer", "details": "x", "beneficiary_name": "Test Holder"})
+                          json={"amount_usd": 5000, "currency": "CUP", "method": "transfer", "details": "x", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 400
 
     def test_legacy_withdraw_no_currency_uses_usd(self):
@@ -155,7 +155,7 @@ class TestCurrencyWithdrawals:
         uid = me["user_id"]
         _set_user_balances(uid, vip_balance_usd=200.0, vip_balances={})
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 50, "method": "transfer", "details": "legacy", "beneficiary_name": "Test Holder"})
+                          json={"amount_usd": 50, "method": "transfer", "details": "legacy", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200
         body = r.json()
         assert body["currency"] == "USD"
@@ -170,7 +170,7 @@ class TestCurrencyWithdrawals:
         uid = me["user_id"]
         _set_user_balances(uid, vip_balances={"CUP": 20000.0}, vip_balance_usd=0.0)
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 8000, "currency": "CUP", "method": "transfer", "details": "x", "beneficiary_name": "Test Holder"})
+                          json={"amount_usd": 8000, "currency": "CUP", "method": "transfer", "details": "x", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200
         wid = r.json()["id"]
         cup_after = float((_vip_me().get("vip_balances") or {}).get("CUP", 0.0))

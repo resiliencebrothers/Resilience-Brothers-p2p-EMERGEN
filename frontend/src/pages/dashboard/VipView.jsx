@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Wallet, ArrowDownToLine, FileDown, Coins } from "lucide-react";
+import { Wallet, ArrowDownToLine, FileDown, Coins, ShieldCheck } from "lucide-react";
 
 const WITHDRAWAL_STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -19,6 +20,7 @@ const WITHDRAWAL_STATUS_STYLES = {
 
 export default function VipView() {
   const { user, refresh } = useAuth();
+  const navigate = useNavigate();
   const [withdrawals, setWithdrawals] = useState([]);
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
   const [amount, setAmount] = useState("");
@@ -26,6 +28,7 @@ export default function VipView() {
   const [method, setMethod] = useState("transfer");
   const [details, setDetails] = useState("");
   const [beneficiaryName, setBeneficiaryName] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [closingDate, setClosingDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [downloading, setDownloading] = useState(false);
@@ -71,6 +74,9 @@ export default function VipView() {
     if (!beneficiaryName || beneficiaryName.trim().length < 2) {
       return toast.error("Nombre del titular beneficiario requerido");
     }
+    if (!totpCode || totpCode.length < 6) {
+      return toast.error("Ingresa tu código 2FA (6 dígitos) o código de recuperación");
+    }
     setBusy(true);
     try {
       await axios.post(`${API}/vip/withdraw`, {
@@ -79,12 +85,23 @@ export default function VipView() {
         method,
         details,
         beneficiary_name: beneficiaryName.trim(),
+        totp_code: totpCode.trim(),
       }, { withCredentials: true });
       toast.success("Solicitud de retiro enviada");
-      setAmount(""); setDetails(""); setBeneficiaryName("");
+      setAmount(""); setDetails(""); setBeneficiaryName(""); setTotpCode("");
       await load(); await refresh();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
+      const detail = e.response?.data?.detail;
+      if (e.response?.status === 412 && detail?.code === "TOTP_SETUP_REQUIRED") {
+        toast.error("Debes configurar 2FA antes de realizar retiros");
+        setTimeout(() => navigate("/dashboard/security"), 1500);
+        return;
+      }
+      if (detail?.code === "TOTP_INVALID" || detail?.code === "TOTP_CODE_REQUIRED") {
+        toast.error(detail.message || "Código 2FA inválido");
+        return;
+      }
+      toast.error(detail?.message || detail || "Error");
     } finally {
       setBusy(false);
     }
@@ -210,6 +227,25 @@ export default function VipView() {
               />
               <p className="text-[0.65rem] text-neutral-600 mt-1">
                 Obligatorio · queda registrado en contabilidad
+              </p>
+            </div>
+            <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-3">
+              <Label className="micro-label text-[#EAB308] flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5" /> Código 2FA <span className="text-[#EAB308]">*</span>
+              </Label>
+              <Input
+                data-testid="withdraw-totp"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                placeholder="123456 o XXXXX-XXXXX"
+                maxLength={11}
+                inputMode="text"
+                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono text-center text-lg tracking-wider"
+                required
+              />
+              <p className="text-[0.65rem] text-neutral-500 mt-1">
+                Código de 6 dígitos de tu app autenticadora o un código de recuperación.{" "}
+                <a href="/dashboard/security" className="text-[#EAB308] hover:underline">¿Aún no configuras 2FA?</a>
               </p>
             </div>
             <Button data-testid="submit-withdraw-btn" onClick={submit} disabled={busy} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12">

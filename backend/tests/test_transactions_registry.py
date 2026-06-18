@@ -14,7 +14,7 @@ import uuid
 import pytest
 import requests
 
-from conftest import BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, EMPLOYEE_TOKEN as EMP
+from conftest import make_vip_totp, BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, EMPLOYEE_TOKEN as EMP
 
 
 def _h(tok=None):
@@ -110,7 +110,7 @@ class TestTransactionsE2E:
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP),
             json={"amount_usd": 1.0, "method": "transfer", "details": "Acc Z",
-                  "beneficiary_name": unique_bene},
+                  "beneficiary_name": unique_bene, "totp_code": make_vip_totp()},
         )
         # Could fail with 400 if balance insufficient — top up first by direct admin tweak:
         if r.status_code == 400:

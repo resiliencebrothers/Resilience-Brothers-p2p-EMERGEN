@@ -39,3 +39,69 @@ def tokens():
         "normal": NORMAL_TOKEN,
         "employee": EMPLOYEE_TOKEN,
     }
+
+
+# ---------- 2FA helpers (iter13) ----------
+# These ensure the VIP test user has TOTP enabled so existing withdrawal tests
+# can pass through the step-up gate. Returns a callable that produces fresh codes.
+
+import sys as _sys
+_sys.path.insert(0, str((_ROOT / "backend").resolve()))
+
+
+def _ensure_test_user_totp(user_id: str) -> str:
+    """Enable TOTP on a test user with a deterministic secret. Returns the secret."""
+    import asyncio
+    from motor.motor_asyncio import AsyncIOMotorClient as _M
+    import totp_service as _ts
+    # Fixed secret per user_id so tests are reproducible
+    secret = _ts.generate_secret() if False else "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # 32-char base32
+    encrypted = _ts.encrypt_secret(secret)
+
+    async def _go():
+        cli = _M(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        await cli.users.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "totp_enabled": True,
+                "totp_secret_encrypted": encrypted,
+                "totp_recovery_codes": [],
+                "totp_setup_at": "2026-01-01T00:00:00+00:00",
+            }},
+        )
+    asyncio.get_event_loop().run_until_complete(_go()) if False else asyncio.run(_go())
+    return secret
+
+
+def totp_code_for(secret: str) -> str:
+    """Generate a current TOTP code for the given secret."""
+    import pyotp
+    return pyotp.TOTP(secret).now()
+
+
+@pytest.fixture(scope="session")
+def vip_totp_secret():
+    """Ensures the VIP test user has 2FA enabled and returns the secret."""
+    return _ensure_test_user_totp("user_test_vip01")
+
+
+@pytest.fixture
+def vip_totp_code(vip_totp_secret):
+    """Fresh TOTP code at the moment of test call."""
+    return totp_code_for(vip_totp_secret)
+
+
+# Auto-enable 2FA for the VIP test user at session start so the legacy withdrawal
+# tests that don't import the fixture explicitly still work via `make_vip_totp()`.
+_VIP_TOTP_SECRET = None
+
+
+def make_vip_totp() -> str:
+    """Module-level convenience used by tests that didn't request the fixture.
+
+    Re-applies the setup every call (idempotent) so tests that disable 2FA mid-suite
+    don't leave the VIP user in a broken state for subsequent tests.
+    """
+    global _VIP_TOTP_SECRET
+    _VIP_TOTP_SECRET = _ensure_test_user_totp("user_test_vip01")
+    return totp_code_for(_VIP_TOTP_SECRET)

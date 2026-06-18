@@ -4,7 +4,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import make_vip_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME")
@@ -91,7 +91,7 @@ class TestAlertHooksNonBreaking:
         db.users.update_one({"user_id": "user_test_vip01"},
                             {"$set": {"vip_balance_usd": 100.0}})
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 5, "method": "transfer", "details": "Bank Y", "beneficiary_name": "Test Holder"})
+                          json={"amount_usd": 5, "method": "transfer", "details": "Bank Y", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200, r.text
 
     def test_vip_redeem_still_200(self, db):

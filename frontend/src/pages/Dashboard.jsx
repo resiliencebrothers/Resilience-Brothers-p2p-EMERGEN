@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, X, Receipt } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, X, Receipt, ShieldCheck } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -10,6 +10,7 @@ import VipView from "@/pages/dashboard/VipView";
 import MarketplaceView from "@/pages/dashboard/MarketplaceView";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
+import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import PushToggle from "@/components/PushToggle";
 
 const ROLE_LABELS = {
@@ -31,6 +32,7 @@ export default function Dashboard() {
     { to: "/dashboard/exchange", icon: ArrowLeftRight, label: "Intercambio", id: "nav-exchange" },
     { to: "/dashboard/orders", icon: ListOrdered, label: "Mis Órdenes", id: "nav-orders" },
     { to: "/dashboard/transactions", icon: Receipt, label: "Mi Historial", id: "nav-transactions" },
+    { to: "/dashboard/security", icon: ShieldCheck, label: "Seguridad", id: "nav-security" },
     ...(isVip ? [
       { to: "/dashboard/vip", icon: Star, label: "Saldo VIP", id: "nav-vip" },
       { to: "/dashboard/marketplace", icon: Boxes, label: "Marketplace", id: "nav-marketplace" },
@@ -166,6 +168,7 @@ export default function Dashboard() {
             <Route path="exchange" element={<ExchangeView />} />
             <Route path="orders" element={<OrdersView />} />
             <Route path="transactions" element={<MyTransactions />} />
+            <Route path="security" element={<SecuritySettings />} />
             <Route path="vip" element={<VipView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
           </Routes>

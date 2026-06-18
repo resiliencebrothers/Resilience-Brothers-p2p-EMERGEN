@@ -27,6 +27,7 @@ from push_service import (
 )
 from admin_alerts import notify_all_admins, get_vip_threshold
 from audit_log import log_action
+import totp_service
 from audit_pdf import generate_audit_pdf
 from transactions_pdf import generate_transactions_pdf
 import csv
@@ -194,6 +195,7 @@ class WithdrawalCreate(BaseModel):
     method: Literal["transfer", "cash", "crypto"]
     details: str
     beneficiary_name: str = Field(..., min_length=2, description="Nombre del titular de la cuenta beneficiaria")
+    totp_code: Optional[str] = Field(None, min_length=6, max_length=11, description="Código TOTP (6 dígitos) o código de recuperación (XXXXX-XXXXX)")
 
 class UserUpdate(BaseModel):
     role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
@@ -759,6 +761,8 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     user = await require_user(request)
     if user["role"] not in ("vip", "admin"):
         raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    # 2FA mandatory: must be set up AND a valid code provided
+    await _enforce_totp_step_up(user, payload.totp_code, action_label="retiro")
     currency = payload.currency or "USD"
     if _get_user_balance(user, currency) < payload.amount_usd:
         raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
@@ -784,6 +788,158 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     except Exception as e:
         logger.error(f"Admin notify (withdrawal) failed: {e}")
     return w.model_dump()
+
+
+# ============== 2FA / TOTP MANAGEMENT ==============
+
+async def _enforce_totp_step_up(user: dict, code: Optional[str], action_label: str = "esta acción"):
+    """Raise HTTPException if user has no 2FA enabled OR submitted code is invalid.
+    Consumes a recovery code if `code` matches one. Otherwise verifies TOTP.
+    """
+    if not user.get("totp_enabled"):
+        raise HTTPException(
+            status_code=412,  # Precondition Required
+            detail={
+                "code": "TOTP_SETUP_REQUIRED",
+                "message": f"Debes configurar la verificación en dos pasos (2FA) antes de realizar {action_label}.",
+                "setup_url": "/dashboard/security",
+            },
+        )
+    if not code:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOTP_CODE_REQUIRED", "message": f"Se requiere código 2FA para {action_label}."},
+        )
+    submitted = code.strip()
+    # Try recovery code first if it has hyphen or len 10/11
+    if len(submitted) >= 10 and any(c.isalpha() for c in submitted):
+        ok, remaining = totp_service.consume_recovery_code(
+            user.get("totp_recovery_codes", []) or [], submitted
+        )
+        if ok:
+            await db.users.update_one(
+                {"user_id": user["user_id"]},
+                {"$set": {"totp_recovery_codes": remaining}},
+            )
+            return
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOTP_INVALID", "message": "Código de recuperación inválido."},
+        )
+    # Otherwise treat as TOTP
+    if not user.get("totp_secret_encrypted"):
+        raise HTTPException(status_code=409, detail="Estado 2FA inconsistente. Re-configura tu autenticador.")
+    try:
+        secret = totp_service.decrypt_secret(user["totp_secret_encrypted"])
+    except Exception:
+        raise HTTPException(status_code=500, detail="No se pudo verificar el código 2FA.")
+    if not totp_service.verify_totp(secret, submitted):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOTP_INVALID", "message": "Código 2FA inválido o expirado."},
+        )
+
+
+@api_router.get("/me/2fa/status")
+async def totp_status(request: Request):
+    user = await require_user(request)
+    return {
+        "enabled": bool(user.get("totp_enabled")),
+        "setup_at": user.get("totp_setup_at"),
+        "recovery_codes_remaining": len(user.get("totp_recovery_codes") or []),
+    }
+
+
+@api_router.post("/me/2fa/setup")
+async def totp_setup(request: Request):
+    """Generates a pending TOTP secret + QR. NOT enabled until /verify-setup confirms a valid code."""
+    user = await require_user(request)
+    if user.get("totp_enabled"):
+        raise HTTPException(status_code=409, detail="2FA ya está habilitado. Desactívalo primero para reconfigurar.")
+    secret = totp_service.generate_secret()
+    encrypted = totp_service.encrypt_secret(secret)
+    # Store as pending (separate from active secret); cleared once enabled
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"totp_pending_secret_encrypted": encrypted}},
+    )
+    uri = totp_service.provisioning_uri(secret, user["email"])
+    return {
+        "qr_data_url": totp_service.qr_data_url(uri),
+        "secret": secret,  # shown so user can paste into authenticator if QR fails
+        "provisioning_uri": uri,
+        "issuer": totp_service.ISSUER,
+    }
+
+
+@api_router.post("/me/2fa/verify-setup")
+async def totp_verify_setup(request: Request, payload: dict):
+    """Verify the first TOTP code; on success, enable 2FA and return one-time recovery codes."""
+    user = await require_user(request)
+    code = (payload.get("code") or "").strip()
+    pending = user.get("totp_pending_secret_encrypted")
+    if not pending:
+        raise HTTPException(status_code=400, detail="No hay configuración pendiente. Inicia el setup primero.")
+    try:
+        secret = totp_service.decrypt_secret(pending)
+    except Exception:
+        raise HTTPException(status_code=500, detail="No se pudo leer el secreto pendiente.")
+    if not totp_service.verify_totp(secret, code):
+        raise HTTPException(status_code=401, detail="Código inválido. Vuelve a intentarlo.")
+    plain_codes, hashed_codes = totp_service.generate_recovery_codes(10)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {
+            "$set": {
+                "totp_secret_encrypted": pending,
+                "totp_enabled": True,
+                "totp_setup_at": iso(now_utc()),
+                "totp_recovery_codes": hashed_codes,
+            },
+            "$unset": {"totp_pending_secret_encrypted": ""},
+        },
+    )
+    return {
+        "enabled": True,
+        "recovery_codes": plain_codes,
+        "message": "2FA activado. Guarda los códigos de recuperación en un lugar seguro: solo se muestran una vez.",
+    }
+
+
+@api_router.post("/me/2fa/disable")
+async def totp_disable(request: Request, payload: dict):
+    user = await require_user(request)
+    if not user.get("totp_enabled"):
+        return {"enabled": False, "already_disabled": True}
+    code = (payload.get("code") or "").strip()
+    await _enforce_totp_step_up(user, code, action_label="desactivar 2FA")
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {
+            "$set": {"totp_enabled": False},
+            "$unset": {
+                "totp_secret_encrypted": "",
+                "totp_pending_secret_encrypted": "",
+                "totp_recovery_codes": "",
+                "totp_setup_at": "",
+            },
+        },
+    )
+    return {"enabled": False}
+
+
+@api_router.post("/me/2fa/regenerate-recovery-codes")
+async def totp_regenerate_recovery(request: Request, payload: dict):
+    """Issue a fresh set of 10 recovery codes (invalidates the old ones). Requires current TOTP."""
+    user = await require_user(request)
+    code = (payload.get("code") or "").strip()
+    await _enforce_totp_step_up(user, code, action_label="regenerar códigos de recuperación")
+    plain_codes, hashed_codes = totp_service.generate_recovery_codes(10)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"totp_recovery_codes": hashed_codes}},
+    )
+    return {"recovery_codes": plain_codes}
 
 @api_router.get("/vip/withdrawals/mine")
 async def my_withdrawals(request: Request):
