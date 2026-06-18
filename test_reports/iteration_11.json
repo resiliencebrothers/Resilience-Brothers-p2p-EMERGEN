@@ -1,0 +1,45 @@
+{
+  "summary": "Phase 2 TOTP step-up 2FA backend verification. Ran full pytest suite under /app/backend/tests/ (15 test files, 205 tests total): 204 passed, 1 skipped — exactly matching expectation from main agent. Also performed live curl-style verification against the deployed REACT_APP_BACKEND_URL covering the four new step-up endpoints: PUT /api/admin/settings, PUT /api/admin/rates/{id}, PUT /api/admin/users/{id}, plus 403 employee guard on settings. Both negative (missing TOTP -> 401 TOTP_CODE_REQUIRED with Spanish error message) and positive (valid TOTP -> 200) paths verified. All previous tests (audit log, defensive mode, multicurrency, employee restrictions, push, marketplace, registries, withdrawals, pagination, alerts) still pass. No regressions detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/rates", "issue": "Persists the transient `totp_code` field into the MongoDB rate document (returned as `totp_code: null` in subsequent reads). PUT correctly excludes it via payload.model_dump(exclude={'totp_code'}); POST should do the same. Cosmetic / data-hygiene only — does not affect functionality."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/",
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_totp_2fa.py",
+    "/app/backend/tests/test_audit_log_and_defensive.py",
+    "/app/backend/tests/test_admin_alerts.py",
+    "/app/backend/tests/test_admin_pagination.py",
+    "/app/backend/tests/test_audit_export_and_dates.py",
+    "/app/backend/tests/test_email_and_closing.py",
+    "/app/backend/tests/test_employee_and_revenue.py",
+    "/app/backend/tests/test_marketplace_profit_and_margin.py",
+    "/app/backend/tests/test_multicurrency_and_stats.py",
+    "/app/backend/tests/test_p2p_backend.py",
+    "/app/backend/tests/test_push_notifications.py",
+    "/app/backend/tests/test_transactions_registry.py",
+    "/app/tests/curl_totp_stepup.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional cleanup: in POST /api/admin/rates (server.py ~line 358-370), exclude `totp_code` from payload.model_dump() when persisting to db.rates — matches the pattern already used in update_rate. Run a one-time cleanup `$unset: {totp_code: ''}` on the rates collection to remove leftover null fields."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2000+ lines — exceeds the 700-line guideline. Recommend splitting routers (admin, p2p, withdrawals, totp, marketplace, audit) into modules under /app/backend/routers/ in a future refactor. Not blocking.",
+    "POST /api/admin/rates does not strip `totp_code` from the persisted Mongo document; update_rate does. Minor inconsistency.",
+    "TOTP step-up implementation is consistent across update_rate (~373), update_withdrawal (~963), update_admin_settings (~1189), update_user (~1918) — all go through _enforce_totp_step_up with localized Spanish action_label. Good pattern.",
+    "Tests use a fixed deterministic TOTP secret ('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP') for admin/employee/vip test users — acceptable for dev fixtures but should never leak to production seed data."
+  ],
+  "updated_files": ["/app/tests/curl_totp_stepup.py (new — live curl verification script for step-up endpoints)"],
+  "success_rate": {"backend": "100% (204/204 active tests pass, 1 expected skip)", "frontend": "not tested (skipped per main agent instruction)"},
+  "test_credentials": "Test session tokens from /app/memory/test_credentials.md — admin: test_session_admin_X, employee: test_session_employee_X, vip: test_session_vip_X, normal: test_session_normal_X (Authorization: Bearer). TOTP secret used for all test users: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP (seeded by conftest.make_admin_totp / make_employee_totp / make_vip_totp helpers).",
+  "seed_data_creation": "conftest.py auto-enables TOTP on user_test_admin01 and user_test_employee01 at pytest collection time (idempotent). Test mutated one rate (USD->CUP) and one user (user_test_normal01 role unchanged) via curl checks — no destructive changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 TOTP step-up is fully covered by /app/backend/tests/test_totp_2fa.py plus integration across audit_log/defensive/admin tests. The conftest helpers make_admin_totp() / make_employee_totp() / make_vip_totp() + with_totp_admin(body) / with_totp_employee(body) wrappers are the canonical way to inject TOTP codes — reuse them. For ad-hoc live verification use /app/tests/curl_totp_stepup.py. If main agent extends step-up to more endpoints (e.g. DELETE /api/admin/rates, /api/admin/transactions/*), add similar 401-without-code + 200-with-code assertions following the existing patterns in test_audit_log_and_defensive.py. The minor `totp_code: null` persistence bug in POST /api/admin/rates is cosmetic and not blocking.",
+  "rca of the issue": "N/A — no failures. The minor `totp_code: null` field on rate documents stems from POST /api/admin/rates persisting `payload.model_dump()` without `exclude={'totp_code'}`, unlike PUT which correctly excludes it (server.py L377). Fix: add `exclude={'totp_code'}` to model_dump() calls on lines 365, 368."
+}

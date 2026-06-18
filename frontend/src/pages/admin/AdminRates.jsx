@@ -1,22 +1,26 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const empty = { from_code: "", to_code: "", rate_normal: 0, rate_vip: 0, real_rate: "" };
 
 export default function AdminRates() {
+  const navigate = useNavigate();
   const [rates, setRates] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
+  const [pendingTotp, setPendingTotp] = useState(null); // payload waiting for 2FA on edit
 
   const load = async () => {
     const [r, c] = await Promise.all([axios.get(`${API}/rates`), axios.get(`${API}/currencies`)]);
@@ -24,19 +28,42 @@ export default function AdminRates() {
   };
   useEffect(() => { load(); }, []);
 
+  const buildPayload = () => ({
+    ...form,
+    rate_normal: parseFloat(form.rate_normal),
+    rate_vip: parseFloat(form.rate_vip),
+    real_rate: form.real_rate === "" || form.real_rate === null ? null : parseFloat(form.real_rate),
+  });
+
   const save = async () => {
+    const payload = buildPayload();
     try {
-      const payload = {
-        ...form,
-        rate_normal: parseFloat(form.rate_normal),
-        rate_vip: parseFloat(form.rate_vip),
-        real_rate: form.real_rate === "" || form.real_rate === null ? null : parseFloat(form.real_rate),
-      };
-      if (editing) await axios.put(`${API}/admin/rates/${editing.id}`, payload, { withCredentials: true });
-      else await axios.post(`${API}/admin/rates`, payload, { withCredentials: true });
+      if (editing) {
+        // Editing an existing rate is high-risk → require 2FA step-up
+        setPendingTotp(payload);
+        return;
+      }
+      await axios.post(`${API}/admin/rates`, payload, { withCredentials: true });
       toast.success("Tasa guardada");
       setOpen(false); setEditing(null); setForm(empty); load();
-    } catch (e) { toast.error("Error"); }
+    } catch (e) {
+      toast.error("Error");
+    }
+  };
+
+  const confirmEditWithTotp = async (code) => {
+    try {
+      await axios.put(
+        `${API}/admin/rates/${editing.id}`,
+        { ...pendingTotp, totp_code: code },
+        { withCredentials: true }
+      );
+      toast.success("Tasa actualizada");
+      setPendingTotp(null);
+      setOpen(false); setEditing(null); setForm(empty); load();
+    } catch (e) {
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+    }
   };
 
   const remove = async (id) => {
@@ -120,6 +147,14 @@ export default function AdminRates() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <TotpPromptDialog
+        open={!!pendingTotp}
+        title="Confirmar edición de tasa"
+        description="Editar tasas impacta a todos los clientes. Ingresa tu código 2FA."
+        onConfirm={confirmEditWithTotp}
+        onCancel={() => setPendingTotp(null)}
+      />
     </div>
   );
 }

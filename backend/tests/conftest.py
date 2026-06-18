@@ -105,3 +105,42 @@ def make_vip_totp() -> str:
     global _VIP_TOTP_SECRET
     _VIP_TOTP_SECRET = _ensure_test_user_totp("user_test_vip01")
     return totp_code_for(_VIP_TOTP_SECRET)
+
+
+# ---------- Admin / Employee TOTP helpers (iter14 — admin step-up 2FA) ----------
+_ADMIN_TOTP_SECRET = None
+_EMPLOYEE_TOTP_SECRET = None
+
+
+def make_admin_totp() -> str:
+    """Enable 2FA on the admin test user (idempotent) and return a fresh TOTP code."""
+    global _ADMIN_TOTP_SECRET
+    _ADMIN_TOTP_SECRET = _ensure_test_user_totp("user_test_admin01")
+    return totp_code_for(_ADMIN_TOTP_SECRET)
+
+
+def make_employee_totp() -> str:
+    """Enable 2FA on the employee test user (idempotent) and return a fresh TOTP code."""
+    global _EMPLOYEE_TOTP_SECRET
+    _EMPLOYEE_TOTP_SECRET = _ensure_test_user_totp("user_test_employee01")
+    return totp_code_for(_EMPLOYEE_TOTP_SECRET)
+
+
+def with_totp_admin(body: dict) -> dict:
+    """Return `body` augmented with a fresh admin TOTP code."""
+    return {**body, "totp_code": make_admin_totp()}
+
+
+def with_totp_employee(body: dict) -> dict:
+    return {**body, "totp_code": make_employee_totp()}
+
+
+# Pre-enable 2FA on admin & employee at collection so most existing tests pass
+# without needing to call helpers individually.
+try:
+    make_admin_totp()
+    make_employee_totp()
+except Exception:
+    # Employee user may not exist yet on some envs; ignore — individual tests
+    # that need it will re-trigger via helper.
+    pass

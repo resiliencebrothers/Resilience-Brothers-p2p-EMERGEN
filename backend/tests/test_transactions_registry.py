@@ -14,7 +14,7 @@ import uuid
 import pytest
 import requests
 
-from conftest import make_vip_totp, BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, EMPLOYEE_TOKEN as EMP
+from conftest import make_vip_totp, make_admin_totp, BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, EMPLOYEE_TOKEN as EMP
 
 
 def _h(tok=None):
@@ -120,7 +120,7 @@ class TestTransactionsE2E:
         # Approve it
         upd = requests.put(
             f"{BASE_URL}/api/admin/withdrawals/{wid}/status",
-            headers=_h(ADMIN), json={"status": "approved"},
+            headers=_h(ADMIN), json={"status": "approved", "totp_code": make_admin_totp()},
         )
         assert upd.status_code == 200
         time.sleep(0.2)

@@ -3,7 +3,7 @@ import os
 import pytest
 import requests
 
-from conftest import BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL, EMPLOYEE_TOKEN as EMP
+from conftest import BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL, EMPLOYEE_TOKEN as EMP, make_admin_totp, make_employee_totp
 
 
 def _h(t=None):
@@ -97,7 +97,7 @@ class TestRatesRealRate:
                    "rate_vip": 4.95, "real_rate": 5.1}
         cr = requests.post(f"{BASE_URL}/api/admin/rates", json=payload, headers=_h(ADMIN))
         rid = cr.json()["id"]
-        upd = {**payload, "real_rate": 5.25}
+        upd = {**payload, "real_rate": 5.25, "totp_code": make_employee_totp()}
         ur = requests.put(f"{BASE_URL}/api/admin/rates/{rid}", json=upd, headers=_h(EMP))
         assert ur.status_code == 200, ur.text
         rates = requests.get(f"{BASE_URL}/api/rates").json()
@@ -139,13 +139,13 @@ class TestEmployeeRestrictions:
 
     def test_admin_can_update_admin_settings(self):
         r = requests.put(f"{BASE_URL}/api/admin/settings",
-                         json={"vip_threshold_usdt": 5000},
+                         json={"vip_threshold_usdt": 5000, "totp_code": make_admin_totp()},
                          headers=_h(ADMIN))
         assert r.status_code == 200
 
     def test_employee_cannot_promote_to_admin(self):
         r = requests.put(f"{BASE_URL}/api/admin/users/user_test_normal01",
-                         json={"role": "admin"}, headers=_h(EMP))
+                         json={"role": "admin", "totp_code": make_employee_totp()}, headers=_h(EMP))
         assert r.status_code == 403
         # Verify role unchanged
         users = requests.get(f"{BASE_URL}/api/admin/users", headers=_h(ADMIN)).json()
@@ -154,17 +154,17 @@ class TestEmployeeRestrictions:
 
     def test_employee_cannot_promote_to_employee(self):
         r = requests.put(f"{BASE_URL}/api/admin/users/user_test_normal01",
-                         json={"role": "employee"}, headers=_h(EMP))
+                         json={"role": "employee", "totp_code": make_employee_totp()}, headers=_h(EMP))
         assert r.status_code == 403
 
     def test_employee_can_set_normal_or_vip(self):
         # set normal -> vip
         r = requests.put(f"{BASE_URL}/api/admin/users/user_test_normal01",
-                         json={"role": "vip"}, headers=_h(EMP))
+                         json={"role": "vip", "totp_code": make_employee_totp()}, headers=_h(EMP))
         assert r.status_code == 200, r.text
         # restore
         rr = requests.put(f"{BASE_URL}/api/admin/users/user_test_normal01",
-                          json={"role": "normal"}, headers=_h(EMP))
+                          json={"role": "normal", "totp_code": make_employee_totp()}, headers=_h(EMP))
         assert rr.status_code == 200
 
     def test_admin_can_promote_to_employee(self):
@@ -177,11 +177,11 @@ class TestEmployeeRestrictions:
         )
         client.close()
         r = requests.put(f"{BASE_URL}/api/admin/users/user_test_normal01",
-                         json={"role": "employee"}, headers=_h(ADMIN))
+                         json={"role": "employee", "totp_code": make_admin_totp()}, headers=_h(ADMIN))
         assert r.status_code == 200, r.text
         # Restore
         rr = requests.put(f"{BASE_URL}/api/admin/users/user_test_normal01",
-                          json={"role": "normal"}, headers=_h(ADMIN))
+                          json={"role": "normal", "totp_code": make_admin_totp()}, headers=_h(ADMIN))
         assert rr.status_code == 200
 
 
@@ -200,7 +200,7 @@ class TestRevenueCalculation:
                    "rate_vip": 395, "real_rate": 410}
         if existing:
             r = requests.put(f"{BASE_URL}/api/admin/rates/{existing['id']}",
-                             json=payload, headers=_h(ADMIN))
+                             json={**payload, "totp_code": make_admin_totp()}, headers=_h(ADMIN))
             assert r.status_code == 200
             self.rate_id = existing["id"]
         else:
@@ -252,7 +252,7 @@ class TestRevenueCalculation:
         rates = requests.get(f"{BASE_URL}/api/rates").json()
         existing = next(r for r in rates if r["from_code"] == "USD" and r["to_code"] == "CUP")
         upd = {"from_code": "USD", "to_code": "CUP", "rate_normal": existing["rate_normal"],
-               "rate_vip": existing["rate_vip"], "real_rate": None}
+               "rate_vip": existing["rate_vip"], "real_rate": None, "totp_code": make_admin_totp()}
         r = requests.put(f"{BASE_URL}/api/admin/rates/{existing['id']}",
                          json=upd, headers=_h(ADMIN))
         assert r.status_code == 200
@@ -281,6 +281,6 @@ class TestRevenueCalculation:
         client[os.environ.get("DB_NAME")].orders.delete_one({"id": oid})
         client.close()
         restore = {"from_code": "USD", "to_code": "CUP", "rate_normal": 380,
-                   "rate_vip": 395, "real_rate": 410}
+                   "rate_vip": 395, "real_rate": 410, "totp_code": make_admin_totp()}
         requests.put(f"{BASE_URL}/api/admin/rates/{existing['id']}",
                      json=restore, headers=_h(ADMIN))

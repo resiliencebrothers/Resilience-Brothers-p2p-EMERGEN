@@ -2,7 +2,7 @@
 import pytest
 import requests
 
-from conftest import make_vip_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import make_vip_totp, make_admin_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 
 def _h(token=None):
@@ -14,7 +14,7 @@ def _h(token=None):
 
 def _set_user_balances(user_id: str, vip_balance_usd=None, vip_balances=None):
     """Helper: PUT /api/admin/users/{id} to set balances explicitly."""
-    body = {}
+    body = {"totp_code": make_admin_totp()}
     if vip_balance_usd is not None:
         body["vip_balance_usd"] = vip_balance_usd
     if vip_balances is not None:
@@ -136,7 +136,8 @@ class TestCurrencyWithdrawals:
         assert round(cup_after, 4) == 40000.0
         # Cleanup: reject withdrawal -> refund to CUP
         rr = requests.put(f"{BASE_URL}/api/admin/withdrawals/{wid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "rejected", "admin_note": "test cleanup"})
+                          headers=_h(ADMIN_TOKEN),
+                          json={"status": "rejected", "admin_note": "test cleanup", "totp_code": make_admin_totp()})
         assert rr.status_code == 200
         me3 = _vip_me()
         cup_refunded = float((me3.get("vip_balances") or {}).get("CUP", 0.0))
@@ -163,7 +164,7 @@ class TestCurrencyWithdrawals:
         assert round(me2["vip_balance_usd"], 4) == 150.0
         # Cleanup: reject the withdrawal so it doesn't pollute admin stats negatively
         requests.put(f"{BASE_URL}/api/admin/withdrawals/{body['id']}/status",
-                     headers=_h(ADMIN_TOKEN), json={"status": "rejected"})
+                     headers=_h(ADMIN_TOKEN), json={"status": "rejected", "totp_code": make_admin_totp()})
 
     def test_rejected_withdrawal_refunds_correct_currency(self):
         me = _vip_me()
@@ -176,7 +177,7 @@ class TestCurrencyWithdrawals:
         cup_after = float((_vip_me().get("vip_balances") or {}).get("CUP", 0.0))
         assert round(cup_after, 4) == 12000.0
         rr = requests.put(f"{BASE_URL}/api/admin/withdrawals/{wid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "rejected"})
+                          headers=_h(ADMIN_TOKEN), json={"status": "rejected", "totp_code": make_admin_totp()})
         assert rr.status_code == 200
         cup_refunded = float((_vip_me().get("vip_balances") or {}).get("CUP", 0.0))
         assert round(cup_refunded, 4) == 20000.0
@@ -226,13 +227,13 @@ class TestDoubleApproveGuard:
         amt_to = order["amount_to"]
         # 1st approve
         r1 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "totp_code": make_admin_totp()})
         assert r1.status_code == 200
         cup1 = float((_vip_me().get("vip_balances") or {}).get("CUP", 0.0))
         assert round(cup1, 4) == round(amt_to, 4)
         # 2nd approve — should NOT increment again
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "totp_code": make_admin_totp()})
         assert r2.status_code == 200
         cup2 = float((_vip_me().get("vip_balances") or {}).get("CUP", 0.0))
         assert round(cup2, 4) == round(amt_to, 4), f"Double-credit regression! cup1={cup1} cup2={cup2}"

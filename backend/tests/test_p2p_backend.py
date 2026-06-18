@@ -2,7 +2,7 @@
 import pytest
 import requests
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp, make_vip_totp
 
 
 def _h(token=None):
@@ -113,7 +113,7 @@ class TestRateCRUD:
         assert r.status_code == 200
         rid = r.json()["id"]
         # Edit
-        payload2 = {**payload, "rate_normal": 12, "rate_vip": 13}
+        payload2 = {**payload, "rate_normal": 12, "rate_vip": 13, "totp_code": make_admin_totp()}
         r2 = requests.put(f"{BASE_URL}/api/admin/rates/{rid}", headers=_h(ADMIN_TOKEN), json=payload2)
         assert r2.status_code == 200 and r2.json()["rate_normal"] == 12
         # Cleanup
@@ -200,19 +200,27 @@ class TestWithdrawals:
         assert r.status_code == 403
 
     def test_vip_withdraw_then_reject_refunds(self):
-        bal = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        # Read merged balance (legacy vip_balance_usd + vip_balances.USD)
+        def usd_balance():
+            me = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
+            return float(me.get("vip_balance_usd") or 0.0) + float((me.get("vip_balances") or {}).get("USD", 0.0))
+        bal = usd_balance()
         if bal < 5:
             pytest.skip("VIP balance too low")
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                         json={"amount_usd": 5, "method": "transfer", "details": "Bank Y", "beneficiary_name": "Test Holder"})
+                         json={"amount_usd": 5, "method": "transfer", "details": "Bank Y",
+                               "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200
         wid = r.json()["id"]
-        after = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        after = usd_balance()
         assert round(bal - after, 4) == 5.0
         # Admin rejects
         r2 = requests.put(f"{BASE_URL}/api/admin/withdrawals/{wid}/status",
-                         headers=_h(ADMIN_TOKEN), json={"status": "rejected", "admin_note": "no"})
+                         headers=_h(ADMIN_TOKEN),
+                         json={"status": "rejected", "admin_note": "no", "totp_code": make_admin_totp()})
         assert r2.status_code == 200
+        refunded = usd_balance()
+        assert round(refunded - after, 4) == 5.0
         refunded = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
         assert round(refunded - after, 4) == 5.0
 
@@ -236,7 +244,7 @@ class TestRedemptions:
         me = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         new_bal = cheap["price_usd"] + 100
         requests.put(f"{BASE_URL}/api/admin/users/{me['user_id']}",
-                     headers=_h(ADMIN_TOKEN), json={"vip_balance_usd": new_bal})
+                     headers=_h(ADMIN_TOKEN), json={"vip_balance_usd": new_bal, "totp_code": make_admin_totp()})
         stock_before = cheap["stock"]
         r = requests.post(f"{BASE_URL}/api/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": cheap["id"], "quantity": 1, "delivery_address": "Addr"})
@@ -284,10 +292,12 @@ class TestUsersAdmin:
         normal = next(u for u in users if u["email"] == "normal.test@resilience.com")
         # Update role to vip
         r2 = requests.put(f"{BASE_URL}/api/admin/users/{normal['user_id']}",
-                          headers=_h(ADMIN_TOKEN), json={"role": "vip", "vip_balance_usd": 50})
+                          headers=_h(ADMIN_TOKEN),
+                          json={"role": "vip", "vip_balance_usd": 50, "totp_code": make_admin_totp()})
         assert r2.status_code == 200
         assert r2.json()["role"] == "vip"
         assert r2.json()["vip_balance_usd"] == 50
         # Revert
         requests.put(f"{BASE_URL}/api/admin/users/{normal['user_id']}",
-                     headers=_h(ADMIN_TOKEN), json={"role": "normal", "vip_balance_usd": 0})
+                     headers=_h(ADMIN_TOKEN),
+                     json={"role": "normal", "vip_balance_usd": 0, "totp_code": make_admin_totp()})

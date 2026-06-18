@@ -12,7 +12,7 @@ import time
 import pytest
 import requests
 
-from conftest import BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL, EMPLOYEE_TOKEN as EMP
+from conftest import BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL, EMPLOYEE_TOKEN as EMP, make_admin_totp
 
 
 def _h(t=None):
@@ -24,7 +24,11 @@ def _h(t=None):
 
 def _ensure_settings(defensive_margin_pct, vip_threshold=5000.0):
     """Set global settings; defensive_margin_pct=None disables."""
-    payload = {"vip_threshold_usdt": vip_threshold, "defensive_margin_pct": defensive_margin_pct}
+    payload = {
+        "vip_threshold_usdt": vip_threshold,
+        "defensive_margin_pct": defensive_margin_pct,
+        "totp_code": make_admin_totp(),
+    }
     r = requests.put(f"{BASE_URL}/api/admin/settings", headers=_h(ADMIN), json=payload)
     assert r.status_code == 200, r.text
     return r.json()
@@ -79,6 +83,7 @@ class TestAuditWrites:
         new_payload = {
             "from_code": "USDT", "to_code": "MXN",
             "rate_normal": 17.05, "rate_vip": 17.25, "real_rate": 17.45,
+            "totp_code": make_admin_totp(),
         }
         r = requests.put(f"{BASE_URL}/api/admin/rates/{rate_id}", headers=_h(ADMIN), json=new_payload)
         assert r.status_code == 200, r.text
@@ -111,7 +116,7 @@ class TestAuditWrites:
 
     def test_user_update_writes_audit_entry(self):
         # UserUpdate model supports role/vip_balance_usd/vip_balances; set VIP role (idempotent)
-        payload = {"role": "vip"}
+        payload = {"role": "vip", "totp_code": make_admin_totp()}
         r = requests.put(
             f"{BASE_URL}/api/admin/users/user_test_vip01",
             headers=_h(ADMIN),
@@ -371,7 +376,7 @@ class TestDefensiveApprovalGating:
         r = requests.put(
             f"{BASE_URL}/api/admin/orders/{oid}/status",
             headers=_h(ADMIN),
-            json={"status": "approved", "admin_note": "admin approves"},
+            json={"status": "approved", "admin_note": "admin approves", "totp_code": make_admin_totp()},
         )
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "approved"

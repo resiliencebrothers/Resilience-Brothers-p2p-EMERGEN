@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
+import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { Search } from "lucide-react";
@@ -20,6 +22,7 @@ const ROLE_LABELS = {
 
 export default function AdminUsers() {
   const { user: currentUser } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [editing, setEditing] = useState({});
   const [search, setSearch] = useState("");
@@ -27,6 +30,8 @@ export default function AdminUsers() {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  // Pending 2FA: { user_id, payload, label }
+  const [pendingTotp, setPendingTotp] = useState(null);
 
   useEffect(() => { setPage(0); }, [search]);
 
@@ -53,20 +58,41 @@ export default function AdminUsers() {
   }, [page, search]);
   useEffect(() => { load(); }, [load]);
 
-  const saveRole = async (user_id, role) => {
-    try {
-      await axios.put(`${API}/admin/users/${user_id}`, { role }, { withCredentials: true });
-      toast.success("Rol actualizado"); load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
-    }
+  const saveRole = (user_id, role) => {
+    setPendingTotp({
+      user_id,
+      payload: { role },
+      label: `cambiar rol a ${role}`,
+    });
   };
 
-  const saveBalance = async (user_id) => {
+  const saveBalance = (user_id) => {
     const val = parseFloat(editing[user_id]);
     if (isNaN(val)) return toast.error("Valor inválido");
-    await axios.put(`${API}/admin/users/${user_id}`, { vip_balance_usd: val }, { withCredentials: true });
-    toast.success("Saldo actualizado"); setEditing({ ...editing, [user_id]: undefined }); load();
+    setPendingTotp({
+      user_id,
+      payload: { vip_balance_usd: val },
+      label: "actualizar saldo VIP",
+    });
+  };
+
+  const confirmWithTotp = async (code) => {
+    const { user_id, payload } = pendingTotp;
+    try {
+      await axios.put(
+        `${API}/admin/users/${user_id}`,
+        { ...payload, totp_code: code },
+        { withCredentials: true }
+      );
+      toast.success("Usuario actualizado");
+      if ("vip_balance_usd" in payload) {
+        setEditing((prev) => ({ ...prev, [user_id]: undefined }));
+      }
+      setPendingTotp(null);
+      load();
+    } catch (e) {
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+    }
   };
 
   const isAdmin = currentUser?.role === "admin";
@@ -172,6 +198,14 @@ export default function AdminUsers() {
         loading={loading}
         onPageChange={setPage}
         testidPrefix="users-pagination"
+      />
+
+      <TotpPromptDialog
+        open={!!pendingTotp}
+        title="Confirmar cambio en usuario"
+        description={`Vas a ${pendingTotp?.label || "actualizar este usuario"}. Ingresa tu código 2FA.`}
+        onConfirm={confirmWithTotp}
+        onCancel={() => setPendingTotp(null)}
       />
     </div>
   );

@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 
 export default function AdminWithdrawals() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [redemptions, setRedemptions] = useState([]);
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
+  const [pendingStatus, setPendingStatus] = useState(null); // status string awaiting 2FA
 
   const load = async () => {
     const [w, r] = await Promise.all([
@@ -21,10 +25,18 @@ export default function AdminWithdrawals() {
   };
   useEffect(() => { load(); }, []);
 
-  const updateW = async (status) => {
-    await axios.put(`${API}/admin/withdrawals/${open.id}/status`, { status, admin_note: note }, { withCredentials: true });
-    toast.success(`Retiro ${status}`);
-    setOpen(null); setNote(""); load();
+  const confirmWithTotp = async (code) => {
+    try {
+      await axios.put(
+        `${API}/admin/withdrawals/${open.id}/status`,
+        { status: pendingStatus, admin_note: note, totp_code: code },
+        { withCredentials: true }
+      );
+      toast.success(`Retiro ${pendingStatus}`);
+      setPendingStatus(null); setOpen(null); setNote(""); load();
+    } catch (e) {
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+    }
   };
 
   const updateR = async (id, status) => {
@@ -124,14 +136,22 @@ export default function AdminWithdrawals() {
               </div>
               <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
               <div className="grid grid-cols-3 gap-2">
-                <Button onClick={() => updateW("approved")} className="bg-[#22C55E] text-black rounded-none">Aprobar</Button>
-                <Button onClick={() => updateW("paid")} className="bg-[#EAB308] text-black rounded-none">Pagado</Button>
-                <Button onClick={() => updateW("rejected")} className="bg-[#EF4444] text-white rounded-none">Rechazar</Button>
+                <Button onClick={() => setPendingStatus("approved")} className="bg-[#22C55E] text-black rounded-none">Aprobar</Button>
+                <Button onClick={() => setPendingStatus("paid")} className="bg-[#EAB308] text-black rounded-none">Pagado</Button>
+                <Button onClick={() => setPendingStatus("rejected")} className="bg-[#EF4444] text-white rounded-none">Rechazar</Button>
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      <TotpPromptDialog
+        open={!!pendingStatus}
+        title={`Confirmar retiro: ${pendingStatus ?? ""}`}
+        description="Modificar un retiro mueve dinero real. Ingresa tu código 2FA para continuar."
+        onConfirm={confirmWithTotp}
+        onCancel={() => setPendingStatus(null)}
+      />
     </div>
   );
 }

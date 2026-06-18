@@ -2,7 +2,7 @@
 import pytest
 import requests
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp
 
 
 def _h(token=None):
@@ -23,13 +23,21 @@ def _create_vip_order(amount=15, delivery_method="accumulate"):
 
 # ----- Email notification on approve/reject -----
 class TestEmailNotificationsAndStatusUpdate:
+    @classmethod
+    def setup_class(cls):
+        # Ensure defensive mode is OFF so test orders don't become requires_double_approval
+        requests.put(f"{BASE_URL}/api/admin/settings", headers=_h(ADMIN_TOKEN),
+                     json={"vip_threshold_usdt": 5000, "defensive_margin_pct": None,
+                           "totp_code": make_admin_totp()})
+
     def test_approve_does_not_break_endpoint_even_if_email_fails(self):
         order = _create_vip_order()
         oid = order["id"]
         me0 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         before_cup = float((me0.get("vip_balances") or {}).get("CUP", 0.0))
         r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                         headers=_h(ADMIN_TOKEN), json={"status": "approved", "admin_note": "iter2 approve"})
+                         headers=_h(ADMIN_TOKEN),
+                         json={"status": "approved", "admin_note": "iter2 approve", "totp_code": make_admin_totp()})
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "approved"
@@ -70,13 +78,13 @@ class TestEmailNotificationsAndStatusUpdate:
         cup0 = float((me0.get("vip_balances") or {}).get("CUP", 0.0))
         # First approve
         r1 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "totp_code": make_admin_totp()})
         assert r1.status_code == 200
         me1 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         cup1 = float((me1.get("vip_balances") or {}).get("CUP", 0.0))
         # Second approve (same status) — iter3 guard must prevent double-credit
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "totp_code": make_admin_totp()})
         assert r2.status_code == 200
         me2 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         cup2 = float((me2.get("vip_balances") or {}).get("CUP", 0.0))
@@ -125,7 +133,7 @@ class TestVipDailyClosing:
         order = _create_vip_order(amount=20, delivery_method="accumulate")
         oid = order["id"]
         ra = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "approved"})
+                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "totp_code": make_admin_totp()})
         assert ra.status_code == 200
         # Fetch closing
         from datetime import datetime, timezone

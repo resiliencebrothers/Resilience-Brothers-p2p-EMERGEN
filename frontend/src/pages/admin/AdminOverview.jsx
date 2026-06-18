@@ -1,17 +1,21 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { Users, ListChecks, Package, Database, ArrowDownUp, ArrowUpRight, ArrowDownLeft, Coins, TrendingUp, BellRing } from "lucide-react";
 
 export default function AdminOverview() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [threshold, setThreshold] = useState("");
   const [defensivePct, setDefensivePct] = useState("");
   const [savingThreshold, setSavingThreshold] = useState(false);
+  const [pendingSettings, setPendingSettings] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -31,16 +35,25 @@ export default function AdminOverview() {
   };
   useEffect(() => { load(); }, []);
 
-  const saveThreshold = async () => {
+  const saveThreshold = () => {
     const v = parseFloat(threshold);
     if (!v || v < 0) return toast.error("Umbral inválido");
     const def = defensivePct === "" ? null : parseFloat(defensivePct);
+    setPendingSettings({ vip_threshold_usdt: v, defensive_margin_pct: def });
+  };
+
+  const confirmSettingsWithTotp = async (code) => {
     setSavingThreshold(true);
     try {
-      await axios.put(`${API}/admin/settings`, { vip_threshold_usdt: v, defensive_margin_pct: def }, { withCredentials: true });
+      await axios.put(
+        `${API}/admin/settings`,
+        { ...pendingSettings, totp_code: code },
+        { withCredentials: true }
+      );
       toast.success("Configuración guardada");
+      setPendingSettings(null);
     } catch (e) {
-      toast.error("Error al guardar");
+      if (!handleTotpError(e, navigate)) toast.error("Error al guardar");
     } finally {
       setSavingThreshold(false);
     }
@@ -152,6 +165,15 @@ export default function AdminOverview() {
           dataTestId="stat-vip-holdings"
         />
       </div>
+
+      <TotpPromptDialog
+        open={!!pendingSettings}
+        title="Confirmar cambio de configuración"
+        description="Modificar el umbral o margen defensivo es una acción global. Ingresa tu código 2FA."
+        busy={savingThreshold}
+        onConfirm={confirmSettingsWithTotp}
+        onCancel={() => setPendingSettings(null)}
+      />
     </div>
   );
 }

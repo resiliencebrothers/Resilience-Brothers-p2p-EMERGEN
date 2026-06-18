@@ -4,7 +4,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from conftest import make_vip_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import make_vip_totp, make_admin_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME")
@@ -49,7 +49,7 @@ class TestAdminSettings:
     def test_put_settings_admin_persists(self):
         r = requests.put(f"{BASE_URL}/api/admin/settings",
                          headers=_h(ADMIN_TOKEN),
-                         json={"vip_threshold_usdt": 3000})
+                         json={"vip_threshold_usdt": 3000, "totp_code": make_admin_totp()})
         assert r.status_code == 200, r.text
         data = r.json()
         assert data.get("ok") is True
@@ -60,12 +60,12 @@ class TestAdminSettings:
         # Restore to 5000
         requests.put(f"{BASE_URL}/api/admin/settings",
                      headers=_h(ADMIN_TOKEN),
-                     json={"vip_threshold_usdt": 5000})
+                     json={"vip_threshold_usdt": 5000, "totp_code": make_admin_totp()})
 
     def test_put_settings_invalid_payload_422(self):
         r = requests.put(f"{BASE_URL}/api/admin/settings",
                          headers=_h(ADMIN_TOKEN),
-                         json={"vip_threshold_usdt": "not-a-number-abc"})
+                         json={"vip_threshold_usdt": "not-a-number-abc", "totp_code": make_admin_totp()})
         # pydantic v2 returns 422
         assert r.status_code == 422
 
@@ -112,7 +112,7 @@ class TestVipThresholdAlert:
     def test_threshold_crossing_sets_last_vip_alert_threshold(self, db):
         # Reset VIP state and ensure threshold = 5000
         requests.put(f"{BASE_URL}/api/admin/settings", headers=_h(ADMIN_TOKEN),
-                     json={"vip_threshold_usdt": 5000})
+                     json={"vip_threshold_usdt": 5000, "totp_code": make_admin_totp()})
         # Seed user state: vip_balances.USD = 4900, last_vip_alert_threshold = 0
         db.users.update_one(
             {"user_id": "user_test_vip01"},

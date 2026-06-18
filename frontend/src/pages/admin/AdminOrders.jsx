@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
+import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { Eye } from "lucide-react";
 import { toast } from "sonner";
 
@@ -19,6 +21,7 @@ const STATUS_STYLES = {
 const PAGE_SIZE = 50;
 
 export default function AdminOrders() {
+  const navigate = useNavigate();
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
@@ -26,6 +29,7 @@ export default function AdminOrders() {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
+  const [pendingStatus, setPendingStatus] = useState(null); // status waiting for 2FA (low-margin orders)
 
   useEffect(() => { setPage(0); }, [filter]);
 
@@ -46,11 +50,25 @@ export default function AdminOrders() {
   }, [filter, page]);
   useEffect(() => { load(); }, [load]);
 
-  const updateStatus = async (status) => {
+  const updateStatus = async (status, totpCode = null) => {
     if (!open) return;
-    await axios.put(`${API}/admin/orders/${open.id}/status`, { status, admin_note: note }, { withCredentials: true });
-    toast.success(`Orden ${status}`);
-    setOpen(null); setNote(""); load();
+    const body = { status, admin_note: note };
+    if (totpCode) body.totp_code = totpCode;
+    try {
+      await axios.put(`${API}/admin/orders/${open.id}/status`, body, { withCredentials: true });
+      toast.success(`Orden ${status}`);
+      setOpen(null); setNote(""); setPendingStatus(null); load();
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      const code = typeof detail === "object" ? detail?.code : null;
+      // Server requires step-up 2FA → open prompt
+      if (code === "TOTP_CODE_REQUIRED" || code === "TOTP_INVALID") {
+        if (code === "TOTP_INVALID") toast.error(detail?.message || "Código 2FA inválido");
+        setPendingStatus(status);
+        return;
+      }
+      if (!handleTotpError(e, navigate)) toast.error(detail?.message || detail || "Error");
+    }
   };
 
   return (
@@ -145,6 +163,14 @@ export default function AdminOrders() {
           )}
         </DialogContent>
       </Dialog>
+
+      <TotpPromptDialog
+        open={!!pendingStatus}
+        title="Confirmar acción de alto riesgo"
+        description="Esta orden requiere doble aprobación. Ingresa tu código 2FA para confirmar."
+        onConfirm={(code) => updateStatus(pendingStatus, code)}
+        onCancel={() => setPendingStatus(null)}
+      />
     </div>
   );
 }

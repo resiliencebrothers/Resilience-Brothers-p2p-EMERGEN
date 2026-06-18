@@ -98,6 +98,7 @@ class ExchangeRateCreate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None
+    totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido al editar")
 
 class Order(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -201,6 +202,7 @@ class UserUpdate(BaseModel):
     role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
     vip_balance_usd: Optional[float] = None
     vip_balances: Optional[Dict[str, float]] = None
+    totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
 # ============== AUTH ==============
 
@@ -370,10 +372,12 @@ async def create_rate(payload: ExchangeRateCreate, request: Request):
 @api_router.put("/admin/rates/{rate_id}")
 async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
     actor = await require_staff(request)
+    await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar tasa")
     old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
+    rate_data = payload.model_dump(exclude={"totp_code"})
     await db.rates.update_one(
         {"id": rate_id},
-        {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}}
+        {"$set": {**rate_data, "updated_at": iso(now_utc())}}
     )
     fresh = await db.rates.find_one({"id": rate_id}, {"_id": 0})
     # If real_rate changed, scan pending orders for negative margin
@@ -609,6 +613,10 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
             and new_status == "approved"
             and actor.get("role") != "admin"):
         raise HTTPException(status_code=403, detail="Solo un admin puede aprobar órdenes con margen bajo")
+    # 2FA step-up: approving a requires_double_approval order is high-risk
+    if order.get("status") == "requires_double_approval" and new_status == "approved":
+        await _enforce_totp_step_up(actor, payload.get("totp_code"),
+                                    action_label="aprobar orden con margen bajo")
 
     await db.orders.update_one(
         {"id": order_id},
@@ -955,11 +963,14 @@ async def all_withdrawals(request: Request):
 
 @api_router.put("/admin/withdrawals/{wid}/status")
 async def update_withdrawal(wid: str, payload: dict, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in ("approved", "paid", "rejected", "pending"):
         raise HTTPException(status_code=400, detail="status inválido")
+    # 2FA step-up: any change to a withdrawal status moves real money / refunds balance
+    await _enforce_totp_step_up(actor, payload.get("totp_code"),
+                                action_label="gestionar retiro")
     w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     if not w:
         raise HTTPException(status_code=404, detail="No encontrado")
@@ -1163,6 +1174,7 @@ async def admin_platform_stats(request: Request):
 class AdminSettings(BaseModel):
     vip_threshold_usdt: float = Field(default=5000.0, ge=0)
     defensive_margin_pct: Optional[float] = Field(default=None)  # null = disabled. Otherwise orders with profit_pct < this require admin double-approval
+    totp_code: Optional[str] = Field(default=None, max_length=11, description="Código 2FA requerido")
 
 
 @api_router.get("/admin/settings")
@@ -1183,7 +1195,8 @@ async def get_admin_settings(request: Request):
 @api_router.put("/admin/settings")
 async def update_admin_settings(payload: AdminSettings, request: Request):
     actor = await require_admin(request)
-    data = payload.model_dump()
+    await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar configuración")
+    data = payload.model_dump(exclude={"totp_code"})
     data["id"] = "global"
     await db.settings.update_one({"id": "global"}, {"$set": data}, upsert=True)
     await log_action(db, actor, "settings.update", "settings", "global",
@@ -1911,7 +1924,8 @@ async def list_users(request: Request, q: Optional[str] = None,
 @api_router.put("/admin/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate, request: Request):
     requester = await require_staff(request)
-    update = {k: v for k, v in payload.model_dump().items() if v is not None}
+    await _enforce_totp_step_up(requester, payload.totp_code, action_label="actualizar usuario")
+    update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
     # Employees can only assign 'normal' or 'vip' roles, not admin/employee
