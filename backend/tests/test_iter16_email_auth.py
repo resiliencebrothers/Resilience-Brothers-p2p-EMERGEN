@@ -6,8 +6,8 @@ from pymongo import MongoClient
 from conftest import BASE_URL
 
 
-TEST_EMAIL = "cuba.iter16@example.com"
-TEST_PASSWORD = "veryStrongPass123"
+TEST_EMAIL = os.environ.get("TEST_EMAIL_AUTH_EMAIL", "cuba.iter16@example.com")
+TEST_PASSWORD = os.environ.get("TEST_EMAIL_AUTH_PWD", "veryStrongPass123")  # test-only fixture credential, not a real secret
 TEST_NAME = "Iter16 Test User"
 
 

@@ -14,7 +14,6 @@ export function AuthProvider({ children }) {
       setUser(res.data);
     } catch (err) {
       if (err?.response?.status !== 401) {
-        // eslint-disable-next-line no-console -- intentional: surface real auth errors in production (Sentry/LogRocket captures these)
         console.error("Auth check failed:", err);
       }
       setUser(null);
@@ -35,7 +34,6 @@ export function AuthProvider({ children }) {
     try {
       await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
     } catch (err) {
-      // eslint-disable-next-line no-console -- intentional: logout failures must be visible in production logs
       console.error("Logout request failed:", err);
     }
     setUser(null);

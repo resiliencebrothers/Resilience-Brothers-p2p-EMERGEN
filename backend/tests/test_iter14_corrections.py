@@ -36,7 +36,7 @@ def _enable_totp_normal():
     import sys; sys.path.insert(0, "/app/backend")
     import totp_service
     cli = MongoClient(os.environ["MONGO_URL"])
-    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+    secret = os.environ.get("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")  # pyotp docs sample, test-only
     cli[os.environ["DB_NAME"]].users.update_one(
         {"user_id": "user_test_normal01"},
         {"$set": {
