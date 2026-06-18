@@ -1,15 +1,23 @@
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { ArrowUpRight, ShieldCheck, Globe2, Zap, Activity, Boxes, BadgeCheck, ChevronRight } from "lucide-react";
+import { useState } from "react";
+import { ArrowUpRight, ShieldCheck, Globe2, Zap, Activity, Boxes, BadgeCheck, ChevronRight, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import EmailAuthDialog from "@/components/EmailAuthDialog";
 
 export default function Landing() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
+  const [emailAuthOpen, setEmailAuthOpen] = useState(false);
 
   const handleEnter = () => {
-    if (user) navigate(user.role === "admin" ? "/admin" : "/dashboard");
+    if (user) navigate(user.role === "admin" || user.role === "employee" ? "/admin" : "/dashboard");
     else login();
+  };
+
+  const handleEmailAuth = () => {
+    if (user) navigate(user.role === "admin" || user.role === "employee" ? "/admin" : "/dashboard");
+    else setEmailAuthOpen(true);
   };
 
   return (
@@ -69,15 +77,20 @@ export default function Landing() {
                 onClick={handleEnter}
                 className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none px-8 h-14 text-base"
               >
-                Comenzar a Operar <ChevronRight className="w-5 h-5 ml-1" />
+                Comenzar con Google <ChevronRight className="w-5 h-5 ml-1" />
               </Button>
-              <a
-                href="#services"
-                className="border border-white/20 hover:border-white text-white px-8 h-14 inline-flex items-center text-sm font-semibold tracking-wide transition-colors"
+              <Button
+                data-testid="hero-email-btn"
+                onClick={handleEmailAuth}
+                variant="ghost"
+                className="border border-white/20 hover:border-[#EAB308] hover:bg-transparent text-white rounded-none px-8 h-14 text-sm font-semibold"
               >
-                EXPLORAR SERVICIOS
-              </a>
+                <Mail className="w-4 h-4 mr-2" /> Iniciar con email
+              </Button>
             </div>
+            <p className="text-[0.7rem] text-neutral-500 mt-3 max-w-md">
+              ¿Tu región bloquea Google? Usa <button onClick={handleEmailAuth} className="text-[#EAB308] hover:underline" data-testid="hero-email-link">acceso por email</button> — registro instantáneo, sin terceros.
+            </p>
           </div>
           <div className="lg:col-span-4 grid grid-cols-2 gap-4 mt-8 lg:mt-0">
             {[
@@ -268,6 +281,15 @@ export default function Landing() {
           >
             Crear Cuenta con Google <ArrowUpRight className="w-5 h-5 ml-1" />
           </Button>
+          <div className="mt-4">
+            <button
+              data-testid="cta-email-link"
+              onClick={handleEmailAuth}
+              className="text-sm text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
+            >
+              o crear cuenta con email →
+            </button>
+          </div>
         </div>
       </section>
 
@@ -280,6 +302,8 @@ export default function Landing() {
           <span className="micro-label text-neutral-600">Global Trade Infrastructure</span>
         </div>
       </footer>
+
+      <EmailAuthDialog open={emailAuthOpen} onClose={() => setEmailAuthOpen(false)} />
     </div>
   );
 }

@@ -8,7 +8,7 @@ import logging
 import uuid
 import requests
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Literal, Dict
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
@@ -371,6 +371,122 @@ async def auth_logout(request: Request, response: Response):
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
+
+
+# ============== EMAIL / PASSWORD AUTH (iter16 — geo-restricted users) ==============
+import bcrypt
+
+
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+async def _create_session(user_id: str, response: Response):
+    """Issue a session_token + set cookie. Mirrors Google flow."""
+    session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
+    expires_at = now_utc() + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": iso(expires_at),
+        "created_at": iso(now_utc()),
+    })
+    response.set_cookie(
+        key="session_token", value=session_token, httponly=True, secure=True,
+        samesite="none", path="/", max_age=7 * 24 * 3600,
+    )
+
+
+class AuthRegisterPayload(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=200)
+    name: str = Field(..., min_length=2, max_length=120)
+
+
+class AuthLoginPayload(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=1, max_length=200)
+
+
+async def _too_many_failed_attempts(identifier: str) -> bool:
+    """Return True if user/IP is currently locked out (5 fails in 15 min)."""
+    cutoff = (now_utc() - timedelta(minutes=15)).isoformat()
+    n = await db.login_attempts.count_documents(
+        {"identifier": identifier, "created_at": {"$gte": cutoff}, "success": False}
+    )
+    return n >= 5
+
+
+async def _record_login_attempt(identifier: str, success: bool):
+    await db.login_attempts.insert_one({
+        "identifier": identifier,
+        "success": success,
+        "created_at": iso(now_utc()),
+    })
+    if success:
+        # Clear failed attempts on success
+        await db.login_attempts.delete_many(
+            {"identifier": identifier, "success": False}
+        )
+
+
+@api_router.post("/auth/register")
+async def auth_register(payload: AuthRegisterPayload, response: Response):
+    email = payload.email.lower().strip()
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email")
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    role = "admin" if email in ADMIN_EMAILS else "normal"
+    if await db.users.count_documents({}) == 0:
+        role = "admin"
+    user_doc = {
+        "user_id": user_id,
+        "email": email,
+        "name": payload.name.strip(),
+        "picture": "",
+        "role": role,
+        "auth_provider": "password",
+        "password_hash": _hash_password(payload.password),
+        "vip_balance_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.users.insert_one(user_doc)
+    await _create_session(user_id, response)
+    user_doc.pop("_id", None)
+    user_doc.pop("password_hash", None)
+    return user_doc
+
+
+@api_router.post("/auth/login")
+async def auth_login(payload: AuthLoginPayload, request: Request, response: Response):
+    email = payload.email.lower().strip()
+    # iter16: per-email rate limit (5 fails / 15min) — survives behind proxies
+    identifier = email
+    if await _too_many_failed_attempts(identifier):
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos fallidos. Espera 15 minutos.",
+        )
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if (not user) or not user.get("password_hash"):
+        await _record_login_attempt(identifier, False)
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    if not _verify_password(payload.password, user["password_hash"]):
+        await _record_login_attempt(identifier, False)
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+    await _record_login_attempt(identifier, True)
+    await _create_session(user["user_id"], response)
+    user.pop("password_hash", None)
+    return user
+
 
 # ============== CURRENCIES ==============
 
