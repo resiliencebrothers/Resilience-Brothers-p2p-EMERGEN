@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -7,11 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
-import { Banknote, ArrowDown, ArrowUp, Download, FileText, Receipt, X } from "lucide-react";
+import { Banknote, ArrowDown, ArrowUp, Download, FileText, Receipt, X, ExternalLink } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
 export default function AdminTransactions() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [totals, setTotals] = useState({ by_currency: {}, total_count: 0 });
   const [total, setTotal] = useState(0);
@@ -25,6 +27,8 @@ export default function AdminTransactions() {
   const [holderInput, setHolderInput] = useState("");
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
   const [selected, setSelected] = useState(null); // currently open transaction in modal
 
   // currencies for dropdown
@@ -45,7 +49,7 @@ export default function AdminTransactions() {
   // reset page on filter change
   useEffect(() => {
     setPage(0);
-  }, [direction, currency, holder, since, until]);
+  }, [direction, currency, holder, since, until, minAmount, maxAmount]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,17 +60,19 @@ export default function AdminTransactions() {
       if (holder) params.holder = holder;
       if (since) params.since = since;
       if (until) params.until = until;
+      if (minAmount !== "") params.min_amount = minAmount;
+      if (maxAmount !== "") params.max_amount = maxAmount;
       const r = await axios.get(`${API}/admin/transactions`, { params, withCredentials: true });
       setItems(r.data.items);
       setTotals(r.data.totals);
       const t = Number(r.headers["x-total-count"]);
       setTotal(Number.isFinite(t) ? t : r.data.items.length);
     } catch (e) {
-      toast.error("Error al cargar transacciones");
+      toast.error(e.response?.data?.detail || "Error al cargar transacciones");
     } finally {
       setLoading(false);
     }
-  }, [direction, currency, holder, since, until, page]);
+  }, [direction, currency, holder, since, until, minAmount, maxAmount, page]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
@@ -77,6 +83,8 @@ export default function AdminTransactions() {
       if (holder) params.set("holder", holder);
       if (since) params.set("since", since);
       if (until) params.set("until", until);
+      if (minAmount !== "") params.set("min_amount", minAmount);
+      if (maxAmount !== "") params.set("max_amount", maxAmount);
       const url = `${API}/admin/transactions/export.${kind}?${params.toString()}`;
       const r = await axios.get(url, { responseType: "blob", withCredentials: true });
       const blobUrl = URL.createObjectURL(new Blob([r.data], { type: r.headers["content-type"] }));
@@ -100,9 +108,11 @@ export default function AdminTransactions() {
     setHolderInput("");
     setSince("");
     setUntil("");
+    setMinAmount("");
+    setMaxAmount("");
   };
 
-  const hasFilters = direction !== "all" || currency || holderInput || since || until;
+  const hasFilters = direction !== "all" || currency || holderInput || since || until || minAmount !== "" || maxAmount !== "";
   const totalsByCurrency = totals?.by_currency || {};
   const totalsRows = Object.entries(totalsByCurrency)
     .map(([code, v]) => ({ code, ...v, net: (v.in || 0) - (v.out || 0) }))
@@ -209,6 +219,32 @@ export default function AdminTransactions() {
               value={until}
               onChange={(e) => setUntil(e.target.value)}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs"
+            />
+          </div>
+          <div>
+            <div className="micro-label text-neutral-500 mb-1">Monto mín.</div>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              data-testid="tx-min-amount"
+              value={minAmount}
+              onChange={(e) => setMinAmount(e.target.value)}
+              placeholder="0"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-28 font-mono text-xs"
+            />
+          </div>
+          <div>
+            <div className="micro-label text-neutral-500 mb-1">Monto máx.</div>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              data-testid="tx-max-amount"
+              value={maxAmount}
+              onChange={(e) => setMaxAmount(e.target.value)}
+              placeholder="∞"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-28 font-mono text-xs"
             />
           </div>
           {hasFilters && (
@@ -438,6 +474,22 @@ export default function AdminTransactions() {
                   Las salidas no tienen comprobante de transferencia entrante (son pagos de la plataforma al cliente).
                 </div>
               )}
+
+              {/* Action: navigate to the original section */}
+              <div className="pt-2 flex justify-end">
+                <Button
+                  data-testid="tx-modal-goto-source"
+                  onClick={() => {
+                    const target = selected.ref_type === "order" ? "/admin/orders" : "/admin/withdrawals";
+                    setSelected(null);
+                    navigate(target);
+                  }}
+                  className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black font-bold h-10 px-4 text-xs uppercase tracking-wider"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 mr-2" />
+                  {selected.ref_type === "order" ? "Ir a Órdenes" : "Ir a Retiros VIP"}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

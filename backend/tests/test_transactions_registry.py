@@ -173,6 +173,60 @@ class TestTransactionFilters:
             assert abs(actual.get("in", 0) - expected["in"]) < 0.01
 
 
+# ---------- Amount range filters ----------
+class TestTransactionAmountFilters:
+    def test_min_amount_filter(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions",
+                         headers=_h(ADMIN), params={"min_amount": 10, "limit": 200})
+        assert r.status_code == 200
+        for it in r.json()["items"]:
+            assert it["amount"] >= 10
+
+    def test_max_amount_filter(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions",
+                         headers=_h(ADMIN), params={"max_amount": 5, "limit": 200})
+        assert r.status_code == 200
+        for it in r.json()["items"]:
+            assert it["amount"] <= 5
+
+    def test_amount_range(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions",
+                         headers=_h(ADMIN),
+                         params={"min_amount": 5, "max_amount": 10, "limit": 200})
+        assert r.status_code == 200
+        for it in r.json()["items"]:
+            assert 5 <= it["amount"] <= 10
+
+    def test_negative_amount_rejected(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions",
+                         headers=_h(ADMIN), params={"min_amount": -1})
+        assert r.status_code == 400
+
+    def test_min_greater_than_max_rejected(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions",
+                         headers=_h(ADMIN),
+                         params={"min_amount": 100, "max_amount": 50})
+        assert r.status_code == 400
+
+    def test_amount_filter_propagates_to_csv(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions/export.csv",
+                         headers=_h(ADMIN), params={"min_amount": 50})
+        assert r.status_code == 200
+        # Decode and check each amount column >= 50 (column index 3)
+        import csv as _csv, io
+        text = r.content.decode("utf-8-sig")
+        rows = list(_csv.reader(io.StringIO(text)))
+        for row in rows[1:]:  # skip header
+            assert float(row[3]) >= 50
+
+    def test_amount_filter_propagates_to_pdf(self):
+        r = requests.get(f"{BASE_URL}/api/admin/transactions/export.pdf",
+                         headers=_h(ADMIN),
+                         params={"min_amount": 10, "max_amount": 100})
+        assert r.status_code == 200
+        assert r.content.startswith(b"%PDF-")
+
+
 # ---------- Exports ----------
 class TestTransactionsExports:
     def test_csv_admin_ok_with_bom_and_headers(self):

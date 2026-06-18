@@ -1249,7 +1249,9 @@ def _date_range_query(since: Optional[str], until: Optional[str]) -> dict:
 
 async def _build_transactions(direction: Optional[str], currency: Optional[str],
                               holder: Optional[str], since: Optional[str],
-                              until: Optional[str]) -> list:
+                              until: Optional[str],
+                              min_amount: Optional[float] = None,
+                              max_amount: Optional[float] = None) -> list:
     """Unified transaction list from approved/completed orders + approved/paid withdrawals.
 
     Each entry: {direction: 'in'|'out', currency, amount, holder_name, client_name,
@@ -1320,6 +1322,11 @@ async def _build_transactions(direction: Optional[str], currency: Optional[str],
             })
 
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    # Amount range filter (applied after building to support both directions consistently)
+    if min_amount is not None:
+        items = [it for it in items if it["amount"] >= min_amount]
+    if max_amount is not None:
+        items = [it for it in items if it["amount"] <= max_amount]
     return items
 
 
@@ -1347,11 +1354,19 @@ async def list_transactions(request: Request,
                             holder: Optional[str] = None,
                             since: Optional[str] = None,
                             until: Optional[str] = None,
+                            min_amount: Optional[float] = None,
+                            max_amount: Optional[float] = None,
                             limit: int = 100, offset: int = 0):
     await require_admin(request)
     if direction and direction not in ("in", "out", "all"):
         raise HTTPException(status_code=400, detail="direction debe ser 'in', 'out' o 'all'")
-    items = await _build_transactions(direction, currency, holder, since, until)
+    if min_amount is not None and min_amount < 0:
+        raise HTTPException(status_code=400, detail="min_amount debe ser >= 0")
+    if max_amount is not None and max_amount < 0:
+        raise HTTPException(status_code=400, detail="max_amount debe ser >= 0")
+    if min_amount is not None and max_amount is not None and min_amount > max_amount:
+        raise HTTPException(status_code=400, detail="min_amount no puede ser mayor que max_amount")
+    items = await _build_transactions(direction, currency, holder, since, until, min_amount, max_amount)
     totals = _compute_transaction_totals(items)
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
@@ -1373,9 +1388,11 @@ async def export_transactions_csv(request: Request,
                                   currency: Optional[str] = None,
                                   holder: Optional[str] = None,
                                   since: Optional[str] = None,
-                                  until: Optional[str] = None):
+                                  until: Optional[str] = None,
+                                  min_amount: Optional[float] = None,
+                                  max_amount: Optional[float] = None):
     await require_admin(request)
-    items = await _build_transactions(direction, currency, holder, since, until)
+    items = await _build_transactions(direction, currency, holder, since, until, min_amount, max_amount)
     import io
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
@@ -1414,14 +1431,17 @@ async def export_transactions_pdf(request: Request,
                                   currency: Optional[str] = None,
                                   holder: Optional[str] = None,
                                   since: Optional[str] = None,
-                                  until: Optional[str] = None):
+                                  until: Optional[str] = None,
+                                  min_amount: Optional[float] = None,
+                                  max_amount: Optional[float] = None):
     await require_admin(request)
-    items = await _build_transactions(direction, currency, holder, since, until)
+    items = await _build_transactions(direction, currency, holder, since, until, min_amount, max_amount)
     totals = _compute_transaction_totals(items)
     pdf_bytes = generate_transactions_pdf(
         items,
         {"direction": direction, "currency": currency, "holder": holder,
-         "since": since, "until": until},
+         "since": since, "until": until,
+         "min_amount": min_amount, "max_amount": max_amount},
         totals,
     )
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")

@@ -75,12 +75,18 @@ def generate_transactions_pdf(entries: list, filters: dict, totals: dict) -> byt
     f_holder = filters.get("holder") or "todos"
     f_since = filters.get("since") or "—"
     f_until = filters.get("until") or "—"
+    f_min = filters.get("min_amount")
+    f_max = filters.get("max_amount")
+    amount_range = "—"
+    if f_min is not None or f_max is not None:
+        amount_range = f"{f_min if f_min is not None else '∞-'} a {f_max if f_max is not None else '+∞'}"
     story.append(Paragraph(
         f"Filtros → Dirección: <font color='#FFFFFF'><b>{f_dir}</b></font> · "
         f"Moneda: <font color='#FFFFFF'><b>{f_cur}</b></font> · "
         f"Titular: <font color='#FFFFFF'><b>{f_holder}</b></font> · "
         f"Desde: <font color='#FFFFFF'><b>{f_since}</b></font> · "
-        f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font>",
+        f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font> · "
+        f"Monto: <font color='#FFFFFF'><b>{amount_range}</b></font>",
         sub,
     ))
 
