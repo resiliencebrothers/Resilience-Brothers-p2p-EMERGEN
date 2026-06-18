@@ -388,10 +388,12 @@ def _verify_password(pw: str, hashed: str) -> bool:
         return False
 
 
-async def _create_session(user_id: str, response: Response):
-    """Issue a session_token + set cookie. Mirrors Google flow."""
+async def _create_session(user_id: str, response: Response, ttl_hours: int = 168):
+    """Issue a session_token + set cookie. Default TTL = 7 days (168h).
+    Pass ttl_hours=24 for a 'remember me 24h' short-lived session."""
+    ttl_hours = max(1, min(int(ttl_hours), 168))  # clamp 1h..7d
     session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
-    expires_at = now_utc() + timedelta(days=7)
+    expires_at = now_utc() + timedelta(hours=ttl_hours)
     await db.user_sessions.insert_one({
         "user_id": user_id,
         "session_token": session_token,
@@ -400,7 +402,7 @@ async def _create_session(user_id: str, response: Response):
     })
     response.set_cookie(
         key="session_token", value=session_token, httponly=True, secure=True,
-        samesite="none", path="/", max_age=7 * 24 * 3600,
+        samesite="none", path="/", max_age=ttl_hours * 3600,
     )
 
 
@@ -413,6 +415,7 @@ class AuthRegisterPayload(BaseModel):
 class AuthLoginPayload(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=200)
+    remember_hours: Optional[int] = None  # if set (e.g. 24), session = ttl_hours; else 7d default
 
 
 async def _too_many_failed_attempts(identifier: str) -> bool:
@@ -517,7 +520,8 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
                     "message": "Verifica tu correo antes de iniciar sesión. Revisa tu bandeja."},
         )
     await _record_login_attempt(identifier, True)
-    await _create_session(user["user_id"], response)
+    ttl = payload.remember_hours if payload.remember_hours else 168
+    await _create_session(user["user_id"], response, ttl_hours=ttl)
     user.pop("password_hash", None)
     user.pop("verification_token", None)
     return user

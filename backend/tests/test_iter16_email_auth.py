@@ -165,6 +165,73 @@ class TestEmailPasswordAuth:
         )
         assert r.status_code == 429
 
+    def test_login_default_session_is_7_days(self):
+        """Without remember_hours, session must default to 7d (168h)."""
+        _r, user = _register()
+        _verify(user["verification_token"])
+        r = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+        )
+        assert r.status_code == 200
+        token = r.cookies["session_token"]
+        cli, db = _db()
+        sess = db.user_sessions.find_one({"session_token": token})
+        cli.close()
+        # Expires roughly 7 days from now (allow 5 min skew)
+        from datetime import datetime, timezone, timedelta
+        exp = sess["expires_at"]
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        delta = exp - datetime.now(timezone.utc)
+        assert timedelta(days=6, hours=23) <= delta <= timedelta(days=7, minutes=5)
+
+    def test_login_with_remember_hours_24_creates_short_session(self):
+        """remember_hours=24 must cap the session to 24h (login once a day)."""
+        _r, user = _register()
+        _verify(user["verification_token"])
+        r = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "remember_hours": 24},
+        )
+        assert r.status_code == 200
+        token = r.cookies["session_token"]
+        cli, db = _db()
+        sess = db.user_sessions.find_one({"session_token": token})
+        cli.close()
+        from datetime import datetime, timezone, timedelta
+        exp = sess["expires_at"]
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        delta = exp - datetime.now(timezone.utc)
+        assert timedelta(hours=23, minutes=55) <= delta <= timedelta(hours=24, minutes=5)
+
+    def test_login_remember_hours_clamped_to_max_7d(self):
+        """Out-of-range remember_hours must be clamped (no >7d sessions)."""
+        _r, user = _register()
+        _verify(user["verification_token"])
+        r = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "remember_hours": 99999},
+        )
+        assert r.status_code == 200
+        token = r.cookies["session_token"]
+        cli, db = _db()
+        sess = db.user_sessions.find_one({"session_token": token})
+        cli.close()
+        from datetime import datetime, timezone, timedelta
+        exp = sess["expires_at"]
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        delta = exp - datetime.now(timezone.utc)
+        assert delta <= timedelta(days=7, minutes=5)
+
     # ---------- Password Reset ----------
     def test_forgot_password_creates_token_for_known_user(self):
         _r, _user = _register()

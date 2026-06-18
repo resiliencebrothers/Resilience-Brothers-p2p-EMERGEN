@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Mail, Lock, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,11 +18,12 @@ export default function EmailAuthDialog({ open, onClose }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState(""); // post-register / forgot confirmation
 
   const reset = () => {
-    setEmail(""); setPassword(""); setName(""); setLoading(false); setSuccessMsg(""); setMode("login");
+    setEmail(""); setPassword(""); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setMode("login");
   };
 
   const submit = async (e) => {
@@ -37,7 +39,7 @@ export default function EmailAuthDialog({ open, onClose }) {
       const url = mode === "register" ? "/auth/register" : "/auth/login";
       const body = mode === "register"
         ? { email: email.trim(), password, name: name.trim() }
-        : { email: email.trim(), password };
+        : { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}) };
       const r = await axios.post(`${API}${url}`, body, { withCredentials: true });
       if (mode === "register") {
         // iter17: registration no longer logs in — must verify email first
@@ -160,6 +162,21 @@ export default function EmailAuthDialog({ open, onClose }) {
                 />
               </div>
             </div>
+          )}
+          {mode === "login" && (
+            <label
+              htmlFor="auth-remember-24h"
+              className="flex items-center gap-2 cursor-pointer select-none text-xs text-neutral-400 hover:text-white transition-colors"
+            >
+              <Checkbox
+                id="auth-remember-24h"
+                data-testid="auth-remember-24h"
+                checked={remember24h}
+                onCheckedChange={(v) => setRemember24h(v === true)}
+                className="border-white/30 data-[state=checked]:bg-[#EAB308] data-[state=checked]:text-black data-[state=checked]:border-[#EAB308]"
+              />
+              Mantener sesión 24 horas (entrar 1 vez al día)
+            </label>
           )}
           <Button
             type="submit"
