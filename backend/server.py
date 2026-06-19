@@ -2614,6 +2614,30 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request):
                      details={"changes": update, "prev_role": old_user.get("role") if old_user else None})
     return new_user
 
+
+@api_router.post("/admin/users/{user_id}/verify-email")
+async def admin_verify_user_email(user_id: str, request: Request):
+    """Manually mark a user's email as verified. Useful for support cases or while
+    Resend domain is not yet verified. Requires staff role + 2FA step-up."""
+    requester = await require_staff(request)
+    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    await _enforce_totp_step_up(requester, payload.get("totp_code"), action_label="verificar email manualmente")
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if target.get("email_verified"):
+        return {"ok": True, "already_verified": True, "user": target}
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"email_verified": True},
+         "$unset": {"verification_token": "", "verification_expires_at": ""}},
+    )
+    fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    await log_action(db, requester, "user.verify_email_manual", "user", user_id,
+                     summary=f"Email verificado manualmente para {target.get('email', '')}",
+                     details={"email": target.get("email")})
+    return {"ok": True, "already_verified": False, "user": fresh}
+
 # ============== SEED ==============
 
 @api_router.post("/admin/seed")

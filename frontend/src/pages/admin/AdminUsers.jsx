@@ -87,17 +87,35 @@ export default function AdminUsers() {
     });
   };
 
+  const verifyEmailManually = (user_id, email) => {
+    setPendingTotp({
+      kind: "verify-email",
+      user_id,
+      payload: {},
+      label: `verificar manualmente el email de ${email}`,
+    });
+  };
+
   const confirmWithTotp = async (code) => {
-    const { user_id, payload } = pendingTotp;
+    const { user_id, payload, kind } = pendingTotp;
     try {
-      await axios.put(
-        `${API}/admin/users/${user_id}`,
-        { ...payload, totp_code: code },
-        { withCredentials: true }
-      );
-      toast.success("Usuario actualizado");
-      if ("allowed_currencies" in payload) {
-        setEditingCurrencies((prev) => ({ ...prev, [user_id]: undefined }));
+      if (kind === "verify-email") {
+        await axios.post(
+          `${API}/admin/users/${user_id}/verify-email`,
+          { totp_code: code },
+          { withCredentials: true }
+        );
+        toast.success("Email verificado manualmente");
+      } else {
+        await axios.put(
+          `${API}/admin/users/${user_id}`,
+          { ...payload, totp_code: code },
+          { withCredentials: true }
+        );
+        toast.success("Usuario actualizado");
+        if ("allowed_currencies" in payload) {
+          setEditingCurrencies((prev) => ({ ...prev, [user_id]: undefined }));
+        }
       }
       setPendingTotp(null);
       load();
@@ -180,7 +198,31 @@ export default function AdminUsers() {
                   {u.picture && <img src={u.picture} alt="" className="w-7 h-7 rounded-full" />}
                   <span>{u.name}</span>
                 </td>
-                <td className="px-4 py-3 text-neutral-400">{u.email}</td>
+                <td className="px-4 py-3 text-neutral-400">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>{u.email}</span>
+                    {u.auth_provider === "password" && u.email_verified === false && (
+                      <>
+                        <span
+                          data-testid={`email-unverified-${u.user_id}`}
+                          className="text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 border border-[#EF4444]/40 text-[#EF4444] bg-[#EF4444]/10"
+                          title="El usuario aún no verificó su email"
+                        >
+                          No verificado
+                        </span>
+                        <button
+                          type="button"
+                          data-testid={`verify-email-btn-${u.user_id}`}
+                          onClick={() => verifyEmailManually(u.user_id, u.email)}
+                          className="text-[0.65rem] uppercase tracking-widest text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4"
+                          title="Marcar este email como verificado manualmente (requiere 2FA)"
+                        >
+                          Verificar
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </td>
                 <td className="px-4 py-3">
                   <Select
                     value={u.role}
