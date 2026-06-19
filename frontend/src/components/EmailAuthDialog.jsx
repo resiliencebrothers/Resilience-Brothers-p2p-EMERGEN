@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
@@ -22,6 +22,7 @@ export default function EmailAuthDialog({ open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState(""); // post-register / forgot confirmation
   const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
+  const nameInputRef = useRef(null);
 
   const reset = () => {
     setEmail(""); setPassword(""); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
@@ -107,7 +108,14 @@ export default function EmailAuthDialog({ open, onClose }) {
                 <button
                   type="button"
                   data-testid="auth-notice-register-btn"
-                  onClick={() => { setNotice(null); setSuccessMsg(""); setMode("register"); setPassword(""); }}
+                  onClick={() => {
+                    setNotice(null);
+                    setSuccessMsg("");
+                    setPassword("");
+                    setMode("register");
+                    // Email stays; focus the Name field on next tick (after register-only fields mount)
+                    setTimeout(() => nameInputRef.current?.focus(), 50);
+                  }}
                   className="text-[#EAB308] hover:text-[#FACC15] font-semibold underline underline-offset-4"
                 >
                   → Crear cuenta con este email
@@ -150,6 +158,7 @@ export default function EmailAuthDialog({ open, onClose }) {
               <div className="relative mt-1">
                 <UserIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
                 <Input
+                  ref={nameInputRef}
                   data-testid="auth-name-input"
                   required
                   minLength={2}
