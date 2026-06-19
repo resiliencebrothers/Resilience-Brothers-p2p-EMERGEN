@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Mail, Lock, User as UserIcon } from "lucide-react";
+import { Mail, Lock, User as UserIcon, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 export default function EmailAuthDialog({ open, onClose }) {
@@ -17,6 +17,8 @@ export default function EmailAuthDialog({ open, onClose }) {
   const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -25,12 +27,16 @@ export default function EmailAuthDialog({ open, onClose }) {
   const nameInputRef = useRef(null);
 
   const reset = () => {
-    setEmail(""); setPassword(""); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
+    setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
   };
 
   const submit = async (e) => {
     e?.preventDefault?.();
     if (loading) return;
+    if (mode === "register" && password !== confirmPassword) {
+      toast.error("Las contraseñas no coinciden");
+      return;
+    }
     setLoading(true);
     try {
       if (mode === "forgot") {
@@ -193,16 +199,47 @@ export default function EmailAuthDialog({ open, onClose }) {
                 <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
                 <Input
                   data-testid="auth-password-input"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   required
                   minLength={mode === "register" ? 8 : 1}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={mode === "register" ? "mín. 8 caracteres" : "Tu contraseña"}
                   autoComplete={mode === "register" ? "new-password" : "current-password"}
-                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9 pr-10"
+                />
+                <button
+                  type="button"
+                  data-testid="auth-toggle-password-visibility"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-neutral-500 hover:text-[#EAB308] transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          )}
+          {mode === "register" && (
+            <div>
+              <Label className="micro-label text-neutral-500">Confirmar contraseña</Label>
+              <div className="relative mt-1">
+                <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                <Input
+                  data-testid="auth-confirm-password-input"
+                  type={showPassword ? "text" : "password"}
+                  required
+                  minLength={8}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repite la contraseña"
+                  autoComplete="new-password"
+                  className={`rounded-none bg-[#0a0a0a] h-11 pl-9 ${confirmPassword && confirmPassword !== password ? "border-[#EF4444]" : "border-white/10"}`}
                 />
               </div>
+              {confirmPassword && confirmPassword !== password && (
+                <p data-testid="auth-password-mismatch" className="text-[0.7rem] text-[#EF4444] mt-1">Las contraseñas no coinciden.</p>
+              )}
             </div>
           )}
           {mode === "login" && (
