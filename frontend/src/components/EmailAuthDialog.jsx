@@ -21,9 +21,10 @@ export default function EmailAuthDialog({ open, onClose }) {
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState(""); // post-register / forgot confirmation
+  const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
 
   const reset = () => {
-    setEmail(""); setPassword(""); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setMode("login");
+    setEmail(""); setPassword(""); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
   };
 
   const submit = async (e) => {
@@ -56,6 +57,10 @@ export default function EmailAuthDialog({ open, onClose }) {
       const message = typeof detail === "object" ? detail?.message : detail;
       if (code === "EMAIL_NOT_VERIFIED") {
         setSuccessMsg(message || "Verifica tu correo antes de iniciar sesión.");
+      } else if (code === "USER_NOT_FOUND") {
+        setNotice({ kind: "register", message: message || "No existe una cuenta con este email. Crea una cuenta para continuar." });
+      } else if (code === "USE_GOOGLE_LOGIN") {
+        setNotice({ kind: "google", message: message || "Esta cuenta fue creada con Google." });
       } else {
         toast.error(typeof message === "string" ? message : "Error de autenticación");
       }
@@ -92,6 +97,34 @@ export default function EmailAuthDialog({ open, onClose }) {
           </div>
         ) : (
         <form onSubmit={submit} className="space-y-4">
+          {notice && (
+            <div
+              data-testid="auth-notice"
+              className={`border-l-2 px-3 py-3 text-xs ${notice.kind === "register" ? "border-[#EAB308] bg-[#EAB308]/5 text-[#FEF3C7]" : "border-[#3B82F6] bg-[#3B82F6]/5 text-[#DBEAFE]"}`}
+            >
+              <p className="leading-relaxed mb-2">{notice.message}</p>
+              {notice.kind === "register" && (
+                <button
+                  type="button"
+                  data-testid="auth-notice-register-btn"
+                  onClick={() => { setNotice(null); setSuccessMsg(""); setMode("register"); setPassword(""); }}
+                  className="text-[#EAB308] hover:text-[#FACC15] font-semibold underline underline-offset-4"
+                >
+                  → Crear cuenta con este email
+                </button>
+              )}
+              {notice.kind === "google" && (
+                <button
+                  type="button"
+                  data-testid="auth-notice-google-btn"
+                  onClick={() => { onClose?.(); login(); }}
+                  className="text-[#60A5FA] hover:text-[#93C5FD] font-semibold underline underline-offset-4"
+                >
+                  → Continuar con Google
+                </button>
+              )}
+            </div>
+          )}
           <button
             type="button"
             data-testid="auth-google-btn"
@@ -137,7 +170,7 @@ export default function EmailAuthDialog({ open, onClose }) {
                 type="email"
                 required
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); if (notice) setNotice(null); }}
                 placeholder="tu@email.com"
                 autoComplete="email"
                 className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"

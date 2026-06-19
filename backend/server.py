@@ -506,12 +506,28 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
             detail="Demasiados intentos fallidos. Espera 15 minutos.",
         )
     user = await db.users.find_one({"email": email}, {"_id": 0})
-    if (not user) or not user.get("password_hash"):
+    if not user:
         await _record_login_attempt(identifier, False)
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "USER_NOT_FOUND",
+                    "message": "No existe una cuenta con este email. Crea una cuenta para acceder a la plataforma."},
+        )
+    if not user.get("password_hash"):
+        # Account exists but was created via Google OAuth (no password set)
+        await _record_login_attempt(identifier, False)
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "USE_GOOGLE_LOGIN",
+                    "message": "Esta cuenta fue creada con Google. Usa el botón \"Continuar con Google\"."},
+        )
     if not _verify_password(payload.password, user["password_hash"]):
         await _record_login_attempt(identifier, False)
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "INVALID_PASSWORD",
+                    "message": "Contraseña incorrecta. Si la olvidaste, usa \"¿Olvidaste tu contraseña?\"."},
+        )
     # Iter17: block password login until email is verified
     if user.get("auth_provider") == "password" and not user.get("email_verified", False):
         raise HTTPException(

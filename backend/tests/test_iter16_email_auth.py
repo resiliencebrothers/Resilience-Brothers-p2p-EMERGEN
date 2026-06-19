@@ -143,13 +143,36 @@ class TestEmailPasswordAuth:
             json={"email": TEST_EMAIL, "password": "wrong-pass-1234"},
         )
         assert r.status_code == 401
+        assert r.json()["detail"]["code"] == "INVALID_PASSWORD"
 
-    def test_login_unknown_user_rejected(self):
+    def test_login_unknown_user_returns_user_not_found(self):
         r = requests.post(
             f"{BASE_URL}/api/auth/login",
             json={"email": "nobody@example.com", "password": "whatever-strong"},
         )
+        assert r.status_code == 404
+        body = r.json()["detail"]
+        assert body["code"] == "USER_NOT_FOUND"
+        assert "cuenta" in body["message"].lower()
+
+    def test_login_google_only_account_returns_use_google(self):
+        """User exists but has no password_hash (created via Google OAuth)."""
+        cli, db = _db()
+        db.users.insert_one({
+            "user_id": "user_test_googleonly",
+            "email": TEST_EMAIL,
+            "name": "Google Only",
+            "role": "normal",
+            "auth_provider": "google",
+            "email_verified": True,
+        })
+        cli.close()
+        r = requests.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": TEST_EMAIL, "password": "anyStrongPwd123"},
+        )
         assert r.status_code == 401
+        assert r.json()["detail"]["code"] == "USE_GOOGLE_LOGIN"
 
     def test_brute_force_locks_out_after_5_fails(self):
         _r, user = _register()
