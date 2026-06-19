@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import SpreadCalculator from "@/components/SpreadCalculator";
 import { Plus, Edit2, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -93,6 +94,8 @@ export default function AdminRates() {
           <Plus className="w-4 h-4 mr-1" /> Nueva tasa
         </Button>
       </div>
+
+      <SpreadCalculator rates={rates} />
 
       <div className="tactile-card overflow-hidden">
         <table className="w-full text-sm">
