@@ -71,9 +71,9 @@ export default function OnboardingDialog({ open, onClose }) {
 
           {/* Progress dots */}
           <div className="flex items-center gap-2 mb-6" data-testid="onboarding-progress">
-            {SLIDES.map((_, i) => (
+            {SLIDES.map((s, i) => (
               <button
-                key={i}
+                key={s.eyebrow}
                 type="button"
                 aria-label={`Ir a paso ${i + 1}`}
                 onClick={() => setIdx(i)}

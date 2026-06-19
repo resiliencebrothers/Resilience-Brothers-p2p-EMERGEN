@@ -61,6 +61,10 @@ class User(BaseModel):
     role: Literal["normal", "vip", "employee", "admin"] = "normal"
     vip_balance_usd: float = 0.0  # legacy USD balance, used for redemptions
     vip_balances: Dict[str, float] = {}  # per-currency balances {"USD": 100, "CUP": 38000}
+    # iter21 — granular marketplace permissions for `employee` role. Admin bypasses all checks.
+    can_edit_product_prices: bool = False
+    can_upload_product_images: bool = False
+    can_delete_products: bool = False
     created_at: str
 
 class Currency(BaseModel):
@@ -208,6 +212,10 @@ class UserUpdate(BaseModel):
     vip_balance_usd: Optional[float] = None  # admin-only correction (not editable from new UI)
     vip_balances: Optional[Dict[str, float]] = None
     allowed_currencies: Optional[List[str]] = None   # iter14 — employee currency scope
+    # iter21 — employee marketplace permissions
+    can_edit_product_prices: Optional[bool] = None
+    can_upload_product_images: Optional[bool] = None
+    can_delete_products: Optional[bool] = None
     totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
 
@@ -979,22 +987,48 @@ async def list_products():
     docs = await db.products.find({"is_active": True}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
+def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool):
+    """iter21 — admin bypasses. Employees need explicit toggles set in /admin/users."""
+    if actor.get("role") == "admin":
+        return
+    if editing_price and not actor.get("can_edit_product_prices"):
+        raise HTTPException(status_code=403, detail="No tienes permiso para modificar precios de productos")
+    if editing_image and not actor.get("can_upload_product_images"):
+        raise HTTPException(status_code=403, detail="No tienes permiso para subir imágenes de productos")
+
+
 @api_router.post("/admin/products")
 async def create_product(payload: ProductCreate, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
+    _check_employee_product_perms(
+        actor,
+        editing_price=(payload.price_usd is not None and payload.price_usd != 0) or (payload.cost_usd is not None and payload.cost_usd != 0),
+        editing_image=bool((payload.image_url or "").strip()),
+    )
     p = Product(**payload.model_dump())
     await db.products.insert_one(p.model_dump())
     return p.model_dump()
 
 @api_router.put("/admin/products/{product_id}")
 async def update_product(product_id: str, payload: ProductCreate, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
+    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    price_changed = (
+        float(payload.price_usd) != float(existing.get("price_usd", 0))
+        or float(payload.cost_usd) != float(existing.get("cost_usd", 0))
+    )
+    image_changed = (payload.image_url or "") != (existing.get("image_url") or "")
+    _check_employee_product_perms(actor, editing_price=price_changed, editing_image=image_changed)
     await db.products.update_one({"id": product_id}, {"$set": payload.model_dump()})
     return await db.products.find_one({"id": product_id}, {"_id": 0})
 
 @api_router.delete("/admin/products/{product_id}")
 async def delete_product(product_id: str, request: Request):
-    await require_staff(request)
+    actor = await require_staff(request)
+    if actor.get("role") != "admin" and not actor.get("can_delete_products"):
+        raise HTTPException(status_code=403, detail="No tienes permiso para eliminar productos")
     await db.products.delete_one({"id": product_id})
     return {"ok": True}
 

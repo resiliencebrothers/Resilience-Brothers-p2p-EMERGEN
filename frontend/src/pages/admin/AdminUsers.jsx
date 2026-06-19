@@ -87,6 +87,20 @@ export default function AdminUsers() {
     });
   };
 
+  const PERM_LABELS = {
+    can_edit_product_prices: "modificar precios de productos",
+    can_upload_product_images: "subir imágenes de productos",
+    can_delete_products: "eliminar productos",
+  };
+
+  const saveMarketPerm = (user_id, perm, value) => {
+    setPendingTotp({
+      user_id,
+      payload: { [perm]: value },
+      label: `${value ? "otorgar" : "revocar"} permiso para ${PERM_LABELS[perm]}`,
+    });
+  };
+
   const verifyEmailManually = (user_id, email) => {
     setPendingTotp({
       kind: "verify-email",
@@ -186,12 +200,13 @@ export default function AdminUsers() {
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Saldo (USDT eq.)</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Monedas autorizadas</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Permisos Mercado</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
-            {!loading && users.length === 0 && <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
+            {loading && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
+            {!loading && users.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
             {users.map(u => (
               <tr key={u.user_id} className="border-b border-white/5">
                 <td className="px-4 py-3 flex items-center gap-2">
@@ -273,6 +288,15 @@ export default function AdminUsers() {
                     />
                   ) : (
                     <span className="text-neutral-600 text-xs">— sin restricción —</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {u.role === "employee" ? (
+                    <MarketPermsCell user={u} onToggle={(perm, value) => saveMarketPerm(u.user_id, perm, value)} />
+                  ) : u.role === "admin" ? (
+                    <span className="text-[0.65rem] text-[#EAB308] uppercase tracking-widest">acceso total</span>
+                  ) : (
+                    <span className="text-neutral-600 text-xs">—</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500">{new Date(u.created_at).toLocaleDateString()}</td>
@@ -382,3 +406,35 @@ function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle, onSave
     </div>
   );
 }
+
+function MarketPermsCell({ user, onToggle }) {
+  const items = [
+    { key: "can_edit_product_prices", label: "Precios", title: "Puede modificar precios y costos de productos" },
+    { key: "can_upload_product_images", label: "Imágenes", title: "Puede cambiar la URL de imagen promocional" },
+    { key: "can_delete_products", label: "Eliminar", title: "Puede eliminar productos del catálogo" },
+  ];
+  return (
+    <div className="flex flex-col gap-1.5" data-testid={`market-perms-${user.user_id}`}>
+      {items.map(({ key, label, title }) => {
+        const on = !!user[key];
+        return (
+          <label
+            key={key}
+            title={title}
+            className={`flex items-center gap-2 cursor-pointer select-none text-xs ${on ? "text-[#22C55E]" : "text-neutral-500"}`}
+          >
+            <input
+              type="checkbox"
+              checked={on}
+              onChange={(e) => onToggle(key, e.target.checked)}
+              data-testid={`market-perm-${key}-${user.user_id}`}
+              className="accent-[#EAB308] w-3.5 h-3.5"
+            />
+            <span className="font-mono">{label}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+

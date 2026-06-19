@@ -7,7 +7,7 @@ from conftest import BASE_URL
 
 
 TEST_EMAIL = os.environ.get("TEST_ONBOARDING_EMAIL", "onboarding.iter18@example.com")
-TEST_PASSWORD = "veryStrongPass123"
+TEST_PASSWORD = os.environ.get("TEST_ONBOARDING_PWD", "veryStrongPass123")  # test-only fixture
 TEST_NAME = "Onboarding Test"
 
 
