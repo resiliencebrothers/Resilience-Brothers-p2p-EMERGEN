@@ -12,6 +12,7 @@ import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import PushToggle from "@/components/PushToggle";
+import OnboardingDialog from "@/components/OnboardingDialog";
 
 const ROLE_LABELS = {
   normal: "Cliente",
@@ -27,6 +28,8 @@ export default function Dashboard() {
   // iter14: any non-staff client (normal + vip) may see balance & withdraw panel.
   const isClient = user && !isStaff;
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Onboarding shows ONLY for users explicitly marked as not-onboarded (legacy users have the field missing and are treated as completed).
+  const [showOnboarding, setShowOnboarding] = useState(user?.onboarding_completed === false);
 
   const navItems = [
     { to: "/dashboard", icon: LayoutDashboard, label: "Resumen", end: true, id: "nav-overview" },
@@ -101,6 +104,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white flex">
+      <OnboardingDialog open={showOnboarding} onClose={() => setShowOnboarding(false)} />
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
         <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3">

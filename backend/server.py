@@ -334,6 +334,7 @@ async def auth_session(payload: dict, response: Response):
             "picture": data.get("picture", ""),
             "role": role,
             "vip_balance_usd": 0.0,
+            "onboarding_completed": False,
             "created_at": iso(now_utc()),
         }
         await db.users.insert_one(user_doc)
@@ -363,6 +364,18 @@ async def auth_me(request: Request):
     user = await require_user(request)
     user.pop("_id", None)
     return user
+
+
+@api_router.post("/me/onboarding/complete")
+async def complete_onboarding(request: Request):
+    """Mark the current user's first-visit onboarding tour as completed."""
+    user = await require_user(request)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"onboarding_completed": True}},
+    )
+    return {"ok": True}
+
 
 @api_router.post("/auth/logout")
 async def auth_logout(request: Request, response: Response):
@@ -463,6 +476,7 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
         "verification_token": verification_token,
         "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
         "vip_balance_usd": 0.0,
+        "onboarding_completed": False,
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
