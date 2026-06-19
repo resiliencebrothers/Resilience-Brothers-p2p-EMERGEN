@@ -214,7 +214,9 @@ export default function AdminOrders() {
                 <div><span className="text-neutral-500">Envía:</span> {open.amount_from} {open.from_code}</div>
                 <div><span className="text-neutral-500">Recibe:</span> {open.amount_to} {open.to_code}</div>
                 <div><span className="text-neutral-500">Tasa:</span> {open.rate_applied}</div>
-                <div><span className="text-neutral-500">Comisión:</span> {open.commission_percent}%</div>
+                {open.commission_percent > 0 && (
+                  <div><span className="text-neutral-500">Comisión:</span> {open.commission_percent}%</div>
+                )}
                 <div className="col-span-2"><span className="text-neutral-500">Titular pago:</span> {open.sender_name}</div>
                 <div className="col-span-2"><span className="text-neutral-500">Entrega ({open.delivery_method}):</span> {open.delivery_details || "—"}</div>
               </div>

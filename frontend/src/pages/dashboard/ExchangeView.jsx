@@ -46,7 +46,7 @@ export default function ExchangeView() {
   if (selectedRate) {
     rate = isVip ? selectedRate.rate_vip : selectedRate.rate_normal;
   }
-  const commission = isVip ? 0 : 5;
+  const commission = 0;
   const amt = parseFloat(amount) || 0;
   const gross = amt * rate;
   const finalAmount = gross * (1 - commission / 100);
@@ -110,7 +110,9 @@ export default function ExchangeView() {
           <div className="flex justify-between"><span className="text-neutral-500">Envías:</span> <span>{success.amount_from} {success.from_code}</span></div>
           <div className="flex justify-between"><span className="text-neutral-500">Recibes:</span> <span className="text-[#EAB308]">{success.amount_to} {success.to_code}</span></div>
           <div className="flex justify-between"><span className="text-neutral-500">Tasa:</span> <span>{success.rate_applied}</span></div>
-          <div className="flex justify-between"><span className="text-neutral-500">Comisión:</span> <span>{success.commission_percent}%</span></div>
+          {success.commission_percent > 0 && (
+            <div className="flex justify-between"><span className="text-neutral-500">Comisión:</span> <span>{success.commission_percent}%</span></div>
+          )}
         </div>
         <Button data-testid="new-order-btn" onClick={() => { setSuccess(null); setAmount(""); setProofImage(""); setSenderName(""); setDeliveryDetails(""); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
           Nueva Orden
@@ -125,7 +127,7 @@ export default function ExchangeView() {
         <div className="micro-label text-[#EAB308] mb-2">/ Intercambio</div>
         <h1 className="font-display text-3xl">Cripto ↔ Fiat</h1>
         <p className="text-neutral-400 mt-2">
-          {isVip ? "Tasas VIP · Sin comisión" : "Comisión estándar 5%"}
+          {isVip ? "Tasas VIP preferenciales" : "Tasa estándar según tu estatus"}
         </p>
       </div>
 
@@ -175,7 +177,9 @@ export default function ExchangeView() {
           <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 p-5 space-y-2 font-mono text-sm">
             <div className="flex justify-between"><span className="text-neutral-400">Tasa aplicada:</span><span>{rate} {toCode}/{fromCode}</span></div>
             <div className="flex justify-between"><span className="text-neutral-400">Bruto:</span><span>{gross.toFixed(4)} {toCode}</span></div>
-            <div className="flex justify-between"><span className="text-neutral-400">Comisión ({commission}%):</span><span className="text-[#EF4444]">-{(gross - finalAmount).toFixed(4)}</span></div>
+            {commission > 0 && (
+              <div className="flex justify-between"><span className="text-neutral-400">Comisión ({commission}%):</span><span className="text-[#EF4444]">-{(gross - finalAmount).toFixed(4)}</span></div>
+            )}
             <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-base">
               <span className="text-white">Recibirás:</span>
               <span className="text-[#EAB308] font-bold">{finalAmount.toFixed(4)} {toCode}</span>

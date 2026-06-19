@@ -29,7 +29,7 @@ export default function OverviewView() {
         <div className="micro-label text-[#EAB308] mb-2">/ Dashboard</div>
         <h1 className="font-display text-3xl lg:text-4xl">Hola, {user?.name?.split(" ")[0]}.</h1>
         <p className="text-neutral-400 mt-2">
-          {isVip ? "Cuenta VIP · Tasas preferenciales activas · Sin comisiones" : "Cuenta Estándar · Comisión 5% aplicada"}
+          {isVip ? "Cuenta VIP · Tasas preferenciales activas" : "Cuenta Estándar · Tasa según estatus"}
         </p>
       </div>
 

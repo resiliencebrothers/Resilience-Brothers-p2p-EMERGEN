@@ -175,13 +175,13 @@ export default function AdminRevenue() {
       <div className="grid md:grid-cols-2 gap-4">
         <RoleCard
           title="Clientes Normales"
-          subtitle="Margen 5% comisión + spread"
+          subtitle="Margen del spread (tasa estándar)"
           data={data.by_role.normal}
           accent="border-white/10"
         />
         <RoleCard
           title="Clientes VIP"
-          subtitle="Solo spread (sin comisión)"
+          subtitle="Margen del spread (tasa preferencial)"
           data={data.by_role.vip}
           accent="border-[#EAB308]/40"
         />

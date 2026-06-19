@@ -122,7 +122,8 @@ class TestRateCRUD:
 
 # ----- Orders -----
 class TestOrders:
-    def test_order_normal_5pct(self):
+    def test_order_normal_no_commission(self):
+        """iter19: normal users no longer pay a 5% commission. Differentiation is via rate_normal."""
         rates = requests.get(f"{BASE_URL}/api/rates").json()
         rate = next(r for r in rates if r["from_code"] == "USD" and r["to_code"] == "CUP")
         payload = {"from_code": "USD", "to_code": "CUP", "amount_from": 100,
@@ -131,8 +132,8 @@ class TestOrders:
         r = requests.post(f"{BASE_URL}/api/orders", headers=_h(NORMAL_TOKEN), json=payload)
         assert r.status_code == 200, r.text
         data = r.json()
-        expected = round(100 * rate["rate_normal"] * 0.95, 4)
-        assert data["commission_percent"] == 5.0
+        expected = round(100 * rate["rate_normal"], 4)
+        assert data["commission_percent"] == 0.0
         assert data["amount_to"] == expected
         assert data["status"] == "pending"
         assert data["sender_name"] == "John Doe"

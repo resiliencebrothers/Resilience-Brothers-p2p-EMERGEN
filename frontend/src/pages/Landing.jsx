@@ -95,7 +95,7 @@ export default function Landing() {
           <div className="lg:col-span-4 grid grid-cols-2 gap-4 mt-8 lg:mt-0">
             {[
               { v: "+12", l: "Países" },
-              { v: "5%→0%", l: "Comisión VIP" },
+              { v: "VIP", l: "Tasa preferencial" },
               { v: "24h", l: "Settlement" },
               { v: "100%", l: "P2P" },
             ].map((s) => (

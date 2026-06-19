@@ -722,7 +722,10 @@ async def create_order(payload: OrderCreate, request: Request):
         raise HTTPException(status_code=400, detail="Tasa de cambio no disponible para ese par")
     is_vip = user["role"] in ("vip", "admin")
     rate = rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"]
-    commission = 0.0 if is_vip else 5.0
+    # iter19: commission removed. Differentiation by status now lives entirely in rate_normal vs rate_vip
+    # (admins set both rates in /admin/rates). New orders carry commission_percent = 0.0; existing
+    # historical orders keep their original 5% value untouched.
+    commission = 0.0
     gross = payload.amount_from * rate
     amount_to = gross * (1 - commission / 100)
     order = Order(

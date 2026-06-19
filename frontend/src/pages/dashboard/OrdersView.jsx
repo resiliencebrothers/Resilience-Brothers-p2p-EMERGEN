@@ -78,7 +78,9 @@ export default function OrdersView() {
               <Row label="Envías" value={`${selected.amount_from} ${selected.from_code}`} />
               <Row label="Recibes" value={`${selected.amount_to} ${selected.to_code}`} />
               <Row label="Tasa" value={selected.rate_applied} />
-              <Row label="Comisión" value={`${selected.commission_percent}%`} />
+              {selected.commission_percent > 0 && (
+                <Row label="Comisión" value={`${selected.commission_percent}%`} />
+              )}
               <Row label="Entrega" value={selected.delivery_method} />
               <Row label="Detalles" value={selected.delivery_details || "—"} />
               <Row label="Titular" value={selected.sender_name} />
