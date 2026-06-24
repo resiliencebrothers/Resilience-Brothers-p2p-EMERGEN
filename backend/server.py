@@ -1,12 +1,16 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Cookie, Response, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import uuid
+import base64
+import json
+import httpx
 import requests
+from urllib.parse import urlencode
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Literal, Dict
@@ -372,6 +376,138 @@ async def auth_me(request: Request):
     user = await require_user(request)
     user.pop("_id", None)
     return user
+
+
+# ============================================================
+# iter22 — Custom Google OAuth 2.0 (replaces Emergent Google Auth)
+# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+# ============================================================
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Parse the payload of a JWT obtained directly from Google's token endpoint
+    over TLS. Signature verification is unnecessary here because the token was
+    delivered through an authenticated server-to-server channel (we hold the
+    client_secret) — not from an untrusted client."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError("Malformed id_token")
+    payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
+
+
+@api_router.get("/auth/google/login")
+async def google_login(request: Request, redirect: Optional[str] = None):
+    """Build the Google OAuth URL and 302-redirect the browser to it."""
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
+        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured")
+    # Origin where the user came from (preview vs production). Trust the Host header set by ingress.
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    proto = request.headers.get("x-forwarded-proto", "https")
+    origin = f"{proto}://{host}"
+    redirect_uri = f"{origin}/api/auth/google/callback"
+    state_token = uuid.uuid4().hex
+    post_login_redirect = redirect or "/dashboard"
+    await db.oauth_states.insert_one({
+        "state": state_token,
+        "redirect": post_login_redirect,
+        "redirect_uri": redirect_uri,
+        "created_at": iso(now_utc()),
+        "expires_at": iso(now_utc() + timedelta(minutes=10)),
+    })
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state_token,
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+    return RedirectResponse(url=url, status_code=302)
+
+
+@api_router.get("/auth/google/callback")
+async def google_callback(request: Request, code: Optional[str] = None,
+                           state: Optional[str] = None, error: Optional[str] = None):
+    """Exchange the code for tokens, lookup/create the user by email, issue a session cookie,
+    and bounce the browser to the SPA's post-login page."""
+    if error:
+        # User declined consent — bounce back to landing with a flag the SPA can read
+        return RedirectResponse(url=f"/?auth_error={error}", status_code=302)
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+    state_doc = await db.oauth_states.find_one_and_delete({"state": state})
+    if not state_doc:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+
+    # Exchange the authorization code for tokens (server-side, requires client_secret)
+    async with httpx.AsyncClient(timeout=15) as client:
+        token_resp = await client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": state_doc["redirect_uri"],
+                "grant_type": "authorization_code",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=401, detail=f"Token exchange failed: {token_resp.text}")
+    tokens = token_resp.json()
+    id_token = tokens.get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=401, detail="No id_token returned by Google")
+    claims = _decode_jwt_payload(id_token)
+    if claims.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="id_token audience mismatch")
+    email = (claims.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Google id_token missing email claim")
+    if claims.get("email_verified") is False:
+        raise HTTPException(status_code=401, detail="Google account email not verified")
+
+    name = claims.get("name") or ""
+    picture = claims.get("picture") or ""
+
+    # Option A — match by email (links to legacy Emergent Google Auth users automatically)
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {"name": name or existing.get("name", ""),
+                       "picture": picture or existing.get("picture", ""),
+                       "email_verified": True,
+                       "auth_provider": existing.get("auth_provider") or "google"}},
+        )
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        role = "admin" if email in ADMIN_EMAILS else "normal"
+        if await db.users.count_documents({}) == 0:
+            role = "admin"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email,
+            "name": name,
+            "picture": picture,
+            "role": role,
+            "auth_provider": "google",
+            "email_verified": True,
+            "vip_balance_usd": 0.0,
+            "onboarding_completed": False,
+            "created_at": iso(now_utc()),
+        })
+
+    # Issue session cookie (default 7d, same as Emergent Auth had)
+    response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
+    await _create_session(user_id, response, ttl_hours=168)
+    return response
 
 
 @api_router.post("/me/onboarding/complete")
