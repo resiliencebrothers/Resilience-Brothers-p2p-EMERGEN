@@ -110,6 +110,15 @@ export default function AdminUsers() {
     });
   };
 
+  const verifyPhoneManually = (user_id, phone, email) => {
+    setPendingTotp({
+      kind: "verify-phone",
+      user_id,
+      payload: {},
+      label: `verificar el teléfono ${phone} de ${email}`,
+    });
+  };
+
   const confirmWithTotp = async (code) => {
     const { user_id, payload, kind } = pendingTotp;
     try {
@@ -120,6 +129,13 @@ export default function AdminUsers() {
           { withCredentials: true }
         );
         toast.success("Email verificado manualmente");
+      } else if (kind === "verify-phone") {
+        await axios.post(
+          `${API}/admin/users/${user_id}/verify-phone`,
+          { totp_code: code },
+          { withCredentials: true }
+        );
+        toast.success("Teléfono verificado manualmente");
       } else {
         await axios.put(
           `${API}/admin/users/${user_id}`,
@@ -200,13 +216,14 @@ export default function AdminUsers() {
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Saldo (USDT eq.)</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Monedas autorizadas</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Teléfono</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Permisos Mercado</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
-            {!loading && users.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
+            {loading && <tr><td colSpan="8" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
+            {!loading && users.length === 0 && <tr><td colSpan="8" className="text-center text-neutral-500 py-8">Sin resultados</td></tr>}
             {users.map(u => (
               <tr key={u.user_id} className="border-b border-white/5">
                 <td className="px-4 py-3 flex items-center gap-2">
@@ -288,6 +305,28 @@ export default function AdminUsers() {
                     />
                   ) : (
                     <span className="text-neutral-600 text-xs">— sin restricción —</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {u.phone ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="font-mono text-xs text-neutral-300" data-testid={`phone-${u.user_id}`}>{u.phone}</span>
+                      {u.phone_verified ? (
+                        <span className="text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 border border-[#22C55E]/40 text-[#22C55E] bg-[#22C55E]/10 self-start">Verificado</span>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid={`verify-phone-btn-${u.user_id}`}
+                          onClick={() => verifyPhoneManually(u.user_id, u.phone, u.email)}
+                          className="text-[0.65rem] uppercase tracking-widest text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4 self-start"
+                          title="Marcar este teléfono como verificado (requiere 2FA)"
+                        >
+                          Verificar
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-neutral-600 text-xs">— legacy —</span>
                   )}
                 </td>
                 <td className="px-4 py-3">

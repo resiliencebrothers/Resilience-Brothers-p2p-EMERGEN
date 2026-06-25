@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Mail, Lock, User as UserIcon, Eye, EyeOff } from "lucide-react";
+import { Mail, Lock, User as UserIcon, Eye, EyeOff, Phone } from "lucide-react";
 import { toast } from "sonner";
 
 export default function EmailAuthDialog({ open, onClose }) {
@@ -20,6 +20,7 @@ export default function EmailAuthDialog({ open, onClose }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");  // iter23 — required for new registrations (E.164)
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState(""); // post-register / forgot confirmation
@@ -27,7 +28,7 @@ export default function EmailAuthDialog({ open, onClose }) {
   const nameInputRef = useRef(null);
 
   const reset = () => {
-    setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false); setName(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
+    setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false); setName(""); setPhone(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
   };
 
   const submit = async (e) => {
@@ -46,7 +47,7 @@ export default function EmailAuthDialog({ open, onClose }) {
       }
       const url = mode === "register" ? "/auth/register" : "/auth/login";
       const body = mode === "register"
-        ? { email: email.trim(), password, name: name.trim() }
+        ? { email: email.trim(), password, name: name.trim(), phone: phone.trim() }
         : { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}) };
       const r = await axios.post(`${API}${url}`, body, { withCredentials: true });
       if (mode === "register") {
@@ -174,6 +175,28 @@ export default function EmailAuthDialog({ open, onClose }) {
                   className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
                 />
               </div>
+            </div>
+          )}
+          {mode === "register" && (
+            <div>
+              <Label className="micro-label text-neutral-500">Teléfono</Label>
+              <div className="relative mt-1">
+                <Phone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+                <Input
+                  data-testid="auth-phone-input"
+                  type="tel"
+                  required
+                  inputMode="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+5350123456 (con código de país)"
+                  autoComplete="tel"
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9 font-mono"
+                />
+              </div>
+              <p className="text-[0.65rem] text-neutral-600 mt-1">
+                Un miembro del staff verificará tu número antes de habilitar retiros.
+              </p>
             </div>
           )}
           <div>

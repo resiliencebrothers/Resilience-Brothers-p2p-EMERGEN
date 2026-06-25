@@ -6,6 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import uuid
+import re
 import base64
 import json
 import httpx
@@ -69,6 +70,12 @@ class User(BaseModel):
     can_edit_product_prices: bool = False
     can_upload_product_images: bool = False
     can_delete_products: bool = False
+    # iter23 — phone-based trust layer.
+    # phone is REQUIRED at registration for new users. Legacy users (created before iter23) keep phone=None and operate normally.
+    # phone_verified is toggled manually by staff after they confirm the number is real.
+    # New users with phone set but phone_verified=False are blocked from creating withdrawals.
+    phone: Optional[str] = None  # E.164 normalized, e.g. "+5350123456"
+    phone_verified: bool = False
     created_at: str
 
 class Currency(BaseModel):
@@ -487,6 +494,8 @@ async def google_callback(request: Request, code: Optional[str] = None,
                        "auth_provider": existing.get("auth_provider") or "google"}},
         )
     else:
+        # iter23 — block scammers by email (phone unknown here, will be checked later when they fill /me/phone)
+        await assert_not_blocked(email=email)
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         role = "admin" if email in ADMIN_EMAILS else "normal"
         if await db.users.count_documents({}) == 0:
@@ -501,6 +510,8 @@ async def google_callback(request: Request, code: Optional[str] = None,
             "email_verified": True,
             "vip_balance_usd": 0.0,
             "onboarding_completed": False,
+            "phone": None,
+            "phone_verified": False,
             "created_at": iso(now_utc()),
         })
 
@@ -519,6 +530,124 @@ async def complete_onboarding(request: Request):
         {"$set": {"onboarding_completed": True}},
     )
     return {"ok": True}
+
+
+# ===== iter23 — Phone management (user-facing) =====
+class PhoneSetPayload(BaseModel):
+    phone: str = Field(..., min_length=8, max_length=20)
+
+
+@api_router.post("/me/phone")
+async def set_my_phone(payload: PhoneSetPayload, request: Request):
+    """Self-service endpoint for Google OAuth users (who don't supply phone at registration)
+    or anyone who needs to update their number. Phone is set as `phone_verified=False`;
+    staff must confirm it manually before withdrawals are allowed."""
+    user = await require_user(request)
+    phone = normalize_phone(payload.phone)
+    await assert_not_blocked(email=user["email"], phone=phone)
+    # Phone uniqueness (allow keeping the same one if already mine)
+    other = await db.users.find_one({"phone": phone, "user_id": {"$ne": user["user_id"]}}, {"_id": 0})
+    if other:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PHONE_IN_USE",
+                    "message": "Este número ya está asociado a otra cuenta."},
+        )
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"phone": phone, "phone_verified": False}},
+    )
+    return {"ok": True, "phone": phone, "phone_verified": False}
+
+
+# ===== iter23 — Blocked contacts (anti-scam blocklist) =====
+class BlockedContactPayload(BaseModel):
+    phone: Optional[str] = Field(None, max_length=20)
+    email: Optional[EmailStr] = None
+    reason: str = Field(..., min_length=3, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+@api_router.get("/admin/blocked-contacts")
+async def list_blocked_contacts(request: Request, q: Optional[str] = None,
+                                 limit: int = 100, skip: int = 0):
+    await require_staff(request)
+    query: dict = {}
+    if q:
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        query = {"$or": [{"phone": rx}, {"email": rx}, {"reason": rx}, {"notes": rx}]}
+    total = await db.blocked_contacts.count_documents(query)
+    cursor = db.blocked_contacts.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+    items = await cursor.to_list(length=limit)
+    return {"items": items, "total": total}
+
+
+@api_router.post("/admin/blocked-contacts")
+async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
+    actor = await require_staff(request)
+    phone = normalize_phone(payload.phone) if payload.phone else None
+    email = payload.email.lower().strip() if payload.email else None
+    if not phone and not email:
+        raise HTTPException(status_code=422, detail="Debes proporcionar teléfono y/o email")
+    # Deduplicate: don't allow same (phone OR email) twice
+    or_clauses = []
+    if phone: or_clauses.append({"phone": phone})
+    if email: or_clauses.append({"email": email})
+    existing = await db.blocked_contacts.find_one({"$or": or_clauses}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=409, detail="Este contacto ya está bloqueado")
+    doc = {
+        "id": uuid.uuid4().hex,
+        "phone": phone,
+        "email": email,
+        "reason": payload.reason.strip(),
+        "notes": (payload.notes or "").strip(),
+        "created_at": iso(now_utc()),
+        "created_by": actor["user_id"],
+        "created_by_email": actor.get("email", ""),
+    }
+    await db.blocked_contacts.insert_one(doc)
+    await log_action(db, actor, "blocked_contact.add", "blocked_contact", doc["id"],
+                     summary=f"Bloqueó contacto (phone={phone or '-'}, email={email or '-'})",
+                     details={"phone": phone, "email": email, "reason": payload.reason})
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/admin/blocked-contacts/{contact_id}")
+async def remove_blocked_contact(contact_id: str, request: Request):
+    actor = await require_staff(request)
+    target = await db.blocked_contacts.find_one({"id": contact_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Contacto bloqueado no encontrado")
+    await db.blocked_contacts.delete_one({"id": contact_id})
+    await log_action(db, actor, "blocked_contact.remove", "blocked_contact", contact_id,
+                     summary=f"Desbloqueó contacto (phone={target.get('phone') or '-'}, email={target.get('email') or '-'})",
+                     details=target)
+    return {"ok": True}
+
+
+# ===== iter23 — Staff manually verifies a user's phone =====
+@api_router.post("/admin/users/{user_id}/verify-phone")
+async def admin_verify_user_phone(user_id: str, request: Request):
+    """Mark a user's phone as verified. Staff confirms manually (e.g. by calling them).
+    Unlocks withdrawals for new (post-iter23) users."""
+    requester = await require_staff(request)
+    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    await _enforce_totp_step_up(requester, payload.get("totp_code"), action_label="verificar teléfono manualmente")
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not target.get("phone"):
+        raise HTTPException(status_code=400, detail="El usuario aún no ha proporcionado un teléfono")
+    if target.get("phone_verified"):
+        return {"ok": True, "already_verified": True, "user": target}
+    await db.users.update_one({"user_id": user_id}, {"$set": {"phone_verified": True}})
+    fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    await log_action(db, requester, "user.verify_phone_manual", "user", user_id,
+                     summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
+                     details={"email": target.get("email"), "phone": target.get("phone")})
+    return {"ok": True, "already_verified": False, "user": fresh}
 
 
 @api_router.post("/auth/logout")
@@ -567,6 +696,41 @@ class AuthRegisterPayload(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=200)
     name: str = Field(..., min_length=2, max_length=120)
+    phone: str = Field(..., min_length=8, max_length=20)  # iter23 — E.164: +<countrycode><number>
+
+
+PHONE_E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
+
+
+def normalize_phone(raw: str) -> str:
+    """Strip spaces, dashes, parens. Result must match E.164 (+1234567890)."""
+    cleaned = re.sub(r"[\s\-\(\)\.]", "", raw or "")
+    if not PHONE_E164_RE.match(cleaned):
+        raise HTTPException(
+            status_code=422,
+            detail="Formato de teléfono inválido. Usa formato internacional: +<código país><número>, ej. +5350123456",
+        )
+    return cleaned
+
+
+async def assert_not_blocked(*, email: Optional[str] = None, phone: Optional[str] = None):
+    """iter23 — reject registration if email OR phone match any entry in blocked_contacts."""
+    or_clauses = []
+    if email:
+        or_clauses.append({"email": email.lower().strip()})
+    if phone:
+        or_clauses.append({"phone": phone})
+    if not or_clauses:
+        return
+    hit = await db.blocked_contacts.find_one({"$or": or_clauses})
+    if hit:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "BLOCKED_CONTACT",
+                "message": "Esta cuenta no puede ser creada. Si crees que es un error, contacta a soporte.",
+            },
+        )
 
 
 class AuthLoginPayload(BaseModel):
@@ -600,9 +764,19 @@ async def _record_login_attempt(identifier: str, success: bool):
 @api_router.post("/auth/register")
 async def auth_register(payload: AuthRegisterPayload, response: Response):
     email = payload.email.lower().strip()
+    phone = normalize_phone(payload.phone)
+    # iter23 — block scammers by email or phone
+    await assert_not_blocked(email=email, phone=phone)
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email")
+    # iter23 — phone uniqueness so the same number can't open multiple accounts
+    if await db.users.find_one({"phone": phone}, {"_id": 0}):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PHONE_IN_USE",
+                    "message": "Este número de teléfono ya está asociado a otra cuenta."},
+        )
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     role = "admin" if email in ADMIN_EMAILS else "normal"
     if await db.users.count_documents({}) == 0:
@@ -621,6 +795,8 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
         "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
         "vip_balance_usd": 0.0,
         "onboarding_completed": False,
+        "phone": phone,
+        "phone_verified": False,
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
@@ -1270,6 +1446,14 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     # iter14: opens to all client roles (normal + vip + admin). Staff cannot withdraw to themselves.
     if user["role"] == "employee":
         raise HTTPException(status_code=403, detail="Empleados no pueden retirar")
+    # iter23: if a phone is on file it MUST be staff-verified before withdrawals are allowed.
+    # Legacy users (created before iter23) have phone=None and pass this check.
+    if user.get("phone") and not user.get("phone_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "PHONE_NOT_VERIFIED",
+                    "message": "Tu número de teléfono debe ser verificado por un miembro del staff antes de poder retirar. Contacta a soporte."},
+        )
     # 2FA mandatory: must be set up AND a valid code provided
     await _enforce_totp_step_up(user, payload.totp_code, action_label="retiro")
     currency = payload.currency or "USD"
