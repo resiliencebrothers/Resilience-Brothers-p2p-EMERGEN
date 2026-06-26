@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { API } from "@/App";
 import { ListChecks, ArrowDownToLine, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import DefensiveModePanel from "@/components/DefensiveModePanel";
 
 const ORDER_STATUS = {
   pending: "Pendiente",
@@ -41,6 +42,8 @@ export default function AdminQueue() {
           Sólo los ítems pendientes dentro de tus monedas autorizadas. Los admins ven todo.
         </p>
       </div>
+
+      <DefensiveModePanel />
 
       {empty && (
         <div className="tactile-card p-12 text-center">

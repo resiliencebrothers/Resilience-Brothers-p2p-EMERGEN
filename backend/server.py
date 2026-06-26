@@ -496,6 +496,8 @@ async def google_callback(request: Request, code: Optional[str] = None,
     else:
         # iter23 — block scammers by email (phone unknown here, will be checked later when they fill /me/phone)
         await assert_not_blocked(email=email)
+        # iter24 — block new account creation in defensive mode (existing users still log in fine)
+        await _assert_not_defensive("nuevos registros")
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         role = "admin" if email in ADMIN_EMAILS else "normal"
         if await db.users.count_documents({}) == 0:
@@ -627,7 +629,6 @@ async def remove_blocked_contact(contact_id: str, request: Request):
     return {"ok": True}
 
 
-# ===== iter23 — Staff manually verifies a user's phone =====
 @api_router.post("/admin/users/{user_id}/verify-phone")
 async def admin_verify_user_phone(user_id: str, request: Request):
     """Mark a user's phone as verified. Staff confirms manually (e.g. by calling them).
@@ -648,6 +649,63 @@ async def admin_verify_user_phone(user_id: str, request: Request):
                      summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
                      details={"email": target.get("email"), "phone": target.get("phone")})
     return {"ok": True, "already_verified": False, "user": fresh}
+
+
+# ===== iter24 — Defensive Mode =====
+# A single document in `system_config` collection: {key: "defensive_mode", enabled: bool, reason, enabled_at, enabled_by}
+DEFENSIVE_MODE_KEY = "defensive_mode"
+
+
+async def _get_defensive_mode() -> dict:
+    doc = await db.system_config.find_one({"key": DEFENSIVE_MODE_KEY}, {"_id": 0})
+    return doc or {"key": DEFENSIVE_MODE_KEY, "enabled": False, "reason": "", "enabled_at": None, "enabled_by_email": ""}
+
+
+async def _assert_not_defensive(action_label: str):
+    state = await _get_defensive_mode()
+    if state.get("enabled"):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "DEFENSIVE_MODE",
+                "message": f"La plataforma está en modo defensivo y temporalmente no acepta {action_label}. Intenta de nuevo en unos minutos.",
+                "reason": state.get("reason", ""),
+            },
+        )
+
+
+@api_router.get("/system/defensive-mode")
+async def public_defensive_mode():
+    """Public endpoint so the SPA can show the warning banner to everyone."""
+    state = await _get_defensive_mode()
+    return {"enabled": bool(state.get("enabled")), "enabled_at": state.get("enabled_at")}
+
+
+class DefensiveModePayload(BaseModel):
+    enabled: bool
+    reason: Optional[str] = Field(None, max_length=500)
+    totp_code: Optional[str] = Field(None, max_length=11)
+
+
+@api_router.post("/admin/defensive-mode/toggle")
+async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Request):
+    actor = await require_admin(request)  # admin-only (not staff)
+    await _enforce_totp_step_up(actor, payload.totp_code,
+                                 action_label=f"{'activar' if payload.enabled else 'desactivar'} modo defensivo")
+    update = {
+        "key": DEFENSIVE_MODE_KEY,
+        "enabled": payload.enabled,
+        "reason": (payload.reason or "").strip(),
+        "enabled_at": iso(now_utc()) if payload.enabled else None,
+        "enabled_by_email": actor.get("email", "") if payload.enabled else "",
+    }
+    await db.system_config.update_one(
+        {"key": DEFENSIVE_MODE_KEY}, {"$set": update}, upsert=True,
+    )
+    await log_action(db, actor, "system.defensive_mode", "system", DEFENSIVE_MODE_KEY,
+                     summary=f"Modo defensivo {'activado' if payload.enabled else 'desactivado'}",
+                     details={"reason": update["reason"]})
+    return update
 
 
 @api_router.post("/auth/logout")
@@ -765,6 +823,8 @@ async def _record_login_attempt(identifier: str, success: bool):
 async def auth_register(payload: AuthRegisterPayload, response: Response):
     email = payload.email.lower().strip()
     phone = normalize_phone(payload.phone)
+    # iter24 — block new registrations entirely when in defensive mode
+    await _assert_not_defensive("nuevos registros")
     # iter23 — block scammers by email or phone
     await assert_not_blocked(email=email, phone=phone)
     existing = await db.users.find_one({"email": email}, {"_id": 0})
@@ -1446,6 +1506,9 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     # iter14: opens to all client roles (normal + vip + admin). Staff cannot withdraw to themselves.
     if user["role"] == "employee":
         raise HTTPException(status_code=403, detail="Empleados no pueden retirar")
+    # iter24 — admins bypass the freeze (they need to be able to operate during defensive mode)
+    if user["role"] != "admin":
+        await _assert_not_defensive("retiros")
     # iter23: if a phone is on file it MUST be staff-verified before withdrawals are allowed.
     # Legacy users (created before iter23) have phone=None and pass this check.
     if user.get("phone") and not user.get("phone_verified"):

@@ -9,6 +9,7 @@ import ResetPassword from "@/pages/ResetPassword";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import TermsOfService from "@/pages/TermsOfService";
 import Dashboard from "@/pages/Dashboard";
+import { DefensiveBanner } from "@/components/DefensiveModePanel";
 import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
 import InstallPrompt from "@/components/InstallPrompt";
@@ -56,6 +57,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <Toaster theme="dark" position="top-right" toastOptions={{ style: { background: "#141414", border: "1px solid rgba(255,255,255,0.1)", color: "#fff" } }} />
+        <DefensiveBanner />
         <AppRouter />
         <InstallPrompt />
       </AuthProvider>

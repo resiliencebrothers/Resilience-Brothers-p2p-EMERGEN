@@ -23,7 +23,7 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white">
       {/* HEADER */}
-      <header className="fixed top-0 inset-x-0 z-50 glass-panel">
+      <header className="sticky top-0 inset-x-0 z-50 glass-panel">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-12 w-12 object-contain" />
