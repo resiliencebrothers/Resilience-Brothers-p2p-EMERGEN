@@ -1,6 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
-import { useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import { ArrowUpRight, ShieldCheck, Globe2, Zap, Activity, Boxes, BadgeCheck, ChevronRight, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import EmailAuthDialog from "@/components/EmailAuthDialog";
@@ -8,7 +9,23 @@ import EmailAuthDialog from "@/components/EmailAuthDialog";
 export default function Landing() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [emailAuthOpen, setEmailAuthOpen] = useState(false);
+  const [prefillEmail, setPrefillEmail] = useState("");
+
+  // Handle "?verified=1&email=..." from the verify-email flow:
+  // show a success toast and auto-open the login dialog with the email pre-filled.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("verified") === "1") {
+      const email = params.get("email") || "";
+      setPrefillEmail(email);
+      setEmailAuthOpen(true);
+      toast.success("¡Correo verificado! Inicia sesión para continuar.", { duration: 5000 });
+      // Clean URL so a refresh doesn't re-trigger the toast/dialog.
+      navigate("/", { replace: true });
+    }
+  }, [location.search, navigate]);
 
   const handleEnter = () => {
     if (user) navigate(user.role === "admin" || user.role === "employee" ? "/admin" : "/dashboard");
@@ -17,7 +34,7 @@ export default function Landing() {
 
   const handleEmailAuth = () => {
     if (user) navigate(user.role === "admin" || user.role === "employee" ? "/admin" : "/dashboard");
-    else setEmailAuthOpen(true);
+    else { setPrefillEmail(""); setEmailAuthOpen(true); }
   };
 
   return (
@@ -303,7 +320,7 @@ export default function Landing() {
         </div>
       </footer>
 
-      <EmailAuthDialog open={emailAuthOpen} onClose={() => setEmailAuthOpen(false)} />
+      <EmailAuthDialog open={emailAuthOpen} onClose={() => setEmailAuthOpen(false)} initialEmail={prefillEmail} />
     </div>
   );
 }

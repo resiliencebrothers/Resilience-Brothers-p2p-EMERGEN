@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
@@ -11,11 +11,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Mail, Lock, User as UserIcon, Eye, EyeOff, Phone } from "lucide-react";
 import { toast } from "sonner";
 
-export default function EmailAuthDialog({ open, onClose }) {
+export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const navigate = useNavigate();
   const { setUser, login } = useAuth();
   const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(initialEmail || "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -30,6 +30,17 @@ export default function EmailAuthDialog({ open, onClose }) {
   const reset = () => {
     setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false); setName(""); setPhone(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
   };
+
+  // When the dialog opens with a prefilled email (from the verify-email flow),
+  // populate the email field and force login mode so the user can sign in.
+  useEffect(() => {
+    if (open && initialEmail) {
+      setEmail(initialEmail);
+      setMode("login");
+      setNotice(null);
+      setSuccessMsg("");
+    }
+  }, [open, initialEmail]);
 
   const submit = async (e) => {
     e?.preventDefault?.();

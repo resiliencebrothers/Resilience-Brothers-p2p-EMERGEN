@@ -880,14 +880,16 @@ async def auth_verify_email(token: str, response: Response):
     expires = user.get("verification_expires_at")
     if expires and expires < iso(now_utc()):
         raise HTTPException(status_code=400, detail="El enlace expiró. Solicita uno nuevo.")
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {"email_verified": True},
-         "$unset": {"verification_token": "", "verification_expires_at": ""}},
-    )
-    await _create_session(user["user_id"], response)
-    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0, "password_hash": 0})
-    return fresh
+    # Idempotent: if already verified (e.g. user clicks the link a second time),
+    # don't fail — just return success so the UX is smooth.
+    if not user.get("email_verified"):
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {"email_verified": True},
+             "$unset": {"verification_token": "", "verification_expires_at": ""}},
+        )
+    # Do NOT auto-login. User should sign in manually with their credentials.
+    return {"verified": True, "email": user["email"], "name": user.get("name", "")}
 
 
 @api_router.post("/auth/login")
