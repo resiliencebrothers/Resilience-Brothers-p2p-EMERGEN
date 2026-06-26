@@ -892,6 +892,63 @@ async def auth_verify_email(token: str, response: Response):
     return {"verified": True, "email": user["email"], "name": user.get("name", "")}
 
 
+class AuthResendVerificationPayload(BaseModel):
+    email: EmailStr
+
+
+# Resend verification email — rate-limited to 1 request every 60s per email.
+# Always returns a generic message to avoid leaking which emails are registered.
+RESEND_COOLDOWN_SECONDS = 60
+
+
+@api_router.post("/auth/resend-verification")
+async def auth_resend_verification(payload: AuthResendVerificationPayload):
+    email = payload.email.lower().strip()
+    generic_response = {
+        "ok": True,
+        "message": "Si la cuenta existe y no está verificada, te reenviamos el correo. Revisa tu bandeja (y spam).",
+    }
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        return generic_response
+    # Only password-based accounts have verification; google accounts are pre-verified.
+    if user.get("auth_provider") != "password":
+        return generic_response
+    if user.get("email_verified"):
+        return generic_response
+    # Rate-limit: refuse if last_resend_at is < 60s ago
+    last_resend = user.get("last_resend_at")
+    if last_resend:
+        try:
+            last_dt = datetime.fromisoformat(last_resend.replace("Z", "+00:00"))
+            elapsed = (now_utc() - last_dt).total_seconds()
+            if elapsed < RESEND_COOLDOWN_SECONDS:
+                wait = int(RESEND_COOLDOWN_SECONDS - elapsed)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Por favor espera {wait}s antes de solicitar otro correo.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # malformed date → ignore and resend
+    # Regenerate token + extend expiration window
+    new_token = uuid.uuid4().hex + uuid.uuid4().hex
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {
+            "verification_token": new_token,
+            "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
+            "last_resend_at": iso(now_utc()),
+        }},
+    )
+    try:
+        email_service.notify_email_verification(email, user.get("name", ""), new_token)
+    except Exception as e:
+        logger.error(f"Resend verification email failed for {email}: {e}")
+    return generic_response
+
+
 @api_router.post("/auth/login")
 async def auth_login(payload: AuthLoginPayload, request: Request, response: Response):
     email = payload.email.lower().strip()

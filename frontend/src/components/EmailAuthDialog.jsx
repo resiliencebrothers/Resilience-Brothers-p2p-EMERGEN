@@ -42,6 +42,28 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     }
   }, [open, initialEmail]);
 
+  const [resending, setResending] = useState(false);
+
+  const handleResendVerification = async () => {
+    const target = email.trim();
+    if (!target) {
+      toast.error("Ingresa tu email primero");
+      return;
+    }
+    if (resending) return;
+    setResending(true);
+    try {
+      const r = await axios.post(`${API}/auth/resend-verification`, { email: target });
+      toast.success(r.data?.message || "Si la cuenta existe y no está verificada, te reenviamos el correo.", { duration: 6000 });
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail : "No pudimos reenviar el correo. Intenta de nuevo.";
+      toast.error(msg);
+    } finally {
+      setResending(false);
+    }
+  };
+
   const submit = async (e) => {
     e?.preventDefault?.();
     if (loading) return;
@@ -110,6 +132,17 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               <Mail className="w-6 h-6 text-[#22C55E]" />
             </div>
             <p className="text-sm text-neutral-300 mb-5">{successMsg}</p>
+            {mode !== "forgot" && (
+              <button
+                type="button"
+                data-testid="auth-resend-verification-btn"
+                onClick={handleResendVerification}
+                disabled={resending}
+                className="block mx-auto mb-4 text-xs text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4 disabled:opacity-50"
+              >
+                {resending ? "Reenviando..." : "¿No recibiste el correo? Reenviar"}
+              </button>
+            )}
             <Button onClick={() => { onClose?.(); reset(); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
               Entendido
             </Button>
@@ -321,6 +354,17 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4"
               >
                 ¿Olvidaste tu contraseña?
+              </button>
+            )}
+            {mode === "login" && (
+              <button
+                type="button"
+                data-testid="auth-resend-verification-link"
+                onClick={handleResendVerification}
+                disabled={resending}
+                className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 disabled:opacity-50"
+              >
+                {resending ? "Reenviando..." : "¿No recibiste el correo de verificación?"}
               </button>
             )}
           </div>
