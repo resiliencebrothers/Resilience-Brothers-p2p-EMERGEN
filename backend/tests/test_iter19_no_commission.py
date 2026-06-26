@@ -37,13 +37,16 @@ def _create_order(token: str, from_code: str, to_code: str, amount: float):
     )
 
 
+NORMAL_TOKEN = os.environ.get("TEST_TOKEN_NORMAL", "test_session_normal_X")
+VIP_TOKEN = os.environ.get("TEST_TOKEN_VIP", "test_session_vip_X")
+
+
 class TestCommissionRemoved:
     def setup_method(self, _):
         _make_rate("USD", "CUP", rn=380.0, rv=395.0)
 
     def test_normal_user_order_has_zero_commission(self):
-        token = "test_session_normal_X"
-        r = _create_order(token, "USD", "CUP", 100.0)
+        r = _create_order(NORMAL_TOKEN, "USD", "CUP", 100.0)
         assert r.status_code == 200, r.text
         order = r.json()
         assert order["commission_percent"] == 0.0
@@ -52,8 +55,7 @@ class TestCommissionRemoved:
         assert order["amount_to"] == 38000.0
 
     def test_vip_user_order_still_zero_commission_and_vip_rate(self):
-        token = "test_session_vip_X"
-        r = _create_order(token, "USD", "CUP", 100.0)
+        r = _create_order(VIP_TOKEN, "USD", "CUP", 100.0)
         assert r.status_code == 200, r.text
         order = r.json()
         assert order["commission_percent"] == 0.0
@@ -62,10 +64,8 @@ class TestCommissionRemoved:
 
     def test_rate_differentiation_preserved(self):
         """Admin can still distinguish pricing via rate_normal vs rate_vip."""
-        rn_token = "test_session_normal_X"
-        vip_token = "test_session_vip_X"
-        rn_order = _create_order(rn_token, "USD", "CUP", 50.0).json()
-        vip_order = _create_order(vip_token, "USD", "CUP", 50.0).json()
+        rn_order = _create_order(NORMAL_TOKEN, "USD", "CUP", 50.0).json()
+        vip_order = _create_order(VIP_TOKEN, "USD", "CUP", 50.0).json()
         assert rn_order["amount_to"] < vip_order["amount_to"]
         assert rn_order["rate_applied"] == 380.0
         assert vip_order["rate_applied"] == 395.0

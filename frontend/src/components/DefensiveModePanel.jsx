@@ -25,7 +25,9 @@ export default function DefensiveModePanel() {
     try {
       const r = await axios.get(`${API}/system/defensive-mode`, { withCredentials: true });
       setState(r.data);
-    } catch { /* silent */ } finally { setLoading(false); }
+    } catch (err) {
+      console.error("Failed to fetch defensive-mode state:", err);
+    } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
 
@@ -159,7 +161,10 @@ export function DefensiveBanner() {
       try {
         const r = await axios.get(`${API}/system/defensive-mode`);
         if (active) setEnabled(!!r.data?.enabled);
-      } catch { /* silent */ }
+      } catch (err) {
+        // Non-critical: banner just stays in its previous state if the public endpoint is unreachable
+        console.warn("DefensiveBanner poll failed:", err?.message || err);
+      }
     };
     fetchState();
     const t = setInterval(fetchState, 60_000); // poll every 60s

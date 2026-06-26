@@ -52,11 +52,19 @@ function ProtectedRoute({ children, staffOnly = false }) {
   return children;
 }
 
+const TOAST_OPTIONS = {
+  style: {
+    background: "#141414",
+    border: "1px solid rgba(255,255,255,0.1)",
+    color: "#fff",
+  },
+};
+
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Toaster theme="dark" position="top-right" toastOptions={{ style: { background: "#141414", border: "1px solid rgba(255,255,255,0.1)", color: "#fff" } }} />
+        <Toaster theme="dark" position="top-right" toastOptions={TOAST_OPTIONS} />
         <DefensiveBanner />
         <AppRouter />
         <InstallPrompt />

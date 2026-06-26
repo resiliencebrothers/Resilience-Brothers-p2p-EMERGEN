@@ -28,7 +28,10 @@ def _cleanup_emails():
     cli.close()
 
 
-def _register(email, phone, password="strongPass123", name="Test User"):
+DEFAULT_TEST_PWD = os.environ.get("TEST_PHONE_TRUST_PWD", "strongPass123")  # test-only fixture
+
+
+def _register(email, phone, password=DEFAULT_TEST_PWD, name="Test User"):
     return requests.post(
         f"{BASE_URL}/api/auth/register",
         json={"email": email, "password": password, "name": name, "phone": phone},
