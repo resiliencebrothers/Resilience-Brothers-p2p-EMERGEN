@@ -41,8 +41,20 @@ import csv
 import json as _json
 
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# Shared Mongo client lives in db_client to avoid duplication across modules.
+from db_client import db, client  # noqa: E402
+
+# Auth helpers extracted to auth_utils (iter27 refactor). Re-exported here so the
+# rest of server.py keeps working without rewriting every reference.
+from auth_utils import (  # noqa: E402
+    now_utc, iso,
+    _hash_password, _verify_password,
+    _create_session, get_session_user,
+    require_user, require_admin, require_staff,
+    _too_many_failed_attempts, _record_login_attempt,
+    normalize_phone, PHONE_E164_RE, assert_not_blocked,
+    _decode_jwt_payload,
+)
 
 app = FastAPI(title="Resilience Brothers P2P")
 api_router = APIRouter(prefix="/api")
@@ -50,12 +62,6 @@ api_router = APIRouter(prefix="/api")
 ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get('ADMIN_EMAILS', '').split(',') if e.strip()]
 
 # ============== MODELS ==============
-
-def now_utc():
-    return datetime.now(timezone.utc)
-
-def iso(dt):
-    return dt.isoformat() if isinstance(dt, datetime) else dt
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -258,47 +264,6 @@ class CompanyWithdrawalCreate(BaseModel):
 
 # ============== AUTH ==============
 
-async def get_session_user(request: Request) -> Optional[dict]:
-    token = request.cookies.get("session_token")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if not token:
-        return None
-    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
-    if not sess:
-        return None
-    expires_at = sess.get("expires_at")
-    if isinstance(expires_at, str):
-        expires_at = datetime.fromisoformat(expires_at)
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at < now_utc():
-        return None
-    user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
-    return user
-
-async def require_user(request: Request) -> dict:
-    user = await get_session_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user
-
-async def require_admin(request: Request) -> dict:
-    user = await require_user(request)
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    return user
-
-async def require_staff(request: Request) -> dict:
-    """Allow both admin and employee roles for most management endpoints."""
-    user = await require_user(request)
-    if user.get("role") not in ("admin", "employee"):
-        raise HTTPException(status_code=403, detail="Staff only")
-    return user
-
-
 def _enforce_employee_currency_scope(actor: dict, *codes: str) -> None:
     """Iter14: employees may only act on entities involving currencies they're
     authorized for. Admins bypass. Empty `allowed_currencies` = unrestricted."""
@@ -316,211 +281,21 @@ def _enforce_employee_currency_scope(actor: dict, *codes: str) -> None:
             detail=f"No estás autorizado a gestionar las monedas: {', '.join(codes)}",
         )
 
-@api_router.post("/auth/session")
-async def auth_session(payload: dict, response: Response):
-    session_id = payload.get("session_id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id required")
-    resp = requests.get(
-        "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-        headers={"X-Session-ID": session_id},
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid session")
-    data = resp.json()
-    email = data["email"].lower()
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-    if existing:
-        user_id = existing["user_id"]
-        # Update name/picture
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"name": data.get("name", existing["name"]), "picture": data.get("picture", existing.get("picture", ""))}}
-        )
-        user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    else:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        role = "admin" if email in ADMIN_EMAILS else "normal"
-        # If this is the first user, make them admin
-        count = await db.users.count_documents({})
-        if count == 0:
-            role = "admin"
-        user_doc = {
-            "user_id": user_id,
-            "email": email,
-            "name": data.get("name", ""),
-            "picture": data.get("picture", ""),
-            "role": role,
-            "vip_balance_usd": 0.0,
-            "onboarding_completed": False,
-            "created_at": iso(now_utc()),
-        }
-        await db.users.insert_one(user_doc)
-
-    session_token = data["session_token"]
-    expires_at = now_utc() + timedelta(days=7)
-    await db.user_sessions.insert_one({
-        "user_id": user_doc["user_id"],
-        "session_token": session_token,
-        "expires_at": iso(expires_at),
-        "created_at": iso(now_utc()),
-    })
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        path="/",
-        max_age=7 * 24 * 3600,
-    )
-    user_doc.pop("_id", None)
-    return user_doc
-
-@api_router.get("/auth/me")
-async def auth_me(request: Request):
-    user = await require_user(request)
-    user.pop("_id", None)
-    return user
+# ============== AUTH ROUTES MOVED ==============
+# /auth/session, /auth/me, /auth/google/*, /auth/logout, /auth/register,
+# /auth/verify-email, /auth/resend-verification, /auth/login,
+# /auth/forgot-password, /auth/reset-password
+# moved to routes/auth.py during iter27 refactor. Router is included at the
+# end of this file (look for: api_router.include_router(auth_router)).
+# ===============================================
 
 
 # ============================================================
-# iter22 — Custom Google OAuth 2.0 (replaces Emergent Google Auth)
+# Custom Google OAuth 2.0 (iter22) — REMINDER comment kept for reference
 # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 # ============================================================
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-
-
-def _decode_jwt_payload(token: str) -> dict:
-    """Parse the payload of a JWT obtained directly from Google's token endpoint
-    over TLS. Signature verification is unnecessary here because the token was
-    delivered through an authenticated server-to-server channel (we hold the
-    client_secret) — not from an untrusted client."""
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise ValueError("Malformed id_token")
-    payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
-    return json.loads(base64.urlsafe_b64decode(payload_b64))
-
-
-@api_router.get("/auth/google/login")
-async def google_login(request: Request, redirect: Optional[str] = None):
-    """Build the Google OAuth URL and 302-redirect the browser to it."""
-    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):
-        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured")
-    # Origin where the user came from (preview vs production). Trust the Host header set by ingress.
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
-    proto = request.headers.get("x-forwarded-proto", "https")
-    origin = f"{proto}://{host}"
-    redirect_uri = f"{origin}/api/auth/google/callback"
-    state_token = uuid.uuid4().hex
-    post_login_redirect = redirect or "/dashboard"
-    await db.oauth_states.insert_one({
-        "state": state_token,
-        "redirect": post_login_redirect,
-        "redirect_uri": redirect_uri,
-        "created_at": iso(now_utc()),
-        "expires_at": iso(now_utc() + timedelta(minutes=10)),
-    })
-    params = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state_token,
-        "access_type": "online",
-        "prompt": "select_account",
-    }
-    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
-    return RedirectResponse(url=url, status_code=302)
-
-
-@api_router.get("/auth/google/callback")
-async def google_callback(request: Request, code: Optional[str] = None,
-                           state: Optional[str] = None, error: Optional[str] = None):
-    """Exchange the code for tokens, lookup/create the user by email, issue a session cookie,
-    and bounce the browser to the SPA's post-login page."""
-    if error:
-        # User declined consent — bounce back to landing with a flag the SPA can read
-        return RedirectResponse(url=f"/?auth_error={error}", status_code=302)
-    if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing code or state")
-    state_doc = await db.oauth_states.find_one_and_delete({"state": state})
-    if not state_doc:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-
-    # Exchange the authorization code for tokens (server-side, requires client_secret)
-    async with httpx.AsyncClient(timeout=15) as client:
-        token_resp = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": state_doc["redirect_uri"],
-                "grant_type": "authorization_code",
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-    if token_resp.status_code != 200:
-        raise HTTPException(status_code=401, detail=f"Token exchange failed: {token_resp.text}")
-    tokens = token_resp.json()
-    id_token = tokens.get("id_token")
-    if not id_token:
-        raise HTTPException(status_code=401, detail="No id_token returned by Google")
-    claims = _decode_jwt_payload(id_token)
-    if claims.get("aud") != GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=401, detail="id_token audience mismatch")
-    email = (claims.get("email") or "").lower().strip()
-    if not email:
-        raise HTTPException(status_code=401, detail="Google id_token missing email claim")
-    if claims.get("email_verified") is False:
-        raise HTTPException(status_code=401, detail="Google account email not verified")
-
-    name = claims.get("name") or ""
-    picture = claims.get("picture") or ""
-
-    # Option A — match by email (links to legacy Emergent Google Auth users automatically)
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-    if existing:
-        user_id = existing["user_id"]
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"name": name or existing.get("name", ""),
-                       "picture": picture or existing.get("picture", ""),
-                       "email_verified": True,
-                       "auth_provider": existing.get("auth_provider") or "google"}},
-        )
-    else:
-        # iter23 — block scammers by email (phone unknown here, will be checked later when they fill /me/phone)
-        await assert_not_blocked(email=email)
-        # iter24 — block new account creation in defensive mode (existing users still log in fine)
-        await _assert_not_defensive("nuevos registros")
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        role = "admin" if email in ADMIN_EMAILS else "normal"
-        if await db.users.count_documents({}) == 0:
-            role = "admin"
-        await db.users.insert_one({
-            "user_id": user_id,
-            "email": email,
-            "name": name,
-            "picture": picture,
-            "role": role,
-            "auth_provider": "google",
-            "email_verified": True,
-            "vip_balance_usd": 0.0,
-            "onboarding_completed": False,
-            "phone": None,
-            "phone_verified": False,
-            "created_at": iso(now_utc()),
-        })
-
-    # Issue session cookie (default 7d, same as Emergent Auth had)
-    response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
-    await _create_session(user_id, response, ttl_hours=168)
-    return response
 
 
 @api_router.post("/me/onboarding/complete")
@@ -708,342 +483,13 @@ async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Re
     return update
 
 
-@api_router.post("/auth/logout")
-async def auth_logout(request: Request, response: Response):
-    token = request.cookies.get("session_token")
-    if token:
-        await db.user_sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/")
-    return {"ok": True}
-
-
-# ============== EMAIL / PASSWORD AUTH (iter16 — geo-restricted users) ==============
-import bcrypt
-
-
-def _hash_password(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def _verify_password(pw: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
-    except Exception:
-        return False
-
-
-async def _create_session(user_id: str, response: Response, ttl_hours: int = 168):
-    """Issue a session_token + set cookie. Default TTL = 7 days (168h).
-    Pass ttl_hours=24 for a 'remember me 24h' short-lived session."""
-    ttl_hours = max(1, min(int(ttl_hours), 168))  # clamp 1h..7d
-    session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
-    expires_at = now_utc() + timedelta(hours=ttl_hours)
-    await db.user_sessions.insert_one({
-        "user_id": user_id,
-        "session_token": session_token,
-        "expires_at": iso(expires_at),
-        "created_at": iso(now_utc()),
-    })
-    response.set_cookie(
-        key="session_token", value=session_token, httponly=True, secure=True,
-        samesite="none", path="/", max_age=ttl_hours * 3600,
-    )
-
-
-class AuthRegisterPayload(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=200)
-    name: str = Field(..., min_length=2, max_length=120)
-    phone: str = Field(..., min_length=8, max_length=20)  # iter23 — E.164: +<countrycode><number>
-
-
-PHONE_E164_RE = re.compile(r"^\+[1-9]\d{7,14}$")
-
-
-def normalize_phone(raw: str) -> str:
-    """Strip spaces, dashes, parens. Result must match E.164 (+1234567890)."""
-    cleaned = re.sub(r"[\s\-\(\)\.]", "", raw or "")
-    if not PHONE_E164_RE.match(cleaned):
-        raise HTTPException(
-            status_code=422,
-            detail="Formato de teléfono inválido. Usa formato internacional: +<código país><número>, ej. +5350123456",
-        )
-    return cleaned
-
-
-async def assert_not_blocked(*, email: Optional[str] = None, phone: Optional[str] = None):
-    """iter23 — reject registration if email OR phone match any entry in blocked_contacts."""
-    or_clauses = []
-    if email:
-        or_clauses.append({"email": email.lower().strip()})
-    if phone:
-        or_clauses.append({"phone": phone})
-    if not or_clauses:
-        return
-    hit = await db.blocked_contacts.find_one({"$or": or_clauses})
-    if hit:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "BLOCKED_CONTACT",
-                "message": "Esta cuenta no puede ser creada. Si crees que es un error, contacta a soporte.",
-            },
-        )
-
-
-class AuthLoginPayload(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=1, max_length=200)
-    remember_hours: Optional[int] = None  # if set (e.g. 24), session = ttl_hours; else 7d default
-
-
-async def _too_many_failed_attempts(identifier: str) -> bool:
-    """Return True if user/IP is currently locked out (5 fails in 15 min)."""
-    cutoff = (now_utc() - timedelta(minutes=15)).isoformat()
-    n = await db.login_attempts.count_documents(
-        {"identifier": identifier, "created_at": {"$gte": cutoff}, "success": False}
-    )
-    return n >= 5
-
-
-async def _record_login_attempt(identifier: str, success: bool):
-    await db.login_attempts.insert_one({
-        "identifier": identifier,
-        "success": success,
-        "created_at": iso(now_utc()),
-    })
-    if success:
-        # Clear failed attempts on success
-        await db.login_attempts.delete_many(
-            {"identifier": identifier, "success": False}
-        )
-
-
-@api_router.post("/auth/register")
-async def auth_register(payload: AuthRegisterPayload, response: Response):
-    email = payload.email.lower().strip()
-    phone = normalize_phone(payload.phone)
-    # iter24 — block new registrations entirely when in defensive mode
-    await _assert_not_defensive("nuevos registros")
-    # iter23 — block scammers by email or phone
-    await assert_not_blocked(email=email, phone=phone)
-    existing = await db.users.find_one({"email": email}, {"_id": 0})
-    if existing:
-        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email")
-    # iter23 — phone uniqueness so the same number can't open multiple accounts
-    if await db.users.find_one({"phone": phone}, {"_id": 0}):
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "PHONE_IN_USE",
-                    "message": "Este número de teléfono ya está asociado a otra cuenta."},
-        )
-    user_id = f"user_{uuid.uuid4().hex[:12]}"
-    role = "admin" if email in ADMIN_EMAILS else "normal"
-    if await db.users.count_documents({}) == 0:
-        role = "admin"
-    verification_token = uuid.uuid4().hex + uuid.uuid4().hex
-    user_doc = {
-        "user_id": user_id,
-        "email": email,
-        "name": payload.name.strip(),
-        "picture": "",
-        "role": role,
-        "auth_provider": "password",
-        "password_hash": _hash_password(payload.password),
-        "email_verified": False,
-        "verification_token": verification_token,
-        "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
-        "vip_balance_usd": 0.0,
-        "onboarding_completed": False,
-        "phone": phone,
-        "phone_verified": False,
-        "created_at": iso(now_utc()),
-    }
-    await db.users.insert_one(user_doc)
-    # Send verification email (best effort)
-    try:
-        email_service.notify_email_verification(email, payload.name.strip(), verification_token)
-    except Exception as e:
-        logger.error(f"Verification email failed: {e}")
-    return {
-        "ok": True,
-        "email": email,
-        "message": "Cuenta creada. Revisa tu correo para verificar tu email antes de iniciar sesión.",
-    }
-
-
-@api_router.get("/auth/verify-email/{token}")
-async def auth_verify_email(token: str, response: Response):
-    user = await db.users.find_one({"verification_token": token}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=400, detail="Token inválido o ya usado")
-    expires = user.get("verification_expires_at")
-    if expires and expires < iso(now_utc()):
-        raise HTTPException(status_code=400, detail="El enlace expiró. Solicita uno nuevo.")
-    # Idempotent: if already verified (e.g. user clicks the link a second time),
-    # don't fail — just return success so the UX is smooth.
-    if not user.get("email_verified"):
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {"email_verified": True},
-             "$unset": {"verification_token": "", "verification_expires_at": ""}},
-        )
-    # Do NOT auto-login. User should sign in manually with their credentials.
-    return {"verified": True, "email": user["email"], "name": user.get("name", "")}
-
-
-class AuthResendVerificationPayload(BaseModel):
-    email: EmailStr
-
-
-# Resend verification email — rate-limited to 1 request every 60s per email.
-# Always returns a generic message to avoid leaking which emails are registered.
-RESEND_COOLDOWN_SECONDS = 60
-
-
-@api_router.post("/auth/resend-verification")
-async def auth_resend_verification(payload: AuthResendVerificationPayload):
-    email = payload.email.lower().strip()
-    generic_response = {
-        "ok": True,
-        "message": "Si la cuenta existe y no está verificada, te reenviamos el correo. Revisa tu bandeja (y spam).",
-    }
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        return generic_response
-    # Only password-based accounts have verification; google accounts are pre-verified.
-    if user.get("auth_provider") != "password":
-        return generic_response
-    if user.get("email_verified"):
-        return generic_response
-    # Rate-limit: refuse if last_resend_at is < 60s ago
-    last_resend = user.get("last_resend_at")
-    if last_resend:
-        try:
-            last_dt = datetime.fromisoformat(last_resend.replace("Z", "+00:00"))
-            elapsed = (now_utc() - last_dt).total_seconds()
-            if elapsed < RESEND_COOLDOWN_SECONDS:
-                wait = int(RESEND_COOLDOWN_SECONDS - elapsed)
-                raise HTTPException(
-                    status_code=429,
-                    detail=f"Por favor espera {wait}s antes de solicitar otro correo.",
-                )
-        except HTTPException:
-            raise
-        except Exception:
-            pass  # malformed date → ignore and resend
-    # Regenerate token + extend expiration window
-    new_token = uuid.uuid4().hex + uuid.uuid4().hex
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {
-            "verification_token": new_token,
-            "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
-            "last_resend_at": iso(now_utc()),
-        }},
-    )
-    try:
-        email_service.notify_email_verification(email, user.get("name", ""), new_token)
-    except Exception as e:
-        logger.error(f"Resend verification email failed for {email}: {e}")
-    return generic_response
-
-
-@api_router.post("/auth/login")
-async def auth_login(payload: AuthLoginPayload, request: Request, response: Response):
-    email = payload.email.lower().strip()
-    identifier = email
-    if await _too_many_failed_attempts(identifier):
-        raise HTTPException(
-            status_code=429,
-            detail="Demasiados intentos fallidos. Espera 15 minutos.",
-        )
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        await _record_login_attempt(identifier, False)
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "USER_NOT_FOUND",
-                    "message": "No existe una cuenta con este email. Crea una cuenta para acceder a la plataforma."},
-        )
-    if not user.get("password_hash"):
-        # Account exists but was created via Google OAuth (no password set)
-        await _record_login_attempt(identifier, False)
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "USE_GOOGLE_LOGIN",
-                    "message": "Esta cuenta fue creada con Google. Usa el botón \"Continuar con Google\"."},
-        )
-    if not _verify_password(payload.password, user["password_hash"]):
-        await _record_login_attempt(identifier, False)
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "INVALID_PASSWORD",
-                    "message": "Contraseña incorrecta. Si la olvidaste, usa \"¿Olvidaste tu contraseña?\"."},
-        )
-    # Iter17: block password login until email is verified
-    if user.get("auth_provider") == "password" and not user.get("email_verified", False):
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "EMAIL_NOT_VERIFIED",
-                    "message": "Verifica tu correo antes de iniciar sesión. Revisa tu bandeja."},
-        )
-    await _record_login_attempt(identifier, True)
-    ttl = payload.remember_hours if payload.remember_hours else 168
-    await _create_session(user["user_id"], response, ttl_hours=ttl)
-    user.pop("password_hash", None)
-    user.pop("verification_token", None)
-    return user
-
-
-class ForgotPasswordPayload(BaseModel):
-    email: EmailStr
-
-
-@api_router.post("/auth/forgot-password")
-async def auth_forgot_password(payload: ForgotPasswordPayload):
-    """Send reset link if account exists. Always returns 200 to avoid email enumeration."""
-    email = payload.email.lower().strip()
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if user and user.get("password_hash"):
-        token = uuid.uuid4().hex + uuid.uuid4().hex
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {
-                "password_reset_token": token,
-                "password_reset_expires_at": iso(now_utc() + timedelta(hours=2)),
-            }},
-        )
-        try:
-            email_service.notify_password_reset(email, user.get("name", ""), token)
-        except Exception as e:
-            logger.error(f"Password reset email failed: {e}")
-    return {"ok": True, "message": "Si la cuenta existe, recibirás un correo con el enlace."}
-
-
-class ResetPasswordPayload(BaseModel):
-    token: str
-    password: str = Field(..., min_length=8, max_length=200)
-
-
-@api_router.post("/auth/reset-password")
-async def auth_reset_password(payload: ResetPasswordPayload, response: Response):
-    user = await db.users.find_one({"password_reset_token": payload.token}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=400, detail="Token inválido")
-    expires = user.get("password_reset_expires_at")
-    if expires and expires < iso(now_utc()):
-        raise HTTPException(status_code=400, detail="El enlace expiró. Solicita uno nuevo.")
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$set": {
-            "password_hash": _hash_password(payload.password),
-            "email_verified": True,  # password reset via email proves ownership
-        },
-         "$unset": {"password_reset_token": "", "password_reset_expires_at": ""}},
-    )
-    await _create_session(user["user_id"], response)
-    return {"ok": True, "message": "Contraseña actualizada"}
+# ============== AUTH ROUTES MOVED ==============
+# /auth/logout, /auth/register, /auth/verify-email, /auth/resend-verification,
+# /auth/login, /auth/forgot-password, /auth/reset-password moved to
+# routes/auth.py during iter27 refactor. Router included at end of file.
+# (All helpers — _hash_password, _create_session, normalize_phone, etc. — moved
+# to auth_utils.py and re-imported at the top of this file.)
+# ===============================================
 
 
 # ============== CURRENCIES ==============
@@ -3155,6 +2601,10 @@ async def seed_data(request: Request):
 @api_router.get("/")
 async def root():
     return {"service": "Resilience Brothers P2P", "status": "ok"}
+
+# Modular routers (extracted from server.py during iter27 refactor)
+from routes.auth import router as auth_router  # noqa: E402
+api_router.include_router(auth_router)
 
 app.include_router(api_router)
 

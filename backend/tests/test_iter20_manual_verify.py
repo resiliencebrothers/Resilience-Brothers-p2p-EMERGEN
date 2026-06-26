@@ -25,7 +25,7 @@ def _cleanup():
 def _register():
     requests.post(
         f"{BASE_URL}/api/auth/register",
-        json={"email": TEST_EMAIL, "password": TEST_PWD, "name": "Manual"},
+        json={"email": TEST_EMAIL, "password": TEST_PWD, "name": "Manual", "phone": "+15551234567"},
     )
     cli, db = _db()
     u = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
