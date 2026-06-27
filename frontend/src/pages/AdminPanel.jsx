@@ -18,6 +18,7 @@ import AdminQueue from "@/pages/admin/AdminQueue";
 import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import PushToggle from "@/components/PushToggle";
+import NotificationBell from "@/components/NotificationBell";
 
 export default function AdminPanel() {
   const { user, logout } = useAuth();
@@ -95,8 +96,13 @@ export default function AdminPanel() {
           {renderNavLinks()}
         </nav>
         <div className="p-4 border-t border-white/5">
-          <div className="text-sm font-medium truncate">{user?.name}</div>
-          <div className="micro-label text-[#EAB308] mb-3">{user?.role?.toUpperCase()}</div>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium truncate">{user?.name}</div>
+              <div className="micro-label text-[#EAB308]">{user?.role?.toUpperCase()}</div>
+            </div>
+            <NotificationBell />
+          </div>
           <div className="mb-2"><PushToggle /></div>
           <button data-testid="admin-logout" onClick={logout} className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 px-3 py-2">
             <LogOut className="w-4 h-4" /> Cerrar Sesión
@@ -112,7 +118,9 @@ export default function AdminPanel() {
             <span className="font-display text-sm">ADMIN</span>
             <span className="micro-label text-[#EAB308] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
           </div>
-          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <button
                 data-testid="admin-mobile-menu-trigger"
@@ -160,6 +168,7 @@ export default function AdminPanel() {
               </div>
             </SheetContent>
           </Sheet>
+          </div>
         </div>
 
         <div className="p-6 lg:p-10">

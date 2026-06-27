@@ -349,6 +349,14 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
+    # iter29 — notify staff that a new password-auth user is pending verification.
+    # Skipped for admin/employee accounts (they're created active).
+    if role not in ("admin", "employee"):
+        try:
+            from routes.notifications import notify_staff_new_pending_user
+            await notify_staff_new_pending_user(user_doc)
+        except Exception as e:
+            logger.error(f"Pending-user notify failed: {e}")
     try:
         email_service.notify_email_verification(email, payload.name.strip(), verification_token)
     except Exception as e:
@@ -356,7 +364,7 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
     return {
         "ok": True,
         "email": email,
-        "message": "Cuenta creada. Revisa tu correo para verificar tu email antes de iniciar sesión.",
+        "message": "Cuenta creada. Revisa tu correo para verificar tu email. Después, un miembro del staff debe verificar tu teléfono manualmente (puede tardar hasta 24 horas) antes de que puedas operar en la plataforma.",
     }
 
 

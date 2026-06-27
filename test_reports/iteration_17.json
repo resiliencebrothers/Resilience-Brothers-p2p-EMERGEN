@@ -1,0 +1,34 @@
+{
+  "summary": "iter29 in-app notifications — full E2E coverage. Backend: 10/10 NEW iter29 tests PASS (fan-out to admin + perm-employees on register & first /me/phone, no fan-out for admin/employee registrations, no fan-out on phone-update, verify-phone & reject-phone create proper user notifications with data.reason, GET /notifications strictly scoped per-user with no cross-user leak, unread-count, mark-read idempotent, mark-read on other-user's notif returns 200 already_read without mutating the row, mark-all-read scoped to current user, register response contains 'puede tardar hasta 24 horas'). Backwards-compat: 17/17 iter28 regression PASS — no breakage. Frontend Playwright: admin landed on /admin with session cookie, NotificationBell visible in sidebar footer, unread badge showed seeded count=5, popover opened with 5 items, clicking 1 item decremented badge 5→4, mark-all-read cleared all unread in DB (verified post-test: 0 unread). One false-FAIL in playwright log explained below.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter29_notifications.py",
+    "/app/test_reports/pytest/iter29_results.xml",
+    "/app/test_reports/pytest/iter28_regression_iter29.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Two NotificationBell instances render concurrently (sidebar footer + mobile top bar). Each maintains its own unreadCount state and runs its own 30s poll, so after an action (mark-as-read, mark-all-read) one instance updates immediately and the other only catches up on its next poll tick. In practice only one is visible per viewport (responsive CSS), so this is invisible to end-users — but lifting unreadCount/items to AuthContext or a tiny shared store would be cleaner and avoid double polling load on the backend.",
+    "/app/backend/routes/notifications.py uses `from auth_utils import iso, now_utc` — good consistency. Helpers swallow exceptions individually (per-recipient try/except inside the fan-out loop) so a single recipient failure cannot break registration. Good.",
+    "notify_staff_new_pending_user does not de-duplicate — if /me/phone were ever called twice with the user having a previously-empty phone in a race, multiple identical notifications could be inserted. Mitigated by the `if not user.get('phone'):` gate in server.py, which is correct. Not a real issue today.",
+    "server.py is now 2904 lines — soft-cap exceeded again. Recommend extracting the phone-verify / phone-reject endpoints into routes/blocklist.py (already noted in iter28 review).",
+    "MarkReadPayload model defined in notifications.py but never used by the endpoint (mark-by-id uses path param). Either wire it into a bulk-mark-by-ids endpoint or remove to avoid dead code.",
+    "Register response message length is now long (~200 chars); fine but consider moving copy into a constants module if this grows further.",
+    "Mark-read endpoint correctly returns 200 idempotently for: (a) own-already-read, (b) another-user's-id. Same response shape `{ok:true, already_read:true}` in both cases — prevents enumeration attacks. Verified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter29_notifications.py (new — 10 tests, 5 classes)"
+  ],
+  "success_rate": {"backend": "100% iter29 (10/10) + 100% iter28 regression (17/17)", "frontend": "100% — bell visible, badge count correct, popover opens, click-to-read decrements, mark-all-read clears unread"},
+  "test_credentials": "From /app/memory/test_credentials.md — admin/employee/normal/vip session tokens (test_session_*_X). Still valid.",
+  "seed_data_creation": "Test fixture auto-resets employee.can_manage_blocklist and normal/vip account_status. For frontend test, seeded 2 unread new_user_pending notifications for admin (cleaned up post-test). Test-created users via /auth/register are deleted by fixture teardown via {email: /^test_iter29_/}.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) /app/backend/tests/test_iter29_notifications.py is the canonical iter29 regression file — auto-cleans notifications collection where data.email starts with 'test_iter29_'. 2) The playwright 'FAIL: badge still visible after mark-all-read: 5' line in this run's log is a FALSE alarm: there are two NotificationBell instances in DOM (sidebar + mobile top bar) and query_selector grabbed the hidden one whose 30s poll hadn't fired yet. DB confirmed unread=0 immediately after the call, and screenshot shows the visible bell has no badge. 3) /api/notifications is properly per-user scoped — verified via DB-level cross-user seed.",
+  "rca of the issue": "No bugs. Implementation matches spec exactly: (a) fan-out gating on role∈{admin} ∪ {employee with can_manage_blocklist=True}, (b) /me/phone only fans out when user.phone was previously empty (no spam on updates), (c) idempotent mark-read returns identical response for own-read and foreign-id (anti-enumeration), (d) per-user scoped GET (no leaks), (e) 24h copy present in register response."
+}

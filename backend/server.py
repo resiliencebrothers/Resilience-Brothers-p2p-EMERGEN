@@ -345,6 +345,16 @@ async def set_my_phone(payload: PhoneSetPayload, request: Request):
         {"user_id": user["user_id"]},
         {"$set": {"phone": phone, "phone_verified": False}},
     )
+    # iter29 — notify staff that a new user is pending verification (only if this
+    # is the FIRST time they set a phone, to avoid spam on every phone update)
+    if not user.get("phone"):
+        try:
+            from routes.notifications import notify_staff_new_pending_user
+            fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+            if fresh and fresh.get("role") in ("normal", "vip"):
+                await notify_staff_new_pending_user(fresh)
+        except Exception as e:
+            logger.error(f"Notification fan-out failed for new pending user: {e}")
     return {"ok": True, "phone": phone, "phone_verified": False}
 
 
@@ -607,6 +617,12 @@ async def admin_verify_user_phone(user_id: str, request: Request):
         {"$set": {"phone_verified": True, "account_status": "active"}},
     )
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    # iter29 — notify the user their account is now active
+    try:
+        from routes.notifications import notify_user_phone_verified
+        await notify_user_phone_verified(fresh)
+    except Exception as e:
+        logger.error(f"verify-phone notify failed: {e}")
     await log_action(db, requester, "user.verify_phone_manual", "user", user_id,
                      summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
                      details={"email": target.get("email"), "phone": target.get("phone")})
@@ -656,6 +672,12 @@ async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, req
         {"$set": {"phone_verified": False, "account_status": "under_review"}},
     )
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    # iter29 — notify the user their verification was rejected
+    try:
+        from routes.notifications import notify_user_phone_rejected
+        await notify_user_phone_rejected(fresh, payload.reason.strip())
+    except Exception as e:
+        logger.error(f"reject-phone notify failed: {e}")
     await log_action(
         db, requester, "user.reject_phone", "user", user_id,
         summary=f"Rechazó teléfono y bloqueó a {target.get('email','')} ({phone})",
@@ -2845,7 +2867,9 @@ async def root():
 
 # Modular routers (extracted from server.py during iter27 refactor)
 from routes.auth import router as auth_router  # noqa: E402
+from routes.notifications import router as notifications_router  # noqa: E402
 api_router.include_router(auth_router)
+api_router.include_router(notifications_router)
 
 app.include_router(api_router)
 

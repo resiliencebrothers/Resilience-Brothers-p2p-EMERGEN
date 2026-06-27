@@ -13,6 +13,7 @@ import MyTransactions from "@/pages/dashboard/MyTransactions";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import PushToggle from "@/components/PushToggle";
 import OnboardingDialog from "@/components/OnboardingDialog";
+import NotificationBell from "@/components/NotificationBell";
 
 const ROLE_LABELS = {
   normal: "Cliente",
@@ -78,18 +79,19 @@ export default function Dashboard() {
 
   const renderUserFooter = (logoutTestid) => (
     <div className="p-4 border-t border-white/5">
-      <div className="flex items-center gap-3 mb-3">
+      <div className="flex items-center gap-2 mb-3">
         {user?.picture ? (
           <img src={user.picture} alt="" className="w-9 h-9 rounded-full" />
         ) : (
           <div className="w-9 h-9 bg-neutral-800 rounded-full"></div>
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-sm font-medium truncate">{user?.name}</div>
           <div className="micro-label text-neutral-500">
             {ROLE_LABELS[user?.role] || "Cliente"}
           </div>
         </div>
+        <NotificationBell />
       </div>
       <div className="mb-2"><PushToggle /></div>
       <button
@@ -128,7 +130,9 @@ export default function Dashboard() {
               <span className="micro-label text-[#EAB308] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
             )}
           </div>
-          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <button
                 data-testid="dashboard-mobile-menu-trigger"
@@ -165,6 +169,7 @@ export default function Dashboard() {
               {renderUserFooter("logout-mobile-btn")}
             </SheetContent>
           </Sheet>
+          </div>
         </div>
 
         <div className="p-6 lg:p-10">
