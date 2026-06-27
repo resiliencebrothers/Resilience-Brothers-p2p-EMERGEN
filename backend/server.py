@@ -21,6 +21,10 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
+# Init Sentry BEFORE creating the FastAPI app so exceptions in startup are captured.
+from sentry_config import init_sentry  # noqa: E402
+init_sentry()
+
 from db_client import db, client  # noqa: E402
 
 # Modular routers (extracted from server.py during iter27 → iter33 refactor)

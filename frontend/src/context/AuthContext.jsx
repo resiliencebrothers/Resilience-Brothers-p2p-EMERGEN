@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { API } from "@/App";
+import { setSentryUser, captureError } from "@/sentry";
 
 const AuthContext = createContext(null);
 
@@ -12,11 +13,13 @@ export function AuthProvider({ children }) {
     try {
       const res = await axios.get(`${API}/auth/me`, { withCredentials: true });
       setUser(res.data);
+      setSentryUser(res.data);
     } catch (err) {
       if (err?.response?.status !== 401) {
-        console.error("Auth check failed:", err);
+        captureError(err, { stage: "auth_check" });
       }
       setUser(null);
+      setSentryUser(null);
     } finally {
       setLoading(false);
     }
@@ -34,9 +37,10 @@ export function AuthProvider({ children }) {
     try {
       await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
     } catch (err) {
-      console.error("Logout request failed:", err);
+      captureError(err, { stage: "logout" });
     }
     setUser(null);
+    setSentryUser(null);
     window.location.href = "/";
   }, []);
 

@@ -286,8 +286,10 @@ class TestNegativeMarginOrderCreate:
         assert log_after.count("Negative margin check failed") == before_errs, "alert path errored"
 
     def test_alert_when_real_rate_makes_loss(self):
+        # iter19: commission=0% for all roles.
         # rate_normal=380, real_rate=350
-        # amount_to = 100*380*0.95 = 36100; profit_cup = 100*350 - 36100 = -1100
+        # amount_to  = 100 * 380           = 38000
+        # profit_cup = 100 * 350 - 38000   = -3000  (loss → admin alert)
         _set_rate("USD", "CUP", rate_normal=380, rate_vip=395, real_rate=350)
         r = requests.post(
             f"{BASE_URL}/api/orders", headers=_h(NORMAL),
@@ -298,7 +300,8 @@ class TestNegativeMarginOrderCreate:
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["amount_from"] == 100
-        assert body["amount_to"] == pytest.approx(36100.0)
+        assert body["amount_to"] == pytest.approx(38000.0)
+        assert body["commission_percent"] == 0.0
         time.sleep(1.0)
         log_after = _tail_log(400)
         # Notification path should not log an error

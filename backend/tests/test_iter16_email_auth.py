@@ -9,6 +9,9 @@ from conftest import BASE_URL
 TEST_EMAIL = os.environ.get("TEST_EMAIL_AUTH_EMAIL", "cuba.iter16@example.com")
 TEST_PASSWORD = os.environ.get("TEST_EMAIL_AUTH_PWD", "veryStrongPass123")  # test-only fixture credential, not a real secret
 TEST_NAME = "Iter16 Test User"
+# iter23 made phone mandatory at register time. A single fixture phone is fine
+# because each test cleans up the user (and therefore the phone) before running.
+TEST_PHONE = "+5350000016"
 
 
 def _db():
@@ -22,6 +25,8 @@ def _cleanup():
     if user:
         db.user_sessions.delete_many({"user_id": user["user_id"]})
     db.users.delete_many({"email": TEST_EMAIL})
+    # iter23 — clean phone-based residue from previous test runs.
+    db.users.delete_many({"phone": {"$in": [TEST_PHONE, "+5350000017"]}})
     db.login_attempts.delete_many({})  # clear rate limit history
     cli.close()
 
@@ -30,7 +35,7 @@ def _register():
     """Register and return (response, verification_token from DB)."""
     r = requests.post(
         f"{BASE_URL}/api/auth/register",
-        json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
+        json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME, "phone": TEST_PHONE},
     )
     cli, db = _db()
     user = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
@@ -65,35 +70,45 @@ class TestEmailPasswordAuth:
         _register()
         r = requests.post(
             f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": "differentPass1234", "name": "Otro"},
+            json={"email": TEST_EMAIL, "password": "differentPass1234", "name": "Otro", "phone": "+5350000017"},
         )
         assert r.status_code == 409
 
     def test_register_invalid_email_rejected(self):
         r = requests.post(
             f"{BASE_URL}/api/auth/register",
-            json={"email": "not-an-email", "password": TEST_PASSWORD, "name": TEST_NAME},
+            json={"email": "not-an-email", "password": TEST_PASSWORD, "name": TEST_NAME, "phone": TEST_PHONE},
         )
         assert r.status_code == 422
 
     def test_register_short_password_rejected(self):
         r = requests.post(
             f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": "short", "name": TEST_NAME},
+            json={"email": TEST_EMAIL, "password": "short", "name": TEST_NAME, "phone": TEST_PHONE},
         )
         assert r.status_code == 422
 
     # ---------- Email Verification ----------
     def test_verify_email_logs_user_in(self):
+        """iter28+ — verify-email confirms the address but does NOT auto-login.
+        User has to sign in manually after clicking the link."""
         _r, user = _register()
         v = _verify(user["verification_token"])
         assert v.status_code == 200, v.text
         body = v.json()
+        assert body["verified"] is True
         assert body["email"] == TEST_EMAIL
-        assert body["email_verified"] is True
+        # No password_hash / verification_token leaked in the response
         assert "password_hash" not in body
         assert "verification_token" not in body
-        assert "session_token" in v.cookies
+        # iter28: verify-email is intentionally not a login — no session cookie.
+        assert "session_token" not in v.cookies
+        # DB state: email_verified=True, verification_token unset.
+        cli, db = _db()
+        fresh = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
+        cli.close()
+        assert fresh["email_verified"] is True
+        assert "verification_token" not in fresh
 
     def test_verify_invalid_token_rejected(self):
         r = _verify("not-a-real-token-xxx")

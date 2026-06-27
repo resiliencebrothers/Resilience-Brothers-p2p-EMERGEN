@@ -79,6 +79,17 @@ async def get_session_user(request: Request) -> Optional[dict]:
     if expires_at < now_utc():
         return None
     user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    # Tag Sentry with the actor so errors surface user context.
+    if user:
+        try:
+            import sentry_sdk
+            sentry_sdk.set_user({
+                "id": user.get("user_id"),
+                "email": user.get("email"),
+                "role": user.get("role"),
+            })
+        except Exception:
+            pass
     return user
 
 
