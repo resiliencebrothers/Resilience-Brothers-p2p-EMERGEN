@@ -27,16 +27,27 @@ def _cleanup():
 
 
 def _register_and_login():
+    """Register + verify (iter25 — verify no longer auto-logs in) + login.
+    Returns (user_doc, session_token)."""
     requests.post(
         f"{BASE_URL}/api/auth/register",
-        json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "name": TEST_NAME},
+        json={
+            "email": TEST_EMAIL,
+            "password": TEST_PASSWORD,
+            "name": TEST_NAME,
+            "phone": "+5350000018",
+        },
     )
     cli, db = _db()
     user = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
     cli.close()
-    # verify (auto-creates session)
-    v = requests.get(f"{BASE_URL}/api/auth/verify-email/{user['verification_token']}")
-    return user, v.cookies["session_token"]
+    requests.get(f"{BASE_URL}/api/auth/verify-email/{user['verification_token']}")
+    # iter25 — verify-email no longer creates a session; user must log in.
+    r = requests.post(
+        f"{BASE_URL}/api/auth/login",
+        json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+    )
+    return user, r.cookies["session_token"]
 
 
 class TestOnboardingFlag:
