@@ -64,6 +64,7 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - **iter25 (Jun 26, 2026)**: **Verify-email UX fix** — clicking the verification link no longer auto-logs in. Backend `auth_verify_email` returns `{verified, email, name}` and stops creating a session. Frontend redirects to `/?verified=1&email=<encoded>`; Landing detects the query, shows toast "Correo verificado", auto-opens `EmailAuthDialog` in login mode with the email pre-filled, then cleans the URL. New `initialEmail` prop on `EmailAuthDialog`. Resend `EMAIL_SENDER` updated to `Resilience Brothers <noreply@resiliencebrothers.com>` (domain verified). Backend 4/4 + Frontend 3/3 E2E (`/app/test_reports/iteration_9.json`).
 - **iter26 (Jun 26, 2026)**: **Reenviar correo de verificación** — new `POST /api/auth/resend-verification` (rate-limited 1/60s per email, generic 200 to prevent enumeration, regenerates token + last_resend_at, best-effort email). `EmailAuthDialog` adds: (1) footer link in login mode "¿No recibiste el correo de verificación?", (2) button in post-register success card, (3) button in EMAIL_NOT_VERIFIED success card. Backend 7/7 + Frontend 9/9 (`/app/test_reports/iteration_14.json`).
 - **iter27 (Jun 26, 2026)**: **Refactor Phase 1 — Auth router extraction**. Created `/app/backend/db_client.py` (shared Mongo client), `/app/backend/auth_utils.py` (188 lines of helpers), `/app/backend/routes/__init__.py` + `/app/backend/routes/auth.py` (437 lines, 11 endpoints + 5 models). `server.py` reduced from 3189 → 2638 lines (-17%). Zero behavioral regression: 58/58 iter20-26 regression tests + 20/21 new structural tests pass (1 fail is ingress quirk, not refactor). Frontend smoke test confirms Landing + EmailAuthDialog still work (`/app/test_reports/iteration_15.json`).
+- **iter28 (Jun 26, 2026)**: **Anti-scam Trust Layer Phase 2** — six features in one ship: (1) `POST /api/admin/blocked-contacts/bulk-import` with a WhatsApp-aware parser (`_parse_whatsapp_blocklist`) that handles block headers, decorative emoji lines, multiple E.164 phones per block, and 📌-prefixed reason lines; (2) granular permission `users.can_manage_blocklist` (default false; admin always bypasses) gating ALL blocklist + verify/reject endpoints; (3) **Verify ✅ / Reject 🚫** split — `POST /api/admin/users/{user_id}/reject-phone` blocklists the phone + keeps account `under_review`; verify-phone now refuses (409 `PHONE_IS_BLOCKED`) if the phone is on the blocklist; (4) new `users.account_status` field (`active`/`under_review`/`blocked`) with new accounts starting `under_review`; admin/employee bypass; (5) `_assert_account_active` guard added to `create_order`, `create_withdrawal`, `redeem_product` → 403 `ACCOUNT_UNDER_REVIEW`/`ACCOUNT_BLOCKED`; (6) login + Google callback re-check blocklist on every login and force `under_review` on hit. Frontend: AdminBlockedContacts bulk-import dialog with format example + result card (`import-count-imported/skipped/invalid` + `affected_active_accounts` warning); AdminUsers reject-phone dialog + permission-aware Verificar/Rechazar buttons + account_status badge; Dashboard under-review-banner + account-blocked-banner. **17/17 new + 84/85 regression + Frontend Playwright 100% pass** (`/app/backend/tests/test_iter28_anti_scam_trust.py`, `/app/test_reports/iteration_16.json`).
 
 ## Prioritized Backlog
 ### P0 — Waiting on user
@@ -71,7 +72,7 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 
 ### P1
 - Reduce cyclomatic complexity in `update_order_status`, `create_order` (backend), `EmailAuthDialog.jsx` (frontend).
-- Refactor Phase 2: extract `routes/orders.py`, `routes/admin.py`, `routes/market.py`, `routes/products.py` from `server.py` (currently still 2638 lines).
+- Refactor Phase 2: extract `routes/blocklist.py` (blocked_contacts + verify/reject — ~250 lines), `routes/orders.py`, `routes/admin.py`, `routes/market.py`, `routes/products.py` from `server.py` (currently 2880 lines, still too monolithic).
 - Multi-currency display of VIP balance across UI (legacy single-USD widgets if any remain).
 - Search + pagination in admin tables (audit, orders, users) when data grows.
 - Visual highlight (red tint) of negative-profit cards on AdminRevenue.
@@ -84,6 +85,8 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Stripe / Zelle webhooks for auto-confirmation.
 - Replace base64 proof storage with Emergent Object Storage.
 - Auto-seed dev session tokens (`test_session_admin_X`, `_employee_X`, `_vip_X`, `_normal_X`) in `conftest.py` so iter20+ tests no longer require manual user_sessions insertion.
+- Reject-phone analytics: count of users currently under_review, scammers blocked per week, false-positive rate (admin un-blocked / total blocks).
+- Self-service appeal flow: under_review users can submit an "I'm not a scammer" form that lands in a staff queue.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md` and `/app/auth_testing.md`.
