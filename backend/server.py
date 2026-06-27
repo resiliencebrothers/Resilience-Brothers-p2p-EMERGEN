@@ -54,6 +54,12 @@ from auth_utils import (  # noqa: E402
     _too_many_failed_attempts, _record_login_attempt,
     normalize_phone, PHONE_E164_RE, assert_not_blocked,
     _decode_jwt_payload,
+    _enforce_totp_step_up,
+    _enforce_employee_currency_scope,
+)
+# Catalog models are now defined in routes/market.py — re-export for legacy callers (e.g. /admin/seed)
+from routes.market import (  # noqa: E402
+    Currency, CurrencyCreate, ExchangeRate, ExchangeRateCreate, Product, ProductCreate,
 )
 
 app = FastAPI(title="Resilience Brothers P2P")
@@ -91,44 +97,9 @@ class User(BaseModel):
     account_status: Literal["active", "under_review", "blocked"] = "under_review"
     created_at: str
 
-class Currency(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    code: str  # USDT, BTC, USD, CUP, BRL, MXN
-    name: str
-    type: Literal["crypto", "fiat"]
-    symbol: Optional[str] = ""
-    country: Optional[str] = ""
-    is_active: bool = True
-    payment_account: Optional[str] = ""  # Account info for deposits (Zelle, bank, etc)
-    created_at: str = Field(default_factory=lambda: iso(now_utc()))
-
-class CurrencyCreate(BaseModel):
-    code: str
-    name: str
-    type: Literal["crypto", "fiat"]
-    symbol: Optional[str] = ""
-    country: Optional[str] = ""
-    is_active: bool = True
-    payment_account: Optional[str] = ""
-
-class ExchangeRate(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    from_code: str
-    to_code: str
-    rate_normal: float
-    rate_vip: float
-    real_rate: Optional[float] = None  # real market exit rate; used to compute revenue
-    updated_at: str = Field(default_factory=lambda: iso(now_utc()))
-
-class ExchangeRateCreate(BaseModel):
-    from_code: str
-    to_code: str
-    rate_normal: float
-    rate_vip: float
-    real_rate: Optional[float] = None
-    totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido al editar")
+# Catalog models (Currency, CurrencyCreate, ExchangeRate, ExchangeRateCreate,
+# Product, ProductCreate) moved to routes/market.py during iter31 and re-imported
+# at the top of this file.
 
 class Order(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -161,28 +132,7 @@ class OrderCreate(BaseModel):
     sender_name: str = Field(..., min_length=2, description="Nombre del titular de la cuenta que hizo la transferencia")
     proof_image: str = ""
 
-class Product(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    description: str = ""
-    image_url: str = ""
-    price_usd: float
-    cost_usd: float = 0.0  # admin's acquisition cost; price_usd - cost_usd = profit per unit
-    stock: int = 0
-    category: str = "general"
-    is_active: bool = True
-    created_at: str = Field(default_factory=lambda: iso(now_utc()))
-
-class ProductCreate(BaseModel):
-    name: str
-    description: str = ""
-    image_url: str = ""
-    price_usd: float
-    cost_usd: float = 0.0
-    stock: int = 0
-    category: str = "general"
-    is_active: bool = True
+# Product / ProductCreate moved to routes/market.py during iter31.
 
 class Redemption(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -275,22 +225,7 @@ class CompanyWithdrawalCreate(BaseModel):
 
 # ============== AUTH ==============
 
-def _enforce_employee_currency_scope(actor: dict, *codes: str) -> None:
-    """Iter14: employees may only act on entities involving currencies they're
-    authorized for. Admins bypass. Empty `allowed_currencies` = unrestricted."""
-    if actor.get("role") != "employee":
-        return
-    allowed = actor.get("allowed_currencies") or []
-    if not allowed:
-        return
-    codes = [c for c in codes if c]
-    if not codes:
-        return
-    if not any(c in allowed for c in codes):
-        raise HTTPException(
-            status_code=403,
-            detail=f"No estás autorizado a gestionar las monedas: {', '.join(codes)}",
-        )
+# _enforce_employee_currency_scope moved to auth_utils.py during iter31 refactor.
 
 # ============== AUTH ROUTES MOVED ==============
 # /auth/session, /auth/me, /auth/google/*, /auth/logout, /auth/register,
@@ -456,108 +391,7 @@ async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Re
 
 # ============== CURRENCIES ==============
 
-@api_router.get("/currencies")
-async def list_currencies():
-    docs = await db.currencies.find({}, {"_id": 0}).to_list(500)
-    return docs
-
-@api_router.post("/admin/currencies")
-async def create_currency(payload: CurrencyCreate, request: Request):
-    await require_staff(request)
-    c = Currency(**payload.model_dump())
-    await db.currencies.insert_one(c.model_dump())
-    return c.model_dump()
-
-@api_router.put("/admin/currencies/{currency_id}")
-async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request):
-    await require_staff(request)
-    await db.currencies.update_one({"id": currency_id}, {"$set": payload.model_dump()})
-    doc = await db.currencies.find_one({"id": currency_id}, {"_id": 0})
-    return doc
-
-@api_router.delete("/admin/currencies/{currency_id}")
-async def delete_currency(currency_id: str, request: Request):
-    await require_staff(request)
-    await db.currencies.delete_one({"id": currency_id})
-    return {"ok": True}
-
-# ============== EXCHANGE RATES ==============
-
-@api_router.get("/rates")
-async def list_rates():
-    docs = await db.rates.find({}, {"_id": 0}).to_list(500)
-    return docs
-
-@api_router.post("/admin/rates")
-async def create_rate(payload: ExchangeRateCreate, request: Request):
-    actor = await require_staff(request)
-    _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
-    existing = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
-    if existing:
-        await db.rates.update_one(
-            {"id": existing["id"]},
-            {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}}
-        )
-        return await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
-    r = ExchangeRate(**payload.model_dump())
-    await db.rates.insert_one(r.model_dump())
-    return r.model_dump()
-
-@api_router.put("/admin/rates/{rate_id}")
-async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
-    actor = await require_staff(request)
-    await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar tasa")
-    _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
-    old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
-    if old:
-        _enforce_employee_currency_scope(actor, old["from_code"], old["to_code"])
-    rate_data = payload.model_dump(exclude={"totp_code"})
-    await db.rates.update_one(
-        {"id": rate_id},
-        {"$set": {**rate_data, "updated_at": iso(now_utc())}}
-    )
-    fresh = await db.rates.find_one({"id": rate_id}, {"_id": 0})
-    # If real_rate changed, scan pending orders for negative margin
-    try:
-        old_rr = old.get("real_rate") if old else None
-        if fresh and fresh.get("real_rate") is not None and fresh.get("real_rate") != old_rr:
-            pending = await db.orders.find(
-                {"from_code": fresh["from_code"], "to_code": fresh["to_code"], "status": "pending"},
-                {"_id": 0},
-            ).to_list(500)
-            losers = []
-            total_loss = 0.0
-            for o in pending:
-                p = await _compute_order_profit(o, fresh)
-                if p and p["amount"] < 0:
-                    losers.append(o)
-                    total_loss += abs(p["amount"])
-            if losers:
-                await notify_all_admins(
-                    db,
-                    title=f"⚠️ {len(losers)} órdenes pendientes en pérdida",
-                    body=(
-                        f"Actualizaste la tasa real de {fresh['from_code']}→{fresh['to_code']} a "
-                        f"{fresh['real_rate']}. {len(losers)} órdenes pendientes generarían pérdida total "
-                        f"≈ {total_loss:.2f} {fresh['to_code']}."
-                    ),
-                    url_path="/admin/orders",
-                )
-    except Exception as e:
-        logger.error(f"Rate update margin scan failed: {e}")
-    await log_action(db, actor, "rate.update", "rate", rate_id,
-                     summary=f"Tasa {fresh['from_code']}→{fresh['to_code']} actualizada",
-                     details={"old": old, "new": fresh})
-    return fresh
-
-@api_router.delete("/admin/rates/{rate_id}")
-async def delete_rate(rate_id: str, request: Request):
-    actor = await require_staff(request)
-    existing = await db.rates.find_one({"id": rate_id}, {"_id": 0})
-    if existing:
-        _enforce_employee_currency_scope(actor, existing["from_code"], existing["to_code"])
-    await db.rates.delete_one({"id": rate_id})
-    return {"ok": True}
+# Currencies + Rates endpoints moved to routes/market.py during iter31 refactor.
 
 # ============== ORDERS ==============
 
@@ -852,55 +686,7 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
 
 # ============== PRODUCTS ==============
 
-@api_router.get("/products")
-async def list_products():
-    docs = await db.products.find({"is_active": True}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return docs
-
-def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool):
-    """iter21 — admin bypasses. Employees need explicit toggles set in /admin/users."""
-    if actor.get("role") == "admin":
-        return
-    if editing_price and not actor.get("can_edit_product_prices"):
-        raise HTTPException(status_code=403, detail="No tienes permiso para modificar precios de productos")
-    if editing_image and not actor.get("can_upload_product_images"):
-        raise HTTPException(status_code=403, detail="No tienes permiso para subir imágenes de productos")
-
-
-@api_router.post("/admin/products")
-async def create_product(payload: ProductCreate, request: Request):
-    actor = await require_staff(request)
-    _check_employee_product_perms(
-        actor,
-        editing_price=(payload.price_usd is not None and payload.price_usd != 0) or (payload.cost_usd is not None and payload.cost_usd != 0),
-        editing_image=bool((payload.image_url or "").strip()),
-    )
-    p = Product(**payload.model_dump())
-    await db.products.insert_one(p.model_dump())
-    return p.model_dump()
-
-@api_router.put("/admin/products/{product_id}")
-async def update_product(product_id: str, payload: ProductCreate, request: Request):
-    actor = await require_staff(request)
-    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-    price_changed = (
-        float(payload.price_usd) != float(existing.get("price_usd", 0))
-        or float(payload.cost_usd) != float(existing.get("cost_usd", 0))
-    )
-    image_changed = (payload.image_url or "") != (existing.get("image_url") or "")
-    _check_employee_product_perms(actor, editing_price=price_changed, editing_image=image_changed)
-    await db.products.update_one({"id": product_id}, {"$set": payload.model_dump()})
-    return await db.products.find_one({"id": product_id}, {"_id": 0})
-
-@api_router.delete("/admin/products/{product_id}")
-async def delete_product(product_id: str, request: Request):
-    actor = await require_staff(request)
-    if actor.get("role") != "admin" and not actor.get("can_delete_products"):
-        raise HTTPException(status_code=403, detail="No tienes permiso para eliminar productos")
-    await db.products.delete_one({"id": product_id})
-    return {"ok": True}
+# Products endpoints moved to routes/market.py during iter31 refactor.
 
 # ============== VIP - REDEMPTIONS & WITHDRAWALS ==============
 
@@ -1047,54 +833,6 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
 
 
 # ============== 2FA / TOTP MANAGEMENT ==============
-
-async def _enforce_totp_step_up(user: dict, code: Optional[str], action_label: str = "esta acción"):
-    """Raise HTTPException if user has no 2FA enabled OR submitted code is invalid.
-    Consumes a recovery code if `code` matches one. Otherwise verifies TOTP.
-    """
-    if not user.get("totp_enabled"):
-        raise HTTPException(
-            status_code=412,  # Precondition Required
-            detail={
-                "code": "TOTP_SETUP_REQUIRED",
-                "message": f"Debes configurar la verificación en dos pasos (2FA) antes de realizar {action_label}.",
-                "setup_url": "/dashboard/security",
-            },
-        )
-    if not code:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "TOTP_CODE_REQUIRED", "message": f"Se requiere código 2FA para {action_label}."},
-        )
-    submitted = code.strip()
-    # Try recovery code first if it has hyphen or len 10/11
-    if len(submitted) >= 10 and any(c.isalpha() for c in submitted):
-        ok, remaining = totp_service.consume_recovery_code(
-            user.get("totp_recovery_codes", []) or [], submitted
-        )
-        if ok:
-            await db.users.update_one(
-                {"user_id": user["user_id"]},
-                {"$set": {"totp_recovery_codes": remaining}},
-            )
-            return
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "TOTP_INVALID", "message": "Código de recuperación inválido."},
-        )
-    # Otherwise treat as TOTP
-    if not user.get("totp_secret_encrypted"):
-        raise HTTPException(status_code=409, detail="Estado 2FA inconsistente. Re-configura tu autenticador.")
-    try:
-        secret = totp_service.decrypt_secret(user["totp_secret_encrypted"])
-    except Exception:
-        raise HTTPException(status_code=500, detail="No se pudo verificar el código 2FA.")
-    if not totp_service.verify_totp(secret, submitted):
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "TOTP_INVALID", "message": "Código 2FA inválido o expirado."},
-        )
-
 
 @api_router.get("/me/2fa/status")
 async def totp_status(request: Request):
@@ -2597,13 +2335,15 @@ async def seed_data(request: Request):
 async def root():
     return {"service": "Resilience Brothers P2P", "status": "ok"}
 
-# Modular routers (extracted from server.py during iter27 refactor)
+# Modular routers (extracted from server.py during iter27+iter30+iter31 refactor)
 from routes.auth import router as auth_router  # noqa: E402
 from routes.notifications import router as notifications_router  # noqa: E402
 from routes.blocklist import router as blocklist_router  # noqa: E402
+from routes.market import router as market_router  # noqa: E402
 api_router.include_router(auth_router)
 api_router.include_router(notifications_router)
 api_router.include_router(blocklist_router)
+api_router.include_router(market_router)
 
 app.include_router(api_router)
 

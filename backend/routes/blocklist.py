@@ -21,7 +21,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from db_client import db
-from auth_utils import require_staff, normalize_phone, now_utc, iso
+from auth_utils import (
+    require_staff, normalize_phone, now_utc, iso, _enforce_totp_step_up,
+)
 from audit_log import log_action
 from routes.notifications import (
     notify_user_phone_verified,
@@ -250,9 +252,6 @@ async def admin_verify_user_phone(user_id: str, request: Request):
     requester = await require_staff(request)
     await _assert_can_manage_blocklist(requester)
     payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    # Lazy import: _enforce_totp_step_up lives in server.py and would create a
-    # circular import at module load if imported at the top.
-    from server import _enforce_totp_step_up
     await _enforce_totp_step_up(requester, payload.get("totp_code"), action_label="verificar teléfono manualmente")
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not target:
@@ -294,7 +293,6 @@ async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, req
     blocklist and keeps the user under_review. Requires can_manage_blocklist + TOTP."""
     requester = await require_staff(request)
     await _assert_can_manage_blocklist(requester)
-    from server import _enforce_totp_step_up
     await _enforce_totp_step_up(requester, payload.totp_code, action_label="rechazar teléfono y bloquear")
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not target:

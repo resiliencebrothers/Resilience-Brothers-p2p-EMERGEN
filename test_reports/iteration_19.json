@@ -1,0 +1,41 @@
+{
+  "summary": "iter31 — Phase-3 partial refactor verified. (a) routes/market.py (295 lines) hosts all 12 currency/rate/product endpoints + their 6 Pydantic models + helpers (_check_employee_product_perms, _scan_rate_change_margin). (b) _enforce_totp_step_up + _enforce_employee_currency_scope now live in auth_utils.py and are imported directly (no more lazy `from server import` in routes/blocklist.py or routes/market.py). server.py = 2377 lines. Backend started cleanly via supervisor with NO circular import errors. OpenAPI exports 80 unique paths (86 method ops) — unchanged. Regression suite: 60/64 PASS across iter14/iter21/iter28/iter29/iter30. The 4 failures are in test_iter18_onboarding.py but are a PRE-EXISTING test bug (test calls /api/auth/register without the now-required `phone` field — 422 response, user never created → user[verification_token] → NoneType). Unrelated to iter31. Frontend: AdminPanel loads with admin cookie; Monedas/Tasas/Productos tabs each render their data with ZERO /api/ 4xx/5xx errors — confirming the moved endpoints work end-to-end. /admin/seed returns 200 confirming Currency/ExchangeRate/Product models hydrate correctly when re-imported from routes.market.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/register (NOT touched by iter31)", "issue": "test_iter18_onboarding.py fails because it omits the required `phone` field — pre-existing test bug. Fix: add phone='+5350000018' (or similar) to the register payload in _register_and_login()."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/test_reports/pytest/iter31_results.xml",
+    "/app/backend/tests/test_iter14_corrections.py",
+    "/app/backend/tests/test_iter21_employee_perms.py",
+    "/app/backend/tests/test_iter28_anti_scam_trust.py",
+    "/app/backend/tests/test_iter29_notifications.py",
+    "/app/backend/tests/test_iter30_blocklist_push.py"
+  ],
+  "action_items": [
+    "(LOW PRIORITY, NOT iter31-related) Update /app/backend/tests/test_iter18_onboarding.py::_register_and_login to include `phone` in the /auth/register payload — currently failing 4/5 tests due to 422 validation error.",
+    "(HOUSEKEEPING) DB has many TEST_* products from previous iter runs that were never cleaned up. Consider adding a teardown sweep `db.products.delete_many({'name': {'$regex': '^TEST_'}})` to test fixtures.",
+    "(CODE QUALITY) routes/market.py:205 still uses lazy `from server import _compute_order_profit, notify_all_admins` — this is unavoidable while _compute_order_profit lives in server.py, but if Phase 4 extracts the order/profit module, this lazy import can be hoisted to module-load."
+  ],
+  "critical_code_review_comments": [
+    "auth_utils.py:201 _enforce_totp_step_up signature/error codes (412 TOTP_SETUP_REQUIRED, 401 TOTP_CODE_REQUIRED, 401 TOTP_INVALID) unchanged from server.py original. Verified via iter14 (rate updates), iter30 (verify-phone/reject-phone) tests all still PASS.",
+    "auth_utils.py:107 _enforce_employee_currency_scope (sync function) unchanged. Verified via iter14::test_cannot_update_unauthorized_rate (403) + test_can_update_authorized_rate (200) both still PASS.",
+    "routes/market.py:185 PUT /admin/rates/{id} correctly awaits _scan_rate_change_margin AFTER the DB update + AFTER step-up enforcement — preserves original ordering. iter14 PUT-rate tests all pass, confirming the lazy-import path inside _scan_rate_change_margin (line 205) loads successfully on first invocation without circular-import errors.",
+    "routes/market.py GET /api/products correctly filters by is_active=True (verified manually: returned 301 products, all with is_active truthy).",
+    "routes/blocklist.py:25 now imports `_enforce_totp_step_up` at module load from auth_utils — last remaining `from server import` lazy import is GONE. iter30 verify-phone/reject-phone tests all PASS (TOTP setup_required + valid_code + idempotent insert + push fan-out all preserved).",
+    "Model class re-import path: server.py imports Currency/CurrencyCreate/ExchangeRate/ExchangeRateCreate/Product/ProductCreate from routes.market — /admin/seed returned 200 confirming these models hydrate correctly under the seed endpoint.",
+    "OpenAPI consistency: 80 unique paths preserved. All 12 moved endpoints visible at original /api/currencies, /api/admin/currencies, /api/admin/currencies/{id}, /api/rates, /api/admin/rates, /api/admin/rates/{id}, /api/products, /api/admin/products, /api/admin/products/{id} (GET/POST/PUT/DELETE distribution unchanged).",
+    "Employee product perms (_check_employee_product_perms): iter21 12/12 still PASS — admins bypass, employees gated on price/cost/image/delete fields exactly as before."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "94% (60/64 — 4 pre-existing iter18 onboarding test bugs NOT caused by iter31)", "frontend": "100% (Monedas/Tasas/Productos admin tabs all render with 0 API errors)"},
+  "test_credentials": "/app/memory/test_credentials.md — admin/employee/normal/vip session tokens (test_session_*_X). TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP. Valid.",
+  "seed_data_creation": "None new. Used existing conftest fixtures + manually toggled admin's totp_enabled=True for one manual PUT-rate probe.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter31 was a pure structural refactor: 12 endpoints + 6 models + 2 helpers moved out of server.py (2637→2377). No behavioral drift detected. The iter18 onboarding test failure is pre-existing (register endpoint requires `phone` since iter22+, but test still sends only email/password/name). When testing the next iteration, please update test_iter18_onboarding.py first if onboarding flow needs verification. The lazy-import inside routes/market.py::_scan_rate_change_margin (line 205) is exercised by every PUT /admin/rates/{id} call; iter14 rate-update tests already cover this path. The full margin fan-out (notify_all_admins on negative-margin pending orders) was NOT explicitly tested with a seeded loss scenario but the import path itself loaded without error during iter14 PUT-rate test runs. server.py↔routes/blocklist.py coupling is now ZERO (last `from server import` removed). routes/auth.py still has 2 lazy imports of `_assert_not_defensive` from server.py — candidate for next refactor pass.",
+  "rca of the issue": "No bugs introduced by iter31. The 4 iter18 onboarding test failures have RCA = pre-existing test bug (register endpoint Pydantic schema requires `phone` field which was added in earlier iter, but test still posts only {email,password,name} → 422 → user never created → db.users.find_one returns None → KeyError on user['verification_token']). Reproduction: `pytest backend/tests/test_iter18_onboarding.py -v`. Mitigation: add `phone='+5350000018'` (or any valid Cuba phone) to the register payload in _register_and_login()."
+}
