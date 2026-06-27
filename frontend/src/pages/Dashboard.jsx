@@ -168,6 +168,35 @@ export default function Dashboard() {
         </div>
 
         <div className="p-6 lg:p-10">
+          {user?.account_status === "under_review" && user?.role !== "admin" && user?.role !== "employee" && (
+            <div
+              data-testid="under-review-banner"
+              className="mb-6 border-l-4 border-[#EAB308] bg-[#EAB308]/5 px-4 py-3 text-sm text-[#FEF3C7] flex items-start gap-3"
+            >
+              <span className="text-2xl leading-none">⚠️</span>
+              <div>
+                <div className="font-semibold text-[#EAB308] uppercase tracking-wider text-xs mb-1">Cuenta bajo revisión</div>
+                <p className="text-neutral-300 text-xs leading-relaxed">
+                  Tu cuenta aún no está activa. Un miembro del staff debe verificar tu teléfono antes de que puedas operar (intercambios, retiros y canjes están temporalmente deshabilitados).
+                  Si llevas más de 24h esperando, contacta a soporte por WhatsApp.
+                </p>
+              </div>
+            </div>
+          )}
+          {user?.account_status === "blocked" && user?.role !== "admin" && user?.role !== "employee" && (
+            <div
+              data-testid="account-blocked-banner"
+              className="mb-6 border-l-4 border-[#EF4444] bg-[#EF4444]/5 px-4 py-3 text-sm text-[#FECACA] flex items-start gap-3"
+            >
+              <span className="text-2xl leading-none">🚫</span>
+              <div>
+                <div className="font-semibold text-[#EF4444] uppercase tracking-wider text-xs mb-1">Cuenta bloqueada</div>
+                <p className="text-neutral-300 text-xs leading-relaxed">
+                  Tu cuenta ha sido bloqueada por el equipo. Si crees que es un error, contacta a soporte.
+                </p>
+              </div>
+            </div>
+          )}
           <Routes>
             <Route index element={<OverviewView />} />
             <Route path="exchange" element={<ExchangeView />} />

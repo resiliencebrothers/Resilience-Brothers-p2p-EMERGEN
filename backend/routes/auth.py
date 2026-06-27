@@ -265,8 +265,22 @@ async def google_callback(request: Request, code: Optional[str] = None,
             "onboarding_completed": False,
             "phone": None,
             "phone_verified": False,
+            # iter28 — Google users still need phone verification before operating.
+            # Admin/employee bypass via _assert_account_active.
+            "account_status": "active" if role in ("admin", "employee") else "under_review",
             "created_at": iso(now_utc()),
         })
+
+    # iter28 — blocklist re-check on every Google login.
+    if existing:
+        u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+        if u and u.get("phone") and u.get("role") in ("normal", "vip"):
+            blocked = await db.blocked_contacts.find_one({"phone": u["phone"]}, {"_id": 0})
+            if blocked:
+                await db.users.update_one(
+                    {"user_id": user_id},
+                    {"$set": {"phone_verified": False, "account_status": "under_review"}},
+                )
 
     response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
     await _create_session(user_id, response, ttl_hours=168)
@@ -329,6 +343,9 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
         "onboarding_completed": False,
         "phone": phone,
         "phone_verified": False,
+        # iter28 — new accounts start under_review; staff must verify phone first.
+        # Admin/employee role bypasses the check inside _assert_account_active.
+        "account_status": "active" if role in ("admin", "employee") else "under_review",
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
@@ -447,6 +464,17 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
                     "message": "Verifica tu correo antes de iniciar sesión. Revisa tu bandeja."},
         )
     await _record_login_attempt(identifier, True)
+    # iter28 — every login re-checks the blocklist: if the user's phone is now blocked,
+    # freeze the account (under_review) so they cannot operate even with a valid session.
+    if user.get("phone"):
+        blocked = await db.blocked_contacts.find_one({"phone": user["phone"]}, {"_id": 0})
+        if blocked and user.get("role") in ("normal", "vip"):
+            await db.users.update_one(
+                {"user_id": user["user_id"]},
+                {"$set": {"phone_verified": False, "account_status": "under_review"}},
+            )
+            user["phone_verified"] = False
+            user["account_status"] = "under_review"
     ttl = payload.remember_hours if payload.remember_hours else 168
     await _create_session(user["user_id"], response, ttl_hours=ttl)
     user.pop("password_hash", None)

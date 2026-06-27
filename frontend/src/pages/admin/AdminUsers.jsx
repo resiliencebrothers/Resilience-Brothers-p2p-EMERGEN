@@ -4,6 +4,9 @@ import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,7 +14,7 @@ import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { Search, ChevronDown } from "lucide-react";
+import { Search, ChevronDown, Ban } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -36,6 +39,9 @@ export default function AdminUsers() {
   const [currencies, setCurrencies] = useState([]);
   // Pending 2FA: { user_id, payload, label }
   const [pendingTotp, setPendingTotp] = useState(null);
+  // Reject-phone flow: { user_id, phone, email } shown in a dialog to capture the reason
+  const [rejectingPhone, setRejectingPhone] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   useEffect(() => { setPage(0); }, [search, roleFilter]);
 
@@ -91,6 +97,7 @@ export default function AdminUsers() {
     can_edit_product_prices: "modificar precios de productos",
     can_upload_product_images: "subir imágenes de productos",
     can_delete_products: "eliminar productos",
+    can_manage_blocklist: "gestionar lista de bloqueos y verificar teléfonos",
   };
 
   const saveMarketPerm = (user_id, perm, value) => {
@@ -119,6 +126,29 @@ export default function AdminUsers() {
     });
   };
 
+  // iter28 — reject-phone flow: open dialog for reason, then prompt 2FA, then POST.
+  const openRejectPhone = (user_id, phone, email) => {
+    setRejectingPhone({ user_id, phone, email });
+    setRejectReason("");
+  };
+
+  const confirmRejectPhone = () => {
+    if (!rejectingPhone) return;
+    const reason = rejectReason.trim();
+    if (reason.length < 3) {
+      toast.error("Escribe un motivo (mínimo 3 caracteres)");
+      return;
+    }
+    const { user_id, phone, email } = rejectingPhone;
+    setRejectingPhone(null);
+    setPendingTotp({
+      kind: "reject-phone",
+      user_id,
+      payload: { reason, notes: "" },
+      label: `RECHAZAR teléfono ${phone} de ${email} y bloquear su número`,
+    });
+  };
+
   const confirmWithTotp = async (code) => {
     const { user_id, payload, kind } = pendingTotp;
     try {
@@ -135,7 +165,14 @@ export default function AdminUsers() {
           { totp_code: code },
           { withCredentials: true }
         );
-        toast.success("Teléfono verificado manualmente");
+        toast.success("Teléfono verificado manualmente. Cuenta activada.");
+      } else if (kind === "reject-phone") {
+        await axios.post(
+          `${API}/admin/users/${user_id}/reject-phone`,
+          { ...payload, totp_code: code },
+          { withCredentials: true }
+        );
+        toast.success("Teléfono rechazado y bloqueado. Cuenta en revisión.");
       } else {
         await axios.put(
           `${API}/admin/users/${user_id}`,
@@ -150,11 +187,13 @@ export default function AdminUsers() {
       setPendingTotp(null);
       load();
     } catch (e) {
-      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail?.message || e.response?.data?.detail || "Error");
     }
   };
 
   const isAdmin = currentUser?.role === "admin";
+  // iter28 — admin OR staff with can_manage_blocklist may verify/reject phones
+  const canManageBlocklist = isAdmin || (currentUser?.role === "employee" && !!currentUser?.can_manage_blocklist);
   const allowedRoles = isAdmin
     ? ["normal", "vip", "employee", "admin"]
     : ["normal", "vip"];
@@ -313,16 +352,37 @@ export default function AdminUsers() {
                       <span className="font-mono text-xs text-neutral-300" data-testid={`phone-${u.user_id}`}>{u.phone}</span>
                       {u.phone_verified ? (
                         <span className="text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 border border-[#22C55E]/40 text-[#22C55E] bg-[#22C55E]/10 self-start">Verificado</span>
+                      ) : (canManageBlocklist ? (
+                        <div className="flex gap-2 self-start">
+                          <button
+                            type="button"
+                            data-testid={`verify-phone-btn-${u.user_id}`}
+                            onClick={() => verifyPhoneManually(u.user_id, u.phone, u.email)}
+                            className="text-[0.65rem] uppercase tracking-widest text-[#22C55E] hover:text-[#4ADE80] underline underline-offset-4"
+                            title="Marcar como verificado y activar cuenta (requiere 2FA)"
+                          >
+                            ✓ Verificar
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`reject-phone-btn-${u.user_id}`}
+                            onClick={() => openRejectPhone(u.user_id, u.phone, u.email)}
+                            className="text-[0.65rem] uppercase tracking-widest text-[#EF4444] hover:text-[#FCA5A5] underline underline-offset-4"
+                            title="Rechazar y bloquear (requiere 2FA)"
+                          >
+                            ✕ Rechazar
+                          </button>
+                        </div>
                       ) : (
-                        <button
-                          type="button"
-                          data-testid={`verify-phone-btn-${u.user_id}`}
-                          onClick={() => verifyPhoneManually(u.user_id, u.phone, u.email)}
-                          className="text-[0.65rem] uppercase tracking-widest text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4 self-start"
-                          title="Marcar este teléfono como verificado (requiere 2FA)"
+                        <span className="text-[0.6rem] uppercase tracking-widest text-neutral-600 self-start" title="Sin permiso 'Bloqueos' — pídeselo a un admin">Pendiente</span>
+                      ))}
+                      {u.account_status && u.account_status !== "active" && u.role !== "admin" && u.role !== "employee" && (
+                        <span
+                          data-testid={`account-status-${u.user_id}`}
+                          className={`text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 self-start ${u.account_status === "blocked" ? "border border-[#EF4444]/40 text-[#EF4444] bg-[#EF4444]/10" : "border border-[#EAB308]/40 text-[#EAB308] bg-[#EAB308]/10"}`}
                         >
-                          Verificar
-                        </button>
+                          {u.account_status === "blocked" ? "Bloqueada" : "En revisión"}
+                        </span>
                       )}
                     </div>
                   ) : (
@@ -361,6 +421,47 @@ export default function AdminUsers() {
         onConfirm={confirmWithTotp}
         onCancel={() => setPendingTotp(null)}
       />
+
+      {/* iter28 — Reject-phone reason dialog */}
+      <Dialog open={!!rejectingPhone} onOpenChange={(o) => { if (!o) { setRejectingPhone(null); setRejectReason(""); } }}>
+        <DialogContent data-testid="reject-phone-dialog" className="bg-[#0A0A0A] border-white/10 text-white rounded-none">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl flex items-center gap-2">
+              <Ban className="w-6 h-6 text-[#EF4444]" /> Rechazar y bloquear teléfono
+            </DialogTitle>
+            <DialogDescription className="text-neutral-500 text-xs">
+              El número <span className="font-mono text-[#EF4444]">{rejectingPhone?.phone}</span> de{" "}
+              <span className="text-neutral-300">{rejectingPhone?.email}</span> se agregará a la lista de bloqueados.
+              La cuenta del usuario quedará <strong className="text-[#EAB308]">en revisión</strong> y no podrá operar
+              en la plataforma. Esta acción se puede revertir borrando el contacto de la lista de bloqueos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="micro-label text-neutral-500">Motivo del bloqueo *</Label>
+              <Textarea
+                data-testid="reject-phone-reason-input"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Ej: comprobante falsificado, sospecha de estafa en grupo de WhatsApp, etc."
+                className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 min-h-[100px]"
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => { setRejectingPhone(null); setRejectReason(""); }} className="rounded-none">Cancelar</Button>
+              <Button
+                data-testid="reject-phone-confirm"
+                onClick={confirmRejectPhone}
+                disabled={rejectReason.trim().length < 3}
+                className="bg-[#EF4444] hover:bg-[#DC2626] text-white font-bold rounded-none"
+              >
+                Continuar al 2FA
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -451,6 +552,7 @@ function MarketPermsCell({ user, onToggle }) {
     { key: "can_edit_product_prices", label: "Precios", title: "Puede modificar precios y costos de productos" },
     { key: "can_upload_product_images", label: "Imágenes", title: "Puede cambiar la URL de imagen promocional" },
     { key: "can_delete_products", label: "Eliminar", title: "Puede eliminar productos del catálogo" },
+    { key: "can_manage_blocklist", label: "Bloqueos", title: "Puede ver y gestionar la lista de bloqueos, y verificar/rechazar teléfonos de usuarios" },
   ];
   return (
     <div className="flex flex-col gap-1.5" data-testid={`market-perms-${user.user_id}`}>

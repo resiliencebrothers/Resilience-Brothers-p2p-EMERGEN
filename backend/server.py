@@ -76,12 +76,19 @@ class User(BaseModel):
     can_edit_product_prices: bool = False
     can_upload_product_images: bool = False
     can_delete_products: bool = False
+    # iter28 — granular anti-scam blocklist permission. Only employees with this flag (and admins)
+    # can view/manage blocked_contacts and verify/reject user phones.
+    can_manage_blocklist: bool = False
     # iter23 — phone-based trust layer.
     # phone is REQUIRED at registration for new users. Legacy users (created before iter23) keep phone=None and operate normally.
     # phone_verified is toggled manually by staff after they confirm the number is real.
     # New users with phone set but phone_verified=False are blocked from creating withdrawals.
     phone: Optional[str] = None  # E.164 normalized, e.g. "+5350123456"
     phone_verified: bool = False
+    # iter28 — account_status gates all client operations (orders, withdrawals, redemptions).
+    # New users start "under_review"; staff moves them to "active" by verifying phone.
+    # Staff rejecting phone or login detecting a blocklisted phone leaves the user "under_review".
+    account_status: Literal["active", "under_review", "blocked"] = "under_review"
     created_at: str
 
 class Currency(BaseModel):
@@ -233,6 +240,10 @@ class UserUpdate(BaseModel):
     can_edit_product_prices: Optional[bool] = None
     can_upload_product_images: Optional[bool] = None
     can_delete_products: Optional[bool] = None
+    # iter28 — anti-scam blocklist permission
+    can_manage_blocklist: Optional[bool] = None
+    # iter28 — admin can move accounts back to active manually (e.g. after appeal)
+    account_status: Optional[Literal["active", "under_review", "blocked"]] = None
     totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
 
@@ -341,18 +352,59 @@ async def set_my_phone(payload: PhoneSetPayload, request: Request):
 class BlockedContactPayload(BaseModel):
     phone: Optional[str] = Field(None, max_length=20)
     email: Optional[EmailStr] = None
+    name: Optional[str] = Field(None, max_length=120)  # iter28 — display name of scammer (optional)
     reason: str = Field(..., min_length=3, max_length=500)
     notes: Optional[str] = Field(None, max_length=2000)
+
+
+# iter28 — gate management of the blocklist + manual phone verify/reject behind a
+# granular permission. Admins always pass; employees need can_manage_blocklist=True.
+async def _assert_can_manage_blocklist(actor: dict):
+    if actor.get("role") == "admin":
+        return
+    if actor.get("role") == "employee" and actor.get("can_manage_blocklist"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="No tienes permiso para gestionar la lista de bloqueos. Pídeselo a un administrador.",
+    )
+
+
+# iter28 — every client-facing operation (orders, withdrawals, redemptions) calls this.
+# Staff (employee/admin) bypass; under_review/blocked clients are rejected.
+async def _assert_account_active(user: dict):
+    if user.get("role") in ("admin", "employee"):
+        return
+    status = user.get("account_status", "active")
+    if status == "active":
+        return
+    if status == "under_review":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "ACCOUNT_UNDER_REVIEW",
+                "message": "Tu cuenta está bajo revisión. Un miembro del staff debe verificar tu teléfono antes de poder operar. Contacta a soporte para acelerar la verificación.",
+            },
+        )
+    # blocked
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "ACCOUNT_BLOCKED",
+            "message": "Tu cuenta está bloqueada. Si crees que es un error, contacta a soporte.",
+        },
+    )
 
 
 @api_router.get("/admin/blocked-contacts")
 async def list_blocked_contacts(request: Request, q: Optional[str] = None,
                                  limit: int = 100, skip: int = 0):
-    await require_staff(request)
+    actor = await require_staff(request)
+    await _assert_can_manage_blocklist(actor)
     query: dict = {}
     if q:
         rx = {"$regex": re.escape(q), "$options": "i"}
-        query = {"$or": [{"phone": rx}, {"email": rx}, {"reason": rx}, {"notes": rx}]}
+        query = {"$or": [{"phone": rx}, {"email": rx}, {"name": rx}, {"reason": rx}, {"notes": rx}]}
     total = await db.blocked_contacts.count_documents(query)
     cursor = db.blocked_contacts.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
     items = await cursor.to_list(length=limit)
@@ -362,6 +414,7 @@ async def list_blocked_contacts(request: Request, q: Optional[str] = None,
 @api_router.post("/admin/blocked-contacts")
 async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
     actor = await require_staff(request)
+    await _assert_can_manage_blocklist(actor)
     phone = normalize_phone(payload.phone) if payload.phone else None
     email = payload.email.lower().strip() if payload.email else None
     if not phone and not email:
@@ -377,6 +430,7 @@ async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
         "id": uuid.uuid4().hex,
         "phone": phone,
         "email": email,
+        "name": (payload.name or "").strip() or None,
         "reason": payload.reason.strip(),
         "notes": (payload.notes or "").strip(),
         "created_at": iso(now_utc()),
@@ -394,6 +448,7 @@ async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
 @api_router.delete("/admin/blocked-contacts/{contact_id}")
 async def remove_blocked_contact(contact_id: str, request: Request):
     actor = await require_staff(request)
+    await _assert_can_manage_blocklist(actor)
     target = await db.blocked_contacts.find_one({"id": contact_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Contacto bloqueado no encontrado")
@@ -404,11 +459,129 @@ async def remove_blocked_contact(contact_id: str, request: Request):
     return {"ok": True}
 
 
+# ===== iter28 — Bulk import from WhatsApp scammer chat =====
+# Accepts free-form text (typically pasted from a WhatsApp chat) and detects
+# "blocks": a header line (scammer name/title) followed by one or more E.164
+# phone lines, followed by reason/note lines (often starting with 📌 or similar).
+# Empty lines separate blocks. The parser tolerates emoji, spaces, dashes, etc.
+PHONE_DETECT_RE = re.compile(r"\+[1-9][\d\-\s\(\)\.]{7,18}")
+
+
+def _parse_whatsapp_blocklist(text: str):
+    """Return a list of {phone, name, reason} entries parsed from a WhatsApp-style block list.
+
+    Strategy:
+    - Split on blank lines into blocks.
+    - Inside each block, the FIRST non-phone, non-empty line is treated as the scammer
+      'name/title' (e.g. "Estafador ❌️", or "Juan Pérez").
+    - Every line that contains an E.164 phone match is captured as a phone.
+    - Every other non-empty line after the first phone is concatenated into 'reason'
+      (newline-joined). Lines before the first phone (other than the name line) are
+      also appended to the reason.
+    - Decorative lines like just an emoji or a row of dashes are skipped.
+    """
+    entries = []
+    blocks = re.split(r"\n\s*\n", text.strip())
+    for raw_block in blocks:
+        lines = [ln.strip() for ln in raw_block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        phones, name, reason_lines = [], None, []
+        for ln in lines:
+            phone_matches = PHONE_DETECT_RE.findall(ln)
+            if phone_matches:
+                # Treat first match as the phone of this line; ignore extras (rare)
+                cleaned = re.sub(r"[\s\-\(\)\.]", "", phone_matches[0])
+                phones.append(cleaned)
+                continue
+            # Skip lines that are only emoji / arrows / dashes / bullets
+            if re.fullmatch(r"[\W_]+", ln):
+                continue
+            if name is None:
+                name = ln.lstrip("📌•·-—*").strip()
+            else:
+                reason_lines.append(ln.lstrip("📌•·-—*").strip())
+        # Ignore blocks with no phone
+        if not phones:
+            continue
+        reason = "\n".join(reason_lines).strip() or (name or "Importado de lista")
+        # Mirror name across all phones in this block
+        for p in phones:
+            entries.append({"phone": p, "name": name, "reason": reason})
+    return entries
+
+
+class BulkImportPayload(BaseModel):
+    text: str = Field(..., min_length=1, max_length=200_000)
+
+
+@api_router.post("/admin/blocked-contacts/bulk-import")
+async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Request):
+    """Import a pasted WhatsApp-style block list. Returns counts + errors so the UI
+    can show a clear report (imported / skipped duplicates / invalid)."""
+    actor = await require_staff(request)
+    await _assert_can_manage_blocklist(actor)
+    parsed = _parse_whatsapp_blocklist(payload.text)
+    imported, skipped_duplicates, invalid = [], [], []
+    for entry in parsed:
+        raw_phone = entry["phone"]
+        try:
+            phone = normalize_phone(raw_phone)
+        except HTTPException:
+            invalid.append({"phone": raw_phone, "reason": "Formato de teléfono inválido"})
+            continue
+        if await db.blocked_contacts.find_one({"phone": phone}, {"_id": 0}):
+            skipped_duplicates.append(phone)
+            continue
+        doc = {
+            "id": uuid.uuid4().hex,
+            "phone": phone,
+            "email": None,
+            "name": entry.get("name"),
+            "reason": entry.get("reason") or "Importado de lista",
+            "notes": "",
+            "created_at": iso(now_utc()),
+            "created_by": actor["user_id"],
+            "created_by_email": actor.get("email", ""),
+            "source": "bulk_import",
+        }
+        await db.blocked_contacts.insert_one(doc)
+        imported.append(phone)
+    # iter28 — once contacts are bulk-imported, immediately freeze any active
+    # client account whose phone matches the new blocklist (so an already-registered
+    # scammer can't operate until staff manually re-verifies).
+    affected_users = 0
+    if imported:
+        res = await db.users.update_many(
+            {"phone": {"$in": imported}, "role": {"$in": ["normal", "vip"]}},
+            {"$set": {"account_status": "under_review", "phone_verified": False}},
+        )
+        affected_users = res.modified_count
+    await log_action(
+        db, actor, "blocked_contact.bulk_import", "blocked_contact", "bulk",
+        summary=f"Importó {len(imported)} contactos bloqueados (saltó {len(skipped_duplicates)} duplicados, {len(invalid)} inválidos, {affected_users} cuentas activas pasaron a revisión)",
+        details={"imported_count": len(imported), "skipped_count": len(skipped_duplicates),
+                 "invalid_count": len(invalid), "affected_active_accounts": affected_users},
+    )
+    return {
+        "ok": True,
+        "imported": imported,
+        "imported_count": len(imported),
+        "skipped_duplicates": skipped_duplicates,
+        "skipped_count": len(skipped_duplicates),
+        "invalid": invalid,
+        "invalid_count": len(invalid),
+        "affected_active_accounts": affected_users,
+    }
+
+
 @api_router.post("/admin/users/{user_id}/verify-phone")
 async def admin_verify_user_phone(user_id: str, request: Request):
     """Mark a user's phone as verified. Staff confirms manually (e.g. by calling them).
-    Unlocks withdrawals for new (post-iter23) users."""
+    Unlocks withdrawals AND moves the account to 'active' so the user can operate.
+    Requires the can_manage_blocklist permission (or admin role)."""
     requester = await require_staff(request)
+    await _assert_can_manage_blocklist(requester)
     payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     await _enforce_totp_step_up(requester, payload.get("totp_code"), action_label="verificar teléfono manualmente")
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -416,14 +589,79 @@ async def admin_verify_user_phone(user_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if not target.get("phone"):
         raise HTTPException(status_code=400, detail="El usuario aún no ha proporcionado un teléfono")
-    if target.get("phone_verified"):
+    # iter28 — refuse to verify if the phone is on the blocklist
+    blocked = await db.blocked_contacts.find_one({"phone": target["phone"]}, {"_id": 0})
+    if blocked:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PHONE_IS_BLOCKED",
+                "message": f"Este número está en la lista de bloqueados (motivo: {blocked.get('reason', 'sin motivo')}). No se puede verificar.",
+                "blocked_entry": blocked,
+            },
+        )
+    if target.get("phone_verified") and target.get("account_status") == "active":
         return {"ok": True, "already_verified": True, "user": target}
-    await db.users.update_one({"user_id": user_id}, {"$set": {"phone_verified": True}})
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"phone_verified": True, "account_status": "active"}},
+    )
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await log_action(db, requester, "user.verify_phone_manual", "user", user_id,
                      summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
                      details={"email": target.get("email"), "phone": target.get("phone")})
     return {"ok": True, "already_verified": False, "user": fresh}
+
+
+# iter28 — reject phone: blocklist the number + keep account under review.
+class RejectPhonePayload(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+    notes: Optional[str] = Field(None, max_length=2000)
+    totp_code: Optional[str] = Field(None, max_length=11)
+
+
+@api_router.post("/admin/users/{user_id}/reject-phone")
+async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, request: Request):
+    """Staff rejects a user's phone (scammer detected). Adds the number to the
+    blocklist and keeps the user 'under_review' so they cannot operate. Requires
+    can_manage_blocklist + TOTP step-up."""
+    requester = await require_staff(request)
+    await _assert_can_manage_blocklist(requester)
+    await _enforce_totp_step_up(requester, payload.totp_code, action_label="rechazar teléfono y bloquear")
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    phone = target.get("phone")
+    if not phone:
+        raise HTTPException(status_code=400, detail="El usuario aún no ha proporcionado un teléfono")
+    # Add to blocklist (idempotent)
+    existing = await db.blocked_contacts.find_one({"phone": phone}, {"_id": 0})
+    if not existing:
+        doc = {
+            "id": uuid.uuid4().hex,
+            "phone": phone,
+            "email": target.get("email"),
+            "name": target.get("name"),
+            "reason": payload.reason.strip(),
+            "notes": (payload.notes or "").strip(),
+            "created_at": iso(now_utc()),
+            "created_by": requester["user_id"],
+            "created_by_email": requester.get("email", ""),
+            "source": "phone_reject",
+        }
+        await db.blocked_contacts.insert_one(doc)
+    # Move account to under_review (operations blocked); keep phone_verified=False
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"phone_verified": False, "account_status": "under_review"}},
+    )
+    fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    await log_action(
+        db, requester, "user.reject_phone", "user", user_id,
+        summary=f"Rechazó teléfono y bloqueó a {target.get('email','')} ({phone})",
+        details={"phone": phone, "reason": payload.reason},
+    )
+    return {"ok": True, "user": fresh}
 
 
 # ===== iter24 — Defensive Mode =====
@@ -602,6 +840,7 @@ async def delete_rate(rate_id: str, request: Request):
 @api_router.post("/orders")
 async def create_order(payload: OrderCreate, request: Request):
     user = await require_user(request)
+    await _assert_account_active(user)  # iter28 — block scammers / under-review users
     rate_doc = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
     if not rate_doc:
         raise HTTPException(status_code=400, detail="Tasa de cambio no disponible para ese par")
@@ -940,6 +1179,7 @@ async def _decrement_balance(user_id: str, code: str, amount: float):
 @api_router.post("/vip/redeem")
 async def redeem_product(payload: RedemptionCreate, request: Request):
     user = await require_user(request)
+    await _assert_account_active(user)  # iter28 — block scammers / under-review users
     if user["role"] not in ("vip", "admin"):
         raise HTTPException(status_code=403, detail="Solo clientes VIP")
     product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
@@ -1008,6 +1248,7 @@ async def update_redemption(rid: str, payload: dict, request: Request):
 @api_router.post("/vip/withdraw")
 async def create_withdrawal(payload: WithdrawalCreate, request: Request):
     user = await require_user(request)
+    await _assert_account_active(user)  # iter28 — block scammers / under-review users
     # iter14: opens to all client roles (normal + vip + admin). Staff cannot withdraw to themselves.
     if user["role"] == "employee":
         raise HTTPException(status_code=403, detail="Empleados no pueden retirar")

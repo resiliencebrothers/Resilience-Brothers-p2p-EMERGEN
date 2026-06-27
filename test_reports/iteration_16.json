@@ -1,0 +1,37 @@
+{
+  "summary": "iter28 Anti-scam Trust Layer (Phase 2) — full E2E coverage. Wrote /app/backend/tests/test_iter28_anti_scam_trust.py (17 tests covering WhatsApp bulk-import parser, can_manage_blocklist perm gating, verify/reject phone, account_status enforcement on /orders + /vip/withdraw + /vip/redeem, login re-check, register default). 17/17 NEW pass + 67/68 RELEVANT PRIOR ITER pass (iter20/21/23/25/26/27). The 1 fail is the same pre-existing iter27 openapi-via-ingress artifact. Frontend Playwright validated: admin bulk-import dialog with counts, reject-phone dialog with reason-length gating, employee perm-toggle (Pendiente vs buttons), under-review-banner + account-blocked-banner visibility per account_status. Admin Verificar/Rechazar still fully functional — no regression.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter28_anti_scam_trust.py",
+    "/app/test_reports/pytest/iter28_results.xml",
+    "/app/test_reports/pytest/iter28_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py at 2880 lines is past the 700-line soft-cap. iter27 already split auth; consider extracting blocked_contacts + verify/reject endpoints to /app/backend/routes/blocklist.py in iter29.",
+    "_parse_whatsapp_blocklist correctly handles the real WhatsApp example (5 entries, multi-block, decorator-only lines skipped, reason newline-joined).",
+    "_assert_account_active runs AFTER pydantic validation, so malformed bodies get 422 not 403 — acceptable security pattern (validation is stateless).",
+    "Permission gating is consistent: admin bypasses, employee needs can_manage_blocklist=True, applied uniformly to list/add/delete/bulk-import/verify-phone/reject-phone.",
+    "Login re-check (routes/auth.py L467-477) correctly flips status to under_review on blocklist hit but does NOT block login itself — matches the spec exactly.",
+    "Idempotency of reject-phone verified: second call doesn't duplicate the blocked_contacts row.",
+    "Dashboard banners gated by role !== admin && role !== employee — staff never see the banners (correct)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter28_anti_scam_trust.py (new — 17 tests)"
+  ],
+  "success_rate": {"backend": "100% iter28 (17/17) + 99% regression (84/85, 1 pre-existing ingress artifact)", "frontend": "100% (bulk-import dialog, reject-phone gating, employee perm toggle, under-review + blocked banners all PASS)"},
+  "test_credentials": "From /app/memory/test_credentials.md — admin/employee/normal/vip session tokens. Refreshed session expiries during this run.",
+  "seed_data_creation": "Refreshed 4 user_sessions tokens (30-day TTL). Temporarily toggled employee.can_manage_blocklist between True/False and normal user.account_status between active/under_review/blocked for FE banner tests. All seed mutations were rolled back before finishing.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) /app/backend/tests/test_iter28_anti_scam_trust.py is the canonical iter28 regression file. 2) The fixture in that file auto-resets employee.can_manage_blocklist + normal/vip account_status — safe to re-run. 3) When testing account_status enforcement, REMEMBER pydantic validation runs before _assert_account_active — so payloads must be schema-valid to reach the 403 gate (use full body fields). 4) Register endpoint requires `phone` field; emails are normalized to lowercase. 5) The known iter27 openapi-via-ingress test failure is unchanged and unrelated.",
+  "rca of the issue": "No iter28 bugs. The WhatsApp parser, perm gating, verify/reject, account_status enforcement and login re-check all match the spec. Manual cross-checks: (a) reason field correctly newline-joins the 3 📌 lines, (b) name='Estafador ❌️' mirrored across all 3 phones in the block, (c) bulk-import flips already-registered users to under_review when phone matches (affected_active_accounts>=1), (d) idempotent reject-phone, (e) admin always sees Verificar/Rechazar regardless of can_manage_blocklist."
+}

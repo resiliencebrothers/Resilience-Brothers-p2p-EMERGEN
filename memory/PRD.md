@@ -61,22 +61,29 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Mi Cola** (`/admin/queue`): consolidated pending orders + withdrawals scoped to staff's allowed_currencies. Admin sees everything pending.
   - **Fondo Empresa** (`/admin/company-funds`): dynamic per-currency working capital (inflow − client_payouts − company_payouts). New collection `company_withdrawals` with status flow pending→approved→paid. Staff with currency scope can CREATE, only admin can change status. Each withdrawal captures beneficiary, autodetected `authorized_by`, optional invoice image. 2FA step-up required. Insufficient funds blocked. 242/242 tests pass (12 new).
 - **iter17 (Feb 18, 2026)**: **Email/Password authentication fallback** (for users blocked from Google OAuth, e.g. Cuba). New endpoints `POST /api/auth/{register,login,forgot-password,reset-password}` and `GET /api/auth/verify-email/{token}`. Registration creates an **unverified** user (no auto-login). Login is blocked with 403 `EMAIL_NOT_VERIFIED` until verification. Single-use verification + reset tokens stored in `users.verification_token` / `users.password_reset_token` (24h / 2h TTL). Brute-force lockout reuses iter13 `login_attempts` logic (5 fails → 429). Resend sends the verification + reset emails (best-effort; sandbox-safe). New pages: `/auth/verify-email/:token` (`VerifyEmail.jsx`) and `/auth/reset-password/:token` (`ResetPassword.jsx`). `EmailAuthDialog.jsx` now supports three modes (login | register | forgot) with a "¿Olvidaste tu contraseña?" link. Google OAuth remains visible inside the dialog and on the landing page. StrictMode-safe verify (useRef sentinel). **17/17 backend tests + 19/19 E2E checkpoints pass** (`/app/backend/tests/test_iter16_email_auth.py`, `/app/test_reports/iteration_13.json`).
+- **iter25 (Jun 26, 2026)**: **Verify-email UX fix** — clicking the verification link no longer auto-logs in. Backend `auth_verify_email` returns `{verified, email, name}` and stops creating a session. Frontend redirects to `/?verified=1&email=<encoded>`; Landing detects the query, shows toast "Correo verificado", auto-opens `EmailAuthDialog` in login mode with the email pre-filled, then cleans the URL. New `initialEmail` prop on `EmailAuthDialog`. Resend `EMAIL_SENDER` updated to `Resilience Brothers <noreply@resiliencebrothers.com>` (domain verified). Backend 4/4 + Frontend 3/3 E2E (`/app/test_reports/iteration_9.json`).
+- **iter26 (Jun 26, 2026)**: **Reenviar correo de verificación** — new `POST /api/auth/resend-verification` (rate-limited 1/60s per email, generic 200 to prevent enumeration, regenerates token + last_resend_at, best-effort email). `EmailAuthDialog` adds: (1) footer link in login mode "¿No recibiste el correo de verificación?", (2) button in post-register success card, (3) button in EMAIL_NOT_VERIFIED success card. Backend 7/7 + Frontend 9/9 (`/app/test_reports/iteration_14.json`).
+- **iter27 (Jun 26, 2026)**: **Refactor Phase 1 — Auth router extraction**. Created `/app/backend/db_client.py` (shared Mongo client), `/app/backend/auth_utils.py` (188 lines of helpers), `/app/backend/routes/__init__.py` + `/app/backend/routes/auth.py` (437 lines, 11 endpoints + 5 models). `server.py` reduced from 3189 → 2638 lines (-17%). Zero behavioral regression: 58/58 iter20-26 regression tests + 20/21 new structural tests pass (1 fail is ingress quirk, not refactor). Frontend smoke test confirms Landing + EmailAuthDialog still work (`/app/test_reports/iteration_15.json`).
 
 ## Prioritized Backlog
 ### P0 — Waiting on user
-- Verify `resiliencebrothers.com` DNS in Resend so admin alerts + client emails deliver in production (currently sandbox 403s to non-owner addresses).
+- ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.
 
 ### P1
+- Reduce cyclomatic complexity in `update_order_status`, `create_order` (backend), `EmailAuthDialog.jsx` (frontend).
+- Refactor Phase 2: extract `routes/orders.py`, `routes/admin.py`, `routes/market.py`, `routes/products.py` from `server.py` (currently still 2638 lines).
 - Multi-currency display of VIP balance across UI (legacy single-USD widgets if any remain).
 - Search + pagination in admin tables (audit, orders, users) when data grows.
 - Visual highlight (red tint) of negative-profit cards on AdminRevenue.
 - Add `<th>Real</th>` column in AdminRates table (data already exposed via GET /api/rates).
+- Move `_assert_not_defensive` from `server.py` to a small `system_state.py` module to eliminate the lazy `from server import` inside `routes/auth.py`.
 
 ### P2
+- Sentry / error monitoring integration.
 - Real crypto wallet integration (on-chain USDT/BTC verification).
 - Stripe / Zelle webhooks for auto-confirmation.
-- Refactor `/app/backend/server.py` (~1345 lines) into routers (auth/orders/withdrawals/redemptions/admin/products/revenue/push/audit).
 - Replace base64 proof storage with Emergent Object Storage.
+- Auto-seed dev session tokens (`test_session_admin_X`, `_employee_X`, `_vip_X`, `_normal_X`) in `conftest.py` so iter20+ tests no longer require manual user_sessions insertion.
 
 ## Test Credentials
 See `/app/memory/test_credentials.md` and `/app/auth_testing.md`.
