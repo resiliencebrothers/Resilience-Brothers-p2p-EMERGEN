@@ -22,10 +22,9 @@ Schema (collection `notifications`):
 """
 import uuid
 import logging
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Request
 
 from db_client import db
 from auth_utils import require_user, now_utc, iso
@@ -133,10 +132,6 @@ async def my_unread_count(request: Request):
         {"recipient_user_id": user["user_id"], "read": False}
     )
     return {"count": n}
-
-
-class MarkReadPayload(BaseModel):
-    ids: Optional[List[str]] = None  # if None, no-op
 
 
 @router.post("/notifications/{notification_id}/read")
