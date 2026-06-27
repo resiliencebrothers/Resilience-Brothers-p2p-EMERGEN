@@ -28,6 +28,12 @@ from fastapi import APIRouter, Request
 
 from db_client import db
 from auth_utils import require_user, now_utc, iso
+from push_service import (
+    send_push_to_user,
+    build_new_pending_user_payload,
+    build_phone_verified_payload,
+    build_phone_rejected_payload,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +63,8 @@ async def _insert_notification(*, recipient_user_id: str, type: str, title: str,
 
 async def notify_staff_new_pending_user(target_user: dict):
     """Fan-out a notification to every admin and every employee with
-    can_manage_blocklist=True, so they see a new user is waiting for verification."""
+    can_manage_blocklist=True, so they see a new user is waiting for verification.
+    Also delivers a Web Push notification to each recipient's registered devices."""
     recipients_cursor = db.users.find(
         {"$or": [
             {"role": "admin"},
@@ -77,14 +84,16 @@ async def notify_staff_new_pending_user(target_user: dict):
         "phone": target_user.get("phone"),
         "name": target_user.get("name"),
     }
+    push_payload = build_new_pending_user_payload(target_user)
     for uid in recipients:
         try:
             await _insert_notification(
                 recipient_user_id=uid, type="new_user_pending",
                 title=title, message=message, data=data,
             )
+            await send_push_to_user(db, uid, push_payload)
         except Exception as e:
-            logger.error(f"Failed to insert pending-user notification for {uid}: {e}")
+            logger.error(f"Failed to deliver pending-user notification to {uid}: {e}")
 
 
 async def notify_user_phone_verified(target_user: dict):
@@ -96,6 +105,7 @@ async def notify_user_phone_verified(target_user: dict):
         message="Hemos verificado tu teléfono. Ya puedes operar en la plataforma: hacer intercambios, retiros y canjes.",
         data={"phone": target_user.get("phone")},
     )
+    await send_push_to_user(db, target_user["user_id"], build_phone_verified_payload(target_user))
 
 
 async def notify_user_phone_rejected(target_user: dict, reason: str):
@@ -107,6 +117,7 @@ async def notify_user_phone_rejected(target_user: dict, reason: str):
         message=f"No pudimos verificar tu teléfono. Motivo: {reason}. Si crees que es un error, contacta a soporte por WhatsApp para apelar.",
         data={"phone": target_user.get("phone"), "reason": reason},
     )
+    await send_push_to_user(db, target_user["user_id"], build_phone_rejected_payload(target_user, reason))
 
 
 # ============================================================

@@ -69,3 +69,63 @@ def build_order_rejected_payload(order: dict) -> dict:
         "tag": f"order-{order['id']}",
         "url": f"{APP_URL}/dashboard/orders" if APP_URL else "/dashboard/orders",
     }
+
+
+# ============================================================
+# iter30 — generic per-user push delivery used by routes/notifications.py
+# ============================================================
+
+async def send_push_to_user(db, user_id: str, payload: dict) -> None:
+    """Send `payload` to every active push subscription registered for `user_id`.
+    Silently prunes dead subscriptions. Best-effort — never raises."""
+    try:
+        subs = await db.push_subscriptions.find(
+            {"user_id": user_id}, {"_id": 0}
+        ).to_list(50)
+        if not subs:
+            return
+        dead_ids = []
+        for s in subs:
+            result = send_push(s.get("subscription"), payload)
+            if result == "dead":
+                dead_ids.append(s.get("id"))
+        if dead_ids:
+            await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
+    except Exception as e:
+        logger.error(f"send_push_to_user({user_id}) failed: {e}")
+
+
+def build_new_pending_user_payload(target_user: dict) -> dict:
+    name = target_user.get("name") or target_user.get("email") or "Usuario"
+    phone = target_user.get("phone") or "-"
+    return {
+        "title": "Nuevo usuario pendiente de verificación",
+        "body": f"{name} ({phone}). Verifica o rechaza desde Admin → Usuarios.",
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"pending-{target_user.get('user_id', 'x')}",
+        "url": f"{APP_URL}/admin/users" if APP_URL else "/admin/users",
+    }
+
+
+def build_phone_verified_payload(target_user: dict) -> dict:
+    return {
+        "title": "¡Tu cuenta está activa! ✓",
+        "body": "Hemos verificado tu teléfono. Ya puedes operar en la plataforma.",
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"verified-{target_user.get('user_id', 'x')}",
+        "url": f"{APP_URL}/dashboard" if APP_URL else "/dashboard",
+    }
+
+
+def build_phone_rejected_payload(target_user: dict, reason: str) -> dict:
+    return {
+        "title": "Verificación rechazada",
+        "body": (reason or "Tu teléfono no pudo ser verificado. Contacta a soporte.")[:140],
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"rejected-{target_user.get('user_id', 'x')}",
+        "url": f"{APP_URL}/dashboard" if APP_URL else "/dashboard",
+    }
+

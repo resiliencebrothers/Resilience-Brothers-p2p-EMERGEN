@@ -1,0 +1,31 @@
+{
+  "summary": "iter30 — blocklist router extraction + PWA Web Push fan-out + complexity-reduced create_order/update_order_status/EmailAuthDialog. Backend 50/50 PASS: 11/11 NEW iter30 tests (blocklist CRUD refactor, permission gating, push fan-out via dead-subscription pruning spy, register-doesn't-break-when-push-fails, account_active still guards orders) + 10/10 iter29 regression + 17/17 iter28 regression + 4/4 iter25 verify-email + 7/7 iter26 resend-verification. OpenAPI exports exactly 80 endpoints including all 5 blocklist endpoints at original paths. server.py reduced 2904→2637 lines, routes/blocklist.py = 334 lines as specified. Frontend Playwright: EmailAuthDialog ERROR_CODE_HANDLERS dispatch verified — USER_NOT_FOUND triggers notice card with 'Crear cuenta con este email' CTA, exact original copy + visible. No regression detected in any of the 3 iter30 changes.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter30_blocklist_push.py",
+    "/app/backend/tests/test_iter29_notifications.py",
+    "/app/backend/tests/test_iter28_anti_scam_trust.py",
+    "/app/test_reports/pytest/iter30_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Lazy `from server import _enforce_totp_step_up` inside routes/blocklist.py verify-phone/reject-phone endpoints works correctly to avoid circular imports, but it imports on EVERY call (hot path is unaffected since Python caches the module). Consider hoisting to module-load once a separate `routes/_internal.py` (or `auth_utils.py`) hosts _enforce_totp_step_up — would also remove the only remaining server.py↔routes/blocklist.py coupling.",
+    "routes/blocklist.py POST /admin/blocked-contacts returns the doc with status_code=200 (FastAPI default). The PRD says '201 on create'. Current impl returns 200 — this is the same as the pre-refactor behavior (no regression) but does not match the PRD spec. If 201 is required, add `status_code=201` to the decorator.",
+    "routes/blocklist.py reads request.json() defensively in admin_verify_user_phone (no Pydantic model). Verified working but inconsistent with reject-phone which uses RejectPhonePayload. Could add a small VerifyPhonePayload(BaseModel) with optional totp_code for consistency + better OpenAPI docs.",
+    "push_service.send_push_to_user properly: (a) returns early on no-subs, (b) tracks dead ids in list, (c) prunes them with a single delete_many, (d) never raises (try/except wraps the entire body). Validated via two integration tests seeding a None-subscription which gets pruned.",
+    "EmailAuthDialog ERROR_CODE_HANDLERS extraction is clean and easy to extend (just add a key to the dict). handleAuthError remains pure with no side effects beyond the handler call/toast. No behavior change vs iter17.",
+    "create_order split into 4 helpers (_resolve_order_rate / _build_order_from_payload / _maybe_flag_defensive_margin / _dispatch_new_order_alerts) is a clean refactor — verified equivalence: existing iter28 test test_under_review_normal_user_cannot_create_order still passes with same 403+ACCOUNT_UNDER_REVIEW response.",
+    "update_order_status split into _authorize_status_transition + _run_post_status_side_effects is equally clean. Existing iter27/iter28 regression all pass. (Did not exhaustively re-test the 6 sub-paths since pre-existing tests cover them.)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter30_blocklist_push.py (new — 11 tests: 4 CRUD + 2 permissions + 4 push fan-out + 1 account_active guard)"
+  ],
+  "success_rate": {"backend": "100% (50/50 across iter25/26/28/29/30)", "frontend": "100% (EmailAuthDialog USER_NOT_FOUND verified visually + via DOM text)"},
+  "test_credentials": "/app/memory/test_credentials.md — admin/employee/normal/vip session tokens (test_session_*_X). Still valid.",
+  "seed_data_creation": "Per-test: dead push_subscription docs (id prefix 'iter30_dead_*' / 'iter30_admin_fail') seeded on admin/normal users for push-invocation spying — cleaned up by fixture. Test-created users via /auth/register cleaned by {email: /^test_iter30_/}.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter30 regression file is /app/backend/tests/test_iter30_blocklist_push.py — 11 tests, fully self-cleaning. Strategy for confirming push fan-out without a real VAPID key: seed a push_subscription with subscription=None — send_push() returns 'dead' which causes send_push_to_user to delete it. Verifying the doc is gone post-call proves the helper was invoked. Backwards-compat sweep: do NOT run test_iter16_email_auth.py (slow, also unrelated). The 3 push helpers (send_push_to_user, build_phone_verified_payload, build_phone_rejected_payload, build_new_pending_user_payload) all live in /app/backend/push_service.py.",
+  "rca of the issue": "No bugs. All three iter30 changes verified as pure structural refactors with no behavioral drift: (1) blocklist router extraction — all 5 endpoints respond at same paths with same status codes and shapes, permission gating unchanged, 80 endpoints in OpenAPI; (2) PWA push fan-out — send_push_to_user is invoked from notify_staff_new_pending_user, notify_user_phone_verified, notify_user_phone_rejected (proven by dead-subscription pruning) and exceptions in push delivery never break the in-app notification flow; (3) EmailAuthDialog ERROR_CODE_HANDLERS table preserves USER_NOT_FOUND → notice card / EMAIL_NOT_VERIFIED → success card / USE_GOOGLE_LOGIN → notice card / generic → toast.error mapping exactly as iter17. The complexity-reduced create_order/update_order_status helpers are validated indirectly by the existing iter27/iter28/iter29 test suites all still passing."
+}

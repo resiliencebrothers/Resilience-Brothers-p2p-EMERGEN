@@ -64,6 +64,22 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     }
   };
 
+  // Map of backend error codes → UI side-effects. Extracted to reduce submit() complexity.
+  const ERROR_CODE_HANDLERS = {
+    EMAIL_NOT_VERIFIED: (msg) => setSuccessMsg(msg || "Verifica tu correo antes de iniciar sesión."),
+    USER_NOT_FOUND: (msg) => setNotice({ kind: "register", message: msg || "No existe una cuenta con este email. Crea una cuenta para continuar." }),
+    USE_GOOGLE_LOGIN: (msg) => setNotice({ kind: "google", message: msg || "Esta cuenta fue creada con Google." }),
+  };
+
+  const handleAuthError = (err) => {
+    const detail = err.response?.data?.detail;
+    const code = typeof detail === "object" ? detail?.code : null;
+    const message = typeof detail === "object" ? detail?.message : detail;
+    const handler = code && ERROR_CODE_HANDLERS[code];
+    if (handler) { handler(message); return; }
+    toast.error(typeof message === "string" ? message : "Error de autenticación");
+  };
+
   const submit = async (e) => {
     e?.preventDefault?.();
     if (loading) return;
@@ -93,18 +109,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       onClose?.(); reset();
       navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard");
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      const code = typeof detail === "object" ? detail?.code : null;
-      const message = typeof detail === "object" ? detail?.message : detail;
-      if (code === "EMAIL_NOT_VERIFIED") {
-        setSuccessMsg(message || "Verifica tu correo antes de iniciar sesión.");
-      } else if (code === "USER_NOT_FOUND") {
-        setNotice({ kind: "register", message: message || "No existe una cuenta con este email. Crea una cuenta para continuar." });
-      } else if (code === "USE_GOOGLE_LOGIN") {
-        setNotice({ kind: "google", message: message || "Esta cuenta fue creada con Google." });
-      } else {
-        toast.error(typeof message === "string" ? message : "Error de autenticación");
-      }
+      handleAuthError(err);
     } finally { setLoading(false); }
   };
 

@@ -358,30 +358,13 @@ async def set_my_phone(payload: PhoneSetPayload, request: Request):
     return {"ok": True, "phone": phone, "phone_verified": False}
 
 
-# ===== iter23 — Blocked contacts (anti-scam blocklist) =====
-class BlockedContactPayload(BaseModel):
-    phone: Optional[str] = Field(None, max_length=20)
-    email: Optional[EmailStr] = None
-    name: Optional[str] = Field(None, max_length=120)  # iter28 — display name of scammer (optional)
-    reason: str = Field(..., min_length=3, max_length=500)
-    notes: Optional[str] = Field(None, max_length=2000)
+# ============== BLOCKLIST ROUTES MOVED ==============
+# Blocked-contacts CRUD + bulk-import + verify-phone + reject-phone moved to
+# routes/blocklist.py during iter30 refactor.
+# `_assert_account_active` stays in this file because it's used by orders /
+# withdrawals / redemptions (not just by the blocklist module).
+# ====================================================
 
-
-# iter28 — gate management of the blocklist + manual phone verify/reject behind a
-# granular permission. Admins always pass; employees need can_manage_blocklist=True.
-async def _assert_can_manage_blocklist(actor: dict):
-    if actor.get("role") == "admin":
-        return
-    if actor.get("role") == "employee" and actor.get("can_manage_blocklist"):
-        return
-    raise HTTPException(
-        status_code=403,
-        detail="No tienes permiso para gestionar la lista de bloqueos. Pídeselo a un administrador.",
-    )
-
-
-# iter28 — every client-facing operation (orders, withdrawals, redemptions) calls this.
-# Staff (employee/admin) bypass; under_review/blocked clients are rejected.
 async def _assert_account_active(user: dict):
     if user.get("role") in ("admin", "employee"):
         return
@@ -404,287 +387,6 @@ async def _assert_account_active(user: dict):
             "message": "Tu cuenta está bloqueada. Si crees que es un error, contacta a soporte.",
         },
     )
-
-
-@api_router.get("/admin/blocked-contacts")
-async def list_blocked_contacts(request: Request, q: Optional[str] = None,
-                                 limit: int = 100, skip: int = 0):
-    actor = await require_staff(request)
-    await _assert_can_manage_blocklist(actor)
-    query: dict = {}
-    if q:
-        rx = {"$regex": re.escape(q), "$options": "i"}
-        query = {"$or": [{"phone": rx}, {"email": rx}, {"name": rx}, {"reason": rx}, {"notes": rx}]}
-    total = await db.blocked_contacts.count_documents(query)
-    cursor = db.blocked_contacts.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
-    items = await cursor.to_list(length=limit)
-    return {"items": items, "total": total}
-
-
-@api_router.post("/admin/blocked-contacts")
-async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
-    actor = await require_staff(request)
-    await _assert_can_manage_blocklist(actor)
-    phone = normalize_phone(payload.phone) if payload.phone else None
-    email = payload.email.lower().strip() if payload.email else None
-    if not phone and not email:
-        raise HTTPException(status_code=422, detail="Debes proporcionar teléfono y/o email")
-    # Deduplicate: don't allow same (phone OR email) twice
-    or_clauses = []
-    if phone: or_clauses.append({"phone": phone})
-    if email: or_clauses.append({"email": email})
-    existing = await db.blocked_contacts.find_one({"$or": or_clauses}, {"_id": 0})
-    if existing:
-        raise HTTPException(status_code=409, detail="Este contacto ya está bloqueado")
-    doc = {
-        "id": uuid.uuid4().hex,
-        "phone": phone,
-        "email": email,
-        "name": (payload.name or "").strip() or None,
-        "reason": payload.reason.strip(),
-        "notes": (payload.notes or "").strip(),
-        "created_at": iso(now_utc()),
-        "created_by": actor["user_id"],
-        "created_by_email": actor.get("email", ""),
-    }
-    await db.blocked_contacts.insert_one(doc)
-    await log_action(db, actor, "blocked_contact.add", "blocked_contact", doc["id"],
-                     summary=f"Bloqueó contacto (phone={phone or '-'}, email={email or '-'})",
-                     details={"phone": phone, "email": email, "reason": payload.reason})
-    doc.pop("_id", None)
-    return doc
-
-
-@api_router.delete("/admin/blocked-contacts/{contact_id}")
-async def remove_blocked_contact(contact_id: str, request: Request):
-    actor = await require_staff(request)
-    await _assert_can_manage_blocklist(actor)
-    target = await db.blocked_contacts.find_one({"id": contact_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Contacto bloqueado no encontrado")
-    await db.blocked_contacts.delete_one({"id": contact_id})
-    await log_action(db, actor, "blocked_contact.remove", "blocked_contact", contact_id,
-                     summary=f"Desbloqueó contacto (phone={target.get('phone') or '-'}, email={target.get('email') or '-'})",
-                     details=target)
-    return {"ok": True}
-
-
-# ===== iter28 — Bulk import from WhatsApp scammer chat =====
-# Accepts free-form text (typically pasted from a WhatsApp chat) and detects
-# "blocks": a header line (scammer name/title) followed by one or more E.164
-# phone lines, followed by reason/note lines (often starting with 📌 or similar).
-# Empty lines separate blocks. The parser tolerates emoji, spaces, dashes, etc.
-PHONE_DETECT_RE = re.compile(r"\+[1-9][\d\-\s\(\)\.]{7,18}")
-
-
-def _parse_whatsapp_blocklist(text: str):
-    """Return a list of {phone, name, reason} entries parsed from a WhatsApp-style block list.
-
-    Strategy:
-    - Split on blank lines into blocks.
-    - Inside each block, the FIRST non-phone, non-empty line is treated as the scammer
-      'name/title' (e.g. "Estafador ❌️", or "Juan Pérez").
-    - Every line that contains an E.164 phone match is captured as a phone.
-    - Every other non-empty line after the first phone is concatenated into 'reason'
-      (newline-joined). Lines before the first phone (other than the name line) are
-      also appended to the reason.
-    - Decorative lines like just an emoji or a row of dashes are skipped.
-    """
-    entries = []
-    blocks = re.split(r"\n\s*\n", text.strip())
-    for raw_block in blocks:
-        lines = [ln.strip() for ln in raw_block.splitlines() if ln.strip()]
-        if not lines:
-            continue
-        phones, name, reason_lines = [], None, []
-        for ln in lines:
-            phone_matches = PHONE_DETECT_RE.findall(ln)
-            if phone_matches:
-                # Treat first match as the phone of this line; ignore extras (rare)
-                cleaned = re.sub(r"[\s\-\(\)\.]", "", phone_matches[0])
-                phones.append(cleaned)
-                continue
-            # Skip lines that are only emoji / arrows / dashes / bullets
-            if re.fullmatch(r"[\W_]+", ln):
-                continue
-            if name is None:
-                name = ln.lstrip("📌•·-—*").strip()
-            else:
-                reason_lines.append(ln.lstrip("📌•·-—*").strip())
-        # Ignore blocks with no phone
-        if not phones:
-            continue
-        reason = "\n".join(reason_lines).strip() or (name or "Importado de lista")
-        # Mirror name across all phones in this block
-        for p in phones:
-            entries.append({"phone": p, "name": name, "reason": reason})
-    return entries
-
-
-class BulkImportPayload(BaseModel):
-    text: str = Field(..., min_length=1, max_length=200_000)
-
-
-@api_router.post("/admin/blocked-contacts/bulk-import")
-async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Request):
-    """Import a pasted WhatsApp-style block list. Returns counts + errors so the UI
-    can show a clear report (imported / skipped duplicates / invalid)."""
-    actor = await require_staff(request)
-    await _assert_can_manage_blocklist(actor)
-    parsed = _parse_whatsapp_blocklist(payload.text)
-    imported, skipped_duplicates, invalid = [], [], []
-    for entry in parsed:
-        raw_phone = entry["phone"]
-        try:
-            phone = normalize_phone(raw_phone)
-        except HTTPException:
-            invalid.append({"phone": raw_phone, "reason": "Formato de teléfono inválido"})
-            continue
-        if await db.blocked_contacts.find_one({"phone": phone}, {"_id": 0}):
-            skipped_duplicates.append(phone)
-            continue
-        doc = {
-            "id": uuid.uuid4().hex,
-            "phone": phone,
-            "email": None,
-            "name": entry.get("name"),
-            "reason": entry.get("reason") or "Importado de lista",
-            "notes": "",
-            "created_at": iso(now_utc()),
-            "created_by": actor["user_id"],
-            "created_by_email": actor.get("email", ""),
-            "source": "bulk_import",
-        }
-        await db.blocked_contacts.insert_one(doc)
-        imported.append(phone)
-    # iter28 — once contacts are bulk-imported, immediately freeze any active
-    # client account whose phone matches the new blocklist (so an already-registered
-    # scammer can't operate until staff manually re-verifies).
-    affected_users = 0
-    if imported:
-        res = await db.users.update_many(
-            {"phone": {"$in": imported}, "role": {"$in": ["normal", "vip"]}},
-            {"$set": {"account_status": "under_review", "phone_verified": False}},
-        )
-        affected_users = res.modified_count
-    await log_action(
-        db, actor, "blocked_contact.bulk_import", "blocked_contact", "bulk",
-        summary=f"Importó {len(imported)} contactos bloqueados (saltó {len(skipped_duplicates)} duplicados, {len(invalid)} inválidos, {affected_users} cuentas activas pasaron a revisión)",
-        details={"imported_count": len(imported), "skipped_count": len(skipped_duplicates),
-                 "invalid_count": len(invalid), "affected_active_accounts": affected_users},
-    )
-    return {
-        "ok": True,
-        "imported": imported,
-        "imported_count": len(imported),
-        "skipped_duplicates": skipped_duplicates,
-        "skipped_count": len(skipped_duplicates),
-        "invalid": invalid,
-        "invalid_count": len(invalid),
-        "affected_active_accounts": affected_users,
-    }
-
-
-@api_router.post("/admin/users/{user_id}/verify-phone")
-async def admin_verify_user_phone(user_id: str, request: Request):
-    """Mark a user's phone as verified. Staff confirms manually (e.g. by calling them).
-    Unlocks withdrawals AND moves the account to 'active' so the user can operate.
-    Requires the can_manage_blocklist permission (or admin role)."""
-    requester = await require_staff(request)
-    await _assert_can_manage_blocklist(requester)
-    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    await _enforce_totp_step_up(requester, payload.get("totp_code"), action_label="verificar teléfono manualmente")
-    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not target.get("phone"):
-        raise HTTPException(status_code=400, detail="El usuario aún no ha proporcionado un teléfono")
-    # iter28 — refuse to verify if the phone is on the blocklist
-    blocked = await db.blocked_contacts.find_one({"phone": target["phone"]}, {"_id": 0})
-    if blocked:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "PHONE_IS_BLOCKED",
-                "message": f"Este número está en la lista de bloqueados (motivo: {blocked.get('reason', 'sin motivo')}). No se puede verificar.",
-                "blocked_entry": blocked,
-            },
-        )
-    if target.get("phone_verified") and target.get("account_status") == "active":
-        return {"ok": True, "already_verified": True, "user": target}
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {"phone_verified": True, "account_status": "active"}},
-    )
-    fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    # iter29 — notify the user their account is now active
-    try:
-        from routes.notifications import notify_user_phone_verified
-        await notify_user_phone_verified(fresh)
-    except Exception as e:
-        logger.error(f"verify-phone notify failed: {e}")
-    await log_action(db, requester, "user.verify_phone_manual", "user", user_id,
-                     summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
-                     details={"email": target.get("email"), "phone": target.get("phone")})
-    return {"ok": True, "already_verified": False, "user": fresh}
-
-
-# iter28 — reject phone: blocklist the number + keep account under review.
-class RejectPhonePayload(BaseModel):
-    reason: str = Field(..., min_length=3, max_length=500)
-    notes: Optional[str] = Field(None, max_length=2000)
-    totp_code: Optional[str] = Field(None, max_length=11)
-
-
-@api_router.post("/admin/users/{user_id}/reject-phone")
-async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, request: Request):
-    """Staff rejects a user's phone (scammer detected). Adds the number to the
-    blocklist and keeps the user 'under_review' so they cannot operate. Requires
-    can_manage_blocklist + TOTP step-up."""
-    requester = await require_staff(request)
-    await _assert_can_manage_blocklist(requester)
-    await _enforce_totp_step_up(requester, payload.totp_code, action_label="rechazar teléfono y bloquear")
-    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    phone = target.get("phone")
-    if not phone:
-        raise HTTPException(status_code=400, detail="El usuario aún no ha proporcionado un teléfono")
-    # Add to blocklist (idempotent)
-    existing = await db.blocked_contacts.find_one({"phone": phone}, {"_id": 0})
-    if not existing:
-        doc = {
-            "id": uuid.uuid4().hex,
-            "phone": phone,
-            "email": target.get("email"),
-            "name": target.get("name"),
-            "reason": payload.reason.strip(),
-            "notes": (payload.notes or "").strip(),
-            "created_at": iso(now_utc()),
-            "created_by": requester["user_id"],
-            "created_by_email": requester.get("email", ""),
-            "source": "phone_reject",
-        }
-        await db.blocked_contacts.insert_one(doc)
-    # Move account to under_review (operations blocked); keep phone_verified=False
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {"phone_verified": False, "account_status": "under_review"}},
-    )
-    fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    # iter29 — notify the user their verification was rejected
-    try:
-        from routes.notifications import notify_user_phone_rejected
-        await notify_user_phone_rejected(fresh, payload.reason.strip())
-    except Exception as e:
-        logger.error(f"reject-phone notify failed: {e}")
-    await log_action(
-        db, requester, "user.reject_phone", "user", user_id,
-        summary=f"Rechazó teléfono y bloqueó a {target.get('email','')} ({phone})",
-        details={"phone": phone, "reason": payload.reason},
-    )
-    return {"ok": True, "user": fresh}
-
 
 # ===== iter24 — Defensive Mode =====
 # A single document in `system_config` collection: {key: "defensive_mode", enabled: bool, reason, enabled_at, enabled_by}
@@ -863,18 +565,29 @@ async def delete_rate(rate_id: str, request: Request):
 async def create_order(payload: OrderCreate, request: Request):
     user = await require_user(request)
     await _assert_account_active(user)  # iter28 — block scammers / under-review users
-    rate_doc = await db.rates.find_one({"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0})
+    rate, rate_doc = await _resolve_order_rate(payload.from_code, payload.to_code, user)
+    order = _build_order_from_payload(payload, user, rate)
+    await db.orders.insert_one(order.model_dump())
+    await _maybe_flag_defensive_margin(order)
+    await _dispatch_new_order_alerts(order, user)
+    return await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
+
+
+async def _resolve_order_rate(from_code: str, to_code: str, user: dict):
+    """Look up the active rate and pick vip vs normal. Returns (rate, rate_doc)."""
+    rate_doc = await db.rates.find_one({"from_code": from_code, "to_code": to_code}, {"_id": 0})
     if not rate_doc:
         raise HTTPException(status_code=400, detail="Tasa de cambio no disponible para ese par")
     is_vip = user["role"] in ("vip", "admin")
-    rate = rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"]
-    # iter19: commission removed. Differentiation by status now lives entirely in rate_normal vs rate_vip
-    # (admins set both rates in /admin/rates). New orders carry commission_percent = 0.0; existing
-    # historical orders keep their original 5% value untouched.
+    return rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"], rate_doc
+
+
+def _build_order_from_payload(payload, user: dict, rate: float) -> "Order":
+    """iter19: commission removed. New orders carry commission_percent=0.0;
+    historical orders keep their original 5% value untouched."""
     commission = 0.0
-    gross = payload.amount_from * rate
-    amount_to = gross * (1 - commission / 100)
-    order = Order(
+    amount_to = round(payload.amount_from * rate * (1 - commission / 100), 4)
+    return Order(
         user_id=user["user_id"],
         user_email=user["email"],
         user_name=user["name"],
@@ -882,7 +595,7 @@ async def create_order(payload: OrderCreate, request: Request):
         from_code=payload.from_code,
         to_code=payload.to_code,
         amount_from=payload.amount_from,
-        amount_to=round(amount_to, 4),
+        amount_to=amount_to,
         rate_applied=rate,
         commission_percent=commission,
         delivery_method=payload.delivery_method,
@@ -890,24 +603,31 @@ async def create_order(payload: OrderCreate, request: Request):
         sender_name=payload.sender_name,
         proof_image=payload.proof_image,
     )
-    await db.orders.insert_one(order.model_dump())
-    # Defensive mode: if profit pct below configured threshold, mark for double approval
+
+
+async def _maybe_flag_defensive_margin(order: "Order") -> None:
+    """If profit pct is below the configured defensive margin, flag the order for
+    double approval. Best-effort — never raises."""
     try:
         rate_doc = await db.rates.find_one(
             {"from_code": order.from_code, "to_code": order.to_code}, {"_id": 0}
         )
         settings_doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
         defensive_pct = settings_doc.get("defensive_margin_pct") if settings_doc else None
-        if defensive_pct is not None and rate_doc and rate_doc.get("real_rate"):
-            p = await _compute_order_profit(order.model_dump(), rate_doc)
-            if p and p["pct"] < float(defensive_pct):
-                await db.orders.update_one(
-                    {"id": order.id},
-                    {"$set": {"status": "requires_double_approval"}}
-                )
+        if defensive_pct is None or not rate_doc or not rate_doc.get("real_rate"):
+            return
+        p = await _compute_order_profit(order.model_dump(), rate_doc)
+        if p and p["pct"] < float(defensive_pct):
+            await db.orders.update_one(
+                {"id": order.id}, {"$set": {"status": "requires_double_approval"}}
+            )
     except Exception as e:
         logger.error(f"Defensive mode check failed: {e}")
-    # Notify admins of new order (push + email)
+
+
+async def _dispatch_new_order_alerts(order: "Order", user: dict) -> None:
+    """Notify all admins of the new order + raise a negative-margin alert if applicable.
+    Best-effort — each side effect is isolated so one failure doesn't block the others."""
     try:
         await notify_all_admins(
             db,
@@ -917,12 +637,10 @@ async def create_order(payload: OrderCreate, request: Request):
         )
     except Exception as e:
         logger.error(f"Admin notify (new order) failed: {e}")
-    # Negative margin alert
     try:
         await _check_negative_margin_alert(order.model_dump())
     except Exception as e:
         logger.error(f"Negative margin check failed: {e}")
-    return await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
 
 
 async def _check_negative_margin_alert(order: dict):
@@ -1063,17 +781,14 @@ async def _send_client_order_push(order: dict, new_status: str):
         logger.error(f"Push notification failed: {e}")
 
 
-@api_router.put("/admin/orders/{order_id}/status")
-async def update_order_status(order_id: str, payload: dict, request: Request):
-    actor = await require_staff(request)
-    new_status = payload.get("status")
-    note = payload.get("admin_note", "")
-    if new_status not in ("approved", "rejected", "completed", "pending", "requires_double_approval"):
-        raise HTTPException(status_code=400, detail="status inválido")
-    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
-    if not order:
-        raise HTTPException(status_code=404, detail="Orden no encontrada")
-    # iter14: once an order is confirmed (approved), only an admin can change its status
+_VALID_ORDER_STATUSES = {"approved", "rejected", "completed", "pending", "requires_double_approval"}
+
+
+async def _authorize_status_transition(actor: dict, order: dict, new_status: str,
+                                         totp_code: Optional[str]) -> None:
+    """Enforce all permission + scope + 2FA rules before mutating the order.
+    Raises HTTPException on rejection."""
+    # iter14: once approved, only admin can modify the status
     if (order.get("status") == "approved"
             and new_status != "approved"
             and actor.get("role") != "admin"):
@@ -1083,39 +798,56 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
         )
     # iter14: employee currency scope — only act on orders touching authorized currencies
     _enforce_employee_currency_scope(actor, order["from_code"], order["to_code"])
-    # Defensive: only admin can approve orders that require double-approval
-    if (order.get("status") == "requires_double_approval"
-            and new_status == "approved"
-            and actor.get("role") != "admin"):
-        raise HTTPException(status_code=403, detail="Solo un admin puede aprobar órdenes con margen bajo")
-    # 2FA step-up: approving a requires_double_approval order is high-risk
+    # Defensive: only admin can approve requires_double_approval; high-risk so step-up TOTP
     if order.get("status") == "requires_double_approval" and new_status == "approved":
-        await _enforce_totp_step_up(actor, payload.get("totp_code"),
-                                    action_label="aprobar orden con margen bajo")
+        if actor.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo un admin puede aprobar órdenes con margen bajo")
+        await _enforce_totp_step_up(actor, totp_code,
+                                     action_label="aprobar orden con margen bajo")
 
-    await db.orders.update_one(
-        {"id": order_id},
-        {"$set": {"status": new_status, "admin_note": note, "updated_at": iso(now_utc())}}
-    )
 
-    is_first_approval = new_status == "approved" and order["status"] != "approved"
-    if (is_first_approval
-            and order["delivery_method"] == "accumulate"):
+async def _run_post_status_side_effects(order: dict, new_status: str, prev_status: str) -> None:
+    """Apply balance accumulation and notifications after a status change.
+    Each side effect is wrapped so one failure doesn't block the others."""
+    is_first_approval = new_status == "approved" and prev_status != "approved"
+    if is_first_approval and order["delivery_method"] == "accumulate":
         # iter14: normal users may also accumulate balance (no longer VIP-only)
         await _accumulate_vip_balance(order)
         if order["user_role"] in ("vip", "admin"):
             await _check_vip_threshold_alert(order)
-
-    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
-    if new_status in ("approved", "rejected") and order["status"] != new_status:
+    if new_status in ("approved", "rejected") and prev_status != new_status:
         target_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
         if target_user:
-            await _send_client_order_email(updated, new_status, target_user)
-            await _send_client_order_push(updated, new_status)
-    await log_action(db, actor, f"order.{new_status}", "order", order_id,
-                     summary=f"Orden {order['from_code']}→{order['to_code']} {new_status}",
-                     details={"prev": order["status"], "new": new_status, "note": note,
-                              "amount_from": order["amount_from"], "amount_to": order["amount_to"]})
+            await _send_client_order_email(order, new_status, target_user)
+            await _send_client_order_push(order, new_status)
+
+
+@api_router.put("/admin/orders/{order_id}/status")
+async def update_order_status(order_id: str, payload: dict, request: Request):
+    actor = await require_staff(request)
+    new_status = payload.get("status")
+    note = payload.get("admin_note", "")
+    if new_status not in _VALID_ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail="status inválido")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    await _authorize_status_transition(actor, order, new_status, payload.get("totp_code"))
+
+    prev_status = order["status"]
+    await db.orders.update_one(
+        {"id": order_id},
+        {"$set": {"status": new_status, "admin_note": note, "updated_at": iso(now_utc())}},
+    )
+    updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    await _run_post_status_side_effects(updated, new_status, prev_status)
+
+    await log_action(
+        db, actor, f"order.{new_status}", "order", order_id,
+        summary=f"Orden {order['from_code']}→{order['to_code']} {new_status}",
+        details={"prev": prev_status, "new": new_status, "note": note,
+                  "amount_from": order["amount_from"], "amount_to": order["amount_to"]},
+    )
     return updated
 
 # ============== PRODUCTS ==============
@@ -2868,8 +2600,10 @@ async def root():
 # Modular routers (extracted from server.py during iter27 refactor)
 from routes.auth import router as auth_router  # noqa: E402
 from routes.notifications import router as notifications_router  # noqa: E402
+from routes.blocklist import router as blocklist_router  # noqa: E402
 api_router.include_router(auth_router)
 api_router.include_router(notifications_router)
+api_router.include_router(blocklist_router)
 
 app.include_router(api_router)
 
