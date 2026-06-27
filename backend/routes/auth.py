@@ -45,7 +45,7 @@ import email_service
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=["Auth"])
 
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -246,9 +246,8 @@ async def google_callback(request: Request, code: Optional[str] = None,
     else:
         await assert_not_blocked(email=email)
         # iter24 — block new account creation in defensive mode (existing users still log in)
-        # Lazy import avoids circular dep with server.py
-        from server import _assert_not_defensive
-        await _assert_not_defensive("nuevos registros")
+        from services.balances import assert_not_defensive
+        await assert_not_defensive("nuevos registros")
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         role = "admin" if email in ADMIN_EMAILS else "normal"
         if await db.users.count_documents({}) == 0:
@@ -309,8 +308,8 @@ async def auth_register(payload: AuthRegisterPayload, response: Response):
     email = payload.email.lower().strip()
     phone = normalize_phone(payload.phone)
     # iter24 — block new registrations entirely when in defensive mode
-    from server import _assert_not_defensive
-    await _assert_not_defensive("nuevos registros")
+    from services.balances import assert_not_defensive
+    await assert_not_defensive("nuevos registros")
     # iter23 — block scammers by email or phone
     await assert_not_blocked(email=email, phone=phone)
     existing = await db.users.find_one({"email": email}, {"_id": 0})

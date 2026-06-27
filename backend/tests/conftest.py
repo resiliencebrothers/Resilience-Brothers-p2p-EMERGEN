@@ -41,6 +41,41 @@ def tokens():
     }
 
 
+# ---------- Session seeding (iter33) ----------
+# The integration tests use Bearer tokens against locally seeded `user_sessions`.
+# Some flows (logout, auth refactor) delete sessions, so we re-seed at the start
+# of every test FUNCTION to keep the suite self-sufficient end-to-end.
+
+def _seed_test_sessions():
+    from datetime import datetime, timezone, timedelta
+    from pymongo import MongoClient as _MC
+    db = _MC(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    exp = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    sessions = [
+        (ADMIN_TOKEN, "user_test_admin01"),
+        (EMPLOYEE_TOKEN, "user_test_employee01"),
+        (VIP_TOKEN, "user_test_vip01"),
+        (NORMAL_TOKEN, "user_test_normal01"),
+    ]
+    for tok, uid in sessions:
+        db.user_sessions.update_one(
+            {"session_token": tok},
+            {"$set": {"session_token": tok, "user_id": uid, "expires_at": exp}},
+            upsert=True,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _autoseed_sessions():
+    """Re-seed the four test sessions before every test so logout-style flows
+    don't break sibling tests that share the module."""
+    try:
+        _seed_test_sessions()
+    except Exception:
+        pass
+    yield
+
+
 # ---------- 2FA helpers (iter13) ----------
 # These ensure the VIP test user has TOTP enabled so existing withdrawal tests
 # can pass through the step-up gate. Returns a callable that produces fresh codes.

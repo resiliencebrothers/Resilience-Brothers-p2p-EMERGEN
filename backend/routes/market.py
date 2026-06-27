@@ -33,7 +33,7 @@ from audit_log import log_action
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=["Market"])
 
 
 # ============================================================
@@ -195,21 +195,21 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
 
 async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]):
     """When the real_rate of a pair changes, fan out a warning if any pending
-    orders for that pair would now generate a loss. Lazy-imports the helpers
-    from server.py to avoid circular dependency at module load."""
+    orders for that pair would now generate a loss."""
     if not fresh or fresh.get("real_rate") is None:
         return
     old_rr = old.get("real_rate") if old else None
     if fresh.get("real_rate") == old_rr:
         return
-    from server import _compute_order_profit, notify_all_admins
+    from services.orders_helpers import compute_order_profit
+    from admin_alerts import notify_all_admins
     pending = await db.orders.find(
         {"from_code": fresh["from_code"], "to_code": fresh["to_code"], "status": "pending"},
         {"_id": 0},
     ).to_list(500)
     losers, total_loss = [], 0.0
     for o in pending:
-        p = await _compute_order_profit(o, fresh)
+        p = await compute_order_profit(o, fresh)
         if p and p["amount"] < 0:
             losers.append(o)
             total_loss += abs(p["amount"])

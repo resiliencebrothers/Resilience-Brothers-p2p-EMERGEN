@@ -1,0 +1,37 @@
+{
+  "summary": "Iter33 server.py refactor (server.py: 2316 -> 92 lines; /me/*, /orders/*, /vip/*, /admin/* extracted into routes/ + services/) verified by running the full backend pytest suite plus targeted public-ingress smoke tests. 373 passed, 2 skipped, 15 failed - every failure matches the pre-existing list the main agent flagged (14 in test_iter16_email_auth.py register-without-phone, 1 in test_marketplace_profit_and_margin.py 5% commission). Zero new regressions caused by the refactor. OpenAPI exposes exactly 80 paths with the 9 required tags (Auth, Me, Orders, Admin, Market, Blocklist, Notifications, Push, System) and zero untagged operations. Public ingress smoke-tested for /api, /api/system/defensive-mode, /api/me/2fa/status, /api/admin/queue, /api/orders/mine, /api/vip/balances - all 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_iter16_email_auth.py", "issue": "14 tests fail because the test fixture registers users without the phone field that iter23 made mandatory. PRE-EXISTING - unrelated to this refactor. Stale tests need updating."},
+      {"endpoint": "tests/test_marketplace_profit_and_margin.py::test_alert_when_real_rate_makes_loss", "issue": "Expects amount_to=36100 (5% commission removed in iter19). Actual=38000. PRE-EXISTING stale test."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/pytest/iter20_regression.xml",
+    "/app/backend/tests/"
+  ],
+  "action_items": [
+    "(Optional, NOT required by this refactor) Update test_iter16_email_auth.py to include the now-mandatory phone field on register payloads.",
+    "(Optional) Update test_marketplace_profit_and_margin.py::test_alert_when_real_rate_makes_loss to use the post-iter19 no-commission expected amount (38000)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now a clean 92-line composition root - good separation of concerns.",
+    "All 9 OpenAPI tags are applied across all 80 paths; no untagged operations - consistent and discoverable.",
+    "Public ingress reaches every relocated router segment (/me, /orders, /vip, /admin, /system) without 404, confirming router registration in server.py is correct.",
+    "Pre-existing failing tests should be modernised in a separate cleanup iteration so the suite returns to a 100% green baseline."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "96.1% (373/388 effective; 100% if pre-existing stale tests excluded)", "frontend": "N/A - backend-only request"},
+  "test_credentials": "Used in-test session tokens from conftest autouse fixture: admin/employee/vip/normal Bearer tokens (test_session_*). No new seed data created.",
+  "seed_data_creation": "None - relied on existing conftest _autoseed_sessions fixture.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Refactor is regression-clean. The only failing tests are the documented pre-existing stale tests (test_iter16_email_auth phone field, test_marketplace_profit_and_margin 5% commission). If they are ever modernised, expect the suite to hit 100%. test_totp_2fa.py passes in isolation; 2 skips in the full-suite run are unrelated. OpenAPI snapshot: 80 paths, 9 tags, 0 untagged.",
+  "rca of the issue": "No new issues. All observed failures reproduce on a checkout-only of the prior baseline and stem from (a) iter23 making phone mandatory while iter16 tests never registered with phone, and (b) iter19 removing the 5% commission while one marketplace test still asserts the old amount."
+}
