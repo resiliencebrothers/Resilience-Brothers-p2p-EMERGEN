@@ -48,6 +48,7 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Despliegue: app live en `https://p2p.resiliencebrothers.com` (subdominio dedicado, dominio raíz reservado para otra app del usuario). **(Feb 17, 2026)**
 - Registro de Transacciones (contabilidad): `sender_name` obligatorio en órdenes + `beneficiary_name` obligatorio en retiros VIP. Nueva sección `/admin/transactions` (admin-only) muestra entradas + salidas con totales por moneda (in/out/neto). Filtros: dirección, moneda, titular (search), rango de fechas. Exports CSV (UTF-8 BOM) y PDF branded reusando ReportLab. **(Feb 17, 2026 — iter11)**
 - Modal de detalle en Transacciones: rows clickeables abren Dialog con datos completos + comprobante de transferencia (imagen base64) descargable para entradas; mensaje contextual para salidas. **(Feb 18, 2026 — iter11)**
+- **Refactor monolito → modular (iter27 → iter33)**. `server.py` pasó de 2316 líneas a **92 líneas** (solo bootstrap + CORS + scheduler). Routers extraídos: `routes/auth.py`, `routes/notifications.py`, `routes/blocklist.py`, `routes/market.py`, `routes/push.py`, `routes/me.py`, `routes/orders.py`, `routes/admin.py`. Helpers compartidos en `services/balances.py`, `services/orders_helpers.py`, `services/transactions.py`. OpenAPI ahora expone **80 paths con 9 tags** (Auth, Me, Orders, Admin, Market, Blocklist, Notifications, Push, System) — Swagger UI navegable. Conftest `_autoseed_sessions` re-siembra las 4 sesiones de prueba antes de cada test → suite auto-suficiente. Testing agent confirmó cero regresiones (373 passed; 15 failures pre-existentes, ajenas al refactor). **(Feb 27, 2026 — iter33)**
 - Filtros de monto (mín/máx) en Transacciones: validación servidor (rechazo de negativos y `min > max` con HTTP 400), propagación a CSV y PDF. Botón "Ir a Órdenes / Ir a Retiros VIP" en el modal para navegar a la sección original. **(Feb 18, 2026 — iter11)**
 - Acceso ampliado a Transacciones: **empleados** ahora ven `/admin/transactions` (admin + employee = staff). Nuevo `/dashboard/transactions` para **VIPs y clientes normales** con `GET /api/me/transactions` que aísla por user_id, exports CSV/PDF propios. Nav "Mi Historial" en Dashboard mobile + desktop. **(Feb 18, 2026 — iter12)**
 - 2FA / TOTP step-up para retiros: secretos cifrados con Fernet (TOTP_MASTER_KEY env var), 10 códigos de recuperación bcrypt-hashed de un solo uso. Endpoints `/api/me/2fa/{status,setup,verify-setup,disable,regenerate-recovery-codes}`. Tolerancia ±1 step (30s clock drift). Página `/dashboard/security` con QR + secret manual + códigos de recuperación. Withdrawals obligan 2FA: 412 si no configurado (con `setup_url`), 401 si código inválido. Recovery codes consumibles también funcionan. **(Feb 18, 2026 — iter13)**
@@ -79,14 +80,13 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Search + pagination in admin tables (audit, orders, users) when data grows.
 - Visual highlight (red tint) of negative-profit cards on AdminRevenue.
 - Add `<th>Real</th>` column in AdminRates table (data already exposed via GET /api/rates).
-- Move `_assert_not_defensive` from `server.py` to a small `system_state.py` module to eliminate the 2 lazy `from server import` calls inside `routes/auth.py`.
 
 ### P2
 - Sentry / error monitoring integration.
 - Real crypto wallet integration (on-chain USDT/BTC verification).
 - Stripe / Zelle webhooks for auto-confirmation.
 - Replace base64 proof storage with Emergent Object Storage.
-- Auto-seed dev session tokens (`test_session_admin_X`, `_employee_X`, `_vip_X`, `_normal_X`) in `conftest.py` so iter20+ tests no longer require manual user_sessions insertion.
+- Modernize stale tests: `test_iter16_email_auth.py` (add mandatory `phone` field added in iter23) + `test_marketplace_profit_and_margin.py::test_alert_when_real_rate_makes_loss` (drop 5% commission removed in iter19). Pre-existing failures called out by the iter33 testing agent.
 - Reject-phone analytics: count of users currently under_review, scammers blocked per week, false-positive rate (admin un-blocked / total blocks).
 - Self-service appeal flow: under_review users can submit an "I'm not a scammer" form that lands in a staff queue.
 - POST /admin/blocked-contacts → status_code=201 + add `VerifyPhonePayload(BaseModel)` for OpenAPI/consistency (code-review notes from iter30).
@@ -96,7 +96,11 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 See `/app/memory/test_credentials.md` and `/app/auth_testing.md`.
 
 ## Key Files
-- `/app/backend/server.py` — All API routes + models.
+- `/app/backend/server.py` — Slim 92-line bootstrap (CORS, router includes, scheduler hooks).
+- `/app/backend/routes/` — `auth`, `me`, `orders`, `admin`, `market`, `blocklist`, `notifications`, `push` (one APIRouter per domain, all with OpenAPI tags).
+- `/app/backend/services/` — Shared business helpers: `balances` (rates / USDT conversion / defensive mode), `orders_helpers` (order workflow), `transactions` (registry + audit dates).
+- `/app/backend/auth_utils.py` — Auth + session + TOTP step-up helpers.
+- `/app/backend/db_client.py` — Single Mongo client + DB handle.
 - `/app/frontend/src/App.js` — Router + AuthCallback gate.
 - `/app/frontend/src/pages/Landing.jsx` — Public landing.
 - `/app/frontend/src/pages/Dashboard.jsx` — Client shell + nav.
