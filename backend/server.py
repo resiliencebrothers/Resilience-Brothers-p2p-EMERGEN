@@ -1246,68 +1246,7 @@ async def update_admin_settings(payload: AdminSettings, request: Request):
 
 # ============== PUSH NOTIFICATIONS ==============
 
-class PushSubscriptionCreate(BaseModel):
-    subscription: dict  # browser PushSubscription JSON
-    user_agent: Optional[str] = ""
-
-
-@api_router.get("/push/vapid-public-key")
-async def push_vapid_public_key():
-    return {"key": VAPID_PUBLIC_KEY}
-
-
-@api_router.post("/push/subscribe")
-async def push_subscribe(payload: PushSubscriptionCreate, request: Request):
-    user = await require_user(request)
-    endpoint = (payload.subscription or {}).get("endpoint", "")
-    if not endpoint:
-        raise HTTPException(status_code=400, detail="Subscription inválida")
-    # Upsert by endpoint to avoid duplicates
-    await db.push_subscriptions.update_one(
-        {"endpoint": endpoint},
-        {"$set": {
-            "id": str(uuid.uuid4()),
-            "user_id": user["user_id"],
-            "endpoint": endpoint,
-            "subscription": payload.subscription,
-            "user_agent": payload.user_agent or "",
-            "created_at": iso(now_utc()),
-        }},
-        upsert=True,
-    )
-    return {"ok": True}
-
-
-@api_router.post("/push/unsubscribe")
-async def push_unsubscribe(payload: dict, request: Request):
-    user = await require_user(request)
-    endpoint = payload.get("endpoint", "")
-    if not endpoint:
-        raise HTTPException(status_code=400, detail="endpoint requerido")
-    await db.push_subscriptions.delete_one({"endpoint": endpoint, "user_id": user["user_id"]})
-    return {"ok": True}
-
-
-@api_router.post("/push/test")
-async def push_test(request: Request):
-    """Send a test push to the current user's devices (helps the user verify it works)."""
-    user = await require_user(request)
-    subs = await db.push_subscriptions.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(50)
-    if not subs:
-        raise HTTPException(status_code=404, detail="No tienes dispositivos suscritos")
-    payload = {
-        "title": "Resilience Brothers",
-        "body": "Notificaciones activadas correctamente ✓",
-        "icon": "/icons/icon-192.png",
-        "badge": "/icons/icon-192.png",
-        "tag": "test-notification",
-        "url": "/dashboard",
-    }
-    delivered = 0
-    for s in subs:
-        if send_push(s["subscription"], payload) == "ok":
-            delivered += 1
-    return {"delivered": delivered, "total": len(subs)}
+# Push subscription endpoints + PushSubscriptionCreate model moved to routes/push.py during iter32.
 
 
 # ============== AUDIT LOG (ADMIN ONLY) ==============
