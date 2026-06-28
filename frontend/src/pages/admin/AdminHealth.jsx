@@ -64,6 +64,7 @@ export default function AdminHealth() {
     load();
     const id = setInterval(load, 60_000); // auto-refresh cada minuto
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading && !data) {
