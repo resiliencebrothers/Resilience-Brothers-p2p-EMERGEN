@@ -36,6 +36,11 @@ from routes.push import router as push_router  # noqa: E402
 from routes.me import router as me_router  # noqa: E402
 from routes.orders import router as orders_router  # noqa: E402
 from routes.admin import router as admin_router, build_revenue_timeseries  # noqa: E402
+from routes.admin_withdrawals import router as admin_withdrawals_router  # noqa: E402
+from routes.admin_users import router as admin_users_router  # noqa: E402
+from routes.admin_audit import router as admin_audit_router  # noqa: E402
+from routes.admin_company_funds import router as admin_company_funds_router  # noqa: E402
+from routes.admin_revenue import router as admin_revenue_router  # noqa: E402
 from routes.files import router as files_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
@@ -67,6 +72,11 @@ api_router.include_router(push_router)
 api_router.include_router(me_router)
 api_router.include_router(orders_router)
 api_router.include_router(admin_router)
+api_router.include_router(admin_withdrawals_router)
+api_router.include_router(admin_users_router)
+api_router.include_router(admin_audit_router)
+api_router.include_router(admin_company_funds_router)
+api_router.include_router(admin_revenue_router)
 api_router.include_router(files_router)
 
 app.include_router(api_router)

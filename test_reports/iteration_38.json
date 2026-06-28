@@ -1,0 +1,32 @@
+{
+  "summary": "Iter38 — End-to-end verification of P1+P2 (Opción A) backend & frontend split. Backend: full pytest suite 472 passed + 2 skipped (zero regressions vs iter25 baseline). New focused suite test_iter38_admin_split.py (19/19 passed) hits every endpoint owned by the 5 new admin sub-routers (admin_withdrawals, admin_users, admin_audit, admin_company_funds, admin_revenue) plus the slim admin.py — all 200 with valid JSON/PDF/CSV. Frontend: all 4 split pages render identically — EmailAuthDialog (Login + Register modes + password mismatch + Google + keep-session 24h), AdminTransactions (totals cards, 7 filters, CSV/PDF, 9-column table with 51 rows), AdminUsers (search, role filter, 8-column table with 20 results, Verificar/Rechazar/En Revisión badges), AdminRevenue (4 BigStat cards, banner tasas faltantes, 2 RoleCards, 4 tables, period dropdown). RejectPhoneDialog confirmed: Continuar disabled <3 chars, enabled at 16 chars. All sub-component data-testid attrs (revenue-period, revenue-daily-card, daily-range, daily-rows, revenue-monthly-card, monthly-rows, export-csv-2026-06, email-auth-dialog, hero-email-btn, admin-nav-*, etc.) preserved verbatim.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter38_admin_split.py",
+    "/app/test_reports/pytest/iter38_admin_split.xml",
+    "/app/test_reports/pytest/iter38_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Split is clean: server.py imports 5 new routers explicitly with noqa:E402, build_revenue_timeseries re-exported from admin.py for backward-compat. No circular imports, no shared mutable state.",
+    "admin.py is now 538 lines (was 1247) — well within the 700-line ceiling flagged in iter25. The other 5 files are 98-299 lines each.",
+    "Frontend sub-components live under semantic dirs (pages/admin/{transactions,users,revenue}/ + components/auth/) — natural mental model for future contributors.",
+    "All 17 new sub-components keep the original parent's data-testid naming (e.g. revenue-monthly-card, daily-rows, export-csv-YYYY-MM, hero-email-btn, email-auth-dialog) — testing agents and Playwright suites need ZERO updates.",
+    "PRE-EXISTING (not introduced by this split): _refund_balance_on_reject still credits amount_usd verbatim into vip_balances.{currency} for non-USD currencies — flagged in iter25, intentionally preserved.",
+    "PRE-EXISTING: admin_revenue.py still awaits compute_order_profit in a python loop — acceptable for current scale, candidate for batch precompute later."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter38_admin_split.py (new, 19 tests, 5s runtime)"
+  ],
+  "success_rate": {
+    "backend": "100% (472/472 full regression + 19/19 new split coverage)",
+    "frontend": "100% (4 split pages × all flows verified: EmailAuthDialog login/register/mismatch, AdminTransactions cards+filters+table, AdminUsers table+RejectPhoneDialog disabled-state, AdminRevenue 4 cards + 4 tables + period selector)"
+  },
+  "test_credentials": "Cookie session_token=test_session_admin_X (seeded by conftest._autoseed_sessions for user_test_admin01, role=admin). TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP.",
+  "seed_data_creation": "None — used the existing autouse session seeds. All HTTP calls go through preview ingress (REACT_APP_BACKEND_URL) so testing reflects exactly what the user sees.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend P1+P2 router split is fully covered: test_iter38_admin_split.py (19 endpoint smoke tests, ~5s) + test_refactor_regression_iter25.py (16 deep-branch tests) together pin every admin endpoint contract. Frontend P2 component split: every sub-component renders, data-testid names preserved (verified live). EmailAuthDialog opens directly from landing's hero-email-btn (the only entry point, no intermediate 'Iniciar con email' step in current flow — that label was the dialog header, not a separate button). For the AdminTransactions row→modal flow, the table needs ~1500ms after navigation before /api/admin/transactions data lands (use networkidle + 1500ms wait OR wait for table tbody tr count > 0). Role-change TOTP step-up was not exercised end-to-end (would need to actually trigger the role change and assert the TotpPrompt opens) but the wiring is intact: 20 role selects render in the users table; cancel-on-TOTP path is covered by test_totp_2fa.py at the API layer.",
+  "rca of the issue": "No issues. The 1247→538 line backend split + 4-file frontend split into 17 sub-components is behavior-identical: same routes, same status codes, same JSON shapes, same data-testid names, same validation rules, same toasts, same TOTP step-up triggers. Full backend regression (472 tests) is green; new endpoint coverage (19 tests) is green; live frontend renders all 4 split pages with all sub-components wired."
+}

@@ -1,51 +1,57 @@
-"""Admin router — iter33. Houses every `/admin/*` endpoint (orders/redemptions/
-withdrawals management, settings, defensive mode, queue, users, audit log,
-transactions registry, revenue reports, company funds tracker, marketplace
-seed, platform stats).
+"""Admin router — core operations.
 
-This file is intentionally large because it mirrors the admin domain. Shared
-helpers live in services/* so they can be unit-tested independently.
+After the iter39 split this file owns only the cross-cutting admin endpoints:
+- Defensive mode (public read + admin toggle)
+- Orders / redemptions admin (list + status transitions)
+- Platform stats + health summary
+- Admin settings (vip threshold, defensive margin, ops notifications email)
+- Transactions registry + CSV/PDF exports
+- Staff queue
+- Seed bootstrap
+
+Domain-specific sub-routers live in:
+- routes/admin_withdrawals.py
+- routes/admin_users.py
+- routes/admin_audit.py
+- routes/admin_company_funds.py
+- routes/admin_revenue.py     (also exposes `build_revenue_timeseries`)
 """
 import csv
 import io
-import json as _json
 import logging
 import os
-import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from io import BytesIO
-from typing import Dict, List, Literal, Optional
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from db_client import db
 from auth_utils import (
     require_admin, require_staff,
     now_utc, iso,
-    _enforce_employee_currency_scope, _enforce_totp_step_up,
+    _enforce_totp_step_up,
 )
 from audit_log import log_action
-from audit_pdf import generate_audit_pdf
 from transactions_pdf import generate_transactions_pdf
-from revenue_report import build_buckets, revenue_monthly_csv, revenue_monthly_pdf
-import email_service
 
 from services.balances import (
     build_rate_lookup, convert_to_usdt,
     get_defensive_mode, DEFENSIVE_MODE_KEY,
 )
 from services.orders_helpers import (
-    VALID_ORDER_STATUSES, compute_order_profit,
+    VALID_ORDER_STATUSES,
     authorize_status_transition, run_post_status_side_effects,
 )
 from services.transactions import (
     build_transactions, compute_transaction_totals,
-    build_audit_query, fetch_audit_entries,
 )
-from services.proof_upload import maybe_upload_proof
 from services.health import build_health_summary
+
+# Re-export so legacy importers (server.py startup wrapper) keep working.
+from routes.admin_revenue import build_revenue_timeseries  # noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -55,19 +61,6 @@ router = APIRouter(tags=["Admin"])
 # ============================================================
 # Pydantic models
 # ============================================================
-
-class UserUpdate(BaseModel):
-    role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
-    vip_balance_usd: Optional[float] = None
-    vip_balances: Optional[Dict[str, float]] = None
-    allowed_currencies: Optional[List[str]] = None
-    can_edit_product_prices: Optional[bool] = None
-    can_upload_product_images: Optional[bool] = None
-    can_delete_products: Optional[bool] = None
-    can_manage_blocklist: Optional[bool] = None
-    account_status: Optional[Literal["active", "under_review", "blocked"]] = None
-    totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
-
 
 class AdminSettings(BaseModel):
     vip_threshold_usdt: float = Field(default=5000.0, ge=0)
@@ -83,32 +76,6 @@ class AdminSettings(BaseModel):
 class DefensiveModePayload(BaseModel):
     enabled: bool
     reason: Optional[str] = Field(None, max_length=500)
-    totp_code: Optional[str] = Field(None, max_length=11)
-
-
-class CompanyWithdrawal(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    amount: float
-    currency: str
-    beneficiary: str
-    authorized_by_id: str
-    authorized_by_name: str
-    authorized_by_email: str
-    concept: str = ""
-    invoice_image: str = ""
-    note: str = ""
-    status: Literal["pending", "approved", "paid", "rejected"] = "pending"
-    created_at: str = Field(default_factory=lambda: iso(now_utc()))
-
-
-class CompanyWithdrawalCreate(BaseModel):
-    amount: float = Field(..., gt=0)
-    currency: str
-    beneficiary: str = Field(..., min_length=2)
-    concept: str = ""
-    invoice_image: str = ""
-    note: str = ""
     totp_code: Optional[str] = Field(None, max_length=11)
 
 
@@ -257,109 +224,6 @@ async def update_redemption(rid: str, payload: dict, request: Request):
 
 
 # ============================================================
-# Withdrawals — admin listing + status transitions
-# ============================================================
-
-@router.get("/admin/withdrawals")
-async def all_withdrawals(request: Request,
-                          status: Optional[str] = None,
-                          user_q: Optional[str] = None,
-                          currency: Optional[str] = None):
-    actor = await require_staff(request)
-    q = {}
-    if status:
-        q["status"] = status
-    if currency:
-        q["currency"] = currency.upper()
-    if user_q:
-        rx = {"$regex": user_q, "$options": "i"}
-        q["$or"] = [{"user_name": rx}, {"user_email": rx}]
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed:
-            if "currency" in q:
-                if q["currency"] not in allowed:
-                    return []
-            else:
-                q["currency"] = {"$in": allowed}
-    docs = await db.withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return docs
-
-
-def _assert_paid_lock(actor: dict, withdrawal: dict, new_status: str) -> None:
-    """Block non-admins from un-marking an already-paid withdrawal."""
-    if (withdrawal["status"] == "paid"
-            and new_status != "paid"
-            and actor.get("role") != "admin"):
-        raise HTTPException(
-            status_code=403,
-            detail="Este retiro ya fue entregado. Solo un admin puede modificarlo.",
-        )
-
-
-async def _refund_balance_on_reject(withdrawal: dict, new_status: str) -> None:
-    """Restore the VIP balance when a withdrawal moves into 'rejected'."""
-    if new_status != "rejected" or withdrawal["status"] == "rejected":
-        return
-    refund_currency = withdrawal.get("currency", "USD")
-    await db.users.update_one(
-        {"user_id": withdrawal["user_id"]},
-        {"$inc": {f"vip_balances.{refund_currency}": withdrawal["amount_usd"]}},
-    )
-
-
-def _collect_payout_evidence(payload: dict, update_doc: dict) -> None:
-    """Persist optional payout proof image + tx hash on the update document."""
-    proof = payload.get("payout_proof_image")
-    if proof:
-        update_doc["payout_proof_image"] = maybe_upload_proof(proof, "withdrawals") or proof
-    tx_hash = payload.get("payout_tx_hash")
-    if tx_hash:
-        update_doc["payout_tx_hash"] = tx_hash
-
-
-def _validate_paid_evidence(withdrawal: dict, update_doc: dict, new_status: str) -> None:
-    """When marking as paid, ensure the required payout artefact is present."""
-    if new_status != "paid" or withdrawal["status"] == "paid":
-        return
-    method = withdrawal.get("method")
-    existing_proof = withdrawal.get("payout_proof_image") or update_doc.get("payout_proof_image")
-    if method == "transfer" and not existing_proof:
-        raise HTTPException(
-            status_code=400,
-            detail="Adjunta la captura de la transferencia realizada al cliente antes de marcar como entregado",
-        )
-    if method == "crypto":
-        existing_hash = withdrawal.get("payout_tx_hash") or update_doc.get("payout_tx_hash")
-        if not existing_hash and not existing_proof:
-            raise HTTPException(
-                status_code=400,
-                detail="Adjunta hash de transacción y/o captura del envío antes de marcar como entregado",
-            )
-
-
-@router.put("/admin/withdrawals/{wid}/status")
-async def update_withdrawal(wid: str, payload: dict, request: Request):
-    actor = await require_staff(request)
-    new_status = payload.get("status")
-    if new_status not in ("approved", "paid", "rejected", "pending"):
-        raise HTTPException(status_code=400, detail="status inválido")
-    await _enforce_totp_step_up(actor, payload.get("totp_code"),
-                                 action_label="gestionar retiro")
-    w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
-    if not w:
-        raise HTTPException(status_code=404, detail="No encontrado")
-    _assert_paid_lock(actor, w, new_status)
-    _enforce_employee_currency_scope(actor, w.get("currency"))
-    await _refund_balance_on_reject(w, new_status)
-    update_doc = {"status": new_status, "admin_note": payload.get("admin_note", "")}
-    _collect_payout_evidence(payload, update_doc)
-    _validate_paid_evidence(w, update_doc, new_status)
-    await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
-    return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
-
-
-# ============================================================
 # Platform stats
 # ============================================================
 
@@ -491,87 +355,6 @@ async def update_admin_settings(payload: AdminSettings, request: Request):
 
 
 # ============================================================
-# Audit log
-# ============================================================
-
-@router.get("/admin/audit")
-async def list_audit_log(request: Request, limit: int = 100, offset: int = 0,
-                         action: Optional[str] = None, actor_id: Optional[str] = None,
-                         since: Optional[str] = None, until: Optional[str] = None):
-    await require_admin(request)
-    q = build_audit_query(action, actor_id, since, until)
-    limit = max(1, min(limit, 500))
-    offset = max(0, offset)
-    total = await db.audit_log.count_documents(q)
-    docs = await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
-    return JSONResponse(
-        content=docs,
-        headers={
-            "X-Total-Count": str(total),
-            "X-Offset": str(offset),
-            "X-Limit": str(limit),
-            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
-        },
-    )
-
-
-@router.get("/admin/audit/export.csv")
-async def export_audit_csv(request: Request, action: Optional[str] = None,
-                           actor_id: Optional[str] = None,
-                           since: Optional[str] = None, until: Optional[str] = None,
-                           limit: int = 5000):
-    await require_admin(request)
-    entries = await fetch_audit_entries(action, actor_id, since, until, limit)
-    text_buf = io.StringIO()
-    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
-    writer.writerow(["created_at", "actor_id", "actor_email", "actor_name", "actor_role",
-                     "action", "entity_type", "entity_id", "summary", "details"])
-    for e in entries:
-        writer.writerow([
-            e.get("created_at", ""),
-            e.get("actor_id", ""),
-            e.get("actor_email", ""),
-            e.get("actor_name", ""),
-            e.get("actor_role", ""),
-            e.get("action", ""),
-            e.get("entity_type", ""),
-            e.get("entity_id", ""),
-            e.get("summary", ""),
-            _json.dumps(e.get("details") or {}, ensure_ascii=False),
-        ])
-    buf = BytesIO()
-    buf.write(text_buf.getvalue().encode("utf-8-sig"))
-    buf.seek(0)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    filename = f"audit_log_{ts}.csv"
-    return StreamingResponse(
-        buf,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/admin/audit/export.pdf")
-async def export_audit_pdf(request: Request, action: Optional[str] = None,
-                           actor_id: Optional[str] = None,
-                           since: Optional[str] = None, until: Optional[str] = None,
-                           limit: int = 2000):
-    await require_admin(request)
-    entries = await fetch_audit_entries(action, actor_id, since, until, limit)
-    pdf_bytes = generate_audit_pdf(
-        entries,
-        {"action": action, "actor_id": actor_id, "since": since, "until": until},
-    )
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    filename = f"audit_log_{ts}.pdf"
-    return StreamingResponse(
-        BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-# ============================================================
 # Transactions registry (admin view)
 # ============================================================
 
@@ -692,425 +475,6 @@ async def export_transactions_pdf(request: Request,
 
 
 # ============================================================
-# Revenue (admin only)
-# ============================================================
-
-async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
-    """Profit from delivered redemptions: total_usd - cost_usd. USD ≈ USDT for simplicity."""
-    q = {"status": "delivered"}
-    if days and days > 0:
-        cutoff = (now_utc() - timedelta(days=days)).isoformat()
-        q["created_at"] = {"$gte": cutoff}
-    rows = await db.redemptions.find(q, {"_id": 0}).to_list(5000)
-    total_revenue = 0.0
-    total_cost = 0.0
-    by_product: dict = {}
-    for r in rows:
-        rev = float(r.get("total_usd") or 0.0)
-        cost = float(r.get("cost_usd") or 0.0)
-        total_revenue += rev
-        total_cost += cost
-        key = r.get("product_name", "—")
-        if key not in by_product:
-            by_product[key] = {
-                "product": key, "units": 0, "revenue_usd": 0.0,
-                "cost_usd": 0.0, "profit_usd": 0.0, "redemptions": 0,
-            }
-        bp = by_product[key]
-        bp["units"] += int(r.get("quantity") or 0)
-        bp["revenue_usd"] += rev
-        bp["cost_usd"] += cost
-        bp["profit_usd"] += (rev - cost)
-        bp["redemptions"] += 1
-    items = []
-    for v in by_product.values():
-        v["revenue_usd"] = round(v["revenue_usd"], 2)
-        v["cost_usd"] = round(v["cost_usd"], 2)
-        v["profit_usd"] = round(v["profit_usd"], 2)
-        v["margin_pct"] = round((v["profit_usd"] / v["revenue_usd"] * 100), 2) if v["revenue_usd"] > 0 else 0.0
-        items.append(v)
-    items.sort(key=lambda x: -x["profit_usd"])
-    return {
-        "total_revenue_usd": round(total_revenue, 2),
-        "total_cost_usd": round(total_cost, 2),
-        "total_profit_usd": round(total_revenue - total_cost, 2),
-        "items": items,
-        "deliveries": len(rows),
-    }
-
-
-def _new_pair_bucket(o: dict, rate_doc: dict) -> dict:
-    return {
-        "pair": f"{o['from_code']}→{o['to_code']}",
-        "from_code": o["from_code"],
-        "to_code": o["to_code"],
-        "orders": 0,
-        "volume_from": 0.0,
-        "volume_to": 0.0,
-        "profit_to": 0.0,
-        "profit_usdt": 0.0,
-        "real_rate": rate_doc.get("real_rate"),
-        "rate_normal": rate_doc.get("rate_normal"),
-        "rate_vip": rate_doc.get("rate_vip"),
-        "avg_profit_pct": 0.0,
-    }
-
-
-def _role_bucket_for(order: dict) -> str:
-    return "vip" if order.get("user_role") in ("vip", "admin") else "normal"
-
-
-async def _accumulate_revenue_order(
-    o: dict, rate_doc: dict, fx: dict,
-    by_pair: dict, by_role: dict, missing: set,
-) -> tuple[float, float | None]:
-    """Mutate by_pair/by_role with this order. Returns (volume_usdt, profit_usdt|None)."""
-    profit = await compute_order_profit(o, rate_doc)
-    volume_usdt = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
-    role = _role_bucket_for(o)
-    by_role[role]["orders"] += 1
-    by_role[role]["volume_usdt"] += volume_usdt
-
-    if profit is None:
-        missing.add(f"{o['from_code']}→{o['to_code']}")
-        return volume_usdt, None
-
-    profit_usdt = convert_to_usdt(profit["amount"], profit["currency"], fx) or 0.0
-    by_role[role]["profit_usdt"] += profit_usdt
-
-    key = f"{o['from_code']}→{o['to_code']}"
-    bucket = by_pair.setdefault(key, _new_pair_bucket(o, rate_doc))
-    bucket["orders"] += 1
-    bucket["volume_from"] += o["amount_from"]
-    bucket["volume_to"] += o["amount_to"]
-    bucket["profit_to"] += profit["amount"]
-    bucket["profit_usdt"] += profit_usdt
-    return volume_usdt, profit_usdt
-
-
-def _finalize_pair_items(by_pair: dict) -> list:
-    items = []
-    for b in by_pair.values():
-        if b["volume_to"] > 0 and b["real_rate"]:
-            real_value = b["volume_from"] * float(b["real_rate"])
-            b["avg_profit_pct"] = (
-                round((real_value - b["volume_to"]) / real_value * 100, 3)
-                if real_value > 0 else 0.0
-            )
-        b["profit_to"] = round(b["profit_to"], 4)
-        b["profit_usdt"] = round(b["profit_usdt"], 4)
-        items.append(b)
-    items.sort(key=lambda x: -x["profit_usdt"])
-    return items
-
-
-@router.get("/admin/revenue")
-async def admin_revenue(request: Request, days: Optional[int] = None):
-    await require_admin(request)
-    q = {"status": {"$in": ["approved", "completed"]}}
-    if days and days > 0:
-        cutoff = (now_utc() - timedelta(days=days)).isoformat()
-        q["updated_at"] = {"$gte": cutoff}
-
-    orders = await db.orders.find(q, {"_id": 0}).to_list(5000)
-    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
-    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
-    fx = await build_rate_lookup()
-
-    by_pair: dict = {}
-    by_role = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
-               "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
-    missing_rate_pairs: set = set()
-    total_profit_usdt = 0.0
-    total_volume_usdt = 0.0
-
-    for o in orders:
-        rate_doc = rate_by_pair.get((o["from_code"], o["to_code"]))
-        vol, prof = await _accumulate_revenue_order(
-            o, rate_doc, fx, by_pair, by_role, missing_rate_pairs,
-        )
-        total_volume_usdt += vol
-        if prof is not None:
-            total_profit_usdt += prof
-
-    pair_items = _finalize_pair_items(by_pair)
-
-    for r in by_role.values():
-        r["profit_usdt"] = round(r["profit_usdt"], 4)
-        r["volume_usdt"] = round(r["volume_usdt"], 4)
-
-    marketplace = await _compute_marketplace_revenue(days)
-
-    return {
-        "total_profit_usdt": round(total_profit_usdt + marketplace["total_profit_usd"], 4),
-        "p2p_profit_usdt": round(total_profit_usdt, 4),
-        "marketplace_profit_usdt": round(marketplace["total_profit_usd"], 4),
-        "total_volume_usdt": round(total_volume_usdt, 4),
-        "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
-        "by_pair": pair_items,
-        "by_role": by_role,
-        "marketplace": marketplace,
-        "missing_real_rate_pairs": sorted(missing_rate_pairs),
-        "orders_total": len(orders),
-    }
-
-
-async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
-                                    year: Optional[int] = None, month: Optional[int] = None):
-    """Build per-day or per-month buckets for the admin revenue dashboard.
-
-    Filters:
-      - `days`: restrict to last N days (preferred for daily charts).
-      - `year`/`month`: restrict to a specific calendar month (used for the monthly export).
-    """
-    order_q: dict = {"status": {"$in": ["approved", "completed"]}}
-    redemption_q: dict = {"status": "delivered"}
-
-    if year and month:
-        start = datetime(year, month, 1, tzinfo=timezone.utc)
-        end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-               if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
-        order_q["updated_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
-        redemption_q["created_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
-    elif days and days > 0:
-        cutoff = (now_utc() - timedelta(days=days)).isoformat()
-        order_q["updated_at"] = {"$gte": cutoff}
-        redemption_q["created_at"] = {"$gte": cutoff}
-
-    orders = await db.orders.find(order_q, {"_id": 0}).to_list(5000)
-    redemptions = await db.redemptions.find(redemption_q, {"_id": 0}).to_list(5000)
-    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
-    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
-    fx = await build_rate_lookup()
-
-    profit_map: dict = {}
-    for o in orders:
-        o["_volume_usdt"] = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
-        rate_doc = rate_by_pair.get((o["from_code"], o["to_code"]))
-        prof = await compute_order_profit(o, rate_doc)
-        if prof is None:
-            continue
-        prof_usdt = convert_to_usdt(prof["amount"], prof["currency"], fx) or 0.0
-        profit_map[o["id"]] = prof_usdt
-
-    return build_buckets(orders, redemptions, profit_map, granularity)
-
-
-@router.get("/admin/revenue/timeseries")
-async def admin_revenue_timeseries(request: Request, granularity: str = "day",
-                                     days: Optional[int] = None):
-    await require_admin(request)
-    if granularity not in ("day", "month"):
-        raise HTTPException(status_code=400, detail="granularity inválida (day|month)")
-    rows = await build_revenue_timeseries(granularity, days=days)
-    return {"granularity": granularity, "rows": rows}
-
-
-@router.get("/admin/revenue/monthly/export")
-async def admin_revenue_monthly_export(request: Request, year: int, month: int,
-                                          format: str = "csv"):
-    """Export the daily breakdown of a calendar month as CSV or PDF."""
-    await require_admin(request)
-    if month < 1 or month > 12:
-        raise HTTPException(status_code=400, detail="mes inválido")
-    if format not in ("csv", "pdf"):
-        raise HTTPException(status_code=400, detail="formato inválido (csv|pdf)")
-
-    rows = await build_revenue_timeseries("day", year=year, month=month)
-    rows_asc = sorted(rows, key=lambda x: x["bucket"])
-    period_label = f"{year}-{month:02d}"
-
-    if format == "csv":
-        payload = revenue_monthly_csv(rows_asc, period_label)
-        headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.csv"'}
-        return Response(content=payload, media_type="text/csv; charset=utf-8", headers=headers)
-
-    totals = {
-        "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
-        "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
-        "total": sum(r["total_profit_usdt"] for r in rows_asc),
-        "volume": sum(r["volume_usdt"] for r in rows_asc),
-        "orders": sum(r["orders"] for r in rows_asc),
-    }
-    payload = revenue_monthly_pdf(rows_asc, period_label, totals)
-    headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.pdf"'}
-    return Response(content=payload, media_type="application/pdf", headers=headers)
-
-
-@router.post("/admin/revenue/monthly/send-now")
-async def admin_revenue_send_now(payload: dict, request: Request):
-    """Manually trigger the monthly revenue email."""
-    actor = await require_admin(request)
-    await _enforce_totp_step_up(actor, payload.get("totp_code"),
-                                 action_label="enviar reporte mensual")
-    year = int(payload.get("year") or 0)
-    month = int(payload.get("month") or 0)
-    if month < 1 or month > 12 or year < 2020:
-        raise HTTPException(status_code=400, detail="año/mes inválido")
-    rows = await build_revenue_timeseries("day", year=year, month=month)
-    rows_asc = sorted(rows, key=lambda x: x["bucket"])
-    totals = {
-        "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
-        "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
-        "total": sum(r["total_profit_usdt"] for r in rows_asc),
-        "volume": sum(r["volume_usdt"] for r in rows_asc),
-        "orders": sum(r["orders"] for r in rows_asc),
-    }
-    pdf_bytes = revenue_monthly_pdf(rows_asc, f"{year}-{month:02d}", totals)
-    from admin_alerts import resolve_admin_email_recipients
-    recipients = await resolve_admin_email_recipients(db)
-    sent = 0
-    for to_addr in recipients:
-        if email_service.notify_monthly_revenue(
-            to_addr, f"{year}-{month:02d}", totals, pdf_bytes
-        ):
-            sent += 1
-    return {"ok": True, "sent": sent, "total_admins": len(recipients),
-            "period": f"{year}-{month:02d}"}
-
-
-# ============================================================
-# Company funds (working capital)
-# ============================================================
-
-async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict]:
-    """Per-currency platform working-capital balance.
-
-    balance[c] = inflows_from_confirmed_orders[c]
-                - outflows_to_clients_paid[c]
-                - outflows_company_paid[c]
-    `scope` (currency codes) optionally restricts the returned list.
-    """
-    inflow: dict = {}
-    async for o in db.orders.find(
-        {"status": {"$in": ["approved", "completed"]}},
-        {"_id": 0, "from_code": 1, "amount_from": 1},
-    ):
-        c = o.get("from_code")
-        if c:
-            inflow[c] = inflow.get(c, 0.0) + float(o.get("amount_from") or 0.0)
-
-    out_clients: dict = {}
-    async for w in db.withdrawals.find(
-        {"status": "paid"}, {"_id": 0, "currency": 1, "amount_usd": 1}
-    ):
-        c = w.get("currency") or "USD"
-        out_clients[c] = out_clients.get(c, 0.0) + float(w.get("amount_usd") or 0.0)
-
-    out_company: dict = {}
-    async for cw in db.company_withdrawals.find(
-        {"status": "paid"}, {"_id": 0, "currency": 1, "amount": 1}
-    ):
-        c = cw.get("currency")
-        if c:
-            out_company[c] = out_company.get(c, 0.0) + float(cw.get("amount") or 0.0)
-
-    codes = set(inflow) | set(out_clients) | set(out_company)
-    rows = []
-    for c in sorted(codes):
-        if scope and c not in scope:
-            continue
-        rows.append({
-            "currency": c,
-            "inflow": round(inflow.get(c, 0.0), 4),
-            "outflow_clients": round(out_clients.get(c, 0.0), 4),
-            "outflow_company": round(out_company.get(c, 0.0), 4),
-            "balance": round(inflow.get(c, 0.0) - out_clients.get(c, 0.0) - out_company.get(c, 0.0), 4),
-        })
-    return rows
-
-
-@router.get("/admin/company-funds")
-async def admin_company_funds(request: Request):
-    actor = await require_staff(request)
-    scope = None
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed:
-            scope = allowed
-    return await _compute_company_funds(scope)
-
-
-@router.post("/admin/company-withdrawals")
-async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: Request):
-    actor = await require_staff(request)
-    currency = payload.currency.upper()
-    _enforce_employee_currency_scope(actor, currency)
-    await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
-    funds = await _compute_company_funds([currency])
-    avail = next((f["balance"] for f in funds if f["currency"] == currency), 0.0)
-    if payload.amount > avail:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Fondo insuficiente en {currency}: disponible {avail:.2f}",
-        )
-    cw = CompanyWithdrawal(
-        amount=payload.amount,
-        currency=currency,
-        beneficiary=payload.beneficiary,
-        authorized_by_id=actor["user_id"],
-        authorized_by_name=actor.get("name", ""),
-        authorized_by_email=actor.get("email", ""),
-        concept=payload.concept,
-        invoice_image=(maybe_upload_proof(payload.invoice_image, "company_invoices")
-                        or payload.invoice_image),
-        note=payload.note,
-    )
-    await db.company_withdrawals.insert_one(cw.model_dump())
-    await log_action(db, actor, "company_withdrawal.create", "company_withdrawal", cw.id,
-                     summary=f"Retiro fondo {currency} {payload.amount} → {payload.beneficiary}",
-                     details={"currency": currency, "amount": payload.amount,
-                              "beneficiary": payload.beneficiary})
-    return cw.model_dump()
-
-
-@router.get("/admin/company-withdrawals")
-async def list_company_withdrawals(request: Request,
-                                     status: Optional[str] = None,
-                                     currency: Optional[str] = None):
-    actor = await require_staff(request)
-    q = {}
-    if status:
-        q["status"] = status
-    if currency:
-        q["currency"] = currency.upper()
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed:
-            if "currency" in q and q["currency"] not in allowed:
-                return []
-            elif "currency" not in q:
-                q["currency"] = {"$in": allowed}
-    docs = await db.company_withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return docs
-
-
-@router.put("/admin/company-withdrawals/{cwid}/status")
-async def update_company_withdrawal(cwid: str, payload: dict, request: Request):
-    """Only admin can change status (approve/pay/reject). Staff with scope creates only."""
-    actor = await require_admin(request)
-    new_status = payload.get("status")
-    if new_status not in ("approved", "paid", "rejected"):
-        raise HTTPException(status_code=400, detail="status inválido")
-    await _enforce_totp_step_up(actor, payload.get("totp_code"),
-                                 action_label="actualizar retiro de fondo")
-    cw = await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
-    if not cw:
-        raise HTTPException(status_code=404, detail="No encontrado")
-    if cw["status"] == "paid" and new_status != "paid":
-        raise HTTPException(status_code=403, detail="Ya fue pagado, no se puede revertir")
-    update_doc = {"status": new_status}
-    note = payload.get("note")
-    if note is not None:
-        update_doc["admin_note"] = note
-    await db.company_withdrawals.update_one({"id": cwid}, {"$set": update_doc})
-    await log_action(db, actor, "company_withdrawal.status", "company_withdrawal", cwid,
-                     summary=f"Retiro fondo {cw['currency']} {cw['amount']} → {new_status}",
-                     details={"from": cw["status"], "to": new_status})
-    return await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
-
-
-# ============================================================
 # Staff queue
 # ============================================================
 
@@ -1129,79 +493,6 @@ async def staff_queue(request: Request):
     withdrawals = await db.withdrawals.find(wd_q, {"_id": 0}).sort("created_at", -1).to_list(500)
     return {"orders": orders, "withdrawals": withdrawals,
             "counts": {"orders": len(orders), "withdrawals": len(withdrawals)}}
-
-
-# ============================================================
-# Users management
-# ============================================================
-
-@router.get("/admin/users")
-async def list_users(request: Request, q: Optional[str] = None,
-                     role: Optional[str] = None,
-                     limit: int = 1000, offset: int = 0):
-    await require_staff(request)
-    mongo_q = {}
-    if q:
-        rx = {"$regex": q, "$options": "i"}
-        mongo_q["$or"] = [{"name": rx}, {"email": rx}]
-    if role and role in ("normal", "vip", "employee", "admin"):
-        mongo_q["role"] = role
-    limit = max(1, min(limit, 1000))
-    offset = max(0, offset)
-    total = await db.users.count_documents(mongo_q)
-    docs = await db.users.find(mongo_q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
-    return JSONResponse(
-        content=docs,
-        headers={
-            "X-Total-Count": str(total),
-            "X-Offset": str(offset),
-            "X-Limit": str(limit),
-            "Access-Control-Expose-Headers": "X-Total-Count, X-Offset, X-Limit",
-        },
-    )
-
-
-@router.put("/admin/users/{user_id}")
-async def update_user(user_id: str, payload: UserUpdate, request: Request):
-    requester = await require_staff(request)
-    await _enforce_totp_step_up(requester, payload.totp_code, action_label="actualizar usuario")
-    update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
-    if not update:
-        raise HTTPException(status_code=400, detail="Nada para actualizar")
-    if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
-        raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
-    old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    await db.users.update_one({"user_id": user_id}, {"$set": update})
-    new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    await log_action(db, requester, "user.update", "user", user_id,
-                     summary=f"Usuario {new_user.get('email', '')} actualizado",
-                     details={"changes": update,
-                              "prev_role": old_user.get("role") if old_user else None})
-    return new_user
-
-
-@router.post("/admin/users/{user_id}/verify-email")
-async def admin_verify_user_email(user_id: str, request: Request):
-    """Manually mark a user's email as verified. Requires staff role + 2FA step-up."""
-    requester = await require_staff(request)
-    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    await _enforce_totp_step_up(requester, payload.get("totp_code"),
-                                 action_label="verificar email manualmente")
-    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if target.get("email_verified"):
-        return {"ok": True, "already_verified": True, "user": target}
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {"email_verified": True},
-         "$unset": {"verification_token": "", "verification_expires_at": ""}},
-    )
-    fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    await log_action(db, requester, "user.verify_email_manual", "user", user_id,
-                     summary=f"Email verificado manualmente para {target.get('email', '')}",
-                     details={"email": target.get("email")})
-    return {"ok": True, "already_verified": False, "user": fresh}
 
 
 # ============================================================

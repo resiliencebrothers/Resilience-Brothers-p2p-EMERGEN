@@ -5,11 +5,31 @@ import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Mail, Lock, User as UserIcon, Eye, EyeOff, Phone } from "lucide-react";
 import { toast } from "sonner";
+
+import { AuthSuccessPanel } from "./auth/AuthSuccessPanel";
+import { GoogleAuthButton } from "./auth/GoogleAuthButton";
+import { AuthNotice } from "./auth/AuthNotice";
+import { AuthCredentialsFields } from "./auth/AuthCredentialsFields";
+
+const TITLES = {
+  register: "Crear cuenta",
+  forgot: "Recuperar contraseña",
+  login: "Iniciar con email",
+};
+
+const DESCRIPTIONS = {
+  register: "¿Aún no tienes cuenta en Resilience? Regístrate con tu email.",
+  forgot: "Te enviaremos un enlace para crear una nueva contraseña.",
+  login: "Acceso con email y contraseña.",
+};
+
+const SUBMIT_LABELS = {
+  register: "Crear cuenta",
+  forgot: "Enviar enlace",
+  login: "Iniciar sesión",
+};
 
 export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const navigate = useNavigate();
@@ -20,15 +40,18 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");  // iter23 — required for new registrations (E.164)
+  const [phone, setPhone] = useState("");
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [successMsg, setSuccessMsg] = useState(""); // post-register / forgot confirmation
+  const [successMsg, setSuccessMsg] = useState("");
   const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
+  const [resending, setResending] = useState(false);
   const nameInputRef = useRef(null);
 
   const reset = () => {
-    setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false); setName(""); setPhone(""); setRemember24h(false); setLoading(false); setSuccessMsg(""); setNotice(null); setMode("login");
+    setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false);
+    setName(""); setPhone(""); setRemember24h(false); setLoading(false);
+    setSuccessMsg(""); setNotice(null); setMode("login");
   };
 
   // When the dialog opens with a prefilled email (from the verify-email flow),
@@ -42,8 +65,6 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     }
   }, [open, initialEmail]);
 
-  const [resending, setResending] = useState(false);
-
   const handleResendVerification = async () => {
     const target = email.trim();
     if (!target) {
@@ -54,7 +75,10 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     setResending(true);
     try {
       const r = await axios.post(`${API}/auth/resend-verification`, { email: target });
-      toast.success(r.data?.message || "Si la cuenta existe y no está verificada, te reenviamos el correo.", { duration: 6000 });
+      toast.success(
+        r.data?.message || "Si la cuenta existe y no está verificada, te reenviamos el correo.",
+        { duration: 6000 }
+      );
     } catch (err) {
       const detail = err.response?.data?.detail;
       const msg = typeof detail === "string" ? detail : "No pudimos reenviar el correo. Intenta de nuevo.";
@@ -64,11 +88,20 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     }
   };
 
-  // Map of backend error codes → UI side-effects. Extracted to reduce submit() complexity.
+  // Map backend error codes → UI side-effects. Reduces submit() complexity.
   const ERROR_CODE_HANDLERS = {
-    EMAIL_NOT_VERIFIED: (msg) => setSuccessMsg(msg || "Verifica tu correo antes de iniciar sesión."),
-    USER_NOT_FOUND: (msg) => setNotice({ kind: "register", message: msg || "No existe una cuenta con este email. Crea una cuenta para continuar." }),
-    USE_GOOGLE_LOGIN: (msg) => setNotice({ kind: "google", message: msg || "Esta cuenta fue creada con Google." }),
+    EMAIL_NOT_VERIFIED: (msg) =>
+      setSuccessMsg(msg || "Verifica tu correo antes de iniciar sesión."),
+    USER_NOT_FOUND: (msg) =>
+      setNotice({
+        kind: "register",
+        message: msg || "No existe una cuenta con este email. Crea una cuenta para continuar.",
+      }),
+    USE_GOOGLE_LOGIN: (msg) =>
+      setNotice({
+        kind: "google",
+        message: msg || "Esta cuenta fue creada con Google.",
+      }),
   };
 
   const handleAuthError = (err) => {
@@ -110,270 +143,133 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard");
     } catch (err) {
       handleAuthError(err);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
+  const handleClose = () => { onClose?.(); reset(); };
+
+  const switchToRegisterFromNotice = () => {
+    setNotice(null);
+    setSuccessMsg("");
+    setPassword("");
+    setMode("register");
+    setTimeout(() => nameInputRef.current?.focus(), 50);
+  };
+
+  const useGoogleFromNotice = () => { onClose?.(); login(); };
+
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) { onClose?.(); reset(); } }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
       <DialogContent
         data-testid="email-auth-dialog"
         className="bg-[#141414] border-white/10 text-white rounded-none max-w-md"
       >
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl">
-            {mode === "register" ? "Crear cuenta"
-              : mode === "forgot" ? "Recuperar contraseña"
-              : "Iniciar con email"}
-          </DialogTitle>
+          <DialogTitle className="font-display text-2xl">{TITLES[mode]}</DialogTitle>
           <DialogDescription className="text-neutral-500 text-xs">
-            {mode === "register" ? "¿Aún no tienes cuenta en Resilience? Regístrate con tu email."
-              : mode === "forgot" ? "Te enviaremos un enlace para crear una nueva contraseña."
-              : "Acceso con email y contraseña."}
+            {DESCRIPTIONS[mode]}
           </DialogDescription>
         </DialogHeader>
+
         {successMsg ? (
-          <div className="py-4 text-center" data-testid="auth-success-state">
-            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#22C55E]/10 flex items-center justify-center">
-              <Mail className="w-6 h-6 text-[#22C55E]" />
-            </div>
-            <p className="text-sm text-neutral-300 mb-5">{successMsg}</p>
-            {mode !== "forgot" && (
-              <button
-                type="button"
-                data-testid="auth-resend-verification-btn"
-                onClick={handleResendVerification}
-                disabled={resending}
-                className="block mx-auto mb-4 text-xs text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4 disabled:opacity-50"
-              >
-                {resending ? "Reenviando..." : "¿No recibiste el correo? Reenviar"}
-              </button>
-            )}
-            <Button onClick={() => { onClose?.(); reset(); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
-              Entendido
-            </Button>
-          </div>
+          <AuthSuccessPanel
+            message={successMsg}
+            mode={mode}
+            resending={resending}
+            onResend={handleResendVerification}
+            onClose={handleClose}
+          />
         ) : (
-        <form onSubmit={submit} className="space-y-4">
-          {notice && (
-            <div
-              data-testid="auth-notice"
-              className={`border-l-2 px-3 py-3 text-xs ${notice.kind === "register" ? "border-[#EAB308] bg-[#EAB308]/5 text-[#FEF3C7]" : "border-[#3B82F6] bg-[#3B82F6]/5 text-[#DBEAFE]"}`}
-            >
-              <p className="leading-relaxed mb-2">{notice.message}</p>
-              {notice.kind === "register" && (
-                <button
-                  type="button"
-                  data-testid="auth-notice-register-btn"
-                  onClick={() => {
-                    setNotice(null);
-                    setSuccessMsg("");
-                    setPassword("");
-                    setMode("register");
-                    // Email stays; focus the Name field on next tick (after register-only fields mount)
-                    setTimeout(() => nameInputRef.current?.focus(), 50);
-                  }}
-                  className="text-[#EAB308] hover:text-[#FACC15] font-semibold underline underline-offset-4"
-                >
-                  → Crear cuenta con este email
-                </button>
-              )}
-              {notice.kind === "google" && (
-                <button
-                  type="button"
-                  data-testid="auth-notice-google-btn"
-                  onClick={() => { onClose?.(); login(); }}
-                  className="text-[#60A5FA] hover:text-[#93C5FD] font-semibold underline underline-offset-4"
-                >
-                  → Continuar con Google
-                </button>
-              )}
+          <form onSubmit={submit} className="space-y-4">
+            <AuthNotice
+              notice={notice}
+              onSwitchToRegister={switchToRegisterFromNotice}
+              onUseGoogle={useGoogleFromNotice}
+            />
+
+            <GoogleAuthButton onClick={() => { onClose?.(); login(); }} />
+
+            <div className="relative flex items-center text-[0.65rem] text-neutral-600 micro-label">
+              <div className="flex-1 h-px bg-white/10" />
+              <span className="px-3">o</span>
+              <div className="flex-1 h-px bg-white/10" />
             </div>
-          )}
-          <button
-            type="button"
-            data-testid="auth-google-btn"
-            onClick={() => { onClose?.(); login(); }}
-            className="w-full border border-white/20 hover:border-[#EAB308] hover:bg-white/5 text-white rounded-none h-11 text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-              <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.4 6.2 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/>
-              <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 16.2 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.4 6.2 29.5 4 24 4c-7.7 0-14.3 4.4-17.7 10.7z"/>
-              <path fill="#4CAF50" d="M24 44c5.3 0 10.1-2 13.8-5.4l-6.4-5.4C29.2 35 26.7 36 24 36c-5.1 0-9.5-3.2-11.2-7.8l-6.5 5C9.6 39.6 16.3 44 24 44z"/>
-              <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.7l6.4 5.4C42 35 44 30 44 24c0-1.3-.1-2.4-.4-3.5z"/>
-            </svg>
-            Continuar con Google
-          </button>
-          <div className="relative flex items-center text-[0.65rem] text-neutral-600 micro-label">
-            <div className="flex-1 h-px bg-white/10" />
-            <span className="px-3">o</span>
-            <div className="flex-1 h-px bg-white/10" />
-          </div>
-          {mode === "register" && (
-            <div>
-              <Label className="micro-label text-neutral-500">Nombre</Label>
-              <div className="relative mt-1">
-                <UserIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                <Input
-                  ref={nameInputRef}
-                  data-testid="auth-name-input"
-                  required
-                  minLength={2}
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Tu nombre"
-                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
-                />
-              </div>
-            </div>
-          )}
-          {mode === "register" && (
-            <div>
-              <Label className="micro-label text-neutral-500">Teléfono</Label>
-              <div className="relative mt-1">
-                <Phone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                <Input
-                  data-testid="auth-phone-input"
-                  type="tel"
-                  required
-                  inputMode="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+5350123456 (con código de país)"
-                  autoComplete="tel"
-                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9 font-mono"
-                />
-              </div>
-              <p className="text-[0.65rem] text-neutral-600 mt-1">
-                Un miembro del staff verificará tu número antes de habilitar retiros.
-              </p>
-            </div>
-          )}
-          <div>
-            <Label className="micro-label text-neutral-500">Email</Label>
-            <div className="relative mt-1">
-              <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-              <Input
-                data-testid="auth-email-input"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); if (notice) setNotice(null); }}
-                placeholder="tu@email.com"
-                autoComplete="email"
-                className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
-              />
-            </div>
-          </div>
-          {mode !== "forgot" && (
-            <div>
-              <Label className="micro-label text-neutral-500">Contraseña</Label>
-              <div className="relative mt-1">
-                <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                <Input
-                  data-testid="auth-password-input"
-                  type={showPassword ? "text" : "password"}
-                  required
-                  minLength={mode === "register" ? 8 : 1}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === "register" ? "mín. 8 caracteres" : "Tu contraseña"}
-                  autoComplete={mode === "register" ? "new-password" : "current-password"}
-                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9 pr-10"
-                />
-                <button
-                  type="button"
-                  data-testid="auth-toggle-password-visibility"
-                  onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-neutral-500 hover:text-[#EAB308] transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-          )}
-          {mode === "register" && (
-            <div>
-              <Label className="micro-label text-neutral-500">Confirmar contraseña</Label>
-              <div className="relative mt-1">
-                <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                <Input
-                  data-testid="auth-confirm-password-input"
-                  type={showPassword ? "text" : "password"}
-                  required
-                  minLength={8}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Repite la contraseña"
-                  autoComplete="new-password"
-                  className={`rounded-none bg-[#0a0a0a] h-11 pl-9 ${confirmPassword && confirmPassword !== password ? "border-[#EF4444]" : "border-white/10"}`}
-                />
-              </div>
-              {confirmPassword && confirmPassword !== password && (
-                <p data-testid="auth-password-mismatch" className="text-[0.7rem] text-[#EF4444] mt-1">Las contraseñas no coinciden.</p>
-              )}
-            </div>
-          )}
-          {mode === "login" && (
-            <label
-              htmlFor="auth-remember-24h"
-              className="flex items-center gap-2 cursor-pointer select-none text-xs text-neutral-400 hover:text-white transition-colors"
-            >
-              <Checkbox
-                id="auth-remember-24h"
-                data-testid="auth-remember-24h"
-                checked={remember24h}
-                onCheckedChange={(v) => setRemember24h(v === true)}
-                className="border-white/30 data-[state=checked]:bg-[#EAB308] data-[state=checked]:text-black data-[state=checked]:border-[#EAB308]"
-              />
-              Mantener sesión 24 horas (entrar 1 vez al día)
-            </label>
-          )}
-          <Button
-            type="submit"
-            data-testid="auth-submit"
-            disabled={loading}
-            className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12"
-          >
-            {loading ? "..."
-              : mode === "register" ? "Crear cuenta"
-              : mode === "forgot" ? "Enviar enlace"
-              : "Iniciar sesión"}
-          </Button>
-          <div className="flex flex-col gap-2 items-center">
-            <button
-              type="button"
-              data-testid="auth-toggle-mode"
-              onClick={() => setMode(mode === "login" ? "register" : "login")}
-              className="text-xs text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
-            >
-              {mode === "register" ? "Ya tengo cuenta, iniciar sesión"
-                : mode === "forgot" ? "Volver a iniciar sesión"
-                : "¿No tienes cuenta? Crear una"}
-            </button>
+
+            <AuthCredentialsFields
+              mode={mode}
+              name={name} setName={setName}
+              phone={phone} setPhone={setPhone}
+              email={email} setEmail={setEmail}
+              password={password} setPassword={setPassword}
+              confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword}
+              showPassword={showPassword} setShowPassword={setShowPassword}
+              nameInputRef={nameInputRef}
+              onEmailChange={() => { if (notice) setNotice(null); }}
+            />
+
             {mode === "login" && (
+              <label
+                htmlFor="auth-remember-24h"
+                className="flex items-center gap-2 cursor-pointer select-none text-xs text-neutral-400 hover:text-white transition-colors"
+              >
+                <Checkbox
+                  id="auth-remember-24h"
+                  data-testid="auth-remember-24h"
+                  checked={remember24h}
+                  onCheckedChange={(v) => setRemember24h(v === true)}
+                  className="border-white/30 data-[state=checked]:bg-[#EAB308] data-[state=checked]:text-black data-[state=checked]:border-[#EAB308]"
+                />
+                Mantener sesión 24 horas (entrar 1 vez al día)
+              </label>
+            )}
+
+            <Button
+              type="submit"
+              data-testid="auth-submit"
+              disabled={loading}
+              className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12"
+            >
+              {loading ? "..." : SUBMIT_LABELS[mode]}
+            </Button>
+
+            <div className="flex flex-col gap-2 items-center">
               <button
                 type="button"
-                data-testid="auth-forgot-link"
-                onClick={() => setMode("forgot")}
-                className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4"
+                data-testid="auth-toggle-mode"
+                onClick={() => setMode(mode === "login" ? "register" : "login")}
+                className="text-xs text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
               >
-                ¿Olvidaste tu contraseña?
+                {mode === "register"
+                  ? "Ya tengo cuenta, iniciar sesión"
+                  : mode === "forgot"
+                    ? "Volver a iniciar sesión"
+                    : "¿No tienes cuenta? Crear una"}
               </button>
-            )}
-            {mode === "login" && (
-              <button
-                type="button"
-                data-testid="auth-resend-verification-link"
-                onClick={handleResendVerification}
-                disabled={resending}
-                className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 disabled:opacity-50"
-              >
-                {resending ? "Reenviando..." : "¿No recibiste el correo de verificación?"}
-              </button>
-            )}
-          </div>
-        </form>
+              {mode === "login" && (
+                <>
+                  <button
+                    type="button"
+                    data-testid="auth-forgot-link"
+                    onClick={() => setMode("forgot")}
+                    className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4"
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="auth-resend-verification-link"
+                    onClick={handleResendVerification}
+                    disabled={resending}
+                    className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 disabled:opacity-50"
+                  >
+                    {resending ? "Reenviando..." : "¿No recibiste el correo de verificación?"}
+                  </button>
+                </>
+              )}
+            </div>
+          </form>
         )}
       </DialogContent>
     </Dialog>
