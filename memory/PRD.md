@@ -52,6 +52,10 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - **Sentry integration (iter34)**: `sentry_config.py` + `frontend/sentry.js` con backend (`sentry-sdk[fastapi] 2.63`) y frontend (`@sentry/react 10.62`). Deshabilitado por defecto, activa con `SENTRY_DSN` / `REACT_APP_SENTRY_DSN`. Auto-tag de actor (user_id, email, role) en cada error. ErrorBoundary global. Filtro de ruido: descarta HTTPException<500, ResizeObserver loop, network cancelado. 2 proyectos creados en sentry.io: `resilience-backend` (Python/FastAPI) y `resilience-frontend` (React). Test events confirmados en ambos dashboards. **(Feb 28, 2026 — iter34)**
 - **Tests obsoletos modernizados (iter34)**: `test_iter16_email_auth.py` agrega `phone` requerido + actualiza expectativa de no-auto-login en verify-email. `test_marketplace_profit_and_margin.py` elimina suposición de comisión 5% (iter19 puso 0%). Resultado: 21 + 13 = 34 tests previamente rotos ahora verdes. **(Feb 28, 2026 — iter34)**
 - **Cloudflare R2 Object Storage (iter35)**: abstracción provider-agnóstica (`services/storage.py` con r2/s3/none) + helper base64→storage (`services/proof_upload.py`) + proxy autenticado (`routes/files.py` con ownership check). `POST /api/orders` automáticamente sube `proof_image` base64 a R2 y persiste solo `/api/files/orders/<date>/<uuid>.png` en MongoDB. Igual para `payout_proof_image` (admin withdrawal status) y `invoice_image` (company-withdrawals). Bucket `resilience-p2p-proofs` (ENAM region), 10 GB gratis. **Cero cambios frontend** — `<img src="/api/files/...">` funciona via cookie samesite=none + secure. Testing agent: **105/105 verde** incluyendo 14 e2e contra el bucket real. **(Feb 28, 2026 — iter35)**
+- **3 P2 refinements (iter36)**:
+  - 📂 **`/api/openapi.json` ahora bajo `/api/*`** → Swagger UI (`/api/docs`) y ReDoc (`/api/redoc`) son alcanzables vía el ingress público (antes solo en localhost:8001).
+  - 🚦 **HTTP 413 al cliente** cuando `proof_image > 8 MB` → la validación se ejecuta ANTES del check de storage para proteger MongoDB incluso en modo legacy. Detail estructurado: `{code: "PROOF_TOO_LARGE", size_mb, limit_mb, message}`.
+  - 🔄 **Backfill base64 → R2** (`scripts/backfill_base64_to_r2.py`): CLI standalone con `--dry-run`/`--apply` mutuamente exclusivos, idempotente (key determinístico = doc_id), continúa al primer error y reporta resumen al final. Migración ejecutada: **159 órdenes históricas movidas a R2**, 2 oversize y 80 inválidas dejadas inline. Re-run produce 0 candidatos (idempotencia confirmada). Testing agent: **117/117 verde**. **(Feb 28, 2026 — iter36)**
 - Filtros de monto (mín/máx) en Transacciones: validación servidor (rechazo de negativos y `min > max` con HTTP 400), propagación a CSV y PDF. Botón "Ir a Órdenes / Ir a Retiros VIP" en el modal para navegar a la sección original. **(Feb 18, 2026 — iter11)**
 - Acceso ampliado a Transacciones: **empleados** ahora ven `/admin/transactions` (admin + employee = staff). Nuevo `/dashboard/transactions` para **VIPs y clientes normales** con `GET /api/me/transactions` que aísla por user_id, exports CSV/PDF propios. Nav "Mi Historial" en Dashboard mobile + desktop. **(Feb 18, 2026 — iter12)**
 - 2FA / TOTP step-up para retiros: secretos cifrados con Fernet (TOTP_MASTER_KEY env var), 10 códigos de recuperación bcrypt-hashed de un solo uso. Endpoints `/api/me/2fa/{status,setup,verify-setup,disable,regenerate-recovery-codes}`. Tolerancia ±1 step (30s clock drift). Página `/dashboard/security` con QR + secret manual + códigos de recuperación. Withdrawals obligan 2FA: 412 si no configurado (con `setup_url`), 401 si código inválido. Recovery codes consumibles también funcionan. **(Feb 18, 2026 — iter13)**
@@ -85,13 +89,12 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Add `<th>Real</th>` column in AdminRates table (data already exposed via GET /api/rates).
 
 ### P2
-- Sentry / error monitoring integration. ✅ Done in iter34.
-- Real crypto wallet integration (on-chain USDT/BTC verification).
-- Stripe / Zelle webhooks for auto-confirmation.
+- Wallets on-chain reales (USDT/BTC) + Stripe/Zelle webhooks de auto-confirmación.
 - Replace base64 proof storage with Emergent Object Storage. ✅ Done in iter35 (Cloudflare R2).
-- Modernize stale tests: `test_iter16_email_auth.py` + `test_marketplace_profit_and_margin.py`. ✅ Done in iter34.
-- Backfill base64 → R2 for historical orders (user explicitly skipped; new orders only).
-- Optional: move `openapi.json` under `/api/openapi.json` so external consumers can fetch the schema via the public ingress (minor — currently only reachable on localhost:8001).
+- Modernize stale tests. ✅ Done in iter34.
+- Backfill base64 → R2 for historical orders. ✅ Done in iter36 (159 órdenes migradas).
+- Optional: move `openapi.json` under `/api/openapi.json`. ✅ Done in iter36.
+- Optional: surface 413 to client on oversize proof_image. ✅ Done in iter36.
 - Reject-phone analytics: count of users currently under_review, scammers blocked per week, false-positive rate (admin un-blocked / total blocks).
 - Self-service appeal flow: under_review users can submit an "I'm not a scammer" form that lands in a staff queue.
 - POST /admin/blocked-contacts → status_code=201 + add `VerifyPhonePayload(BaseModel)` for OpenAPI/consistency (code-review notes from iter30).
