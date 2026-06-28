@@ -1,0 +1,35 @@
+{
+  "summary": "Iter25 backend regression for cyclomatic-complexity refactor — 100% green. Full pytest suite: 449 passed, 2 skipped (identical to pre-refactor baseline). New focused refactor regression file (test_refactor_regression_iter25.py, 16 tests) exercises every branch of the refactored helpers in update_withdrawal, admin_revenue, generate_audit_pdf, generate_vip_closing_pdf end-to-end via curl-style HTTP. All pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_refactor_regression_iter25.py",
+    "/app/test_reports/pytest/iter25_refactor.xml",
+    "/app/test_reports/pytest/iter25_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/admin.py — file is now 1235 lines. Above the recommended 700-line ceiling. Consider splitting per concern: withdrawals.py, revenue.py, company_funds.py, audit_export.py, users.py. Pure organizational, no functional risk, but will pay off as more endpoints land.",
+    "_validate_paid_evidence relies on the implicit invariant that update_doc is mutated by _collect_payout_evidence BEFORE validation. The current call order in update_withdrawal is correct (collect → validate), but a future contributor could swap these and silently break the 400 branch. Adding a one-line comment near the call site, or making _validate_paid_evidence take both proof+hash as explicit args, would harden against this.",
+    "_refund_balance_on_reject uses amount_usd as the increment regardless of the currency it is keyed under (vip_balances.{currency}). For non-USD withdrawals this credits the wrong magnitude (e.g. a 25 USD-equivalent BRL withdrawal refunds 25 to vip_balances.BRL, not 25 * USDBRL). This is pre-existing behavior preserved by the refactor — flagging here because it's now isolated in a single helper and easy to fix later.",
+    "admin_revenue still calls compute_order_profit inside a python loop (await per order). For ≥5000 approved orders this is N awaits. Acceptable today but a candidate for batch precomputation / aggregation later.",
+    "audit_pdf.py and pdf_service.py refactors look clean — helpers are small, naming is consistent, no shared mutable state between helpers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_refactor_regression_iter25.py (new file, 16 tests, zero production-code changes)"
+  ],
+  "success_rate": {"backend": "100% (449/449 pre-existing + 16/16 new refactor regression)", "frontend": "skipped per request"},
+  "test_credentials": "Used autouse session seeding from conftest._autoseed_sessions: test_session_admin_X (user_test_admin01), test_session_employee_X, test_session_vip_X, test_session_normal_X. TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP. No real auth flow exercised.",
+  "seed_data_creation": "Per-test withdrawal rows prefixed TEST_wd_* inserted directly into the withdrawals collection (and cleaned up in finally blocks) to deterministically drive every branch of update_withdrawal. vip_balances.USD increment from the reject-refund test is rolled back in finally to keep the suite idempotent.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The refactor was purely structural and is fully covered now: branches (a)-(h) of update_withdrawal, full JSON shape of /admin/revenue (with and without ?days=30), %PDF magic-byte check on both /vip/daily-closing and /admin/audit/export.pdf (with and without filters), and 7-section health summary. If the next iteration touches any of these files, re-run /app/backend/tests/test_refactor_regression_iter25.py first — it is fast (~4s) and isolates this refactor's contract. Pre-existing behavior note for next agent: _refund_balance_on_reject refunds amount_usd into vip_balances.{currency} verbatim — this is unit-mismatched for non-USD but PRE-EXISTING (refactor preserved it intentionally). Don't 'fix' it without checking the seed/order flow.",
+  "rca of the issue": "No issue. Refactor is behavior-identical: same signatures, same HTTP codes, same JSON shapes, same error messages, same PDF magic bytes."
+}

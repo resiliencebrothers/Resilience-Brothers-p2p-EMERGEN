@@ -282,11 +282,62 @@ async def all_withdrawals(request: Request,
     return docs
 
 
+def _assert_paid_lock(actor: dict, withdrawal: dict, new_status: str) -> None:
+    """Block non-admins from un-marking an already-paid withdrawal."""
+    if (withdrawal["status"] == "paid"
+            and new_status != "paid"
+            and actor.get("role") != "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Este retiro ya fue entregado. Solo un admin puede modificarlo.",
+        )
+
+
+async def _refund_balance_on_reject(withdrawal: dict, new_status: str) -> None:
+    """Restore the VIP balance when a withdrawal moves into 'rejected'."""
+    if new_status != "rejected" or withdrawal["status"] == "rejected":
+        return
+    refund_currency = withdrawal.get("currency", "USD")
+    await db.users.update_one(
+        {"user_id": withdrawal["user_id"]},
+        {"$inc": {f"vip_balances.{refund_currency}": withdrawal["amount_usd"]}},
+    )
+
+
+def _collect_payout_evidence(payload: dict, update_doc: dict) -> None:
+    """Persist optional payout proof image + tx hash on the update document."""
+    proof = payload.get("payout_proof_image")
+    if proof:
+        update_doc["payout_proof_image"] = maybe_upload_proof(proof, "withdrawals") or proof
+    tx_hash = payload.get("payout_tx_hash")
+    if tx_hash:
+        update_doc["payout_tx_hash"] = tx_hash
+
+
+def _validate_paid_evidence(withdrawal: dict, update_doc: dict, new_status: str) -> None:
+    """When marking as paid, ensure the required payout artefact is present."""
+    if new_status != "paid" or withdrawal["status"] == "paid":
+        return
+    method = withdrawal.get("method")
+    existing_proof = withdrawal.get("payout_proof_image") or update_doc.get("payout_proof_image")
+    if method == "transfer" and not existing_proof:
+        raise HTTPException(
+            status_code=400,
+            detail="Adjunta la captura de la transferencia realizada al cliente antes de marcar como entregado",
+        )
+    if method == "crypto":
+        existing_hash = withdrawal.get("payout_tx_hash") or update_doc.get("payout_tx_hash")
+        if not existing_hash and not existing_proof:
+            raise HTTPException(
+                status_code=400,
+                detail="Adjunta hash de transacción y/o captura del envío antes de marcar como entregado",
+            )
+
+
 @router.put("/admin/withdrawals/{wid}/status")
 async def update_withdrawal(wid: str, payload: dict, request: Request):
     actor = await require_staff(request)
     new_status = payload.get("status")
-    note = payload.get("admin_note", "")
     if new_status not in ("approved", "paid", "rejected", "pending"):
         raise HTTPException(status_code=400, detail="status inválido")
     await _enforce_totp_step_up(actor, payload.get("totp_code"),
@@ -294,40 +345,12 @@ async def update_withdrawal(wid: str, payload: dict, request: Request):
     w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     if not w:
         raise HTTPException(status_code=404, detail="No encontrado")
-    if w["status"] == "paid" and new_status != "paid" and actor.get("role") != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Este retiro ya fue entregado. Solo un admin puede modificarlo.",
-        )
+    _assert_paid_lock(actor, w, new_status)
     _enforce_employee_currency_scope(actor, w.get("currency"))
-    if new_status == "rejected" and w["status"] != "rejected":
-        refund_currency = w.get("currency", "USD")
-        await db.users.update_one(
-            {"user_id": w["user_id"]},
-            {"$inc": {f"vip_balances.{refund_currency}": w["amount_usd"]}},
-        )
-    update_doc = {"status": new_status, "admin_note": note}
-    proof = payload.get("payout_proof_image")
-    if proof:
-        update_doc["payout_proof_image"] = maybe_upload_proof(proof, "withdrawals") or proof
-    tx_hash = payload.get("payout_tx_hash")
-    if tx_hash:
-        update_doc["payout_tx_hash"] = tx_hash
-    if new_status == "paid" and w["status"] != "paid":
-        method = w.get("method")
-        existing_proof = w.get("payout_proof_image") or update_doc.get("payout_proof_image")
-        if method == "transfer" and not existing_proof:
-            raise HTTPException(
-                status_code=400,
-                detail="Adjunta la captura de la transferencia realizada al cliente antes de marcar como entregado",
-            )
-        if method == "crypto":
-            existing_hash = w.get("payout_tx_hash") or update_doc.get("payout_tx_hash")
-            if not existing_hash and not existing_proof:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Adjunta hash de transacción y/o captura del envío antes de marcar como entregado",
-                )
+    await _refund_balance_on_reject(w, new_status)
+    update_doc = {"status": new_status, "admin_note": payload.get("admin_note", "")}
+    _collect_payout_evidence(payload, update_doc)
+    _validate_paid_evidence(w, update_doc, new_status)
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
 
@@ -705,6 +728,71 @@ async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
     }
 
 
+def _new_pair_bucket(o: dict, rate_doc: dict) -> dict:
+    return {
+        "pair": f"{o['from_code']}→{o['to_code']}",
+        "from_code": o["from_code"],
+        "to_code": o["to_code"],
+        "orders": 0,
+        "volume_from": 0.0,
+        "volume_to": 0.0,
+        "profit_to": 0.0,
+        "profit_usdt": 0.0,
+        "real_rate": rate_doc.get("real_rate"),
+        "rate_normal": rate_doc.get("rate_normal"),
+        "rate_vip": rate_doc.get("rate_vip"),
+        "avg_profit_pct": 0.0,
+    }
+
+
+def _role_bucket_for(order: dict) -> str:
+    return "vip" if order.get("user_role") in ("vip", "admin") else "normal"
+
+
+async def _accumulate_revenue_order(
+    o: dict, rate_doc: dict, fx: dict,
+    by_pair: dict, by_role: dict, missing: set,
+) -> tuple[float, float | None]:
+    """Mutate by_pair/by_role with this order. Returns (volume_usdt, profit_usdt|None)."""
+    profit = await compute_order_profit(o, rate_doc)
+    volume_usdt = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
+    role = _role_bucket_for(o)
+    by_role[role]["orders"] += 1
+    by_role[role]["volume_usdt"] += volume_usdt
+
+    if profit is None:
+        missing.add(f"{o['from_code']}→{o['to_code']}")
+        return volume_usdt, None
+
+    profit_usdt = convert_to_usdt(profit["amount"], profit["currency"], fx) or 0.0
+    by_role[role]["profit_usdt"] += profit_usdt
+
+    key = f"{o['from_code']}→{o['to_code']}"
+    bucket = by_pair.setdefault(key, _new_pair_bucket(o, rate_doc))
+    bucket["orders"] += 1
+    bucket["volume_from"] += o["amount_from"]
+    bucket["volume_to"] += o["amount_to"]
+    bucket["profit_to"] += profit["amount"]
+    bucket["profit_usdt"] += profit_usdt
+    return volume_usdt, profit_usdt
+
+
+def _finalize_pair_items(by_pair: dict) -> list:
+    items = []
+    for b in by_pair.values():
+        if b["volume_to"] > 0 and b["real_rate"]:
+            real_value = b["volume_from"] * float(b["real_rate"])
+            b["avg_profit_pct"] = (
+                round((real_value - b["volume_to"]) / real_value * 100, 3)
+                if real_value > 0 else 0.0
+            )
+        b["profit_to"] = round(b["profit_to"], 4)
+        b["profit_usdt"] = round(b["profit_usdt"], 4)
+        items.append(b)
+    items.sort(key=lambda x: -x["profit_usdt"])
+    return items
+
+
 @router.get("/admin/revenue")
 async def admin_revenue(request: Request, days: Optional[int] = None):
     await require_admin(request)
@@ -721,59 +809,20 @@ async def admin_revenue(request: Request, days: Optional[int] = None):
     by_pair: dict = {}
     by_role = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
                "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
-    missing_rate_pairs = set()
+    missing_rate_pairs: set = set()
     total_profit_usdt = 0.0
     total_volume_usdt = 0.0
 
     for o in orders:
-        pair_key = (o["from_code"], o["to_code"])
-        rate_doc = rate_by_pair.get(pair_key)
-        profit = await compute_order_profit(o, rate_doc)
-        volume_usdt = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
-        total_volume_usdt += volume_usdt
-        role_bucket = "vip" if o.get("user_role") in ("vip", "admin") else "normal"
-        by_role[role_bucket]["orders"] += 1
-        by_role[role_bucket]["volume_usdt"] += volume_usdt
+        rate_doc = rate_by_pair.get((o["from_code"], o["to_code"]))
+        vol, prof = await _accumulate_revenue_order(
+            o, rate_doc, fx, by_pair, by_role, missing_rate_pairs,
+        )
+        total_volume_usdt += vol
+        if prof is not None:
+            total_profit_usdt += prof
 
-        if profit is None:
-            missing_rate_pairs.add(f"{o['from_code']}→{o['to_code']}")
-            continue
-        profit_usdt = convert_to_usdt(profit["amount"], profit["currency"], fx) or 0.0
-        total_profit_usdt += profit_usdt
-        by_role[role_bucket]["profit_usdt"] += profit_usdt
-
-        key = f"{o['from_code']}→{o['to_code']}"
-        if key not in by_pair:
-            by_pair[key] = {
-                "pair": key,
-                "from_code": o["from_code"],
-                "to_code": o["to_code"],
-                "orders": 0,
-                "volume_from": 0.0,
-                "volume_to": 0.0,
-                "profit_to": 0.0,
-                "profit_usdt": 0.0,
-                "real_rate": rate_doc.get("real_rate"),
-                "rate_normal": rate_doc.get("rate_normal"),
-                "rate_vip": rate_doc.get("rate_vip"),
-                "avg_profit_pct": 0.0,
-            }
-        bucket = by_pair[key]
-        bucket["orders"] += 1
-        bucket["volume_from"] += o["amount_from"]
-        bucket["volume_to"] += o["amount_to"]
-        bucket["profit_to"] += profit["amount"]
-        bucket["profit_usdt"] += profit_usdt
-
-    pair_items = []
-    for _k, b in by_pair.items():
-        if b["volume_to"] > 0 and b["real_rate"]:
-            real_value = b["volume_from"] * float(b["real_rate"])
-            b["avg_profit_pct"] = round((real_value - b["volume_to"]) / real_value * 100, 3) if real_value > 0 else 0.0
-        b["profit_to"] = round(b["profit_to"], 4)
-        b["profit_usdt"] = round(b["profit_usdt"], 4)
-        pair_items.append(b)
-    pair_items.sort(key=lambda x: -x["profit_usdt"])
+    pair_items = _finalize_pair_items(by_pair)
 
     for r in by_role.values():
         r["profit_usdt"] = round(r["profit_usdt"], 4)

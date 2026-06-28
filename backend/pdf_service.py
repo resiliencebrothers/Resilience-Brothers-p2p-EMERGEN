@@ -63,6 +63,66 @@ def _header_footer(canvas, doc):
     canvas.restoreState()
 
 
+def _compute_closing_totals(orders: list) -> dict:
+    """Aggregate the four headline figures shown in the summary band."""
+    total_received = 0.0
+    total_in_native: dict = {}
+    total_volume_from = 0.0
+    for o in orders:
+        total_volume_from += o.get("amount_from", 0) or 0
+        amt_to = o.get("amount_to", 0) or 0
+        if o.get("delivery_method") == "accumulate":
+            total_received += amt_to
+        else:
+            total_in_native[o["to_code"]] = total_in_native.get(o["to_code"], 0) + amt_to
+    return {
+        "total_received_usd": total_received,
+        "total_in_native": total_in_native,
+        "total_orders": len(orders),
+        "total_volume_from": total_volume_from,
+    }
+
+
+def _format_order_row(o: dict) -> list:
+    """Render a single order as the 7-column row of the orders table."""
+    ts = o.get("updated_at") or o.get("created_at")
+    try:
+        ts_fmt = datetime.fromisoformat(ts).strftime("%H:%M") if ts else "—"
+    except Exception:
+        ts_fmt = "—"
+    return [
+        o["id"][:6],
+        ts_fmt,
+        f"{o['from_code']}→{o['to_code']}",
+        f"{o['amount_from']:.2f} {o['from_code']}",
+        f"{o['amount_to']:.2f} {o['to_code']}",
+        f"{o['rate_applied']:.4f}",
+        o["delivery_method"],
+    ]
+
+
+def _build_currency_breakdown_table(total_in_native: dict) -> Table:
+    rows = [["Moneda", "Total recibido"]]
+    for code, total in total_in_native.items():
+        rows.append([code, f"{total:,.2f}"])
+    tbl = Table(rows, colWidths=[2*inch, 2*inch])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), PANEL),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_YELLOW),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
+        ("TEXTCOLOR", (0, 1), (-1, -1), TEXT),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    return tbl
+
+
 def generate_vip_closing_pdf(
     user: dict,
     orders: list,
@@ -90,14 +150,11 @@ def generate_vip_closing_pdf(
         f"Cliente: <font color='#FFFFFF'><b>{user.get('name','')}</b></font> · {user.get('email','')}", sub))
 
     # Summary cards
-    total_received = sum(o.get("amount_to", 0) for o in orders if o.get("delivery_method") == "accumulate")
-    total_in_native = {}
-    for o in orders:
-        if o.get("delivery_method") != "accumulate":
-            total_in_native.setdefault(o["to_code"], 0)
-            total_in_native[o["to_code"]] += o.get("amount_to", 0)
-    total_orders = len(orders)
-    total_volume_from = sum(o.get("amount_from", 0) for o in orders)
+    totals = _compute_closing_totals(orders)
+    total_received = totals["total_received_usd"]
+    total_in_native = totals["total_in_native"]
+    total_orders = totals["total_orders"]
+    total_volume_from = totals["total_volume_from"]
 
     summary_data = [
         [Paragraph("Órdenes aprobadas", body_muted), Paragraph("Volumen total", body_muted), Paragraph("Acumulado USD", body_muted), Paragraph("Saldo al cierre", body_muted)],
@@ -127,22 +184,7 @@ def generate_vip_closing_pdf(
     story.append(Spacer(1, 6))
 
     headers = ["ID", "Hora", "Par", "Envió", "Recibió", "Tasa", "Entrega"]
-    data = [headers]
-    for o in orders:
-        try:
-            ts = o.get("updated_at") or o.get("created_at")
-            ts_fmt = datetime.fromisoformat(ts).strftime("%H:%M") if ts else "—"
-        except Exception:
-            ts_fmt = "—"
-        data.append([
-            o["id"][:6],
-            ts_fmt,
-            f"{o['from_code']}→{o['to_code']}",
-            f"{o['amount_from']:.2f} {o['from_code']}",
-            f"{o['amount_to']:.2f} {o['to_code']}",
-            f"{o['rate_applied']:.4f}",
-            o["delivery_method"],
-        ])
+    data = [headers] + [_format_order_row(o) for o in orders]
 
     if len(data) == 1:
         data.append(["—", "—", "—", "—", "—", "—", "—"])
@@ -173,25 +215,7 @@ def generate_vip_closing_pdf(
     if total_in_native:
         story.append(Paragraph("Recibido por moneda destino (no acumulado)", label))
         story.append(Spacer(1, 4))
-        rows = [["Moneda", "Total recibido"]]
-        for code, total in total_in_native.items():
-            rows.append([code, f"{total:,.2f}"])
-        currency_tbl = Table(rows, colWidths=[2*inch, 2*inch])
-        currency_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), PANEL),
-            ("TEXTCOLOR", (0,0), (-1,0), BRAND_YELLOW),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE", (0,0), (-1,0), 8),
-            ("BACKGROUND", (0,1), (-1,-1), colors.HexColor("#0c0c0c")),
-            ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
-            ("FONTSIZE", (0,1), (-1,-1), 9),
-            ("GRID", (0,0), (-1,-1), 0.4, BORDER),
-            ("TOPPADDING", (0,0), (-1,-1), 6),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-            ("LEFTPADDING", (0,0), (-1,-1), 8),
-            ("RIGHTPADDING", (0,0), (-1,-1), 8),
-        ]))
-        story.append(currency_tbl)
+        story.append(_build_currency_breakdown_table(total_in_native))
         story.append(Spacer(1, 20))
 
     # Signature block

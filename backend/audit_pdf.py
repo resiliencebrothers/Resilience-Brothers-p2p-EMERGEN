@@ -52,6 +52,43 @@ def _header_footer(canvas, doc):
     canvas.restoreState()
 
 
+def _format_audit_ts(value: str) -> str:
+    """Best-effort ISO timestamp → 'YYYY-MM-DD HH:MM:SS'. Falls back to raw."""
+    try:
+        return datetime.fromisoformat(value or "").strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return value or "—"
+
+
+def _build_audit_row(e: dict) -> list:
+    """Render a single audit entry as the 7-column row used in the PDF."""
+    actor = e.get("actor_name") or e.get("actor_email") or "—"
+    return [
+        _format_audit_ts(e.get("created_at", "")),
+        actor[:32],
+        (e.get("actor_role") or "—").upper(),
+        e.get("action", "—"),
+        e.get("entity_type", "—"),
+        (e.get("entity_id") or "—")[:10],
+        (e.get("summary") or "—")[:80],
+    ]
+
+
+def _build_filters_paragraph(filters: dict, total: int, sub_style) -> Paragraph:
+    f_action = filters.get("action") or "todas"
+    f_actor = filters.get("actor_id") or "todos"
+    f_since = filters.get("since") or "—"
+    f_until = filters.get("until") or "—"
+    return Paragraph(
+        f"Filtros → Acción: <font color='#FFFFFF'><b>{f_action}</b></font> · "
+        f"Actor: <font color='#FFFFFF'><b>{f_actor}</b></font> · "
+        f"Desde: <font color='#FFFFFF'><b>{f_since}</b></font> · "
+        f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font> · "
+        f"Total: <font color='#EAB308'><b>{total}</b></font>",
+        sub_style,
+    )
+
+
 def generate_audit_pdf(entries: list, filters: dict) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(
@@ -66,36 +103,10 @@ def generate_audit_pdf(entries: list, filters: dict) -> bytes:
     story = []
     story.append(Paragraph("/ REGISTRO DE ACCIONES", label))
     story.append(Paragraph("Audit Log — Resilience Brothers", h1))
-
-    f_action = filters.get("action") or "todas"
-    f_actor = filters.get("actor_id") or "todos"
-    f_since = filters.get("since") or "—"
-    f_until = filters.get("until") or "—"
-    story.append(Paragraph(
-        f"Filtros → Acción: <font color='#FFFFFF'><b>{f_action}</b></font> · "
-        f"Actor: <font color='#FFFFFF'><b>{f_actor}</b></font> · "
-        f"Desde: <font color='#FFFFFF'><b>{f_since}</b></font> · "
-        f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font> · "
-        f"Total: <font color='#EAB308'><b>{len(entries)}</b></font>",
-        sub,
-    ))
+    story.append(_build_filters_paragraph(filters, len(entries), sub))
 
     headers = ["Cuándo (UTC)", "Quién", "Rol", "Acción", "Entidad", "ID", "Resumen"]
-    data = [headers]
-    for e in entries:
-        try:
-            ts = datetime.fromisoformat(e.get("created_at", "")).strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            ts = e.get("created_at", "—")
-        data.append([
-            ts,
-            (e.get("actor_name") or e.get("actor_email") or "—")[:32],
-            (e.get("actor_role") or "—").upper(),
-            e.get("action", "—"),
-            e.get("entity_type", "—"),
-            (e.get("entity_id") or "—")[:10],
-            (e.get("summary") or "—")[:80],
-        ])
+    data = [headers] + [_build_audit_row(e) for e in entries]
     if len(data) == 1:
         data.append(["—"] * 7)
 
