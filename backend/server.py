@@ -36,6 +36,10 @@ from routes.push import router as push_router  # noqa: E402
 from routes.me import router as me_router  # noqa: E402
 from routes.orders import router as orders_router  # noqa: E402
 from routes.admin import router as admin_router, build_revenue_timeseries  # noqa: E402
+from routes.files import router as files_router  # noqa: E402
+from services import storage as storage_service  # noqa: E402
+
+storage_service.init_storage()
 
 
 app = FastAPI(title="Resilience Brothers P2P")
@@ -56,6 +60,7 @@ api_router.include_router(push_router)
 api_router.include_router(me_router)
 api_router.include_router(orders_router)
 api_router.include_router(admin_router)
+api_router.include_router(files_router)
 
 app.include_router(api_router)
 

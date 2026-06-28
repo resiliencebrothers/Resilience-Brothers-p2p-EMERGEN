@@ -43,6 +43,7 @@ from services.orders_helpers import (
     resolve_order_rate, build_order_from_payload,
     maybe_flag_defensive_margin, dispatch_new_order_alerts,
 )
+from services.proof_upload import maybe_upload_proof
 
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,9 @@ async def create_order(payload: OrderCreate, request: Request):
     user = await require_user(request)
     await assert_account_active(user)
     rate, _rate_doc = await resolve_order_rate(payload.from_code, payload.to_code, user)
+    # iter35 — if proof_image is a base64 data URL, persist it to object storage.
+    # When storage is disabled the helper returns the value untouched (base64 fallback).
+    payload.proof_image = maybe_upload_proof(payload.proof_image, "orders") or ""
     order = build_order_from_payload(payload, user, rate)
     await db.orders.insert_one(order.model_dump())
     await maybe_flag_defensive_margin(order)

@@ -44,6 +44,7 @@ from services.transactions import (
     build_transactions, compute_transaction_totals,
     build_audit_query, fetch_audit_entries,
 )
+from services.proof_upload import maybe_upload_proof
 
 
 logger = logging.getLogger(__name__)
@@ -307,7 +308,7 @@ async def update_withdrawal(wid: str, payload: dict, request: Request):
     update_doc = {"status": new_status, "admin_note": note}
     proof = payload.get("payout_proof_image")
     if proof:
-        update_doc["payout_proof_image"] = proof
+        update_doc["payout_proof_image"] = maybe_upload_proof(proof, "withdrawals") or proof
     tx_hash = payload.get("payout_tx_hash")
     if tx_hash:
         update_doc["payout_tx_hash"] = tx_hash
@@ -975,7 +976,8 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
         authorized_by_name=actor.get("name", ""),
         authorized_by_email=actor.get("email", ""),
         concept=payload.concept,
-        invoice_image=payload.invoice_image,
+        invoice_image=(maybe_upload_proof(payload.invoice_image, "company_invoices")
+                        or payload.invoice_image),
         note=payload.note,
     )
     await db.company_withdrawals.insert_one(cw.model_dump())
