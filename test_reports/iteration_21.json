@@ -1,0 +1,40 @@
+{
+  "summary": "iter34 Sentry wiring regression — backend only. Verified Sentry SDK initialises cleanly when SENTRY_DSN is configured, get_session_user's new sentry_sdk.set_user call did NOT break any auth-gated endpoint, and the three pytest files explicitly called out (test_sentry_config.py, test_iter16_email_auth.py, test_marketplace_profit_and_margin.py) all pass. Added a new regression suite test_sentry_regression_iter34.py covering items 3-7 of the review request. Scheduler (monthly_revenue_email) starts cleanly post-Sentry import. 47/47 in-scope tests passing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "logger 'sentry_config'", "issue": "The `Sentry initialized (env=preview, traces=0.1).` INFO log line never appears in /var/log/supervisor/backend.err.log because uvicorn's logging config doesn't propagate the sentry_config logger. Verified Sentry IS active via sentry_sdk.Hub.current.client. Cosmetic — consider attaching the logger to uvicorn's handler or using print() for visibility on boot."},
+      {"endpoint": "review_request item 4", "issue": "The request mentioned `POST /api/admin/orders/search` but the actual route is `GET /api/admin/orders` (with query params). Reworded test accordingly — endpoint works fine."},
+      {"endpoint": "review_request item 5", "issue": "Request mentioned `GET /api/currencies/active` — actual route is `GET /api/currencies`. Reworded — works fine."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sentry_regression_iter34.py",
+    "/app/test_reports/pytest/sentry_regression.xml",
+    "/app/test_reports/pytest/sentry_regression_iter34.xml"
+  ],
+  "action_items": [
+    "Optional cosmetic: make `Sentry initialized ...` log line visible on backend startup by attaching the sentry_config logger to uvicorn's handler, or switch to print() during init. Functionality is correct; only the boot log is silent."
+  ],
+  "critical_code_review_comments": [
+    "sentry_config.py is clean (80 lines), gated correctly on SENTRY_DSN, before_send filter drops 4xx HTTPException + EndOfStream noise — good practice.",
+    "auth_utils.get_session_user wraps sentry_sdk.set_user in try/except — safely degrades if sentry_sdk is uninstalled. Good defensive pattern.",
+    "sentry_sdk 1.x in use — emits SentryHubDeprecationWarning. Consider pinning sentry-sdk>=2.0 in requirements.txt and migrating from Hub API to the new isolation-scope API at some point. Not blocking.",
+    "server.py calls init_sentry() before FastAPI() construction — correct order so middleware integrations attach."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sentry_regression_iter34.py (new)"
+  ],
+  "success_rate": {"backend": "100% (47/47 in-scope tests)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "Used preseeded fixed sessions from conftest.py autouse fixture: test_session_admin_X / test_session_employee_X / test_session_vip_X / test_session_normal_X. Confirmed all four resolve correctly via GET /api/auth/me.",
+  "seed_data_creation": "Register-flow test creates one TEST_iter34_<uuid>@resilience.example.com user per run. No cleanup needed (test-prefixed). Sessions are re-seeded automatically by autouse fixture each test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sentry backend wiring verified. SDK active, no regression. Reusable regression test at /app/backend/tests/test_sentry_regression_iter34.py covers: auth/me (valid + 401), /me/onboarding/complete, GET /api/notifications, GET /api/admin/orders, POST /api/orders + PUT /api/admin/orders/{id}/status, POST /api/vip/withdraw (TOTP gate), POST /api/auth/register + /api/auth/login. NOTE: registration requires E.164 phone (e.g. +1202555xxxx) AND email domain that is NOT .test/.local (use .example.com or real-looking domain) — these are upstream FastAPI/pydantic email validation constraints, not bugs.",
+  "rca of the issue": "No Sentry-related issue found. Three failing tests in the first regression run were authored against incorrect endpoint paths and invalid test fixtures (email .test TLD, non-digit phone); all corrected, all 10 now pass."
+}
