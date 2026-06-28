@@ -49,6 +49,9 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Registro de Transacciones (contabilidad): `sender_name` obligatorio en órdenes + `beneficiary_name` obligatorio en retiros VIP. Nueva sección `/admin/transactions` (admin-only) muestra entradas + salidas con totales por moneda (in/out/neto). Filtros: dirección, moneda, titular (search), rango de fechas. Exports CSV (UTF-8 BOM) y PDF branded reusando ReportLab. **(Feb 17, 2026 — iter11)**
 - Modal de detalle en Transacciones: rows clickeables abren Dialog con datos completos + comprobante de transferencia (imagen base64) descargable para entradas; mensaje contextual para salidas. **(Feb 18, 2026 — iter11)**
 - **Refactor monolito → modular (iter27 → iter33)**. `server.py` pasó de 2316 líneas a **92 líneas** (solo bootstrap + CORS + scheduler). Routers extraídos: `routes/auth.py`, `routes/notifications.py`, `routes/blocklist.py`, `routes/market.py`, `routes/push.py`, `routes/me.py`, `routes/orders.py`, `routes/admin.py`. Helpers compartidos en `services/balances.py`, `services/orders_helpers.py`, `services/transactions.py`. OpenAPI ahora expone **80 paths con 9 tags** (Auth, Me, Orders, Admin, Market, Blocklist, Notifications, Push, System) — Swagger UI navegable. Conftest `_autoseed_sessions` re-siembra las 4 sesiones de prueba antes de cada test → suite auto-suficiente. Testing agent confirmó cero regresiones (373 passed; 15 failures pre-existentes, ajenas al refactor). **(Feb 27, 2026 — iter33)**
+- **Sentry integration (iter34)**: `sentry_config.py` + `frontend/sentry.js` con backend (`sentry-sdk[fastapi] 2.63`) y frontend (`@sentry/react 10.62`). Deshabilitado por defecto, activa con `SENTRY_DSN` / `REACT_APP_SENTRY_DSN`. Auto-tag de actor (user_id, email, role) en cada error. ErrorBoundary global. Filtro de ruido: descarta HTTPException<500, ResizeObserver loop, network cancelado. 2 proyectos creados en sentry.io: `resilience-backend` (Python/FastAPI) y `resilience-frontend` (React). Test events confirmados en ambos dashboards. **(Feb 28, 2026 — iter34)**
+- **Tests obsoletos modernizados (iter34)**: `test_iter16_email_auth.py` agrega `phone` requerido + actualiza expectativa de no-auto-login en verify-email. `test_marketplace_profit_and_margin.py` elimina suposición de comisión 5% (iter19 puso 0%). Resultado: 21 + 13 = 34 tests previamente rotos ahora verdes. **(Feb 28, 2026 — iter34)**
+- **Cloudflare R2 Object Storage (iter35)**: abstracción provider-agnóstica (`services/storage.py` con r2/s3/none) + helper base64→storage (`services/proof_upload.py`) + proxy autenticado (`routes/files.py` con ownership check). `POST /api/orders` automáticamente sube `proof_image` base64 a R2 y persiste solo `/api/files/orders/<date>/<uuid>.png` en MongoDB. Igual para `payout_proof_image` (admin withdrawal status) y `invoice_image` (company-withdrawals). Bucket `resilience-p2p-proofs` (ENAM region), 10 GB gratis. **Cero cambios frontend** — `<img src="/api/files/...">` funciona via cookie samesite=none + secure. Testing agent: **105/105 verde** incluyendo 14 e2e contra el bucket real. **(Feb 28, 2026 — iter35)**
 - Filtros de monto (mín/máx) en Transacciones: validación servidor (rechazo de negativos y `min > max` con HTTP 400), propagación a CSV y PDF. Botón "Ir a Órdenes / Ir a Retiros VIP" en el modal para navegar a la sección original. **(Feb 18, 2026 — iter11)**
 - Acceso ampliado a Transacciones: **empleados** ahora ven `/admin/transactions` (admin + employee = staff). Nuevo `/dashboard/transactions` para **VIPs y clientes normales** con `GET /api/me/transactions` que aísla por user_id, exports CSV/PDF propios. Nav "Mi Historial" en Dashboard mobile + desktop. **(Feb 18, 2026 — iter12)**
 - 2FA / TOTP step-up para retiros: secretos cifrados con Fernet (TOTP_MASTER_KEY env var), 10 códigos de recuperación bcrypt-hashed de un solo uso. Endpoints `/api/me/2fa/{status,setup,verify-setup,disable,regenerate-recovery-codes}`. Tolerancia ±1 step (30s clock drift). Página `/dashboard/security` con QR + secret manual + códigos de recuperación. Withdrawals obligan 2FA: 412 si no configurado (con `setup_url`), 401 si código inválido. Recovery codes consumibles también funcionan. **(Feb 18, 2026 — iter13)**
@@ -82,11 +85,13 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - Add `<th>Real</th>` column in AdminRates table (data already exposed via GET /api/rates).
 
 ### P2
-- Sentry / error monitoring integration.
+- Sentry / error monitoring integration. ✅ Done in iter34.
 - Real crypto wallet integration (on-chain USDT/BTC verification).
 - Stripe / Zelle webhooks for auto-confirmation.
-- Replace base64 proof storage with Emergent Object Storage.
-- Modernize stale tests: `test_iter16_email_auth.py` (add mandatory `phone` field added in iter23) + `test_marketplace_profit_and_margin.py::test_alert_when_real_rate_makes_loss` (drop 5% commission removed in iter19). Pre-existing failures called out by the iter33 testing agent.
+- Replace base64 proof storage with Emergent Object Storage. ✅ Done in iter35 (Cloudflare R2).
+- Modernize stale tests: `test_iter16_email_auth.py` + `test_marketplace_profit_and_margin.py`. ✅ Done in iter34.
+- Backfill base64 → R2 for historical orders (user explicitly skipped; new orders only).
+- Optional: move `openapi.json` under `/api/openapi.json` so external consumers can fetch the schema via the public ingress (minor — currently only reachable on localhost:8001).
 - Reject-phone analytics: count of users currently under_review, scammers blocked per week, false-positive rate (admin un-blocked / total blocks).
 - Self-service appeal flow: under_review users can submit an "I'm not a scammer" form that lands in a staff queue.
 - POST /admin/blocked-contacts → status_code=201 + add `VerifyPhonePayload(BaseModel)` for OpenAPI/consistency (code-review notes from iter30).
@@ -96,14 +101,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 See `/app/memory/test_credentials.md` and `/app/auth_testing.md`.
 
 ## Key Files
-- `/app/backend/server.py` — Slim 92-line bootstrap (CORS, router includes, scheduler hooks).
-- `/app/backend/routes/` — `auth`, `me`, `orders`, `admin`, `market`, `blocklist`, `notifications`, `push` (one APIRouter per domain, all with OpenAPI tags).
-- `/app/backend/services/` — Shared business helpers: `balances` (rates / USDT conversion / defensive mode), `orders_helpers` (order workflow), `transactions` (registry + audit dates).
-- `/app/backend/auth_utils.py` — Auth + session + TOTP step-up helpers.
+- `/app/backend/server.py` — Slim 92-line bootstrap (CORS, router includes, scheduler hooks, Sentry init, Storage init).
+- `/app/backend/sentry_config.py` — Sentry SDK init (iter34). No-op when SENTRY_DSN unset.
+- `/app/backend/routes/` — `auth`, `me`, `orders`, `admin`, `market`, `blocklist`, `notifications`, `push`, `files` (one APIRouter per domain, all with OpenAPI tags).
+- `/app/backend/services/` — Shared helpers: `balances`, `orders_helpers`, `transactions`, `storage` (iter35 — R2/S3 abstraction), `proof_upload` (iter35 — base64→R2 helper).
+- `/app/backend/auth_utils.py` — Auth + session + TOTP step-up helpers. Auto-tags Sentry user on get_session_user.
 - `/app/backend/db_client.py` — Single Mongo client + DB handle.
+- `/app/backend/.env.sentry.example`, `.env.storage.example` — Documented config knobs.
+- `/app/frontend/src/sentry.js` — Frontend Sentry init + helpers (iter34).
+- `/app/frontend/src/index.js` — ErrorBoundary wired (iter34).
+- `/app/frontend/src/context/AuthContext.jsx` — Tags Sentry user on login/logout.
 - `/app/frontend/src/App.js` — Router + AuthCallback gate.
-- `/app/frontend/src/pages/Landing.jsx` — Public landing.
-- `/app/frontend/src/pages/Dashboard.jsx` — Client shell + nav.
-- `/app/frontend/src/pages/AdminPanel.jsx` — Admin shell + nav.
+- `/app/frontend/src/pages/Landing.jsx`, `Dashboard.jsx`, `AdminPanel.jsx` — Main shells.
 - `/app/frontend/src/pages/dashboard/*` and `/admin/*` — Feature views.
 - `/app/design_guidelines.json` — Design system reference.
