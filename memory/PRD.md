@@ -83,6 +83,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - `audit_pdf.py generate_audit_pdf` (CC 13 → <10): `_format_audit_ts`, `_build_audit_row`, `_build_filters_paragraph`.
   - `pdf_service.py generate_vip_closing_pdf` (CC 13 → <10): `_compute_closing_totals`, `_format_order_row`, `_build_currency_breakdown_table`.
   Plus React Hook Stale Closure audit: ESLint `react-hooks/exhaustive-deps` ran clean across all `src/**` — the original code-review report was outdated. Removed 3 unused `eslint-disable-next-line react-hooks/exhaustive-deps` directives (`PushToggle.jsx`, `AdminHealth.jsx`, `ExchangeView.jsx`). Behavior-identical: same signatures, same HTTP codes, same JSON shapes, same PDF magic bytes. **Backend 449/449 pre-existing + 16/16 new refactor regression (`test_refactor_regression_iter25.py`) pass** (`/app/test_reports/iteration_25.json`).
+- **iter39 (Feb 28, 2026)**: **Bandeja única de notificaciones operativas + Backend split + Frontend component split (P1+P2)**.
+  - **Centralised ops mailbox**: new `settings.global.ops_notifications_email`. When set, all admin alert emails (new order/withdrawal/redemption/margin/pending/monthly report) funnel to that single inbox via `admin_alerts.resolve_admin_email_recipients()`; push notifications still fan out per admin. UI in `AdminOverview.jsx` ("Bandeja única de notificaciones operativas" input with 2FA step-up). 7/7 tests in `test_ops_notifications_email.py`.
+  - **Backend split**: `routes/admin.py` 1247 → 538 lines (-57%). 5 new sub-routers: `admin_withdrawals.py` (123 lines), `admin_users.py` (115), `admin_audit.py` (98), `admin_company_funds.py` (185), `admin_revenue.py` (299). server.py imports all 5 + re-exports `build_revenue_timeseries`. 31 admin endpoints, zero route collisions. **472/472 pytest regression + 19/19 new endpoint coverage (`test_iter38_admin_split.py`)** all green.
+  - **Frontend component split**: 4 oversized pages decomposed into 17 sub-components.
+    - `AdminTransactions.jsx` 499 → 172 (-65%); new dir `pages/admin/transactions/` with `TransactionsTotals`, `TransactionsFilters`, `TransactionsTable`, `TransactionDetailModal`.
+    - `AdminUsers.jsx` 581 → 429 (-26%); new dir `pages/admin/users/` with `CurrencyMultiSelect`, `MarketPermsCell`, `UserPhoneCell`, `RejectPhoneDialog`.
+    - `AdminRevenue.jsx` 464 → 215 (-54%); new dir `pages/admin/revenue/` with `RevenueCards`, `RevenueByPairTable`, `RevenueDailyTable`, `RevenueMonthlyTable`, `RevenueMarketplaceTable`.
+    - `EmailAuthDialog.jsx` 381 → 277 (-27%); new dir `components/auth/` with `AuthSuccessPanel`, `GoogleAuthButton`, `AuthNotice`, `AuthCredentialsFields`.
+    All 17 sub-components preserve the original parent `data-testid` names — testing suites need ZERO updates. Frontend live-verified in preview (4 pages + all flows). (`/app/test_reports/iteration_38.json`)
 
 
 ## Prioritized Backlog
@@ -90,9 +99,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.
 
 ### P1
-- **Component size & nested ternaries (P2 originally, surfaced again in iter38 code review)**: split oversized components — `AdminTransactions.jsx`, `AdminUsers.jsx`, `AdminRevenue.jsx`, `EmailAuthDialog.jsx` — and replace nested ternaries with helper functions.
-- **`routes/admin.py` is now 1235 lines** — recommended ceiling is 700. Split per concern: `withdrawals.py`, `revenue.py`, `company_funds.py`, `audit_export.py`, `users.py`. Pure organizational, no functional risk.
-- **Refactor Phase 3 cont.**: extract `routes/orders.py` (orders + withdrawals + redemptions, ~600 lines) and `routes/admin.py` (stats, audit, transactions, revenue, queue, company-funds, users, defensive-mode — ~900 lines) from `server.py` (still 2377 lines). After both, server.py would be ~800 lines — pure app bootstrap + cross-cutting helpers.
+- **Refactor Phase 3 (closed)** ✅ — `server.py` already slim (108 lines); admin.py split into 6 modules (iter39).
+- ~~Component size & nested ternaries~~ — **closed in iter39**: 4 oversized components split into 17 sub-components.
+- ~~Split `routes/admin.py`~~ — **closed in iter39** (1247 → 538 lines).
+
+### P2
+- **Type Safety**: add type hints to `server.py` and core business logic (services/*).
+- **Remove residual `console.error` calls** across remaining frontend production files and route them to Sentry instead.
+- **Nested ternaries**: a handful of remaining ternary chains in `OrdersView.jsx`, `WithdrawalsView.jsx` could be replaced with helper functions (cosmetic).
+- **Wallets on-chain reales** (USDT/BTC) + webhooks Stripe/Zelle de auto-confirmación.
 - Multi-currency display of VIP balance across UI (legacy single-USD widgets if any remain).
 - Search + pagination in admin tables (audit, orders, users) when data grows.
 - Visual highlight (red tint) of negative-profit cards on AdminRevenue.
