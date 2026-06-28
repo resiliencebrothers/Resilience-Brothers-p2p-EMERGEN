@@ -4,12 +4,17 @@ Used by:
 - `POST /api/orders`   → field `proof_image` (transfer proof from client)
 - `PUT  /api/admin/withdrawals/{id}/status` → field `payout_proof_image`
   (admin uploading proof of payout to client)
+- `POST /api/admin/company-withdrawals`  → field `invoice_image`
 
 Accepts either:
   a) A base64 data URL  → uploads to storage and returns `/api/files/<key>`.
   b) An already-uploaded reference (starts with `/api/files/` or `http`) →
      returned untouched.
   c) Anything else (empty / unrecognized) → returned untouched.
+
+iter36 — oversize handling: when the decoded payload exceeds `MAX_UPLOAD_BYTES`
+(8 MB) the helper raises `HTTPException(413)`. Previously it silently kept the
+base64 inline which could push the order document past MongoDB's 16 MB limit.
 
 If storage is disabled or upload fails, the function returns the input
 verbatim so the existing base64 flow keeps working — no data loss.
@@ -19,6 +24,8 @@ import logging
 import re
 import uuid
 from typing import Optional
+
+from fastapi import HTTPException
 
 from services import storage as storage_service
 
@@ -63,9 +70,9 @@ def maybe_upload_proof(value: Optional[str], folder: str) -> Optional[str]:
     m = _DATA_URL_RE.match(value)
     if not m:
         return value  # unrecognized format → keep as-is (defensive)
-    if not storage_service.is_enabled():
-        return value  # storage off → keep base64 (legacy fallback)
 
+    # iter36 — validate size BEFORE checking storage status so the 8 MB cap
+    # protects MongoDB even when storage is off (legacy / dev mode).
     mime = m.group("mime").lower()
     raw_b64 = re.sub(r"\s+", "", m.group("payload"))
     try:
@@ -74,9 +81,26 @@ def maybe_upload_proof(value: Optional[str], folder: str) -> Optional[str]:
         logger.warning(f"[proof] invalid base64 — keeping as-is: {e}")
         return value
     if len(blob) > MAX_UPLOAD_BYTES:
-        # Reject silently — caller could surface a 413 if it wants stricter UX.
-        logger.warning(f"[proof] upload too large ({len(blob)} bytes) — keeping base64")
-        return value
+        # iter36 — surface 413 to the client instead of silently keeping a multi-MB
+        # blob inline (which would also blow past Mongo's 16 MB document limit).
+        size_mb = len(blob) / (1024 * 1024)
+        limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "PROOF_TOO_LARGE",
+                "message": (
+                    f"La imagen del comprobante es demasiado grande "
+                    f"({size_mb:.1f} MB). Máximo permitido: {limit_mb:.0f} MB. "
+                    f"Comprime la imagen o tómala con menor resolución."
+                ),
+                "size_mb": round(size_mb, 2),
+                "limit_mb": limit_mb,
+            },
+        )
+
+    if not storage_service.is_enabled():
+        return value  # storage off → keep base64 (legacy fallback, size-bounded)
 
     ext = _MIME_TO_EXT.get(mime, "bin")
     from datetime import datetime, timezone

@@ -42,7 +42,14 @@ from services import storage as storage_service  # noqa: E402
 storage_service.init_storage()
 
 
-app = FastAPI(title="Resilience Brothers P2P")
+app = FastAPI(
+    title="Resilience Brothers P2P",
+    # iter36 — expose the schema + docs under /api/* so the public ingress (which only
+    # proxies /api/*) can reach them. Internal /openapi.json keeps working on :8001.
+    openapi_url="/api/openapi.json",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+)
 api_router = APIRouter(prefix="/api")
 
 

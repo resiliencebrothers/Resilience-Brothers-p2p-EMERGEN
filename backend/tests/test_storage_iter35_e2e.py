@@ -49,9 +49,10 @@ class TestStorageBoot:
         assert r.status_code == 200
 
     def test_openapi_exposes_files_route(self):
-        # OpenAPI schema is only served on the internal port (k8s ingress
-        # forwards /api/* only). 81 paths total including /api/files/{key}.
-        r = requests.get("http://localhost:8001/openapi.json", timeout=10)
+        # iter36 — OpenAPI schema moved under /api/openapi.json so the public
+        # k8s ingress (which proxies /api/*) can reach it. 81 paths total
+        # including /api/files/{key}.
+        r = requests.get(f"{BASE_URL}/api/openapi.json", timeout=10)
         assert r.status_code == 200
         paths = r.json().get("paths", {})
         assert len(paths) == 81, f"expected 81 paths, got {len(paths)}"
@@ -165,14 +166,9 @@ class TestPathTraversal:
 # ---------- Item 9: oversize falls back to base64 ----------
 
 class TestOversizeFallback:
-    def test_oversize_proof_image_kept_as_base64(self):
-        """Build a >8 MB base64 image; helper must reject upload and keep it inline.
-
-        The endpoint may still accept it (the helper falls back), so we tolerate
-        either 200 (order created with inline base64) or 413/400 if a stricter
-        size guard is wired. We just verify that no /api/files/... reference
-        was produced and either branch is well-defined.
-        """
+    def test_oversize_proof_image_returns_413(self):
+        """iter36 — oversize uploads must return HTTP 413 with PROOF_TOO_LARGE
+        instead of silently keeping the base64 inline."""
         big_bytes = b"\x00" * (9 * 1024 * 1024)  # 9 MB > 8 MB hard limit
         big_url = "data:image/png;base64," + base64.b64encode(big_bytes).decode("ascii")
         payload = {
@@ -183,16 +179,13 @@ class TestOversizeFallback:
         r = requests.post(
             f"{BASE_URL}/api/orders", headers=_h(NORMAL_TOKEN), json=payload, timeout=60
         )
-        # Per the helper contract (services/proof_upload.py) we expect a
-        # successful order creation with the base64 string preserved.
-        assert r.status_code == 200, r.text
-        proof = r.json().get("proof_image") or ""
-        assert not proof.startswith("/api/files/"), (
-            "Oversize file should not be uploaded to storage"
-        )
-        assert proof.startswith("data:image/png;base64,"), (
-            "Oversize file should be kept as inline base64"
-        )
+        assert r.status_code == 413, r.text
+        body = r.json()
+        # FastAPI nests the structured detail under "detail"
+        detail = body.get("detail") or {}
+        assert detail.get("code") == "PROOF_TOO_LARGE"
+        assert detail.get("size_mb", 0) > 8
+        assert detail.get("limit_mb") == 8
 
 
 # ---------- Item 10: admin withdrawal payout_proof_image ----------

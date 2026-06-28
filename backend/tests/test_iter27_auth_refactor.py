@@ -35,12 +35,11 @@ def test_api_root_alive():
 def test_openapi_path_count_unchanged():
     """Snapshot assertion — updated after each refactor that adds/removes paths.
 
-    Hits the backend directly (localhost:8001) because the public ingress only
-    forwards `/api/*`. iter33 split server.py into routes/* and exposed push +
-    notifications endpoints; iter35 added GET /api/files/{key:path}. The
-    current count is 81.
+    Hits the backend directly (localhost:8001) at the new /api/openapi.json
+    path (iter36 — exposed the schema under /api/* for public ingress access).
+    iter35 added GET /api/files/{key:path}, the current count is 81.
     """
-    r = requests.get("http://localhost:8001/openapi.json")
+    r = requests.get("http://localhost:8001/api/openapi.json")
     assert r.status_code == 200
     assert len(r.json()["paths"]) == 81
 

@@ -1,0 +1,31 @@
+{
+  "summary": "iter36 backend-only review — 3 P2 wiring items: (1) /api/openapi.json now reachable via public ingress (returns 81 paths incl. /api/files/{key}); /api/docs and /api/redoc serve HTML successfully. (2) POST /api/orders with >8 MB proof_image now returns HTTP 413 detail.code='PROOF_TOO_LARGE' AND no order document is persisted (verified by Mongo count before/after). 413 also fires when storage is disabled (protects Mongo even in legacy mode). 100 KB and 68-byte PNGs still upload to /api/files/orders/<date>/<uuid>.png and round-trip via GET /api/files/{key}. (3) backfill_base64_to_r2.py --dry-run runs to completion, output is byte-identical across consecutive runs (idempotent), and reports Migrated=0 / Scanned=82 / Invalid=80 / Oversize=2 matching the post-apply baseline. Spot-check of a real migrated /api/files/orders/* document returns 200 + image/* content-type via admin Bearer. Full regression: 25 p2p + 3 sentry + 21 iter16 email + 13 marketplace + 21 iter27 auth = 83/83 pass. Total: 117/117 in-scope tests green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter36_wiring.py",
+    "/app/backend/tests/test_storage_iter35.py",
+    "/app/backend/tests/test_storage_iter35_e2e.py",
+    "/app/test_reports/pytest/iter36_results.xml",
+    "/app/test_reports/pytest/iter36_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:49-51 — openapi_url='/api/openapi.json', docs_url='/api/docs', redoc_url='/api/redoc' wired correctly; FastAPI rebuilds the schema route on update with no caching pitfalls.",
+    "services/proof_upload.py — the size check is correctly placed BEFORE the storage.is_enabled() gate (lines 83-100). MongoDB's 16 MB document cap is now defended regardless of storage backend. The 413 HTTPException carries a structured detail (code, message, size_mb, limit_mb) that the frontend can render cleanly.",
+    "scripts/backfill_base64_to_r2.py — clean idempotent design: deterministic key per doc_id (line 79-86) means a re-run of --apply overwrites the same R2 object, not duplicates. Continue-on-error correctly returns non-zero summary line per failure without aborting. Best-effort orphan delete on mongo update failure (line 127) avoids leaking R2 objects.",
+    "Minor (informational, not blocking): the legacy /openapi.json path on the public URL returns 200 with HTML (Express SPA fallback) rather than 404 — the JSON schema is NOT leaked, but a strict 404 reading would require ingress-level deny. Current behaviour is acceptable: the schema is unambiguously moved.",
+    "Cost-safety: full iter36 test run does ~6 R2 PUTs of 68-byte/100 KB PNGs + 0 PUTs for the 9 MB blob (rejected pre-storage). Well under Cloudflare free tier."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter36_wiring.py (new — 11 e2e tests covering items 1-7, 9, 10 of the review request)",
+    "/app/backend/tests/test_storage_iter35_e2e.py (updated — openapi assertion moved from /openapi.json to /api/openapi.json; oversize test now asserts 413 instead of 200 fallback, both to match the iter36 contract)"
+  ],
+  "success_rate": {"backend": "100% (117/117: 34 iter36-scope + 83 regression)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "Used autouse-seeded sessions from conftest.py (test_session_admin_X, test_session_employee_X, test_session_vip_X, test_session_normal_X). Admin/VIP TOTP via make_admin_totp / make_vip_totp helpers.",
+  "seed_data_creation": "Created during run: 3 new orders with R2-uploaded proofs (68B PNG, 100KB PNG, 68B round-trip), 1 admin-paid withdrawal with payout proof on R2, 1 company-withdrawal invoice on R2 (if funds available). 0 orders created for the 413 path (verified via Mongo count). No backfill --apply executed (only --dry-run, twice).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable iter36 e2e suite at /app/backend/tests/test_iter36_wiring.py (11 tests, ~16s including 2 backfill dry-run subprocesses ~3s each). Reusable iter35 e2e at /app/backend/tests/test_storage_iter35_e2e.py (14 tests, now updated for iter36 contract). To rerun: `pytest tests/test_iter36_wiring.py tests/test_storage_iter35.py tests/test_storage_iter35_e2e.py -v`. Regression baseline = 83 tests across test_p2p_backend / test_sentry_config / test_iter16_email_auth / test_marketplace_profit_and_margin / test_iter27_auth_refactor. Live R2 bucket = `resilience-p2p-proofs` (~170 objects post iter36). Backfill --dry-run summary baseline: scanned=82, migrated=0, oversize=2, invalid=80, errors=0 — re-running should produce IDENTICAL summary (idempotency invariant).",
+  "rca of the issue": "No bugs found in iter36. The two initial test failures in the pre-existing iter35 e2e suite were correctly diagnosed as test-side staleness: (a) the OpenAPI assertion still pointed at the old /openapi.json URL on localhost:8001, which now correctly 404s after the move to /api/openapi.json; (b) the oversize test still asserted the old 200-with-base64-fallback contract, which iter36 deliberately replaced with 413. Both tests were updated to match the new iter36 contract and now pass. All 11 review-request items are functionally verified end-to-end."
+}

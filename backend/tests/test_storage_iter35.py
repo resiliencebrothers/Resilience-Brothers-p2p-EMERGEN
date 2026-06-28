@@ -94,15 +94,34 @@ def test_maybe_upload_proof_uploads_when_storage_on(monkeypatch):
     assert captured["content_type"] == "image/png"
 
 
-def test_maybe_upload_proof_rejects_oversize(monkeypatch):
+def test_maybe_upload_proof_raises_413_on_oversize(monkeypatch):
+    """iter36 — oversize uploads must raise HTTPException(413), regardless of
+    whether storage is enabled. We never want a 10 MB blob to land in MongoDB."""
+    from fastapi import HTTPException
     from services import storage as storage_service
     monkeypatch.setattr(storage_service, "is_enabled", lambda: True)
-    # Should never reach put_object.
     monkeypatch.setattr(storage_service, "put_object",
                           lambda *a, **kw: pytest.fail("put_object should not be called"))
     from services import proof_upload
     importlib.reload(proof_upload)
-    # Construct a fake 10 MB blob in base64 (> 8 MB limit).
     big_bytes = b"A" * (10 * 1024 * 1024)
     big_data_url = "data:image/png;base64," + base64.b64encode(big_bytes).decode("ascii")
-    assert proof_upload.maybe_upload_proof(big_data_url, "orders") == big_data_url
+    with pytest.raises(HTTPException) as exc:
+        proof_upload.maybe_upload_proof(big_data_url, "orders")
+    assert exc.value.status_code == 413
+    assert exc.value.detail["code"] == "PROOF_TOO_LARGE"
+    assert exc.value.detail["size_mb"] > 8
+
+
+def test_maybe_upload_proof_413_fires_even_when_storage_off(monkeypatch):
+    """Size cap protects MongoDB even in legacy / dev mode (storage disabled)."""
+    from fastapi import HTTPException
+    from services import storage as storage_service
+    monkeypatch.setattr(storage_service, "is_enabled", lambda: False)
+    from services import proof_upload
+    importlib.reload(proof_upload)
+    big_bytes = b"B" * (10 * 1024 * 1024)
+    big_data_url = "data:image/png;base64," + base64.b64encode(big_bytes).decode("ascii")
+    with pytest.raises(HTTPException) as exc:
+        proof_upload.maybe_upload_proof(big_data_url, "orders")
+    assert exc.value.status_code == 413
