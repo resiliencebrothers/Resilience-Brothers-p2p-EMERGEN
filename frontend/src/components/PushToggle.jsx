@@ -3,6 +3,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { Bell, BellOff, BellRing } from "lucide-react";
 import { toast } from "sonner";
+import { captureError } from "@/sentry";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -59,12 +60,16 @@ export default function PushToggle() {
       try {
         await axios.post(`${API}/push/test`, {}, { withCredentials: true });
       } catch (err) {
-        // eslint-disable-next-line no-console -- benign: first device may not have receivers yet
-        console.warn("Push test failed (no devices yet):", err?.response?.status);
+        // benign: first device may not have receivers yet — track as a warning only
+        captureError(err, {
+          where: "PushToggle.testNotification",
+          status: err?.response?.status,
+          level: "info",
+        });
       }
     } catch (e) {
-      // eslint-disable-next-line no-console -- intentional: surface push setup errors in production
-      console.error(e);
+      // intentional: surface push setup errors in production
+      captureError(e, { where: "PushToggle.subscribe" });
       toast.error("Error al activar notificaciones");
     } finally {
       setBusy(false);

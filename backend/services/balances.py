@@ -81,7 +81,7 @@ def get_user_balance(user: dict, code: str) -> float:
     return bal
 
 
-async def decrement_balance(user_id: str, code: str, amount: float):
+async def decrement_balance(user_id: str, code: str, amount: float) -> None:
     """Decrement a currency balance. For USD, prefer vip_balance_usd legacy field first."""
     if code == "USD":
         user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -103,7 +103,7 @@ async def decrement_balance(user_id: str, code: str, amount: float):
         )
 
 
-async def accumulate_vip_balance(order: dict):
+async def accumulate_vip_balance(order: dict) -> None:
     """Increment VIP per-currency balance for an approved accumulate order."""
     await db.users.update_one(
         {"user_id": order["user_id"]},
@@ -126,7 +126,7 @@ async def get_defensive_mode() -> dict:
     }
 
 
-async def assert_not_defensive(action_label: str):
+async def assert_not_defensive(action_label: str) -> None:
     state = await get_defensive_mode()
     if state.get("enabled"):
         raise HTTPException(
@@ -140,7 +140,7 @@ async def assert_not_defensive(action_label: str):
         )
 
 
-async def assert_account_active(user: dict):
+async def assert_account_active(user: dict) -> None:
     """Gate client operations (orders, withdrawals, redemptions) on account_status.
     Staff/admin always pass through."""
     if user.get("role") in ("admin", "employee"):

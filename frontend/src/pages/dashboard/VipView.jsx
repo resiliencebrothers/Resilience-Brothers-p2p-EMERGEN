@@ -18,6 +18,19 @@ const WITHDRAWAL_STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
 };
 
+// Labels are method-specific: cash deliveries use "Entregado / En progreso"
+// while transfers/crypto use "Pagado / Confirmado".
+const WITHDRAWAL_LABELS_BY_METHOD = {
+  cash:     { paid: "Entregado", approved: "En progreso", pending: "Pendiente", rejected: "Rechazado" },
+  transfer: { paid: "Pagado",    approved: "Confirmado",  pending: "Pendiente", rejected: "Rechazado" },
+  crypto:   { paid: "Pagado",    approved: "Confirmado",  pending: "Pendiente", rejected: "Rechazado" },
+};
+
+function getWithdrawalLabel(method, status) {
+  const map = WITHDRAWAL_LABELS_BY_METHOD[method] ?? WITHDRAWAL_LABELS_BY_METHOD.transfer;
+  return map[status] ?? status;
+}
+
 export default function VipView() {
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
@@ -267,9 +280,7 @@ export default function VipView() {
           <div className="space-y-2 max-h-[400px] overflow-y-auto">
             {withdrawals.length === 0 && <p className="text-neutral-500 text-sm">Sin retiros aún.</p>}
             {withdrawals.map(w => {
-              const label = w.method === "cash"
-                ? { paid: "Entregado", approved: "En progreso", pending: "Pendiente", rejected: "Rechazado" }[w.status] || w.status
-                : { paid: "Pagado", approved: "Confirmado", pending: "Pendiente", rejected: "Rechazado" }[w.status] || w.status;
+              const label = getWithdrawalLabel(w.method, w.status);
               return (
                 <div key={w.id} className="border border-white/10 p-3 text-sm" data-testid={`withdrawal-row-${w.id}`}>
                   <div className="flex justify-between items-start">

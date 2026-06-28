@@ -82,7 +82,7 @@ VALID_ORDER_STATUSES = {
 # Order creation pipeline (used by POST /orders)
 # ============================================================
 
-async def resolve_order_rate(from_code: str, to_code: str, user: dict):
+async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[float, dict]:
     """Look up the active rate and pick vip vs normal. Returns (rate, rate_doc)."""
     rate_doc = await db.rates.find_one(
         {"from_code": from_code, "to_code": to_code}, {"_id": 0}
@@ -157,7 +157,7 @@ async def maybe_flag_defensive_margin(order: "Order") -> None:
         logger.error(f"Defensive mode check failed: {e}")
 
 
-async def check_negative_margin_alert(order: dict):
+async def check_negative_margin_alert(order: dict) -> None:
     """Notify admins if an order would generate a loss given the current real_rate."""
     rate_doc = await db.rates.find_one(
         {"from_code": order["from_code"], "to_code": order["to_code"]}, {"_id": 0}
@@ -203,7 +203,7 @@ async def dispatch_new_order_alerts(order: "Order", user: dict) -> None:
 # Order status transitions (used by PUT /admin/orders/{id}/status)
 # ============================================================
 
-async def check_vip_threshold_alert(order: dict):
+async def check_vip_threshold_alert(order: dict) -> None:
     """If user's total_usdt crossed the configured threshold, notify admins once."""
     try:
         threshold = await get_vip_threshold(db)
@@ -228,7 +228,7 @@ async def check_vip_threshold_alert(order: dict):
         logger.error(f"VIP threshold alert failed: {e}")
 
 
-async def send_client_order_email(order: dict, new_status: str, target_user: dict):
+async def send_client_order_email(order: dict, new_status: str, target_user: dict) -> None:
     try:
         if new_status == "approved":
             notify_order_approved(order, target_user)
@@ -238,7 +238,7 @@ async def send_client_order_email(order: dict, new_status: str, target_user: dic
         logger.error(f"Email notification failed: {e}")
 
 
-async def send_client_order_push(order: dict, new_status: str):
+async def send_client_order_push(order: dict, new_status: str) -> None:
     try:
         push_payload = (
             build_order_approved_payload(order)

@@ -90,6 +90,7 @@ def _storage_status() -> dict:
     # Reach into the module-level client + bucket. We expose them as the public
     # surface for health reporting (acceptable for an admin-only view).
     client = storage_service._client  # noqa: SLF001
+    assert client is not None  # narrowed by is_enabled()
     bucket = storage_service._bucket   # noqa: SLF001
     total_count = 0
     total_bytes = 0

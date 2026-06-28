@@ -92,6 +92,11 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
     - `AdminRevenue.jsx` 464 → 215 (-54%); new dir `pages/admin/revenue/` with `RevenueCards`, `RevenueByPairTable`, `RevenueDailyTable`, `RevenueMonthlyTable`, `RevenueMarketplaceTable`.
     - `EmailAuthDialog.jsx` 381 → 277 (-27%); new dir `components/auth/` with `AuthSuccessPanel`, `GoogleAuthButton`, `AuthNotice`, `AuthCredentialsFields`.
     All 17 sub-components preserve the original parent `data-testid` names — testing suites need ZERO updates. Frontend live-verified in preview (4 pages + all flows). (`/app/test_reports/iteration_38.json`)
+- **iter40 (Feb 28, 2026)**: **Type Safety + Sentry coverage + Ternarios cosméticos (P2 closure)**.
+  - **Type hints + mypy**: created `/app/backend/mypy.ini` with `follow_imports = silent` and `check_untyped_defs = True`. Added explicit return types (`-> None`, `-> tuple[float, dict]`, `Dict[str, Any]`, `List[TransactionItem]`) across `services/balances.py`, `services/orders_helpers.py`, `services/transactions.py`, `services/storage.py`, `services/health.py`, `server.py`. Pinned `db_client.db: Any` to neutralise motor-stubs false positives. Result: **`mypy --config-file mypy.ini` → Success: no issues found in 8 source files** (server.py + 7 service modules). Ready for CI integration.
+  - **Sentry coverage**: removed 4 orphan `console.error/console.warn` from React bundle (`DefensiveModePanel.jsx` x2, `PushToggle.jsx` x2) and rerouted them to `captureError(err, { where, level })` from `@/sentry`. Service-worker registration (`sw-register.js`) keeps its console.error because it runs before the React bundle/Sentry SDK is initialised. Production errors now flow to Sentry.
+  - **Ternarios cosméticos**: extracted `WITHDRAWAL_LABELS_BY_METHOD` map + `getWithdrawalLabel(method, status)` helper in `VipView.jsx`. The nested method+status ternary that used to be 3 lines deep is now a clean lookup. `OrdersView.jsx` already used `STATUS_LABELS`/`STATUS_STYLES` maps — no refactor needed.
+  - Backend regression: **491/491 pytest green** after all P2 changes.
 
 
 ## Prioritized Backlog
@@ -104,10 +109,13 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - ~~Split `routes/admin.py`~~ — **closed in iter39** (1247 → 538 lines).
 
 ### P2
-- **Type Safety**: add type hints to `server.py` and core business logic (services/*).
-- **Remove residual `console.error` calls** across remaining frontend production files and route them to Sentry instead.
-- **Nested ternaries**: a handful of remaining ternary chains in `OrdersView.jsx`, `WithdrawalsView.jsx` could be replaced with helper functions (cosmetic).
+- ~~Type Safety~~ — **closed in iter40**: mypy 100% green across `server.py` + `services/*`.
+- ~~Sentry coverage~~ — **closed in iter40**: 0 orphan `console.error/warn` left in React bundle.
+- ~~Nested ternaries~~ — **closed in iter40** (`VipView.jsx` extracted helper; `OrdersView.jsx` already clean).
 - **Wallets on-chain reales** (USDT/BTC) + webhooks Stripe/Zelle de auto-confirmación.
+- **Analytics anti-scam** (under_review activos, blocks/semana, falsos positivos).
+- **Self-service appeal** para `under_review`.
+- **Mobile-first quick admin dashboard** (1 pantalla con pendientes urgentes, balance, último PDF, botón "Acción rápida").
 - Multi-currency display of VIP balance across UI (legacy single-USD widgets if any remain).
 - Search + pagination in admin tables (audit, orders, users) when data grows.
 - Visual highlight (red tint) of negative-profit cards on AdminRevenue.

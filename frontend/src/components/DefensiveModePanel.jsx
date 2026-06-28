@@ -10,6 +10,7 @@ import { ShieldAlert, ShieldCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { useNavigate } from "react-router-dom";
+import { captureError } from "@/sentry";
 
 export default function DefensiveModePanel() {
   const { user } = useAuth();
@@ -26,7 +27,7 @@ export default function DefensiveModePanel() {
       const r = await axios.get(`${API}/system/defensive-mode`, { withCredentials: true });
       setState(r.data);
     } catch (err) {
-      console.error("Failed to fetch defensive-mode state:", err);
+      captureError(err, { where: "DefensiveModePanel.load" });
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
@@ -163,7 +164,7 @@ export function DefensiveBanner() {
         if (active) setEnabled(!!r.data?.enabled);
       } catch (err) {
         // Non-critical: banner just stays in its previous state if the public endpoint is unreachable
-        console.warn("DefensiveBanner poll failed:", err?.message || err);
+        captureError(err, { where: "DefensiveBanner.poll", level: "warning" });
       }
     };
     fetchState();

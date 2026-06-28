@@ -5,11 +5,15 @@ Builds the unified transaction list (entradas = orders, salidas = withdrawals)
 plus the date-range normalization used by the audit log queries.
 """
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
 from db_client import db
+
+
+# Public alias — every entry in the unified transactions list shares this shape.
+TransactionItem = Dict[str, Any]
 
 
 # ============================================================
@@ -51,8 +55,8 @@ def date_range_query(since: Optional[str], until: Optional[str]) -> dict:
 
 
 def build_audit_query(action: Optional[str], actor_id: Optional[str],
-                      since: Optional[str], until: Optional[str]) -> dict:
-    q = {}
+                      since: Optional[str], until: Optional[str]) -> Dict[str, Any]:
+    q: Dict[str, Any] = {}
     if action:
         q["action"] = action
     if actor_id:
@@ -60,7 +64,7 @@ def build_audit_query(action: Optional[str], actor_id: Optional[str],
     s = normalize_audit_date(since, end_of_day=False)
     u = normalize_audit_date(until, end_of_day=True)
     if s or u:
-        rng = {}
+        rng: Dict[str, str] = {}
         if s:
             rng["$gte"] = s
         if u:
@@ -71,7 +75,7 @@ def build_audit_query(action: Optional[str], actor_id: Optional[str],
 
 async def fetch_audit_entries(action: Optional[str], actor_id: Optional[str],
                               since: Optional[str], until: Optional[str],
-                              limit: int) -> list:
+                              limit: int) -> List[Dict[str, Any]]:
     q = build_audit_query(action, actor_id, since, until)
     limit = max(1, min(limit, 5000))
     return await db.audit_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
@@ -86,7 +90,7 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
                              until: Optional[str],
                              min_amount: Optional[float] = None,
                              max_amount: Optional[float] = None,
-                             user_id: Optional[str] = None) -> list:
+                             user_id: Optional[str] = None) -> List[TransactionItem]:
     """Unified transaction list from approved/completed orders + approved/paid withdrawals.
 
     Each entry: {direction: 'in'|'out', currency, amount, holder_name, client_name,
@@ -94,7 +98,7 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
     Only records with a non-empty holder/sender field are included.
     If user_id is provided, restricts to transactions owned by that user.
     """
-    items: list = []
+    items: List[TransactionItem] = []
     date_q = date_range_query(since, until)
 
     # ENTRADAS (orders): approved/completed only, sender_name required
@@ -169,8 +173,8 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
     return items
 
 
-def compute_transaction_totals(items: list) -> dict:
-    by_currency: dict = {}
+def compute_transaction_totals(items: List[TransactionItem]) -> Dict[str, Any]:
+    by_currency: Dict[str, Dict[str, Any]] = {}
     for it in items:
         cur = it["currency"]
         slot = by_currency.setdefault(cur, {"in": 0.0, "out": 0.0, "count": 0})

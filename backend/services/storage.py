@@ -113,6 +113,7 @@ def put_object(key: str, data: bytes, content_type: str = "application/octet-str
     back to base64 storage when None to avoid losing user uploads."""
     if not is_enabled():
         return None
+    assert _client is not None  # narrowed by is_enabled()
     try:
         _client.put_object(
             Bucket=_bucket, Key=key, Body=data,
@@ -129,6 +130,7 @@ def get_object_bytes(key: str) -> Tuple[Optional[bytes], Optional[str]]:
     """Read an object's body and content-type. Returns (None, None) on miss."""
     if not is_enabled():
         return None, None
+    assert _client is not None  # narrowed by is_enabled()
     try:
         resp = _client.get_object(Bucket=_bucket, Key=key)
         return resp["Body"].read(), resp.get("ContentType", "application/octet-stream")
@@ -140,6 +142,7 @@ def get_object_bytes(key: str) -> Tuple[Optional[bytes], Optional[str]]:
 def delete_object(key: str) -> bool:
     if not is_enabled():
         return False
+    assert _client is not None  # narrowed by is_enabled()
     try:
         _client.delete_object(Bucket=_bucket, Key=key)
         return True

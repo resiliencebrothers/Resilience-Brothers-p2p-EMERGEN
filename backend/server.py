@@ -59,7 +59,7 @@ api_router = APIRouter(prefix="/api")
 
 
 @api_router.get("/", tags=["System"])
-async def root():
+async def root() -> dict:
     return {"service": "Resilience Brothers P2P", "status": "ok"}
 
 
@@ -98,12 +98,17 @@ logger = logging.getLogger(__name__)
 
 
 @app.on_event("startup")
-async def start_background_jobs():
+async def start_background_jobs() -> None:
     """Wire up APScheduler. Wrap build_revenue_timeseries to expose it to
     scheduler.py without importing server.py (which would be circular)."""
     from scheduler import start_scheduler
 
-    async def _build_timeseries(granularity, year=None, month=None, days=None):
+    async def _build_timeseries(
+        granularity: str,
+        year: int | None = None,
+        month: int | None = None,
+        days: int | None = None,
+    ) -> list:
         return await build_revenue_timeseries(
             granularity, days=days, year=year, month=month
         )
@@ -112,7 +117,7 @@ async def start_background_jobs():
 
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown_db_client() -> None:
     from scheduler import stop_scheduler
     stop_scheduler()
     client.close()
