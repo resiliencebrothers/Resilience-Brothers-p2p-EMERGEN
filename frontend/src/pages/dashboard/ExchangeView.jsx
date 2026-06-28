@@ -206,7 +206,7 @@ export default function ExchangeView() {
             data-testid="sender-name-input"
             value={senderName}
             onChange={(e) => setSenderName(e.target.value)}
-            placeholder="Nombre completo en cuenta zelle/banco"
+            placeholder="Nombre completo del titular de la cuenta de origen"
             className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
             required
           />
