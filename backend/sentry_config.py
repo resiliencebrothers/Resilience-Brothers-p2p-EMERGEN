@@ -20,7 +20,7 @@ def init_sentry() -> bool:
     """Initialize Sentry SDK if `SENTRY_DSN` is configured. Returns True if active."""
     dsn = os.environ.get("SENTRY_DSN", "").strip()
     if not dsn:
-        logger.info("SENTRY_DSN not set — Sentry disabled.")
+        print("[sentry] SENTRY_DSN not set — disabled.", flush=True)
         return False
     try:
         import sentry_sdk
@@ -45,10 +45,12 @@ def init_sentry() -> bool:
             ],
             before_send=_filter_noise,
         )
-        logger.info(f"Sentry initialized (env={environment}, traces={traces_rate}).")
+        # Use print() so the boot confirmation always appears in supervisor logs
+        # regardless of the uvicorn logger config.
+        print(f"[sentry] initialized — env={environment}, traces={traces_rate}", flush=True)
         return True
     except Exception as e:
-        logger.error(f"Sentry init failed: {e}")
+        print(f"[sentry] init failed: {e}", flush=True)
         return False
 
 
