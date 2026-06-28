@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Callable, Dict, Optional
 
 from db_client import db
 from services import storage as storage_service
@@ -31,7 +31,7 @@ LOG_FILE = "/var/log/supervisor/backend.err.log"
 _ERROR_RX = re.compile(r"^(ERROR|CRITICAL)\b|\s(ERROR|CRITICAL):", re.MULTILINE)
 
 
-def _safe(coroutine_or_fn, default):
+def _safe(coroutine_or_fn: Callable[[], Any], default: Dict[str, Any]) -> Dict[str, Any]:
     """Wrap a single section so one failure doesn't tank the dashboard."""
     try:
         return coroutine_or_fn()

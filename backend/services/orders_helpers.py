@@ -93,7 +93,7 @@ async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[
     return rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"], rate_doc
 
 
-def build_order_from_payload(payload, user: dict, rate: float) -> "Order":
+def build_order_from_payload(payload: "OrderCreate", user: dict, rate: float) -> "Order":
     """iter19: commission removed. New orders carry commission_percent=0.0;
     historical orders keep their original 5% value untouched."""
     commission = 0.0
