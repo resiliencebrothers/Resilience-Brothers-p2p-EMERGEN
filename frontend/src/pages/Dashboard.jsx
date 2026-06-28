@@ -78,7 +78,7 @@ export default function Dashboard() {
   );
 
   const renderUserFooter = (logoutTestid) => (
-    <div className="p-4 border-t border-white/5">
+    <div className="p-4 border-t border-white/5 shrink-0">
       <div className="flex items-center gap-2 mb-3">
         {user?.picture ? (
           <img src={user.picture} alt="" className="w-9 h-9 rounded-full" />
@@ -109,14 +109,14 @@ export default function Dashboard() {
       <OnboardingDialog open={showOnboarding} onClose={() => setShowOnboarding(false)} />
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
-        <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3">
+        <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3 shrink-0">
           <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-10 w-10 object-contain" />
           <div>
             <div className="font-display text-sm">RESILIENCE</div>
             <div className="micro-label text-neutral-500 text-[0.6rem]">P2P Console</div>
           </div>
         </div>
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">{renderNavLinks()}</nav>
+        <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto">{renderNavLinks()}</nav>
         {renderUserFooter("logout-btn")}
       </aside>
 
@@ -147,7 +147,7 @@ export default function Dashboard() {
               className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
             >
               <VisuallyHidden><SheetTitle>Menú de navegación</SheetTitle></VisuallyHidden>
-              <div className="h-16 border-b border-white/5 flex items-center justify-between px-5">
+              <div className="h-16 border-b border-white/5 flex items-center justify-between px-5 shrink-0">
                 <div className="flex items-center gap-3">
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
                   <div>
@@ -163,7 +163,7 @@ export default function Dashboard() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+              <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto">
                 {renderNavLinks(() => setMobileOpen(false))}
               </nav>
               {renderUserFooter("logout-mobile-btn")}
