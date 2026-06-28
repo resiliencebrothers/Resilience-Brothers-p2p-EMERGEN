@@ -1,12 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import axios from "axios";
-import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bell, CheckCheck, UserCheck, UserX, BellRing } from "lucide-react";
-
-const POLL_MS = 30_000;
+import { useState } from "react";
+import { useNotifications } from "@/hooks/useNotifications";
 
 const TYPE_ICON = {
   new_user_pending: { Icon: UserCheck, color: "text-[#EAB308]" },
@@ -23,61 +20,66 @@ function timeAgo(iso) {
   return `hace ${Math.floor(seconds / 86400)}d`;
 }
 
+/* ----------------- sub-components ----------------- */
+
+function NotificationRow({ item, onClick }) {
+  const { Icon, color } = TYPE_ICON[item.type] || TYPE_ICON.info;
+  return (
+    <button
+      type="button"
+      data-testid={`notification-item-${item.id}`}
+      onClick={onClick}
+      className={`w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/[0.02] transition-colors flex gap-3 ${item.read ? "opacity-60" : ""}`}
+    >
+      <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${color}`} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-xs font-semibold text-neutral-200 truncate">{item.title}</span>
+          <span className="text-[0.6rem] text-neutral-600 flex-shrink-0">{timeAgo(item.created_at)}</span>
+        </div>
+        <p className="text-[0.7rem] text-neutral-400 mt-0.5 line-clamp-2">{item.message}</p>
+      </div>
+      {!item.read && <span className="w-2 h-2 rounded-full bg-[#EAB308] mt-1.5 flex-shrink-0" />}
+    </button>
+  );
+}
+
+function NotificationList({ items, loading, onItemClick }) {
+  if (loading) {
+    return <div className="py-10 text-center text-xs text-neutral-500">Cargando...</div>;
+  }
+  if (items.length === 0) {
+    return (
+      <div className="py-12 text-center" data-testid="notifications-empty">
+        <Bell className="w-8 h-8 text-neutral-700 mx-auto mb-2" />
+        <p className="text-xs text-neutral-500">No tienes notificaciones todavía.</p>
+      </div>
+    );
+  }
+  return items.map((it) => (
+    <NotificationRow
+      key={it.id}
+      item={it}
+      onClick={() => !it.read && onItemClick(it.id)}
+    />
+  ));
+}
+
+/* ----------------- main component ----------------- */
+
 export default function NotificationBell() {
   const { user } = useAuth();
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const pollRef = useRef(null);
+  const { unreadCount, items, loading, loadList, markRead, markAllRead } = useNotifications();
 
-  const refreshCount = useCallback(async () => {
-    if (!user) return;
-    try {
-      const r = await axios.get(`${API}/notifications/unread-count`, { withCredentials: true });
-      setUnreadCount(r.data?.count || 0);
-    } catch (e) { /* silent — bell not blocking */ }
-  }, [user]);
-
-  const loadList = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const r = await axios.get(`${API}/notifications`, { withCredentials: true, params: { limit: 30 } });
-      setItems(r.data?.items || []);
-    } catch (e) { /* silent */ } finally { setLoading(false); }
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-    refreshCount();
-    pollRef.current = setInterval(refreshCount, POLL_MS);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [user, refreshCount]);
-
-  // When opening, fetch the latest list and mark items as read implicitly on click.
   const handleOpen = (next) => {
     setOpen(next);
     if (next) loadList();
   };
 
-  const markRead = async (id) => {
-    try {
-      await axios.post(`${API}/notifications/${id}/read`, {}, { withCredentials: true });
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, read: true } : it)));
-      refreshCount();
-    } catch (e) { /* silent */ }
-  };
-
-  const markAllRead = async () => {
-    try {
-      await axios.post(`${API}/notifications/mark-all-read`, {}, { withCredentials: true });
-      setItems((prev) => prev.map((it) => ({ ...it, read: true })));
-      setUnreadCount(0);
-    } catch (e) { /* silent */ }
-  };
-
   if (!user) return null;
+
+  const hasUnread = items.some((it) => !it.read);
 
   return (
     <Popover open={open} onOpenChange={handleOpen}>
@@ -109,7 +111,7 @@ export default function NotificationBell() {
             <h3 className="font-display text-base">Notificaciones</h3>
             <p className="text-[0.65rem] text-neutral-500">{unreadCount > 0 ? `${unreadCount} sin leer` : "Todo al día"}</p>
           </div>
-          {items.some((it) => !it.read) && (
+          {hasUnread && (
             <button
               type="button"
               data-testid="mark-all-read-btn"
@@ -121,35 +123,7 @@ export default function NotificationBell() {
           )}
         </div>
         <ScrollArea className="max-h-[420px]">
-          {loading && <div className="py-10 text-center text-xs text-neutral-500">Cargando...</div>}
-          {!loading && items.length === 0 && (
-            <div className="py-12 text-center" data-testid="notifications-empty">
-              <Bell className="w-8 h-8 text-neutral-700 mx-auto mb-2" />
-              <p className="text-xs text-neutral-500">No tienes notificaciones todavía.</p>
-            </div>
-          )}
-          {!loading && items.map((it) => {
-            const { Icon, color } = TYPE_ICON[it.type] || TYPE_ICON.info;
-            return (
-              <button
-                key={it.id}
-                type="button"
-                data-testid={`notification-item-${it.id}`}
-                onClick={() => !it.read && markRead(it.id)}
-                className={`w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/[0.02] transition-colors flex gap-3 ${it.read ? "opacity-60" : ""}`}
-              >
-                <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${color}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-xs font-semibold text-neutral-200 truncate">{it.title}</span>
-                    <span className="text-[0.6rem] text-neutral-600 flex-shrink-0">{timeAgo(it.created_at)}</span>
-                  </div>
-                  <p className="text-[0.7rem] text-neutral-400 mt-0.5 line-clamp-2">{it.message}</p>
-                </div>
-                {!it.read && <span className="w-2 h-2 rounded-full bg-[#EAB308] mt-1.5 flex-shrink-0" />}
-              </button>
-            );
-          })}
+          <NotificationList items={items} loading={loading} onItemClick={markRead} />
         </ScrollArea>
       </PopoverContent>
     </Popover>

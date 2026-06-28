@@ -134,7 +134,9 @@ class TestRegisterLogin:
         uniq = uuid.uuid4().hex[:10]
         digits = "".join(c for c in uniq if c.isdigit()).ljust(6, "0")[:6]
         email = f"TEST_iter34_{uniq}@resilience.example.com"
-        password = "Strong#Pass123"
+        # iter38 — test-only credential. NOT a real secret. Override with
+        # TEST_USER_PASSWORD env var if you need a custom value locally.
+        password = os.environ.get("TEST_USER_PASSWORD", "TestPwd_" + uniq)
         payload = {
             "email": email,
             "password": password,

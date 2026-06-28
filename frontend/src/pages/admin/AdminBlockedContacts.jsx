@@ -340,8 +340,8 @@ export default function AdminBlockedContacts() {
                 <div>
                   <div className="text-xs uppercase tracking-wider text-neutral-500 mb-1">Entradas inválidas (no importadas):</div>
                   <div className="bg-[#0F0F0F] border border-[#EF4444]/30 p-2 max-h-32 overflow-y-auto text-xs font-mono">
-                    {importResult.invalid.map((it, i) => (
-                      <div key={i} className="text-neutral-400">• <span className="text-[#EF4444]">{it.phone}</span> — {it.reason}</div>
+                    {importResult.invalid.map((it) => (
+                      <div key={`${it.phone}-${it.reason}`} className="text-neutral-400">• <span className="text-[#EF4444]">{it.phone}</span> — {it.reason}</div>
                     ))}
                   </div>
                 </div>

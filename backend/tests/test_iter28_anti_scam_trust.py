@@ -372,7 +372,8 @@ class TestLoginRecheck:
         re-frozen."""
         db = _db()
         email = "test_iter28_login@example.com"
-        password = "veryStrongPass123"
+        # iter38 — test-only credential. NOT a real secret.
+        password = os.environ.get("TEST_USER_PASSWORD", "veryStrongPass123")
         phone = "+5359111222"
         db.users.delete_many({"email": email})
         db.blocked_contacts.delete_many({"phone": phone})
@@ -413,7 +414,7 @@ class TestLoginRecheck:
         try:
             r = requests.post(f"{API}/auth/register",
                               json={"name": "T28 Reg", "email": email,
-                                    "password": "veryStrongPass123",
+                                    "password": os.environ.get("TEST_USER_PASSWORD", "veryStrongPass123"),
                                     "phone": "+5359000999"})
             assert r.status_code in (200, 201), r.text
             u = db.users.find_one({"email": email})
