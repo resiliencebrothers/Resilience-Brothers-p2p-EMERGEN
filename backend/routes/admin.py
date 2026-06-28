@@ -72,6 +72,10 @@ class UserUpdate(BaseModel):
 class AdminSettings(BaseModel):
     vip_threshold_usdt: float = Field(default=5000.0, ge=0)
     defensive_margin_pct: Optional[float] = Field(default=None)
+    ops_notifications_email: Optional[str] = Field(
+        default=None, max_length=254,
+        description="Bandeja única que recibe los emails operativos (nuevos órdenes, retiros, alertas). Si está vacío, cada admin recibe en su correo personal.",
+    )
     totp_code: Optional[str] = Field(default=None, max_length=11,
                                        description="Código 2FA requerido")
 
@@ -460,10 +464,12 @@ async def get_admin_settings(request: Request):
         return {
             "vip_threshold_usdt": float(os.environ.get("VIP_ALERT_THRESHOLD_USDT", 5000)),
             "defensive_margin_pct": None,
+            "ops_notifications_email": None,
         }
     return {
         "vip_threshold_usdt": float(doc.get("vip_threshold_usdt", 5000)),
         "defensive_margin_pct": doc.get("defensive_margin_pct"),
+        "ops_notifications_email": doc.get("ops_notifications_email"),
     }
 
 
@@ -472,6 +478,11 @@ async def update_admin_settings(payload: AdminSettings, request: Request):
     actor = await require_admin(request)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar configuración")
     data = payload.model_dump(exclude={"totp_code"})
+    # Normalise empty string → None and validate light email shape
+    ops_email = (data.get("ops_notifications_email") or "").strip() or None
+    if ops_email and ("@" not in ops_email or " " in ops_email):
+        raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
+    data["ops_notifications_email"] = ops_email
     data["id"] = "global"
     await db.settings.update_one({"id": "global"}, {"$set": data}, upsert=True)
     await log_action(db, actor, "settings.update", "settings", "global",
@@ -946,14 +957,15 @@ async def admin_revenue_send_now(payload: dict, request: Request):
         "orders": sum(r["orders"] for r in rows_asc),
     }
     pdf_bytes = revenue_monthly_pdf(rows_asc, f"{year}-{month:02d}", totals)
-    admins = await db.users.find({"role": "admin"}, {"_id": 0, "email": 1}).to_list(200)
+    from admin_alerts import resolve_admin_email_recipients
+    recipients = await resolve_admin_email_recipients(db)
     sent = 0
-    for a in admins:
-        if a.get("email") and email_service.notify_monthly_revenue(
-            a["email"], f"{year}-{month:02d}", totals, pdf_bytes
+    for to_addr in recipients:
+        if email_service.notify_monthly_revenue(
+            to_addr, f"{year}-{month:02d}", totals, pdf_bytes
         ):
             sent += 1
-    return {"ok": True, "sent": sent, "total_admins": len(admins),
+    return {"ok": True, "sent": sent, "total_admins": len(recipients),
             "period": f"{year}-{month:02d}"}
 
 

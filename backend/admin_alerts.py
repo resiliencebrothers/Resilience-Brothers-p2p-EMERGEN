@@ -9,9 +9,28 @@ logger = logging.getLogger(__name__)
 APP_URL = os.environ.get("APP_PUBLIC_URL", "")
 
 
+async def resolve_admin_email_recipients(db, admins: list | None = None) -> list[str]:
+    """Resolve which emails should receive ops alerts.
+
+    If `settings.global.ops_notifications_email` is set, ALL admin emails are
+    funneled to that single inbox. Otherwise each admin's personal email is used.
+    """
+    settings_doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
+    ops_email = (settings_doc or {}).get("ops_notifications_email")
+    if ops_email:
+        return [ops_email]
+    if admins is None:
+        admins = await db.users.find({"role": "admin"}, {"_id": 0, "email": 1}).to_list(200)
+    return [a["email"] for a in admins if a.get("email")]
+
+
 async def notify_all_admins(db, *, title: str, body: str, url_path: str = "/admin"):
     """Send a notification (push + email) to all users with role='admin'.
     `db` is the motor AsyncIOMotorDatabase instance.
+
+    Email behavior: if `settings.global.ops_notifications_email` is set, a single
+    email is sent to that inbox (centralized ops mailbox). Otherwise it fans out
+    to each admin's personal email. Push notifications always fan out per admin.
     """
     admins = await db.users.find({"role": "admin"}, {"_id": 0}).to_list(50)
     if not admins:
@@ -35,8 +54,8 @@ async def notify_all_admins(db, *, title: str, body: str, url_path: str = "/admi
     email_sent = 0
     dead_ids = []
 
+    # Push fan-out — always per admin device
     for admin in admins:
-        # Push to all admin's devices
         try:
             subs = await db.push_subscriptions.find({"user_id": admin["user_id"]}, {"_id": 0}).to_list(20)
             for s in subs:
@@ -47,14 +66,16 @@ async def notify_all_admins(db, *, title: str, body: str, url_path: str = "/admi
                     dead_ids.append(s["id"])
         except Exception as e:
             logger.error(f"Push to admin {admin.get('email')} failed: {e}")
-        # Email
+
+    # Email — centralised inbox OR per-admin fan-out
+    email_recipients = await resolve_admin_email_recipients(db, admins=admins)
+    html = _base_template(title, html_body)
+    for to_addr in email_recipients:
         try:
-            if admin.get("email"):
-                html = _base_template(title, html_body)
-                if _send(admin["email"], f"[Resilience Admin] {title}", html):
-                    email_sent += 1
+            if _send(to_addr, f"[Resilience Admin] {title}", html):
+                email_sent += 1
         except Exception as e:
-            logger.error(f"Email to admin {admin.get('email')} failed: {e}")
+            logger.error(f"Email to {to_addr} failed: {e}")
 
     if dead_ids:
         try:

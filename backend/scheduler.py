@@ -52,13 +52,15 @@ async def run_monthly_revenue_email(db, build_timeseries):
 
     admins = await db.users.find({"role": "admin"},
                                  {"_id": 0, "email": 1, "name": 1}).to_list(200)
+    from admin_alerts import resolve_admin_email_recipients
+    recipients = await resolve_admin_email_recipients(db, admins=admins)
     sent = 0
-    for a in admins:
-        if a.get("email") and email_service.notify_monthly_revenue(
-            a["email"], label, totals, pdf_bytes
+    for to_addr in recipients:
+        if email_service.notify_monthly_revenue(
+            to_addr, label, totals, pdf_bytes
         ):
             sent += 1
-    logger.info("Monthly revenue email %s: sent to %s/%s admins", label, sent, len(admins))
+    logger.info("Monthly revenue email %s: sent to %s/%s recipient(s)", label, sent, len(recipients))
 
 
 def start_scheduler(db, build_timeseries):

@@ -14,6 +14,7 @@ export default function AdminOverview() {
   const [loading, setLoading] = useState(true);
   const [threshold, setThreshold] = useState("");
   const [defensivePct, setDefensivePct] = useState("");
+  const [opsEmail, setOpsEmail] = useState("");
   const [savingThreshold, setSavingThreshold] = useState(false);
   const [pendingSettings, setPendingSettings] = useState(null);
 
@@ -27,6 +28,7 @@ export default function AdminOverview() {
       setStats(s.data);
       setThreshold(String(set.data.vip_threshold_usdt));
       setDefensivePct(set.data.defensive_margin_pct == null ? "" : String(set.data.defensive_margin_pct));
+      setOpsEmail(set.data.ops_notifications_email || "");
     } catch (e) {
       toast.error("Error al cargar estadísticas");
     } finally {
@@ -39,7 +41,15 @@ export default function AdminOverview() {
     const v = parseFloat(threshold);
     if (!v || v < 0) return toast.error("Umbral inválido");
     const def = defensivePct === "" ? null : parseFloat(defensivePct);
-    setPendingSettings({ vip_threshold_usdt: v, defensive_margin_pct: def });
+    const trimmedEmail = opsEmail.trim();
+    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      return toast.error("Email de notificaciones operativas no válido");
+    }
+    setPendingSettings({
+      vip_threshold_usdt: v,
+      defensive_margin_pct: def,
+      ops_notifications_email: trimmedEmail || null,
+    });
   };
 
   const confirmSettingsWithTotp = async (code) => {
@@ -128,6 +138,27 @@ export default function AdminOverview() {
           >
             {savingThreshold ? "Guardando..." : "Guardar"}
           </Button>
+        </div>
+
+        {/* Centralised ops mailbox — funnels ALL admin emails to a single inbox */}
+        <div className="mt-6 pt-6 border-t border-white/5">
+          <label className="micro-label text-neutral-500 text-[0.65rem]">
+            BANDEJA ÚNICA DE NOTIFICACIONES OPERATIVAS
+          </label>
+          <Input
+            type="email"
+            placeholder="ej. notificacionesresiliencebrothe@gmail.com"
+            value={opsEmail}
+            onChange={(e) => setOpsEmail(e.target.value)}
+            className="mt-1 rounded-none bg-black/40 border-white/10"
+            data-testid="ops-notifications-email-input"
+          />
+          <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
+            Si está configurado, <strong className="text-neutral-300">todos</strong> los emails operativos
+            (nueva orden, retiro, canje VIP, alerta de margen, pendientes acumulados, cierre mensual)
+            se envían a este único inbox. Los correos personales de los admins solo se usarán para
+            login, 2FA y avisos personales. Déjalo vacío para volver al fan-out por admin.
+          </p>
         </div>
       </div>
 
