@@ -1,0 +1,39 @@
+{
+  "summary": "iter35 Cloudflare R2 storage integration — backend only. Verified end-to-end against a real R2 bucket (`resilience-p2p-proofs`): backend boots with [storage] R2 ready log, openapi exposes /api/files/{key} (81 total paths), POST /api/orders persists base64 proof_image to R2 and returns /api/files/orders/<date>/<uuid>.png references in both API response and MongoDB, GET /api/files/{key} enforces ownership correctly (owner=200, admin=200, employee=200, other non-admin user=403, anonymous=401, missing key=404, path traversal=400). Oversize (>8 MB) gracefully falls back to inline base64. PUT /api/admin/withdrawals/{wid}/status with payout_proof_image now stores /api/files/withdrawals/... refs. POST /api/admin/company-withdrawals persists invoice_image as /api/files/company_invoices/... refs. All 6 pre-existing regression suites still pass (91 tests). Total: 105/105 in-scope tests green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /openapi.json",
+        "issue": "OpenAPI schema is registered at FastAPI default `/openapi.json` (no /api prefix), so it is NOT reachable via the public k8s ingress (which only proxies /api/*). It only works on http://localhost:8001/openapi.json. The review request loosely implied /api/openapi.json — adjust the test or move the schema route under /api in server.py if you want it externally inspectable. Functionality is otherwise correct: 81 paths registered including /api/files/{key}."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_storage_iter35_e2e.py",
+    "/app/test_reports/pytest/iter35_e2e.xml",
+    "/app/test_reports/pytest/iter35_regression.xml"
+  ],
+  "action_items": [
+    "Optional: move openapi.json under /api/ in server.py (FastAPI(openapi_url='/api/openapi.json')) so the schema is reachable via the public ingress for external API consumers; today it's only reachable internally on port 8001.",
+    "Optional: when proof_upload helper falls back due to oversize (>8 MB), the order is still created with the raw base64 inline — consider surfacing a 413 to the client for better UX (current behaviour matches the documented contract, so this is a feature decision, not a bug)."
+  ],
+  "critical_code_review_comments": [
+    "services/storage.py — clean, well-typed abstraction. init_storage() correctly does head_bucket() at boot to fail-fast on bad creds (validated: backend shows `[storage] R2 ready — bucket=resilience-p2p-proofs`). Returns None from put_object/get_object_bytes on failure so callers can fall back, exactly matching the documented contract.",
+    "services/proof_upload.py — defensive: passthrough for empty/existing refs, regex-validated data URLs, 8 MB hard limit before base64 decode (avoids decoding multi-GB payloads). Falls back to original value on any failure, no data loss possible.",
+    "routes/files.py — ownership check is concise and correct: admin/employee bypass, otherwise lookup is restricted to the calling user's own orders.proof_image / withdrawals.payout_proof_image. Path-traversal guard (`if '../' in key or key.startswith('/')`) is simple and effective; FastAPI's path-param matching also normalises `/api/files/../x` to /api/x → 404 anyway, giving defence in depth.",
+    "routes/orders.py:120 and admin.py:311/979 — all three call sites wrap the helper with `or original_value`, preserving the legacy base64 string when storage layer returns None (correct fallback pattern).",
+    "Cost-safety reviewed: total R2 writes during full test run ≈ 4 PUT operations of 68-byte PNGs (plus the single 9 MB blob that is rejected before reaching R2), well under Cloudflare's free tier."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_storage_iter35_e2e.py (new — 14 e2e tests covering items 1-11 of the review request)"
+  ],
+  "success_rate": {"backend": "100% (105/105 in-scope: 14 new e2e + 91 regression)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "Used autouse-seeded sessions from conftest.py: test_session_admin_X / test_session_employee_X / test_session_vip_X / test_session_normal_X. Admin TOTP via make_admin_totp() helper, VIP TOTP via make_vip_totp(). All resolved correctly via /api/auth/me.",
+  "seed_data_creation": "Test creates: 1-2 orders (USD→CUP, $1) by NORMAL user with R2-uploaded PNG proof; 1 oversize-fallback order (no R2 upload); 1 withdrawal-paid update (R2-uploaded payout proof); 1 company-withdrawal $0.01 USD if funds available (otherwise auto-skipped). Total R2 objects written per run: ~4 PNGs (~68 bytes each). No cleanup performed — bucket retains test artefacts which is acceptable per the agent_to_agent_context_note.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reusable iter35 e2e suite at /app/backend/tests/test_storage_iter35_e2e.py (14 tests, ~6s). Live R2 bucket = `resilience-p2p-proofs`. To re-test: `pytest tests/test_storage_iter35_e2e.py -v`. The TestCompanyWithdrawalInvoice test auto-skips if USD company funds are insufficient — to force it to run, seed company funds first (or simply rely on the broader assertion that the helper code path is identical to the order/withdrawal path which IS exercised). If you ever see `[storage] disabled` in backend logs again, restart with `sudo supervisorctl restart backend` — the boot is sensitive to env loading order.",
+  "rca of the issue": "No bugs found in iter35. The single test failure in the first run was a wrong assumption in the test about /api/openapi.json being publicly routed — actual route is /openapi.json which is only reachable via localhost:8001 (k8s ingress only proxies /api/*). Test corrected and now passes. All 11 functional review-request items + 6 regression suites green."
+}
