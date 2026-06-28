@@ -1,0 +1,36 @@
+{
+  "summary": "iter37 Admin Health Dashboard fully verified — 14/14 dedicated tests pass, 117/117 regression tests pass after stale-counter fix, and the React page renders every required testid with live R2 + Sentry data through the admin session-cookie path.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter37_admin_health.py",
+    "/app/test_reports/pytest/iter37_results.xml",
+    "/app/test_reports/pytest/iter37_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/health.py::_sentry_status — deep_link is hardcoded to 'sentry/issues' regardless of the actual org slug. Fine as a placeholder but consider documenting that SENTRY_ORG_SLUG env var would improve UX.",
+    "services/health.py::_negative_margin_status fetches up to 500 pending orders and computes profit for each in a python loop with awaited rate lookups (cached). Acceptable for current scale; if pending volume grows >500, paginate or push the loss computation into the mongo aggregation pipeline.",
+    "AdminHealth.jsx — useEffect omits eslint-disable for missing deps but the empty-deps array is intentional (load is stable via closure). No bug, but adding // eslint-disable-next-line would silence the lint warning.",
+    "AdminHealth.jsx fires 2 GETs on initial mount (React 18 StrictMode double-invoke in dev). Harmless but worth knowing — production build issues only one."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter27_auth_refactor.py (bumped expected openapi path count 81→82)",
+    "/app/backend/tests/test_iter36_wiring.py (bumped expected openapi path count 81→82)",
+    "/app/backend/tests/test_storage_iter35_e2e.py (bumped expected openapi path count 81→82)"
+  ],
+  "success_rate": {"backend": "100% (117/117 incl. iter37 + regression)", "frontend": "100% (all 17 required testids + nav + refresh + storage folder breakdown + negative-margin alert)"},
+  "test_credentials": "Used autouse session seeding from conftest._autoseed_sessions: test_session_admin_X (user_test_admin01). No real auth flow exercised.",
+  "seed_data_creation": "None. Used the existing 500+ pending orders in the dev DB to verify the negative_margin section + health-margin-table.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter37 added GET /api/admin/health/summary, bumping OpenAPI path count from 81 to 82. test_iter27_auth_refactor.test_openapi_path_count_unchanged, test_iter36_wiring.TestOpenAPIWiring.test_openapi_json_reachable_publicly and test_storage_iter35_e2e.TestStorageBoot.test_openapi_exposes_files_route now expect 82 — next iteration adding a new endpoint must bump them again. The /admin/health page uses the admin-only require_admin gate; employees (test_session_employee_X) get 403 as expected. Defensive-mode toggle requires TOTP for admin (conftest auto-enables TOTP), so any UI test of that toggle must use the make_admin_totp() helper.",
+  "rca of the issue": "The 3 failing regression tests on first run were caused by the new /admin/health/summary endpoint adding the 82nd OpenAPI path. The assertions checked for an exact count of 81. Bumped them to 82 — this is the expected, non-breaking consequence of iter37's new route. Fix is in three test files only; no production code change."
+}

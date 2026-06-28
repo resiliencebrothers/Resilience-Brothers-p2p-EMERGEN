@@ -50,12 +50,13 @@ class TestStorageBoot:
 
     def test_openapi_exposes_files_route(self):
         # iter36 — OpenAPI schema moved under /api/openapi.json so the public
-        # k8s ingress (which proxies /api/*) can reach it. 81 paths total
+        # k8s ingress (which proxies /api/*) can reach it. 82 paths total
+        # after iter37 (`/api/admin/health/summary` added on top of iter35's 81).
         # including /api/files/{key}.
         r = requests.get(f"{BASE_URL}/api/openapi.json", timeout=10)
         assert r.status_code == 200
         paths = r.json().get("paths", {})
-        assert len(paths) == 81, f"expected 81 paths, got {len(paths)}"
+        assert len(paths) == 82, f"expected 82 paths, got {len(paths)}"
         assert "/api/files/{key}" in paths, (
             f"/api/files/{{key}} missing. sample={list(paths.keys())[:6]}"
         )

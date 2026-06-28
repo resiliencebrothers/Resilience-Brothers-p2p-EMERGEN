@@ -1,7 +1,7 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt, Inbox, Wallet, Ban } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt, Inbox, Wallet, Ban, Activity } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -17,6 +17,7 @@ import AdminTransactions from "@/pages/admin/AdminTransactions";
 import AdminQueue from "@/pages/admin/AdminQueue";
 import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
+import AdminHealth from "@/pages/admin/AdminHealth";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -42,6 +43,7 @@ export default function AdminPanel() {
     ] : []),
     ...(user?.role === "admin" ? [
       { to: "/admin/revenue", icon: Banknote, label: "Ingresos", id: "admin-nav-revenue", highlight: true },
+      { to: "/admin/health", icon: Activity, label: "Salud", id: "admin-nav-health", highlight: true },
       { to: "/admin/audit", icon: Shield, label: "Auditoría", id: "admin-nav-audit" },
     ] : []),
   ];
@@ -184,6 +186,7 @@ export default function AdminPanel() {
             <Route path="users" element={<AdminUsers />} />
             <Route path="blocked-contacts" element={<AdminBlockedContacts />} />
             {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
+            {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
             {user?.role === "admin" && <Route path="audit" element={<AdminAudit />} />}
           </Routes>

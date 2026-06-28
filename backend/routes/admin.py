@@ -45,6 +45,7 @@ from services.transactions import (
     build_audit_query, fetch_audit_entries,
 )
 from services.proof_upload import maybe_upload_proof
+from services.health import build_health_summary
 
 
 logger = logging.getLogger(__name__)
@@ -408,6 +409,20 @@ async def admin_platform_stats(request: Request):
         "vip_holdings": await _aggregate_vip_holdings(rates),
         "counters": await _platform_counters(),
     }
+
+
+# ============================================================
+# Health Dashboard (iter37)
+# ============================================================
+
+@router.get("/admin/health/summary")
+async def admin_health_summary(request: Request):
+    """Composite payload for the Admin Health Dashboard. Admin only — exposes
+    R2 bucket size, Sentry env, throughput, defensive mode, negative-margin
+    pending list and the staff queues. Each section is wrapped so one slow
+    data source doesn't break the page."""
+    await require_admin(request)
+    return await build_health_summary()
 
 
 # ============================================================
