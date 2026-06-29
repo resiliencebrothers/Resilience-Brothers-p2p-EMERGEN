@@ -58,9 +58,17 @@ class TestEmailNotificationsAndStatusUpdate:
     def test_completed_status_does_not_break(self):
         order = _create_vip_order(amount=6, delivery_method="transfer")
         oid = order["id"]
+        # iter41: completed + transfer now requires a payout proof. Send a tiny
+        # base64 PNG to satisfy _validate_order_payout_evidence.
+        tiny_png = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        )
         r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                         headers=_h(ADMIN_TOKEN), json={"status": "completed"})
-        assert r.status_code == 200
+                         headers=_h(ADMIN_TOKEN),
+                         json={"status": "completed",
+                               "payout_proof_image": tiny_png})
+        assert r.status_code == 200, r.text
         assert r.json()["status"] == "completed"
 
     def test_pending_status_noop_no_email(self):

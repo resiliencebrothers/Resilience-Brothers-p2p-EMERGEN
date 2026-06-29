@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import { Eye, Search } from "lucide-react";
+import { Eye, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_STYLES = {
@@ -47,6 +47,8 @@ export default function AdminOrders() {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
+  const [payoutProof, setPayoutProof] = useState("");
+  const [payoutHash, setPayoutHash] = useState("");
   const [pendingStatus, setPendingStatus] = useState(null); // status waiting for 2FA (low-margin orders)
 
   useEffect(() => { setPage(0); }, [filter, userQuery, currencyFilter]);
@@ -81,14 +83,33 @@ export default function AdminOrders() {
   }, [filter, page, userQuery, currencyFilter]);
   useEffect(() => { load(); }, [load]);
 
+  const openOrder = (o) => {
+    setOpen(o);
+    setNote(o.admin_note || "");
+    setPayoutProof(o.payout_proof_image || "");
+    setPayoutHash(o.payout_tx_hash || "");
+  };
+
+  const handlePayoutUpload = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 4 * 1024 * 1024) { toast.error("Máx 4MB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setPayoutProof(reader.result);
+    reader.readAsDataURL(f);
+  };
+
   const updateStatus = async (status, totpCode = null) => {
     if (!open) return;
     const body = { status, admin_note: note };
     if (totpCode) body.totp_code = totpCode;
+    // Only send payout fields when they changed — saves bandwidth on small status flips.
+    if (payoutProof && payoutProof !== open.payout_proof_image) body.payout_proof_image = payoutProof;
+    if (payoutHash && payoutHash !== open.payout_tx_hash) body.payout_tx_hash = payoutHash;
     try {
       await axios.put(`${API}/admin/orders/${open.id}/status`, body, { withCredentials: true });
       toast.success(`Orden ${status}`);
-      setOpen(null); setNote(""); setPendingStatus(null); load();
+      setOpen(null); setNote(""); setPayoutProof(""); setPayoutHash(""); setPendingStatus(null); load();
     } catch (e) {
       const detail = e.response?.data?.detail;
       const code = typeof detail === "object" ? detail?.code : null;
@@ -179,7 +200,7 @@ export default function AdminOrders() {
                   <td className="px-3 py-3 font-mono text-[#EAB308]">{o.amount_to}</td>
                   <td className="px-3 py-3 text-xs">{o.delivery_method}</td>
                   <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
-                  <td className="px-3 py-3"><button onClick={() => { setOpen(o); setNote(o.admin_note || ""); }} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#EAB308]"><Eye className="w-4 h-4" /></button></td>
+                  <td className="px-3 py-3"><button onClick={() => openOrder(o)} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#EAB308]"><Eye className="w-4 h-4" /></button></td>
                 </tr>
               ))}
             </tbody>
@@ -222,10 +243,68 @@ export default function AdminOrders() {
               </div>
               {open.proof_image && (
                 <div>
-                  <div className="micro-label text-neutral-500 mb-2">Comprobante</div>
+                  <div className="micro-label text-neutral-500 mb-2">Comprobante del cliente (lo que envió)</div>
                   <img src={open.proof_image} alt="proof" className="w-full max-h-96 object-contain border border-white/10" />
                 </div>
               )}
+
+              {/* Payout evidence — staff uploads the screenshot of the payment made TO the client.
+                  Skipped for 'cash' (no artefact) and 'accumulate' (stays in client's VIP balance). */}
+              {open.delivery_method !== "cash" && open.delivery_method !== "accumulate" && (
+                <div className="border-t border-white/5 pt-4">
+                  <div className="micro-label text-[#EAB308] mb-2">
+                    Comprobante del pago AL cliente ({open.delivery_method === "transfer" ? "transferencia" : "envío crypto"})
+                  </div>
+                  <p className="text-[0.7rem] text-neutral-500 mb-3 leading-relaxed">
+                    {open.delivery_method === "transfer"
+                      ? "Adjunta la captura del banco mostrando que enviaste los " + open.to_code + " al cliente. Es obligatorio antes de marcar como completada."
+                      : "Adjunta el hash de la transacción y/o la captura del wallet. Obligatorio antes de marcar como completada."}
+                  </p>
+                  <div className="space-y-2">
+                    {open.delivery_method === "crypto" && (
+                      <Input
+                        data-testid="order-payout-tx-hash"
+                        value={payoutHash}
+                        onChange={(e) => setPayoutHash(e.target.value)}
+                        placeholder="Hash de transacción (TXID)"
+                        className="rounded-none bg-[#0a0a0a] border-white/10 h-9 font-mono text-xs"
+                      />
+                    )}
+                    <div className="flex items-center gap-2">
+                      <label className="flex-1 flex items-center gap-2 cursor-pointer bg-[#0a0a0a] border border-white/10 hover:border-[#EAB308]/40 px-3 py-2 text-xs text-neutral-300">
+                        <Upload className="w-3.5 h-3.5 text-[#EAB308]" />
+                        <span>{payoutProof ? "Cambiar captura" : "Subir captura (PNG/JPG, máx 4MB)"}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handlePayoutUpload}
+                          data-testid="order-payout-proof-upload"
+                          className="hidden"
+                        />
+                      </label>
+                      {payoutProof && (
+                        <button
+                          type="button"
+                          data-testid="order-payout-proof-clear"
+                          onClick={() => setPayoutProof("")}
+                          className="text-[0.7rem] text-neutral-500 hover:text-[#EF4444] underline underline-offset-4"
+                        >
+                          quitar
+                        </button>
+                      )}
+                    </div>
+                    {payoutProof && (
+                      <img
+                        src={payoutProof}
+                        alt="Captura del pago al cliente"
+                        data-testid="order-payout-proof-preview"
+                        className="w-full max-h-72 object-contain border border-[#EAB308]/30"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+
               <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota administrativa..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
               <div className="grid grid-cols-3 gap-2">
                 <Button

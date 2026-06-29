@@ -89,8 +89,43 @@ export default function OrdersView() {
             </div>
             {selected.proof_image && (
               <div className="mt-4">
-                <div className="micro-label text-neutral-500 mb-2">Comprobante</div>
+                <div className="micro-label text-neutral-500 mb-2">Tu comprobante de pago</div>
                 <img src={selected.proof_image} alt="proof" className="w-full border border-white/10" />
+              </div>
+            )}
+            {/* Payout evidence — uploaded by staff once they've paid the client.
+                Visible only when the order is completed for full transparency. */}
+            {selected.status === "completed" && (selected.payout_proof_image || selected.payout_tx_hash) && (
+              <div className="mt-4 border-t border-white/5 pt-4">
+                <div className="micro-label text-[#22C55E] mb-2">
+                  ✓ Comprobante del pago realizado a ti
+                </div>
+                {selected.payout_tx_hash && (
+                  <div className="text-xs font-mono break-all bg-[#0a0a0a] border border-white/10 p-2 mb-2">
+                    <span className="text-neutral-500">Hash: </span>
+                    <span className="text-[#22C55E]" data-testid="my-order-payout-hash">
+                      {selected.payout_tx_hash}
+                    </span>
+                  </div>
+                )}
+                {selected.payout_proof_image && (
+                  <a
+                    href={selected.payout_proof_image}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-testid="my-order-payout-proof"
+                    className="block"
+                  >
+                    <img
+                      src={selected.payout_proof_image}
+                      alt="Captura del pago al cliente"
+                      className="w-full border border-[#22C55E]/40"
+                    />
+                  </a>
+                )}
+                <p className="text-[0.7rem] text-neutral-500 mt-2">
+                  Esta es la evidencia del pago realizado por Resilience Brothers a tu cuenta/wallet.
+                </p>
               </div>
             )}
           </div>

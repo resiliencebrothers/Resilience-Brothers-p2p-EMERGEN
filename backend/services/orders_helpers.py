@@ -52,6 +52,10 @@ class Order(BaseModel):
     delivery_details: str = ""
     sender_name: str = ""
     proof_image: str = ""
+    # Payout evidence — populated by staff/admin when the order is completed
+    # (the screenshot of the bank transfer / crypto tx made TO the client).
+    payout_proof_image: str = ""
+    payout_tx_hash: str = ""
     status: Literal[
         "pending", "requires_double_approval", "approved", "rejected", "completed"
     ] = "pending"

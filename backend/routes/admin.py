@@ -45,6 +45,7 @@ from services.orders_helpers import (
     VALID_ORDER_STATUSES,
     authorize_status_transition, run_post_status_side_effects,
 )
+from services.proof_upload import maybe_upload_proof
 from services.transactions import (
     build_transactions, compute_transaction_totals,
 )
@@ -160,6 +161,39 @@ async def all_orders(request: Request, status: Optional[str] = None,
     )
 
 
+def _collect_order_payout_evidence(payload: dict, update_doc: dict) -> None:
+    """Persist optional payout proof image + tx hash on the update document.
+    Used by staff/admin when marking an order as completed."""
+    proof = payload.get("payout_proof_image")
+    if proof:
+        update_doc["payout_proof_image"] = maybe_upload_proof(proof, "order_payouts") or proof
+    tx_hash = payload.get("payout_tx_hash")
+    if tx_hash:
+        update_doc["payout_tx_hash"] = tx_hash
+
+
+def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: str) -> None:
+    """When marking an order as completed, ensure the required payout artefact
+    is present for transfer-method deliveries. Mirrors withdrawal validation
+    (iter38). cash deliveries are exempt because there's no captured artefact."""
+    if new_status != "completed" or order["status"] == "completed":
+        return
+    method = order.get("delivery_method")
+    existing_proof = order.get("payout_proof_image") or update_doc.get("payout_proof_image")
+    if method == "transfer" and not existing_proof:
+        raise HTTPException(
+            status_code=400,
+            detail="Adjunta la captura del pago realizado al cliente antes de marcar como completada",
+        )
+    if method == "crypto":
+        existing_hash = order.get("payout_tx_hash") or update_doc.get("payout_tx_hash")
+        if not existing_hash and not existing_proof:
+            raise HTTPException(
+                status_code=400,
+                detail="Adjunta hash de transacción y/o captura del envío al cliente antes de marcar como completada",
+            )
+
+
 @router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request):
     actor = await require_staff(request)
@@ -173,10 +207,12 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
     await authorize_status_transition(actor, order, new_status, payload.get("totp_code"))
 
     prev_status = order["status"]
-    await db.orders.update_one(
-        {"id": order_id},
-        {"$set": {"status": new_status, "admin_note": note, "updated_at": iso(now_utc())}},
-    )
+    update_doc = {"status": new_status, "admin_note": note,
+                  "updated_at": iso(now_utc())}
+    _collect_order_payout_evidence(payload, update_doc)
+    _validate_order_payout_evidence(order, update_doc, new_status)
+
+    await db.orders.update_one({"id": order_id}, {"$set": update_doc})
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     await run_post_status_side_effects(updated, new_status, prev_status)
 
