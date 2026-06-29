@@ -50,24 +50,34 @@ export default function ExchangeView() {
   const gross = amt * rate;
   const finalAmount = gross * (1 - commission / 100);
 
-  // Compute which delivery_method options are valid for the chosen 'to' currency.
-  // crypto destination → only crypto (and accumulate for VIP).
-  // fiat destination → transfer + cash (and accumulate for VIP). Crypto wallet doesn't apply.
-  // Marketplace deliveries (handled elsewhere) still allow cash for physical goods.
+  // Mirror of backend `services/delivery_rules.py`. Keep in sync.
+  const TRANSFER_HINTS = ["transferencia", "transfer", "banco", "bank", "wire", "zelle", "pix"];
+  const CASH_HINTS = ["efectivo", "cash", "domicilio", "billete"];
+
   const deliveryOptions = useMemo(() => {
     if (!toCurr) return [];
-    if (toCurr.type === "crypto") {
-      return [
-        { value: "crypto", label: "Cripto (wallet)" },
-        ...(!isStaff ? [{ value: "accumulate", label: "Acumular en saldo" }] : []),
-      ];
+    // 1. Declared list takes precedence
+    const declared = Array.isArray(toCurr.delivery_methods) ? toCurr.delivery_methods : [];
+    const buildVip = (base) =>
+      !isStaff ? [...base, { value: "accumulate", label: "Acumular en saldo" }] : base;
+
+    const LABELS = {
+      transfer: { value: "transfer", label: "Transferencia bancaria" },
+      cash: { value: "cash", label: "Efectivo (a domicilio)" },
+      crypto: { value: "crypto", label: "Cripto (wallet)" },
+    };
+
+    if (declared.length > 0) {
+      return buildVip(declared.filter((m) => LABELS[m]).map((m) => LABELS[m]));
     }
-    // fiat (USD, CUP, BRL, MXN, ...)
-    return [
-      { value: "transfer", label: "Transferencia bancaria" },
-      { value: "cash", label: "Efectivo (a domicilio)" },
-      ...(!isStaff ? [{ value: "accumulate", label: "Acumular en saldo" }] : []),
-    ];
+    // 2. type=crypto → wallet only
+    if (toCurr.type === "crypto") return buildVip([LABELS.crypto]);
+
+    // 3. fiat — heuristic by name/code
+    const haystack = `${toCurr.name || ""} ${toCurr.code || ""}`.toLowerCase();
+    if (TRANSFER_HINTS.some((h) => haystack.includes(h))) return buildVip([LABELS.transfer]);
+    if (CASH_HINTS.some((h) => haystack.includes(h))) return buildVip([LABELS.cash]);
+    return buildVip([LABELS.transfer, LABELS.cash]);
   }, [toCurr, isStaff]);
 
   // Auto-correct delivery method when the available options change (e.g. user
@@ -282,6 +292,20 @@ export default function ExchangeView() {
           {toCurr?.type === "crypto" && (
             <p className="text-[0.65rem] text-neutral-600 mt-2">
               Como recibes {toCurr.code} (cripto), solo se envía a tu wallet. La entrega física no aplica.
+            </p>
+          )}
+          {toCurr?.type !== "crypto" && deliveryOptions.length > 0 &&
+           !deliveryOptions.some((o) => o.value === "cash") &&
+           !deliveryOptions.some((o) => o.value === "accumulate") && (
+            <p className="text-[0.65rem] text-neutral-600 mt-2">
+              Esta moneda ({toCurr?.name || toCurr?.code}) se entrega únicamente por transferencia bancaria.
+            </p>
+          )}
+          {toCurr?.type !== "crypto" && deliveryOptions.length > 0 &&
+           !deliveryOptions.some((o) => o.value === "transfer") &&
+           deliveryOptions.some((o) => o.value === "cash") && (
+            <p className="text-[0.65rem] text-neutral-600 mt-2">
+              Esta moneda ({toCurr?.name || toCurr?.code}) se entrega únicamente en efectivo.
             </p>
           )}
         </div>

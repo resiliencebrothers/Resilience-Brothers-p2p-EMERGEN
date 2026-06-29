@@ -114,6 +114,12 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Backend regression: **491/491 pytest green** after all P2 changes.
 
 
+- **iter42 (Feb 28, 2026)**: **Heurística de método de entrega por nombre + Spanish error labels (P0 regression fix)**.
+  - **`services/delivery_rules.py`** (NUEVO): single source of truth — reglas heurísticas que mapean moneda → métodos válidos. 3 niveles: (1) `delivery_methods=[…]` declarado explícito gana, (2) crypto → `["crypto"]`, (3) fiat → heurística por `name`/`code` con hints (`transferencia`/`transfer`/`zelle`/`pix`/`banco`/`wire` → solo `transfer`; `efectivo`/`cash`/`domicilio`/`billete` → solo `cash`; resto → ambos).
+  - **`routes/orders.py::_assert_delivery_method_matches_currency`**: usa el helper compartido. Mensaje de error ahora con etiquetas humanas en español (`transferencia bancaria`, `efectivo`, `wallet cripto`) + tipo de moneda (`cripto`/`fiat`), p.ej. `"Para recibir CUP (fiat) solo se permite: transferencia bancaria, efectivo. La opción 'wallet cripto' no aplica."`.
+  - **`ExchangeView.jsx`**: dropdown frontend ahora filtra opciones según `delivery_methods` o detecta el sub-tipo por nombre (CUPT/CUPE) — sin viajes extra al servidor para mostrar sólo lo válido.
+  - **Tests fixed**: `test_cash_to_crypto_rejected` y `test_crypto_to_fiat_rejected` en `test_delivery_method_currency_match.py` (assertions sobre "cripto"/"wallet" y "fiat"/"transferencia" ahora aprobadas). Sub-typed coverage añadida en `test_subtyped_currency_delivery.py` (12 tests). `mypy --config-file mypy.ini` → **9 source files, 0 issues**.
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

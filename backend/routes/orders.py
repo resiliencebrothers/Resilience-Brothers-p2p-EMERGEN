@@ -38,6 +38,7 @@ from services.balances import (
     get_user_balance, decrement_balance,
     assert_account_active, assert_not_defensive,
 )
+from services.delivery_rules import is_delivery_method_allowed, allowed_delivery_methods
 from services.orders_helpers import (
     Order, OrderCreate,
     resolve_order_rate, build_order_from_payload,
@@ -111,28 +112,44 @@ class WithdrawalCreate(BaseModel):
 # ============================================================
 
 async def _assert_delivery_method_matches_currency(to_code: str, delivery_method: str) -> None:
-    """Reject impossible combinations early:
-    - crypto destination → cannot use 'cash' (no physical delivery) nor 'transfer' (no bank).
-    - fiat destination → cannot use 'crypto' (no crypto envelope).
-    'accumulate' is always valid (stays as a balance entry).
-    """
+    """Reject impossible combinations early using the shared `delivery_rules`
+    helper. Handles both broad fiat/crypto check and sub-typed currencies like
+    'CUPT — Peso Cubano Transferencia' (transfer-only) or 'CUPE — Peso Cubano
+    Efectivo' (cash-only)."""
     if delivery_method == "accumulate":
         return
-    target = await db.currencies.find_one({"code": to_code}, {"_id": 0, "type": 1})
+    target = await db.currencies.find_one(
+        {"code": to_code},
+        {"_id": 0, "type": 1, "name": 1, "code": 1, "delivery_methods": 1},
+    )
     if not target:
         # Unknown currency — let downstream rate-lookup raise the proper error.
         return
-    ctype = target.get("type")
-    if ctype == "crypto" and delivery_method in ("cash", "transfer"):
-        raise HTTPException(
-            status_code=400,
-            detail="Para recibir cripto solo se acepta entrega a wallet o acumular en saldo",
-        )
-    if ctype == "fiat" and delivery_method == "crypto":
-        raise HTTPException(
-            status_code=400,
-            detail="Para recibir fiat usa transferencia o efectivo (la opción cripto no aplica)",
-        )
+    if is_delivery_method_allowed(target, delivery_method):
+        return
+    allowed = allowed_delivery_methods(target)
+    # Spanish-friendly labels — also keeps the error human-readable and tests
+    # can assert on semantic keywords (cripto/wallet/fiat/transferencia).
+    _METHOD_ES = {
+        "transfer": "transferencia bancaria",
+        "cash": "efectivo",
+        "crypto": "wallet cripto",
+    }
+    allowed_label = (
+        ", ".join(_METHOD_ES.get(m, m) for m in allowed)
+        if allowed else "ninguna entrega física"
+    )
+    method_label = _METHOD_ES.get(delivery_method, delivery_method)
+    is_crypto_target = (target.get("type") == "crypto")
+    target_kind = "cripto" if is_crypto_target else "fiat"
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Para recibir {target.get('name') or to_code} ({target_kind}) "
+            f"solo se permite: {allowed_label}. "
+            f"La opción '{method_label}' no aplica."
+        ),
+    )
 
 
 @router.post("/orders")
