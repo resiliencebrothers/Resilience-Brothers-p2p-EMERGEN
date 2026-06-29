@@ -50,6 +50,35 @@ export default function ExchangeView() {
   const gross = amt * rate;
   const finalAmount = gross * (1 - commission / 100);
 
+  // Compute which delivery_method options are valid for the chosen 'to' currency.
+  // crypto destination → only crypto (and accumulate for VIP).
+  // fiat destination → transfer + cash (and accumulate for VIP). Crypto wallet doesn't apply.
+  // Marketplace deliveries (handled elsewhere) still allow cash for physical goods.
+  const deliveryOptions = useMemo(() => {
+    if (!toCurr) return [];
+    if (toCurr.type === "crypto") {
+      return [
+        { value: "crypto", label: "Cripto (wallet)" },
+        ...(!isStaff ? [{ value: "accumulate", label: "Acumular en saldo" }] : []),
+      ];
+    }
+    // fiat (USD, CUP, BRL, MXN, ...)
+    return [
+      { value: "transfer", label: "Transferencia bancaria" },
+      { value: "cash", label: "Efectivo (a domicilio)" },
+      ...(!isStaff ? [{ value: "accumulate", label: "Acumular en saldo" }] : []),
+    ];
+  }, [toCurr, isStaff]);
+
+  // Auto-correct delivery method when the available options change (e.g. user
+  // switches destination from CUP to USDT — 'cash'/'transfer' no longer apply).
+  useEffect(() => {
+    if (deliveryOptions.length === 0) return;
+    if (!deliveryOptions.some((o) => o.value === deliveryMethod)) {
+      setDeliveryMethod(deliveryOptions[0].value);
+    }
+  }, [deliveryOptions, deliveryMethod]);
+
   const handleFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -233,17 +262,28 @@ export default function ExchangeView() {
 
         <div>
           <Label className="micro-label text-neutral-500">Método de entrega</Label>
-          <Select value={deliveryMethod} onValueChange={setDeliveryMethod}>
-            <SelectTrigger data-testid="delivery-method-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-              <SelectValue />
+          <Select
+            value={deliveryMethod}
+            onValueChange={setDeliveryMethod}
+            disabled={!toCurr}
+          >
+            <SelectTrigger
+              data-testid="delivery-method-select"
+              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
+            >
+              <SelectValue placeholder={toCurr ? "Selecciona método" : "Elige primero la moneda destino"} />
             </SelectTrigger>
             <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
-              <SelectItem value="transfer">Transferencia bancaria</SelectItem>
-              <SelectItem value="cash">Efectivo (a domicilio)</SelectItem>
-              <SelectItem value="crypto">Cripto (wallet)</SelectItem>
-              {!isStaff && <SelectItem value="accumulate">Acumular en saldo</SelectItem>}
+              {deliveryOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
+          {toCurr?.type === "crypto" && (
+            <p className="text-[0.65rem] text-neutral-600 mt-2">
+              Como recibes {toCurr.code} (cripto), solo se envía a tu wallet. La entrega física no aplica.
+            </p>
+          )}
         </div>
 
         {deliveryMethod !== "accumulate" && (

@@ -110,10 +110,36 @@ class WithdrawalCreate(BaseModel):
 # P2P Orders
 # ============================================================
 
+async def _assert_delivery_method_matches_currency(to_code: str, delivery_method: str) -> None:
+    """Reject impossible combinations early:
+    - crypto destination → cannot use 'cash' (no physical delivery) nor 'transfer' (no bank).
+    - fiat destination → cannot use 'crypto' (no crypto envelope).
+    'accumulate' is always valid (stays as a balance entry).
+    """
+    if delivery_method == "accumulate":
+        return
+    target = await db.currencies.find_one({"code": to_code}, {"_id": 0, "type": 1})
+    if not target:
+        # Unknown currency — let downstream rate-lookup raise the proper error.
+        return
+    ctype = target.get("type")
+    if ctype == "crypto" and delivery_method in ("cash", "transfer"):
+        raise HTTPException(
+            status_code=400,
+            detail="Para recibir cripto solo se acepta entrega a wallet o acumular en saldo",
+        )
+    if ctype == "fiat" and delivery_method == "crypto":
+        raise HTTPException(
+            status_code=400,
+            detail="Para recibir fiat usa transferencia o efectivo (la opción cripto no aplica)",
+        )
+
+
 @router.post("/orders")
 async def create_order(payload: OrderCreate, request: Request):
     user = await require_user(request)
     await assert_account_active(user)
+    await _assert_delivery_method_matches_currency(payload.to_code, payload.delivery_method)
     rate, _rate_doc = await resolve_order_rate(payload.from_code, payload.to_code, user)
     # iter35 — if proof_image is a base64 data URL, persist it to object storage.
     # When storage is disabled the helper returns the value untouched (base64 fallback).
