@@ -113,12 +113,31 @@ async def decrement_balance(user_id: str, code: str, amount: float) -> None:
         )
 
 
-async def accumulate_vip_balance(order: dict) -> None:
-    """Increment VIP per-currency balance for an approved accumulate order."""
+async def accumulate_vip_balance(order: dict) -> bool:
+    """Credit a VIP per-currency balance for an `accumulate` order.
+
+    Idempotent: marks the order with `accumulated_at` on first credit and
+    refuses to credit a second time. Returns True if a credit was applied,
+    False if the order was already credited.
+
+    iter51 — required so any first transition into a "money-settled" status
+    (`approved` OR `completed`, including a direct pending→completed jump
+    from the admin's "Completar" button) credits exactly once.
+    """
+    from datetime import datetime, timezone
+    res = await db.orders.update_one(
+        {"id": order["id"], "accumulated_at": {"$exists": False}},
+        {"$set": {"accumulated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if res.modified_count == 0:
+        # Either the order already had `accumulated_at`, or the order id
+        # doesn't exist — in both cases we MUST NOT double-credit.
+        return False
     await db.users.update_one(
         {"user_id": order["user_id"]},
         {"$inc": {f"vip_balances.{order['to_code']}": order["amount_to"]}},
     )
+    return True
 
 
 # ============================================================

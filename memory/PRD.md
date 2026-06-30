@@ -187,6 +187,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Backend**: nuevo test `test_normal_role_can_convert_uses_rate_normal` verifica que usuarios normales pueden convertir y usan `rate_normal` (no `rate_vip`). **11/11 tests vip_convert verde.**
   - **104/104 tests relacionados pasando.** Mypy strict 25/25. ESLint limpio. Path-count: 85 sin cambios.
 
+- **iter51 (Feb 28, 2026) — BUG FIX P0**: **Saldo perdido en órdenes `pending → completed` directas (sin pasar por `approved`)**.
+  - **Root cause**: `services/orders_helpers.run_post_status_side_effects` solo disparaba `accumulate_vip_balance` cuando `new_status == "approved"`. Si el admin clickeaba "Completar" directamente sobre una orden pendiente (saltándose el botón "Confirmar"), la orden saltaba `pending → completed` y el saldo NUNCA se acreditaba.
+  - **Caso del cliente**: O'brayan cambió 2 transferencias Zelle → CUPT con método "acumular". Solo una se acreditó porque a la otra el admin le hizo "Completar" directo.
+  - **Fix**: 
+    - `services/balances.accumulate_vip_balance` ahora es **idempotente** vía flag atómico `accumulated_at` en el doc de la orden. Devuelve `True/False` indicando si aplicó.
+    - `run_post_status_side_effects` ahora dispara en CUALQUIER primera transición a estado "money-settled" (`approved` O `completed`), no solo `approved`. Idempotencia garantiza no double-credit en `pending → approved → completed`.
+  - **Script de remediación**: `/app/backend/scripts/backfill_accumulate_balances.py` con `--dry-run` y `--apply` para acreditar retroactivamente las órdenes que perdieron el saldo. Idempotente — seguro re-ejecutar.
+  - **Tests**: 6/6 nuevos en `test_accumulate_idempotent.py` (pending→completed directo, pending→approved→completed sin double-credit, dos órdenes con paths mixtos, flag persiste, rejected no acredita, helper directo idempotente). Mypy 25/25. Path-count sin cambios.
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

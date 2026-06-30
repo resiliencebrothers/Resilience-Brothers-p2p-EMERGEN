@@ -287,9 +287,16 @@ async def authorize_status_transition(actor: dict, order: dict, new_status: str,
 
 async def run_post_status_side_effects(order: dict, new_status: str, prev_status: str) -> None:
     """Apply balance accumulation and notifications after a status change.
-    Each side effect is wrapped so one failure doesn't block the others."""
-    is_first_approval = new_status == "approved" and prev_status != "approved"
-    if is_first_approval and order["delivery_method"] == "accumulate":
+    Each side effect is wrapped so one failure doesn't block the others.
+
+    iter51 — accumulation now fires on the first transition into ANY
+    money-settled state (`approved` OR `completed`), not just `approved`.
+    `accumulate_vip_balance` is idempotent via the `accumulated_at` flag
+    so paths like `pending → approved → completed` credit exactly once.
+    """
+    money_states = {"approved", "completed"}
+    is_first_credit = new_status in money_states and prev_status not in money_states
+    if is_first_credit and order["delivery_method"] == "accumulate":
         await accumulate_vip_balance(order)
         if order["user_role"] in ("vip", "admin"):
             await check_vip_threshold_alert(order)
