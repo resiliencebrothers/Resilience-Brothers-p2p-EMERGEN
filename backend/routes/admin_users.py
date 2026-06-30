@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from db_client import db
 from auth_utils import require_staff, _enforce_totp_step_up
 from audit_log import log_action
+from services.balances import build_rate_lookup, convert_to_usdt
 
 
 router = APIRouter(tags=["Admin"])
@@ -44,6 +45,25 @@ async def list_users(request: Request, q: Optional[str] = None,
     offset = max(0, offset)
     total = await db.users.count_documents(mongo_q)
     docs = await db.users.find(mongo_q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
+    # iter47 — enrich each non-staff user with a server-side USDT-equivalent
+    # so the admin list can render a multi-currency total without an extra
+    # rates roundtrip on the frontend.
+    rates = await build_rate_lookup()
+    for d in docs:
+        if d.get("role") in ("normal", "vip"):
+            bals: Dict[str, float] = dict(d.get("vip_balances") or {})
+            legacy = float(d.get("vip_balance_usd") or 0.0)
+            if legacy:
+                bals["USD"] = bals.get("USD", 0.0) + legacy
+            total_usdt = 0.0
+            for code, amount in bals.items():
+                amt = float(amount or 0.0)
+                if amt == 0:
+                    continue
+                u = convert_to_usdt(amt, code, rates)
+                if u is not None:
+                    total_usdt += u
+            d["vip_balance_usdt"] = round(total_usdt, 4)
     return JSONResponse(
         content=docs,
         headers={

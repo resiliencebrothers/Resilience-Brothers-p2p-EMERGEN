@@ -147,6 +147,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **`GET /api/admin/health/summary`** ahora incluye `anti_scam: {...}` que la UI consume en una nueva sección "Anti-fraude · revisión de cuentas" con 4 StatCards (cola actual, tiempo medio, ticket más antiguo, resueltos histórico). Tone (warn/danger) automático según umbrales 24h/48h.
   - **Tests**: 5 en `test_anti_scam_metrics.py` (incluye end-to-end de `verify-phone-manual` con TOTP step-up). Mypy strict 25/25 archivos. ESLint limpio. **Path count: 84**. **540/542 pytest verde** (2 skipped, 0 failed).
 
+- **iter47 (Feb 28, 2026)**: **Multi-currency display VIP en widgets legacy**.
+  - **`MarketplaceView.jsx`**: el widget "Saldo" en marketplace ya NO muestra solo `vip_balance_usd` legacy. Ahora consume `GET /api/vip/balances` y muestra:
+    - **Total en USDT** (valoración multi-moneda) como número grande.
+    - Botón colapsable "N monedas" que despliega chips por divisa (USD, CUP, USDT, etc.) con el monto nativo de cada una.
+    - Auto-refresh tras cada canje exitoso.
+  - **`routes/admin_users.py::list_users`**: el endpoint admin ahora enriquece cada user normal/VIP con el campo `vip_balance_usdt` (suma legacy USD + dict balances vía valuación inverse-rate `USDT→code`). Staff (admin/employee) NO recibe el campo — `vip_balance_usd` en ellos es artefacto histórico irrelevante.
+  - **`AdminUsers.jsx::renderUserBalance`**: ahora muestra `≈ {usdt_equivalent} USDT` debajo del breakdown nativo, dándole al staff un total inmediato sin un viaje extra a `/api/rates`.
+  - **Tests**: 5/5 en `test_admin_users_multicurrency_display.py` (legacy-only, dict-only, ambos sumados, zero-balance, staff-no-enrich). Mypy strict 25/25 archivos. ESLint limpio. Path-count: 84 sin cambios. **545/547 pytest verde** (2 skipped).
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

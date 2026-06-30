@@ -34,6 +34,7 @@ const PERM_LABELS = {
 function renderUserBalance(u) {
   const legacy = Number(u.vip_balance_usd || 0);
   const dict = u.vip_balances || {};
+  const totalUsdt = Number(u.vip_balance_usdt || 0);
   const parts = [];
   if (legacy > 0) {
     parts.push(`${legacy.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD`);
@@ -43,7 +44,19 @@ function renderUserBalance(u) {
     .forEach(([k, v]) => {
       parts.push(`${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${k}`);
     });
-  return parts.length ? parts.join(" · ") : <span className="text-neutral-600">—</span>;
+  if (parts.length === 0) {
+    return <span className="text-neutral-600">—</span>;
+  }
+  return (
+    <span className="inline-flex flex-col" data-testid={`user-balance-${u.user_id}`}>
+      <span className="text-xs text-neutral-300">{parts.join(" · ")}</span>
+      {totalUsdt > 0 && (
+        <span className="text-[0.65rem] text-[#EAB308] font-mono">
+          ≈ {totalUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+        </span>
+      )}
+    </span>
+  );
 }
 
 export default function AdminUsers() {

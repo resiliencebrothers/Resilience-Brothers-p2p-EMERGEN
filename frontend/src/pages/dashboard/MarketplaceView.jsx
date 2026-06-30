@@ -8,20 +8,29 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Boxes, Package } from "lucide-react";
+import { Boxes, Package, ChevronDown } from "lucide-react";
 
 export default function MarketplaceView() {
-  const { user, refresh } = useAuth();
+  const { refresh } = useAuth();
   const [products, setProducts] = useState([]);
   const [open, setOpen] = useState(null);
   const [qty, setQty] = useState(1);
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState([]);
+  // iter47 — multi-currency VIP balance (no longer just legacy USD)
+  const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
+  const [showBreakdown, setShowBreakdown] = useState(false);
+
+  const loadBalances = () =>
+    axios.get(`${API}/vip/balances`, { withCredentials: true })
+      .then((r) => setBalances(r.data))
+      .catch(() => {});
 
   useEffect(() => {
     axios.get(`${API}/products`).then(r => setProducts(r.data));
     axios.get(`${API}/vip/redemptions/mine`, { withCredentials: true }).then(r => setHistory(r.data)).catch(() => {});
+    loadBalances();
   }, []);
 
   const redeem = async () => {
@@ -36,10 +45,14 @@ export default function MarketplaceView() {
       await refresh();
       const p = await axios.get(`${API}/products`); setProducts(p.data);
       const h = await axios.get(`${API}/vip/redemptions/mine`, { withCredentials: true }); setHistory(h.data);
+      await loadBalances();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
     } finally { setBusy(false); }
   };
+
+  const positiveBalances = (balances.balances || []).filter(b => Number(b.amount) > 0);
+  const hasMulti = positiveBalances.length > 0;
 
   return (
     <div className="space-y-8" data-testid="marketplace-view">
@@ -48,9 +61,48 @@ export default function MarketplaceView() {
           <div className="micro-label text-[#EAB308] mb-2">/ Marketplace</div>
           <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#EAB308]" /> Canjea por Mercancía</h1>
         </div>
-        <div className="tactile-card px-5 py-3">
-          <div className="micro-label text-neutral-500">Saldo</div>
-          <div className="font-display text-2xl text-[#EAB308]">${(user?.vip_balance_usd || 0).toFixed(2)}</div>
+        <div className="tactile-card px-5 py-3 min-w-[180px]" data-testid="marketplace-balance-widget">
+          <div className="micro-label text-neutral-500">Saldo total</div>
+          <div
+            className="font-display text-2xl text-[#EAB308]"
+            data-testid="marketplace-balance-usdt"
+          >
+            {(balances.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            <span className="text-sm text-neutral-400 ml-1">USDT</span>
+          </div>
+          {hasMulti && (
+            <>
+              <button
+                onClick={() => setShowBreakdown(!showBreakdown)}
+                className="text-xs text-neutral-400 hover:text-[#EAB308] mt-1 flex items-center gap-1 transition-colors"
+                data-testid="marketplace-balance-toggle"
+              >
+                {showBreakdown ? "Ocultar" : `${positiveBalances.length} ${positiveBalances.length === 1 ? "moneda" : "monedas"}`}
+                <ChevronDown
+                  className={`w-3 h-3 transition-transform ${showBreakdown ? "rotate-180" : ""}`}
+                />
+              </button>
+              {showBreakdown && (
+                <div
+                  className="mt-2 pt-2 border-t border-white/5 space-y-1"
+                  data-testid="marketplace-balance-breakdown"
+                >
+                  {positiveBalances.map((b) => (
+                    <div
+                      key={b.currency}
+                      className="flex items-center justify-between text-xs"
+                      data-testid={`marketplace-balance-${b.currency}`}
+                    >
+                      <span className="text-neutral-400 font-mono">{b.currency}</span>
+                      <span className="text-neutral-200 font-mono">
+                        {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
