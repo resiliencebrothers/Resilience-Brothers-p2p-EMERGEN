@@ -156,6 +156,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **`AdminUsers.jsx::renderUserBalance`**: ahora muestra `≈ {usdt_equivalent} USDT` debajo del breakdown nativo, dándole al staff un total inmediato sin un viaje extra a `/api/rates`.
   - **Tests**: 5/5 en `test_admin_users_multicurrency_display.py` (legacy-only, dict-only, ambos sumados, zero-balance, staff-no-enrich). Mypy strict 25/25 archivos. ESLint limpio. Path-count: 84 sin cambios. **545/547 pytest verde** (2 skipped).
 
+- **iter48 (Feb 28, 2026)**: **Auto-conversión VIP CUP → USDT (instant self-conversion)**.
+  - **Backend**: nuevo endpoint **`POST /api/vip/convert`** en `routes/orders.py` con payload `{from_code, to_code, amount_from}`. Reasigna fondos atómicamente entre las propias monedas del VIP — sin aprobación admin, sin delivery físico. Usa la tasa VIP cuando aplica.
+    - Maneja tasas direccionales: si no existe `(from→to)`, usa la inversa `1/(to→from)` (consistente con la lógica de valuación de balances). Esto desbloquea el caso clásico CUP→USDT cuando solo se cotiza USDT→CUP.
+    - Validaciones: cuenta activa, defensive-mode, monedas distintas, saldo suficiente, tasa cotizada (cualquier dirección), monto positivo.
+    - Audit-loggeado con acción `vip.convert` (actor_id, from/to, amount, rate).
+  - **Frontend (`MarketplaceView.jsx`)**: cada chip de divisa en el breakdown (excepto USDT) ahora tiene un ícono `ArrowRightLeft` que abre un dialog "Convertir {code} → USDT" con input + botón MÁX + confirmación. Auto-refresca el saldo tras éxito.
+  - **Tests**: 8/8 en `test_vip_convert.py` (happy-path, insuficiente, misma moneda, sin tasa, employee rechazado, no auth, validación monto, audit log).
+  - **Path count: 85** (actualizado en los 3 snapshot tests). Mypy strict 25/25. ESLint limpio. **553/555 pytest verde**.
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

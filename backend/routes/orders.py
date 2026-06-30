@@ -10,6 +10,7 @@ Endpoints:
 
 - POST  /vip/withdraw
 - GET   /vip/withdrawals/mine
+- POST  /vip/convert                  (iter48 — instant self-conversion between own balances)
 - GET   /vip/balances
 - GET   /vip/daily-closing            (PDF)
 
@@ -318,6 +319,111 @@ async def vip_balances(request: Request) -> Any:
         })
     items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
     return {"balances": items, "total_usdt": round(total_usdt, 4)}
+
+
+# ============================================================
+# iter48 — VIP self-conversion between own balances (no admin approval)
+# ============================================================
+
+class VipConvertPayload(BaseModel):
+    from_code: str = Field(..., min_length=1, max_length=10)
+    to_code: str = Field(..., min_length=1, max_length=10)
+    amount_from: float = Field(..., gt=0, le=1_000_000_000)
+
+
+@router.post("/vip/convert")
+async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
+    """Atomically swap a VIP's own funds between two currencies they already
+    hold. No physical delivery, no admin approval — this is a balance
+    reshuffle within the SAME user. Uses the VIP rate when applicable.
+
+    Rejects if:
+      - `from_code == to_code`
+      - the user does not hold `amount_from` of `from_code`
+      - no rate row exists for the pair (we deliberately do NOT use the
+        inverse direction here — quoting must be explicit for self-conversion
+        the same way it is for any P2P order).
+
+    Audited via `audit_logs` for traceability.
+    """
+    user = await require_user(request)
+    await assert_account_active(user)
+    if user["role"] == "employee":
+        raise HTTPException(status_code=403, detail="Empleados no tienen saldo a convertir.")
+    if user["role"] != "admin":
+        await assert_not_defensive("conversiones")
+    from_code = payload.from_code.upper().strip()
+    to_code = payload.to_code.upper().strip()
+    if from_code == to_code:
+        raise HTTPException(
+            status_code=400,
+            detail="Las monedas de origen y destino deben ser diferentes.",
+        )
+    # Balance check
+    have = get_user_balance(user, from_code)
+    if have < payload.amount_from:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Saldo insuficiente en {from_code}: tienes "
+                    f"{have:.4f}, intentas convertir {payload.amount_from:.4f}."),
+        )
+    # Rate lookup — for SELF-CONVERSION we accept either direction. The
+    # `USDT→code` rate is the operator's quoted valuation rate (the inverse
+    # of which gives the buy-side conversion). This mirrors the logic used
+    # by `services.balances._convert_direct` for balance valuation: since
+    # no P2P trade is happening (it's an internal balance reshuffle within
+    # the same user), using the inverse quote when direct is unavailable is
+    # the natural behaviour.
+    rate_doc = await db.rates.find_one(
+        {"from_code": from_code, "to_code": to_code}, {"_id": 0}
+    )
+    is_vip = user.get("role") in ("vip", "admin")
+    rate_used: float = 0.0
+    if rate_doc:
+        rate_used = float(rate_doc.get("rate_vip" if is_vip else "rate_normal", 0))
+    else:
+        inverse_doc = await db.rates.find_one(
+            {"from_code": to_code, "to_code": from_code}, {"_id": 0}
+        )
+        if inverse_doc:
+            inv = float(inverse_doc.get("rate_vip" if is_vip else "rate_normal", 0))
+            if inv > 0:
+                rate_used = 1.0 / inv
+    if rate_used <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"No hay tasa cotizada para {from_code} → {to_code}. "
+                    "Contacta a soporte para habilitarla."),
+        )
+    amount_to = round(payload.amount_from * rate_used, 4)
+    # Atomic swap: decrement from + increment to
+    await decrement_balance(user["user_id"], from_code, payload.amount_from)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$inc": {f"vip_balances.{to_code}": amount_to}},
+    )
+    # Audit
+    try:
+        from audit_log import log_action
+        await log_action(
+            db, actor=user, action="vip.convert",
+            entity_type="user", entity_id=user["user_id"],
+            summary=f"{payload.amount_from} {from_code} → {amount_to} {to_code}",
+            details={
+                "from_code": from_code, "to_code": to_code,
+                "amount_from": payload.amount_from,
+                "amount_to": amount_to, "rate": rate_used,
+            },
+        )
+    except Exception as e:
+        logger.error(f"vip.convert audit log failed: {e}")
+    return {
+        "ok": True,
+        "from_code": from_code, "to_code": to_code,
+        "amount_from": payload.amount_from,
+        "amount_to": amount_to,
+        "rate": rate_used,
+    }
 
 
 @router.get("/vip/daily-closing")

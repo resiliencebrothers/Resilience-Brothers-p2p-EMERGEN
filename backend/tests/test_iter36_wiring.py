@@ -37,8 +37,8 @@ class TestOpenAPIWiring:
         assert r.status_code == 200, f"expected 200, got {r.status_code}"
         body = r.json()
         paths = body.get("paths", {})
-        # iter45: added GET /api/admin/quick-summary → 84 paths.
-        assert len(paths) == 84, f"expected 84 paths, got {len(paths)}"
+        # iter48: added POST /api/vip/convert → 85 paths.
+        assert len(paths) == 85, f"expected 85 paths, got {len(paths)}"
         assert "/api/files/{key}" in paths
 
     def test_swagger_docs_reachable_publicly(self):

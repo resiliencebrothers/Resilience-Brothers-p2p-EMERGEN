@@ -39,11 +39,12 @@ def test_openapi_path_count_unchanged():
     path (iter36 — exposed the schema under /api/* for public ingress access).
     iter37 added GET /api/admin/health/summary; iter43 added
     GET /api/currencies/{code}/delivery-methods; iter45 added
-    GET /api/admin/quick-summary. Current count is 84.
+    GET /api/admin/quick-summary; iter48 added POST /api/vip/convert.
+    Current count is 85.
     """
     r = requests.get("http://localhost:8001/api/openapi.json")
     assert r.status_code == 200
-    assert len(r.json()["paths"]) == 84
+    assert len(r.json()["paths"]) == 85
 
 
 # ---- /auth/register ----

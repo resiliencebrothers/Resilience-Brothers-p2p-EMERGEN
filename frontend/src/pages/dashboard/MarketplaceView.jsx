@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Boxes, Package, ChevronDown } from "lucide-react";
+import { Boxes, Package, ChevronDown, ArrowRightLeft } from "lucide-react";
 
 export default function MarketplaceView() {
   const { refresh } = useAuth();
@@ -21,6 +21,11 @@ export default function MarketplaceView() {
   // iter47 — multi-currency VIP balance (no longer just legacy USD)
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
   const [showBreakdown, setShowBreakdown] = useState(false);
+  // iter48 — instant self-conversion dialog state
+  const [convertOpen, setConvertOpen] = useState(false);
+  const [convertFromCode, setConvertFromCode] = useState("");
+  const [convertAmount, setConvertAmount] = useState("");
+  const [convertBusy, setConvertBusy] = useState(false);
 
   const loadBalances = () =>
     axios.get(`${API}/vip/balances`, { withCredentials: true })
@@ -53,6 +58,37 @@ export default function MarketplaceView() {
 
   const positiveBalances = (balances.balances || []).filter(b => Number(b.amount) > 0);
   const hasMulti = positiveBalances.length > 0;
+
+  const openConvertDialog = (fromCode) => {
+    setConvertFromCode(fromCode);
+    setConvertAmount("");
+    setConvertOpen(true);
+  };
+
+  const submitConvert = async () => {
+    const amt = parseFloat(convertAmount);
+    if (!amt || amt <= 0) return toast.error("Cantidad inválida");
+    const available = positiveBalances.find(b => b.currency === convertFromCode);
+    if (!available || Number(available.amount) < amt) {
+      return toast.error(`No tienes ${amt} ${convertFromCode} disponible.`);
+    }
+    setConvertBusy(true);
+    try {
+      const r = await axios.post(
+        `${API}/vip/convert`,
+        { from_code: convertFromCode, to_code: "USDT", amount_from: amt },
+        { withCredentials: true },
+      );
+      toast.success(
+        `Convertiste ${amt} ${convertFromCode} en ${r.data.amount_to} USDT.`,
+      );
+      setConvertOpen(false);
+      await loadBalances();
+      await refresh();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error en la conversión");
+    } finally { setConvertBusy(false); }
+  };
 
   return (
     <div className="space-y-8" data-testid="marketplace-view">
@@ -90,13 +126,25 @@ export default function MarketplaceView() {
                   {positiveBalances.map((b) => (
                     <div
                       key={b.currency}
-                      className="flex items-center justify-between text-xs"
+                      className="flex items-center justify-between text-xs gap-2"
                       data-testid={`marketplace-balance-${b.currency}`}
                     >
                       <span className="text-neutral-400 font-mono">{b.currency}</span>
-                      <span className="text-neutral-200 font-mono">
-                        {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-neutral-200 font-mono">
+                          {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </span>
+                        {b.currency !== "USDT" && (
+                          <button
+                            onClick={() => openConvertDialog(b.currency)}
+                            className="text-[#EAB308] hover:text-[#FACC15] transition-colors p-0.5"
+                            title={`Convertir ${b.currency} a USDT`}
+                            data-testid={`marketplace-convert-${b.currency}`}
+                          >
+                            <ArrowRightLeft className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -186,6 +234,62 @@ export default function MarketplaceView() {
             </div>
             <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12">
               {busy ? "Procesando..." : "Confirmar Canje"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* iter48 — Instant self-conversion dialog */}
+      <Dialog open={convertOpen} onOpenChange={setConvertOpen}>
+        <DialogContent className="bg-[#111] border-white/10 text-white rounded-none">
+          <DialogHeader>
+            <DialogTitle data-testid="convert-dialog-title">
+              Convertir {convertFromCode} → USDT
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="text-xs text-neutral-400">
+              Mueve fondos entre tus propias monedas al tipo de cambio VIP. No
+              requiere aprobación del staff.
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">
+                Cantidad de {convertFromCode}
+              </Label>
+              <div className="flex items-center gap-2 mt-2">
+                <Input
+                  data-testid="convert-amount"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={convertAmount}
+                  onChange={(e) => setConvertAmount(e.target.value)}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-12 font-mono"
+                />
+                <Button
+                  variant="ghost"
+                  className="text-xs text-[#EAB308] h-12 rounded-none px-3 hover:bg-[#EAB308]/10"
+                  onClick={() => {
+                    const b = positiveBalances.find(x => x.currency === convertFromCode);
+                    if (b) setConvertAmount(String(b.amount));
+                  }}
+                  data-testid="convert-max"
+                >MÁX</Button>
+              </div>
+              {convertFromCode && (
+                <div className="text-[0.65rem] text-neutral-500 mt-1 font-mono">
+                  Saldo: {(positiveBalances.find(x => x.currency === convertFromCode)?.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {convertFromCode}
+                </div>
+              )}
+            </div>
+            <Button
+              data-testid="confirm-convert"
+              onClick={submitConvert}
+              disabled={convertBusy || !convertAmount}
+              className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12 flex items-center justify-center gap-2"
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+              {convertBusy ? "Convirtiendo..." : "Confirmar conversión"}
             </Button>
           </div>
         </DialogContent>
