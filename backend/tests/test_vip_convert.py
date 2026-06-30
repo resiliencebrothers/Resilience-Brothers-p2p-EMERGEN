@@ -201,3 +201,31 @@ class TestVipConvert:
                 {"$unset": {"vip_balances.USD": "",
                             "vip_balances.CUP": ""}},
             )
+
+    def test_normal_role_can_convert_uses_rate_normal(self):
+        """iter50 — normal users (non-VIP) are also allowed to convert and
+        the backend uses `rate_normal` instead of `rate_vip`."""
+        db = MongoClient(MONGO_URL)[DB_NAME]
+        uid = "user_test_normal01"
+        db.users.update_one(
+            {"user_id": uid},
+            {"$set": {"vip_balances.USDT": 10.0, "vip_balances.CUP": 0.0}},
+        )
+        try:
+            r = requests.post(
+                f"{BASE_URL}/api/vip/convert",
+                headers=_h(NORMAL_TOKEN),
+                json={"from_code": "USDT", "to_code": "CUP",
+                      "amount_from": 1.0},
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            # rate_normal=380 (vs rate_vip=395) — normals get the worse rate
+            assert body["rate"] == 380.0
+            assert body["amount_to"] == 380.0
+        finally:
+            db.users.update_one(
+                {"user_id": uid},
+                {"$unset": {"vip_balances.USDT": "",
+                            "vip_balances.CUP": ""}},
+            )

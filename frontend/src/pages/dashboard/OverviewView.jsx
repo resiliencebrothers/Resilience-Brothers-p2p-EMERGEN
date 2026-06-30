@@ -4,6 +4,7 @@ import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
+import BalanceConverterCard from "@/components/BalanceConverterCard";
 
 export default function OverviewView() {
   const { user } = useAuth();
@@ -39,6 +40,17 @@ export default function OverviewView() {
         <StatCard icon={CheckCircle} label="Completadas" value={approved} sub="órdenes" />
         <StatCard icon={Activity} label="Estatus" value={user?.role?.toUpperCase()} sub="nivel" />
       </div>
+
+      {/* iter50 — Converter widget visible to normal + vip clients */}
+      {isClient && (
+        <BalanceConverterCard
+          onConverted={() =>
+            axios.get(`${API}/vip/balances`, { withCredentials: true })
+              .then((r) => setBalances(r.data))
+              .catch(() => {})
+          }
+        />
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 tactile-card p-6">

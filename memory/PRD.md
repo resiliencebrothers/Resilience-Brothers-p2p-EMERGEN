@@ -174,6 +174,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Tests backend**: 2 nuevos en `test_vip_convert.py` cubriendo direcciones reverse (USDT→CUP usa tasa directa 395) y cross-fiat (USD→CUP usa tasa directa 395). **10/10 vip_convert tests pasando.** Mypy strict 25/25. ESLint limpio. Path-count: 85 sin cambios.
   - **End-to-end verificado via curl** contra ingress público: USDT→CUP=395, USDT→USD=0.99, CUP→USDT=1/395 inverse.
 
+- **iter50 (Feb 28, 2026)**: **Widget convertidor en Dashboard principal (normal + VIP)**.
+  - **Nuevo componente reusable `BalanceConverterCard.jsx`** (`/app/frontend/src/components/`):
+    - Self-contained: fetches sus propios `vip/balances`, `rates`, `currencies`.
+    - Renderiza tarjeta con título "Convertir Saldos" + breakdown de hasta 3 monedas (botón "Ver todas" si hay más) + botón inline "Convertir" en cada fila.
+    - Dialog con dropdown destino + preview en vivo + botón MÁX + submit. Mismo UX que iter49.
+    - Acepta `onConverted` callback para refrescar el padre.
+    - Si no hay saldo positivo, muestra estado empty inviting "Recibe pagos en transferencia/efectivo…".
+    - Empleados (`role=employee`) NO ven el widget (devuelve `null`).
+  - **`OverviewView.jsx`**: agrega el card entre los StatCards y la grid de tasas/acciones. Visible para `isClient` (normal + VIP, no staff).
+  - **`MarketplaceView.jsx`**: refactor — elimina toda la lógica inline de conversión (state, helpers, dialog) y usa el nuevo componente. -300 líneas duplicadas.
+  - **Backend**: nuevo test `test_normal_role_can_convert_uses_rate_normal` verifica que usuarios normales pueden convertir y usan `rate_normal` (no `rate_vip`). **11/11 tests vip_convert verde.**
+  - **104/104 tests relacionados pasando.** Mypy strict 25/25. ESLint limpio. Path-count: 85 sin cambios.
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.
