@@ -56,8 +56,8 @@ class TestStorageBoot:
         r = requests.get(f"{BASE_URL}/api/openapi.json", timeout=10)
         assert r.status_code == 200
         paths = r.json().get("paths", {})
-        # iter43: added GET /api/currencies/{code}/delivery-methods → 83 paths.
-        assert len(paths) == 83, f"expected 83 paths, got {len(paths)}"
+        # iter45: added GET /api/admin/quick-summary → 84 paths.
+        assert len(paths) == 84, f"expected 84 paths, got {len(paths)}"
         assert "/api/files/{key}" in paths, (
             f"/api/files/{{key}} missing. sample={list(paths.keys())[:6]}"
         )

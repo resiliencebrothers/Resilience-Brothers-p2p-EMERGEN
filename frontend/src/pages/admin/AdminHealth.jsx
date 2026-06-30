@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import {
   Activity, AlertTriangle, Database, ExternalLink, ServerCog,
   ShieldAlert, ShieldCheck, TrendingUp, Users, Inbox, Bug,
-  CloudOff, CloudCheck,
+  CloudOff, CloudCheck, Clock, ShieldX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -329,6 +329,71 @@ export default function AdminHealth() {
           />
         </div>
       </Section>
+
+      {/* Anti-scam analytics (iter46) */}
+      {s.anti_scam && !s.anti_scam.error && (
+        <Section title="Anti-fraude · revisión de cuentas">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <StatCard
+              testid="health-antiscam-queue"
+              icon={ShieldX}
+              label="Bajo revisión ahora"
+              value={s.anti_scam.users_under_review}
+              sub="cola de phone-verify"
+              tone={s.anti_scam.users_under_review > 5 ? "warn" : "default"}
+            />
+            <StatCard
+              testid="health-antiscam-avg-hours"
+              icon={Clock}
+              label="Tiempo medio resolución"
+              value={
+                s.anti_scam.avg_resolution_hours == null
+                  ? "—"
+                  : `${s.anti_scam.avg_resolution_hours} h`
+              }
+              sub={
+                s.anti_scam.avg_resolution_hours == null
+                  ? "sin casos resueltos aún"
+                  : `${s.anti_scam.resolved_count} casos resueltos`
+              }
+              tone={
+                s.anti_scam.avg_resolution_hours != null
+                && s.anti_scam.avg_resolution_hours > 24
+                  ? "warn"
+                  : "default"
+              }
+            />
+            <StatCard
+              testid="health-antiscam-oldest"
+              icon={AlertTriangle}
+              label="Ticket más antiguo"
+              value={
+                s.anti_scam.oldest_pending_hours == null
+                  ? "—"
+                  : `${s.anti_scam.oldest_pending_hours} h`
+              }
+              sub="lleva esperando"
+              tone={
+                s.anti_scam.oldest_pending_hours != null
+                && s.anti_scam.oldest_pending_hours > 48
+                  ? "danger"
+                  : s.anti_scam.oldest_pending_hours != null
+                    && s.anti_scam.oldest_pending_hours > 24
+                    ? "warn"
+                    : "default"
+              }
+            />
+            <StatCard
+              testid="health-antiscam-resolved"
+              icon={ShieldCheck}
+              label="Resueltos histórico"
+              value={s.anti_scam.resolved_count}
+              sub="contribuyen al promedio"
+              tone="ok"
+            />
+          </div>
+        </Section>
+      )}
 
       {/* Tabla margen negativo */}
       {s.negative_margin.count > 0 && (

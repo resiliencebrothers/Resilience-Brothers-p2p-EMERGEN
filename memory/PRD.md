@@ -136,6 +136,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Frontend** (`AdminCurrencies.jsx`): nuevo bloque `<Checkbox>` grid en el dialog de moneda (3 opciones: Transferencia bancaria / Efectivo / Cripto wallet) con texto explicativo. Bind a `form.delivery_methods` que persiste como array o `null` cuando el admin deja todo desmarcado. Testids: `cur-delivery-methods`, `cur-delivery-transfer`, `cur-delivery-cash`, `cur-delivery-crypto`.
   - **Tests**: 5/5 nuevos en `test_admin_currency_delivery_override.py` (crear con override, update para agregar, clear-override-cae-a-heurístico, 422 en valor inválido, lista vacía == sin override). Mypy 24/24 verde. ESLint verde. Path-count se mantiene en 83 (sin nuevos endpoints).
 
+- **iter45–46 (Feb 28, 2026)**: **Mobile-first quick admin dashboard + Anti-scam analytics**.
+  - **iter45 — `/admin/quick`** (`AdminQuickDashboard.jsx`): 4 cards apilados optimizados para celular: (1) Pendientes (count órdenes/retiros + 5 más recientes), (2) Fondos empresa (USDT-eq total + chips USDT/USD/CUP), (3) Acumulado VIP (USDT-eq + liquidez neta), (4) CTA grande "Ver órdenes pendientes". Acceso vía nav-item `Vista Rápida` (icon Zap).
+  - **`GET /api/admin/quick-summary`**: nuevo endpoint dedicado que combina los 3 datasets en una sola request optimizada para mobile (lat. <100ms). Respeta `allowed_currencies` scope para staff role `employee`. 5 tests en `test_admin_quick_summary.py`.
+  - **iter46 — Anti-scam analytics**: nuevo helper `services/anti_scam.py` con 3 funciones:
+    - `mark_user_under_review(user_id)` — idempotente, sólo estampa `under_review_since` la primera vez.
+    - `mark_user_active(user_id)` — calcula `last_under_review_hours` desde el timestamp anterior y lo persiste.
+    - `compute_anti_scam_metrics()` — agrega `users_under_review`, `avg_resolution_hours`, `resolved_count`, `oldest_pending_hours`.
+  - **Wired-in**: `routes/auth.py` (3 transiciones de creación/login) y `routes/blocklist.py` (bulk-import con pipelined `$cond` para preservar timestamps en re-blocks, `verify-phone-manual`, `reject-phone`).
+  - **`GET /api/admin/health/summary`** ahora incluye `anti_scam: {...}` que la UI consume en una nueva sección "Anti-fraude · revisión de cuentas" con 4 StatCards (cola actual, tiempo medio, ticket más antiguo, resueltos histórico). Tone (warn/danger) automático según umbrales 24h/48h.
+  - **Tests**: 5 en `test_anti_scam_metrics.py` (incluye end-to-end de `verify-phone-manual` con TOTP step-up). Mypy strict 25/25 archivos. ESLint limpio. **Path count: 84**. **540/542 pytest verde** (2 skipped, 0 failed).
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

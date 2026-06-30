@@ -42,6 +42,7 @@ from auth_utils import (
     _decode_jwt_payload,
 )
 import email_service
+from services.anti_scam import mark_user_under_review
 
 
 logger = logging.getLogger(__name__)
@@ -267,6 +268,7 @@ async def google_callback(request: Request, code: Optional[str] = None,
             # iter28 — Google users still need phone verification before operating.
             # Admin/employee bypass via _assert_account_active.
             "account_status": "active" if role in ("admin", "employee") else "under_review",
+            "under_review_since": None if role in ("admin", "employee") else iso(now_utc()),
             "created_at": iso(now_utc()),
         })
 
@@ -276,10 +278,7 @@ async def google_callback(request: Request, code: Optional[str] = None,
         if u and u.get("phone") and u.get("role") in ("normal", "vip"):
             blocked = await db.blocked_contacts.find_one({"phone": u["phone"]}, {"_id": 0})
             if blocked:
-                await db.users.update_one(
-                    {"user_id": user_id},
-                    {"$set": {"phone_verified": False, "account_status": "under_review"}},
-                )
+                await mark_user_under_review(user_id)
 
     response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
     await _create_session(user_id, response, ttl_hours=168)
@@ -345,6 +344,7 @@ async def auth_register(payload: AuthRegisterPayload, response: Response) -> Any
         # iter28 — new accounts start under_review; staff must verify phone first.
         # Admin/employee role bypasses the check inside _assert_account_active.
         "account_status": "active" if role in ("admin", "employee") else "under_review",
+        "under_review_since": None if role in ("admin", "employee") else iso(now_utc()),
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
@@ -476,10 +476,7 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
     if user.get("phone"):
         blocked = await db.blocked_contacts.find_one({"phone": user["phone"]}, {"_id": 0})
         if blocked and user.get("role") in ("normal", "vip"):
-            await db.users.update_one(
-                {"user_id": user["user_id"]},
-                {"$set": {"phone_verified": False, "account_status": "under_review"}},
-            )
+            await mark_user_under_review(user["user_id"])
             user["phone_verified"] = False
             user["account_status"] = "under_review"
     ttl = payload.remember_hours if payload.remember_hours else 168

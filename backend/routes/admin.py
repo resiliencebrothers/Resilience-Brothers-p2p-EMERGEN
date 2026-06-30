@@ -53,6 +53,7 @@ from services.health import build_health_summary
 
 # Re-export so legacy importers (server.py startup wrapper) keep working.
 from routes.admin_revenue import build_revenue_timeseries  # noqa: F401
+from routes.admin_company_funds import _compute_company_funds
 
 
 logger = logging.getLogger(__name__)
@@ -529,6 +530,78 @@ async def staff_queue(request: Request) -> Any:
     withdrawals = await db.withdrawals.find(wd_q, {"_id": 0}).sort("created_at", -1).to_list(500)
     return {"orders": orders, "withdrawals": withdrawals,
             "counts": {"orders": len(orders), "withdrawals": len(withdrawals)}}
+
+
+# ============================================================
+# Quick summary — mobile dashboard (iter45)
+# ============================================================
+
+@router.get("/admin/quick-summary")
+async def admin_quick_summary(request: Request) -> Any:
+    """Compact payload for the mobile-first quick dashboard at /admin/quick.
+
+    Combines what staff needs in 5 seconds: pendientes (orders+withdrawals
+    counts and 5 most recent orders), company working-capital (per-currency
+    + USDT-equivalent total) and VIP-accumulated balances (what we owe).
+
+    Employee role respects `allowed_currencies` scope on every section.
+    """
+    actor = await require_staff(request)
+    rates = await build_rate_lookup()
+
+    # ---- scope filter (employee can only see currencies in allowed_currencies)
+    allowed: Optional[list] = None
+    if actor.get("role") == "employee":
+        cur = actor.get("allowed_currencies") or []
+        if cur:
+            allowed = cur
+
+    # ---- 1. Pendientes
+    order_q: Dict[str, Any] = {"status": {"$in": ["pending", "requires_double_approval"]}}
+    wd_q: Dict[str, Any] = {"status": "pending"}
+    if allowed:
+        order_q["$or"] = [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]
+        wd_q["currency"] = {"$in": allowed}
+
+    orders_count = await db.orders.count_documents(order_q)
+    withdrawals_count = await db.withdrawals.count_documents(wd_q)
+    recent_orders = await db.orders.find(
+        order_q,
+        {"_id": 0, "id": 1, "from_code": 1, "to_code": 1,
+         "amount_from": 1, "amount_to": 1, "created_at": 1, "user_email": 1},
+    ).sort("created_at", -1).to_list(5)
+
+    # ---- 2. Company funds (per-currency working capital + USDT total)
+    funds_rows = await _compute_company_funds(allowed)
+    funds_items: List[Dict[str, Any]] = []
+    funds_total_usdt = 0.0
+    for row in funds_rows:
+        code = row["currency"]
+        bal = float(row.get("balance") or 0.0)
+        usdt = convert_to_usdt(bal, code, rates)
+        if usdt is not None:
+            funds_total_usdt += usdt
+        funds_items.append({
+            "currency": code,
+            "balance": bal,
+            "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
+        })
+
+    # ---- 3. VIP holdings (what we owe to clients)
+    vip = await _aggregate_vip_holdings(rates)
+
+    return {
+        "pending": {
+            "orders_count": orders_count,
+            "withdrawals_count": withdrawals_count,
+            "recent_orders": recent_orders,
+        },
+        "company_funds": {
+            "items": funds_items,
+            "total_usdt": round(funds_total_usdt, 4),
+        },
+        "vip_holdings": vip,
+    }
 
 
 # ============================================================

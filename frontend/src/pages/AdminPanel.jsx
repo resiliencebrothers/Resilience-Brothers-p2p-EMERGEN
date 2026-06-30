@@ -1,7 +1,7 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt, Inbox, Wallet, Ban, Activity } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt, Inbox, Wallet, Ban, Activity, Zap } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -18,6 +18,7 @@ import AdminQueue from "@/pages/admin/AdminQueue";
 import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
+import AdminQuickDashboard from "@/pages/admin/AdminQuickDashboard";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -29,6 +30,7 @@ export default function AdminPanel() {
 
   const items = [
     { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
+    { to: "/admin/quick", icon: Zap, label: "Vista Rápida", id: "admin-nav-quick", highlight: true },
     { to: "/admin/queue", icon: Inbox, label: "Mi Cola", id: "admin-nav-queue", highlight: true },
     { to: "/admin/orders", icon: ListChecks, label: "Órdenes", id: "admin-nav-orders" },
     { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros", id: "admin-nav-withdrawals" },
@@ -176,6 +178,7 @@ export default function AdminPanel() {
         <div className="p-6 lg:p-10">
           <Routes>
             <Route index element={<AdminOverview />} />
+            <Route path="quick" element={<AdminQuickDashboard />} />
             <Route path="queue" element={<AdminQueue />} />
             <Route path="company-funds" element={<AdminCompanyFunds />} />
             <Route path="orders" element={<AdminOrders />} />

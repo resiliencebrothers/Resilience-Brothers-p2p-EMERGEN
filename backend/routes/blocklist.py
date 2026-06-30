@@ -25,6 +25,7 @@ from auth_utils import (
     require_staff, normalize_phone, now_utc, iso, _enforce_totp_step_up,
 )
 from audit_log import log_action
+from services.anti_scam import mark_user_under_review, mark_user_active
 from routes.notifications import (
     notify_user_phone_verified,
     notify_user_phone_rejected,
@@ -214,9 +215,21 @@ async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Requ
         imported.append(phone)
     affected_users = 0
     if imported:
+        # iter46 — set status + stamp under_review_since only if missing,
+        # preserving the open-ticket timestamp on users already flagged.
         res = await db.users.update_many(
             {"phone": {"$in": imported}, "role": {"$in": ["normal", "vip"]}},
-            {"$set": {"account_status": "under_review", "phone_verified": False}},
+            [{"$set": {
+                "account_status": "under_review",
+                "phone_verified": False,
+                "under_review_since": {
+                    "$cond": [
+                        {"$ifNull": ["$under_review_since", False]},
+                        "$under_review_since",
+                        iso(now_utc()),
+                    ]
+                },
+            }}],
         )
         affected_users = res.modified_count
     await log_action(
@@ -270,10 +283,7 @@ async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
         )
     if target.get("phone_verified") and target.get("account_status") == "active":
         return {"ok": True, "already_verified": True, "user": target}
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {"phone_verified": True, "account_status": "active"}},
-    )
+    await mark_user_active(user_id)
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     try:
         await notify_user_phone_verified(fresh)
@@ -315,10 +325,7 @@ async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, req
             "source": "phone_reject",
         }
         await db.blocked_contacts.insert_one(doc)
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$set": {"phone_verified": False, "account_status": "under_review"}},
-    )
+    await mark_user_under_review(user_id)
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     try:
         await notify_user_phone_rejected(fresh, payload.reason.strip())

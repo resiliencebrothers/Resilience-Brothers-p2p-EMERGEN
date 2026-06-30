@@ -14,6 +14,7 @@ from db_client import db
 from services import storage as storage_service
 from services.balances import get_defensive_mode
 from services.orders_helpers import compute_order_profit
+from services.anti_scam import compute_anti_scam_metrics
 
 
 logger = logging.getLogger(__name__)
@@ -230,6 +231,12 @@ async def build_health_summary() -> dict:
     neg_margin = await _negative_margin_status()
     queues = await _queue_status()
     platform = await _platform_stats()
+    # iter46 — anti-scam metrics (queue depth, avg resolution time, oldest ticket).
+    try:
+        anti_scam = await compute_anti_scam_metrics()
+    except Exception as e:
+        logger.error(f"anti_scam metrics failed: {e}")
+        anti_scam = {"error": str(e)}
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sentry": sentry,
@@ -239,4 +246,5 @@ async def build_health_summary() -> dict:
         "negative_margin": neg_margin,
         "queues": queues,
         "platform": platform,
+        "anti_scam": anti_scam,
     }
