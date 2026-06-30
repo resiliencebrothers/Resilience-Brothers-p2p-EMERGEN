@@ -7,10 +7,17 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { code: "", name: "", type: "fiat", symbol: "", country: "", is_active: true, payment_account: "" };
+const empty = { code: "", name: "", type: "fiat", symbol: "", country: "", is_active: true, payment_account: "", delivery_methods: null };
+
+const DELIVERY_OPTIONS = [
+  { value: "transfer", label: "Transferencia bancaria" },
+  { value: "cash", label: "Efectivo (a domicilio)" },
+  { value: "crypto", label: "Cripto (wallet)" },
+];
 
 export default function AdminCurrencies() {
   const [items, setItems] = useState([]);
@@ -104,6 +111,38 @@ export default function AdminCurrencies() {
             </div>
             <div><Label className="micro-label text-neutral-500">País</Label><Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
             <div><Label className="micro-label text-neutral-500">Cuenta destino (Zelle, wallet, banco)</Label><Input value={form.payment_account} onChange={e => setForm({ ...form, payment_account: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
+            <div data-testid="cur-delivery-methods">
+              <Label className="micro-label text-neutral-500">Métodos de entrega permitidos</Label>
+              <div className="text-xs text-neutral-500 mt-1 mb-2">
+                Si dejas todos en blanco, el sistema detecta automáticamente por el nombre (transferencia/efectivo/wallet).
+              </div>
+              <div className="space-y-2 mt-2 bg-[#0a0a0a] border border-white/10 p-3">
+                {DELIVERY_OPTIONS.map((opt) => {
+                  const checked = Array.isArray(form.delivery_methods)
+                    && form.delivery_methods.includes(opt.value);
+                  return (
+                    <label
+                      key={opt.value}
+                      className="flex items-center gap-3 cursor-pointer hover:bg-white/5 px-1 py-1"
+                      data-testid={`cur-delivery-${opt.value}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => {
+                          const current = Array.isArray(form.delivery_methods)
+                            ? [...form.delivery_methods] : [];
+                          const next = v
+                            ? [...new Set([...current, opt.value])]
+                            : current.filter((m) => m !== opt.value);
+                          setForm({ ...form, delivery_methods: next.length ? next : null });
+                        }}
+                      />
+                      <span className="text-sm text-neutral-200">{opt.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
             <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">Activa</span></div>
             <Button data-testid="save-currency-btn" onClick={save} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">Guardar</Button>
           </div>

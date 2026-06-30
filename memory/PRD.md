@@ -131,6 +131,11 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Nuevos tests**: `test_currency_delivery_methods_endpoint.py` (8/8). Snapshot path-count actualizado a **83** en `test_iter27_auth_refactor.py`, `test_iter36_wiring.py`, `test_storage_iter35_e2e.py`.
   - **Backend regression**: **525/527 pytest verde** (2 skipped, 0 failed).
 
+- **iter44 (Feb 28, 2026)**: **Admin override de métodos de entrega por moneda (checkbox-grid)**.
+  - **Backend** (`routes/market.py`): `Currency` y `CurrencyCreate` modelos ahora aceptan `delivery_methods: Optional[list[Literal["transfer","cash","crypto"]]] = None`. Cuando se establece (lista no-vacía) gana sobre la heurística por nombre; cuando es `None` o `[]` se cae al heurístico. Validación Pydantic 422 para valores inválidos.
+  - **Frontend** (`AdminCurrencies.jsx`): nuevo bloque `<Checkbox>` grid en el dialog de moneda (3 opciones: Transferencia bancaria / Efectivo / Cripto wallet) con texto explicativo. Bind a `form.delivery_methods` que persiste como array o `null` cuando el admin deja todo desmarcado. Testids: `cur-delivery-methods`, `cur-delivery-transfer`, `cur-delivery-cash`, `cur-delivery-crypto`.
+  - **Tests**: 5/5 nuevos en `test_admin_currency_delivery_override.py` (crear con override, update para agregar, clear-override-cae-a-heurístico, 422 en valor inválido, lista vacía == sin override). Mypy 24/24 verde. ESLint verde. Path-count se mantiene en 83 (sin nuevos endpoints).
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

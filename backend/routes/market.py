@@ -52,6 +52,11 @@ class Currency(BaseModel):
     country: Optional[str] = ""
     is_active: bool = True
     payment_account: Optional[str] = ""
+    # iter44 — admin-controlled override of the heuristic in
+    # `services/delivery_rules.allowed_delivery_methods`. When set (non-empty),
+    # this list wins over the name-based detection. Empty/None falls back to
+    # the heuristic so existing currencies keep their behaviour.
+    delivery_methods: Optional[list[Literal["transfer", "cash", "crypto"]]] = None
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 
@@ -63,6 +68,7 @@ class CurrencyCreate(BaseModel):
     country: Optional[str] = ""
     is_active: bool = True
     payment_account: Optional[str] = ""
+    delivery_methods: Optional[list[Literal["transfer", "cash", "crypto"]]] = None
 
 
 class ExchangeRate(BaseModel):
