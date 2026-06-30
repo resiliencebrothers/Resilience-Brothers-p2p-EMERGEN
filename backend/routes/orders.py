@@ -41,7 +41,7 @@ from services.balances import (
 )
 from services.delivery_rules import is_delivery_method_allowed, allowed_delivery_methods
 from services.orders_helpers import (
-    Order, OrderCreate,
+    OrderCreate,
     resolve_order_rate, build_order_from_payload,
     maybe_flag_defensive_margin, dispatch_new_order_alerts,
 )

@@ -19,8 +19,6 @@ circular imports while routes/auth.py loads.
 """
 import os
 import uuid
-import json
-import base64
 import logging
 from datetime import timedelta
 from typing import Optional, Any

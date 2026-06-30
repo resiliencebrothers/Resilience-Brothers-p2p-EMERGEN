@@ -87,7 +87,6 @@ def start_scheduler(db, build_timeseries):
 
 
 def stop_scheduler():
-    global _scheduler
     if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)
         logger.info("Scheduler stopped")

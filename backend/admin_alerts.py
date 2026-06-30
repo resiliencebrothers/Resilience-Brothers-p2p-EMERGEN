@@ -1,7 +1,6 @@
 """Admin alert dispatcher: sends push + email to ALL admins when triggers fire."""
 import os
 import logging
-import asyncio
 from email_service import _base_template, _send
 from push_service import send_push
 

@@ -23,7 +23,7 @@ from push_service import (
 )
 
 from services.balances import (
-    build_rate_lookup, convert_to_usdt, compute_total_usdt,
+    convert_to_usdt, compute_total_usdt,
     accumulate_vip_balance,
 )
 

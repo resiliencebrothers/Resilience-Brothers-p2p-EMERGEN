@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 from db_client import db
 from services import storage as storage_service

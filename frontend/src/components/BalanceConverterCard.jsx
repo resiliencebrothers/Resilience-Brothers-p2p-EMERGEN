@@ -15,7 +15,7 @@
  *     - onConverted: optional callback fired after a successful conversion
  *       (parent components can refresh their own state, e.g. order list).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -61,11 +61,19 @@ export default function BalanceConverterCard({ onConverted }) {
       .catch(() => {});
   }, [isStaff, user?.role]);
 
-  // Employees don't see this widget
-  if (user?.role === "employee") return null;
+  // iter53 — memoize the positive-balance filter (was recomputed on every
+  // render of every interactive state change incl. dialog open/close).
+  const positive = useMemo(
+    () => (balances.balances || []).filter((b) => Number(b.amount) > 0),
+    [balances.balances],
+  );
+  const visible = useMemo(
+    () => (showAll ? positive : positive.slice(0, 3)),
+    [positive, showAll],
+  );
 
-  const positive = (balances.balances || []).filter((b) => Number(b.amount) > 0);
-  const visible = showAll ? positive : positive.slice(0, 3);
+  // Employees don't see this widget. (hooks above must run first per rules-of-hooks)
+  if (user?.role === "employee") return null;
 
   // Mirrors `services/balances.py::_convert_direct` (inverse-first).
   const computeRate = (f, t) => {
