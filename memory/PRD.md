@@ -204,6 +204,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Frontend admin (`AdminUsers.jsx` + nuevo `users/AdminUserLedgerDialog.jsx`)**: ícono `History` junto al saldo de cada cliente abre un dialog con tabs por divisa, total por bucket y lista detallada de órdenes contributoras. Útil para resolver disputas tipo "envié Zelle dos veces pero solo aparece uno".
   - **Tests**: 8/8 nuevos en `test_balance_ledger.py` (auth required, excluye órdenes no-acreditadas/sin `accumulated_at`, excluye no-accumulate, agrupa correctamente, self-endpoint scope). Mypy strict 25/25. ESLint limpio (3 archivos). **Path count: 87**. **570/572 pytest verde** (2 skipped).
 
+- **iter53 (Feb 28, 2026)**: **Code review cleanup — false positives identificados + correcciones legítimas aplicadas**.
+  - **Verificación de hallazgos críticos del reporte**:
+    - ❌ "3 undefined Python variables" → pylint/pyflakes/ruff reportan código **10.00/10 limpio**. Falso positivo.
+    - ❌ "63 missing React hook dependencies" → ESLint con `react-hooks/exhaustive-deps` (regla oficial) pasa **limpio**. Los items reportados (API, axios, PAGE_SIZE) son identificadores module-level que NO deben ir en deps según la doc oficial de React.
+  - **Correcciones legítimas aplicadas**:
+    - **Unused imports en producción** (8 archivos): `revenue_report.py` (OrderedDict), `pdf_service.py` (mm, TA_LEFT, TA_RIGHT, TA_CENTER, PageBreak, Image), `admin_alerts.py` (asyncio), `scheduler.py` (global no necesario), `routes/orders.py` (Order), `routes/auth.py` (json, base64), `services/health.py` (Optional), `services/orders_helpers.py` (build_rate_lookup).
+    - **`BalanceConverterCard.jsx`**: `positive` (filter) y `visible` (slice) ahora son `useMemo` con deps correctas — evita recálculo en cada apertura/cierre del dialog. Hooks colocados **antes** del early-return para cumplir rules-of-hooks.
+  - **Testing**: `testing_agent_v3_fork` ejecutó la suite completa — **570 passed / 0 failed / 2 skipped (idéntico al baseline de iter52)**, smoke suite dirigida 53/53 verde, path-count canary 87, public ingress 200 OK. **Cero regresiones**. Mypy strict 25/25.
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.
