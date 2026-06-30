@@ -2,7 +2,7 @@
 
 Extracted from routes/admin.py during the iter39 split.
 """
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -32,9 +32,9 @@ class UserUpdate(BaseModel):
 @router.get("/admin/users")
 async def list_users(request: Request, q: Optional[str] = None,
                      role: Optional[str] = None,
-                     limit: int = 1000, offset: int = 0):
+                     limit: int = 1000, offset: int = 0) -> Any:
     await require_staff(request)
-    mongo_q = {}
+    mongo_q: Dict[str, Any] = {}
     if q:
         rx = {"$regex": q, "$options": "i"}
         mongo_q["$or"] = [{"name": rx}, {"email": rx}]
@@ -56,7 +56,7 @@ async def list_users(request: Request, q: Optional[str] = None,
 
 
 @router.put("/admin/users/{user_id}")
-async def update_user(user_id: str, payload: UserUpdate, request: Request):
+async def update_user(user_id: str, payload: UserUpdate, request: Request) -> Any:
     requester = await require_staff(request)
     await _enforce_totp_step_up(requester, payload.totp_code, action_label="actualizar usuario")
     update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
@@ -75,7 +75,7 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request):
 
 
 @router.post("/admin/users/{user_id}/verify-email")
-async def admin_verify_user_email(user_id: str, request: Request):
+async def admin_verify_user_email(user_id: str, request: Request) -> Any:
     """Manually mark a user's email as verified. Requires staff role + 2FA step-up."""
     requester = await require_staff(request)
     payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}

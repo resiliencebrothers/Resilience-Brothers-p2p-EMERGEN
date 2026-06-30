@@ -2,6 +2,7 @@
 
 Endpoints:
 - GET    /currencies                       (public)
+- GET    /currencies/{code}/delivery-methods (public, iter43)
 - POST   /admin/currencies
 - PUT    /admin/currencies/{currency_id}
 - DELETE /admin/currencies/{currency_id}
@@ -19,7 +20,7 @@ re-exported via server.py for legacy callers (the seed endpoint uses them).
 """
 import uuid
 import logging
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +31,7 @@ from auth_utils import (
     now_utc, iso,
 )
 from audit_log import log_action
+from services.delivery_rules import allowed_delivery_methods
 
 
 logger = logging.getLogger(__name__)
@@ -113,12 +115,41 @@ class ProductCreate(BaseModel):
 # ============================================================
 
 @router.get("/currencies")
-async def list_currencies():
+async def list_currencies() -> Any:
     return await db.currencies.find({}, {"_id": 0}).to_list(500)
 
 
+@router.get("/currencies/{code}/delivery-methods")
+async def get_currency_delivery_methods(code: str) -> Any:
+    """Public — source of truth for the frontend dropdown filter.
+
+    Returns the list of physical delivery methods allowed for receiving the
+    given destination currency, computed via `services.delivery_rules`:
+      1. explicit `delivery_methods=[…]` set on the currency document, OR
+      2. heuristic by `type` + name (`CUPT — transferencia` → `["transfer"]`).
+
+    `accumulate` is intentionally NOT included in the response — it is always
+    permitted (role-gated to VIP at order-creation time) and represents the
+    "keep as balance" branch with no physical delivery.
+
+    404 if the currency code does not exist.
+    """
+    currency = await db.currencies.find_one(
+        {"code": code},
+        {"_id": 0, "type": 1, "name": 1, "code": 1, "delivery_methods": 1},
+    )
+    if not currency:
+        raise HTTPException(status_code=404, detail=f"Currency '{code}' not found")
+    return {
+        "code": code,
+        "type": currency.get("type"),
+        "name": currency.get("name"),
+        "allowed": allowed_delivery_methods(currency),
+    }
+
+
 @router.post("/admin/currencies")
-async def create_currency(payload: CurrencyCreate, request: Request):
+async def create_currency(payload: CurrencyCreate, request: Request) -> Any:
     await require_staff(request)
     c = Currency(**payload.model_dump())
     await db.currencies.insert_one(c.model_dump())
@@ -126,14 +157,14 @@ async def create_currency(payload: CurrencyCreate, request: Request):
 
 
 @router.put("/admin/currencies/{currency_id}")
-async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request):
+async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request) -> Any:
     await require_staff(request)
     await db.currencies.update_one({"id": currency_id}, {"$set": payload.model_dump()})
     return await db.currencies.find_one({"id": currency_id}, {"_id": 0})
 
 
 @router.delete("/admin/currencies/{currency_id}")
-async def delete_currency(currency_id: str, request: Request):
+async def delete_currency(currency_id: str, request: Request) -> Any:
     await require_staff(request)
     await db.currencies.delete_one({"id": currency_id})
     return {"ok": True}
@@ -144,12 +175,12 @@ async def delete_currency(currency_id: str, request: Request):
 # ============================================================
 
 @router.get("/rates")
-async def list_rates():
+async def list_rates() -> Any:
     return await db.rates.find({}, {"_id": 0}).to_list(500)
 
 
 @router.post("/admin/rates")
-async def create_rate(payload: ExchangeRateCreate, request: Request):
+async def create_rate(payload: ExchangeRateCreate, request: Request) -> Any:
     actor = await require_staff(request)
     _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
     existing = await db.rates.find_one(
@@ -167,7 +198,7 @@ async def create_rate(payload: ExchangeRateCreate, request: Request):
 
 
 @router.put("/admin/rates/{rate_id}")
-async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request):
+async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request) -> Any:
     actor = await require_staff(request)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar tasa")
     _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
@@ -193,7 +224,7 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
     return fresh
 
 
-async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]):
+async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]) -> Any:
     """When the real_rate of a pair changes, fan out a warning if any pending
     orders for that pair would now generate a loss."""
     if not fresh or fresh.get("real_rate") is None:
@@ -227,7 +258,7 @@ async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]):
 
 
 @router.delete("/admin/rates/{rate_id}")
-async def delete_rate(rate_id: str, request: Request):
+async def delete_rate(rate_id: str, request: Request) -> Any:
     actor = await require_staff(request)
     existing = await db.rates.find_one({"id": rate_id}, {"_id": 0})
     if existing:
@@ -241,12 +272,12 @@ async def delete_rate(rate_id: str, request: Request):
 # ============================================================
 
 @router.get("/products")
-async def list_products():
+async def list_products() -> Any:
     return await db.products.find({"is_active": True}, {"_id": 0}) \
         .sort("created_at", -1).to_list(500)
 
 
-def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool):
+def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool) -> Any:
     """iter21 — admin bypasses. Employees need explicit toggles set in /admin/users."""
     if actor.get("role") == "admin":
         return
@@ -257,7 +288,7 @@ def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_i
 
 
 @router.post("/admin/products")
-async def create_product(payload: ProductCreate, request: Request):
+async def create_product(payload: ProductCreate, request: Request) -> Any:
     actor = await require_staff(request)
     _check_employee_product_perms(
         actor,
@@ -271,7 +302,7 @@ async def create_product(payload: ProductCreate, request: Request):
 
 
 @router.put("/admin/products/{product_id}")
-async def update_product(product_id: str, payload: ProductCreate, request: Request):
+async def update_product(product_id: str, payload: ProductCreate, request: Request) -> Any:
     actor = await require_staff(request)
     existing = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not existing:
@@ -287,7 +318,7 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
 
 
 @router.delete("/admin/products/{product_id}")
-async def delete_product(product_id: str, request: Request):
+async def delete_product(product_id: str, request: Request) -> Any:
     actor = await require_staff(request)
     if actor.get("role") != "admin" and not actor.get("can_delete_products"):
         raise HTTPException(status_code=403, detail="No tienes permiso para eliminar productos")

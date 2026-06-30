@@ -15,6 +15,7 @@ Access rules
 We keep this simple: we lookup the `key` in `orders.proof_image` and
 `withdrawals.payout_proof_image` to derive ownership.
 """
+from typing import Any
 import logging
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -47,7 +48,7 @@ async def _can_access(user: dict, key: str) -> bool:
 
 
 @router.get("/files/{key:path}")
-async def get_file(key: str, request: Request):
+async def get_file(key: str, request: Request) -> Any:
     user = await require_user(request)
     if "../" in key or key.startswith("/"):
         raise HTTPException(status_code=400, detail="key inválida")

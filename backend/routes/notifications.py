@@ -22,7 +22,7 @@ Schema (collection `notifications`):
 """
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, Request
 
@@ -61,7 +61,7 @@ async def _insert_notification(*, recipient_user_id: str, type: str, title: str,
     return doc["id"]
 
 
-async def notify_staff_new_pending_user(target_user: dict):
+async def notify_staff_new_pending_user(target_user: dict) -> Any:
     """Fan-out a notification to every admin and every employee with
     can_manage_blocklist=True, so they see a new user is waiting for verification.
     Also delivers a Web Push notification to each recipient's registered devices."""
@@ -96,7 +96,7 @@ async def notify_staff_new_pending_user(target_user: dict):
             logger.error(f"Failed to deliver pending-user notification to {uid}: {e}")
 
 
-async def notify_user_phone_verified(target_user: dict):
+async def notify_user_phone_verified(target_user: dict) -> Any:
     """Tell the user their phone has been verified and the account is now active."""
     await _insert_notification(
         recipient_user_id=target_user["user_id"],
@@ -108,7 +108,7 @@ async def notify_user_phone_verified(target_user: dict):
     await send_push_to_user(db, target_user["user_id"], build_phone_verified_payload(target_user))
 
 
-async def notify_user_phone_rejected(target_user: dict, reason: str):
+async def notify_user_phone_rejected(target_user: dict, reason: str) -> Any:
     """Tell the user their phone was rejected and the account remains under review."""
     await _insert_notification(
         recipient_user_id=target_user["user_id"],
@@ -126,7 +126,7 @@ async def notify_user_phone_rejected(target_user: dict, reason: str):
 
 @router.get("/notifications")
 async def list_my_notifications(request: Request, limit: int = 30,
-                                  only_unread: bool = False):
+                                  only_unread: bool = False) -> Any:
     user = await require_user(request)
     query = {"recipient_user_id": user["user_id"]}
     if only_unread:
@@ -137,7 +137,7 @@ async def list_my_notifications(request: Request, limit: int = 30,
 
 
 @router.get("/notifications/unread-count")
-async def my_unread_count(request: Request):
+async def my_unread_count(request: Request) -> Any:
     user = await require_user(request)
     n = await db.notifications.count_documents(
         {"recipient_user_id": user["user_id"], "read": False}
@@ -146,7 +146,7 @@ async def my_unread_count(request: Request):
 
 
 @router.post("/notifications/{notification_id}/read")
-async def mark_notification_read(notification_id: str, request: Request):
+async def mark_notification_read(notification_id: str, request: Request) -> Any:
     user = await require_user(request)
     r = await db.notifications.update_one(
         {"id": notification_id, "recipient_user_id": user["user_id"], "read": False},
@@ -159,7 +159,7 @@ async def mark_notification_read(notification_id: str, request: Request):
 
 
 @router.post("/notifications/mark-all-read")
-async def mark_all_read(request: Request):
+async def mark_all_read(request: Request) -> Any:
     user = await require_user(request)
     r = await db.notifications.update_many(
         {"recipient_user_id": user["user_id"], "read": False},

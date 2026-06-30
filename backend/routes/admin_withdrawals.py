@@ -7,7 +7,7 @@ Extracted from routes/admin.py during the iter39 split. Owns:
 The validation/refund/evidence helpers are private to this module.
 """
 from fastapi import APIRouter, HTTPException, Request
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from db_client import db
 from auth_utils import (
@@ -24,9 +24,9 @@ router = APIRouter(tags=["Admin"])
 async def all_withdrawals(request: Request,
                           status: Optional[str] = None,
                           user_q: Optional[str] = None,
-                          currency: Optional[str] = None):
+                          currency: Optional[str] = None) -> Any:
     actor = await require_staff(request)
-    q = {}
+    q: Dict[str, Any] = {}
     if status:
         q["status"] = status
     if currency:
@@ -99,7 +99,7 @@ def _validate_paid_evidence(withdrawal: dict, update_doc: dict, new_status: str)
 
 
 @router.put("/admin/withdrawals/{wid}/status")
-async def update_withdrawal(wid: str, payload: dict, request: Request):
+async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     actor = await require_staff(request)
     new_status = payload.get("status")
     if new_status not in ("approved", "paid", "rejected", "pending"):

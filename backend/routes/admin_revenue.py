@@ -10,7 +10,7 @@ Extracted from routes/admin.py during the iter39 split. Owns:
 through the wrapper in `server.py`.
 """
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -27,7 +27,7 @@ router = APIRouter(tags=["Admin"])
 
 async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
     """Profit from delivered redemptions: total_usd - cost_usd. USD ≈ USDT for simplicity."""
-    q = {"status": "delivered"}
+    q: Dict[str, Any] = {"status": "delivered"}
     if days and days > 0:
         cutoff = (now_utc() - timedelta(days=days)).isoformat()
         q["created_at"] = {"$gte": cutoff}
@@ -69,7 +69,8 @@ async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
     }
 
 
-def _new_pair_bucket(o: dict, rate_doc: dict) -> dict:
+def _new_pair_bucket(o: dict, rate_doc: Optional[dict]) -> dict:
+    rd = rate_doc or {}
     return {
         "pair": f"{o['from_code']}→{o['to_code']}",
         "from_code": o["from_code"],
@@ -79,9 +80,9 @@ def _new_pair_bucket(o: dict, rate_doc: dict) -> dict:
         "volume_to": 0.0,
         "profit_to": 0.0,
         "profit_usdt": 0.0,
-        "real_rate": rate_doc.get("real_rate"),
-        "rate_normal": rate_doc.get("rate_normal"),
-        "rate_vip": rate_doc.get("rate_vip"),
+        "real_rate": rd.get("real_rate"),
+        "rate_normal": rd.get("rate_normal"),
+        "rate_vip": rd.get("rate_vip"),
         "avg_profit_pct": 0.0,
     }
 
@@ -91,7 +92,7 @@ def _role_bucket_for(order: dict) -> str:
 
 
 async def _accumulate_revenue_order(
-    o: dict, rate_doc: dict, fx: dict,
+    o: dict, rate_doc: Optional[dict], fx: dict,
     by_pair: dict, by_role: dict, missing: set,
 ) -> tuple[float, float | None]:
     """Mutate by_pair/by_role with this order. Returns (volume_usdt, profit_usdt|None)."""
@@ -135,7 +136,7 @@ def _finalize_pair_items(by_pair: dict) -> list:
 
 
 @router.get("/admin/revenue")
-async def admin_revenue(request: Request, days: Optional[int] = None):
+async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     await require_admin(request)
     q = {"status": {"$in": ["approved", "completed"]}}
     if days and days > 0:
@@ -186,7 +187,7 @@ async def admin_revenue(request: Request, days: Optional[int] = None):
 
 
 async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
-                                    year: Optional[int] = None, month: Optional[int] = None):
+                                    year: Optional[int] = None, month: Optional[int] = None) -> Any:
     """Build per-day or per-month buckets for the admin revenue dashboard.
 
     Filters:
@@ -228,7 +229,7 @@ async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
 
 @router.get("/admin/revenue/timeseries")
 async def admin_revenue_timeseries(request: Request, granularity: str = "day",
-                                     days: Optional[int] = None):
+                                     days: Optional[int] = None) -> Any:
     await require_admin(request)
     if granularity not in ("day", "month"):
         raise HTTPException(status_code=400, detail="granularity inválida (day|month)")
@@ -238,7 +239,7 @@ async def admin_revenue_timeseries(request: Request, granularity: str = "day",
 
 @router.get("/admin/revenue/monthly/export")
 async def admin_revenue_monthly_export(request: Request, year: int, month: int,
-                                          format: str = "csv"):
+                                          format: str = "csv") -> Any:
     """Export the daily breakdown of a calendar month as CSV or PDF."""
     await require_admin(request)
     if month < 1 or month > 12:
@@ -268,7 +269,7 @@ async def admin_revenue_monthly_export(request: Request, year: int, month: int,
 
 
 @router.post("/admin/revenue/monthly/send-now")
-async def admin_revenue_send_now(payload: dict, request: Request):
+async def admin_revenue_send_now(payload: dict, request: Request) -> Any:
     """Manually trigger the monthly revenue email."""
     actor = await require_admin(request)
     await _enforce_totp_step_up(actor, payload.get("totp_code"),

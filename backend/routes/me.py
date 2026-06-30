@@ -17,7 +17,7 @@ import csv
 import io
 import logging
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -45,7 +45,7 @@ router = APIRouter(tags=["Me"])
 # ============================================================
 
 @router.post("/me/onboarding/complete")
-async def complete_onboarding(request: Request):
+async def complete_onboarding(request: Request) -> Any:
     """Mark the current user's first-visit onboarding tour as completed."""
     user = await require_user(request)
     await db.users.update_one(
@@ -64,7 +64,7 @@ class PhoneSetPayload(BaseModel):
 
 
 @router.post("/me/phone")
-async def set_my_phone(payload: PhoneSetPayload, request: Request):
+async def set_my_phone(payload: PhoneSetPayload, request: Request) -> Any:
     """Self-service for Google OAuth users (phone not collected at signup) or any
     user updating their number. Phone goes back to phone_verified=False; staff
     must re-verify before withdrawals are allowed."""
@@ -103,7 +103,7 @@ async def set_my_phone(payload: PhoneSetPayload, request: Request):
 # ============================================================
 
 @router.get("/me/2fa/status")
-async def totp_status(request: Request):
+async def totp_status(request: Request) -> Any:
     user = await require_user(request)
     return {
         "enabled": bool(user.get("totp_enabled")),
@@ -113,7 +113,7 @@ async def totp_status(request: Request):
 
 
 @router.post("/me/2fa/setup")
-async def totp_setup(request: Request):
+async def totp_setup(request: Request) -> Any:
     """Generates a pending TOTP secret + QR. NOT enabled until /verify-setup confirms a valid code."""
     user = await require_user(request)
     if user.get("totp_enabled"):
@@ -137,7 +137,7 @@ async def totp_setup(request: Request):
 
 
 @router.post("/me/2fa/verify-setup")
-async def totp_verify_setup(request: Request, payload: dict):
+async def totp_verify_setup(request: Request, payload: dict) -> Any:
     """Verify the first TOTP code; on success, enable 2FA and return one-time recovery codes."""
     user = await require_user(request)
     code = (payload.get("code") or "").strip()
@@ -171,7 +171,7 @@ async def totp_verify_setup(request: Request, payload: dict):
 
 
 @router.post("/me/2fa/disable")
-async def totp_disable(request: Request, payload: dict):
+async def totp_disable(request: Request, payload: dict) -> Any:
     user = await require_user(request)
     if not user.get("totp_enabled"):
         return {"enabled": False, "already_disabled": True}
@@ -193,7 +193,7 @@ async def totp_disable(request: Request, payload: dict):
 
 
 @router.post("/me/2fa/regenerate-recovery-codes")
-async def totp_regenerate_recovery(request: Request, payload: dict):
+async def totp_regenerate_recovery(request: Request, payload: dict) -> Any:
     """Issue a fresh set of 10 recovery codes (invalidates the old ones). Requires current TOTP."""
     user = await require_user(request)
     code = (payload.get("code") or "").strip()
@@ -230,7 +230,7 @@ async def list_my_transactions(request: Request,
                                until: Optional[str] = None,
                                min_amount: Optional[float] = None,
                                max_amount: Optional[float] = None,
-                               limit: int = 100, offset: int = 0):
+                               limit: int = 100, offset: int = 0) -> Any:
     user = await require_user(request)
     _validate_txn_filters(direction, min_amount, max_amount)
     items = await build_transactions(
@@ -259,7 +259,7 @@ async def export_my_transactions_csv(request: Request,
                                      since: Optional[str] = None,
                                      until: Optional[str] = None,
                                      min_amount: Optional[float] = None,
-                                     max_amount: Optional[float] = None):
+                                     max_amount: Optional[float] = None) -> Any:
     user = await require_user(request)
     items = await build_transactions(
         direction, currency, None, since, until, min_amount, max_amount,
@@ -300,7 +300,7 @@ async def export_my_transactions_pdf(request: Request,
                                      since: Optional[str] = None,
                                      until: Optional[str] = None,
                                      min_amount: Optional[float] = None,
-                                     max_amount: Optional[float] = None):
+                                     max_amount: Optional[float] = None) -> Any:
     user = await require_user(request)
     items = await build_transactions(
         direction, currency, None, since, until, min_amount, max_amount,

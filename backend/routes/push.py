@@ -8,7 +8,7 @@ Endpoints:
 """
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -28,12 +28,12 @@ class PushSubscriptionCreate(BaseModel):
 
 
 @router.get("/push/vapid-public-key")
-async def push_vapid_public_key():
+async def push_vapid_public_key() -> Any:
     return {"key": VAPID_PUBLIC_KEY}
 
 
 @router.post("/push/subscribe")
-async def push_subscribe(payload: PushSubscriptionCreate, request: Request):
+async def push_subscribe(payload: PushSubscriptionCreate, request: Request) -> Any:
     user = await require_user(request)
     endpoint = (payload.subscription or {}).get("endpoint", "")
     if not endpoint:
@@ -54,7 +54,7 @@ async def push_subscribe(payload: PushSubscriptionCreate, request: Request):
 
 
 @router.post("/push/unsubscribe")
-async def push_unsubscribe(payload: dict, request: Request):
+async def push_unsubscribe(payload: dict, request: Request) -> Any:
     user = await require_user(request)
     endpoint = payload.get("endpoint", "")
     if not endpoint:
@@ -64,7 +64,7 @@ async def push_unsubscribe(payload: dict, request: Request):
 
 
 @router.post("/push/test")
-async def push_test(request: Request):
+async def push_test(request: Request) -> Any:
     """Send a test push to the current user's devices — useful for staff to confirm
     their phone receives alerts BEFORE walking away from the PC."""
     user = await require_user(request)

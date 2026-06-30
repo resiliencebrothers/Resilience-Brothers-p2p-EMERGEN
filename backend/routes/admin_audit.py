@@ -7,7 +7,7 @@ import io
 import json as _json
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -24,7 +24,7 @@ router = APIRouter(tags=["Admin"])
 @router.get("/admin/audit")
 async def list_audit_log(request: Request, limit: int = 100, offset: int = 0,
                          action: Optional[str] = None, actor_id: Optional[str] = None,
-                         since: Optional[str] = None, until: Optional[str] = None):
+                         since: Optional[str] = None, until: Optional[str] = None) -> Any:
     await require_admin(request)
     q = build_audit_query(action, actor_id, since, until)
     limit = max(1, min(limit, 500))
@@ -46,7 +46,7 @@ async def list_audit_log(request: Request, limit: int = 100, offset: int = 0,
 async def export_audit_csv(request: Request, action: Optional[str] = None,
                            actor_id: Optional[str] = None,
                            since: Optional[str] = None, until: Optional[str] = None,
-                           limit: int = 5000):
+                           limit: int = 5000) -> Any:
     await require_admin(request)
     entries = await fetch_audit_entries(action, actor_id, since, until, limit)
     text_buf = io.StringIO()
@@ -82,7 +82,7 @@ async def export_audit_csv(request: Request, action: Optional[str] = None,
 async def export_audit_pdf(request: Request, action: Optional[str] = None,
                            actor_id: Optional[str] = None,
                            since: Optional[str] = None, until: Optional[str] = None,
-                           limit: int = 2000):
+                           limit: int = 2000) -> Any:
     await require_admin(request)
     entries = await fetch_audit_entries(action, actor_id, since, until, limit)
     pdf_bytes = generate_audit_pdf(

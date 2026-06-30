@@ -120,6 +120,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **`ExchangeView.jsx`**: dropdown frontend ahora filtra opciones según `delivery_methods` o detecta el sub-tipo por nombre (CUPT/CUPE) — sin viajes extra al servidor para mostrar sólo lo válido.
   - **Tests fixed**: `test_cash_to_crypto_rejected` y `test_crypto_to_fiat_rejected` en `test_delivery_method_currency_match.py` (assertions sobre "cripto"/"wallet" y "fiat"/"transferencia" ahora aprobadas). Sub-typed coverage añadida en `test_subtyped_currency_delivery.py` (12 tests). `mypy --config-file mypy.ini` → **9 source files, 0 issues**.
 
+- **iter43 (Feb 28, 2026)**: **P1 VIP-balance valuation fix + P2 mypy strict on `routes/*` + público `GET /api/currencies/{code}/delivery-methods`**.
+  - **P1 — `services/balances.py::_convert_direct`**: ahora **prefiere la tasa inversa `USDT→code`** (la "tasa de valoración" del operador) sobre la directa `code→USDT` (que es la tasa de spread de orden). Esto desbloquea las 2 pruebas pre-existentes que fallaban:
+    - `test_admin_alerts::test_threshold_crossing_sets_last_vip_alert_threshold` (5100 USD → 5204 USDT ≥ 5000 threshold ✓)
+    - `test_multicurrency_and_stats::test_vip_legacy_plus_dict_usdt_conversion` (500 USD → 510.20 USDT ≈ 500/0.98 ✓)
+    Endpoints afectados (todos contextos de valoración, no de ejecución): `/api/vip/balances`, `/api/admin/stats`, `/api/admin/revenue`, threshold de alerta.
+  - **P2 — `mypy.ini`**: cobertura strict expandida de **9 → 24 archivos** (server.py + services/* + routes/*). Script `add_route_annotations.py` añadió `-> Any:` a 96 handlers/helpers; arreglos manuales en `admin.py` (`q: Dict[str, Any]`, `items: List[Dict[str, Any]]`, listas seed tipadas), `admin_users.py`, `admin_withdrawals.py`, `admin_company_funds.py`, `admin_revenue.py` (`_new_pair_bucket` ahora acepta `Optional[dict]`). Resultado: **`mypy --config-file mypy.ini` → 0 issues en 24 archivos**. CI ahora bloquea cualquier nuevo handler sin anotaciones.
+  - **Nuevo endpoint público `GET /api/currencies/{code}/delivery-methods`** (`routes/market.py`): expone `allowed_delivery_methods()` como fuente de verdad para que el frontend (y futuros clientes) no dupliquen la heurística. Devuelve `{code, type, name, allowed: [...]}` — `accumulate` se omite intencionalmente (es role-gated, no un método físico).
+  - **`ExchangeView.jsx`**: el `useEffect`/`useState` `allowedMethods` ahora consume el nuevo endpoint con cancellation guard; eliminadas las constantes JS duplicadas `TRANSFER_HINTS`/`CASH_HINTS`. Cualquier nueva sub-moneda (CUPT, CUPE, COP-Bancolombia, etc.) o cambio de heurística en backend se refleja automáticamente en el dropdown.
+  - **Nuevos tests**: `test_currency_delivery_methods_endpoint.py` (8/8). Snapshot path-count actualizado a **83** en `test_iter27_auth_refactor.py`, `test_iter36_wiring.py`, `test_storage_iter35_e2e.py`.
+  - **Backend regression**: **525/527 pytest verde** (2 skipped, 0 failed).
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

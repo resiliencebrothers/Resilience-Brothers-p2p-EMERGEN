@@ -22,12 +22,22 @@ async def build_rate_lookup() -> dict:
 
 
 def _convert_direct(amount: float, code: str, rates: dict) -> Optional[float]:
-    """Try direct or inverse conversion code↔USDT. Returns None if no path."""
-    if (code, "USDT") in rates:
-        return amount * rates[(code, "USDT")]
+    """Try inverse `USDT→code` first (canonical *valuation* rate used by the
+    operator), falling back to direct `code→USDT` if no inverse is available.
+
+    Rationale: when displaying a user balance in USDT-equivalent terms (or when
+    checking the VIP threshold), we want the "buy-back" valuation rate the
+    operator quotes — i.e. *how much USDT would I need to buy this balance*.
+    The direct `code→USDT` rate is an order-execution price (the spread the
+    operator applies when *receiving* USDT for code), which would understate
+    holdings. Order-creation code paths use the dedicated rate-lookup logic in
+    `resolve_order_rate` and are unaffected by this preference.
+    """
     inverse = rates.get(("USDT", code))
     if inverse and inverse > 0:
         return amount / inverse
+    if (code, "USDT") in rates:
+        return amount * rates[(code, "USDT")]
     return None
 
 

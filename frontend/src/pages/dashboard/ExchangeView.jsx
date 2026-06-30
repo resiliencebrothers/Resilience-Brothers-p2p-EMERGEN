@@ -24,6 +24,7 @@ export default function ExchangeView() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [allowedMethods, setAllowedMethods] = useState([]);
 
   const isVip = user?.role === "vip" || user?.role === "admin";
   const isStaff = user?.role === "admin" || user?.role === "employee";
@@ -33,6 +34,18 @@ export default function ExchangeView() {
     axios.get(`${API}/currencies`).then(r => setCurrencies(r.data.filter(c => c.is_active)));
     axios.get(`${API}/rates`).then(r => setRates(r.data));
   }, []);
+
+  // Fetch valid delivery methods for the chosen destination currency from the
+  // backend source-of-truth (iter43). Replaces the previous JS-side heuristic
+  // that had to be kept in sync with services/delivery_rules.py by hand.
+  useEffect(() => {
+    if (!toCode) { setAllowedMethods([]); return; }
+    let cancelled = false;
+    axios.get(`${API}/currencies/${encodeURIComponent(toCode)}/delivery-methods`)
+      .then(r => { if (!cancelled) setAllowedMethods(r.data.allowed || []); })
+      .catch(() => { if (!cancelled) setAllowedMethods([]); });
+    return () => { cancelled = true; };
+  }, [toCode]);
 
   const selectedRate = useMemo(() => {
     return rates.find(r => r.from_code === fromCode && r.to_code === toCode);
@@ -50,35 +63,17 @@ export default function ExchangeView() {
   const gross = amt * rate;
   const finalAmount = gross * (1 - commission / 100);
 
-  // Mirror of backend `services/delivery_rules.py`. Keep in sync.
-  const TRANSFER_HINTS = ["transferencia", "transfer", "banco", "bank", "wire", "zelle", "pix"];
-  const CASH_HINTS = ["efectivo", "cash", "domicilio", "billete"];
-
   const deliveryOptions = useMemo(() => {
     if (!toCurr) return [];
-    // 1. Declared list takes precedence
-    const declared = Array.isArray(toCurr.delivery_methods) ? toCurr.delivery_methods : [];
-    const buildVip = (base) =>
-      !isStaff ? [...base, { value: "accumulate", label: "Acumular en saldo" }] : base;
-
     const LABELS = {
       transfer: { value: "transfer", label: "Transferencia bancaria" },
       cash: { value: "cash", label: "Efectivo (a domicilio)" },
       crypto: { value: "crypto", label: "Cripto (wallet)" },
     };
-
-    if (declared.length > 0) {
-      return buildVip(declared.filter((m) => LABELS[m]).map((m) => LABELS[m]));
-    }
-    // 2. type=crypto → wallet only
-    if (toCurr.type === "crypto") return buildVip([LABELS.crypto]);
-
-    // 3. fiat — heuristic by name/code
-    const haystack = `${toCurr.name || ""} ${toCurr.code || ""}`.toLowerCase();
-    if (TRANSFER_HINTS.some((h) => haystack.includes(h))) return buildVip([LABELS.transfer]);
-    if (CASH_HINTS.some((h) => haystack.includes(h))) return buildVip([LABELS.cash]);
-    return buildVip([LABELS.transfer, LABELS.cash]);
-  }, [toCurr, isStaff]);
+    const base = allowedMethods.filter((m) => LABELS[m]).map((m) => LABELS[m]);
+    // VIP/normal users (non-staff) can also accumulate balance.
+    return !isStaff ? [...base, { value: "accumulate", label: "Acumular en saldo" }] : base;
+  }, [toCurr, allowedMethods, isStaff]);
 
   // Auto-correct delivery method when the available options change (e.g. user
   // switches destination from CUP to USDT — 'cash'/'transfer' no longer apply).

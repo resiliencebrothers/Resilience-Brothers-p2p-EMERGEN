@@ -5,7 +5,7 @@ working capital (inflows from confirmed orders − client payouts − company
 payouts) and manages staff-initiated company withdrawals.
 """
 import uuid
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -97,7 +97,7 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
 
 
 @router.get("/admin/company-funds")
-async def admin_company_funds(request: Request):
+async def admin_company_funds(request: Request) -> Any:
     actor = await require_staff(request)
     scope = None
     if actor.get("role") == "employee":
@@ -108,7 +108,7 @@ async def admin_company_funds(request: Request):
 
 
 @router.post("/admin/company-withdrawals")
-async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: Request):
+async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: Request) -> Any:
     actor = await require_staff(request)
     currency = payload.currency.upper()
     _enforce_employee_currency_scope(actor, currency)
@@ -143,9 +143,9 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
 @router.get("/admin/company-withdrawals")
 async def list_company_withdrawals(request: Request,
                                      status: Optional[str] = None,
-                                     currency: Optional[str] = None):
+                                     currency: Optional[str] = None) -> Any:
     actor = await require_staff(request)
-    q = {}
+    q: Dict[str, Any] = {}
     if status:
         q["status"] = status
     if currency:
@@ -162,7 +162,7 @@ async def list_company_withdrawals(request: Request,
 
 
 @router.put("/admin/company-withdrawals/{cwid}/status")
-async def update_company_withdrawal(cwid: str, payload: dict, request: Request):
+async def update_company_withdrawal(cwid: str, payload: dict, request: Request) -> Any:
     """Only admin can change status (approve/pay/reject). Staff with scope creates only."""
     actor = await require_admin(request)
     new_status = payload.get("status")

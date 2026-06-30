@@ -22,7 +22,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -85,14 +85,14 @@ class DefensiveModePayload(BaseModel):
 # ============================================================
 
 @router.get("/system/defensive-mode")
-async def public_defensive_mode():
+async def public_defensive_mode() -> Any:
     """Public endpoint so the SPA can show the warning banner to everyone."""
     state = await get_defensive_mode()
     return {"enabled": bool(state.get("enabled")), "enabled_at": state.get("enabled_at")}
 
 
 @router.post("/admin/defensive-mode/toggle")
-async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Request):
+async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Request) -> Any:
     actor = await require_admin(request)
     await _enforce_totp_step_up(
         actor, payload.totp_code,
@@ -121,9 +121,9 @@ async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Re
 @router.get("/admin/orders")
 async def all_orders(request: Request, status: Optional[str] = None,
                      user_q: Optional[str] = None, currency: Optional[str] = None,
-                     limit: int = 1000, offset: int = 0):
+                     limit: int = 1000, offset: int = 0) -> Any:
     actor = await require_staff(request)
-    q = {}
+    q: Dict[str, Any] = {}
     if status:
         q["status"] = status
     if currency:
@@ -195,7 +195,7 @@ def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: s
 
 
 @router.put("/admin/orders/{order_id}/status")
-async def update_order_status(order_id: str, payload: dict, request: Request):
+async def update_order_status(order_id: str, payload: dict, request: Request) -> Any:
     actor = await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
@@ -230,14 +230,14 @@ async def update_order_status(order_id: str, payload: dict, request: Request):
 # ============================================================
 
 @router.get("/admin/redemptions")
-async def all_redemptions(request: Request):
+async def all_redemptions(request: Request) -> Any:
     await require_staff(request)
     docs = await db.redemptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 
 @router.put("/admin/redemptions/{rid}/status")
-async def update_redemption(rid: str, payload: dict, request: Request):
+async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     await require_staff(request)
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
@@ -294,14 +294,14 @@ async def _aggregate_vip_holdings(rates: dict) -> dict:
     users = await db.users.find(
         {"role": {"$in": ["vip", "admin"]}}, {"_id": 0}
     ).to_list(1000)
-    totals = {}
+    totals: Dict[str, float] = {}
     for u in users:
         for code, amt in (u.get("vip_balances") or {}).items():
             totals[code] = totals.get(code, 0.0) + float(amt or 0.0)
         legacy = float(u.get("vip_balance_usd") or 0.0)
         if legacy > 0:
             totals["USD"] = totals.get("USD", 0.0) + legacy
-    items = []
+    items: List[Dict[str, Any]] = []
     total_usdt = 0.0
     for code, amt in totals.items():
         usdt = convert_to_usdt(amt, code, rates)
@@ -327,7 +327,7 @@ async def _platform_counters() -> dict:
 
 
 @router.get("/admin/stats")
-async def admin_platform_stats(request: Request):
+async def admin_platform_stats(request: Request) -> Any:
     await require_staff(request)
     rates = await build_rate_lookup()
     return {
@@ -343,7 +343,7 @@ async def admin_platform_stats(request: Request):
 # ============================================================
 
 @router.get("/admin/health/summary")
-async def admin_health_summary(request: Request):
+async def admin_health_summary(request: Request) -> Any:
     """Composite payload for the Admin Health Dashboard. Admin only — exposes
     R2 bucket size, Sentry env, throughput, defensive mode, negative-margin
     pending list and the staff queues. Each section is wrapped so one slow
@@ -357,7 +357,7 @@ async def admin_health_summary(request: Request):
 # ============================================================
 
 @router.get("/admin/settings")
-async def get_admin_settings(request: Request):
+async def get_admin_settings(request: Request) -> Any:
     await require_staff(request)
     doc = await db.settings.find_one({"id": "global"}, {"_id": 0})
     if not doc:
@@ -374,7 +374,7 @@ async def get_admin_settings(request: Request):
 
 
 @router.put("/admin/settings")
-async def update_admin_settings(payload: AdminSettings, request: Request):
+async def update_admin_settings(payload: AdminSettings, request: Request) -> Any:
     actor = await require_admin(request)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar configuración")
     data = payload.model_dump(exclude={"totp_code"})
@@ -415,7 +415,7 @@ async def list_transactions(request: Request,
                             until: Optional[str] = None,
                             min_amount: Optional[float] = None,
                             max_amount: Optional[float] = None,
-                            limit: int = 100, offset: int = 0):
+                            limit: int = 100, offset: int = 0) -> Any:
     await require_staff(request)
     _validate_txn_filters(direction, min_amount, max_amount)
     items = await build_transactions(
@@ -444,7 +444,7 @@ async def export_transactions_csv(request: Request,
                                   since: Optional[str] = None,
                                   until: Optional[str] = None,
                                   min_amount: Optional[float] = None,
-                                  max_amount: Optional[float] = None):
+                                  max_amount: Optional[float] = None) -> Any:
     await require_staff(request)
     items = await build_transactions(
         direction, currency, holder, since, until, min_amount, max_amount
@@ -488,7 +488,7 @@ async def export_transactions_pdf(request: Request,
                                   since: Optional[str] = None,
                                   until: Optional[str] = None,
                                   min_amount: Optional[float] = None,
-                                  max_amount: Optional[float] = None):
+                                  max_amount: Optional[float] = None) -> Any:
     await require_staff(request)
     items = await build_transactions(
         direction, currency, holder, since, until, min_amount, max_amount
@@ -515,11 +515,11 @@ async def export_transactions_pdf(request: Request,
 # ============================================================
 
 @router.get("/admin/queue")
-async def staff_queue(request: Request):
+async def staff_queue(request: Request) -> Any:
     """Pending items in the actor's scope: orders + withdrawals."""
     actor = await require_staff(request)
-    order_q = {"status": {"$in": ["pending", "requires_double_approval"]}}
-    wd_q = {"status": "pending"}
+    order_q: Dict[str, Any] = {"status": {"$in": ["pending", "requires_double_approval"]}}
+    wd_q: Dict[str, Any] = {"status": "pending"}
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
         if allowed:
@@ -536,13 +536,13 @@ async def staff_queue(request: Request):
 # ============================================================
 
 @router.post("/admin/seed")
-async def seed_data(request: Request):
+async def seed_data(request: Request) -> Any:
     await require_staff(request)
     # Import catalog models locally to avoid loading market router at module import time.
     from routes.market import Currency, ExchangeRate, Product
 
     if await db.currencies.count_documents({}) == 0:
-        defaults = [
+        defaults: List[Dict[str, Any]] = [
             {"code": "USDT", "name": "Tether", "type": "crypto", "symbol": "₮", "country": "", "is_active": True, "payment_account": "Wallet TRC20: TXxxxxxxxxxxxx"},
             {"code": "BTC", "name": "Bitcoin", "type": "crypto", "symbol": "₿", "country": "", "is_active": True, "payment_account": "Wallet: bc1qxxxxxxxx"},
             {"code": "USD", "name": "US Dollar (Zelle)", "type": "fiat", "symbol": "$", "country": "USA", "is_active": True, "payment_account": "Zelle: pagos@resilience.com"},
@@ -553,7 +553,7 @@ async def seed_data(request: Request):
         for d in defaults:
             await db.currencies.insert_one(Currency(**d).model_dump())
     if await db.rates.count_documents({}) == 0:
-        rates_default = [
+        rates_default: List[Dict[str, Any]] = [
             {"from_code": "USD", "to_code": "CUP", "rate_normal": 380, "rate_vip": 395},
             {"from_code": "USD", "to_code": "BRL", "rate_normal": 4.9, "rate_vip": 5.05},
             {"from_code": "USD", "to_code": "MXN", "rate_normal": 17.2, "rate_vip": 17.6},
@@ -563,7 +563,7 @@ async def seed_data(request: Request):
         for d in rates_default:
             await db.rates.insert_one(ExchangeRate(**d).model_dump())
     if await db.products.count_documents({}) == 0:
-        prods = [
+        prods: List[Dict[str, Any]] = [
             {"name": "Contenedor de Arroz (40 sacos)", "description": "Saco de 25kg, arroz blanco grado A.", "image_url": "https://images.unsplash.com/photo-1586201375761-83865001e31c?w=600", "price_usd": 1800, "stock": 5, "category": "alimentos"},
             {"name": "Contenedor de Harina (30 sacos)", "description": "Harina de trigo refinada, 25kg.", "image_url": "https://images.unsplash.com/photo-1574323347407-f5e1ad6d020b?w=600", "price_usd": 1200, "stock": 8, "category": "alimentos"},
             {"name": "Pallet de Refrescos (200 cajas)", "description": "Refrescos surtidos, lata 355ml.", "image_url": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=600", "price_usd": 900, "stock": 15, "category": "bebidas"},

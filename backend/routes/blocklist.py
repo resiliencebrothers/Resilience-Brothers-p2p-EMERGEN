@@ -15,7 +15,7 @@ or pulled from auth_utils / db_client / audit_log / routes.notifications.
 import re
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
@@ -39,7 +39,7 @@ router = APIRouter(tags=["Blocklist"])
 # Permission helper — admin OR staff with can_manage_blocklist=True
 # ============================================================
 
-async def _assert_can_manage_blocklist(actor: dict):
+async def _assert_can_manage_blocklist(actor: dict) -> Any:
     if actor.get("role") == "admin":
         return
     if actor.get("role") == "employee" and actor.get("can_manage_blocklist"):
@@ -78,7 +78,7 @@ class RejectPhonePayload(BaseModel):
 
 @router.get("/admin/blocked-contacts")
 async def list_blocked_contacts(request: Request, q: Optional[str] = None,
-                                  limit: int = 100, skip: int = 0):
+                                  limit: int = 100, skip: int = 0) -> Any:
     actor = await require_staff(request)
     await _assert_can_manage_blocklist(actor)
     query: dict = {}
@@ -94,7 +94,7 @@ async def list_blocked_contacts(request: Request, q: Optional[str] = None,
 
 
 @router.post("/admin/blocked-contacts")
-async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
+async def add_blocked_contact(payload: BlockedContactPayload, request: Request) -> Any:
     actor = await require_staff(request)
     await _assert_can_manage_blocklist(actor)
     phone = normalize_phone(payload.phone) if payload.phone else None
@@ -130,7 +130,7 @@ async def add_blocked_contact(payload: BlockedContactPayload, request: Request):
 
 
 @router.delete("/admin/blocked-contacts/{contact_id}")
-async def remove_blocked_contact(contact_id: str, request: Request):
+async def remove_blocked_contact(contact_id: str, request: Request) -> Any:
     actor = await require_staff(request)
     await _assert_can_manage_blocklist(actor)
     target = await db.blocked_contacts.find_one({"id": contact_id}, {"_id": 0})
@@ -152,7 +152,7 @@ async def remove_blocked_contact(contact_id: str, request: Request):
 PHONE_DETECT_RE = re.compile(r"\+[1-9][\d\-\s\(\)\.]{7,18}")
 
 
-def _parse_whatsapp_blocklist(text: str):
+def _parse_whatsapp_blocklist(text: str) -> Any:
     """Parse a WhatsApp-style block list into [{phone, name, reason}].
     See server.py original docstring + tests for full spec."""
     entries = []
@@ -183,7 +183,7 @@ def _parse_whatsapp_blocklist(text: str):
 
 
 @router.post("/admin/blocked-contacts/bulk-import")
-async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Request):
+async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Request) -> Any:
     actor = await require_staff(request)
     await _assert_can_manage_blocklist(actor)
     parsed = _parse_whatsapp_blocklist(payload.text)
@@ -246,7 +246,7 @@ async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Requ
 # ============================================================
 
 @router.post("/admin/users/{user_id}/verify-phone")
-async def admin_verify_user_phone(user_id: str, request: Request):
+async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
     """Mark a user's phone as verified + move account to active. Requires
     can_manage_blocklist + TOTP step-up. Refuses if phone is on the blocklist."""
     requester = await require_staff(request)
@@ -288,7 +288,7 @@ async def admin_verify_user_phone(user_id: str, request: Request):
 
 
 @router.post("/admin/users/{user_id}/reject-phone")
-async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, request: Request):
+async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, request: Request) -> Any:
     """Staff rejects a user's phone (scammer detected). Adds the number to the
     blocklist and keeps the user under_review. Requires can_manage_blocklist + TOTP."""
     requester = await require_staff(request)

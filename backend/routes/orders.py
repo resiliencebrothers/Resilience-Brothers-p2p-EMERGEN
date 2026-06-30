@@ -19,7 +19,7 @@ lives in services/orders_helpers.py and services/balances.py.
 import logging
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Literal, Optional
+from typing import Literal, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -153,7 +153,7 @@ async def _assert_delivery_method_matches_currency(to_code: str, delivery_method
 
 
 @router.post("/orders")
-async def create_order(payload: OrderCreate, request: Request):
+async def create_order(payload: OrderCreate, request: Request) -> Any:
     user = await require_user(request)
     await assert_account_active(user)
     await _assert_delivery_method_matches_currency(payload.to_code, payload.delivery_method)
@@ -169,7 +169,7 @@ async def create_order(payload: OrderCreate, request: Request):
 
 
 @router.get("/orders/mine")
-async def my_orders(request: Request):
+async def my_orders(request: Request) -> Any:
     user = await require_user(request)
     docs = await db.orders.find(
         {"user_id": user["user_id"]}, {"_id": 0}
@@ -182,7 +182,7 @@ async def my_orders(request: Request):
 # ============================================================
 
 @router.post("/vip/redeem")
-async def redeem_product(payload: RedemptionCreate, request: Request):
+async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     user = await require_user(request)
     await assert_account_active(user)
     if user["role"] not in ("vip", "admin"):
@@ -225,7 +225,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request):
 
 
 @router.get("/vip/redemptions/mine")
-async def my_redemptions(request: Request):
+async def my_redemptions(request: Request) -> Any:
     user = await require_user(request)
     docs = await db.redemptions.find(
         {"user_id": user["user_id"]}, {"_id": 0}
@@ -238,7 +238,7 @@ async def my_redemptions(request: Request):
 # ============================================================
 
 @router.post("/vip/withdraw")
-async def create_withdrawal(payload: WithdrawalCreate, request: Request):
+async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     user = await require_user(request)
     await assert_account_active(user)
     if user["role"] == "employee":
@@ -280,7 +280,7 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request):
 
 
 @router.get("/vip/withdrawals/mine")
-async def my_withdrawals(request: Request):
+async def my_withdrawals(request: Request) -> Any:
     user = await require_user(request)
     docs = await db.withdrawals.find(
         {"user_id": user["user_id"]}, {"_id": 0}
@@ -293,7 +293,7 @@ async def my_withdrawals(request: Request):
 # ============================================================
 
 @router.get("/vip/balances")
-async def vip_balances(request: Request):
+async def vip_balances(request: Request) -> Any:
     user = await require_user(request)
     if user["role"] == "employee":
         raise HTTPException(status_code=403, detail="Empleados no tienen saldo de cliente")
@@ -321,7 +321,7 @@ async def vip_balances(request: Request):
 
 
 @router.get("/vip/daily-closing")
-async def vip_daily_closing(request: Request, date: Optional[str] = None):
+async def vip_daily_closing(request: Request, date: Optional[str] = None) -> Any:
     user = await require_user(request)
     if user["role"] not in ("vip", "admin"):
         raise HTTPException(status_code=403, detail="Solo clientes VIP")
