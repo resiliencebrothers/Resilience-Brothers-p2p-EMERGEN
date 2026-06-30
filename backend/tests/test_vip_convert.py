@@ -145,3 +145,59 @@ class TestVipConvert:
         assert latest["details"]["from_code"] == "CUP"
         assert latest["details"]["to_code"] == "USDT"
         assert latest["details"]["amount_from"] == 500.0
+
+    def test_usdt_to_cup_direct_rate_used(self):
+        """iter49 — Reverse direction (USDT→CUP) uses the DIRECT seeded rate."""
+        db = MongoClient(MONGO_URL)[DB_NAME]
+        uid = "user_test_vip01"
+        db.users.update_one(
+            {"user_id": uid},
+            {"$set": {"vip_balances.USDT": 100.0, "vip_balances.CUP": 0.0}},
+        )
+        try:
+            r = requests.post(
+                f"{BASE_URL}/api/vip/convert",
+                headers=_h(VIP_TOKEN),
+                json={"from_code": "USDT", "to_code": "CUP",
+                      "amount_from": 1.0},
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            # USDT→CUP rate_vip=395 → 1 USDT = 395 CUP
+            assert body["rate"] == 395.0
+            assert body["amount_to"] == 395.0
+        finally:
+            db.users.update_one(
+                {"user_id": uid},
+                {"$unset": {"vip_balances.USDT": "",
+                            "vip_balances.CUP": ""}},
+            )
+
+    def test_usd_to_cup_via_inverse_rate(self):
+        """iter49 — USD→CUP has no direct rate; uses inverse USDT path?
+        Actually USDT→USD and USD→CUP both exist; we test the path where
+        the user converts between two non-USDT currencies that have direct
+        rates. USD→CUP IS direct (rate_normal=380, rate_vip=395)."""
+        db = MongoClient(MONGO_URL)[DB_NAME]
+        uid = "user_test_vip01"
+        db.users.update_one(
+            {"user_id": uid},
+            {"$set": {"vip_balances.USD": 10.0, "vip_balances.CUP": 0.0}},
+        )
+        try:
+            r = requests.post(
+                f"{BASE_URL}/api/vip/convert",
+                headers=_h(VIP_TOKEN),
+                json={"from_code": "USD", "to_code": "CUP",
+                      "amount_from": 10.0},
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["rate"] == 395.0  # vip rate
+            assert body["amount_to"] == 3950.0
+        finally:
+            db.users.update_one(
+                {"user_id": uid},
+                {"$unset": {"vip_balances.USD": "",
+                            "vip_balances.CUP": ""}},
+            )

@@ -165,6 +165,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Tests**: 8/8 en `test_vip_convert.py` (happy-path, insuficiente, misma moneda, sin tasa, employee rechazado, no auth, validación monto, audit log).
   - **Path count: 85** (actualizado en los 3 snapshot tests). Mypy strict 25/25. ESLint limpio. **553/555 pytest verde**.
 
+- **iter49 (Feb 28, 2026)**: **Auto-conversión VIP — dropdown destino + preview en vivo**.
+  - **Frontend (`MarketplaceView.jsx`)**:
+    - Dialog de conversión ahora con `<Select>` para elegir moneda destino (cualquier moneda activa excepto la origen). Reemplaza el hardcoded `→ USDT`. El default es USDT (excepto cuando convirtiendo desde USDT, donde toma la primera otra activa).
+    - **Preview en vivo**: card que muestra "Recibirás X {to_code} @ tasa Y" mientras el usuario escribe el monto. Cálculo client-side replica exactamente la lógica del backend (`computeRate`: directa primero, inversa como fallback, `rate_vip` para VIP/admin, `rate_normal` para normales).
+    - Botón "Confirmar" deshabilitado cuando no hay tasa cotizada (UX cleaner — antes el usuario hacía el round-trip y veía un error).
+    - Botón Convertir ahora visible TAMBIÉN en el chip USDT (antes oculto). Cualquier moneda↔cualquier moneda.
+  - **Tests backend**: 2 nuevos en `test_vip_convert.py` cubriendo direcciones reverse (USDT→CUP usa tasa directa 395) y cross-fiat (USD→CUP usa tasa directa 395). **10/10 vip_convert tests pasando.** Mypy strict 25/25. ESLint limpio. Path-count: 85 sin cambios.
+  - **End-to-end verificado via curl** contra ingress público: USDT→CUP=395, USDT→USD=0.99, CUP→USDT=1/395 inverse.
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.
