@@ -8,12 +8,13 @@ import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { Search } from "lucide-react";
+import { Search, History } from "lucide-react";
 
 import { CurrencyMultiSelect } from "./users/CurrencyMultiSelect";
 import { MarketPermsCell } from "./users/MarketPermsCell";
 import { UserPhoneCell } from "./users/UserPhoneCell";
 import { RejectPhoneDialog } from "./users/RejectPhoneDialog";
+import AdminUserLedgerDialog from "./users/AdminUserLedgerDialog";
 
 const PAGE_SIZE = 50;
 
@@ -76,6 +77,8 @@ export default function AdminUsers() {
   // Reject-phone flow: { user_id, phone, email } shown in a dialog to capture the reason
   const [rejectingPhone, setRejectingPhone] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
+  // iter52 — opens the AdminUserLedgerDialog drill-down for one user
+  const [ledgerUser, setLedgerUser] = useState(null);
 
   useEffect(() => { setPage(0); }, [search, roleFilter]);
 
@@ -353,7 +356,20 @@ export default function AdminUsers() {
                   className="px-4 py-3 font-mono text-neutral-300"
                   data-testid={`balance-${u.user_id}`}
                 >
-                  {renderUserBalance(u)}
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1">{renderUserBalance(u)}</div>
+                    {(u.role === "vip" || u.role === "normal") && (
+                      <button
+                        type="button"
+                        onClick={() => setLedgerUser(u)}
+                        className="text-neutral-500 hover:text-[#EAB308] transition-colors p-0.5"
+                        title="Ver auditoría de saldo (qué órdenes contribuyeron)"
+                        data-testid={`open-ledger-${u.user_id}`}
+                      >
+                        <History className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   {u.role === "employee" ? (
@@ -436,6 +452,12 @@ export default function AdminUsers() {
         setReason={setRejectReason}
         onClose={closeRejectPhone}
         onConfirm={confirmRejectPhone}
+      />
+
+      <AdminUserLedgerDialog
+        user={ledgerUser}
+        open={!!ledgerUser}
+        onClose={() => setLedgerUser(null)}
       />
     </div>
   );

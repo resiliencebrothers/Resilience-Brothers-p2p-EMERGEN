@@ -116,3 +116,17 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
                      summary=f"Email verificado manualmente para {target.get('email', '')}",
                      details={"email": target.get("email")})
     return {"ok": True, "already_verified": False, "user": fresh}
+
+
+# ============================================================
+# iter52 — Balance ledger (admin variant — drill-down on any user)
+# ============================================================
+
+@router.get("/admin/users/{user_id}/balance-ledger")
+async def admin_user_balance_ledger(user_id: str, request: Request) -> Any:
+    """Admin/staff drill-down: list every `accumulate` order that contributed
+    to this user's balance, grouped by destination currency. Useful to resolve
+    disputes (e.g. "I sent Zelle twice but only one was credited")."""
+    await require_staff(request)
+    from routes.orders import _build_balance_ledger
+    return await _build_balance_ledger(user_id)

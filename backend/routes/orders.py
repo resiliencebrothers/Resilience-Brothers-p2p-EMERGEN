@@ -322,6 +322,70 @@ async def vip_balances(request: Request) -> Any:
 
 
 # ============================================================
+# iter52 — Balance ledger (per-currency drill-down)
+# ============================================================
+
+async def _build_balance_ledger(user_id: str) -> dict:
+    """Group all credited `accumulate` orders for the given user by `to_code`.
+
+    Returns:
+        {
+          "by_currency": {
+             "CUPT": {
+                "total": 1565000.0,
+                "orders": [{id, from_code, amount_from, amount_to,
+                            status, accumulated_at, created_at}, ...]
+             },
+             ...
+          },
+          "total_orders": N,
+        }
+
+    Only orders carrying `accumulated_at` (i.e. money already credited via
+    iter51's idempotent helper) are included. Manual balance adjustments
+    made via admin DB tools won't appear here — that's by design (ledger
+    reflects observable order activity).
+    """
+    cursor = db.orders.find(
+        {
+            "user_id": user_id,
+            "delivery_method": "accumulate",
+            "accumulated_at": {"$exists": True},
+        },
+        {
+            "_id": 0, "id": 1, "from_code": 1, "to_code": 1,
+            "amount_from": 1, "amount_to": 1, "status": 1,
+            "accumulated_at": 1, "created_at": 1, "sender_name": 1,
+        },
+    ).sort("accumulated_at", -1)
+    by_currency: dict[str, dict[str, Any]] = {}
+    total = 0
+    async for o in cursor:
+        code = o["to_code"]
+        bucket = by_currency.setdefault(code, {"total": 0.0, "orders": []})
+        bucket["total"] += float(o.get("amount_to") or 0)
+        bucket["orders"].append(o)
+        total += 1
+    # Round totals for clean display
+    for code in by_currency:
+        by_currency[code]["total"] = round(by_currency[code]["total"], 4)
+    return {"by_currency": by_currency, "total_orders": total}
+
+
+@router.get("/vip/balance-ledger")
+async def vip_balance_ledger(request: Request) -> Any:
+    """Self-service ledger for the calling user. Returns the same payload as
+    the admin endpoint below but scoped to the caller's own user_id."""
+    user = await require_user(request)
+    if user["role"] == "employee":
+        raise HTTPException(
+            status_code=403,
+            detail="Empleados no tienen saldos de cliente",
+        )
+    return await _build_balance_ledger(user["user_id"])
+
+
+# ============================================================
 # iter48 — VIP self-conversion between own balances (no admin approval)
 # ============================================================
 

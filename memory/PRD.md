@@ -196,6 +196,14 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Script de remediación**: `/app/backend/scripts/backfill_accumulate_balances.py` con `--dry-run` y `--apply` para acreditar retroactivamente las órdenes que perdieron el saldo. Idempotente — seguro re-ejecutar.
   - **Tests**: 6/6 nuevos en `test_accumulate_idempotent.py` (pending→completed directo, pending→approved→completed sin double-credit, dos órdenes con paths mixtos, flag persiste, rejected no acredita, helper directo idempotente). Mypy 25/25. Path-count sin cambios.
 
+- **iter52 (Feb 28, 2026)**: **Audit Log de Saldos (admin + cliente)**.
+  - **Backend**: 2 endpoints nuevos basados en el helper compartido `_build_balance_ledger`:
+    - `GET /api/vip/balance-ledger` — self-service (normal + VIP, NO empleados). Lista todas las órdenes `accumulate` propias acreditadas (con `accumulated_at` set), agrupadas por divisa destino. Cada bucket trae `total` y la lista de órdenes con `id`, `from_code`, `amount_from`, `amount_to`, `status`, `accumulated_at`, `created_at`, `sender_name`.
+    - `GET /api/admin/users/{user_id}/balance-ledger` — drill-down para staff sobre CUALQUIER usuario.
+  - **Frontend cliente (`VipView.jsx`)**: cada tarjeta de divisa en "Saldo por moneda" ahora es **clickeable** (cuando tiene órdenes acreditadas) y abre un dialog con el desglose orden-por-orden. Muestra `+amount`, fecha de acreditación, status, ID, sender_name. Header del card muestra "N órdenes acreditadas en total".
+  - **Frontend admin (`AdminUsers.jsx` + nuevo `users/AdminUserLedgerDialog.jsx`)**: ícono `History` junto al saldo de cada cliente abre un dialog con tabs por divisa, total por bucket y lista detallada de órdenes contributoras. Útil para resolver disputas tipo "envié Zelle dos veces pero solo aparece uno".
+  - **Tests**: 8/8 nuevos en `test_balance_ledger.py` (auth required, excluye órdenes no-acreditadas/sin `accumulated_at`, excluye no-accumulate, agrupa correctamente, self-endpoint scope). Mypy strict 25/25. ESLint limpio (3 archivos). **Path count: 87**. **570/572 pytest verde** (2 skipped).
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.

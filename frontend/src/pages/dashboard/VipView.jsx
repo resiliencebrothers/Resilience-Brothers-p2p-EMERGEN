@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Wallet, ArrowDownToLine, FileDown, Coins, ShieldCheck } from "lucide-react";
+import { Wallet, ArrowDownToLine, FileDown, Coins, ShieldCheck, History, Eye } from "lucide-react";
 
 const WITHDRAWAL_STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -36,6 +37,10 @@ export default function VipView() {
   const navigate = useNavigate();
   const [withdrawals, setWithdrawals] = useState([]);
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
+  // iter52 — per-currency ledger (which orders contributed to each balance)
+  const [ledger, setLedger] = useState({ by_currency: {}, total_orders: 0 });
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [ledgerCurrency, setLedgerCurrency] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [method, setMethod] = useState("transfer");
@@ -80,6 +85,10 @@ export default function VipView() {
       const b = await axios.get(`${API}/vip/balances`, { withCredentials: true });
       setBalances(b.data);
     } catch (_) { setBalances({ balances: [], total_usdt: 0 }); }
+    try {
+      const l = await axios.get(`${API}/vip/balance-ledger`, { withCredentials: true });
+      setLedger(l.data);
+    } catch (_) { setLedger({ by_currency: {}, total_orders: 0 }); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -140,25 +149,67 @@ export default function VipView() {
       </div>
 
       <div className="tactile-card p-6" data-testid="vip-balances-card">
-        <h2 className="font-display text-xl mb-4 flex items-center gap-2">
-          <Coins className="w-5 h-5 text-[#EAB308]" /> Saldo por moneda
-        </h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <h2 className="font-display text-xl flex items-center gap-2">
+            <Coins className="w-5 h-5 text-[#EAB308]" /> Saldo por moneda
+          </h2>
+          {ledger.total_orders > 0 && (
+            <span
+              className="text-xs text-neutral-500 flex items-center gap-1"
+              data-testid="ledger-summary"
+            >
+              <History className="w-3.5 h-3.5" />
+              {ledger.total_orders} {ledger.total_orders === 1 ? "orden" : "órdenes"} acreditadas
+            </span>
+          )}
+        </div>
         {balances.balances.length === 0 ? (
-          <p className="text-neutral-500 text-sm">Aún no tienes saldo acumulado. Crea órdenes con entrega &laquo;Acumular en saldo VIP&raquo;.</p>
+          <p className="text-neutral-500 text-sm">Aún no tienes saldo acumulado. Crea órdenes con entrega &laquo;Acumular en saldo&raquo;.</p>
         ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {balances.balances.map((b) => (
-              <div key={b.currency} className="border border-white/10 p-4 hover:border-[#EAB308]/40 transition-colors">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="micro-label text-neutral-500">{b.currency}</span>
-                  <span className="text-xs text-neutral-500">≈ {b.usdt_equivalent?.toFixed(2) ?? "—"} USDT</span>
-                </div>
-                <div className="font-display text-2xl text-white">
-                  {b.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                </div>
-              </div>
-            ))}
-          </div>
+          <>
+            <p className="text-xs text-neutral-500 mb-3">
+              Click en una moneda para ver las órdenes que la acreditaron.
+            </p>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {balances.balances.map((b) => {
+                const bucket = ledger.by_currency?.[b.currency];
+                const orderCount = bucket?.orders?.length || 0;
+                const hasDrillDown = orderCount > 0;
+                return (
+                  <button
+                    type="button"
+                    key={b.currency}
+                    onClick={() => {
+                      if (!hasDrillDown) return;
+                      setLedgerCurrency(b.currency);
+                      setLedgerOpen(true);
+                    }}
+                    disabled={!hasDrillDown}
+                    className={`text-left border border-white/10 p-4 transition-colors ${
+                      hasDrillDown
+                        ? "hover:border-[#EAB308]/60 hover:bg-white/5 cursor-pointer"
+                        : "opacity-80 cursor-default"
+                    }`}
+                    data-testid={`balance-card-${b.currency}`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="micro-label text-neutral-500">{b.currency}</span>
+                      <span className="text-xs text-neutral-500">≈ {b.usdt_equivalent?.toFixed(2) ?? "—"} USDT</span>
+                    </div>
+                    <div className="font-display text-2xl text-white">
+                      {b.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    </div>
+                    {hasDrillDown && (
+                      <div className="text-[0.65rem] text-[#EAB308] mt-2 flex items-center gap-1">
+                        <Eye className="w-3 h-3" />
+                        {orderCount} {orderCount === 1 ? "orden" : "órdenes"} · ver desglose
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
 
@@ -319,6 +370,75 @@ export default function VipView() {
           </div>
         </div>
       </div>
+
+      {/* iter52 — Per-currency drill-down: which orders contributed */}
+      <Dialog open={ledgerOpen} onOpenChange={setLedgerOpen}>
+        <DialogContent
+          className="bg-[#111] border-white/10 text-white rounded-none max-w-2xl max-h-[80vh] overflow-y-auto"
+          data-testid="ledger-dialog"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="w-5 h-5 text-[#EAB308]" />
+              Órdenes que acreditaron {ledgerCurrency}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="pt-2 space-y-3" data-testid={`ledger-orders-${ledgerCurrency}`}>
+            {(() => {
+              const bucket = ledger.by_currency?.[ledgerCurrency];
+              if (!bucket || bucket.orders.length === 0) {
+                return (
+                  <p className="text-sm text-neutral-500">
+                    No hay órdenes registradas para esta moneda.
+                  </p>
+                );
+              }
+              return (
+                <>
+                  <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 p-3 flex justify-between items-baseline">
+                    <span className="text-xs text-neutral-400">Total acreditado:</span>
+                    <span className="font-mono text-lg text-[#EAB308]">
+                      {bucket.total.toLocaleString(undefined, { maximumFractionDigits: 4 })} {ledgerCurrency}
+                    </span>
+                  </div>
+                  {bucket.orders.map((o) => (
+                    <div
+                      key={o.id}
+                      className="border border-white/10 p-3 text-sm"
+                      data-testid={`ledger-order-${o.id}`}
+                    >
+                      <div className="flex justify-between items-start gap-2 flex-wrap">
+                        <div>
+                          <div className="font-mono">
+                            +{Number(o.amount_to).toLocaleString(undefined, { maximumFractionDigits: 4 })} {o.to_code}
+                          </div>
+                          <div className="text-xs text-neutral-500 mt-0.5">
+                            desde {Number(o.amount_from).toLocaleString(undefined, { maximumFractionDigits: 2 })} {o.from_code}
+                            {o.sender_name && (
+                              <span className="text-neutral-600"> · {o.sender_name}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[0.65rem] uppercase tracking-wider text-[#22C55E]">
+                            {o.status}
+                          </span>
+                          <div className="text-[0.65rem] text-neutral-600 mt-0.5">
+                            {new Date(o.accumulated_at || o.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-[0.6rem] text-neutral-700 font-mono mt-2">
+                        ID: {o.id}
+                      </div>
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
