@@ -103,6 +103,22 @@ async def start_background_jobs() -> None:
     scheduler.py without importing server.py (which would be circular)."""
     from scheduler import start_scheduler
 
+    # iter55.3 — one-shot idempotent migration: strip whitespace from currency
+    # codes so data-entry typos ("CUP ") don't break catalog lookups.
+    try:
+        async for row in db.currencies.find(
+            {"code": {"$regex": r"^\s|\s$"}},
+            {"_id": 0, "id": 1, "code": 1},
+        ):
+            fixed = (row.get("code") or "").strip().upper()
+            if fixed and fixed != row.get("code"):
+                await db.currencies.update_one(
+                    {"id": row["id"]}, {"$set": {"code": fixed}}
+                )
+                logger.info(f"Migrated currency code {row['code']!r} → {fixed!r}")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Currency code migration failed: {e}")
+
     async def _build_timeseries(
         granularity: str,
         year: int | None = None,

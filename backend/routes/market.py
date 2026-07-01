@@ -23,7 +23,7 @@ import logging
 from typing import Optional, Literal, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from db_client import db
 from auth_utils import (
@@ -59,6 +59,13 @@ class Currency(BaseModel):
     delivery_methods: Optional[list[Literal["transfer", "cash", "crypto"]]] = None
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
+    @field_validator("code", mode="before")
+    @classmethod
+    def _strip_code(cls, v: Any) -> Any:
+        # iter55.3 — defensively trim whitespace so data-entry mistakes never
+        # break catalog lookups downstream (see admin_company_funds validation).
+        return v.strip().upper() if isinstance(v, str) else v
+
 
 class CurrencyCreate(BaseModel):
     code: str
@@ -69,6 +76,11 @@ class CurrencyCreate(BaseModel):
     is_active: bool = True
     payment_account: Optional[str] = ""
     delivery_methods: Optional[list[Literal["transfer", "cash", "crypto"]]] = None
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def _strip_code(cls, v: Any) -> Any:
+        return v.strip().upper() if isinstance(v, str) else v
 
 
 class ExchangeRate(BaseModel):
@@ -122,7 +134,14 @@ class ProductCreate(BaseModel):
 
 @router.get("/currencies")
 async def list_currencies() -> Any:
-    return await db.currencies.find({}, {"_id": 0}).to_list(500)
+    # iter55.3 — normalise stored codes on read so legacy rows with trailing
+    # spaces (e.g. `"CUP "`) do not break frontend dropdowns or downstream
+    # lookups (see admin_company_funds.create_company_fund_adjustment).
+    rows = await db.currencies.find({}, {"_id": 0}).to_list(500)
+    for r in rows:
+        if isinstance(r.get("code"), str):
+            r["code"] = r["code"].strip().upper()
+    return rows
 
 
 @router.get("/currencies/{code}/delivery-methods")
@@ -140,18 +159,32 @@ async def get_currency_delivery_methods(code: str) -> Any:
 
     404 if the currency code does not exist.
     """
-    currency = await db.currencies.find_one(
-        {"code": code},
-        {"_id": 0, "type": 1, "name": 1, "code": 1, "delivery_methods": 1},
-    )
+    norm = code.strip().upper()
+    currency = await _find_currency_lenient(norm)
     if not currency:
         raise HTTPException(status_code=404, detail=f"Currency '{code}' not found")
     return {
-        "code": code,
+        "code": norm,
         "type": currency.get("type"),
         "name": currency.get("name"),
         "allowed": allowed_delivery_methods(currency),
     }
+
+
+async def _find_currency_lenient(code: str) -> Optional[dict]:
+    """iter55.3 — resilient currency lookup that survives trailing-whitespace
+    data corruption in the `code` column. Falls back to a case-insensitive
+    regex that also matches ` code ` (surrounding whitespace)."""
+    norm = code.strip().upper()
+    hit = await db.currencies.find_one({"code": norm}, {"_id": 0})
+    if hit:
+        return hit
+    # Escape regex special chars and match trimmed
+    import re
+    pattern = f"^\\s*{re.escape(norm)}\\s*$"
+    return await db.currencies.find_one(
+        {"code": {"$regex": pattern, "$options": "i"}}, {"_id": 0}
+    )
 
 
 @router.post("/admin/currencies")

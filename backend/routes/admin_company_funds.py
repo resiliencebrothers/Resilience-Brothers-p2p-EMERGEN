@@ -309,19 +309,21 @@ async def create_company_fund_adjustment(
                 detail=f"No estás autorizado a mover fondos en {currency}",
             )
 
-    # Validate the currency exists in the catalog
-    cur_doc = await db.currencies.find_one({"code": currency}, {"_id": 0})
+    # Validate the currency exists in the catalog — use lenient lookup so
+    # legacy rows with trailing whitespace (e.g. "CUP ") still resolve.
+    from routes.market import _find_currency_lenient
+    cur_doc = await _find_currency_lenient(currency)
     if not cur_doc:
         # Provide the operator the actual list of active currencies so the UI
         # dropdown mismatch is obvious.
-        active = [c["code"] async for c in db.currencies.find(
+        active = [c["code"].strip().upper() async for c in db.currencies.find(
             {"is_active": True}, {"_id": 0, "code": 1}
         )]
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Moneda «{currency}» no disponible en el catálogo. "
-                f"Válidas: {', '.join(sorted(active))}"
+                f"Válidas: {', '.join(sorted(set(active)))}"
             ),
         )
 

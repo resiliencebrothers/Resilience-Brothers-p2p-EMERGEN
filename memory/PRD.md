@@ -219,7 +219,28 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.3 (Mar 1, 2026)**: **Bug crítico prod — currency codes con espacios rompían el ajuste de fondos**.
+  - **Root cause**: catálogo de producción tenía `"CUP "` (con espacio final) por typo de data-entry. `db.currencies.find_one({"code": "CUP"})` no lo encontraba → 400 "no disponible en el catálogo". Preview no lo mostraba porque su catálogo era limpio.
+  - **Fix defensivo (3 capas)**:
+    1. **Validators pydantic** en `Currency`/`CurrencyCreate`: `code` se normaliza con `.strip().upper()` al validar → nuevos códigos jamás pueden entrar con whitespace.
+    2. **`_find_currency_lenient(code)`** en `market.py`: busca primero exacto; si falla, cae a regex case-insensitive `^\s*{code}\s*$`. Usado también en `admin_company_funds.create_company_fund_adjustment`.
+    3. **`GET /api/currencies`** normaliza en cada respuesta: `code.strip().upper()` para no exponer whitespace legacy al frontend.
+  - **Migración one-shot al startup**: `server.on_event('startup')` busca `code` con whitespace y hace `strip().upper()` en su lugar (idempotente, log info por cada fix). Corre en cada arranque pero es no-op si ya está limpio.
+  - **Tests**: 5/5 en `test_iter55_3_currency_lenient.py` — con `CUP ` corrupto, lookup lenient permite el ajuste; endpoint `/currencies` devuelve normalizado; endpoint `/delivery-methods` no rompe; input lowercase `cup` funciona; mensaje de error para código truly-missing sigue informativo.
+  - **También iter55.2 shipped**: doble X en drawer móvil (Dashboard + AdminPanel) — `SheetContent` de shadcn ya tiene su propio X. Eliminado el X custom + limpieza de imports. Testing agent E2E green (`iteration_42.json`).
+
 - **iter55 (Mar 1, 2026)**: **Fondo Empresa + Registry + Push notifications (3 issues reportados por el operador)**.
+  - Bug 1: `_compute_company_funds` no descontaba `amount_to` de órdenes `completed` con `delivery_method IN (transfer, cash, crypto)`. Fix + nuevo campo `outflow_orders`. `accumulate` NO se resta.
+  - Bug 2: `build_transactions` no emitía filas de salida P2P. Fix: `ref_type='order_payout'` visible en `/admin/transactions` y `/dashboard/transactions`.
+  - Feature 3a: push cuando orden pasa a `completed` (copy contextual por delivery_method).
+  - Feature 3b: rate-change fanout a subscripciones de rol vip/normal (staff excluidos), tag por par → dedupe. Best-effort.
+  - Tests: 17/17 en 2 archivos nuevos, suite completa 603/605, testing_agent_v3_fork E2E green (`iteration_41.json`).
+
+- **iter55.1 (Mar 1, 2026)**: **Mensajes de error diagnósticos**.
+  - Backend: mensaje de moneda no encontrada ahora incluye el código exacto enviado **entre comillas francesas** y lista todas las monedas válidas activas.
+  - Frontend `PushToggle.jsx`: catch específico por `err.name` — `NotAllowedError`/`NotSupportedError`/`AbortError`/`InvalidAccessError` cada uno con mensaje accionable en el toast. Distingue error del navegador vs error del servidor vs VAPID no configurada. Facilita el diagnóstico remoto.
+
+
   - **P0 Bug 1 — Fondo Empresa no descontaba salidas P2P**: cuando un cliente completaba un intercambio (ej. USDT→CUP transferencia), la empresa físicamente pagaba el CUP pero el balance no se movía. Fix: `_compute_company_funds` ahora resta `amount_to` (en `to_code`) de todas las órdenes con `status='completed'` Y `delivery_method IN (transfer, cash, crypto)`. **`accumulate` NO se resta** (el dinero se queda en caja como pasivo VIP y se contabiliza cuando el cliente hace withdrawal). Nuevo campo en la response: `outflow_orders`. Fórmula: `balance = inflow + manual_inflow − outflow_orders − outflow_clients − outflow_company − manual_outflow`.
   - **P0 Bug 2 — Registro de transacciones incompleto**: `build_transactions` no registraba las entregas P2P. Fix: nuevas filas `direction='out'` con `ref_type='order_payout'` (currency=`to_code`, amount=`amount_to`, holder=cliente, method=`delivery_method`). Filtrable por currency/direction, exportable a CSV/PDF, visible en `/admin/transactions` (staff) y `/dashboard/transactions` (cliente).
   - **Feature 3 — Push notifications**:
