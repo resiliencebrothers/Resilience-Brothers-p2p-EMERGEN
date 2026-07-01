@@ -213,6 +213,22 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
     - **`BalanceConverterCard.jsx`**: `positive` (filter) y `visible` (slice) ahora son `useMemo` con deps correctas — evita recálculo en cada apertura/cierre del dialog. Hooks colocados **antes** del early-return para cumplir rules-of-hooks.
   - **Testing**: `testing_agent_v3_fork` ejecutó la suite completa — **570 passed / 0 failed / 2 skipped (idéntico al baseline de iter52)**, smoke suite dirigida 53/53 verde, path-count canary 87, public ingress 200 OK. **Cero regresiones**. Mypy strict 25/25.
 
+- **iter54 (Feb 28, 2026)**: **Company Fund Adjustments — Entradas y salidas manuales de capital de trabajo (P0 shipped)**.
+  - **Backend** (`routes/admin_company_funds.py`):
+    - Nuevos modelos: `CompanyFundAdjustment` (persistido) y `CompanyFundAdjustmentCreate` (payload).
+    - Nuevo permiso granular `users.can_manage_company_funds` (admin siempre autorizado; empleados requieren flag explícito).
+    - `POST /api/admin/company-funds/adjustments` — registra un movimiento manual con `adjustment_type` (`inflow`/`outflow`), `currency`, `amount>0`, `method` (`transfer`/`cash`/`crypto`), `source_name`, `source_account`, `note`. TOTP step-up obligatorio. Validaciones: moneda existe en catálogo (400 con "catálogo" en el detail), scope de empleados por `allowed_currencies` (403). Audit-logged como `company_funds.adjust` con sign `+`/`-` en el summary.
+    - `GET /api/admin/company-funds/adjustments?currency=&limit=` — historial ordenado por fecha desc; empleados scoped a sus `allowed_currencies`; normal client rechazado (403).
+    - `GET /api/admin/company-funds` — response schema ahora incluye `manual_inflow` y `manual_outflow` por moneda. Fórmula del balance: `inflow + manual_inflow − outflow_clients − outflow_company − manual_outflow`.
+    - **Bug fix crítico durante desarrollo**: `db.company_fund_adjustments.insert_one(doc)` mutaba el dict añadiendo `_id: ObjectId`, rompiendo la serialización JSON del response (500). Fix: insertar copia superficial `{**doc}` y devolver el `doc` original limpio.
+  - **Frontend** (`AdminCompanyFunds.jsx` + 2 subcomponentes nuevos `pages/admin/company-funds/`):
+    - Cards de "Capital operativo" ahora muestran líneas dedicadas para **`+ Aporte propio`** (verde) y **`− Salida propia`** (rojo) — solo cuando existen. Balance en rojo si es negativo.
+    - Nuevo botón "Ajuste manual" (junto a "Nuevo retiro") abre `AdjustmentDialog.jsx`: toggle grande **Entrada/Salida** (verde vs rojo), select de moneda (todas activas, filtradas por `allowed_currencies` para empleados), monto, método, `source_name` y `source_account` (label dinámico según método), nota, botón "Continuar (2FA)".
+    - Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable.jsx` — historial cronológico con badge coloreado por tipo, monto con sign explícito, método traducido, fuente/cuenta apilada, autor, nota.
+    - Endpoint público `/api/currencies` alimenta el dropdown para permitir aportes en monedas sin flujo previo.
+  - **Tests**: 16/16 en `tests/test_company_fund_adjustments.py` (POST admin/staff/normal, TOTP obligatorio, catálogo, amount>0, employee-perm gate, filter por moneda, cálculo balance con inflow/outflow). Path-count canary actualizado **87 → 88** en 3 tests (`test_iter27_auth_refactor.py`, `test_iter36_wiring.py`, `test_storage_iter35_e2e.py`). Mypy strict 25/25. ESLint limpio. `testing_agent_v3_fork` E2E backend + frontend **fully green** (`/app/test_reports/iteration_40.json`).
+
+
 ## Prioritized Backlog
 ### P0 — Waiting on user
 
