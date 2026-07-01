@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, X, Receipt, ShieldCheck } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, ShieldCheck } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -147,7 +147,7 @@ export default function Dashboard() {
               className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
             >
               <VisuallyHidden><SheetTitle>Menú de navegación</SheetTitle></VisuallyHidden>
-              <div className="h-16 border-b border-white/5 flex items-center justify-between px-5 shrink-0">
+              <div className="h-16 border-b border-white/5 flex items-center px-5 shrink-0">
                 <div className="flex items-center gap-3">
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
                   <div>
@@ -155,13 +155,7 @@ export default function Dashboard() {
                     <div className="micro-label text-neutral-500 text-[0.55rem]">P2P Console</div>
                   </div>
                 </div>
-                <button
-                  onClick={() => setMobileOpen(false)}
-                  data-testid="dashboard-mobile-menu-close"
-                  className="text-neutral-400 hover:text-white"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                {/* Close button provided by SheetContent (top-right X). */}
               </div>
               <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto">
                 {renderNavLinks(() => setMobileOpen(false))}

@@ -1,7 +1,7 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, X, Receipt, Inbox, Wallet, Ban, Activity, Zap } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -139,7 +139,7 @@ export default function AdminPanel() {
               className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
             >
               <VisuallyHidden><SheetTitle>Menú de navegación admin</SheetTitle></VisuallyHidden>
-              <div className="h-16 border-b border-white/5 flex items-center justify-between px-5 shrink-0">
+              <div className="h-16 border-b border-white/5 flex items-center px-5 shrink-0">
                 <div className="flex items-center gap-3">
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
                   <div>
@@ -147,13 +147,7 @@ export default function AdminPanel() {
                     <div className="micro-label text-[#EAB308] text-[0.55rem]">Control Room</div>
                   </div>
                 </div>
-                <button
-                  onClick={() => setMobileOpen(false)}
-                  data-testid="admin-mobile-menu-close"
-                  className="text-neutral-400 hover:text-white"
-                >
-                  <X className="w-5 h-5" />
-                </button>
+                {/* Close button provided by SheetContent (top-right X). */}
               </div>
               <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto">
                 {renderNavLinks(() => setMobileOpen(false))}

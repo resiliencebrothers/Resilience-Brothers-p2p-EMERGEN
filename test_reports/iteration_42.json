@@ -1,0 +1,27 @@
+{
+  "summary": "iter55.2 hotfix verified — mobile drawer now renders EXACTLY ONE X close button on both /dashboard (VIP) and /admin (admin). The custom X button has been removed; the shadcn SheetContent built-in close (button.ring-offset-background + svg.lucide-x + sr-only 'Close') is the only close control. Screenshots at 400px viewport confirm the visual fix. Open/close cycle works reliably. Regression checks: RESILIENCE/ADMIN logo, all nav links (Resumen, Intercambio, Mis Órdenes, Mi Historial, Seguridad, Saldo y Retiros, Marketplace on VIP; Resumen, Vista Rápida, Mi Cola, Órdenes, Retiros, Monedas, Tasas, Productos, Usuarios, Bloqueos, Fondo Empresa, Transacciones, Ingresos on admin), PushToggle bell, and Cerrar Sesión button all render inside the drawer. Desktop layout at >=1024px unaffected — sidebar shows, mobile trigger hidden, no stray X icons. Legacy testids dashboard-mobile-menu-close and admin-mobile-menu-close correctly removed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sheet drawer (both Dashboard and AdminPanel)", "issues": ["Pre-existing (not related to this hotfix) a11y console warning: 'Missing Description or aria-describedby={undefined} for {DialogContent}'. Consider adding a <SheetDescription> (visually hidden if desired) alongside the SheetTitle to silence Radix a11y warnings."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Optional a11y polish) Add a VisuallyHidden <SheetDescription> to both mobile drawers to eliminate the Radix Dialog a11y warning."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx and AdminPanel.jsx correctly rely on shadcn SheetContent's built-in Close — the comment '{/* Close button provided by SheetContent (top-right X). */}' documents the intent. No duplicate X.",
+    "sheet.jsx renders SheetPrimitive.Close with class 'ring-offset-background' at 'absolute right-4 top-4' — this is the single source of truth for the drawer's close affordance."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only per request)", "frontend": "100% (4/4 checks: dashboard X-count, admin X-count, open/close cycle, desktop non-regression)"},
+  "test_credentials": "Used /app/memory/test_credentials.md — VIP session_token cookie test_session_vip_X and Admin session_token cookie test_session_admin_X.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The mobile drawer close button in Dashboard.jsx and AdminPanel.jsx is now the shadcn built-in one (button.ring-offset-background containing svg.lucide-x + span.sr-only='Close'). No custom close button exists; testids dashboard-mobile-menu-close and admin-mobile-menu-close have been removed. To count X buttons in future tests, locate `[data-testid='dashboard-mobile-menu'] button.ring-offset-background` or `svg.lucide-x`.",
+  "rca of the issue": "Root cause was already correctly identified & fixed by main agent: shadcn's SheetContent auto-renders a top-right close X via SheetPrimitive.Close (see /app/frontend/src/components/ui/sheet.jsx line 50-54). Dashboard.jsx and AdminPanel.jsx used to add a second custom close button, producing two overlapping X icons on Android mobile. Fix removes the custom X and adds a code comment noting the built-in one. Verified at 400px viewport: svg.lucide-x count inside the sheet is exactly 1 for both /dashboard and /admin drawers."
+}
