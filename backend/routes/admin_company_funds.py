@@ -23,6 +23,61 @@ from services.proof_upload import maybe_upload_proof
 router = APIRouter(tags=["Admin"])
 
 
+class CompanyFundAdjustment(BaseModel):
+    """iter54 — Manual capital-of-trabajo movements recorded by admin/staff.
+
+    - Type `inflow` (add capital to the company) — e.g., owner deposits 10M CUPT
+    - Type `outflow` (withdraw own capital) — e.g., pay company expenses in cash
+
+    Method distinguishes where the funds physically moved:
+      - `transfer` → bank account (capture bank + account details)
+      - `cash`     → physical cash (capture depositor/receiver name)
+      - `crypto`   → wallet (capture blockchain address / tx hash)
+
+    Recorded in `company_fund_adjustments` collection. Reflected as positive
+    (inflow) or negative (outflow) in the per-currency balance calculation.
+    """
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    adjustment_type: Literal["inflow", "outflow"]
+    currency: str
+    amount: float = Field(..., gt=0)
+    method: Literal["transfer", "cash", "crypto"]
+    source_name: str = Field(..., min_length=2, description="Persona, banco o wallet")
+    source_account: str = Field(default="", description="Cuenta bancaria, dirección wallet, o vacío para cash")
+    note: str = ""
+    actor_id: str
+    actor_email: str
+    actor_name: str
+    created_at: str = Field(default_factory=lambda: iso(now_utc()))
+
+
+class CompanyFundAdjustmentCreate(BaseModel):
+    adjustment_type: Literal["inflow", "outflow"]
+    currency: str = Field(..., min_length=1, max_length=10)
+    amount: float = Field(..., gt=0, le=1_000_000_000)
+    method: Literal["transfer", "cash", "crypto"]
+    source_name: str = Field(..., min_length=2, max_length=200)
+    source_account: str = Field(default="", max_length=200)
+    note: str = Field(default="", max_length=500)
+    totp_code: Optional[str] = Field(None, max_length=11)
+
+
+async def _assert_can_manage_company_funds(actor: dict) -> None:
+    """iter54 — Admin always allowed; employees need can_manage_company_funds=True."""
+    if actor.get("role") == "admin":
+        return
+    if actor.get("role") == "employee" and actor.get("can_manage_company_funds"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "No tienes permiso para gestionar los fondos de la empresa. "
+            "Pídeselo a un administrador."
+        ),
+    )
+
+
 class CompanyWithdrawal(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -81,17 +136,39 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         if c:
             out_company[c] = out_company.get(c, 0.0) + float(cw.get("amount") or 0.0)
 
-    codes = set(inflow) | set(out_clients) | set(out_company)
+    # iter54 — manual capital-of-trabajo adjustments (inflows/outflows).
+    manual_in: dict = {}
+    manual_out: dict = {}
+    async for a in db.company_fund_adjustments.find(
+        {}, {"_id": 0, "currency": 1, "amount": 1, "adjustment_type": 1}
+    ):
+        c = a.get("currency")
+        amt = float(a.get("amount") or 0.0)
+        if not c or amt <= 0:
+            continue
+        if a.get("adjustment_type") == "inflow":
+            manual_in[c] = manual_in.get(c, 0.0) + amt
+        elif a.get("adjustment_type") == "outflow":
+            manual_out[c] = manual_out.get(c, 0.0) + amt
+
+    codes = set(inflow) | set(out_clients) | set(out_company) | set(manual_in) | set(manual_out)
     rows = []
     for c in sorted(codes):
         if scope and c not in scope:
             continue
+        i = inflow.get(c, 0.0)
+        oc = out_clients.get(c, 0.0)
+        ok = out_company.get(c, 0.0)
+        mi = manual_in.get(c, 0.0)
+        mo = manual_out.get(c, 0.0)
         rows.append({
             "currency": c,
-            "inflow": round(inflow.get(c, 0.0), 4),
-            "outflow_clients": round(out_clients.get(c, 0.0), 4),
-            "outflow_company": round(out_company.get(c, 0.0), 4),
-            "balance": round(inflow.get(c, 0.0) - out_clients.get(c, 0.0) - out_company.get(c, 0.0), 4),
+            "inflow": round(i, 4),
+            "outflow_clients": round(oc, 4),
+            "outflow_company": round(ok, 4),
+            "manual_inflow": round(mi, 4),
+            "manual_outflow": round(mo, 4),
+            "balance": round(i + mi - oc - ok - mo, 4),
         })
     return rows
 
@@ -184,3 +261,94 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
                      summary=f"Retiro fondo {cw['currency']} {cw['amount']} → {new_status}",
                      details={"from": cw["status"], "to": new_status})
     return await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
+
+
+# ============================================================
+# iter54 — Capital-of-trabajo adjustments (manual inflows/outflows)
+# ============================================================
+
+@router.post("/admin/company-funds/adjustments")
+async def create_company_fund_adjustment(
+    payload: CompanyFundAdjustmentCreate, request: Request,
+) -> Any:
+    """Record a manual capital movement (inflow or outflow) into the company
+    working-capital ledger. Reflected immediately in `/admin/company-funds`.
+
+    Auth: admin OR employee with `can_manage_company_funds=True`.
+    TOTP step-up required (money-moving action).
+    """
+    actor = await require_staff(request)
+    await _assert_can_manage_company_funds(actor)
+    await _enforce_totp_step_up(actor, payload.totp_code)
+
+    currency = payload.currency.upper().strip()
+    # Employees scope: can only touch their allowed_currencies
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed and currency not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"No estás autorizado a mover fondos en {currency}",
+            )
+
+    # Validate the currency exists in the catalog
+    cur_doc = await db.currencies.find_one({"code": currency}, {"_id": 0})
+    if not cur_doc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Moneda {currency} no existe en el catálogo",
+        )
+
+    doc = CompanyFundAdjustment(
+        adjustment_type=payload.adjustment_type,
+        currency=currency,
+        amount=payload.amount,
+        method=payload.method,
+        source_name=payload.source_name.strip(),
+        source_account=payload.source_account.strip(),
+        note=payload.note.strip(),
+        actor_id=actor["user_id"],
+        actor_email=actor.get("email", ""),
+        actor_name=actor.get("name", ""),
+    ).model_dump()
+    await db.company_fund_adjustments.insert_one(doc)
+
+    sign = "+" if payload.adjustment_type == "inflow" else "-"
+    await log_action(
+        db, actor, "company_funds.adjust", "company_fund_adjustment", doc["id"],
+        summary=(
+            f"{sign}{payload.amount} {currency} "
+            f"({payload.method}, {payload.adjustment_type}) desde {payload.source_name}"
+        ),
+        details={
+            "adjustment_type": payload.adjustment_type,
+            "currency": currency, "amount": payload.amount,
+            "method": payload.method,
+            "source_name": payload.source_name,
+            "source_account": payload.source_account,
+        },
+    )
+    return doc
+
+
+@router.get("/admin/company-funds/adjustments")
+async def list_company_fund_adjustments(
+    request: Request, currency: Optional[str] = None, limit: int = 100,
+) -> Any:
+    """Return the history of manual capital movements. Employees scoped to
+    their `allowed_currencies` (if any). Newest first."""
+    actor = await require_staff(request)
+    q: Dict[str, Any] = {}
+    if currency:
+        q["currency"] = currency.upper()
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            if "currency" in q and q["currency"] not in allowed:
+                return []
+            elif "currency" not in q:
+                q["currency"] = {"$in": allowed}
+    limit = max(1, min(limit, 500))
+    return await db.company_fund_adjustments.find(q, {"_id": 0}).sort(
+        "created_at", -1
+    ).to_list(limit)

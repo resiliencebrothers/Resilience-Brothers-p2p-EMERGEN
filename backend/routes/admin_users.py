@@ -26,6 +26,7 @@ class UserUpdate(BaseModel):
     can_upload_product_images: Optional[bool] = None
     can_delete_products: Optional[bool] = None
     can_manage_blocklist: Optional[bool] = None
+    can_manage_company_funds: Optional[bool] = None  # iter54 — capital de trabajo
     account_status: Optional[Literal["active", "under_review", "blocked"]] = None
     totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
