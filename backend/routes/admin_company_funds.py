@@ -299,7 +299,7 @@ async def create_company_fund_adjustment(
             detail=f"Moneda {currency} no existe en el catálogo",
         )
 
-    doc = CompanyFundAdjustment(
+    adjustment = CompanyFundAdjustment(
         adjustment_type=payload.adjustment_type,
         currency=currency,
         amount=payload.amount,
@@ -310,8 +310,11 @@ async def create_company_fund_adjustment(
         actor_id=actor["user_id"],
         actor_email=actor.get("email", ""),
         actor_name=actor.get("name", ""),
-    ).model_dump()
-    await db.company_fund_adjustments.insert_one(doc)
+    )
+    doc = adjustment.model_dump()
+    # insert_one mutates the input dict by adding `_id: ObjectId` — pass a copy
+    # so the returned `doc` remains JSON-serialisable.
+    await db.company_fund_adjustments.insert_one({**doc})
 
     sign = "+" if payload.adjustment_type == "inflow" else "-"
     await log_action(

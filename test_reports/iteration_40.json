@@ -1,0 +1,27 @@
+{
+  "summary": "iter54 — Company Fund Adjustments feature: backend + frontend E2E tested and fully green. All 16 tests in test_company_fund_adjustments.py PASS (POST/GET adjustments, auth/permission gating, TOTP step-up, currency catalog validation, amount>0 validation, employee scope, balance/manual_inflow/manual_outflow reflection). Frontend at /admin/company-funds loads correctly with admin cookie; the 'Ajuste manual' button opens the AdjustmentDialog exposing all 9 required data-testids (adj-type-inflow/outflow, adj-currency, adj-amount, adj-method, adj-source-name, adj-source-account, adj-note, adj-submit). Full E2E: filled form → clicked submit → TOTP prompt appeared → entered live TOTP → success toast 'Entrada de capital registrada' → USDT fund card rendered new green 'Aporte propio' line with fund-manual-in-USDT testid → adjustments-empty state flipped to adjustments-table with the new row. Regression on test_iter27_auth_refactor / test_iter36_wiring / test_storage_iter35_e2e (46 tests) also PASS — path count canary updates verified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_company_fund_adjustments.py",
+    "/app/test_reports/pytest/iter40_adjustments.xml",
+    "/app/test_reports/pytest/iter40_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/admin_company_funds.py:317 — good hardening: inserting a shallow copy {**doc} prevents Motor mutating the response with ObjectId. Comment explains the pitfall clearly.",
+    "_compute_company_funds is O(N) full scans over 3 collections + adjustments; fine at current scale but consider aggregation pipeline once collections grow past 100k docs.",
+    "CompanyFundAdjustmentCreate.currency has min_length=1/max_length=10 but no upper() normalisation on the model itself (done at handler); Pydantic model-level normalisation would keep list endpoint filter (`q['currency'] = currency.upper()`) consistent — currently GET ?currency=usd works because of the .upper() call, so no bug, just DRY.",
+    "AdjustmentDialog.jsx submit path requires source_account for method != 'cash'; matches backend contract (crypto/transfer capture account). Good UX.",
+    "AdminCompanyFunds.jsx keeps the older company-withdrawals create dialog + the new adjustment dialog in the same file (313 lines) — still under the 700-line threshold but starting to hold multiple concerns; consider extracting the CompanyWithdrawalDialog next.",
+    "Frontend gates the dialog trigger by `currencies.length === 0` (from /api/currencies) — good, but if the currencies fetch fails silently the button stays disabled with no user hint. Not blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (16/16 feature + 46/46 regression)", "frontend": "100% E2E flow verified"},
+  "test_credentials": "Used seeded admin cookie test_session_admin_X (user_test_admin01) and TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP as documented in /app/memory/test_credentials.md",
+  "seed_data_creation": "Inserted 1 UI __test__ adjustment (USDT, 1234, transfer) via the dialog to verify manual_inflow reflection; cleaned up post-test (delete_many on note ~ ^__test__).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature is fully wired. Endpoints: POST/GET /api/admin/company-funds/adjustments; GET /api/admin/company-funds now returns manual_inflow/manual_outflow/balance. Frontend testids: open-adjustment-dialog, adjustment-dialog, adj-type-inflow, adj-type-outflow, adj-currency, adj-amount, adj-method, adj-source-name, adj-source-account, adj-note, adj-submit, adjustments-table, adjustments-empty, fund-manual-in-{code}, fund-manual-out-{code}. TOTP prompt uses TotpPromptDialog (button label 'Confirmar').",
+  "rca of the issue": "No new bugs. The previous 500 (Motor injecting ObjectId into the pydantic payload dict) is already fixed by cloning the doc before insert_one — verified by response containing serialisable JSON."
+}

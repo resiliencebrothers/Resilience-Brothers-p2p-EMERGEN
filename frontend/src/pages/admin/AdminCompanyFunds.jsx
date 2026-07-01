@@ -10,8 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import { Wallet, Plus, FileImage } from "lucide-react";
+import { Wallet, Plus, FileImage, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
+import AdjustmentDialog from "./company-funds/AdjustmentDialog";
+import AdjustmentsTable from "./company-funds/AdjustmentsTable";
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -27,18 +29,23 @@ export default function AdminCompanyFunds() {
   const isAdmin = user?.role === "admin";
   const [funds, setFunds] = useState([]);
   const [items, setItems] = useState([]);
+  const [adjustments, setAdjustments] = useState([]);
+  const [currencies, setCurrencies] = useState([]);
   const [openCreate, setOpenCreate] = useState(false);
+  const [openAdjustment, setOpenAdjustment] = useState(false);
   const [form, setForm] = useState({ amount: "", currency: "", beneficiary: "", concept: "", note: "", invoice_image: "" });
   const [pendingSubmit, setPendingSubmit] = useState(false);
   const [pendingStatus, setPendingStatus] = useState(null); // {id, status}
 
   const load = async () => {
     try {
-      const [f, l] = await Promise.all([
+      const [f, l, a, c] = await Promise.all([
         axios.get(`${API}/admin/company-funds`, { withCredentials: true }),
         axios.get(`${API}/admin/company-withdrawals`, { withCredentials: true }),
+        axios.get(`${API}/admin/company-funds/adjustments`, { withCredentials: true }),
+        axios.get(`${API}/currencies`, { withCredentials: true }),
       ]);
-      setFunds(f.data); setItems(l.data);
+      setFunds(f.data); setItems(l.data); setAdjustments(a.data); setCurrencies(c.data);
     } catch (e) { toast.error("Error al cargar fondos"); }
   };
   useEffect(() => { load(); }, []);
@@ -107,31 +114,59 @@ export default function AdminCompanyFunds() {
 
       {/* Funds cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="fund-cards">
-        {funds.length === 0 && <div className="col-span-full text-neutral-500 text-sm">Sin movimientos confirmados aún.</div>}
+        {funds.length === 0 && <div className="col-span-full text-neutral-500 text-sm">Sin movimientos registrados aún.</div>}
         {funds.map(f => (
           <div key={f.currency} className="tactile-card p-5" data-testid={`fund-${f.currency}`}>
             <Wallet className="w-4 h-4 text-[#EAB308] mb-2" />
             <div className="micro-label text-neutral-500">{f.currency}</div>
-            <div className="font-display text-2xl mt-1 text-[#22C55E]">{f.balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+            <div
+              className={`font-display text-2xl mt-1 ${
+                f.balance >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"
+              }`}
+              data-testid={`fund-balance-${f.currency}`}
+            >
+              {f.balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </div>
             <div className="text-[0.65rem] text-neutral-500 mt-3 space-y-0.5 font-mono">
-              <div>+ In: {f.inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              <div>+ Órdenes: {f.inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              {f.manual_inflow > 0 && (
+                <div className="text-[#22C55E]/80" data-testid={`fund-manual-in-${f.currency}`}>
+                  + Aporte propio: {f.manual_inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+              )}
               <div>− Clientes: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               <div>− Empresa: {f.outflow_company.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              {f.manual_outflow > 0 && (
+                <div className="text-[#EF4444]/80" data-testid={`fund-manual-out-${f.currency}`}>
+                  − Salida propia: {f.manual_outflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+              )}
             </div>
           </div>
         ))}
       </div>
 
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap justify-between items-center gap-3">
         <h2 className="font-display text-xl">Retiros del fondo</h2>
-        <Button
-          data-testid="create-company-withdrawal"
-          onClick={() => setOpenCreate(true)}
-          disabled={createCurrencies.length === 0}
-          className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none"
-        >
-          <Plus className="w-4 h-4 mr-1" /> Nuevo retiro
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            data-testid="open-adjustment-dialog"
+            variant="outline"
+            onClick={() => setOpenAdjustment(true)}
+            disabled={currencies.length === 0}
+            className="rounded-none border-white/20 hover:bg-white/5"
+          >
+            <SlidersHorizontal className="w-4 h-4 mr-1" /> Ajuste manual
+          </Button>
+          <Button
+            data-testid="create-company-withdrawal"
+            onClick={() => setOpenCreate(true)}
+            disabled={createCurrencies.length === 0}
+            className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none"
+          >
+            <Plus className="w-4 h-4 mr-1" /> Nuevo retiro
+          </Button>
+        </div>
       </div>
 
       <div className="tactile-card overflow-hidden">
@@ -241,6 +276,26 @@ export default function AdminCompanyFunds() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Manual adjustments section */}
+      <div className="flex flex-wrap justify-between items-center gap-3 pt-4">
+        <div>
+          <h2 className="font-display text-xl">Ajustes manuales de capital</h2>
+          <p className="text-neutral-500 text-xs mt-1">
+            Aportes propios (inyección de capital) o retiros del socio. Se reflejan en el balance por moneda.
+          </p>
+        </div>
+      </div>
+      <AdjustmentsTable items={adjustments} />
+
+      <AdjustmentDialog
+        open={openAdjustment}
+        onOpenChange={setOpenAdjustment}
+        currencies={currencies.filter(c =>
+          isAdmin || !user?.allowed_currencies?.length || user.allowed_currencies.includes(c.code)
+        )}
+        onCreated={load}
+      />
 
       <TotpPromptDialog
         open={!!pendingStatus}
