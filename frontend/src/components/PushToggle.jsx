@@ -38,29 +38,83 @@ export default function PushToggle() {
   const subscribe = async () => {
     setBusy(true);
     try {
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") {
-        setStatus("denied");
-        toast.error("Permiso de notificaciones rechazado");
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        toast.error("Tu navegador no soporta notificaciones push");
+        setStatus("unsupported");
         return;
       }
-      const { data } = await axios.get(`${API}/push/vapid-public-key`, { withCredentials: true });
+      // Some Android browsers only fire the permission prompt if the call
+      // originates from a user gesture. This function is invoked via onClick
+      // so we're OK, but we still guard against a stale "denied" state.
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        setStatus(perm === "denied" ? "denied" : "unsubscribed");
+        toast.error(
+          perm === "denied"
+            ? "Bloqueaste las notificaciones. Habilítalas en ajustes del navegador."
+            : "Permiso de notificaciones no otorgado"
+        );
+        return;
+      }
+      let vapidKey;
+      try {
+        const { data } = await axios.get(
+          `${API}/push/vapid-public-key`,
+          { withCredentials: true }
+        );
+        vapidKey = data?.key;
+      } catch {
+        toast.error("No se pudo obtener la clave VAPID del servidor");
+        return;
+      }
+      if (!vapidKey) {
+        toast.error("Servidor sin VAPID configurada. Contacta al administrador.");
+        return;
+      }
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(data.key),
-      });
-      await axios.post(`${API}/push/subscribe`, {
-        subscription: sub.toJSON(),
-        user_agent: navigator.userAgent,
-      }, { withCredentials: true });
+      let sub;
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        });
+      } catch (err) {
+        // Common Android error surface — expose the *actual* browser error so
+        // the operator can distinguish permission vs. network vs. invalid key.
+        const name = err?.name || "Error";
+        const msg = err?.message || "desconocido";
+        captureError(err, { where: "PushToggle.subscribe.pushManager" });
+        if (name === "NotAllowedError") {
+          toast.error("Permiso rechazado por el navegador. Revisa ajustes del sitio.");
+        } else if (name === "NotSupportedError") {
+          toast.error("Push no soportado. Prueba en Chrome/Firefox actualizado.");
+        } else if (name === "AbortError") {
+          toast.error("Suscripción cancelada. Intenta de nuevo.");
+        } else if (name === "InvalidAccessError" || name === "InvalidStateError") {
+          toast.error("Clave VAPID inválida. Contacta al administrador.");
+        } else {
+          toast.error(`Error de push (${name}): ${msg.slice(0, 80)}`);
+        }
+        return;
+      }
+      try {
+        await axios.post(`${API}/push/subscribe`, {
+          subscription: sub.toJSON(),
+          user_agent: navigator.userAgent,
+        }, { withCredentials: true });
+      } catch (err) {
+        toast.error("El servidor rechazó la suscripción. Contacta al administrador.");
+        // best-effort cleanup: undo the browser subscription so the user can retry
+        try { await sub.unsubscribe(); } catch { /* ignore */ }
+        captureError(err, { where: "PushToggle.subscribe.serverPost" });
+        return;
+      }
       setStatus("subscribed");
       toast.success("Notificaciones activadas");
-      // Send test notification
+      // Send test notification — non-fatal
       try {
         await axios.post(`${API}/push/test`, {}, { withCredentials: true });
       } catch (err) {
-        // benign: first device may not have receivers yet — track as a warning only
         captureError(err, {
           where: "PushToggle.testNotification",
           status: err?.response?.status,
@@ -68,9 +122,9 @@ export default function PushToggle() {
         });
       }
     } catch (e) {
-      // intentional: surface push setup errors in production
-      captureError(e, { where: "PushToggle.subscribe" });
-      toast.error("Error al activar notificaciones");
+      // Catch-all for anything unexpected (e.g. serviceWorker.ready timeout)
+      captureError(e, { where: "PushToggle.subscribe.outer" });
+      toast.error(`Error inesperado: ${e?.message?.slice(0, 80) || "reintentar"}`);
     } finally {
       setBusy(false);
     }

@@ -312,9 +312,17 @@ async def create_company_fund_adjustment(
     # Validate the currency exists in the catalog
     cur_doc = await db.currencies.find_one({"code": currency}, {"_id": 0})
     if not cur_doc:
+        # Provide the operator the actual list of active currencies so the UI
+        # dropdown mismatch is obvious.
+        active = [c["code"] async for c in db.currencies.find(
+            {"is_active": True}, {"_id": 0, "code": 1}
+        )]
         raise HTTPException(
             status_code=400,
-            detail=f"Moneda {currency} no existe en el catálogo",
+            detail=(
+                f"Moneda «{currency}» no disponible en el catálogo. "
+                f"Válidas: {', '.join(sorted(active))}"
+            ),
         )
 
     adjustment = CompanyFundAdjustment(
