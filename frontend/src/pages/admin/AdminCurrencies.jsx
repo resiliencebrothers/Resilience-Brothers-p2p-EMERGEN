@@ -97,7 +97,31 @@ export default function AdminCurrencies() {
         <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Moneda</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label className="micro-label text-neutral-500">Código (USDT, USD, CUP...)</Label><Input data-testid="cur-code" value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
+            <div>
+              <Label className="micro-label text-neutral-500">Código (USDT, USD, CUP...)</Label>
+              <Input
+                data-testid="cur-code"
+                value={form.code}
+                onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })}
+                className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono"
+              />
+              {form.code && form.code !== form.code.trim() && (
+                <div
+                  data-testid="cur-code-preview"
+                  className="mt-1.5 text-[0.7rem] text-[#EAB308] font-mono flex items-center gap-1"
+                >
+                  <span className="opacity-60">Se guardará como:</span>
+                  <span className="border border-[#EAB308]/40 bg-[#EAB308]/5 px-1.5 py-0.5">
+                    {form.code.trim()}
+                  </span>
+                </div>
+              )}
+              {form.code && form.code === form.code.trim() && (
+                <div className="mt-1 text-[0.65rem] text-neutral-600 font-mono">
+                  ↳ se guardará como <span className="text-neutral-400">{form.code.trim()}</span>
+                </div>
+              )}
+            </div>
             <div><Label className="micro-label text-neutral-500">Nombre</Label><Input data-testid="cur-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
             <div>
               <Label className="micro-label text-neutral-500">Tipo</Label>
