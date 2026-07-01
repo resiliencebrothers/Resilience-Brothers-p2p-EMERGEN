@@ -215,6 +215,22 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 
 ## Prioritized Backlog
 ### P0 — Waiting on user
+
+### P1 — Prioritized next
+- **Self-service appeal flow** para usuarios `under_review`: banner en dashboard + formulario + cola staff con `can_manage_blocklist`.
+
+### P2 — Backlog
+- **🪙 Wallets crypto on-chain (USDT-TRC20/ERC-20, BTC)** — PRIORIDAD ALTA cuando se retome. Justificación: la mayoría de clientes son cubanos y **crypto es la vía principal de entrada de fondos** (Stripe/tarjetas no viables en Cuba). Alcance recomendado:
+  - Fase 1 (~3-4 días): read-only — auto-detección de depósitos USDT-TRC20 vía polling de TronGrid o webhook de proveedor (Tatum/BlockCypher). Marca orden como "fondos recibidos" automáticamente + guarda TX hash y link a explorer.
+  - Fase 2 (~1-2 semanas + auditoría seguridad): payouts firmados desde hot-wallet company. Requiere private key management (Fireblocks/BitGo custodial o Ledger self-custody).
+- Email diario al `ops_notifications_email` con tickets anti-fraude >48h.
+- Gráfico histórico de blocks/semana en sección Anti-fraude.
+- Refactor opcional: BalanceConverterCard (284L) y VipView (410L) en sub-componentes.
+- Reemplazar `is` con `==` en comparaciones de literales en tests (170 instancias).
+- `<th>Real</th>` column en AdminRates.
+
+### ❌ Descartado
+- **Stripe webhooks / Plaid** — no viable: mayoría de clientes son de Cuba, no tienen acceso a estos servicios financieros US.
 - ✅ ~~Verify `resiliencebrothers.com` DNS in Resend~~ — DONE (jun 26, 2026): domain verified, `EMAIL_SENDER` switched to `noreply@resiliencebrothers.com`. Production deploy still pending so user can paste `APP_PUBLIC_URL=https://p2p.resiliencebrothers.com` in Emergent Secrets and click Deploy.
 
 ### P1
