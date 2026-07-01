@@ -108,8 +108,10 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
     """Per-currency platform working-capital balance.
 
     balance[c] = inflows_from_confirmed_orders[c]
-                - outflows_to_clients_paid[c]
+                - outflow_orders[c]  (iter55 — order payouts to clients)
+                - outflows_to_clients_paid[c]  (VIP balance withdrawals)
                 - outflows_company_paid[c]
+                + manual_inflow[c] - manual_outflow[c]
     `scope` (currency codes) optionally restricts the returned list.
     """
     inflow: dict = {}
@@ -120,6 +122,19 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         c = o.get("from_code")
         if c:
             inflow[c] = inflow.get(c, 0.0) + float(o.get("amount_from") or 0.0)
+
+    # iter55 — order payouts (money physically leaving the treasury when the
+    # admin completes an order with a physical delivery method).
+    # `accumulate` is not an outflow: the money stays in the treasury and is
+    # tracked as VIP liability, which is settled via db.withdrawals below.
+    out_orders: dict = {}
+    async for o in db.orders.find(
+        {"status": "completed", "delivery_method": {"$ne": "accumulate"}},
+        {"_id": 0, "to_code": 1, "amount_to": 1},
+    ):
+        c = o.get("to_code")
+        if c:
+            out_orders[c] = out_orders.get(c, 0.0) + float(o.get("amount_to") or 0.0)
 
     out_clients: dict = {}
     async for w in db.withdrawals.find(
@@ -151,12 +166,14 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         elif a.get("adjustment_type") == "outflow":
             manual_out[c] = manual_out.get(c, 0.0) + amt
 
-    codes = set(inflow) | set(out_clients) | set(out_company) | set(manual_in) | set(manual_out)
+    codes = (set(inflow) | set(out_orders) | set(out_clients) | set(out_company)
+             | set(manual_in) | set(manual_out))
     rows = []
     for c in sorted(codes):
         if scope and c not in scope:
             continue
         i = inflow.get(c, 0.0)
+        oo = out_orders.get(c, 0.0)
         oc = out_clients.get(c, 0.0)
         ok = out_company.get(c, 0.0)
         mi = manual_in.get(c, 0.0)
@@ -164,11 +181,12 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         rows.append({
             "currency": c,
             "inflow": round(i, 4),
+            "outflow_orders": round(oo, 4),
             "outflow_clients": round(oc, 4),
             "outflow_company": round(ok, 4),
             "manual_inflow": round(mi, 4),
             "manual_outflow": round(mo, 4),
-            "balance": round(i + mi - oc - ok - mo, 4),
+            "balance": round(i + mi - oo - oc - ok - mo, 4),
         })
     return rows
 

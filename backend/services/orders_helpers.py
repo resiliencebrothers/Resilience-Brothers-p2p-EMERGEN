@@ -20,6 +20,7 @@ from push_service import (
     send_push,
     build_order_approved_payload,
     build_order_rejected_payload,
+    build_order_completed_payload,
 )
 
 from services.balances import (
@@ -244,11 +245,12 @@ async def send_client_order_email(order: dict, new_status: str, target_user: dic
 
 async def send_client_order_push(order: dict, new_status: str) -> None:
     try:
-        push_payload = (
-            build_order_approved_payload(order)
-            if new_status == "approved"
-            else build_order_rejected_payload(order)
-        )
+        if new_status == "approved":
+            push_payload = build_order_approved_payload(order)
+        elif new_status == "completed":
+            push_payload = build_order_completed_payload(order)
+        else:
+            push_payload = build_order_rejected_payload(order)
         subs = await db.push_subscriptions.find(
             {"user_id": order["user_id"]}, {"_id": 0}
         ).to_list(50)
@@ -300,8 +302,11 @@ async def run_post_status_side_effects(order: dict, new_status: str, prev_status
         await accumulate_vip_balance(order)
         if order["user_role"] in ("vip", "admin"):
             await check_vip_threshold_alert(order)
-    if new_status in ("approved", "rejected") and prev_status != new_status:
+    if new_status in ("approved", "rejected", "completed") and prev_status != new_status:
         target_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
         if target_user:
-            await send_client_order_email(order, new_status, target_user)
+            # Email: keep the historical approved/rejected copy — no dedicated
+            # "completed" template yet. Push covers the completion beat.
+            if new_status in ("approved", "rejected"):
+                await send_client_order_email(order, new_status, target_user)
             await send_client_order_push(order, new_status)

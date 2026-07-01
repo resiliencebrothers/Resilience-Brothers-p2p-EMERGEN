@@ -319,7 +319,7 @@ export default function MyTransactions() {
                 </div>
                 <div className="col-span-2">
                   <div className="micro-label text-neutral-500 mb-1">
-                    {selected.ref_type === "order" ? "ID Orden" : "ID Retiro"}
+                    {selected.ref_type === "withdrawal" ? "ID Retiro" : "ID Orden"}
                   </div>
                   <div className="font-mono text-xs text-neutral-400">{selected.ref_id}</div>
                 </div>
@@ -332,16 +332,18 @@ export default function MyTransactions() {
                   <div className="text-sm whitespace-pre-wrap font-mono text-neutral-300">{selected.delivery_details}</div>
                 </div>
               )}
-              {selected.direction === "in" && selected.proof_image && (
+              {(selected.direction === "in" || selected.ref_type === "order_payout") && selected.proof_image && (
                 <div>
-                  <div className="micro-label text-neutral-500 mb-2">Comprobante</div>
+                  <div className="micro-label text-neutral-500 mb-2">
+                    {selected.ref_type === "order_payout" ? "Comprobante del pago recibido" : "Comprobante"}
+                  </div>
                   <a href={selected.proof_image} target="_blank" rel="noreferrer" className="block border border-white/10 bg-[#0a0a0a] p-2">
                     <img src={selected.proof_image} alt="Comprobante" className="w-full max-h-96 object-contain bg-black"
                       onError={(e) => { e.currentTarget.style.display = "none"; }} />
                   </a>
                 </div>
               )}
-              {selected.direction === "out" && (
+              {selected.direction === "out" && selected.ref_type !== "order_payout" && (
                 <div className="border border-dashed border-white/10 p-4 text-center text-xs text-neutral-500">
                   <X className="w-4 h-4 inline mr-1" /> Las salidas no incluyen comprobante de transferencia entrante.
                 </div>

@@ -1,0 +1,44 @@
+{
+  "summary": "iter55 — Verified: (1) Fondo Empresa outflow_orders reduces balance ONLY when order.status=completed AND delivery_method IN (transfer, cash, crypto). Accumulate & approved leave balance untouched. (2) /api/admin/transactions + /api/me/transactions emit ref_type='order_payout' rows for the same set (38 payout rows visible for admin, 5 for VIP). CSV export contains 'order_payout'. (3) Rate PUT triggers push fanout without crashing (200 OK on both delta and no-op updates). (4) Order status PUT->completed returns 200 and side-effect push does not throw. Backend: 17/17 iter55 pytest + 10/10 live-URL smoke + 28/28 company-funds regression = 55/55 PASS. Frontend: /admin/company-funds subtitle & red 'Entregado a clientes' + fund-order-out-CUP testid confirmed; /admin/transactions payout modal shows 'ID ORDEN', 'DATOS DEL BENEFICIARIO', 'COMPROBANTE DEL PAGO AL CLIENTE' + 'IR A ÓRDENES'; /dashboard/transactions VIP shows 'SALIDA CUP 2,370 TRANSFER COMPLETED' with modal 'COMPROBANTE DEL PAGO RECIBIDO'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/transactions & /api/admin/transactions/export.csv", "issue": "services/transactions.py:205 items.sort(key=lambda x: x.get('created_at','')) 500s with TypeError when any doc in scope has a numeric created_at (e.g. float from legacy or badly-seeded data) mixed with ISO strings. Defensive fix: coerce key to str(x.get('created_at') or '')."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "TransactionDetailModal proof image", "issues": ["Rendered <img> box appears empty visually even though /api/files/order_payouts/... returns HTTP 200 — likely the seeded proof is a 1x1 PNG. Not a bug in prod flow, but consider adding an object-fit/min-height fallback so tiny images don't collapse to invisible strip."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_order_outflows.py",
+    "/app/backend/tests/test_iter55_push_notifications.py",
+    "/app/backend/tests/test_iter41_live_smoke.py",
+    "/app/test_reports/pytest/iter41_iter55.xml",
+    "/app/test_reports/pytest/iter41_live_smoke.xml"
+  ],
+  "action_items": [
+    "(Minor) Harden services/transactions.py sort key against mixed-type created_at to prevent 500 if a legacy order has a non-string timestamp.",
+    "(Cosmetic) TransactionDetailModal: give the proof <img> a min-height/border-fallback so a small/invalid image doesn't render as an invisible frame."
+  ],
+  "critical_code_review_comments": [
+    "routes/admin_company_funds.py _compute_company_funds correctly adds outflow_orders only when status=='completed' AND delivery_method in {transfer,cash,crypto}; balance formula matches subtitle: inflow+manual_inflow − outflow_orders − outflow_clients − outflow_company − manual_outflow. Verified via CUP baseline arithmetic.",
+    "services/transactions.py build_transactions emits order_payout for the same gating, and includes proof_image + delivery_details in the payload — good for the modal.",
+    "services/transactions.py:205 the sort key defaults to '' which mixes types when created_at is numeric. Use str(x.get('created_at') or '') to avoid TypeError.",
+    "push_service.build_rate_changed_payload fanout is fire-and-forget (rate PUT stays 200 even if push subsystem misbehaves) — good design, best-effort as declared.",
+    "Frontend uses distinct testid prefixes: admin=tx-row-{id}, VIP dashboard=my-tx-row-{id}. Consistent modal testid tx-detail-modal on both sides."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter41_live_smoke.py (new — 10 live smoke tests against REACT_APP_BACKEND_URL)"
+  ],
+  "success_rate": {"backend": "100% (55/55 across iter55 + live smoke + regression)", "frontend": "100% for admin+VIP flows validated"},
+  "test_credentials": "Used /app/memory/test_credentials.md — admin cookie test_session_admin_X, VIP cookie test_session_vip_X, TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP (passed inline in JSON body as totp_code, NOT as x-totp-code header).",
+  "seed_data_creation": "Live smoke tests insert TEST_ITER41_* orders directly into db.orders and clean them via module-scoped fixture teardown (order_number regex match). Manual PATCH test also cleaned inline.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Rate PUT endpoint requires totp_code IN the JSON BODY (not header) — model field TotpProtected. Order status transition uses PUT /api/admin/orders/{id}/status (NOT PATCH); requires payout_proof_image + payout_delivery_details when transitioning to 'completed' for transfer/cash/crypto orders. Transaction docs use ISO-string created_at everywhere — legacy float timestamps break the sort in services/transactions.py:205 (500). Frontend testid prefixes: admin=tx-row, VIP=my-tx-row.",
+  "rca of the issue": "N/A — no regressions. Only new observation is the sort-key type-mix vulnerability in services/transactions.py, which is a defensive-hardening comment rather than a live bug (nothing in normal code paths writes non-string created_at)."
+}

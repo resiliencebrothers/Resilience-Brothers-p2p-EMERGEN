@@ -71,6 +71,52 @@ def build_order_rejected_payload(order: dict) -> dict:
     }
 
 
+def build_order_completed_payload(order: dict) -> dict:
+    """iter55 — Sent when the admin/staff marks an order as `completed` (payout
+    delivered). For `accumulate`, the tone is different (balance credited)."""
+    method = order.get("delivery_method")
+    amount_to = order.get("amount_to", 0)
+    to_code = order.get("to_code", "")
+    if method == "accumulate":
+        body = f"Se acreditó {amount_to} {to_code} a tu saldo VIP."
+    elif method == "crypto":
+        body = f"Enviamos {amount_to} {to_code} a tu wallet. Revisa el TX hash."
+    elif method == "cash":
+        body = f"Efectivo de {amount_to} {to_code} entregado. Confirma la recepción."
+    else:  # transfer
+        body = f"Transferimos {amount_to} {to_code} a tu cuenta. Revisa el comprobante."
+    return {
+        "title": f"Orden #{order['id'][:8]} completada ✓",
+        "body": body,
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"order-{order['id']}-completed",
+        "url": f"{APP_URL}/dashboard/orders" if APP_URL else "/dashboard/orders",
+    }
+
+
+def build_rate_changed_payload(from_code: str, to_code: str,
+                                rate_normal: float, rate_vip: float,
+                                for_role: str = "normal") -> dict:
+    """iter55 — Fanout to all clients when an exchange rate is updated.
+    `for_role='vip'` shows the VIP rate; 'normal' shows the standard rate."""
+    rate = rate_vip if for_role == "vip" else rate_normal
+    label = "VIP" if for_role == "vip" else ""
+    return {
+        "title": f"Nueva tasa {from_code} → {to_code}",
+        "body": (
+            f"1 {from_code} = {rate:g} {to_code}"
+            + (f" ({label})" if label else "")
+            + ". Revisa el dashboard antes de intercambiar."
+        ),
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        # Same tag per pair → replaces older rate notifications on the device.
+        "tag": f"rate-{from_code}-{to_code}",
+        "url": f"{APP_URL}/dashboard" if APP_URL else "/dashboard",
+    }
+
+
 # ============================================================
 # iter30 — generic per-user push delivery used by routes/notifications.py
 # ============================================================

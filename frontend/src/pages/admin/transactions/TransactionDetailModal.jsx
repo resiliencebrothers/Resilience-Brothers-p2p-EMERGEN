@@ -71,7 +71,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             </div>
             <div className="col-span-2">
               <div className="micro-label text-neutral-500 mb-1">
-                {selected.ref_type === "order" ? "ID Orden" : "ID Retiro"}
+                {selected.ref_type === "withdrawal" ? "ID Retiro" : "ID Orden"}
               </div>
               <div className="font-mono text-xs text-neutral-400">{selected.ref_id}</div>
             </div>
@@ -95,10 +95,14 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             </div>
           )}
 
-          {selected.direction === "in" && (
+          {(selected.direction === "in" || selected.ref_type === "order_payout") && (
             <div>
               <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between">
-                <span>Comprobante de transferencia</span>
+                <span>
+                  {selected.ref_type === "order_payout"
+                    ? "Comprobante del pago al cliente"
+                    : "Comprobante de transferencia"}
+                </span>
                 {selected.proof_image && (
                   <a
                     href={selected.proof_image}
@@ -133,7 +137,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             </div>
           )}
 
-          {selected.direction === "out" && (
+          {selected.direction === "out" && selected.ref_type !== "order_payout" && (
             <div className="border border-dashed border-white/10 p-4 text-center text-xs text-neutral-500">
               <X className="w-4 h-4 inline mr-1" />
               Las salidas no tienen comprobante de transferencia entrante (son pagos de la plataforma al cliente).
@@ -147,7 +151,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
               className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black font-bold h-10 px-4 text-xs uppercase tracking-wider"
             >
               <ExternalLink className="w-3.5 h-3.5 mr-2" />
-              {selected.ref_type === "order" ? "Ir a Órdenes" : "Ir a Retiros VIP"}
+              {selected.ref_type === "withdrawal" ? "Ir a Retiros VIP" : "Ir a Órdenes"}
             </Button>
           </div>
         </div>

@@ -222,12 +222,56 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
         await _scan_rate_change_margin(old, fresh)
     except Exception as e:
         logger.error(f"Rate update margin scan failed: {e}")
+    # iter55 — fanout push notification to all clients when the customer-facing
+    # rate actually changed (ignore no-op saves like updating only real_rate).
+    try:
+        await _fanout_rate_change_push(old, fresh)
+    except Exception as e:
+        logger.error(f"Rate change push fanout failed: {e}")
     await log_action(
         db, actor, "rate.update", "rate", rate_id,
         summary=f"Tasa {fresh['from_code']}→{fresh['to_code']} actualizada",
         details={"old": old, "new": fresh},
     )
     return fresh
+
+
+async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -> None:
+    """Notify every active push subscription belonging to a client role
+    (vip/normal). Skipped when neither `rate_normal` nor `rate_vip` moved."""
+    if not fresh:
+        return
+    old_normal = float((old or {}).get("rate_normal") or 0.0)
+    old_vip = float((old or {}).get("rate_vip") or 0.0)
+    new_normal = float(fresh.get("rate_normal") or 0.0)
+    new_vip = float(fresh.get("rate_vip") or 0.0)
+    if new_normal == old_normal and new_vip == old_vip:
+        return
+    from push_service import build_rate_changed_payload, send_push
+    subs = await db.push_subscriptions.find({}, {"_id": 0}).to_list(5000)
+    if not subs:
+        return
+    # Preload the role of every user referenced by a subscription
+    user_ids = list({s.get("user_id") for s in subs if s.get("user_id")})
+    users = await db.users.find(
+        {"user_id": {"$in": user_ids}, "role": {"$in": ["vip", "normal"]}},
+        {"_id": 0, "user_id": 1, "role": 1},
+    ).to_list(len(user_ids))
+    role_by_id = {u["user_id"]: u["role"] for u in users}
+    dead_ids: list[str] = []
+    for sub in subs:
+        uid = sub.get("user_id")
+        role = role_by_id.get(uid)
+        if role not in ("vip", "normal"):
+            continue
+        payload = build_rate_changed_payload(
+            fresh["from_code"], fresh["to_code"],
+            new_normal, new_vip, for_role=role,
+        )
+        if send_push(sub.get("subscription"), payload) == "dead":
+            dead_ids.append(sub["id"])
+    if dead_ids:
+        await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
 
 
 async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]) -> Any:

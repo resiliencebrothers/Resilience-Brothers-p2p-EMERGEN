@@ -165,6 +165,43 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
                 "admin_note": w.get("admin_note", ""),
             })
 
+        # iter55 — P2P order payouts (SALIDAS): when an order is completed and
+        # delivery_method is not "accumulate", the company physically paid the
+        # client. Register as an outbound transaction in the destination currency.
+        order_out_q: dict = {
+            "status": "completed",
+            "delivery_method": {"$in": ["transfer", "cash", "crypto"]},
+            **date_q,
+        }
+        if user_id:
+            order_out_q["user_id"] = user_id
+        if currency:
+            order_out_q["to_code"] = currency
+        if holder:
+            # holder for outbound P2P is the client themselves (destination account)
+            order_out_q["$or"] = [
+                {"user_name": {"$regex": holder, "$options": "i"}},
+                {"delivery_details": {"$regex": holder, "$options": "i"}},
+            ]
+        order_outs = await db.orders.find(order_out_q, {"_id": 0}).to_list(5000)
+        for o in order_outs:
+            items.append({
+                "direction": "out",
+                "currency": o["to_code"],
+                "amount": float(o.get("amount_to", 0.0)),
+                "holder_name": o.get("user_name", ""),  # client receives the payout
+                "client_name": o.get("user_name", ""),
+                "client_email": o.get("user_email", ""),
+                "method": o.get("delivery_method", ""),
+                "status": o.get("status", ""),
+                "ref_id": o.get("id", ""),
+                "ref_type": "order_payout",
+                "created_at": o.get("updated_at") or o.get("created_at", ""),
+                "proof_image": o.get("payout_proof_image", ""),
+                "delivery_details": o.get("delivery_details", ""),
+                "admin_note": o.get("admin_note", ""),
+            })
+
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     if min_amount is not None:
         items = [it for it in items if it["amount"] >= min_amount]

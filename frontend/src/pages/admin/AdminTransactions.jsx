@@ -118,7 +118,7 @@ export default function AdminTransactions() {
     minAmount !== "" || maxAmount !== "";
 
   const goToSource = (tx) => {
-    const target = tx.ref_type === "order" ? "/admin/orders" : "/admin/withdrawals";
+    const target = tx.ref_type === "withdrawal" ? "/admin/withdrawals" : "/admin/orders";
     setSelected(null);
     navigate(target);
   };

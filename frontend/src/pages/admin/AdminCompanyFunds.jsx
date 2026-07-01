@@ -108,7 +108,7 @@ export default function AdminCompanyFunds() {
         <div className="micro-label text-[#EAB308] mb-2">/ Fondo de la Empresa</div>
         <h1 className="font-display text-3xl">Capital operativo por moneda</h1>
         <p className="text-neutral-500 text-sm mt-2">
-          Saldo = entradas (órdenes confirmadas) − salidas a clientes − salidas de la empresa.
+          Saldo = entradas (órdenes confirmadas + aportes propios) − entregas a clientes (P2P + retiros VIP) − salidas de la empresa.
         </p>
       </div>
 
@@ -134,7 +134,12 @@ export default function AdminCompanyFunds() {
                   + Aporte propio: {f.manual_inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </div>
               )}
-              <div>− Clientes: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              {(f.outflow_orders ?? 0) > 0 && (
+                <div className="text-[#EF4444]/80" data-testid={`fund-order-out-${f.currency}`}>
+                  − Entregado a clientes: {f.outflow_orders.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+              )}
+              <div>− Retiros VIP: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               <div>− Empresa: {f.outflow_company.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               {f.manual_outflow > 0 && (
                 <div className="text-[#EF4444]/80" data-testid={`fund-manual-out-${f.currency}`}>
