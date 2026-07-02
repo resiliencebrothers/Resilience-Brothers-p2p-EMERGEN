@@ -283,8 +283,11 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
 
 
 async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -> None:
-    """Notify every active push subscription belonging to a client role
-    (vip/normal). Skipped when neither `rate_normal` nor `rate_vip` moved."""
+    """Notify every client (role vip/normal) about the rate change via BOTH:
+    1) In-app notification (`db.notifications`) — every active client gets it,
+       whether or not they subscribed to push.
+    2) Web Push — only devices that opted in through the bell toggle.
+    Skipped when neither `rate_normal` nor `rate_vip` moved."""
     if not fresh:
         logger.info("[rate-fanout] skipped: no fresh rate")
         return
@@ -296,18 +299,45 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
     if new_normal == old_normal and new_vip == old_vip:
         logger.info(f"[rate-fanout] {pair}: no-op (rates unchanged)")
         return
+
+    # ------------------------------------------------------------------
+    # 1) In-app notifications — fanout to every ACTIVE client, not just push subs.
+    # ------------------------------------------------------------------
+    from routes.notifications import _insert_notification
+    from_code, to_code = fresh["from_code"], fresh["to_code"]
+    clients = await db.users.find(
+        {"role": {"$in": ["vip", "normal"]}, "account_status": {"$ne": "suspended"}},
+        {"_id": 0, "user_id": 1, "role": 1},
+    ).to_list(20000)
+    inapp_created = 0
+    for u in clients:
+        rate = new_vip if u["role"] == "vip" else new_normal
+        try:
+            await _insert_notification(
+                recipient_user_id=u["user_id"],
+                type="rate_change",
+                title=f"Nueva tasa {from_code} → {to_code}",
+                message=(
+                    f"1 {from_code} = {rate:g} {to_code}"
+                    + (" (tarifa VIP)" if u["role"] == "vip" else "")
+                    + "."
+                ),
+                data={
+                    "from_code": from_code, "to_code": to_code,
+                    "rate_normal": new_normal, "rate_vip": new_vip,
+                    "old_rate_normal": old_normal, "old_rate_vip": old_vip,
+                },
+            )
+            inapp_created += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[rate-fanout] inapp insert failed for {u.get('user_id')}: {e}")
+
+    # ------------------------------------------------------------------
+    # 2) Web Push — only devices that opted in.
+    # ------------------------------------------------------------------
     from push_service import build_rate_changed_payload, send_push
     subs = await db.push_subscriptions.find({}, {"_id": 0}).to_list(5000)
-    if not subs:
-        logger.info(f"[rate-fanout] {pair}: 0 push subscriptions in DB — nothing to notify")
-        return
-    # Preload the role of every user referenced by a subscription
-    user_ids = list({s.get("user_id") for s in subs if s.get("user_id")})
-    users = await db.users.find(
-        {"user_id": {"$in": user_ids}, "role": {"$in": ["vip", "normal"]}},
-        {"_id": 0, "user_id": 1, "role": 1},
-    ).to_list(len(user_ids))
-    role_by_id = {u["user_id"]: u["role"] for u in users}
+    role_by_id = {u["user_id"]: u["role"] for u in clients}
     dead_ids: list[str] = []
     sent, skipped, dead = 0, 0, 0
     for sub in subs:
@@ -317,8 +347,7 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
             skipped += 1
             continue
         payload = build_rate_changed_payload(
-            fresh["from_code"], fresh["to_code"],
-            new_normal, new_vip, for_role=role,
+            from_code, to_code, new_normal, new_vip, for_role=role,
         )
         result = send_push(sub.get("subscription"), payload)
         if result == "dead":
@@ -331,8 +360,8 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
     if dead_ids:
         await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
     logger.info(
-        f"[rate-fanout] {pair}: total_subs={len(subs)} client_subs={len(subs) - skipped} "
-        f"sent={sent} dead_pruned={dead} skipped={skipped} "
+        f"[rate-fanout] {pair}: clients={len(clients)} inapp={inapp_created} "
+        f"push_sent={sent} push_dead_pruned={dead} push_skipped={skipped} "
         f"delta_normal={old_normal}→{new_normal} delta_vip={old_vip}→{new_vip}"
     )
 

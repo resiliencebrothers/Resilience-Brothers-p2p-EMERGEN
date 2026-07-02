@@ -261,6 +261,49 @@ async def send_client_order_push(order: dict, new_status: str) -> None:
         logger.error(f"Push notification failed: {e}")
 
 
+async def create_inapp_order_notification(order: dict, new_status: str) -> None:
+    """iter55.6 — Mirror push into the in-app inbox so users still see the event
+    even if they never subscribed to Web Push (or the push endpoint was pruned)."""
+    try:
+        from routes.notifications import _insert_notification
+        amt = order.get("amount_to", 0)
+        code = order.get("to_code", "")
+        method = order.get("delivery_method")
+        if new_status == "approved":
+            title = f"Orden #{order['id'][:8]} confirmada"
+            msg = f"Recibimos tu pago. Estamos preparando la entrega de {amt} {code}."
+        elif new_status == "completed":
+            title = f"Orden #{order['id'][:8]} completada"
+            if method == "accumulate":
+                msg = f"Se acreditaron {amt} {code} a tu saldo VIP."
+            elif method == "crypto":
+                msg = f"Enviamos {amt} {code} a tu wallet. Revisa el TX hash en la orden."
+            elif method == "cash":
+                msg = f"Efectivo de {amt} {code} entregado. Confirma la recepción."
+            else:  # transfer
+                msg = f"Transferimos {amt} {code} a tu cuenta. Revisa el comprobante."
+        else:  # rejected
+            title = f"Orden #{order['id'][:8]} rechazada"
+            note = (order.get("admin_note") or "").strip()[:120]
+            msg = note or "Por favor revisa los detalles en tu dashboard."
+        await _insert_notification(
+            recipient_user_id=order["user_id"],
+            type=f"order_{new_status}",
+            title=title,
+            message=msg,
+            data={
+                "order_id": order["id"],
+                "from_code": order.get("from_code"),
+                "to_code": code,
+                "amount_from": order.get("amount_from"),
+                "amount_to": amt,
+                "delivery_method": method,
+            },
+        )
+    except Exception as e:
+        logger.error(f"In-app order notification failed: {e}")
+
+
 async def authorize_status_transition(actor: dict, order: dict, new_status: str,
                                        totp_code: Optional[str]) -> None:
     """Enforce all permission + scope + 2FA rules before mutating the order.
@@ -310,3 +353,4 @@ async def run_post_status_side_effects(order: dict, new_status: str, prev_status
             if new_status in ("approved", "rejected"):
                 await send_client_order_email(order, new_status, target_user)
             await send_client_order_push(order, new_status)
+            await create_inapp_order_notification(order, new_status)

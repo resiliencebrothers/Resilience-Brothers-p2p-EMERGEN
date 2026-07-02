@@ -219,7 +219,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
-- **iter55.3 (Mar 1, 2026)**: **Bug crítico prod — currency codes con espacios rompían el ajuste de fondos**.
+- **iter55.6 (Mar 1, 2026)**: **In-app notifications ahora también se crean para rate changes y order status transitions**.
+  - **Root cause reportado por el operador**: cliente con push activo (campanita verde) vio "No tienes notificaciones · Todo al día" en la bandeja in-app tras cambio de tasa. Los helpers `_fanout_rate_change_push` y `send_client_order_push` SOLO enviaban push OS, no creaban entradas en `db.notifications`.
+  - **Fix**: `_fanout_rate_change_push` renombrado a fanout dual — primero inserta en la bandeja de TODOS los clientes activos (role vip/normal, no suspendidos) sin importar si tienen push subscription; luego envía push solo a los que sí opted-in. Admin/staff **excluidos por diseño** (no se notifican a sí mismos). Los tests confirman scope: `test_admin_does_NOT_get_inbox_entry` verifica el gate.
+  - Nuevo helper `create_inapp_order_notification` en `services/orders_helpers.py` — se llama en `run_post_status_side_effects` junto a `send_client_order_push`. Genera entrada con `type=order_approved|order_completed|order_rejected` y `data.order_id` para deeplink. Copy contextual por `delivery_method`.
+  - **Testing**: 5/5 en `test_iter55_6_inapp_notifications.py` — VIP + normal reciben inbox con tasa correspondiente a su rol; admin no; endpoint `/api/notifications` devuelve las entradas; order approved/completed transitions crean sus respectivas notificaciones. Logs claros: `[rate-fanout] {pair}: clients=N inapp=N push_sent=M push_dead_pruned=X push_skipped=Y`.
+
+- **iter55.5 (Mar 1, 2026)**: **Fanout de tasa robustecido + endpoint diagnóstico**.
+  - `POST /admin/rates` (upsert) ahora también dispara `_fanout_rate_change_push` (antes solo lo hacía el PUT).
+  - Logging detallado en el fanout para diagnosticar en producción.
+  - Nuevo endpoint `GET /api/admin/push/stats` (staff-only): total_subscriptions, by_role, client_subscriptions, sample_last_5.
+  - Path count 88→89. 20/20 tests verdes.
+
+
   - **Root cause**: catálogo de producción tenía `"CUP "` (con espacio final) por typo de data-entry. `db.currencies.find_one({"code": "CUP"})` no lo encontraba → 400 "no disponible en el catálogo". Preview no lo mostraba porque su catálogo era limpio.
   - **Fix defensivo (3 capas)**:
     1. **Validators pydantic** en `Currency`/`CurrencyCreate`: `code` se normaliza con `.strip().upper()` al validar → nuevos códigos jamás pueden entrar con whitespace.
