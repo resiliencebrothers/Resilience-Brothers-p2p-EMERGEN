@@ -88,10 +88,23 @@ VALID_ORDER_STATUSES = {
 # ============================================================
 
 async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[float, dict]:
-    """Look up the active rate and pick vip vs normal. Returns (rate, rate_doc)."""
-    rate_doc = await db.rates.find_one(
-        {"from_code": from_code, "to_code": to_code}, {"_id": 0}
-    )
+    """Look up the active rate and pick vip vs normal. Returns (rate, rate_doc).
+
+    iter55.7 — Lenient lookup: falls back to a case-insensitive regex that
+    tolerates leading/trailing whitespace so legacy `CUP ` rate rows still
+    match a normalised `CUP` from the frontend."""
+    fc = (from_code or "").strip().upper()
+    tc = (to_code or "").strip().upper()
+    rate_doc = await db.rates.find_one({"from_code": fc, "to_code": tc}, {"_id": 0})
+    if not rate_doc:
+        import re
+        rate_doc = await db.rates.find_one(
+            {
+                "from_code": {"$regex": f"^\\s*{re.escape(fc)}\\s*$", "$options": "i"},
+                "to_code": {"$regex": f"^\\s*{re.escape(tc)}\\s*$", "$options": "i"},
+            },
+            {"_id": 0},
+        )
     if not rate_doc:
         raise HTTPException(status_code=400, detail="Tasa de cambio no disponible para ese par")
     is_vip = user["role"] in ("vip", "admin")

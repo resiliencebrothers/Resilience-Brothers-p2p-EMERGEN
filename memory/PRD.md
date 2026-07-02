@@ -219,6 +219,16 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.7 (Mar 1, 2026)**: **Whitespace en códigos de moneda: propagación a rates/orders + colapso de balances**.
+  - **Bugs reportados por el operador tras redeploy**:
+    1. Cliente intenta orden USDT→CUP EFECTIVO → **"Tasa de cambio no disponible para ese par"** aunque la tasa está en la tabla. Root cause: la fila de tasa tenía `to_code="CUP "` (con espacio) porque migración anterior de iter55.3 solo limpió `db.currencies`, no `db.rates`.
+    2. Sección Fondo Empresa mostraba **dos filas CUP EFECTIVO separadas** — una negativa (órdenes viejas con `to_code="CUP "`) y otra positiva (ajuste manual nuevo con `"CUP"`). Root cause: `_compute_company_funds` agrupaba por `code` exacto, no normalizado.
+  - **Fix (3 capas)**:
+    1. **`resolve_order_rate`** ahora es lenient: si el lookup exacto falla, cae a regex case-insensitive tolerante a whitespace en `from_code` Y `to_code`.
+    2. **`_compute_company_funds`** normaliza cada código con `_norm(c).strip().upper()` **antes** de agregar → filas con `"CUP"` y `"CUP "` colapsan en una sola fila `CUP`.
+    3. **Migración expandida al startup** (`server.py`): además de `db.currencies`, ahora limpia whitespace en `db.rates.{from_code,to_code}`, `db.orders.{from_code,to_code}`, `db.withdrawals.currency`, `db.company_withdrawals.currency` y `db.company_fund_adjustments.currency`. Idempotente, no-op tras primera corrida.
+  - **Tests**: 3/3 en `test_iter55_7_currency_whitespace_e2e.py` — reproduce el bug operativo (corromper `to_code="CUP "`, cliente envía `"CUP"`, orden debe ser 200) + verifica el colapso de filas CUP en `/admin/company-funds`. Regresión completa 90/91 en baterías relevantes. Mypy 25/25.
+
 - **iter55.6 (Mar 1, 2026)**: **In-app notifications ahora también se crean para rate changes y order status transitions**.
   - **Root cause reportado por el operador**: cliente con push activo (campanita verde) vio "No tienes notificaciones · Todo al día" en la bandeja in-app tras cambio de tasa. Los helpers `_fanout_rate_change_push` y `send_client_order_push` SOLO enviaban push OS, no creaban entradas en `db.notifications`.
   - **Fix**: `_fanout_rate_change_push` renombrado a fanout dual — primero inserta en la bandeja de TODOS los clientes activos (role vip/normal, no suspendidos) sin importar si tienen push subscription; luego envía push solo a los que sí opted-in. Admin/staff **excluidos por diseño** (no se notifican a sí mismos). Los tests confirman scope: `test_admin_does_NOT_get_inbox_entry` verifica el gate.

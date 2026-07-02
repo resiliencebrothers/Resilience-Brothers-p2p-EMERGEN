@@ -113,26 +113,29 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
                 - outflows_company_paid[c]
                 + manual_inflow[c] - manual_outflow[c]
     `scope` (currency codes) optionally restricts the returned list.
+
+    iter55.7 — Every source code is `.strip().upper()`-normalised before
+    aggregation so legacy rows with stray whitespace / mixed casing collapse
+    into a single row instead of being split (operator report).
     """
+    def _norm(c: Optional[str]) -> Optional[str]:
+        return c.strip().upper() if isinstance(c, str) and c.strip() else None
+
     inflow: dict = {}
     async for o in db.orders.find(
         {"status": {"$in": ["approved", "completed"]}},
         {"_id": 0, "from_code": 1, "amount_from": 1},
     ):
-        c = o.get("from_code")
+        c = _norm(o.get("from_code"))
         if c:
             inflow[c] = inflow.get(c, 0.0) + float(o.get("amount_from") or 0.0)
 
-    # iter55 — order payouts (money physically leaving the treasury when the
-    # admin completes an order with a physical delivery method).
-    # `accumulate` is not an outflow: the money stays in the treasury and is
-    # tracked as VIP liability, which is settled via db.withdrawals below.
     out_orders: dict = {}
     async for o in db.orders.find(
         {"status": "completed", "delivery_method": {"$ne": "accumulate"}},
         {"_id": 0, "to_code": 1, "amount_to": 1},
     ):
-        c = o.get("to_code")
+        c = _norm(o.get("to_code"))
         if c:
             out_orders[c] = out_orders.get(c, 0.0) + float(o.get("amount_to") or 0.0)
 
@@ -140,24 +143,23 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
     async for w in db.withdrawals.find(
         {"status": "paid"}, {"_id": 0, "currency": 1, "amount_usd": 1}
     ):
-        c = w.get("currency") or "USD"
+        c = _norm(w.get("currency")) or "USD"
         out_clients[c] = out_clients.get(c, 0.0) + float(w.get("amount_usd") or 0.0)
 
     out_company: dict = {}
     async for cw in db.company_withdrawals.find(
         {"status": "paid"}, {"_id": 0, "currency": 1, "amount": 1}
     ):
-        c = cw.get("currency")
+        c = _norm(cw.get("currency"))
         if c:
             out_company[c] = out_company.get(c, 0.0) + float(cw.get("amount") or 0.0)
 
-    # iter54 — manual capital-of-trabajo adjustments (inflows/outflows).
     manual_in: dict = {}
     manual_out: dict = {}
     async for a in db.company_fund_adjustments.find(
         {}, {"_id": 0, "currency": 1, "amount": 1, "adjustment_type": 1}
     ):
-        c = a.get("currency")
+        c = _norm(a.get("currency"))
         amt = float(a.get("amount") or 0.0)
         if not c or amt <= 0:
             continue
