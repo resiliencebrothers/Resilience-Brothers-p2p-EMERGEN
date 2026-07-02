@@ -116,8 +116,7 @@ class TestRateChangeFanoutIntegration:
             db.push_subscriptions.delete_one({"id": sub_id})
 
     def test_no_op_rate_update_still_returns_200(self):
-        """Saving the same rate values (no delta) must not fanout push either,
-        but the endpoint must still succeed."""
+        """Saving the same rate values (no delta) must still return 200."""
         import requests
         from tests.conftest import BASE_URL, ADMIN_TOKEN, make_admin_totp
 
@@ -137,6 +136,65 @@ class TestRateChangeFanoutIntegration:
             timeout=15,
         )
         assert rr.status_code == 200
+
+    def test_post_upsert_also_triggers_fanout(self):
+        """iter55.5 — POST /admin/rates upserts a rate (used by the 'Nueva tasa'
+        button in the admin UI when the pair already exists). This path was
+        NOT triggering push fanout, causing operator-reported issue."""
+        import requests
+        from tests.conftest import BASE_URL, ADMIN_TOKEN
+
+        r = requests.get(f"{BASE_URL}/api/rates", timeout=10)
+        rate = r.json()[0]  # existing rate
+        rr = requests.post(
+            f"{BASE_URL}/api/admin/rates",
+            json={
+                "from_code": rate["from_code"],
+                "to_code": rate["to_code"],
+                "rate_normal": float(rate["rate_normal"]) + 0.001,
+                "rate_vip": float(rate.get("rate_vip") or rate["rate_normal"]) + 0.001,
+                "real_rate": float(rate.get("real_rate") or rate["rate_normal"]),
+            },
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+            timeout=15,
+        )
+        assert rr.status_code == 200, rr.text
+        # Confirm the endpoint responded with the updated rate (not the old one)
+        assert abs(float(rr.json()["rate_normal"]) - (float(rate["rate_normal"]) + 0.001)) < 1e-6
+
+
+class TestPushStatsEndpoint:
+    """iter55.5 — Diagnostic endpoint /admin/push/stats for operators."""
+
+    def test_stats_returns_expected_shape(self):
+        import requests
+        from tests.conftest import BASE_URL, ADMIN_TOKEN
+
+        r = requests.get(
+            f"{BASE_URL}/api/admin/push/stats",
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert "total_subscriptions" in data
+        assert "by_role" in data
+        assert "client_subscriptions" in data
+        assert "sample_last_5" in data
+        assert isinstance(data["total_subscriptions"], int)
+        assert isinstance(data["by_role"], dict)
+        assert isinstance(data["sample_last_5"], list)
+
+    def test_stats_requires_staff(self):
+        import requests
+        from tests.conftest import BASE_URL, VIP_TOKEN
+
+        r = requests.get(
+            f"{BASE_URL}/api/admin/push/stats",
+            headers={"Authorization": f"Bearer {VIP_TOKEN}"},
+            timeout=15,
+        )
+        assert r.status_code in (401, 403), r.text
 
 
 class TestFanoutRoleGatingUnit:

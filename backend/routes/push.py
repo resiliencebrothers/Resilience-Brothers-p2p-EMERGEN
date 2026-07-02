@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from db_client import db
-from auth_utils import require_user, now_utc, iso
+from auth_utils import require_user, require_staff, now_utc, iso
 from push_service import VAPID_PUBLIC_KEY, send_push
 
 
@@ -81,3 +81,40 @@ async def push_test(request: Request) -> Any:
     }
     delivered = sum(1 for s in subs if send_push(s["subscription"], payload) == "ok")
     return {"delivered": delivered, "total": len(subs)}
+
+
+@router.get("/admin/push/stats")
+async def admin_push_stats(request: Request) -> Any:
+    """iter55.5 — Diagnostic endpoint. Returns counts of push subscriptions
+    per role so the operator can verify why a fanout may have delivered zero
+    notifications (e.g. no clients subscribed, VAPID mismatch after redeploy,
+    etc.)."""
+    await require_staff(request)
+    subs = await db.push_subscriptions.find({}, {"_id": 0}).to_list(5000)
+    user_ids = list({s.get("user_id") for s in subs if s.get("user_id")})
+    users = await db.users.find(
+        {"user_id": {"$in": user_ids}},
+        {"_id": 0, "user_id": 1, "role": 1, "email": 1, "name": 1},
+    ).to_list(len(user_ids))
+    role_by_id = {u["user_id"]: u.get("role") for u in users}
+    name_by_id = {u["user_id"]: {"email": u.get("email"), "name": u.get("name")} for u in users}
+    by_role: dict = {}
+    for s in subs:
+        role = role_by_id.get(s.get("user_id")) or "orphan"
+        by_role[role] = by_role.get(role, 0) + 1
+    return {
+        "total_subscriptions": len(subs),
+        "by_role": by_role,
+        "client_subscriptions": by_role.get("vip", 0) + by_role.get("normal", 0),
+        "sample_last_5": [
+            {
+                "user_id": s.get("user_id"),
+                "user_email": name_by_id.get(s.get("user_id"), {}).get("email"),
+                "role": role_by_id.get(s.get("user_id")) or "orphan",
+                "user_agent": (s.get("user_agent") or "")[:60],
+                "endpoint_host": (s.get("endpoint") or "")[:60],
+                "created_at": s.get("created_at"),
+            }
+            for s in sorted(subs, key=lambda x: x.get("created_at", ""), reverse=True)[:5]
+        ],
+    }

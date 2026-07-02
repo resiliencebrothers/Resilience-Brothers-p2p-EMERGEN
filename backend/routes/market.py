@@ -226,13 +226,26 @@ async def create_rate(payload: ExchangeRateCreate, request: Request) -> Any:
         {"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0}
     )
     if existing:
+        rate_data = payload.model_dump(exclude={"totp_code"})
         await db.rates.update_one(
             {"id": existing["id"]},
-            {"$set": {**payload.model_dump(), "updated_at": iso(now_utc())}},
+            {"$set": {**rate_data, "updated_at": iso(now_utc())}},
         )
-        return await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
-    r = ExchangeRate(**payload.model_dump())
+        fresh = await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
+        # iter55.5 — mirror PUT: fanout push when the customer-facing rate moves
+        # so this alternate upsert path notifies clients too.
+        try:
+            await _fanout_rate_change_push(existing, fresh)
+        except Exception as e:
+            logger.error(f"Rate upsert push fanout failed: {e}")
+        return fresh
+    r = ExchangeRate(**payload.model_dump(exclude={"totp_code"}))
     await db.rates.insert_one(r.model_dump())
+    # New rate: fanout with old=None → first-ever normal/vip values count as a change
+    try:
+        await _fanout_rate_change_push(None, r.model_dump())
+    except Exception as e:
+        logger.error(f"Rate create push fanout failed: {e}")
     return r.model_dump()
 
 
@@ -273,16 +286,20 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
     """Notify every active push subscription belonging to a client role
     (vip/normal). Skipped when neither `rate_normal` nor `rate_vip` moved."""
     if not fresh:
+        logger.info("[rate-fanout] skipped: no fresh rate")
         return
+    pair = f"{fresh.get('from_code')}→{fresh.get('to_code')}"
     old_normal = float((old or {}).get("rate_normal") or 0.0)
     old_vip = float((old or {}).get("rate_vip") or 0.0)
     new_normal = float(fresh.get("rate_normal") or 0.0)
     new_vip = float(fresh.get("rate_vip") or 0.0)
     if new_normal == old_normal and new_vip == old_vip:
+        logger.info(f"[rate-fanout] {pair}: no-op (rates unchanged)")
         return
     from push_service import build_rate_changed_payload, send_push
     subs = await db.push_subscriptions.find({}, {"_id": 0}).to_list(5000)
     if not subs:
+        logger.info(f"[rate-fanout] {pair}: 0 push subscriptions in DB — nothing to notify")
         return
     # Preload the role of every user referenced by a subscription
     user_ids = list({s.get("user_id") for s in subs if s.get("user_id")})
@@ -292,19 +309,32 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
     ).to_list(len(user_ids))
     role_by_id = {u["user_id"]: u["role"] for u in users}
     dead_ids: list[str] = []
+    sent, skipped, dead = 0, 0, 0
     for sub in subs:
         uid = sub.get("user_id")
         role = role_by_id.get(uid)
         if role not in ("vip", "normal"):
+            skipped += 1
             continue
         payload = build_rate_changed_payload(
             fresh["from_code"], fresh["to_code"],
             new_normal, new_vip, for_role=role,
         )
-        if send_push(sub.get("subscription"), payload) == "dead":
+        result = send_push(sub.get("subscription"), payload)
+        if result == "dead":
             dead_ids.append(sub["id"])
+            dead += 1
+        elif result == "ok":
+            sent += 1
+        else:  # disabled / transient
+            skipped += 1
     if dead_ids:
         await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
+    logger.info(
+        f"[rate-fanout] {pair}: total_subs={len(subs)} client_subs={len(subs) - skipped} "
+        f"sent={sent} dead_pruned={dead} skipped={skipped} "
+        f"delta_normal={old_normal}→{new_normal} delta_vip={old_vip}→{new_vip}"
+    )
 
 
 async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]) -> Any:
