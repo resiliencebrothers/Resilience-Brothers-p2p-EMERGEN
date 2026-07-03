@@ -312,13 +312,67 @@ export default function ExchangeView() {
               {deliveryMethod === "cash" && "Nombre, teléfono y dirección del receptor"}
               {deliveryMethod === "crypto" && "Dirección de wallet (red)"}
             </Label>
+
+            {/* Format hint — contextual per method + destination currency */}
+            {deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() === "CUP" && (
+              <p
+                data-testid="delivery-hint-cup"
+                className="mt-2 text-[0.7rem] text-[#EAB308]/90 font-mono flex items-center gap-1"
+              >
+                <span className="opacity-70">📇</span>
+                La cuenta bancaria cubana debe tener <b className="mx-1">16 dígitos</b>
+                <span className="opacity-70">(ej. 9212 9598 7274 4356)</span>
+              </p>
+            )}
+            {deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() !== "CUP" && (
+              <p className="mt-2 text-[0.7rem] text-neutral-500">
+                Incluye el nombre completo del titular y el número de cuenta.
+              </p>
+            )}
+
             <Textarea
               data-testid="delivery-details-input"
               value={deliveryDetails}
               onChange={(e) => setDeliveryDetails(e.target.value)}
               rows={3}
-              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10"
+              placeholder={
+                deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() === "CUP"
+                  ? "Titular: Juan Pérez\nCuenta: 9212 9598 7274 4356"
+                  : deliveryMethod === "cash"
+                  ? "Nombre, teléfono y dirección donde entregar"
+                  : deliveryMethod === "crypto"
+                  ? "Dirección wallet + red (ej. TRX7pQR9…  · TRC20)"
+                  : ""
+              }
+              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono text-sm"
             />
+
+            {/* Real-time validation for CUP: exactly 16 digits somewhere in the text */}
+            {deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() === "CUP" && deliveryDetails && (
+              (() => {
+                const digits = (deliveryDetails.match(/\d/g) || []).length;
+                const ok = digits === 16;
+                return (
+                  <p
+                    data-testid="delivery-cup-validation"
+                    className={`mt-1.5 text-[0.7rem] font-mono ${
+                      ok ? "text-[#22C55E]" : digits > 0 ? "text-[#EF4444]" : "text-neutral-600"
+                    }`}
+                  >
+                    {ok
+                      ? `✓ 16 dígitos detectados`
+                      : digits > 0
+                      ? `⚠ ${digits} dígitos — faltan/sobran ${Math.abs(16 - digits)}`
+                      : ""}
+                  </p>
+                );
+              })()
+            )}
+
+            <p className="mt-2 text-[0.7rem] text-neutral-500 leading-relaxed">
+              Por favor asegúrese de ingresar los datos de la cuenta de destino correctamente.
+              Un error en la numeración puede retrasar o desviar el pago.
+            </p>
           </div>
         )}
 

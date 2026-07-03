@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import { Eye, Search, Upload } from "lucide-react";
+import { Eye, Search, Upload, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_STYLES = {
@@ -20,6 +20,34 @@ const STATUS_STYLES = {
   completed: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
 };
+
+// iter55.9 — small helper used inside the delivery-details panel. Copies the
+// given `value` to the clipboard and briefly shows a green check, so the
+// operator has visual feedback that the payload landed in the buffer.
+function CopyBtn({ label, value, testid }) {
+  const [ok, setOk] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setOk(true);
+      toast.success("Copiado al portapapeles");
+      setTimeout(() => setOk(false), 1500);
+    } catch {
+      toast.error("No se pudo copiar (permiso denegado)");
+    }
+  };
+  return (
+    <button
+      type="button"
+      data-testid={testid}
+      onClick={copy}
+      className="inline-flex items-center gap-1.5 border border-white/10 hover:border-[#EAB308]/50 bg-[#141414] hover:bg-[#EAB308]/5 px-2.5 py-1 text-[0.7rem] font-mono text-neutral-300 transition-colors"
+    >
+      {ok ? <Check className="w-3 h-3 text-[#22C55E]" /> : <Copy className="w-3 h-3" />}
+      {label}
+    </button>
+  );
+}
 
 // Iter14 — labels for order status (user requested: "Aprobado" → "Confirmado")
 const STATUS_LABELS = {
@@ -239,8 +267,75 @@ export default function AdminOrders() {
                   <div><span className="text-neutral-500">Comisión:</span> {open.commission_percent}%</div>
                 )}
                 <div className="col-span-2"><span className="text-neutral-500">Titular pago:</span> {open.sender_name}</div>
-                <div className="col-span-2"><span className="text-neutral-500">Entrega ({open.delivery_method}):</span> {open.delivery_details || "—"}</div>
               </div>
+
+              {open.delivery_details && (
+                <div className="border border-white/10 bg-[#0a0a0a] p-3" data-testid="delivery-block">
+                  <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between">
+                    <span>Entrega ({open.delivery_method})</span>
+                    {(() => {
+                      const digitsOnly = (open.delivery_details.match(/\d/g) || []).join("");
+                      const looksLikeCubanBank =
+                        open.delivery_method === "transfer" &&
+                        (open.to_code || "").toUpperCase() === "CUP" &&
+                        digitsOnly.length === 16;
+                      return looksLikeCubanBank ? (
+                        <span
+                          data-testid="delivery-cup-ok"
+                          className="text-[#22C55E] text-[0.65rem] normal-case tracking-normal"
+                        >
+                          ✓ 16 dígitos válidos
+                        </span>
+                      ) : open.delivery_method === "transfer" &&
+                        (open.to_code || "").toUpperCase() === "CUP" ? (
+                        <span
+                          data-testid="delivery-cup-warn"
+                          className="text-[#EF4444] text-[0.65rem] normal-case tracking-normal"
+                        >
+                          ⚠ {digitsOnly.length} dígitos (esperado: 16)
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+
+                  <div className="whitespace-pre-wrap font-mono text-sm text-neutral-200 break-words">
+                    {open.delivery_details}
+                  </div>
+
+                  {/* Copy buttons — full text + isolated account number when detectable */}
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <CopyBtn
+                      testid="copy-delivery-full"
+                      label="Copiar todo"
+                      value={open.delivery_details}
+                    />
+                    {(() => {
+                      const digitsOnly = (open.delivery_details.match(/\d/g) || []).join("");
+                      if (
+                        open.delivery_method === "transfer" &&
+                        (open.to_code || "").toUpperCase() === "CUP" &&
+                        digitsOnly.length === 16
+                      ) {
+                        return (
+                          <>
+                            <CopyBtn
+                              testid="copy-delivery-account-digits"
+                              label={`Copiar cuenta (${digitsOnly})`}
+                              value={digitsOnly}
+                            />
+                            <CopyBtn
+                              testid="copy-delivery-account-formatted"
+                              label="Copiar formateada"
+                              value={digitsOnly.match(/.{1,4}/g).join(" ")}
+                            />
+                          </>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+                </div>
+              )}
               {open.proof_image && (
                 <div>
                   <div className="micro-label text-neutral-500 mb-2">Comprobante del cliente (lo que envió)</div>
