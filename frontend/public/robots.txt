@@ -1,0 +1,32 @@
+# Resilience Brothers — Robots directives
+# Only the marketing landing page is public-facing. Every other route is a
+# behind-login SPA path that would return blank HTML to a crawler and inflate
+# Google's "404" / "duplicate" report in Search Console.
+
+User-agent: *
+Allow: /$
+Allow: /manifest.webmanifest
+Allow: /icons/
+Allow: /branding/
+Allow: /splash/
+
+# Private client + admin surfaces — never index
+Disallow: /dashboard
+Disallow: /dashboard/
+Disallow: /admin
+Disallow: /admin/
+Disallow: /auth
+Disallow: /verify-email
+Disallow: /reset-password
+Disallow: /oauth
+Disallow: /2fa
+
+# Backend surface (proxied via /api). No crawlable HTML.
+Disallow: /api/
+Disallow: /health
+
+# Service worker + assets that shouldn't rank
+Disallow: /service-worker.js
+
+# Sitemap for the pages we DO want indexed
+Sitemap: https://p2p.resiliencebrothers.com/sitemap.xml
