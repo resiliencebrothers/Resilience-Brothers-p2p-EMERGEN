@@ -25,6 +25,12 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 7. VIP withdrawals in transfer/cash/crypto.
 8. Dark fintech UI (yellow accent #EAB308, Outfit + IBM Plex Sans).
 
+- Code Quality Refactor (iter44, Jul 3 2026): reduced cyclomatic complexity across three hot paths:
+  - `_compute_company_funds` (D:22 → <C:11): extracted `_aggregate_by_currency` + `_aggregate_manual_adjustments` + module-level `_norm_code` helpers in `routes/admin_company_funds.py`.
+  - `notify_all_admins` (C:13 → <C:11): split into `_push_fanout_to_admins` + `_email_fanout_to_admins` in `admin_alerts.py`.
+  - `_fanout_rate_change_push` (C:20 → C:11): split into `_rate_fanout_inapp` + `_rate_fanout_push` in `routes/market.py`.
+  - Google OAuth `email_verified` check in `routes/auth.py:229` migrated from `is False` (PEP-8 anti-pattern for tri-state semantics) to `not claims.get("email_verified", True)`.
+  - Verified GREEN by testing agent (iter44 report): 102/102 backend tests pass, zero regressions. Frontend build already compiled with zero warnings (no exhaustive-deps changes needed).
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

@@ -23,6 +23,13 @@ from services.proof_upload import maybe_upload_proof
 router = APIRouter(tags=["Admin"])
 
 
+def _norm_code(c: Any) -> Optional[str]:
+    """iter55.7 — Normalise a currency code by stripping whitespace and
+    upper-casing. Returns None for empty/non-string inputs so callers can
+    skip corrupted rows without polluting aggregations."""
+    return c.strip().upper() if isinstance(c, str) and c.strip() else None
+
+
 class CompanyFundAdjustment(BaseModel):
     """iter54 — Manual capital-of-trabajo movements recorded by admin/staff.
 
@@ -115,13 +122,10 @@ async def _aggregate_by_currency(
     normalised `currency_field`. Whitespace-only / missing currency codes
     fall back to `default_currency` (or are skipped when None).
     """
-    def _norm(c: Any) -> Optional[str]:
-        return c.strip().upper() if isinstance(c, str) and c.strip() else None
-
     projection = {"_id": 0, currency_field: 1, amount_field: 1}
     totals: Dict[str, float] = {}
     async for doc in collection.find(query, projection):
-        code = _norm(doc.get(currency_field)) or default_currency
+        code = _norm_code(doc.get(currency_field)) or default_currency
         if not code:
             continue
         totals[code] = totals.get(code, 0.0) + float(doc.get(amount_field) or 0.0)
@@ -130,15 +134,12 @@ async def _aggregate_by_currency(
 
 async def _aggregate_manual_adjustments() -> tuple[Dict[str, float], Dict[str, float]]:
     """Return (manual_inflows, manual_outflows) grouped by normalised currency."""
-    def _norm(c: Any) -> Optional[str]:
-        return c.strip().upper() if isinstance(c, str) and c.strip() else None
-
     manual_in: Dict[str, float] = {}
     manual_out: Dict[str, float] = {}
     async for a in db.company_fund_adjustments.find(
         {}, {"_id": 0, "currency": 1, "amount": 1, "adjustment_type": 1}
     ):
-        code = _norm(a.get("currency"))
+        code = _norm_code(a.get("currency"))
         amt = float(a.get("amount") or 0.0)
         if not code or amt <= 0:
             continue
