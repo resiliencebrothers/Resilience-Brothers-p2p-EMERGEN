@@ -33,13 +33,24 @@ async def _can_access(user: dict, key: str) -> bool:
     if user.get("role") in ("admin", "employee"):
         return True
     ref = f"/api/files/{key}"
-    # iter35 — order proof or admin payout proof attached to user's own withdrawal.
-    own_order = await db.orders.find_one(
+    # Payment proof uploaded by the CLIENT when creating an order.
+    own_order_deposit = await db.orders.find_one(
         {"user_id": user["user_id"], "proof_image": ref},
         {"_id": 0, "id": 1},
     )
-    if own_order:
+    if own_order_deposit:
         return True
+    # iter55.8 — Payout proof uploaded by STAFF when marking the client's own
+    # order as `completed` (physical delivery evidence). Previously missing:
+    # the client would get 403 "No autorizado" trying to see the proof of
+    # their own received payment.
+    own_order_payout = await db.orders.find_one(
+        {"user_id": user["user_id"], "payout_proof_image": ref},
+        {"_id": 0, "id": 1},
+    )
+    if own_order_payout:
+        return True
+    # Payout proof for the user's own VIP-balance withdrawal.
     own_withdrawal = await db.withdrawals.find_one(
         {"user_id": user["user_id"], "payout_proof_image": ref},
         {"_id": 0, "id": 1},

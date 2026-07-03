@@ -219,6 +219,11 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.8 (Mar 1, 2026)**: **Cliente veía "No autorizado" al abrir comprobante del pago recibido**.
+  - **Root cause**: `routes/files.py::_can_access` verificaba `orders.proof_image` (comprobante que sube el cliente al crear orden) y `withdrawals.payout_proof_image` (retiros VIP), pero **NO** `orders.payout_proof_image` (el nuevo campo donde staff sube el comprobante al completar la orden P2P). Cliente dueño de la orden → 403.
+  - **Fix**: agregada la tercera comprobación en `_can_access` para permitir que el dueño de la orden acceda a su propio `payout_proof_image`.
+  - **Tests**: 3/3 en `test_iter55_8_payout_proof_access.py` — el dueño puede acceder (no 403), otro cliente sigue bloqueado con 403 (owner check funciona), staff bypasea siempre.
+
 - **iter55.7 (Mar 1, 2026)**: **Whitespace en códigos de moneda: propagación a rates/orders + colapso de balances**.
   - **Bugs reportados por el operador tras redeploy**:
     1. Cliente intenta orden USDT→CUP EFECTIVO → **"Tasa de cambio no disponible para ese par"** aunque la tasa está en la tabla. Root cause: la fila de tasa tenía `to_code="CUP "` (con espacio) porque migración anterior de iter55.3 solo limpió `db.currencies`, no `db.rates`.
