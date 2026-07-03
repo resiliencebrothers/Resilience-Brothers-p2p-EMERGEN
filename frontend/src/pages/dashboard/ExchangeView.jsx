@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { getDeliveryValidator } from "@/services/delivery_validators";
 import { ArrowRight, Upload, Copy, CheckCircle2 } from "lucide-react";
 
 export default function ExchangeView() {
@@ -305,76 +306,59 @@ export default function ExchangeView() {
           )}
         </div>
 
-        {deliveryMethod !== "accumulate" && (
-          <div>
-            <Label className="micro-label text-neutral-500">
-              {deliveryMethod === "transfer" && "Datos bancarios del receptor"}
-              {deliveryMethod === "cash" && "Nombre, teléfono y dirección del receptor"}
-              {deliveryMethod === "crypto" && "Dirección de wallet (red)"}
-            </Label>
+        {deliveryMethod !== "accumulate" && (() => {
+          const validator = getDeliveryValidator(toCurr?.code, deliveryMethod, toCurr?.type);
+          const feedback = validator?.validate?.(deliveryDetails, { code: toCurr?.code });
+          return (
+            <div>
+              <Label className="micro-label text-neutral-500">
+                {deliveryMethod === "transfer" && "Datos bancarios del receptor"}
+                {deliveryMethod === "cash" && "Nombre, teléfono y dirección del receptor"}
+                {deliveryMethod === "crypto" && "Dirección de wallet (red)"}
+              </Label>
 
-            {/* Format hint — contextual per method + destination currency */}
-            {deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() === "CUP" && (
-              <p
-                data-testid="delivery-hint-cup"
-                className="mt-2 text-[0.7rem] text-[#EAB308]/90 font-mono flex items-center gap-1"
-              >
-                <span className="opacity-70">📇</span>
-                La cuenta bancaria cubana debe tener <b className="mx-1">16 dígitos</b>
-                <span className="opacity-70">(ej. 9212 9598 7274 4356)</span>
+              {/* Structured hint from central validator */}
+              {validator?.hint ? (
+                <p
+                  data-testid={`delivery-hint-${toCurr?.code}-${deliveryMethod}`}
+                  className="mt-2 text-[0.7rem] text-[#EAB308]/90 font-mono flex items-center gap-1.5"
+                >
+                  <span className="opacity-70">{validator.icon}</span>
+                  {validator.hint}
+                </p>
+              ) : (
+                <p className="mt-2 text-[0.7rem] text-neutral-500">
+                  Incluye toda la información necesaria para procesar el pago.
+                </p>
+              )}
+
+              <Textarea
+                data-testid="delivery-details-input"
+                value={deliveryDetails}
+                onChange={(e) => setDeliveryDetails(e.target.value)}
+                rows={3}
+                placeholder={validator?.example || ""}
+                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono text-sm"
+              />
+
+              {feedback && (
+                <p
+                  data-testid="delivery-validation-feedback"
+                  className={`mt-1.5 text-[0.7rem] font-mono ${
+                    feedback.ok ? "text-[#22C55E]" : "text-[#EF4444]"
+                  }`}
+                >
+                  {feedback.feedback}
+                </p>
+              )}
+
+              <p className="mt-2 text-[0.7rem] text-neutral-500 leading-relaxed">
+                Por favor asegúrese de ingresar los datos de la cuenta de destino correctamente.
+                Un error en la numeración puede retrasar o desviar el pago.
               </p>
-            )}
-            {deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() !== "CUP" && (
-              <p className="mt-2 text-[0.7rem] text-neutral-500">
-                Incluye el nombre completo del titular y el número de cuenta.
-              </p>
-            )}
-
-            <Textarea
-              data-testid="delivery-details-input"
-              value={deliveryDetails}
-              onChange={(e) => setDeliveryDetails(e.target.value)}
-              rows={3}
-              placeholder={
-                deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() === "CUP"
-                  ? "Titular: Juan Pérez\nCuenta: 9212 9598 7274 4356"
-                  : deliveryMethod === "cash"
-                  ? "Nombre, teléfono y dirección donde entregar"
-                  : deliveryMethod === "crypto"
-                  ? "Dirección wallet + red (ej. TRX7pQR9…  · TRC20)"
-                  : ""
-              }
-              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono text-sm"
-            />
-
-            {/* Real-time validation for CUP: exactly 16 digits somewhere in the text */}
-            {deliveryMethod === "transfer" && toCurr?.code?.toUpperCase() === "CUP" && deliveryDetails && (
-              (() => {
-                const digits = (deliveryDetails.match(/\d/g) || []).length;
-                const ok = digits === 16;
-                return (
-                  <p
-                    data-testid="delivery-cup-validation"
-                    className={`mt-1.5 text-[0.7rem] font-mono ${
-                      ok ? "text-[#22C55E]" : digits > 0 ? "text-[#EF4444]" : "text-neutral-600"
-                    }`}
-                  >
-                    {ok
-                      ? `✓ 16 dígitos detectados`
-                      : digits > 0
-                      ? `⚠ ${digits} dígitos — faltan/sobran ${Math.abs(16 - digits)}`
-                      : ""}
-                  </p>
-                );
-              })()
-            )}
-
-            <p className="mt-2 text-[0.7rem] text-neutral-500 leading-relaxed">
-              Por favor asegúrese de ingresar los datos de la cuenta de destino correctamente.
-              Un error en la numeración puede retrasar o desviar el pago.
-            </p>
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         <Button
           data-testid="submit-order-btn"

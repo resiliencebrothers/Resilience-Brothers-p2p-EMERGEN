@@ -12,6 +12,7 @@ import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { Eye, Search, Upload, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
+import { getDeliveryBadge } from "@/services/delivery_validators";
 
 const STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
@@ -274,27 +275,18 @@ export default function AdminOrders() {
                   <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between">
                     <span>Entrega ({open.delivery_method})</span>
                     {(() => {
-                      const digitsOnly = (open.delivery_details.match(/\d/g) || []).join("");
-                      const looksLikeCubanBank =
-                        open.delivery_method === "transfer" &&
-                        (open.to_code || "").toUpperCase() === "CUP" &&
-                        digitsOnly.length === 16;
-                      return looksLikeCubanBank ? (
+                      const badge = getDeliveryBadge(open.to_code, open.delivery_method, open.delivery_details);
+                      if (!badge) return null;
+                      return (
                         <span
-                          data-testid="delivery-cup-ok"
-                          className="text-[#22C55E] text-[0.65rem] normal-case tracking-normal"
+                          data-testid={badge.ok ? "delivery-badge-ok" : "delivery-badge-warn"}
+                          className={`text-[0.65rem] normal-case tracking-normal ${
+                            badge.ok ? "text-[#22C55E]" : "text-[#EF4444]"
+                          }`}
                         >
-                          ✓ 16 dígitos válidos
+                          {badge.feedback}
                         </span>
-                      ) : open.delivery_method === "transfer" &&
-                        (open.to_code || "").toUpperCase() === "CUP" ? (
-                        <span
-                          data-testid="delivery-cup-warn"
-                          className="text-[#EF4444] text-[0.65rem] normal-case tracking-normal"
-                        >
-                          ⚠ {digitsOnly.length} dígitos (esperado: 16)
-                        </span>
-                      ) : null;
+                      );
                     })()}
                   </div>
 
@@ -311,16 +303,20 @@ export default function AdminOrders() {
                     />
                     {(() => {
                       const digitsOnly = (open.delivery_details.match(/\d/g) || []).join("");
-                      if (
+                      const isCubanBank =
                         open.delivery_method === "transfer" &&
-                        (open.to_code || "").toUpperCase() === "CUP" &&
-                        digitsOnly.length === 16
-                      ) {
+                        ["CUP", "CUPT", "CUPE"].includes((open.to_code || "").toUpperCase()) &&
+                        digitsOnly.length === 16;
+                      const isClabe =
+                        open.delivery_method === "transfer" &&
+                        (open.to_code || "").toUpperCase() === "MXN" &&
+                        digitsOnly.length === 18;
+                      if (isCubanBank || isClabe) {
                         return (
                           <>
                             <CopyBtn
                               testid="copy-delivery-account-digits"
-                              label={`Copiar cuenta (${digitsOnly})`}
+                              label={`Copiar cuenta (${digitsOnly.length} díg.)`}
                               value={digitsOnly}
                             />
                             <CopyBtn
@@ -330,6 +326,21 @@ export default function AdminOrders() {
                             />
                           </>
                         );
+                      }
+                      // Crypto wallet — copy address alone (extract via regex)
+                      if (open.delivery_method === "crypto") {
+                        const wallet = open.delivery_details.match(
+                          /(T[1-9A-HJ-NP-Za-km-z]{33}|0x[a-fA-F0-9]{40}|bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})/
+                        );
+                        if (wallet) {
+                          return (
+                            <CopyBtn
+                              testid="copy-delivery-wallet"
+                              label={`Copiar wallet (${wallet[0].slice(0, 6)}…${wallet[0].slice(-4)})`}
+                              value={wallet[0]}
+                            />
+                          );
+                        }
                       }
                       return null;
                     })()}

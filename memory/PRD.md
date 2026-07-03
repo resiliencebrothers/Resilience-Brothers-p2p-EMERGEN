@@ -219,7 +219,31 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.10 (Mar 2, 2026)**: **Módulo central de validadores de delivery_details (9 combos)**.
+  - **Motivación**: extender el patrón CUP/16-dígitos a todas las monedas/redes del catálogo (mejora sugerida en iter55.9).
+  - Nuevo `frontend/src/services/delivery_validators.js` (~180L, pura lógica) que exporta `getDeliveryValidator(toCode, method, currencyType)` y `getDeliveryBadge(...)`.
+  - **Cobertura**:
+    - **CUP/CUPT/CUPE transfer**: 16 dígitos.
+    - **CUP/CUPE cash**: nombre + teléfono cubano (+53 XXXX XXXX) + dirección.
+    - **MXN transfer**: CLABE de 18 dígitos.
+    - **BRL transfer**: PIX (email / CPF 11 / CNPJ 14 / teléfono / UUID).
+    - **ZELLE transfer**: email o teléfono US.
+    - **USD transfer**: routing 9 + cuenta.
+    - **COP transfer**: cédula + banco + cuenta.
+    - **EUR transfer**: IBAN europeo (regex `[A-Z]{2}\d{2}...`).
+    - **AED transfer**: IBAN AE + 21 dígitos.
+    - **crypto/wallet**: universal — TRC20 (`T...`), ERC20 (`0x...`), BTC (`bc1.../1.../3...`), Solana (base58 32-44).
+  - Cada validador expone `hint`, `icon`, `example` (usado como placeholder) y `validate(text, ctx)` que retorna `{ok, feedback}` o `null` para input vacío.
+  - `ExchangeView.jsx` (cliente) y `AdminOrders.jsx` (staff) ahora ambos consumen el módulo — mismo comportamiento en creación y procesamiento.
+  - Botón "Copiar wallet" agregado para método crypto (extrae dirección con regex y muestra ellipsis: `Copiar wallet (TXYZ…4567)`).
+  - Botón "Copiar cuenta" ahora funciona también para CLABE MXN (18 dígitos).
+  - **Testing**: 20/20 tests unitarios en `services/__tests__/delivery_validators.test.js` (Jest via CRA). Verificado end-to-end en preview con USDT→MXN (CLABE) mostrando "✓ 18 dígitos (CLABE)". ESLint limpio.
+
 - **iter55.8 (Mar 1, 2026)**: **Cliente veía "No autorizado" al abrir comprobante del pago recibido**.
+  - **Root cause**: `routes/files.py::_can_access` verificaba `orders.proof_image` y `withdrawals.payout_proof_image` pero NO `orders.payout_proof_image` (comprobante que sube staff al completar orden P2P). Cliente dueño de la orden → 403.
+  - **Fix**: 3ª comprobación en `_can_access` para permitir acceso del dueño a `orders.payout_proof_image`. Tests 3/3.
+
+
   - **Root cause**: `routes/files.py::_can_access` verificaba `orders.proof_image` (comprobante que sube el cliente al crear orden) y `withdrawals.payout_proof_image` (retiros VIP), pero **NO** `orders.payout_proof_image` (el nuevo campo donde staff sube el comprobante al completar la orden P2P). Cliente dueño de la orden → 403.
   - **Fix**: agregada la tercera comprobación en `_can_access` para permitir que el dueño de la orden acceda a su propio `payout_proof_image`.
   - **Tests**: 3/3 en `test_iter55_8_payout_proof_access.py` — el dueño puede acceder (no 403), otro cliente sigue bloqueado con 403 (owner check funciona), staff bypasea siempre.
