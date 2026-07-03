@@ -219,7 +219,24 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.11 (Mar 2, 2026)**: **Soporte BEP20 (Binance Smart Chain) en validador crypto**.
+  - **Requerido por operador**: BEP20 es la red USDT más usada por sus clientes en Cuba (bajos fees vs ERC20).
+  - **Reto**: BEP20 y ERC20 comparten el mismo formato de dirección (`0x` + 40 hex) — la dirección sola es ambigua. Enviar BEP20 a un wallet ERC20-only pierde los fondos → **CRÍTICO**.
+  - **Solución**: el validador crypto ahora requiere que el usuario declare la red en el texto (keywords: `BEP20`/`BSC`/`Binance Smart Chain`, `ERC20`/`ETH`, `POLYGON`/`MATIC`). Sin keyword → warning explícito.
+  - **Nuevos feedbacks**:
+    - `0x...` + `BEP20`/`BSC` → `✓ Dirección BEP20 (Binance Smart Chain) válida`
+    - `0x...` + `ERC20`/`ETH` → `✓ Dirección ERC20 (Ethereum) válida`
+    - `0x...` + `POLYGON`/`MATIC` → `✓ Dirección POLYGON válida`
+    - `0x...` sin red → `⚠ Dirección 0x válida pero falta indicar la RED (BEP20, ERC20 o POLYGON)`
+  - **Hint USDT actualizado**: `Wallet USDT. Redes soportadas: BEP20 (recomendada), TRC20, ERC20. Indica la red junto a la dirección.` + placeholder con ejemplos de ambos formatos.
+  - **Testing**: 24/24 tests (4 nuevos específicos para BEP20/aliases/red-ambigua). Verificado E2E en preview: sin red → warning, con `Red: BEP20` → verde.
+
 - **iter55.10 (Mar 2, 2026)**: **Módulo central de validadores de delivery_details (9 combos)**.
+  - Nuevo `frontend/src/services/delivery_validators.js` con validadores para CUP/CUPT/CUPE (transfer 16 díg + cash), MXN (CLABE 18), BRL (PIX), ZELLE (email/phone US), USD, COP, EUR (IBAN), AED, crypto (TRC20/ERC20/BTC/Solana).
+  - Refactor `ExchangeView.jsx` y `AdminOrders.jsx` para consumir el módulo. Botón "Copiar wallet" nuevo en admin.
+  - 20 tests unitarios Jest/CRA (`services/__tests__/delivery_validators.test.js`).
+
+
   - **Motivación**: extender el patrón CUP/16-dígitos a todas las monedas/redes del catálogo (mejora sugerida en iter55.9).
   - Nuevo `frontend/src/services/delivery_validators.js` (~180L, pura lógica) que exporta `getDeliveryValidator(toCode, method, currencyType)` y `getDeliveryBadge(...)`.
   - **Cobertura**:

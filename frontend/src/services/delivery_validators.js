@@ -156,23 +156,45 @@ const validators = {
       const clean = text.trim();
       if (!clean) return null;
       const code = (ctx?.code || "").toUpperCase();
-      // TRC20 (USDT/TRX): starts with T + base58 alphabet, length 34
-      if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(clean)) {
+
+      // Network keywords the user may include ("TRC20", "BEP20", "ERC20"...)
+      const upper = text.toUpperCase();
+      const netHints = {
+        BEP20: /\b(BEP[\s-]?20|BSC|BINANCE\s*SMART\s*CHAIN)\b/.test(upper),
+        TRC20: /\b(TRC[\s-]?20|TRON)\b/.test(upper),
+        ERC20: /\b(ERC[\s-]?20|ETH(EREUM)?)\b/.test(upper),
+        POLYGON: /\b(POLYGON|MATIC)\b/.test(upper),
+      };
+
+      // TRC20 (USDT/TRX): starts with T + base58, 34 chars — inequivocable
+      const trc20 = clean.match(/T[1-9A-HJ-NP-Za-km-z]{33}/);
+      if (trc20) {
         return { ok: true, feedback: "✓ Dirección TRC20 (Tron) válida" };
       }
-      // ERC20 / Ethereum-family: 0x + 40 hex
-      if (/^0x[a-fA-F0-9]{40}$/.test(clean)) {
-        return { ok: true, feedback: "✓ Dirección ERC20 (Ethereum) válida" };
+      // BTC-style — inequivocable
+      if (/^(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(clean)) {
+        return { ok: true, feedback: "✓ Dirección BTC válida" };
       }
-      // Solana: base58, 32–44 chars
+      // 0x + 40 hex — could be ERC20 / BEP20 / POLYGON. Require the user to
+      // spell out the network in the text so staff sends on the correct chain.
+      const evm = clean.match(/0x[a-fA-F0-9]{40}/);
+      if (evm) {
+        if (netHints.BEP20) return { ok: true, feedback: "✓ Dirección BEP20 (Binance Smart Chain) válida" };
+        if (netHints.ERC20) return { ok: true, feedback: "✓ Dirección ERC20 (Ethereum) válida" };
+        if (netHints.POLYGON) return { ok: true, feedback: "✓ Dirección POLYGON válida" };
+        // Address is syntactically correct but the network is ambiguous — this
+        // is critical because sending BEP20 funds to an ERC20-only exchange
+        // loses the money. Warn instead of confirming.
+        return {
+          ok: false,
+          feedback: "⚠ Dirección 0x válida pero falta indicar la RED (BEP20, ERC20 o POLYGON)",
+        };
+      }
+      // Solana: base58, 32-44 chars, not starting with T
       if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(clean) && !clean.startsWith("T")) {
         return code === "SOL"
           ? { ok: true, feedback: "✓ Dirección Solana válida" }
-          : null; // ambiguous — don't confuse the user
-      }
-      // BTC: legacy (1..), segwit (bc1..), P2SH (3..)
-      if (/^(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(clean)) {
-        return { ok: true, feedback: "✓ Dirección BTC válida" };
+          : null;
       }
       return { ok: false, feedback: "⚠ Formato de wallet no reconocido. Verifica red y dirección." };
     },
@@ -203,15 +225,23 @@ export function getDeliveryValidator(toCode, method, currencyType) {
   if (!toCode || !method) return null;
   // Crypto: covered generically by wallet-shape regex regardless of code
   if (method === "crypto" || currencyType === "crypto") {
-    return {
-      ...validators.crypto_wallet,
-      hint: `Dirección de wallet para ${toCode}. Verifica la red antes de enviar.`,
-      example:
-        toCode === "USDT" ? "TRX7pQR9AbCdEfGhIjKlMnOpQrStUvWxYz  · TRC20"
-          : toCode === "BTC" ? "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
-          : "0xabcdef0123456789…",
-      code: toCode,
+    const code = (toCode || "").toUpperCase();
+    // Per-token guidance — BEP20 is our client base's most-used USDT network.
+    const guidance = {
+      USDT: {
+        hint: "Wallet USDT. Redes soportadas: BEP20 (recomendada), TRC20, ERC20. Indica la red junto a la dirección.",
+        example: "0x1234abcd… (Red: BEP20)\n— o —\nTKa1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q (TRC20)",
+      },
+      BTC: {
+        hint: "Wallet Bitcoin (BTC). Acepta segwit (bc1…), legacy (1…) o P2SH (3…).",
+        example: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+      },
     };
+    const g = guidance[code] || {
+      hint: `Dirección de wallet para ${toCode}. Verifica la red antes de enviar.`,
+      example: "0xabcdef0123456789… (Red: BEP20/ERC20)",
+    };
+    return { ...validators.crypto_wallet, ...g, code: toCode };
   }
   const key = dispatch[toCode.toUpperCase()]?.[method];
   return key ? { ...validators[key], code: toCode } : null;

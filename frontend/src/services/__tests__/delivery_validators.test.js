@@ -68,16 +68,36 @@ describe("Zelle (US)", () => {
 
 describe("Crypto wallets (universal)", () => {
   const v = getDeliveryValidator("USDT", "crypto", "crypto");
+  test("hint mentions BEP20 as recommended for USDT", () => {
+    expect(v.hint).toMatch(/BEP20/i);
+    expect(v.hint).toMatch(/recomendada/i);
+  });
   test("accepts TRC20 address", () => {
     // Real Tron address (34 base58 chars starting with T)
     const r = v.validate("TXYZefghjkLmnopqrstuvwxyz1234567ab");
     expect(r.ok).toBe(true);
     expect(r.feedback).toMatch(/TRC20|Tron/i);
   });
-  test("accepts ERC20 address", () => {
-    const r = v.validate("0x1234567890abcdef1234567890abcdef12345678");
+  test("accepts BEP20 address when network is explicitly declared", () => {
+    const r = v.validate("0x1234567890abcdef1234567890abcdef12345678\nRed: BEP20");
+    expect(r.ok).toBe(true);
+    expect(r.feedback).toMatch(/BEP20|Binance/i);
+  });
+  test("accepts BEP20 alias (BSC)", () => {
+    const r = v.validate("0x1234567890abcdef1234567890abcdef12345678 (BSC)");
+    expect(r.ok).toBe(true);
+    expect(r.feedback).toMatch(/BEP20/i);
+  });
+  test("accepts ERC20 address when network is explicit", () => {
+    const r = v.validate("0x1234567890abcdef1234567890abcdef12345678 ERC20");
     expect(r.ok).toBe(true);
     expect(r.feedback).toMatch(/ERC20|Ethereum/i);
+  });
+  test("warns when 0x address has NO network declared (ambiguous — critical)", () => {
+    const r = v.validate("0x1234567890abcdef1234567890abcdef12345678");
+    expect(r.ok).toBe(false);
+    expect(r.feedback).toMatch(/red/i);
+    expect(r.feedback).toMatch(/BEP20/i);
   });
   test("accepts BTC bech32 address", () => {
     const btc = getDeliveryValidator("BTC", "crypto", "crypto");
