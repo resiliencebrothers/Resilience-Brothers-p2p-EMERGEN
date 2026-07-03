@@ -219,7 +219,24 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.12 (Mar 2, 2026)**: **Selector explícito de red crypto (bloqueo de submit)**.
+  - **Motivación**: BEP20/ERC20/POLYGON comparten formato 0x — el keyword-in-text de iter55.11 mitiga pero no elimina el riesgo. Un dropdown fuerza la decisión.
+  - **Nuevo Select** `data-testid="crypto-network-select"` que aparece solo cuando `method=crypto` o `toCurr.type=crypto`:
+    - Opciones: **BEP20 · Binance Smart Chain (recomendada)**, TRC20 · Tron, ERC20 · Ethereum, POLYGON · Matic, Solana, Bitcoin.
+    - Al seleccionar → auto-inyecta/reemplaza la línea `Red: XXX` en el `deliveryDetails` (elimina cualquier línea `Red:` previa antes de agregar la nueva).
+    - Label marcado con `*` rojo + texto "(obligatorio)".
+    - Nota de advertencia: `Enviar a la red equivocada resulta en pérdida total de los fondos. Verifica que tu wallet acepte esta red antes de confirmar.`
+  - **Bloqueo del submit**: `disabled = submitting || (method=crypto && !cryptoNetwork) || (toCurr.type=crypto && method!=accumulate && !cryptoNetwork)`. Botón "Confirmar Orden" ahora muestra estado gris cuando falta la red.
+  - Reset automático de `cryptoNetwork` al cambiar de método (fuera de crypto) o al crear nueva orden.
+  - **Testing**: verificado E2E con Playwright — sin red: submit disabled + warning rojo. Con BEP20 seleccionado: submit enabled + feedback verde. Estados persistentes tras cambio de método. ESLint limpio.
+
 - **iter55.11 (Mar 2, 2026)**: **Soporte BEP20 (Binance Smart Chain) en validador crypto**.
+  - Validador crypto extendido: detecta keywords `BEP20`/`BSC`/`Binance Smart Chain`, `ERC20`/`ETH`, `POLYGON`/`MATIC` en el texto.
+  - Sin keyword → warning: `⚠ Dirección 0x válida pero falta indicar la RED (BEP20, ERC20 o POLYGON)`.
+  - Hint USDT: `Wallet USDT. Redes soportadas: BEP20 (recomendada), TRC20, ERC20`.
+  - 24/24 tests unitarios verdes (4 nuevos).
+
+
   - **Requerido por operador**: BEP20 es la red USDT más usada por sus clientes en Cuba (bajos fees vs ERC20).
   - **Reto**: BEP20 y ERC20 comparten el mismo formato de dirección (`0x` + 40 hex) — la dirección sola es ambigua. Enviar BEP20 a un wallet ERC20-only pierde los fondos → **CRÍTICO**.
   - **Solución**: el validador crypto ahora requiere que el usuario declare la red en el texto (keywords: `BEP20`/`BSC`/`Binance Smart Chain`, `ERC20`/`ETH`, `POLYGON`/`MATIC`). Sin keyword → warning explícito.

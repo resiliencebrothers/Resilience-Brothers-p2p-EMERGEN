@@ -20,6 +20,11 @@ export default function ExchangeView() {
   const [amount, setAmount] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState("transfer");
   const [deliveryDetails, setDeliveryDetails] = useState("");
+  // iter55.12 — For crypto delivery we require an explicit chain selection
+  // because BEP20/ERC20/POLYGON share the same 0x address format and sending
+  // to the wrong chain loses funds. The value is auto-injected into
+  // `deliveryDetails` as a "Red: XXX" line.
+  const [cryptoNetwork, setCryptoNetwork] = useState("");
   const [senderName, setSenderName] = useState("");
   const [proofImage, setProofImage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -148,7 +153,7 @@ export default function ExchangeView() {
             <div className="flex justify-between"><span className="text-neutral-500">Comisión:</span> <span>{success.commission_percent}%</span></div>
           )}
         </div>
-        <Button data-testid="new-order-btn" onClick={() => { setSuccess(null); setAmount(""); setProofImage(""); setSenderName(""); setDeliveryDetails(""); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
+        <Button data-testid="new-order-btn" onClick={() => { setSuccess(null); setAmount(""); setProofImage(""); setSenderName(""); setDeliveryDetails(""); setCryptoNetwork(""); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
           Nueva Orden
         </Button>
       </div>
@@ -270,7 +275,12 @@ export default function ExchangeView() {
           <Label className="micro-label text-neutral-500">Método de entrega</Label>
           <Select
             value={deliveryMethod}
-            onValueChange={setDeliveryMethod}
+            onValueChange={(v) => {
+              setDeliveryMethod(v);
+              // Reset the crypto network hint when leaving a crypto method so
+              // the mandatory-selection guard doesn't stay stale.
+              if (v !== "crypto") setCryptoNetwork("");
+            }}
             disabled={!toCurr}
           >
             <SelectTrigger
@@ -309,6 +319,7 @@ export default function ExchangeView() {
         {deliveryMethod !== "accumulate" && (() => {
           const validator = getDeliveryValidator(toCurr?.code, deliveryMethod, toCurr?.type);
           const feedback = validator?.validate?.(deliveryDetails, { code: toCurr?.code });
+          const isCrypto = deliveryMethod === "crypto" || toCurr?.type === "crypto";
           return (
             <div>
               <Label className="micro-label text-neutral-500">
@@ -341,6 +352,53 @@ export default function ExchangeView() {
                 className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono text-sm"
               />
 
+              {/* iter55.12 — explicit chain selector for crypto: BEP20/ERC20
+                  addresses look identical (0x...) but sending to the wrong
+                  chain loses funds. Forcing a selection removes ambiguity. */}
+              {isCrypto && (
+                <div className="mt-3">
+                  <Label className="micro-label text-neutral-500 flex items-center gap-2">
+                    <span className="text-[#EF4444]">*</span> Red / cadena
+                    <span className="text-[0.6rem] text-neutral-600 normal-case tracking-normal">
+                      (obligatorio)
+                    </span>
+                  </Label>
+                  <Select
+                    value={cryptoNetwork}
+                    onValueChange={(v) => {
+                      setCryptoNetwork(v);
+                      // Inject/replace the "Red: X" line inside deliveryDetails
+                      setDeliveryDetails((current) => {
+                        const lines = current.split("\n").filter((l) => !/^\s*Red:/i.test(l));
+                        const stripped = lines.join("\n").trimEnd();
+                        return stripped ? `${stripped}\nRed: ${v}` : `Red: ${v}`;
+                      });
+                    }}
+                  >
+                    <SelectTrigger
+                      data-testid="crypto-network-select"
+                      className="rounded-none mt-1.5 bg-[#0a0a0a] border-white/10 h-10"
+                    >
+                      <SelectValue placeholder="Selecciona la red de destino" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                      <SelectItem value="BEP20">
+                        BEP20 · Binance Smart Chain <span className="text-[0.65rem] text-[#EAB308] ml-1">(recomendada)</span>
+                      </SelectItem>
+                      <SelectItem value="TRC20">TRC20 · Tron</SelectItem>
+                      <SelectItem value="ERC20">ERC20 · Ethereum</SelectItem>
+                      <SelectItem value="POLYGON">POLYGON · Matic</SelectItem>
+                      <SelectItem value="SOLANA">Solana</SelectItem>
+                      <SelectItem value="BTC">Bitcoin (nativa)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1.5 text-[0.65rem] text-neutral-500 leading-relaxed">
+                    Enviar a la red equivocada resulta en pérdida total de los fondos.
+                    Verifica que tu wallet acepte esta red antes de confirmar.
+                  </p>
+                </div>
+              )}
+
               {feedback && (
                 <p
                   data-testid="delivery-validation-feedback"
@@ -363,8 +421,12 @@ export default function ExchangeView() {
         <Button
           data-testid="submit-order-btn"
           onClick={submit}
-          disabled={submitting}
-          className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-14 text-base"
+          disabled={
+            submitting ||
+            (deliveryMethod === "crypto" && !cryptoNetwork) ||
+            (toCurr?.type === "crypto" && deliveryMethod !== "accumulate" && !cryptoNetwork)
+          }
+          className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-14 text-base disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? "Enviando..." : (<>Confirmar Orden <ArrowRight className="w-4 h-4 ml-2" /></>)}
         </Button>
