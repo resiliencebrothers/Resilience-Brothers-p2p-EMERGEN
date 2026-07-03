@@ -226,7 +226,10 @@ async def google_callback(request: Request, code: Optional[str] = None,
     email = (claims.get("email") or "").lower().strip()
     if not email:
         raise HTTPException(status_code=401, detail="Google id_token missing email claim")
-    if claims.get("email_verified") is False:
+    # `email_verified` may be True, False, or absent from the claim set. We only
+    # reject when Google explicitly reports it as False; a missing claim is
+    # treated as verified (default=True) to preserve backwards-compatible flow.
+    if not claims.get("email_verified", True):
         raise HTTPException(status_code=401, detail="Google account email not verified")
 
     name = claims.get("name") or ""

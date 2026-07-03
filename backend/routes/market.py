@@ -282,33 +282,13 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
     return fresh
 
 
-async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -> None:
-    """Notify every client (role vip/normal) about the rate change via BOTH:
-    1) In-app notification (`db.notifications`) — every active client gets it,
-       whether or not they subscribed to push.
-    2) Web Push — only devices that opted in through the bell toggle.
-    Skipped when neither `rate_normal` nor `rate_vip` moved."""
-    if not fresh:
-        logger.info("[rate-fanout] skipped: no fresh rate")
-        return
-    pair = f"{fresh.get('from_code')}→{fresh.get('to_code')}"
-    old_normal = float((old or {}).get("rate_normal") or 0.0)
-    old_vip = float((old or {}).get("rate_vip") or 0.0)
-    new_normal = float(fresh.get("rate_normal") or 0.0)
-    new_vip = float(fresh.get("rate_vip") or 0.0)
-    if new_normal == old_normal and new_vip == old_vip:
-        logger.info(f"[rate-fanout] {pair}: no-op (rates unchanged)")
-        return
-
-    # ------------------------------------------------------------------
-    # 1) In-app notifications — fanout to every ACTIVE client, not just push subs.
-    # ------------------------------------------------------------------
+async def _rate_fanout_inapp(
+    clients: list, from_code: str, to_code: str,
+    old_normal: float, old_vip: float, new_normal: float, new_vip: float,
+) -> int:
+    """Insert an in-app `rate_change` notification for every active client.
+    Returns the number of notifications successfully inserted."""
     from routes.notifications import _insert_notification
-    from_code, to_code = fresh["from_code"], fresh["to_code"]
-    clients = await db.users.find(
-        {"role": {"$in": ["vip", "normal"]}, "account_status": {"$ne": "suspended"}},
-        {"_id": 0, "user_id": 1, "role": 1},
-    ).to_list(20000)
     inapp_created = 0
     for u in clients:
         rate = new_vip if u["role"] == "vip" else new_normal
@@ -331,18 +311,21 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
             inapp_created += 1
         except Exception as e:  # noqa: BLE001
             logger.error(f"[rate-fanout] inapp insert failed for {u.get('user_id')}: {e}")
+    return inapp_created
 
-    # ------------------------------------------------------------------
-    # 2) Web Push — only devices that opted in.
-    # ------------------------------------------------------------------
+
+async def _rate_fanout_push(
+    role_by_id: dict, from_code: str, to_code: str,
+    new_normal: float, new_vip: float,
+) -> tuple[int, int, int]:
+    """Push the new rate to every subscribed device belonging to an active
+    vip/normal client. Prunes dead subscriptions. Returns (sent, skipped, dead)."""
     from push_service import build_rate_changed_payload, send_push
     subs = await db.push_subscriptions.find({}, {"_id": 0}).to_list(5000)
-    role_by_id = {u["user_id"]: u["role"] for u in clients}
     dead_ids: list[str] = []
     sent, skipped, dead = 0, 0, 0
     for sub in subs:
-        uid = sub.get("user_id")
-        role = role_by_id.get(uid)
+        role = role_by_id.get(sub.get("user_id"))
         if role not in ("vip", "normal"):
             skipped += 1
             continue
@@ -359,6 +342,40 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
             skipped += 1
     if dead_ids:
         await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
+    return sent, skipped, dead
+
+
+async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -> None:
+    """Notify every client (role vip/normal) about the rate change via BOTH:
+    1) In-app notification (`db.notifications`) — every active client gets it,
+       whether or not they subscribed to push.
+    2) Web Push — only devices that opted in through the bell toggle.
+    Skipped when neither `rate_normal` nor `rate_vip` moved."""
+    if not fresh:
+        logger.info("[rate-fanout] skipped: no fresh rate")
+        return
+    pair = f"{fresh.get('from_code')}→{fresh.get('to_code')}"
+    old_normal = float((old or {}).get("rate_normal") or 0.0)
+    old_vip = float((old or {}).get("rate_vip") or 0.0)
+    new_normal = float(fresh.get("rate_normal") or 0.0)
+    new_vip = float(fresh.get("rate_vip") or 0.0)
+    if new_normal == old_normal and new_vip == old_vip:
+        logger.info(f"[rate-fanout] {pair}: no-op (rates unchanged)")
+        return
+
+    from_code, to_code = fresh["from_code"], fresh["to_code"]
+    clients = await db.users.find(
+        {"role": {"$in": ["vip", "normal"]}, "account_status": {"$ne": "suspended"}},
+        {"_id": 0, "user_id": 1, "role": 1},
+    ).to_list(20000)
+
+    inapp_created = await _rate_fanout_inapp(
+        clients, from_code, to_code, old_normal, old_vip, new_normal, new_vip,
+    )
+    role_by_id = {u["user_id"]: u["role"] for u in clients}
+    sent, skipped, dead = await _rate_fanout_push(
+        role_by_id, from_code, to_code, new_normal, new_vip,
+    )
     logger.info(
         f"[rate-fanout] {pair}: clients={len(clients)} inapp={inapp_created} "
         f"push_sent={sent} push_dead_pruned={dead} push_skipped={skipped} "

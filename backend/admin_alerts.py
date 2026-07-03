@@ -23,6 +23,40 @@ async def resolve_admin_email_recipients(db, admins: list | None = None) -> list
     return [a["email"] for a in admins if a.get("email")]
 
 
+async def _push_fanout_to_admins(db, admins: list, payload: dict) -> tuple[int, list[str]]:
+    """Send `payload` via Web Push to every device subscribed by any admin.
+    Returns (pushes_sent, dead_subscription_ids)."""
+    push_sent = 0
+    dead_ids: list[str] = []
+    for admin in admins:
+        try:
+            subs = await db.push_subscriptions.find(
+                {"user_id": admin["user_id"]}, {"_id": 0}
+            ).to_list(20)
+            for s in subs:
+                result = send_push(s["subscription"], payload)
+                if result == "ok":
+                    push_sent += 1
+                elif result == "dead":
+                    dead_ids.append(s["id"])
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Push to admin {admin.get('email')} failed: {e}")
+    return push_sent, dead_ids
+
+
+async def _email_fanout_to_admins(db, admins: list, subject: str, html: str) -> int:
+    """Send `html` to the resolved ops mailbox(es). Returns emails_sent."""
+    recipients = await resolve_admin_email_recipients(db, admins=admins)
+    sent = 0
+    for to_addr in recipients:
+        try:
+            if _send(to_addr, subject, html):
+                sent += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Email to {to_addr} failed: {e}")
+    return sent
+
+
 async def notify_all_admins(db, *, title: str, body: str, url_path: str = "/admin"):
     """Send a notification (push + email) to all users with role='admin'.
     `db` is the motor AsyncIOMotorDatabase instance.
@@ -48,33 +82,12 @@ async def notify_all_admins(db, *, title: str, body: str, url_path: str = "/admi
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 16px;">{body}</p>
       <a href="{target_url}" style="display:inline-block;margin-top:12px;background:#EAB308;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">REVISAR EN EL PANEL →</a>
     """
-
-    push_sent = 0
-    email_sent = 0
-    dead_ids = []
-
-    # Push fan-out — always per admin device
-    for admin in admins:
-        try:
-            subs = await db.push_subscriptions.find({"user_id": admin["user_id"]}, {"_id": 0}).to_list(20)
-            for s in subs:
-                result = send_push(s["subscription"], push_payload)
-                if result == "ok":
-                    push_sent += 1
-                elif result == "dead":
-                    dead_ids.append(s["id"])
-        except Exception as e:
-            logger.error(f"Push to admin {admin.get('email')} failed: {e}")
-
-    # Email — centralised inbox OR per-admin fan-out
-    email_recipients = await resolve_admin_email_recipients(db, admins=admins)
     html = _base_template(title, html_body)
-    for to_addr in email_recipients:
-        try:
-            if _send(to_addr, f"[Resilience Admin] {title}", html):
-                email_sent += 1
-        except Exception as e:
-            logger.error(f"Email to {to_addr} failed: {e}")
+
+    push_sent, dead_ids = await _push_fanout_to_admins(db, admins, push_payload)
+    email_sent = await _email_fanout_to_admins(
+        db, admins, f"[Resilience Admin] {title}", html
+    )
 
     if dead_ids:
         try:

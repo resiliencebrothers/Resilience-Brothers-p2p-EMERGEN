@@ -104,6 +104,49 @@ class CompanyWithdrawalCreate(BaseModel):
     totp_code: Optional[str] = Field(None, max_length=11)
 
 
+async def _aggregate_by_currency(
+    collection: Any,
+    query: Dict[str, Any],
+    currency_field: str,
+    amount_field: str,
+    default_currency: Optional[str] = None,
+) -> Dict[str, float]:
+    """Iterate `collection.find(query)` and sum `amount_field` grouped by
+    normalised `currency_field`. Whitespace-only / missing currency codes
+    fall back to `default_currency` (or are skipped when None).
+    """
+    def _norm(c: Any) -> Optional[str]:
+        return c.strip().upper() if isinstance(c, str) and c.strip() else None
+
+    projection = {"_id": 0, currency_field: 1, amount_field: 1}
+    totals: Dict[str, float] = {}
+    async for doc in collection.find(query, projection):
+        code = _norm(doc.get(currency_field)) or default_currency
+        if not code:
+            continue
+        totals[code] = totals.get(code, 0.0) + float(doc.get(amount_field) or 0.0)
+    return totals
+
+
+async def _aggregate_manual_adjustments() -> tuple[Dict[str, float], Dict[str, float]]:
+    """Return (manual_inflows, manual_outflows) grouped by normalised currency."""
+    def _norm(c: Any) -> Optional[str]:
+        return c.strip().upper() if isinstance(c, str) and c.strip() else None
+
+    manual_in: Dict[str, float] = {}
+    manual_out: Dict[str, float] = {}
+    async for a in db.company_fund_adjustments.find(
+        {}, {"_id": 0, "currency": 1, "amount": 1, "adjustment_type": 1}
+    ):
+        code = _norm(a.get("currency"))
+        amt = float(a.get("amount") or 0.0)
+        if not code or amt <= 0:
+            continue
+        bucket = manual_in if a.get("adjustment_type") == "inflow" else manual_out
+        bucket[code] = bucket.get(code, 0.0) + amt
+    return manual_in, manual_out
+
+
 async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict]:
     """Per-currency platform working-capital balance.
 
@@ -118,55 +161,28 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
     aggregation so legacy rows with stray whitespace / mixed casing collapse
     into a single row instead of being split (operator report).
     """
-    def _norm(c: Optional[str]) -> Optional[str]:
-        return c.strip().upper() if isinstance(c, str) and c.strip() else None
-
-    inflow: dict = {}
-    async for o in db.orders.find(
+    inflow = await _aggregate_by_currency(
+        db.orders,
         {"status": {"$in": ["approved", "completed"]}},
-        {"_id": 0, "from_code": 1, "amount_from": 1},
-    ):
-        c = _norm(o.get("from_code"))
-        if c:
-            inflow[c] = inflow.get(c, 0.0) + float(o.get("amount_from") or 0.0)
-
-    out_orders: dict = {}
-    async for o in db.orders.find(
+        "from_code", "amount_from",
+    )
+    out_orders = await _aggregate_by_currency(
+        db.orders,
         {"status": "completed", "delivery_method": {"$ne": "accumulate"}},
-        {"_id": 0, "to_code": 1, "amount_to": 1},
-    ):
-        c = _norm(o.get("to_code"))
-        if c:
-            out_orders[c] = out_orders.get(c, 0.0) + float(o.get("amount_to") or 0.0)
-
-    out_clients: dict = {}
-    async for w in db.withdrawals.find(
-        {"status": "paid"}, {"_id": 0, "currency": 1, "amount_usd": 1}
-    ):
-        c = _norm(w.get("currency")) or "USD"
-        out_clients[c] = out_clients.get(c, 0.0) + float(w.get("amount_usd") or 0.0)
-
-    out_company: dict = {}
-    async for cw in db.company_withdrawals.find(
-        {"status": "paid"}, {"_id": 0, "currency": 1, "amount": 1}
-    ):
-        c = _norm(cw.get("currency"))
-        if c:
-            out_company[c] = out_company.get(c, 0.0) + float(cw.get("amount") or 0.0)
-
-    manual_in: dict = {}
-    manual_out: dict = {}
-    async for a in db.company_fund_adjustments.find(
-        {}, {"_id": 0, "currency": 1, "amount": 1, "adjustment_type": 1}
-    ):
-        c = _norm(a.get("currency"))
-        amt = float(a.get("amount") or 0.0)
-        if not c or amt <= 0:
-            continue
-        if a.get("adjustment_type") == "inflow":
-            manual_in[c] = manual_in.get(c, 0.0) + amt
-        elif a.get("adjustment_type") == "outflow":
-            manual_out[c] = manual_out.get(c, 0.0) + amt
+        "to_code", "amount_to",
+    )
+    out_clients = await _aggregate_by_currency(
+        db.withdrawals,
+        {"status": "paid"},
+        "currency", "amount_usd",
+        default_currency="USD",
+    )
+    out_company = await _aggregate_by_currency(
+        db.company_withdrawals,
+        {"status": "paid"},
+        "currency", "amount",
+    )
+    manual_in, manual_out = await _aggregate_manual_adjustments()
 
     codes = (set(inflow) | set(out_orders) | set(out_clients) | set(out_company)
              | set(manual_in) | set(manual_out))

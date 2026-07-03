@@ -219,7 +219,20 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.14 (Mar 3, 2026)**: **SEO hygiene — Google Search Console warnings resueltos**.
+  - **Reportes recibidos**: (1) "No se ha encontrado (404)" — crawler hitting private routes returned blank HTML; (2) "Página con redirección"; (3) "Duplicada: sin canonical".
+  - **Fixes en 3 archivos estáticos**:
+    - **`/public/robots.txt`** (nuevo): Disallow `/dashboard`, `/admin`, `/api/`, `/auth`, `/verify-email`, `/reset-password`, `/oauth`, `/2fa`, `/service-worker.js`. Allow solo home + assets estáticos. Directiva `Sitemap:` apuntando al sitemap.xml. Cloudflare prepende su AI-crawler blocklist (aditivo, sin conflicto).
+    - **`/public/sitemap.xml`** (nuevo): un solo `<url>` canónico → `https://p2p.resiliencebrothers.com/`. Todo lo demás es SPA privado que no debe indexarse.
+    - **`/public/index.html`**: agregado `<link rel="canonical" href="https://p2p.resiliencebrothers.com/">`, `<meta name="robots">`, `<meta name="googlebot">`, `<meta property="og:url">`, tarjetas Twitter (`twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`).
+  - **Testing**: `testing_agent_v3_fork` verificó los 9 checks — robots.txt directives presentes, sitemap.xml XML válido, canonical + og:url + twitter + robots/googlebot meta correctamente servidos, SPA sigue renderizando sin regresiones (`/app/test_reports/iteration_43.json`).
+
 - **iter55.13 (Mar 2, 2026)**: **Badge visual de red crypto en admin (lista + modal)**.
+  - Nuevos helpers `extractCryptoNetwork()` y `NETWORK_META` con colores oficiales (BEP20 amarillo, TRC20 rojo, ERC20 azul, POLYGON morado, SOL mint, BTC naranja).
+  - Vista lista `/admin/orders` muestra mini-badge de red en la columna Entrega. Modal muestra badge grande con borde izquierdo del color oficial + frase contextual.
+  - 34/34 tests unitarios verdes.
+
+
   - Nuevos helpers en `delivery_validators.js`: `extractCryptoNetwork(details, method)` y `NETWORK_META` (paleta de colores oficiales).
   - **Colores oficiales**: BEP20 `#F0B90B` Binance yellow · TRC20 `#FF060A` Tron red · ERC20 `#627EEA` Ethereum blue · POLYGON `#8247E5` Matic purple · SOLANA `#14F195` mint · BTC `#F7931A` Bitcoin orange · AMBIGUOUS_0X `#EF4444` (rojo alerta).
   - **Vista lista `/admin/orders`**: columna Entrega ahora muestra el método + un mini-badge de red (12px) en el color oficial. Un vistazo distingue todas las redes en la cola.
