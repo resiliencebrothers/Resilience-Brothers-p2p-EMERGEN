@@ -12,7 +12,7 @@ import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { Eye, Search, Upload, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
-import { getDeliveryBadge } from "@/services/delivery_validators";
+import { getDeliveryBadge, extractCryptoNetwork, NETWORK_META } from "@/services/delivery_validators";
 
 const STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
@@ -227,7 +227,26 @@ export default function AdminOrders() {
                   <td className="px-3 py-3 font-mono">{o.from_code}→{o.to_code}</td>
                   <td className="px-3 py-3 font-mono">{o.amount_from}</td>
                   <td className="px-3 py-3 font-mono text-[#EAB308]">{o.amount_to}</td>
-                  <td className="px-3 py-3 text-xs">{o.delivery_method}</td>
+                  <td className="px-3 py-3 text-xs">
+                    <div className="flex flex-col gap-1">
+                      <span>{o.delivery_method}</span>
+                      {o.delivery_method === "crypto" && (() => {
+                        const net = extractCryptoNetwork(o.delivery_details, "crypto");
+                        if (!net) return null;
+                        const meta = NETWORK_META[net];
+                        if (!meta) return null;
+                        return (
+                          <span
+                            data-testid={`row-network-${net}`}
+                            className="inline-flex items-center px-1.5 py-0.5 font-mono text-[0.6rem] font-bold tracking-wider w-fit"
+                            style={{ background: meta.bg, color: meta.fg }}
+                          >
+                            {net}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </td>
                   <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
                   <td className="px-3 py-3"><button onClick={() => openOrder(o)} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#EAB308]"><Eye className="w-4 h-4" /></button></td>
                 </tr>
@@ -272,6 +291,34 @@ export default function AdminOrders() {
 
               {open.delivery_details && (
                 <div className="border border-white/10 bg-[#0a0a0a] p-3" data-testid="delivery-block">
+                  {/* iter55.13 — Prominent network badge for crypto payouts so
+                      the operator can't accidentally send on the wrong chain. */}
+                  {open.delivery_method === "crypto" && (() => {
+                    const net = extractCryptoNetwork(open.delivery_details, "crypto");
+                    if (!net) return null;
+                    const meta = NETWORK_META[net];
+                    if (!meta) return null;
+                    return (
+                      <div
+                        data-testid={`admin-network-badge-${net}`}
+                        className="mb-3 flex items-center gap-3 border-l-4 pl-3 py-2"
+                        style={{ borderColor: meta.bg, background: `${meta.bg}12` }}
+                      >
+                        <span
+                          className="inline-flex items-center px-3 py-1.5 font-mono text-xs font-bold tracking-wider uppercase"
+                          style={{ background: meta.bg, color: meta.fg }}
+                        >
+                          {meta.label}
+                        </span>
+                        <span className="text-[0.7rem] text-neutral-400 leading-tight">
+                          {net === "AMBIGUOUS_0X"
+                            ? "El cliente NO declaró la red. Contacta antes de enviar."
+                            : `Enviar en la red ${net}. Verifica que el wallet destino la acepte.`}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between">
                     <span>Entrega ({open.delivery_method})</span>
                     {(() => {

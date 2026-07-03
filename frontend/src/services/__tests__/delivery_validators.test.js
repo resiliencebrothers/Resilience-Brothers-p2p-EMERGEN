@@ -2,7 +2,7 @@
  * iter55.10 — Unit tests for the shared delivery-details validators.
  * Runs via CRA/Jest — pure logic, no React needed.
  */
-import { getDeliveryValidator, getDeliveryBadge } from "../delivery_validators";
+import { getDeliveryValidator, getDeliveryBadge, extractCryptoNetwork, NETWORK_META } from "../delivery_validators";
 
 describe("CUP transfer (Cuban bank)", () => {
   const v = getDeliveryValidator("CUP", "transfer");
@@ -129,5 +129,47 @@ describe("Unknown code falls back gracefully", () => {
   });
   test("null for exotic currency", () => {
     expect(getDeliveryValidator("JPY", "transfer")).toBeNull();
+  });
+});
+
+describe("extractCryptoNetwork (admin badge helper)", () => {
+  test("detects TRC20 by address shape", () => {
+    expect(extractCryptoNetwork("TXYZefghjkLmnopqrstuvwxyz1234567ab", "crypto")).toBe("TRC20");
+  });
+  test("detects BEP20 by keyword", () => {
+    expect(extractCryptoNetwork("0x1234567890abcdef1234567890abcdef12345678\nRed: BEP20", "crypto"))
+      .toBe("BEP20");
+  });
+  test("detects BSC alias as BEP20", () => {
+    expect(extractCryptoNetwork("0x1234567890abcdef1234567890abcdef12345678 (BSC)", "crypto"))
+      .toBe("BEP20");
+  });
+  test("detects ERC20 by keyword", () => {
+    expect(extractCryptoNetwork("0x1234567890abcdef1234567890abcdef12345678 ERC20", "crypto"))
+      .toBe("ERC20");
+  });
+  test("returns AMBIGUOUS_0X when 0x has no network declared", () => {
+    expect(extractCryptoNetwork("0x1234567890abcdef1234567890abcdef12345678", "crypto"))
+      .toBe("AMBIGUOUS_0X");
+  });
+  test("detects BTC by address shape", () => {
+    expect(extractCryptoNetwork("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh", "crypto"))
+      .toBe("BTC");
+  });
+  test("null for non-crypto method", () => {
+    expect(extractCryptoNetwork("0x123...", "transfer")).toBeNull();
+  });
+  test("null for empty details", () => {
+    expect(extractCryptoNetwork("", "crypto")).toBeNull();
+  });
+});
+
+describe("NETWORK_META (colour palette)", () => {
+  test("BEP20 has Binance yellow", () => {
+    expect(NETWORK_META.BEP20.bg).toBe("#F0B90B");
+  });
+  test("AMBIGUOUS_0X flagged red for staff attention", () => {
+    expect(NETWORK_META.AMBIGUOUS_0X.bg).toBe("#EF4444");
+    expect(NETWORK_META.AMBIGUOUS_0X.label).toMatch(/red no declarada/i);
   });
 });

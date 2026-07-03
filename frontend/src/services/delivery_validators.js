@@ -253,3 +253,39 @@ export function getDeliveryBadge(toCode, method, deliveryDetails, currencyType) 
   if (!v || !deliveryDetails) return null;
   return v.validate(deliveryDetails, { code: toCode });
 }
+
+/**
+ * iter55.13 — Extract the declared blockchain network from a crypto
+ * delivery_details string. Returns null when the field is not a crypto
+ * delivery or when no network is declared.
+ *
+ * Detection order matches the validator: unambiguous TRC20/BTC first, then
+ * network keywords for 0x-family addresses.
+ */
+export function extractCryptoNetwork(deliveryDetails, method) {
+  if (!deliveryDetails || (method && method !== "crypto")) return null;
+  const text = deliveryDetails;
+  const upper = text.toUpperCase();
+  // Unambiguous shapes take precedence
+  if (/T[1-9A-HJ-NP-Za-km-z]{33}/.test(text)) return "TRC20";
+  if (/^(bc1[a-z0-9]{25,62}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})/m.test(text)) return "BTC";
+  if (/0x[a-fA-F0-9]{40}/.test(text)) {
+    if (/\b(BEP[\s-]?20|BSC|BINANCE\s*SMART\s*CHAIN)\b/.test(upper)) return "BEP20";
+    if (/\b(ERC[\s-]?20|ETH(EREUM)?)\b/.test(upper)) return "ERC20";
+    if (/\b(POLYGON|MATIC)\b/.test(upper)) return "POLYGON";
+    return "AMBIGUOUS_0X";
+  }
+  if (/\bSOL(ANA)?\b/.test(upper)) return "SOLANA";
+  return null;
+}
+
+/** Colour + label tokens for the AdminOrders NetworkBadge component. */
+export const NETWORK_META = {
+  BEP20:   { label: "BEP20 · BSC",       bg: "#F0B90B", fg: "#000000" },
+  TRC20:   { label: "TRC20 · Tron",      bg: "#FF060A", fg: "#FFFFFF" },
+  ERC20:   { label: "ERC20 · Ethereum",  bg: "#627EEA", fg: "#FFFFFF" },
+  POLYGON: { label: "POLYGON · Matic",   bg: "#8247E5", fg: "#FFFFFF" },
+  SOLANA:  { label: "Solana",            bg: "#14F195", fg: "#000000" },
+  BTC:     { label: "Bitcoin",           bg: "#F7931A", fg: "#000000" },
+  AMBIGUOUS_0X: { label: "⚠ Red no declarada", bg: "#EF4444", fg: "#FFFFFF" },
+};

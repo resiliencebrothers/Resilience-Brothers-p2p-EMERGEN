@@ -219,7 +219,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Frontend: `AdminCompanyFunds.jsx` — botón "Ajuste manual" abre `AdjustmentDialog` (toggle Entrada/Salida, selector moneda, método, fuente, 2FA). Nueva sección "Ajustes manuales de capital" con `AdjustmentsTable` — historial cronológico. Cards muestran "Aporte propio" (verde) y "Salida propia" (rojo).
   - Testing: 16/16 en `test_company_fund_adjustments.py`. Path count 87→88 en 3 canaries. Testing agent E2E green (`iteration_40.json`).
 
+- **iter55.13 (Mar 2, 2026)**: **Badge visual de red crypto en admin (lista + modal)**.
+  - Nuevos helpers en `delivery_validators.js`: `extractCryptoNetwork(details, method)` y `NETWORK_META` (paleta de colores oficiales).
+  - **Colores oficiales**: BEP20 `#F0B90B` Binance yellow · TRC20 `#FF060A` Tron red · ERC20 `#627EEA` Ethereum blue · POLYGON `#8247E5` Matic purple · SOLANA `#14F195` mint · BTC `#F7931A` Bitcoin orange · AMBIGUOUS_0X `#EF4444` (rojo alerta).
+  - **Vista lista `/admin/orders`**: columna Entrega ahora muestra el método + un mini-badge de red (12px) en el color oficial. Un vistazo distingue todas las redes en la cola.
+  - **Modal detalle**: badge grande con borde izquierdo del color de la red, label completo (`BEP20 · BSC`) y frase contextual (`Enviar en la red BEP20. Verifica que el wallet destino la acepte.`). Si el 0x no declaró red → badge rojo `⚠ Red no declarada` + `Contacta antes de enviar.`
+  - **Testing**: 34/34 tests unitarios verdes (10 nuevos para `extractCryptoNetwork` y `NETWORK_META`). Verificado E2E con 4 órdenes seed (BEP20/TRC20/ERC20/BTC) — todas las combinaciones renderizan con el color correcto tanto en lista como en modal. ESLint limpio.
+
 - **iter55.12 (Mar 2, 2026)**: **Selector explícito de red crypto (bloqueo de submit)**.
+  - Dropdown obligatorio `data-testid="crypto-network-select"` en `ExchangeView.jsx` cuando `method=crypto`.
+  - Auto-inyecta `Red: XXX` en `deliveryDetails`. Botón "Confirmar Orden" deshabilitado sin red seleccionada.
+  - Opciones: BEP20 (recomendada), TRC20, ERC20, POLYGON, SOLANA, BTC.
+
+
   - **Motivación**: BEP20/ERC20/POLYGON comparten formato 0x — el keyword-in-text de iter55.11 mitiga pero no elimina el riesgo. Un dropdown fuerza la decisión.
   - **Nuevo Select** `data-testid="crypto-network-select"` que aparece solo cuando `method=crypto` o `toCurr.type=crypto`:
     - Opciones: **BEP20 · Binance Smart Chain (recomendada)**, TRC20 · Tron, ERC20 · Ethereum, POLYGON · Matic, Solana, Bitcoin.
