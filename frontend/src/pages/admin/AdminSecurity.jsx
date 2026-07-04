@@ -2,8 +2,13 @@ import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Shield, RefreshCw, Users, MapPin, Ban, AlertOctagon, Wifi, LogOut } from "lucide-react";
+import { Shield, RefreshCw, Users, MapPin, Ban, AlertOctagon, Wifi, LogOut, Cloud, Plus, Trash2 } from "lucide-react";
 
 /**
  * AdminSecurity — read-only operational security dashboard.
@@ -21,6 +26,12 @@ export default function AdminSecurity() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [revoking, setRevoking] = useState(null);
+  const [cfData, setCfData] = useState(null);
+  const [cfLoading, setCfLoading] = useState(true);
+  const [cfDialogOpen, setCfDialogOpen] = useState(false);
+  const [cfForm, setCfForm] = useState({ ip: "", notes: "" });
+  const [cfSubmitting, setCfSubmitting] = useState(false);
+  const [cfDeleting, setCfDeleting] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,7 +46,20 @@ export default function AdminSecurity() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadCloudflare = useCallback(async () => {
+    setCfLoading(true);
+    try {
+      const r = await axios.get(`${API}/admin/security/cloudflare/blocks`, { withCredentials: true });
+      setCfData(r.data);
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "No se pudo cargar la blocklist de Cloudflare");
+    } finally {
+      setCfLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); loadCloudflare(); }, [load, loadCloudflare]);
 
   const revokeSessions = async (userId, email) => {
     if (!window.confirm(`¿Revocar TODAS las sesiones de ${email}?\nEl usuario tendrá que iniciar sesión de nuevo.`)) return;
@@ -52,6 +76,53 @@ export default function AdminSecurity() {
       toast.error(e.response?.data?.detail || "No se pudieron revocar");
     } finally {
       setRevoking(null);
+    }
+  };
+
+  const submitCfBlock = async () => {
+    const ip = cfForm.ip.trim();
+    if (!ip) {
+      toast.error("Ingresa una dirección IP");
+      return;
+    }
+    setCfSubmitting(true);
+    try {
+      const r = await axios.post(
+        `${API}/admin/security/cloudflare/blocks`,
+        { ip, notes: cfForm.notes.trim() },
+        { withCredentials: true }
+      );
+      if (r.data?.already_blocked) {
+        toast.info(`La IP ${ip} ya estaba en la blocklist`);
+      } else if (r.data?.cf_ok) {
+        toast.success(`IP ${ip} bloqueada en Cloudflare WAF`);
+      } else {
+        toast.warning(`Registro creado pero Cloudflare no confirmó: ${r.data?.reason || "revisa logs"}`);
+      }
+      setCfDialogOpen(false);
+      setCfForm({ ip: "", notes: "" });
+      await loadCloudflare();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo crear el bloqueo");
+    } finally {
+      setCfSubmitting(false);
+    }
+  };
+
+  const deleteCfBlock = async (blockId, ip) => {
+    if (!window.confirm(`¿Desbloquear ${ip}?\nSe eliminará la regla en Cloudflare (si aplica) y el registro pasará a 'deleted'.`)) return;
+    setCfDeleting(blockId);
+    try {
+      await axios.delete(
+        `${API}/admin/security/cloudflare/blocks/${blockId}`,
+        { withCredentials: true }
+      );
+      toast.success(`IP ${ip} desbloqueada`);
+      await loadCloudflare();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo desbloquear");
+    } finally {
+      setCfDeleting(null);
     }
   };
 
@@ -220,8 +291,159 @@ export default function AdminSecurity() {
           ])}
         />
       </Panel>
+
+      {/* CLOUDFLARE WAF BLOCKLIST */}
+      <Panel
+        icon={Cloud}
+        title="Cloudflare WAF · Blocklist"
+        subtitle="IPs bloqueadas al borde de Cloudflare. El scanner puede añadirlas automáticamente cuando detecta floods si el auto-block está habilitado."
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-3 text-[0.7rem]">
+          <span className={`px-2 py-1 border ${cfData?.configured ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
+            {cfData?.configured ? "Configurado ✓" : "Sin credenciales (CF_API_TOKEN + CF_ZONE_ID)"}
+          </span>
+          <span className={`px-2 py-1 border ${cfData?.auto_block_enabled ? "border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
+            Auto-block: {cfData?.auto_block_enabled ? "activo" : "desactivado"}
+          </span>
+          <div className="ml-auto flex gap-2">
+            <Button
+              data-testid="cf-refresh-btn"
+              onClick={loadCloudflare}
+              size="sm"
+              variant="outline"
+              className="border-white/10 text-neutral-300 hover:bg-white/5"
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Recargar
+            </Button>
+            <Button
+              data-testid="cf-add-block-btn"
+              onClick={() => setCfDialogOpen(true)}
+              size="sm"
+              className="bg-[#EAB308] text-black hover:bg-[#EAB308]/90"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1.5" /> Bloquear IP
+            </Button>
+          </div>
+        </div>
+
+        {cfLoading && <div className="text-xs text-neutral-500">Cargando blocklist…</div>}
+        {!cfLoading && cfData?.items?.length === 0 && <Empty text="Ningún bloqueo registrado." />}
+        {!cfLoading && cfData?.items?.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="cf-blocks-table">
+              <thead>
+                <tr className="text-[0.6rem] uppercase tracking-wider text-neutral-500 border-b border-white/5">
+                  <th className="text-left py-2 pr-3 font-semibold">IP</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Estado</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Origen</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Notas</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Creado</th>
+                  <th className="text-left py-2 pr-3 font-semibold">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cfData.items.map((b) => (
+                  <tr key={b.id} className="border-b border-white/5" data-testid={`cf-block-row-${b.id}`}>
+                    <td className="py-1.5 pr-3 text-white font-mono text-[0.7rem]">{b.ip}</td>
+                    <td className="py-1.5 pr-3">
+                      <span className={`px-1.5 py-0.5 text-[0.6rem] uppercase font-bold ${statusStyle(b.status)}`}>
+                        {b.status}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 text-neutral-400 text-[0.7rem]">{b.source}</td>
+                    <td className="py-1.5 pr-3 text-neutral-400 text-[0.7rem] max-w-xs truncate" title={b.notes}>{b.notes || "-"}</td>
+                    <td className="py-1.5 pr-3 text-neutral-400 font-mono text-[0.7rem]">{b.created_at?.slice(0, 16).replace("T", " ")}</td>
+                    <td className="py-1.5 pr-3">
+                      {b.status === "active" || b.status === "failed" ? (
+                        <Button
+                          data-testid={`cf-unblock-btn-${b.id}`}
+                          size="sm"
+                          variant="outline"
+                          onClick={() => deleteCfBlock(b.id, b.ip)}
+                          disabled={cfDeleting === b.id}
+                          className="bg-[#EF4444]/10 border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/20 h-6 px-2 text-[0.65rem]"
+                        >
+                          <Trash2 className="w-3 h-3 mr-1" /> Desbloquear
+                        </Button>
+                      ) : (
+                        <span className="text-neutral-600 text-[0.65rem] italic">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <Dialog open={cfDialogOpen} onOpenChange={setCfDialogOpen}>
+        <DialogContent data-testid="cf-block-dialog" className="bg-neutral-950 border-white/10">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-white">
+              <Cloud className="w-5 h-5 text-[#EAB308]" /> Bloquear IP en Cloudflare WAF
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-[0.7rem] uppercase tracking-wider text-neutral-500">IP</label>
+              <Input
+                data-testid="cf-block-ip-input"
+                placeholder="203.0.113.42"
+                value={cfForm.ip}
+                onChange={(e) => setCfForm({ ...cfForm, ip: e.target.value })}
+                className="bg-black/40 border-white/10 text-white font-mono"
+              />
+            </div>
+            <div>
+              <label className="text-[0.7rem] uppercase tracking-wider text-neutral-500">Notas (opcional)</label>
+              <Textarea
+                data-testid="cf-block-notes-input"
+                placeholder="Motivo del bloqueo…"
+                value={cfForm.notes}
+                onChange={(e) => setCfForm({ ...cfForm, notes: e.target.value })}
+                className="bg-black/40 border-white/10 text-white text-sm"
+                rows={2}
+              />
+            </div>
+            {!cfData?.configured && (
+              <div className="text-[0.7rem] text-amber-300 border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                ⚠ Cloudflare no está configurado. Se creará el registro local en estado <code>failed</code>. Añade <code>CF_API_TOKEN</code> y <code>CF_ZONE_ID</code> en el entorno para activar el bloqueo real.
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCfDialogOpen(false)}
+              className="border-white/10 text-neutral-300 hover:bg-white/5"
+            >
+              Cancelar
+            </Button>
+            <Button
+              data-testid="cf-block-submit-btn"
+              onClick={submitCfBlock}
+              disabled={cfSubmitting || !cfForm.ip.trim()}
+              className="bg-[#EF4444] text-white hover:bg-[#EF4444]/90"
+            >
+              {cfSubmitting ? "Bloqueando…" : "Confirmar bloqueo"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+function statusStyle(status) {
+  const map = {
+    active: "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+    pending_create: "border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]",
+    pending_delete: "border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]",
+    deleted: "border border-neutral-500/40 bg-neutral-500/10 text-neutral-400",
+    failed: "border border-[#EF4444]/40 bg-[#EF4444]/10 text-[#FEE2E2]",
+  };
+  return map[status] || "border border-neutral-500/40 bg-neutral-500/10 text-neutral-400";
 }
 
 function SummaryCard({ icon: Icon, label, value, hint, tone = "default", testId }) {
