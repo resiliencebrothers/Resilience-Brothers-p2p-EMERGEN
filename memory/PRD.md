@@ -31,6 +31,12 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - `_fanout_rate_change_push` (C:20 → C:11): split into `_rate_fanout_inapp` + `_rate_fanout_push` in `routes/market.py`.
   - Google OAuth `email_verified` check in `routes/auth.py:229` migrated from `is False` (PEP-8 anti-pattern for tri-state semantics) to `not claims.get("email_verified", True)`.
   - Verified GREEN by testing agent (iter44 report): 102/102 backend tests pass, zero regressions. Frontend build already compiled with zero warnings (no exhaustive-deps changes needed).
+- Architectural Refactor (iter45, Jul 4 2026): reduced complexity on the four remaining D:22+ hot spots. All 4 targets now sit below the C threshold (<11). Radon codebase average dropped from C:15.19 → C:11.8.
+  - `server.py:start_background_jobs` (D:28 → <C:11): whitespace migration extracted to new `services/db_migrations.py:clean_currency_whitespace` service; startup handler is now 26 lines and reads top-to-bottom as `migrate → define timeseries → start scheduler`.
+  - `routes/auth.py:google_callback` (D:26 → <C:11): split into `_exchange_google_code` (token exchange + JWT audience + email validation) and `_upsert_google_user` (delegates to `_update_existing_google_user` / `_create_google_user`).
+  - `services/transactions.py:build_transactions` (D:22 → <C:11): split into 3 fetch helpers (`_fetch_entradas_orders`, `_fetch_salidas_withdrawals`, `_fetch_salidas_order_payouts`) + 3 row-formatter helpers (`_order_to_entrada`, `_withdrawal_to_salida`, `_order_payout_to_salida`).
+  - `transactions_pdf.py:generate_transactions_pdf` (D:22 → <C:11): split into `_build_filters_paragraph`, `_build_totals_paragraph`, `_format_entry_row`, `_build_transactions_table`.
+  - Verified GREEN by testing agent (iter45 report): 138/138 backend tests pass, whitespace-migration E2E confirmed with planted dirty rows, Google OAuth live-smoke curls all green, transaction PDF export produces valid PDFs (verified %PDF- magic + byte size). Zero regressions.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
