@@ -56,6 +56,16 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Instrumentation: `OriginAllowlistMiddleware` logs `origin_blocked` events; `_rate_limit_logged_handler` wraps slowapi 429 to log `rate_limit_hit`; `auth_login` logs `admin_new_ip` on staff login from unseen IP.
   - New UI `/app/frontend/src/pages/admin/AdminSecurity.jsx` with 4 summary cards + 5 detail panels + revoke buttons. Nav link `admin-nav-security` only rendered for role=admin.
   - Verified GREEN by testing agent (iter48 report): **9/9 iter48 tests PASS + 44/44 regression PASS**, frontend E2E 100%, missing `ShieldAlert` import in AdminPanel.jsx fixed. TTL index verified in Mongo (`ttl_ts_30d`, expireAfterSeconds=2592000).
+- Automated Security Alerts Scanner (iter49, Jul 4 2026): APScheduler job runs every 5 minutes over `security_events` to detect and fanout push+email alerts to all admins on 3 anomalies:
+  - `admin_multi_ip`: staff account logged in from ≥3 distinct IPs in the last 24h (threshold configurable via `ADMIN_MULTI_IP_THRESHOLD`).
+  - `ip_rate_flood`: single IP triggered ≥100 rate_limit_hit events in the last 1h.
+  - `origin_flood`: single IP triggered ≥20 origin_blocked events in the last 1h.
+  - New service `/app/backend/services/security_alerts.py` with `run_security_alert_scan()`, `_detect_admin_multi_ip`, `_detect_ip_flood`, dedup via `security_alerts_sent` collection (anomaly_key + 6h cool-off, TTL 7d).
+  - Cool-off configurable via `SECURITY_ALERT_COOLDOWN_HOURS` env var.
+  - Robustness: alert-mark happens BEFORE notify_all_admins fanout so a raise in delivery cannot cause the same anomaly to re-fire every 5 minutes.
+  - Reuses `admin_alerts.notify_all_admins()` for delivery (push per admin device + email to ops mailbox).
+  - Alerts link to `/admin/security` dashboard so admins can drill down and revoke sessions if needed.
+  - Verified GREEN by testing agent (iter49 report): **6/6 iter49 tests PASS + 53/57 regression PASS** (4 rate-limit skipped as expected under `RATE_LIMIT_ENABLED=false`), TTL index `ttl_ts_7d` verified (expireAfterSeconds=604800), scheduler startup logs both jobs.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

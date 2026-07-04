@@ -19,6 +19,7 @@ inboxes clean during a sustained incident but still surfaces new patterns.
 Retention: alert sent-log has a 7-day TTL index so it doesn't grow unbounded.
 """
 import logging
+import os
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -37,8 +38,10 @@ IP_RATE_FLOOD_THRESHOLD = 100
 ORIGIN_FLOOD_WINDOW = timedelta(hours=1)
 ORIGIN_FLOOD_THRESHOLD = 20
 
-# How long to suppress duplicate alerts for the same anomaly key.
-COOLDOWN_HOURS = 6
+# How long to suppress duplicate alerts for the same anomaly key. Tunable at
+# runtime via env so ops can loosen/tighten during an active incident without
+# a code deploy.
+COOLDOWN_HOURS = int(os.environ.get("SECURITY_ALERT_COOLDOWN_HOURS", "6"))
 
 
 # ------------------------------------------------------------------
@@ -129,19 +132,26 @@ async def _fire_admin_multi_ip(db: Any, row: dict) -> bool:
         return False
     ips = row.get("ips") or []
     email = row.get("user_email") or user_id
-    from admin_alerts import notify_all_admins
-    await notify_all_admins(
-        db,
-        title=f"⚠️ Cuenta staff con {len(ips)} IPs distintas",
-        body=(
-            f"{email} inició sesión desde {len(ips)} IPs diferentes en las "
-            f"últimas 24h: {', '.join(ips[:5])}"
-            + ("…" if len(ips) > 5 else "")
-            + ". Revísalo en Admin → Seguridad y revoca sesiones si es sospechoso."
-        ),
-        url_path="/admin/security",
-    )
+    # Mark BEFORE fanout so a raise from notify_all_admins cannot cause the same
+    # anomaly to fire every 5 minutes until an unrelated code path re-marks it.
+    # notify_all_admins internally swallows per-recipient errors, but we still
+    # want the belt-and-braces guarantee.
     await _mark_alerted(db, key, {"user_id": user_id, "email": email, "ips": ips})
+    try:
+        from admin_alerts import notify_all_admins
+        await notify_all_admins(
+            db,
+            title=f"⚠️ Cuenta staff con {len(ips)} IPs distintas",
+            body=(
+                f"{email} inició sesión desde {len(ips)} IPs diferentes en las "
+                f"últimas 24h: {', '.join(ips[:5])}"
+                + ("…" if len(ips) > 5 else "")
+                + ". Revísalo en Admin → Seguridad y revoca sesiones si es sospechoso."
+            ),
+            url_path="/admin/security",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"notify_all_admins failed for {key}: {e}")
     return True
 
 
@@ -152,19 +162,23 @@ async def _fire_ip_flood(db: Any, row: dict, *, kind_label: str,
     if await _already_alerted(db, key):
         return False
     paths = (row.get("top_paths") or [])[:3]
-    from admin_alerts import notify_all_admins
-    await notify_all_admins(
-        db,
-        title=f"⚠️ IP sospechosa: {row['count']} eventos {kind_label}",
-        body=(
-            f"IP {ip} generó {row['count']} eventos '{kind_label}' "
-            f"(umbral: {threshold_desc}). "
-            f"Endpoints tocados: {', '.join(paths) if paths else 'n/a'}. "
-            f"Considera bloquearla en Cloudflare WAF."
-        ),
-        url_path="/admin/security",
-    )
+    # Mark BEFORE fanout (see comment in _fire_admin_multi_ip).
     await _mark_alerted(db, key, {"ip": ip, "count": row["count"], "paths": paths})
+    try:
+        from admin_alerts import notify_all_admins
+        await notify_all_admins(
+            db,
+            title=f"⚠️ IP sospechosa: {row['count']} eventos {kind_label}",
+            body=(
+                f"IP {ip} generó {row['count']} eventos '{kind_label}' "
+                f"(umbral: {threshold_desc}). "
+                f"Endpoints tocados: {', '.join(paths) if paths else 'n/a'}. "
+                f"Considera bloquearla en Cloudflare WAF."
+            ),
+            url_path="/admin/security",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"notify_all_admins failed for {key}: {e}")
     return True
 
 

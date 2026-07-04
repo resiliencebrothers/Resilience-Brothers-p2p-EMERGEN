@@ -213,7 +213,7 @@ Dentro de las 72 h del incidente:
 
 ---
 
-## 🛡️ Estado actual de defensas (iter47)
+## 🛡️ Estado actual de defensas (iter47-iter49)
 
 Verificado activo:
 - ✅ Rate limiting (slowapi): 10/min login, 5/hour register, 3/hour forgot-password, 5/hour appeals
@@ -223,6 +223,12 @@ Verificado activo:
 - ✅ Sentry captura errores 500+
 - ✅ TOTP en acciones de alto riesgo
 - ✅ Sesiones expirables (7 días default)
+- ✅ **Security audit dashboard** (`/admin/security`) — visibilidad en tiempo real de sesiones activas, IPs sospechosas, violaciones de origin, ráfagas de login fallido
+- ✅ **Automated security alerts** — scheduler cada 5m detecta y alerta a admins por push+email cuando:
+  - admin/staff loguea desde ≥3 IPs en 24h
+  - una IP acumula ≥100 rate_limit_hit en 1h
+  - una IP acumula ≥20 origin_blocked en 1h
+  - Dedup 6h por anomaly_key para evitar spam
 
 Pendientes de activar por el usuario:
 - ⚠️ Domain lock + 2FA hardware key en registrar
