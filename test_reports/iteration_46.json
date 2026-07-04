@@ -1,0 +1,37 @@
+{
+  "summary": "iter46 — Self-service appeal flow for under_review clients. Backend (10/10 tests pass — 7 supplied + 3 authz regression) and Frontend (client submit + admin resolve + admin reject flows all working end-to-end via Playwright).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_appeals.py",
+    "/app/backend/tests/test_appeals_authz.py",
+    "/app/test_reports/pytest/iter46_appeals.xml",
+    "/app/test_reports/pytest/iter46_appeals_authz.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "notifications.py notify_staff_new_appeal: recipients query correctly uses $or on role=admin OR (role=employee AND can_manage_blocklist=true); good separation of concerns.",
+    "appeals.py `_resolve_appeal_internal` properly guards against re-processing (status != 'pending' → 409) and never flips user.account_status — matches the documented contract that resolving is a message only, not activation.",
+    "AppealDialog toast handling correctly detects the 409 APPEAL_ALREADY_PENDING structured detail and reloads history so the user immediately sees the warning message; no submit button rendered when a pending appeal exists.",
+    "AdminAppeals dialog forces a non-empty response (client-side check + backend Pydantic min_length=1); confirm button is disabled until textarea has content.",
+    "Sidebar nav-appeals link with `data-testid=admin-nav-appeals` present and routing to `/admin/appeals` works correctly for both admin and employee-with-can_manage_blocklist.",
+    "MINOR (not blocking): AppealDialog import path `import { API } from \"@/App\"` — depends on App.js exporting API constant; already in use by other admin pages so consistent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_appeals_authz.py (new — 3 authz regression tests for VIP/normal → 403)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (client submit + pending-guard + admin resolve + admin reject + tab navigation)"},
+  "test_credentials": "Uses seeded test users from /app/memory/test_credentials.md: session cookies test_session_admin_X, test_session_normal_X etc.",
+  "seed_data_creation": "Temporarily set user_test_normal01.account_status=under_review then restored to active. Planted one pending appeal for the admin reject scenario. All appeals + appeal notifications purged at end of testing.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature complete; no follow-up needed. If regressions surface later, run: `pytest /app/backend/tests/test_appeals.py /app/backend/tests/test_appeals_authz.py -v` (10 tests). Frontend test IDs: open-appeal-dialog-btn, appeal-dialog, appeal-message-textarea, appeal-submit-btn, admin-appeals-page, appeals-tab-{pending|resolved|rejected|all}, appeal-row-<id>, appeal-resolve-btn-<id>, appeal-reject-btn-<id>, appeal-action-dialog, appeal-response-textarea, appeal-action-confirm-btn, admin-nav-appeals.",
+  "rca of the issue": "N/A — no issues found."
+}

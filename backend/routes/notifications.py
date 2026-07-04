@@ -120,6 +120,87 @@ async def notify_user_phone_rejected(target_user: dict, reason: str) -> Any:
     await send_push_to_user(db, target_user["user_id"], build_phone_rejected_payload(target_user, reason))
 
 
+async def notify_staff_new_appeal(appeal: dict) -> Any:
+    """Fan out an in-app notification (and Web Push) to every admin and every
+    employee with `can_manage_blocklist=True` when a client submits a new
+    self-service appeal from the under-review banner."""
+    recipients_cursor = db.users.find(
+        {"$or": [
+            {"role": "admin"},
+            {"role": "employee", "can_manage_blocklist": True},
+        ]},
+        {"_id": 0, "user_id": 1},
+    )
+    recipients = [r["user_id"] async for r in recipients_cursor]
+    name = appeal.get("user_name") or appeal.get("user_email") or "Usuario"
+    email = appeal.get("user_email") or "-"
+    title = "Nueva apelación de cliente"
+    message = f"{name} ({email}) envió una apelación para reactivar su cuenta bajo revisión. Ábrela en Admin → Apelaciones."
+    preview = (appeal.get("message") or "")[:120]
+    data = {
+        "appeal_id": appeal["id"],
+        "target_user_id": appeal["user_id"],
+        "user_email": appeal.get("user_email"),
+        "preview": preview,
+    }
+    push_payload = {
+        "title": title,
+        "body": f"{name}: {preview}",
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"appeal-{appeal['id']}",
+        "url": "/admin/appeals",
+    }
+    for uid in recipients:
+        try:
+            await _insert_notification(
+                recipient_user_id=uid, type="new_appeal",
+                title=title, message=message, data=data,
+            )
+            await send_push_to_user(db, uid, push_payload)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Failed to deliver new-appeal notification to {uid}: {e}")
+
+
+async def notify_user_appeal_reviewed(appeal: dict) -> Any:
+    """Tell the client that staff processed their appeal (either resolved or
+    rejected) and surface the staff response verbatim."""
+    status = appeal.get("status", "resolved")
+    response = appeal.get("staff_response") or ""
+    if status == "resolved":
+        title = "Apelación aprobada"
+        message = (
+            f"El staff revisó tu apelación y la aprobó. Mensaje del equipo: "
+            f"{response}. Si la cuenta sigue bajo revisión, un admin la "
+            f"activará en las próximas horas."
+        )
+    else:
+        title = "Apelación rechazada"
+        message = (
+            f"El staff revisó tu apelación pero no procedió. Mensaje del "
+            f"equipo: {response}. Puedes contactar a soporte por WhatsApp si "
+            f"necesitas otra vía."
+        )
+    await _insert_notification(
+        recipient_user_id=appeal["user_id"],
+        type=f"appeal_{status}",
+        title=title, message=message,
+        data={"appeal_id": appeal["id"], "staff_response": response},
+    )
+    push_payload = {
+        "title": title,
+        "body": response[:120] if response else message[:120],
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"appeal-review-{appeal['id']}",
+        "url": "/dashboard",
+    }
+    try:
+        await send_push_to_user(db, appeal["user_id"], push_payload)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"appeal-review push failed for {appeal['user_id']}: {e}")
+
+
 # ============================================================
 # Endpoints
 # ============================================================

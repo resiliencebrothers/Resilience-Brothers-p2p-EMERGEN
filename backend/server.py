@@ -42,6 +42,7 @@ from routes.admin_audit import router as admin_audit_router  # noqa: E402
 from routes.admin_company_funds import router as admin_company_funds_router  # noqa: E402
 from routes.admin_revenue import router as admin_revenue_router  # noqa: E402
 from routes.files import router as files_router  # noqa: E402
+from routes.appeals import router as appeals_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -78,6 +79,7 @@ api_router.include_router(admin_audit_router)
 api_router.include_router(admin_company_funds_router)
 api_router.include_router(admin_revenue_router)
 api_router.include_router(files_router)
+api_router.include_router(appeals_router)
 
 app.include_router(api_router)
 

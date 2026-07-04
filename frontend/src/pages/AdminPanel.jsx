@@ -1,7 +1,7 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap, MessageSquare } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -19,6 +19,7 @@ import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
 import AdminQuickDashboard from "@/pages/admin/AdminQuickDashboard";
+import AdminAppeals from "@/pages/admin/AdminAppeals";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -39,6 +40,7 @@ export default function AdminPanel() {
     { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
     { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
     { to: "/admin/blocked-contacts", icon: Ban, label: "Bloqueos", id: "admin-nav-blocked-contacts" },
+    { to: "/admin/appeals", icon: MessageSquare, label: "Apelaciones", id: "admin-nav-appeals" },
     { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
     ...(isStaff ? [
       { to: "/admin/transactions", icon: Receipt, label: "Transacciones", id: "admin-nav-transactions", highlight: true },
@@ -182,6 +184,7 @@ export default function AdminPanel() {
             <Route path="products" element={<AdminProducts />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="blocked-contacts" element={<AdminBlockedContacts />} />
+            <Route path="appeals" element={<AdminAppeals />} />
             {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}

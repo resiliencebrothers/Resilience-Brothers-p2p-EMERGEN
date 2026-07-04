@@ -14,6 +14,7 @@ import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import PushToggle from "@/components/PushToggle";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
+import AppealDialog from "@/components/AppealDialog";
 
 const ROLE_LABELS = {
   normal: "Cliente",
@@ -179,6 +180,7 @@ export default function Dashboard() {
                   Tu cuenta aún no está activa. Un miembro del staff debe verificar tu teléfono antes de que puedas operar (intercambios, retiros y canjes están temporalmente deshabilitados).
                   Si llevas más de 24h esperando, contacta a soporte por WhatsApp.
                 </p>
+                <AppealDialog />
               </div>
             </div>
           )}
