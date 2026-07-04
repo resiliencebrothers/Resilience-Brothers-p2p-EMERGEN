@@ -394,9 +394,16 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 - **Self-service appeal flow** para usuarios `under_review`: banner en dashboard + formulario + cola staff con `can_manage_blocklist`.
 
 ### P2 — Backlog
-- **🪙 Wallets crypto on-chain (USDT-TRC20/ERC-20, BTC)** — PRIORIDAD ALTA cuando se retome. Justificación: la mayoría de clientes son cubanos y **crypto es la vía principal de entrada de fondos** (Stripe/tarjetas no viables en Cuba). Alcance recomendado:
-  - Fase 1 (~3-4 días): read-only — auto-detección de depósitos USDT-TRC20 vía polling de TronGrid o webhook de proveedor (Tatum/BlockCypher). Marca orden como "fondos recibidos" automáticamente + guarda TX hash y link a explorer.
-  - Fase 2 (~1-2 semanas + auditoría seguridad): payouts firmados desde hot-wallet company. Requiere private key management (Fireblocks/BitGo custodial o Ledger self-custody).
+- **🪙 Wallets crypto on-chain (USDT-TRC20 + USDT-BEP20)** — **POSPUESTO por el usuario (Jul 4, 2026)** hasta disponer de un wallet frío (Ledger/Trezor/air-gapped) para generar la seed offline sin exponerla en `.env`. Justificación del usuario: mayoría de clientes son cubanos y **crypto es la vía principal de entrada de fondos** (Stripe/tarjetas no viables en Cuba), pero prioriza la seguridad de la seed sobre la velocidad de entrega.
+  - **Diseño técnico ya validado (via integration_playbook_expert_v2, iter45):**
+    - HD wallet BIP44: `m/44'/195'/0'/0/i` (Tron) + `m/44'/60'/0'/0/i` (BSC), librería `bip-utils` (pure-Python, sin C ext.)
+    - APIs: TronGrid `v1/accounts/{addr}/transactions/trc20` + BscScan `module=account&action=tokentx&contractaddress=0x55d398326f99059fF775485246999027B3197955`
+    - Polling: APScheduler cada 15s solo sobre órdenes `status=pending_deposit`
+    - Auto-aprobación con **≥19 confirmaciones (TRC20)** y **≥15 confirmaciones (BEP20)**
+    - Idempotencia: unique index en `tx_hash` en collection `orders`
+    - Matching: address + amount (respetando 6 decimales TRC20 vs 18 decimales BEP20)
+  - **Esquema seguro identificado y consensuado:** usuario genera seed OFFLINE en wallet frío → deriva `TRON_XPUB` (`m/44'/195'/0'`) y `BSC_XPUB` (`m/44'/60'/0'`) → solo carga los xpubs en `.env`. Con xpub la plataforma deriva direcciones y detecta depósitos, pero NO puede firmar transacciones ni mover fondos. Ningún agente Emergent ni infra tendría acceso a la seed (que nunca toca la plataforma).
+  - Fase 2 (~1-2 semanas + auditoría seguridad, futuro lejano): payouts firmados desde hot-wallet company. Requiere private key management (Fireblocks/BitGo custodial o Ledger self-custody).
 - Email diario al `ops_notifications_email` con tickets anti-fraude >48h.
 - Gráfico histórico de blocks/semana en sección Anti-fraude.
 - Refactor opcional: BalanceConverterCard (284L) y VipView (410L) en sub-componentes.
