@@ -1,0 +1,76 @@
+{
+  "iteration": 47,
+  "date": "2026-07-04",
+  "feature": "Security middleware — CORS strict, rate limiting, security headers, origin allowlist, incident-response runbook, pre-commit hook",
+  "status": "GREEN",
+  "test_results": {
+    "test_security_middleware.py": "7/7 PASS",
+    "test_iter47_security_review.py": "13/13 PASS (9 core + 4 rate-limit after enabling)",
+    "regression_suite": "101/101 PASS (+ 4 skipped rate-limit tests when RATE_LIMIT_ENABLED=false)",
+    "test_files": [
+      "test_appeals.py",
+      "test_iter16_email_auth.py",
+      "test_iter15_company_funds.py",
+      "test_admin_alerts.py",
+      "test_iter55_push_notifications.py",
+      "test_iter27_auth_refactor.py",
+      "test_security_middleware.py",
+      "test_iter47_security_review.py"
+    ]
+  },
+  "verified_defenses": {
+    "security_headers": {
+      "strict_transport_security": "max-age=15552000; includeSubDomains; preload",
+      "x_content_type_options": "nosniff",
+      "x_frame_options": "DENY",
+      "referrer_policy": "strict-origin-when-cross-origin",
+      "permissions_policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+      "content_security_policy": "default-src 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests; ...",
+      "x_permitted_cross_domain_policies": "none"
+    },
+    "cors_strict": {
+      "wildcard_rejected_in_production": true,
+      "explicit_allowlist_env": "CORS_ORIGINS",
+      "wildcard_disallowed_via_middleware_config": true
+    },
+    "origin_allowlist_middleware": {
+      "blocks_evil_origin_on_unsafe_methods": "403",
+      "permits_allowed_origins": true,
+      "permits_no_origin_header": true,
+      "safe_get_always_allowed": true
+    },
+    "rate_limiting": {
+      "auth_login": "10/minute",
+      "auth_register": "5/hour",
+      "auth_forgot_password": "3/hour",
+      "auth_reset_password": "10/hour",
+      "auth_resend_verification": "3/hour",
+      "appeals_create": "5/hour",
+      "global_default": "300/minute",
+      "429_returns_ratelimit_headers": true
+    }
+  },
+  "files_created_or_modified": [
+    "/app/backend/security_middleware.py — NEW (200 lines)",
+    "/app/backend/server.py — replaced inline CORS with install_security_middleware(app)",
+    "/app/backend/routes/auth.py — @limiter.limit decorators on 5 endpoints",
+    "/app/backend/routes/appeals.py — @limiter.limit on POST /appeals",
+    "/app/backend/tests/test_security_middleware.py — NEW (7 tests)",
+    "/app/backend/tests/test_iter47_security_review.py — NEW (13 tests)",
+    "/app/backend/tests/test_iter27_auth_refactor.py — updated OpenAPI path count 89→94",
+    "/app/backend/requirements.txt — pinned slowapi==0.1.10, limits==5.8.0",
+    "/app/backend/.env — CORS_ORIGINS explicit list, RATE_LIMIT_ENABLED=false for preview",
+    "/app/docs/incident-response.md — NEW: operational runbook",
+    "/app/.githooks/pre-commit — NEW: secret leakage guard"
+  ],
+  "mypy": "PASS — 28 source files, 0 errors",
+  "frontend_build": "PASS — 0 warnings",
+  "known_limitations": [
+    "The Emergent K8s ingress rewrites the Origin header to the internal cluster hostname `.emergentcf.cloud`. To keep the origin allowlist working through the proxy, both external and internal preview domains are on the allowlist. This is documented in /app/docs/incident-response.md.",
+    "RATE_LIMIT_ENABLED=false in preview so tests don't hit ceilings. Production MUST set this to true and set an explicit CORS_ORIGINS list."
+  ],
+  "next_action_items_for_main_agent": [
+    "Update /app/memory/PRD.md with iter47 log entry",
+    "Call finish tool with security hardening summary and prompt user for the operational steps only they can perform (domain lock, hardware keys, DNSSEC/CAA, etc)"
+  ]
+}

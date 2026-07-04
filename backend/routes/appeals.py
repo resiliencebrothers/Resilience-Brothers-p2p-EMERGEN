@@ -22,9 +22,10 @@ import uuid
 import logging
 from typing import Any, Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from security_middleware import limiter
 from db_client import db
 from auth_utils import require_user, require_staff, now_utc, iso
 from audit_log import log_action
@@ -65,7 +66,8 @@ class AppealResolvePayload(BaseModel):
 # ============================================================
 
 @router.post("/appeals")
-async def create_appeal(payload: AppealCreatePayload, request: Request) -> Any:
+@limiter.limit("5/hour")
+async def create_appeal(payload: AppealCreatePayload, request: Request, response: Response) -> Any:
     """Submit a new appeal. Only allowed while the account is `under_review`."""
     user = await require_user(request)
     if user.get("account_status") != "under_review":

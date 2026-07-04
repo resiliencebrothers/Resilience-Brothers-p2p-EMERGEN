@@ -1,0 +1,90 @@
+#!/bin/bash
+# Pre-commit hook — Resilience Brothers
+# Blocks any commit containing sensitive tokens or files.
+#
+# Install:
+#   cp /app/.githooks/pre-commit /app/.git/hooks/pre-commit
+#   chmod +x /app/.git/hooks/pre-commit
+#
+# Or globally for the repo:
+#   git config core.hooksPath .githooks
+
+set -e
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+echo -e "${YELLOW}[pre-commit] Scanning for secrets…${NC}"
+
+# 1. Block `.env` files from being committed at all
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+if echo "$staged" | grep -qE '(^|/)\.env(\..*)?$'; then
+  echo -e "${RED}❌ Attempting to commit a .env file. Aborting.${NC}"
+  echo "   Add it to .gitignore instead."
+  exit 1
+fi
+
+# 2. Block obvious secret patterns in ANY staged file (excluding tests, docs, this hook)
+FILES_TO_SCAN=$(echo "$staged" | grep -vE '(tests?/|docs?/|\.githooks/|\.md$|CHANGELOG|test_credentials\.md)' || true)
+
+if [ -n "$FILES_TO_SCAN" ]; then
+  # Patterns that MUST NEVER be committed
+  PATTERNS=(
+    # BIP39 mnemonics (12 or 24 words all lowercase)
+    'mnemonic\s*[:=]\s*"[a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+ [a-z]+'
+    # Ethereum/BSC private keys (64 hex chars, possibly prefixed with 0x)
+    '(0x)?[a-fA-F0-9]{64}'
+    # Extended public keys
+    '(xpub|ypub|zpub|xprv|yprv|zprv)[a-zA-Z0-9]{100,}'
+    # AWS access keys
+    'AKIA[0-9A-Z]{16}'
+    # Google API keys
+    'AIza[0-9A-Za-z\-_]{35}'
+    # Generic API key patterns
+    '["\x27](sk|pk|api|key|token|secret|bearer)_[a-zA-Z0-9]{20,}["\x27]'
+    # JWT tokens
+    'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+    # Common secret variable assignments
+    'PRIVATE_KEY\s*=\s*["\x27][^"\x27]{20,}'
+    'SEED_PHRASE\s*=\s*["\x27][^"\x27]{20,}'
+    'HD_MNEMONIC\s*=\s*["\x27][^"\x27]{20,}'
+  )
+
+  found_secret=0
+  for pattern in "${PATTERNS[@]}"; do
+    matches=$(git diff --cached -U0 -- $FILES_TO_SCAN 2>/dev/null | grep -E "^\+" | grep -EnH "$pattern" || true)
+    if [ -n "$matches" ]; then
+      echo -e "${RED}❌ Possible secret detected (pattern: $pattern):${NC}"
+      echo "$matches" | head -5
+      found_secret=1
+    fi
+  done
+
+  if [ "$found_secret" -eq 1 ]; then
+    echo ""
+    echo -e "${RED}Commit aborted. Remove the secret and use env vars.${NC}"
+    echo "If this is a false positive, run: git commit --no-verify"
+    exit 1
+  fi
+fi
+
+# 3. Warn on large files (>1MB) — usually build artifacts that should be ignored
+if [ -n "$staged" ]; then
+  large=$(echo "$staged" | while read f; do
+    if [ -f "$f" ]; then
+      size=$(wc -c < "$f")
+      if [ "$size" -gt 1048576 ]; then
+        echo "  - $f ($((size / 1024))KB)"
+      fi
+    fi
+  done)
+  if [ -n "$large" ]; then
+    echo -e "${YELLOW}⚠️  Large files staged (may not belong in git):${NC}"
+    echo "$large"
+    echo "  Continue anyway? Add --no-verify to bypass."
+  fi
+fi
+
+echo -e "${GREEN}✅ Pre-commit checks passed.${NC}"

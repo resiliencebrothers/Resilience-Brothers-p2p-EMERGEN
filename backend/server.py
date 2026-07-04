@@ -14,10 +14,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI
-from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-
-
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -83,13 +80,11 @@ api_router.include_router(appeals_router)
 
 app.include_router(api_router)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# iter47 — Security middleware: strict CORS, rate limiting (slowapi),
+# security headers (HSTS/CSP/X-Frame/etc). Wire once here so `server.py` stays
+# a thin bootstrap.
+from security_middleware import install_security_middleware  # noqa: E402
+install_security_middleware(app)
 
 
 logging.basicConfig(

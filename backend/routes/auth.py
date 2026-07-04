@@ -40,6 +40,7 @@ from auth_utils import (
     _decode_jwt_payload,
 )
 import email_service
+from security_middleware import limiter
 from services.anti_scam import mark_user_under_review
 
 
@@ -328,7 +329,8 @@ async def auth_logout(request: Request, response: Response) -> Any:
 # ============================================================
 
 @router.post("/auth/register")
-async def auth_register(payload: AuthRegisterPayload, response: Response) -> Any:
+@limiter.limit("5/hour")
+async def auth_register(payload: AuthRegisterPayload, request: Request, response: Response) -> Any:
     email = payload.email.lower().strip()
     phone = normalize_phone(payload.phone)
     # iter24 — block new registrations entirely when in defensive mode
@@ -411,7 +413,8 @@ async def auth_verify_email(token: str, response: Response) -> Any:
 
 
 @router.post("/auth/resend-verification")
-async def auth_resend_verification(payload: AuthResendVerificationPayload) -> Any:
+@limiter.limit("3/hour")
+async def auth_resend_verification(payload: AuthResendVerificationPayload, request: Request, response: Response) -> Any:
     """Resend the email verification link. Always returns a generic 200 to avoid
     leaking which emails are registered. Rate-limited to 1 request per 60s per user."""
     from datetime import datetime
@@ -459,6 +462,7 @@ async def auth_resend_verification(payload: AuthResendVerificationPayload) -> An
 
 
 @router.post("/auth/login")
+@limiter.limit("10/minute")
 async def auth_login(payload: AuthLoginPayload, request: Request, response: Response) -> Any:
     email = payload.email.lower().strip()
     identifier = email
@@ -512,7 +516,8 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
 
 
 @router.post("/auth/forgot-password")
-async def auth_forgot_password(payload: ForgotPasswordPayload) -> Any:
+@limiter.limit("3/hour")
+async def auth_forgot_password(payload: ForgotPasswordPayload, request: Request, response: Response) -> Any:
     """Send reset link if account exists. Always returns 200 to avoid email enumeration."""
     email = payload.email.lower().strip()
     user = await db.users.find_one({"email": email}, {"_id": 0})
@@ -533,7 +538,8 @@ async def auth_forgot_password(payload: ForgotPasswordPayload) -> Any:
 
 
 @router.post("/auth/reset-password")
-async def auth_reset_password(payload: ResetPasswordPayload, response: Response) -> Any:
+@limiter.limit("10/hour")
+async def auth_reset_password(payload: ResetPasswordPayload, request: Request, response: Response) -> Any:
     user = await db.users.find_one({"password_reset_token": payload.token}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=400, detail="Token inválido")
