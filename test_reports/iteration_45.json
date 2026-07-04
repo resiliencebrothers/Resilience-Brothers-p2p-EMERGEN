@@ -1,0 +1,54 @@
+{
+  "summary": "iter45 refactor regression — verified backend behaviour is IDENTICAL after refactoring the 4 D:22+ high-complexity functions: server.py:start_background_jobs (now delegates to services/db_migrations.py:clean_currency_whitespace), routes/auth.py:google_callback (split into _exchange_google_code / _upsert_google_user / _update_existing_google_user / _create_google_user), services/transactions.py:build_transactions (split into _fetch_entradas_orders / _fetch_salidas_withdrawals / _fetch_salidas_order_payouts + row-formatter helpers), and transactions_pdf.py:generate_transactions_pdf (split into _build_filters_paragraph / _build_totals_paragraph / _format_entry_row / _build_transactions_table). 138/138 targeted regression tests PASS (1 skipped pre-existing), whitespace migration E2E verified with planted dirty rows in rates+orders+withdrawals, Google OAuth login+callback endpoints respond exactly as documented, transaction registry + PDF exports (admin & /me VIP, with and without filters) all live-smoke green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "tests_executed": {
+    "targeted_refactor_regression (iter45_refactor.xml)": {
+      "test_iter27_auth_refactor.py": "PASS — auth router extraction still green after inner-helper split of google_callback.",
+      "test_iter16_email_auth.py": "14/14 PASS — email/password register/verify/login/reset/brute-force lockout all intact.",
+      "test_transactions_registry.py": "30/31 PASS + 1 pre-existing skip — admin & /me transactions, direction/currency/holder/date/amount filters, CSV/PDF exports, employee-forbidden gates all work after build_transactions split.",
+      "test_audit_export_and_dates.py": "14/14 PASS — audit CSV/PDF export, date filters (YYYY-MM-DD + full ISO), pagination unchanged.",
+      "test_iter55_3_currency_lenient.py": "5/5 PASS — lenient currency lookup still tolerates whitespace/case.",
+      "test_iter55_7_currency_whitespace_e2e.py": "3/3 PASS — includes direct invocation of clean_currency_whitespace, confirming the extracted service module still normalises rates/orders/withdrawals rows.",
+      "test_iter15_company_funds.py": "12/12 PASS — company funds aggregation + company withdrawal CRUD + queue endpoints all green (regression from iter44).",
+      "test_admin_alerts.py": "11/11 PASS — admin settings + alert fanout hooks (order/withdrawal/redeem) intact.",
+      "test_iter55_push_notifications.py": "13/13 PASS — rate change fanout via POST upsert and PUT paths, no-op skip, role gating unchanged.",
+      "test_iter55_order_outflows.py": "7/7 PASS — completed transfer/crypto orders still reduce balance and surface as SALIDA rows via _order_payout_to_salida; accumulate excluded; direction+currency filters on payouts correct."
+    },
+    "whitespace_migration_e2e_live": "PLANTED dirty rows in db.rates ({from_code:' USD ',to_code:'cup '}), db.orders ({from_code:' eur',to_code:'USD '}), db.withdrawals ({currency:' mlc '}) → restarted backend → all rows normalised to uppercase-trimmed values (USD, CUP, EUR, USD, MLC). Confirms the extracted services/db_migrations.py:clean_currency_whitespace fires on startup exactly like the pre-refactor inline block. Cleanup: planted TEST_ rows deleted.",
+    "google_oauth_live_smoke": "GET /api/auth/google/login → 302 to accounts.google.com/o/oauth2/v2/auth with all expected params (client_id, redirect_uri, state, response_type=code, scope=openid+email+profile, access_type=online, prompt=select_account). GET /api/auth/google/callback (no code+state) → 400 'Missing code or state'. GET /api/auth/google/callback?code=abc&state=nonexistentstate → 400 'Invalid or expired OAuth state'. GET /api/auth/google/callback?error=access_denied → 302 to /?auth_error=access_denied. Full token-exchange path not testable without a real Google flow, but the pytest suite covers the branch logic + source review of _exchange_google_code / _upsert_google_user matches previous inline behaviour.",
+    "transactions_registry_live_smoke": "GET /api/admin/transactions?limit=5 → 200, items+totals shape correct, by_currency spans USD/USDT/CUP. GET /api/admin/transactions?direction=out&currency=USD → 200, 90 items, all direction=out. GET /api/admin/transactions/export.pdf → 200 application/pdf, 773888 bytes, valid %PDF- magic. GET /api/admin/transactions/export.pdf?direction=in&currency=USD&min_amount=1 → 200 application/pdf, 729358 bytes valid. GET /api/me/transactions/export.pdf (VIP) → 200 application/pdf, 749839 bytes valid."
+  },
+  "test_report_links": [
+    "/app/test_reports/pytest/iter45_refactor.xml",
+    "/app/backend/tests/test_iter27_auth_refactor.py",
+    "/app/backend/tests/test_iter16_email_auth.py",
+    "/app/backend/tests/test_transactions_registry.py",
+    "/app/backend/tests/test_audit_export_and_dates.py",
+    "/app/backend/tests/test_iter55_7_currency_whitespace_e2e.py",
+    "/app/backend/tests/test_iter15_company_funds.py",
+    "/app/backend/tests/test_admin_alerts.py",
+    "/app/backend/tests/test_iter55_push_notifications.py",
+    "/app/backend/tests/test_iter55_order_outflows.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/db_migrations.py — clean, well-scoped extraction. _WHITESPACE_TARGETS as a module-level tuple is easy to extend if a new collection adds a currency field. Per-collection try/except around _clean_field prevents a partial failure (e.g. missing collection in early envs) from aborting the migration for the other collections. Good.",
+    "routes/auth.py:222 — 'if not claims.get(\"email_verified\", True)' preserves the iter44-verified tri-state semantics (True/absent → accept, False → reject). Split moves this into _exchange_google_code alongside audience check and email-presence check — cohesive.",
+    "routes/auth.py:279 _upsert_google_user is a 3-line thin router between _update_existing_google_user and _create_google_user — arguably could be inlined back into google_callback, but keeping it here makes google_callback read as a linear top-level flow, which is the whole point of the refactor. OK.",
+    "services/transactions.py:145-200 — the three _fetch_* helpers all accept (date_q, currency, holder, user_id) with identical signatures; nice consistency, but the shared filter-building logic (user_id/currency/holder injection) is duplicated 3x. Minor DRY nit (~5 lines each) — extractable into a `_apply_common_filters(q, currency_field, holder_field, ...)` helper if it grows. Non-blocking.",
+    "transactions_pdf.py:80 _build_totals_paragraph returns None when the totals dict is empty — the caller (generate_transactions_pdf:172) correctly guards with `if totals_para is not None:` before appending. Consistent with the previous inline behaviour (no empty 'TOTALES POR MONEDA' block when there is nothing to show).",
+    "transactions_pdf.py:147 the row-colouring loop is now cleanly separated from row assembly. `_format_entry_row` returns only strings; colour decisions live in _build_transactions_table. Good separation of data-vs-presentation.",
+    "server.py:100-126 start_background_jobs is now 26 lines (previously 90+); reads top-to-bottom as: run migration → define _build_timeseries → start_scheduler. Excellent readability improvement.",
+    "No `_id` leakage detected across all refactored code — every db.<coll>.find*() call passes `{\"_id\": 0}` projection.",
+    "All refactored helpers use proper async/await; no accidental sync blocking. HTTPException re-raises still propagate correctly through the split callback path."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (138/138 pass, 1 pre-existing skip; whitespace-migration E2E + 5 live smoke curls all green)", "frontend": "N/A (backend-only per request)"},
+  "test_credentials": "Used seeded sessions from /app/memory/test_credentials.md — test_session_admin_X / employee_X / vip_X / normal_X. TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP. No production/real secrets touched.",
+  "seed_data_creation": "Planted 3 TEST_iter45_migration_row* rows in db.rates/orders/withdrawals for the migration E2E test, then deleted them after verification. conftest auto-seeds the four test user sessions on every test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter45 refactor (radon-metric-only, no behaviour change) is verified GREEN across 138 backend tests + live-smoke curls on all 4 refactored surfaces. New service module services/db_migrations.py is idempotent and re-runs cleanly on every backend restart. New auth.py private helpers (_exchange_google_code / _upsert_google_user / _update_existing_google_user / _create_google_user) preserve the exact previous behaviour including the iter44 email_verified tri-state check. New transactions.py fetch helpers preserve the direction/currency/holder/user_id/date filter matrix. New transactions_pdf.py helpers preserve the tri-part layout (filters bar → totals block → table) including the None-guarded empty-totals case. Zero regressions across the full 10-file test suite. Frontend not tested (backend-only request).",
+  "rca of the issue": "N/A — code-quality refactor verification pass; no bugs found. All 4 target functions now sit below the C threshold and the refactor is behaviourally identical to the pre-refactor baseline."
+}

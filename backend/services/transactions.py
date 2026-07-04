@@ -85,6 +85,121 @@ async def fetch_audit_entries(action: Optional[str], actor_id: Optional[str],
 # Unified transactions registry
 # ============================================================
 
+def _order_to_entrada(o: dict) -> TransactionItem:
+    return {
+        "direction": "in",
+        "currency": o["from_code"],
+        "amount": float(o.get("amount_from", 0.0)),
+        "holder_name": o.get("sender_name", ""),
+        "client_name": o.get("user_name", ""),
+        "client_email": o.get("user_email", ""),
+        "method": o.get("delivery_method", ""),
+        "status": o.get("status", ""),
+        "ref_id": o.get("id", ""),
+        "ref_type": "order",
+        "created_at": o.get("created_at", ""),
+        "proof_image": o.get("proof_image", ""),
+        "delivery_details": o.get("delivery_details", ""),
+        "admin_note": o.get("admin_note", ""),
+    }
+
+
+def _withdrawal_to_salida(w: dict) -> TransactionItem:
+    return {
+        "direction": "out",
+        "currency": w.get("currency", "USD"),
+        "amount": float(w.get("amount_usd", 0.0)),
+        "holder_name": w.get("beneficiary_name", ""),
+        "client_name": w.get("user_name", ""),
+        "client_email": w.get("user_email", ""),
+        "method": w.get("method", ""),
+        "status": w.get("status", ""),
+        "ref_id": w.get("id", ""),
+        "ref_type": "withdrawal",
+        "created_at": w.get("created_at", ""),
+        "proof_image": "",
+        "delivery_details": w.get("details", ""),
+        "admin_note": w.get("admin_note", ""),
+    }
+
+
+def _order_payout_to_salida(o: dict) -> TransactionItem:
+    return {
+        "direction": "out",
+        "currency": o["to_code"],
+        "amount": float(o.get("amount_to", 0.0)),
+        "holder_name": o.get("user_name", ""),  # client receives the payout
+        "client_name": o.get("user_name", ""),
+        "client_email": o.get("user_email", ""),
+        "method": o.get("delivery_method", ""),
+        "status": o.get("status", ""),
+        "ref_id": o.get("id", ""),
+        "ref_type": "order_payout",
+        "created_at": o.get("updated_at") or o.get("created_at", ""),
+        "proof_image": o.get("payout_proof_image", ""),
+        "delivery_details": o.get("delivery_details", ""),
+        "admin_note": o.get("admin_note", ""),
+    }
+
+
+async def _fetch_entradas_orders(date_q: dict, currency: Optional[str], holder: Optional[str],
+                                 user_id: Optional[str]) -> List[TransactionItem]:
+    q: dict = {
+        "status": {"$in": ["approved", "completed"]},
+        "sender_name": {"$nin": [None, ""]},
+        **date_q,
+    }
+    if user_id:
+        q["user_id"] = user_id
+    if currency:
+        q["from_code"] = currency
+    if holder:
+        q["sender_name"] = {"$regex": holder, "$options": "i"}
+    rows = await db.orders.find(q, {"_id": 0}).to_list(5000)
+    return [_order_to_entrada(o) for o in rows]
+
+
+async def _fetch_salidas_withdrawals(date_q: dict, currency: Optional[str], holder: Optional[str],
+                                     user_id: Optional[str]) -> List[TransactionItem]:
+    q: dict = {
+        "status": {"$in": ["approved", "paid"]},
+        "beneficiary_name": {"$nin": [None, ""]},
+        **date_q,
+    }
+    if user_id:
+        q["user_id"] = user_id
+    if currency:
+        q["currency"] = currency
+    if holder:
+        q["beneficiary_name"] = {"$regex": holder, "$options": "i"}
+    rows = await db.withdrawals.find(q, {"_id": 0}).to_list(5000)
+    return [_withdrawal_to_salida(w) for w in rows]
+
+
+async def _fetch_salidas_order_payouts(date_q: dict, currency: Optional[str], holder: Optional[str],
+                                       user_id: Optional[str]) -> List[TransactionItem]:
+    """iter55 — P2P order payouts (SALIDAS): when an order is completed and
+    delivery_method is not "accumulate", the company physically paid the
+    client. Register as an outbound transaction in the destination currency."""
+    q: dict = {
+        "status": "completed",
+        "delivery_method": {"$in": ["transfer", "cash", "crypto"]},
+        **date_q,
+    }
+    if user_id:
+        q["user_id"] = user_id
+    if currency:
+        q["to_code"] = currency
+    if holder:
+        # holder for outbound P2P is the client themselves (destination account)
+        q["$or"] = [
+            {"user_name": {"$regex": holder, "$options": "i"}},
+            {"delivery_details": {"$regex": holder, "$options": "i"}},
+        ]
+    rows = await db.orders.find(q, {"_id": 0}).to_list(5000)
+    return [_order_payout_to_salida(o) for o in rows]
+
+
 async def build_transactions(direction: Optional[str], currency: Optional[str],
                              holder: Optional[str], since: Optional[str],
                              until: Optional[str],
@@ -101,106 +216,12 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
     items: List[TransactionItem] = []
     date_q = date_range_query(since, until)
 
-    # ENTRADAS (orders): approved/completed only, sender_name required
     if direction in (None, "all", "in"):
-        order_q: dict = {
-            "status": {"$in": ["approved", "completed"]},
-            "sender_name": {"$nin": [None, ""]},
-            **date_q,
-        }
-        if user_id:
-            order_q["user_id"] = user_id
-        if currency:
-            order_q["from_code"] = currency
-        if holder:
-            order_q["sender_name"] = {"$regex": holder, "$options": "i"}
-        orders = await db.orders.find(order_q, {"_id": 0}).to_list(5000)
-        for o in orders:
-            items.append({
-                "direction": "in",
-                "currency": o["from_code"],
-                "amount": float(o.get("amount_from", 0.0)),
-                "holder_name": o.get("sender_name", ""),
-                "client_name": o.get("user_name", ""),
-                "client_email": o.get("user_email", ""),
-                "method": o.get("delivery_method", ""),
-                "status": o.get("status", ""),
-                "ref_id": o.get("id", ""),
-                "ref_type": "order",
-                "created_at": o.get("created_at", ""),
-                "proof_image": o.get("proof_image", ""),
-                "delivery_details": o.get("delivery_details", ""),
-                "admin_note": o.get("admin_note", ""),
-            })
+        items.extend(await _fetch_entradas_orders(date_q, currency, holder, user_id))
 
-    # SALIDAS (withdrawals): approved/paid only, beneficiary_name required
     if direction in (None, "all", "out"):
-        with_q: dict = {
-            "status": {"$in": ["approved", "paid"]},
-            "beneficiary_name": {"$nin": [None, ""]},
-            **date_q,
-        }
-        if user_id:
-            with_q["user_id"] = user_id
-        if currency:
-            with_q["currency"] = currency
-        if holder:
-            with_q["beneficiary_name"] = {"$regex": holder, "$options": "i"}
-        withdrawals = await db.withdrawals.find(with_q, {"_id": 0}).to_list(5000)
-        for w in withdrawals:
-            items.append({
-                "direction": "out",
-                "currency": w.get("currency", "USD"),
-                "amount": float(w.get("amount_usd", 0.0)),
-                "holder_name": w.get("beneficiary_name", ""),
-                "client_name": w.get("user_name", ""),
-                "client_email": w.get("user_email", ""),
-                "method": w.get("method", ""),
-                "status": w.get("status", ""),
-                "ref_id": w.get("id", ""),
-                "ref_type": "withdrawal",
-                "created_at": w.get("created_at", ""),
-                "proof_image": "",
-                "delivery_details": w.get("details", ""),
-                "admin_note": w.get("admin_note", ""),
-            })
-
-        # iter55 — P2P order payouts (SALIDAS): when an order is completed and
-        # delivery_method is not "accumulate", the company physically paid the
-        # client. Register as an outbound transaction in the destination currency.
-        order_out_q: dict = {
-            "status": "completed",
-            "delivery_method": {"$in": ["transfer", "cash", "crypto"]},
-            **date_q,
-        }
-        if user_id:
-            order_out_q["user_id"] = user_id
-        if currency:
-            order_out_q["to_code"] = currency
-        if holder:
-            # holder for outbound P2P is the client themselves (destination account)
-            order_out_q["$or"] = [
-                {"user_name": {"$regex": holder, "$options": "i"}},
-                {"delivery_details": {"$regex": holder, "$options": "i"}},
-            ]
-        order_outs = await db.orders.find(order_out_q, {"_id": 0}).to_list(5000)
-        for o in order_outs:
-            items.append({
-                "direction": "out",
-                "currency": o["to_code"],
-                "amount": float(o.get("amount_to", 0.0)),
-                "holder_name": o.get("user_name", ""),  # client receives the payout
-                "client_name": o.get("user_name", ""),
-                "client_email": o.get("user_email", ""),
-                "method": o.get("delivery_method", ""),
-                "status": o.get("status", ""),
-                "ref_id": o.get("id", ""),
-                "ref_type": "order_payout",
-                "created_at": o.get("updated_at") or o.get("created_at", ""),
-                "proof_image": o.get("payout_proof_image", ""),
-                "delivery_details": o.get("delivery_details", ""),
-                "admin_note": o.get("admin_note", ""),
-            })
+        items.extend(await _fetch_salidas_withdrawals(date_q, currency, holder, user_id))
+        items.extend(await _fetch_salidas_order_payouts(date_q, currency, holder, user_id))
 
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     if min_amount is not None:

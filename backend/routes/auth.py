@@ -189,19 +189,9 @@ async def google_login(request: Request, redirect: Optional[str] = None) -> Any:
     return RedirectResponse(url=url, status_code=302)
 
 
-@router.get("/auth/google/callback")
-async def google_callback(request: Request, code: Optional[str] = None,
-                          state: Optional[str] = None, error: Optional[str] = None) -> Any:
-    """Exchange the code for tokens, lookup/create the user by email, issue a session cookie,
-    and bounce the browser to the SPA's post-login page."""
-    if error:
-        return RedirectResponse(url=f"/?auth_error={error}", status_code=302)
-    if not code or not state:
-        raise HTTPException(status_code=400, detail="Missing code or state")
-    state_doc = await db.oauth_states.find_one_and_delete({"state": state})
-    if not state_doc:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
-
+async def _exchange_google_code(code: str, redirect_uri: str) -> dict:
+    """Exchange Google OAuth code for tokens and return the decoded id_token claims.
+    Raises 401 on any failure along the way (network, invalid audience, missing email)."""
     async with httpx.AsyncClient(timeout=15) as cli:
         token_resp = await cli.post(
             "https://oauth2.googleapis.com/token",
@@ -209,7 +199,7 @@ async def google_callback(request: Request, code: Optional[str] = None,
                 "code": code,
                 "client_id": GOOGLE_CLIENT_ID,
                 "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": state_doc["redirect_uri"],
+                "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -231,55 +221,89 @@ async def google_callback(request: Request, code: Optional[str] = None,
     # treated as verified (default=True) to preserve backwards-compatible flow.
     if not claims.get("email_verified", True):
         raise HTTPException(status_code=401, detail="Google account email not verified")
+    return claims
 
-    name = claims.get("name") or ""
-    picture = claims.get("picture") or ""
 
+async def _update_existing_google_user(existing: dict, name: str, picture: str) -> str:
+    """Refresh profile fields on a returning Google user; re-check blocklist."""
+    user_id = existing["user_id"]
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"name": name or existing.get("name", ""),
+                  "picture": picture or existing.get("picture", ""),
+                  "email_verified": True,
+                  "auth_provider": existing.get("auth_provider") or "google"}},
+    )
+    # iter28 — blocklist re-check on every Google login.
+    if existing.get("phone") and existing.get("role") in ("normal", "vip"):
+        blocked = await db.blocked_contacts.find_one({"phone": existing["phone"]}, {"_id": 0})
+        if blocked:
+            await mark_user_under_review(user_id)
+    return user_id
+
+
+async def _create_google_user(email: str, name: str, picture: str) -> str:
+    """Enforce defensive-mode/blocklist gates and create a new user. First user
+    is auto-promoted to admin; admin/employee accounts skip the phone-verification
+    hold, everyone else lands in `under_review` until they verify a phone."""
+    await assert_not_blocked(email=email)
+    # iter24 — block new account creation in defensive mode (existing users still log in)
+    from services.balances import assert_not_defensive
+    await assert_not_defensive("nuevos registros")
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    role = "admin" if email in ADMIN_EMAILS else "normal"
+    if await db.users.count_documents({}) == 0:
+        role = "admin"
+    staff = role in ("admin", "employee")
+    await db.users.insert_one({
+        "user_id": user_id,
+        "email": email,
+        "name": name,
+        "picture": picture,
+        "role": role,
+        "auth_provider": "google",
+        "email_verified": True,
+        "vip_balance_usd": 0.0,
+        "onboarding_completed": False,
+        "phone": None,
+        "phone_verified": False,
+        # iter28 — Google users still need phone verification before operating.
+        # Admin/employee bypass via _assert_account_active.
+        "account_status": "active" if staff else "under_review",
+        "under_review_since": None if staff else iso(now_utc()),
+        "created_at": iso(now_utc()),
+    })
+    return user_id
+
+
+async def _upsert_google_user(email: str, name: str, picture: str) -> str:
+    """Look up the user by email; update or create as needed. Returns `user_id`."""
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
-        user_id = existing["user_id"]
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"name": name or existing.get("name", ""),
-                      "picture": picture or existing.get("picture", ""),
-                      "email_verified": True,
-                      "auth_provider": existing.get("auth_provider") or "google"}},
-        )
-    else:
-        await assert_not_blocked(email=email)
-        # iter24 — block new account creation in defensive mode (existing users still log in)
-        from services.balances import assert_not_defensive
-        await assert_not_defensive("nuevos registros")
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        role = "admin" if email in ADMIN_EMAILS else "normal"
-        if await db.users.count_documents({}) == 0:
-            role = "admin"
-        await db.users.insert_one({
-            "user_id": user_id,
-            "email": email,
-            "name": name,
-            "picture": picture,
-            "role": role,
-            "auth_provider": "google",
-            "email_verified": True,
-            "vip_balance_usd": 0.0,
-            "onboarding_completed": False,
-            "phone": None,
-            "phone_verified": False,
-            # iter28 — Google users still need phone verification before operating.
-            # Admin/employee bypass via _assert_account_active.
-            "account_status": "active" if role in ("admin", "employee") else "under_review",
-            "under_review_since": None if role in ("admin", "employee") else iso(now_utc()),
-            "created_at": iso(now_utc()),
-        })
+        return await _update_existing_google_user(existing, name, picture)
+    return await _create_google_user(email, name, picture)
 
-    # iter28 — blocklist re-check on every Google login.
-    if existing:
-        u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-        if u and u.get("phone") and u.get("role") in ("normal", "vip"):
-            blocked = await db.blocked_contacts.find_one({"phone": u["phone"]}, {"_id": 0})
-            if blocked:
-                await mark_user_under_review(user_id)
+
+@router.get("/auth/google/callback")
+async def google_callback(request: Request, code: Optional[str] = None,
+                          state: Optional[str] = None, error: Optional[str] = None) -> Any:
+    """Exchange the code for tokens, lookup/create the user by email, issue a session cookie,
+    and bounce the browser to the SPA's post-login page."""
+    if error:
+        return RedirectResponse(url=f"/?auth_error={error}", status_code=302)
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+    state_doc = await db.oauth_states.find_one_and_delete({"state": state})
+    if not state_doc:
+        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+
+    claims = await _exchange_google_code(code, state_doc["redirect_uri"])
+    email = (claims.get("email") or "").lower().strip()
+    user_id = await _upsert_google_user(
+        email=email,
+        name=claims.get("name") or "",
+        picture=claims.get("picture") or "",
+    )
 
     response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
     await _create_session(user_id, response, ttl_hours=168)

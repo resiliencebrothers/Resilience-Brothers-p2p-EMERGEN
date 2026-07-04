@@ -102,84 +102,13 @@ async def start_background_jobs() -> None:
     """Wire up APScheduler. Wrap build_revenue_timeseries to expose it to
     scheduler.py without importing server.py (which would be circular)."""
     from scheduler import start_scheduler
+    from services.db_migrations import clean_currency_whitespace
 
-    # iter55.3 + iter55.7 — one-shot idempotent migrations: strip whitespace
+    # iter55.3 + iter55.7 — one-shot idempotent migration: strip whitespace
     # (and uppercase) currency codes across ALL collections that store them so
     # data-entry typos never split accounting rows or break rate lookups.
     try:
-        # 1) db.currencies.code
-        async for row in db.currencies.find(
-            {"code": {"$regex": r"^\s|\s$"}},
-            {"_id": 0, "id": 1, "code": 1},
-        ):
-            fixed = (row.get("code") or "").strip().upper()
-            if fixed and fixed != row.get("code"):
-                await db.currencies.update_one(
-                    {"id": row["id"]}, {"$set": {"code": fixed}}
-                )
-                logger.info(f"Migrated currencies.code {row['code']!r} → {fixed!r}")
-
-        # 2) db.rates.{from_code,to_code}
-        for field in ("from_code", "to_code"):
-            async for row in db.rates.find(
-                {field: {"$regex": r"^\s|\s$"}},
-                {"_id": 0, "id": 1, field: 1},
-            ):
-                fixed = (row.get(field) or "").strip().upper()
-                if fixed and fixed != row.get(field):
-                    await db.rates.update_one(
-                        {"id": row["id"]}, {"$set": {field: fixed}}
-                    )
-                    logger.info(f"Migrated rates.{field} {row[field]!r} → {fixed!r}")
-
-        # 3) db.orders.{from_code,to_code}
-        for field in ("from_code", "to_code"):
-            async for row in db.orders.find(
-                {field: {"$regex": r"^\s|\s$"}},
-                {"_id": 0, "id": 1, field: 1},
-            ):
-                fixed = (row.get(field) or "").strip().upper()
-                if fixed and fixed != row.get(field):
-                    await db.orders.update_one(
-                        {"id": row["id"]}, {"$set": {field: fixed}}
-                    )
-                    logger.info(f"Migrated orders.{field} on id={row['id']}")
-
-        # 4) db.withdrawals.currency
-        async for row in db.withdrawals.find(
-            {"currency": {"$regex": r"^\s|\s$"}},
-            {"_id": 0, "id": 1, "currency": 1},
-        ):
-            fixed = (row.get("currency") or "").strip().upper()
-            if fixed and fixed != row.get("currency"):
-                await db.withdrawals.update_one(
-                    {"id": row["id"]}, {"$set": {"currency": fixed}}
-                )
-                logger.info(f"Migrated withdrawals.currency on id={row['id']}")
-
-        # 5) db.company_withdrawals.currency
-        async for row in db.company_withdrawals.find(
-            {"currency": {"$regex": r"^\s|\s$"}},
-            {"_id": 0, "id": 1, "currency": 1},
-        ):
-            fixed = (row.get("currency") or "").strip().upper()
-            if fixed and fixed != row.get("currency"):
-                await db.company_withdrawals.update_one(
-                    {"id": row["id"]}, {"$set": {"currency": fixed}}
-                )
-                logger.info(f"Migrated company_withdrawals.currency on id={row['id']}")
-
-        # 6) db.company_fund_adjustments.currency
-        async for row in db.company_fund_adjustments.find(
-            {"currency": {"$regex": r"^\s|\s$"}},
-            {"_id": 0, "id": 1, "currency": 1},
-        ):
-            fixed = (row.get("currency") or "").strip().upper()
-            if fixed and fixed != row.get("currency"):
-                await db.company_fund_adjustments.update_one(
-                    {"id": row["id"]}, {"$set": {"currency": fixed}}
-                )
-                logger.info(f"Migrated adjustments.currency on id={row['id']}")
+        await clean_currency_whitespace(db)
     except Exception as e:  # noqa: BLE001
         logger.error(f"Currency code migration failed: {e}")
 
