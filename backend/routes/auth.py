@@ -500,6 +500,24 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
                     "message": "Verifica tu correo antes de iniciar sesión. Revisa tu bandeja."},
         )
     await _record_login_attempt(identifier, True)
+    # iter48 — Log admin/employee login from a new IP for the security dashboard.
+    if user.get("role") in ("admin", "employee"):
+        try:
+            from services.security_events import (
+                _client_ip, known_ip_for_user, remember_login_ip,
+                log_security_event, KIND_ADMIN_NEW_IP,
+            )
+            ip = _client_ip(request)
+            if not await known_ip_for_user(user["user_id"], ip):
+                await log_security_event(
+                    KIND_ADMIN_NEW_IP, request,
+                    user_id=user["user_id"],
+                    user_email=user.get("email"),
+                    extra={"role": user.get("role")},
+                )
+            await remember_login_ip(user["user_id"], ip)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"admin_new_ip logging failed: {e}")
     # iter28 — every login re-checks the blocklist: if the user's phone is now blocked,
     # freeze the account (under_review) so they cannot operate even with a valid session.
     if user.get("phone"):

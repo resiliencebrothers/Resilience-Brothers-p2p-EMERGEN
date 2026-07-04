@@ -40,6 +40,7 @@ from routes.admin_company_funds import router as admin_company_funds_router  # n
 from routes.admin_revenue import router as admin_revenue_router  # noqa: E402
 from routes.files import router as files_router  # noqa: E402
 from routes.appeals import router as appeals_router  # noqa: E402
+from routes.admin_security import router as admin_security_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -77,6 +78,7 @@ api_router.include_router(admin_company_funds_router)
 api_router.include_router(admin_revenue_router)
 api_router.include_router(files_router)
 api_router.include_router(appeals_router)
+api_router.include_router(admin_security_router)
 
 app.include_router(api_router)
 
@@ -100,6 +102,7 @@ async def start_background_jobs() -> None:
     scheduler.py without importing server.py (which would be circular)."""
     from scheduler import start_scheduler
     from services.db_migrations import clean_currency_whitespace
+    from services.security_events import ensure_indexes as security_events_indexes
 
     # iter55.3 + iter55.7 — one-shot idempotent migration: strip whitespace
     # (and uppercase) currency codes across ALL collections that store them so
@@ -108,6 +111,12 @@ async def start_background_jobs() -> None:
         await clean_currency_whitespace(db)
     except Exception as e:  # noqa: BLE001
         logger.error(f"Currency code migration failed: {e}")
+
+    # iter48 — security_events collection indexes (idempotent).
+    try:
+        await security_events_indexes()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"security_events index setup failed: {e}")
 
     async def _build_timeseries(
         granularity: str,

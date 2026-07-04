@@ -85,6 +85,21 @@ limiter = Limiter(
 )
 
 
+def _rate_limit_logged_handler(request: Request, exc: RateLimitExceeded) -> Response:
+    """Wrap slowapi's default handler + log to security_events."""
+    # Fire-and-forget (schedule) so we don't block the 429 response.
+    import asyncio
+    try:
+        from services.security_events import log_security_event, KIND_RATE_LIMIT_HIT
+        asyncio.create_task(log_security_event(
+            KIND_RATE_LIMIT_HIT, request,
+            extra={"limit": str(exc.detail)},
+        ))
+    except Exception:
+        pass
+    return _rate_limit_exceeded_handler(request, exc)
+
+
 def configure_rate_limiter(app: FastAPI) -> None:
     """Wire the global `limiter` to the FastAPI app.
     Individual routes opt-in to stricter buckets via `@limiter.limit("N/period")`.
@@ -93,7 +108,7 @@ def configure_rate_limiter(app: FastAPI) -> None:
     # mypy: slowapi handler is typed as `Callable[[Request, RateLimitExceeded], Response]`,
     # but Starlette expects `Callable[[Request, Exception], Response]`. The
     # runtime behaviour is correct (RateLimitExceeded IS-A Exception).
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_logged_handler)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------
@@ -195,6 +210,14 @@ class OriginAllowlistMiddleware(BaseHTTPMiddleware):
             origin = (request.headers.get("origin") or "").rstrip("/").lower()
             if origin and origin not in self.allowed:
                 logger.warning(f"Blocked cross-origin {request.method} from {origin} to {request.url.path}")
+                # iter48 — log to security_events for the admin dashboard.
+                try:
+                    from services.security_events import (
+                        log_security_event, KIND_ORIGIN_BLOCKED,
+                    )
+                    await log_security_event(KIND_ORIGIN_BLOCKED, request)
+                except Exception:
+                    pass
                 from fastapi.responses import JSONResponse
                 return JSONResponse(
                     status_code=403,
