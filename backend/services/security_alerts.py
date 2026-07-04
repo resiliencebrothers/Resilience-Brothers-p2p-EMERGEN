@@ -164,6 +164,29 @@ async def _fire_ip_flood(db: Any, row: dict, *, kind_label: str,
     paths = (row.get("top_paths") or [])[:3]
     # Mark BEFORE fanout (see comment in _fire_admin_multi_ip).
     await _mark_alerted(db, key, {"ip": ip, "count": row["count"], "paths": paths})
+
+    # iter50 — auto-block at Cloudflare WAF when enabled. Runs BEFORE the admin
+    # notification so the body can include the block outcome.
+    cf_outcome = None
+    if ip != "unknown":
+        try:
+            from services import cloudflare_client, cloudflare_blocks
+            if cloudflare_client.is_auto_block_enabled():
+                res = await cloudflare_blocks.create_block(
+                    db, ip,
+                    notes=f"auto: security_alerts_scanner kind={kind_label} count={row['count']}",
+                    source="scanner",
+                )
+                if res.get("cf_ok"):
+                    cf_outcome = " · IP bloqueada en Cloudflare WAF ✅"
+                elif res.get("already_blocked"):
+                    cf_outcome = " · IP ya estaba en la blocklist ✅"
+                else:
+                    cf_outcome = f" · Cloudflare WAF: no se pudo bloquear ({res.get('reason','error')})"
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"cloudflare auto-block failed for {ip}: {e}")
+            cf_outcome = " · Cloudflare auto-block falló (ver logs)"
+
     try:
         from admin_alerts import notify_all_admins
         await notify_all_admins(
@@ -172,8 +195,8 @@ async def _fire_ip_flood(db: Any, row: dict, *, kind_label: str,
             body=(
                 f"IP {ip} generó {row['count']} eventos '{kind_label}' "
                 f"(umbral: {threshold_desc}). "
-                f"Endpoints tocados: {', '.join(paths) if paths else 'n/a'}. "
-                f"Considera bloquearla en Cloudflare WAF."
+                f"Endpoints tocados: {', '.join(paths) if paths else 'n/a'}."
+                + (cf_outcome or "")
             ),
             url_path="/admin/security",
         )

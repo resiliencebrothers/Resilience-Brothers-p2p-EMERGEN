@@ -13,9 +13,10 @@ that even trusted employees should not see (rotate secrets, IP addresses, etc.).
 """
 import logging
 from datetime import timedelta
-from typing import Any, List
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from db_client import db
 from auth_utils import require_staff, now_utc, iso
@@ -172,3 +173,56 @@ async def revoke_user_sessions(user_id: str, request: Request) -> Any:
     r = await db.user_sessions.delete_many({"user_id": user_id})
     logger.warning(f"[security] Revoked {r.deleted_count} sessions for user {user_id}")
     return {"ok": True, "revoked": r.deleted_count}
+
+
+# ============================================================
+# iter50 — Cloudflare WAF IP block management (admin-only)
+# ============================================================
+
+class _CloudflareBlockPayload(BaseModel):  # type: ignore[misc]
+    ip: str = Field(..., min_length=3, max_length=45)
+    notes: str = Field("", max_length=500)
+
+
+@router.get("/admin/security/cloudflare/blocks")
+async def cloudflare_blocks_list(
+    request: Request, status: Optional[str] = None,
+) -> Any:
+    """List every IP block record. `status` filter accepts:
+    active | pending_create | pending_delete | deleted | failed."""
+    await _require_admin_only(request)
+    from services import cloudflare_blocks, cloudflare_client
+    items = await cloudflare_blocks.list_blocks(db, status=status)
+    return {
+        "items": items,
+        "configured": cloudflare_client._is_configured(),
+        "auto_block_enabled": cloudflare_client.is_auto_block_enabled(),
+    }
+
+
+@router.post("/admin/security/cloudflare/blocks")
+async def cloudflare_block_ip(payload: _CloudflareBlockPayload, request: Request) -> Any:
+    """Manually block an IP at Cloudflare WAF (source='admin')."""
+    admin = await _require_admin_only(request)
+    from services import cloudflare_blocks
+    notes = payload.notes.strip() or f"manual: admin_id={admin['user_id']}"
+    if "manual:" not in notes:
+        notes = f"manual: {notes} (admin_id={admin['user_id']})"
+    res = await cloudflare_blocks.create_block(
+        db, payload.ip.strip(), notes,
+        source="admin",
+        user_id=admin["user_id"], user_email=admin.get("email"),
+    )
+    return res
+
+
+@router.delete("/admin/security/cloudflare/blocks/{block_id}")
+async def cloudflare_unblock_ip(block_id: str, request: Request) -> Any:
+    """Manual unblock. Local record moves to `deleted` even if Cloudflare
+    delete fails so the admin UI stays consistent."""
+    await _require_admin_only(request)
+    from services import cloudflare_blocks
+    res = await cloudflare_blocks.delete_block(db, block_id)
+    if not res.get("ok"):
+        raise HTTPException(status_code=404, detail=res.get("error", "not_found"))
+    return res
