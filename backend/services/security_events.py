@@ -50,6 +50,7 @@ async def log_security_event(
     """Persist one security event. Non-fatal — failures are swallowed after logging
     so the middleware/handler that called us never breaks the primary flow."""
     try:
+        now = now_utc()
         doc = {
             "kind": kind,
             "ip": _client_ip(request) if request else None,
@@ -60,7 +61,9 @@ async def log_security_event(
             "user_id": user_id,
             "user_email": user_email,
             "extra": extra or {},
-            "created_at": iso(now_utc()),
+            "created_at": iso(now),
+            # Native Date field for MongoDB TTL — auto-expires after 30 days.
+            "_ts": now,
         }
         await db.security_events.insert_one(doc)
     except Exception as e:  # noqa: BLE001
@@ -70,10 +73,11 @@ async def log_security_event(
 async def ensure_indexes() -> None:
     """Create the TTL + look-up indexes. Idempotent; safe to call on every boot."""
     try:
-        # 30-day retention. The TTL index uses a Date field, so we mirror
-        # `created_at` (ISO string) into `_ts` (Date) via a small trigger below,
-        # OR use `expireAfterSeconds` on an existing Date field. Simplest:
-        # store BOTH — iso string for portability + Date for TTL.
+        # iter48 — 30-day TTL on `_ts` (native Date field). MongoDB will drop
+        # documents older than 30d automatically so the collection stays bounded.
+        await db.security_events.create_index(
+            [("_ts", 1)], expireAfterSeconds=30 * 24 * 3600, name="ttl_ts_30d",
+        )
         await db.security_events.create_index([("created_at", -1)])
         await db.security_events.create_index([("kind", 1), ("created_at", -1)])
         await db.security_events.create_index([("ip", 1), ("created_at", -1)])
