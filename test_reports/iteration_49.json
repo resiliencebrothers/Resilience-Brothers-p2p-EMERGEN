@@ -1,0 +1,36 @@
+{
+  "iteration": 49,
+  "feature": "iter49 — Automated security alerts scheduler (every 5 min scan over security_events)",
+  "summary": "Backend-only feature. 6/6 iter49 tests PASS (test_iter49_security_alerts.py). 53/57 regression tests PASS with 4 rate-limit tests SKIPPED (RATE_LIMIT_ENABLED=false in preview, as expected). TTL index `ttl_ts_7d` (expireAfterSeconds=604800) confirmed on db.security_alerts_sent. Backend logs show scheduler startup line 'Scheduler started: monthly_revenue_email (day 1 @ 09:00 UTC) + security_alert_scan (every 5m)' + APScheduler line 'Added job \"run_security_alert_scan\" to job store \"default\"'. Empty security_events → returns {admin_multi_ip:0, ip_rate_flood:0, origin_flood:0}. De-dup via anomaly_key with 6h cooldown works (second scan returns 0). All three anomaly categories (admin_multi_ip @ 3+ IPs / 24h, ip_rate_flood @ 100+ / 1h, origin_flood @ 20+ / 1h) fire exactly one alert and record entries in db.security_alerts_sent with the expected anomaly_key format.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter49_security_alerts.py",
+    "/app/test_reports/pytest/iter49_security_alerts.xml",
+    "/app/test_reports/pytest/iter49_regression.xml"
+  ],
+  "action_items": [
+    "None. iter49 is GREEN end-to-end. Ready to merge."
+  ],
+  "critical_code_review_comments": [
+    "services/security_alerts.py `_fire_admin_multi_ip` and `_fire_ip_flood` do not wrap `notify_all_admins` in a try/except themselves — a raise from that call would fall through to `run_security_alert_scan`'s per-category try/except, which is fine, but then `_mark_alerted` would never run and the anomaly would keep re-firing every 5 minutes until cooldown accidentally kicks in from a different code path. Consider marking the alert as sent BEFORE (or independently of) the fanout, or wrapping notify_all_admins call in try/except so mark_alerted always runs. Currently mitigated because admin_alerts.notify_all_admins internally swallows per-recipient exceptions (both push and email fanout are try/except-ed), so no exception propagates in practice — but this is a fragile contract worth documenting.",
+    "services/security_alerts.py: `_detect_admin_multi_ip` groups by user_id but the alert body only mentions email — if user_email is missing in the event doc it falls back to user_id, which is fine. However if the same user_id spans multiple emails (renaming) only $last is shown; low priority.",
+    "The 6h COOLDOWN_HOURS constant is embedded inside security_alerts.py — expose via env var if ops needs to tune during an active incident.",
+    "test_iter49_security_alerts.py uses raw motor client per test to avoid asyncio loop-cache bleed — good pattern, but consider extracting `_run(_scan)` + `_sync_db()` helpers into a shared conftest fixture for future iterations."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (6/6 iter49, 53/57 regression — 4 skipped as expected)", "frontend": "N/A — backend-only"},
+  "test_credentials": "N/A for iter49 (tests plant/clean events directly via pymongo sync).",
+  "seed_data_creation": "Each iter49 test plants its own security_events docs (3 admin_new_ip / 105 rate_limit_hit / 25 origin_blocked) and cleans them + security_alerts_sent before running. No global seed needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter49 GREEN. Scheduler now has TWO jobs: monthly_revenue_email (cron) + security_alert_scan (interval 5m). To trigger a scan on-demand: `await services.security_alerts.run_security_alert_scan(db)`. Anomaly keys: `admin_multi_ip:{user_id}`, `ip_rate_flood:{ip}`, `origin_flood:{ip}`. Dedup log lives in db.security_alerts_sent with TTL 7d on `_ts` (Date field). If future iterations add new detectors, follow the same pattern: detector returns list of aggregation rows → _fire_* checks _already_alerted → notify_all_admins → _mark_alerted. Notes for regression: pytest-asyncio 1.4.0 is pinned in requirements.txt; test_iter49 uses its own event-loop-per-test pattern (via _run(_scan)) — do NOT convert to @pytest.mark.asyncio without also fixing the shared motor client capture.",
+  "rca of the issue": "N/A — no issues found. Feature working as designed."
+}

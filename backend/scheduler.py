@@ -1,15 +1,19 @@
 """Background scheduler for periodic admin tasks.
 
-Currently handles: monthly revenue PDF email to all admins on day 1 at 09:00 UTC.
+Currently handles:
+- monthly revenue PDF email to all admins on day 1 at 09:00 UTC.
+- iter49: security anomaly scan every 5 minutes.
 """
 import logging
 from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 import email_service
 from revenue_report import revenue_monthly_pdf
+from services.security_alerts import run_security_alert_scan
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +85,20 @@ def start_scheduler(db, build_timeseries):
         misfire_grace_time=3600,  # if container was down, run within 1h of catch-up
         coalesce=True,
     )
+    # iter49 — every 5 minutes scan security_events for anomalies and fanout
+    # push + email alerts to every admin. Cheap query (indexed) + de-duped per
+    # anomaly_key with 6h cool-off, so scaling this frequency is safe.
+    _scheduler.add_job(
+        run_security_alert_scan,
+        IntervalTrigger(minutes=5),
+        kwargs={"db": db},
+        id="security_alert_scan",
+        replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
+    )
     _scheduler.start()
-    logger.info("Scheduler started: monthly_revenue_email (day 1 @ 09:00 UTC)")
+    logger.info("Scheduler started: monthly_revenue_email (day 1 @ 09:00 UTC) + security_alert_scan (every 5m)")
     return _scheduler
 
 

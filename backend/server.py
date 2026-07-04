@@ -103,6 +103,7 @@ async def start_background_jobs() -> None:
     from scheduler import start_scheduler
     from services.db_migrations import clean_currency_whitespace
     from services.security_events import ensure_indexes as security_events_indexes
+    from services.security_alerts import ensure_indexes as security_alerts_indexes
 
     # iter55.3 + iter55.7 — one-shot idempotent migration: strip whitespace
     # (and uppercase) currency codes across ALL collections that store them so
@@ -117,6 +118,12 @@ async def start_background_jobs() -> None:
         await security_events_indexes()
     except Exception as e:  # noqa: BLE001
         logger.error(f"security_events index setup failed: {e}")
+
+    # iter49 — security_alerts_sent (dedup log) TTL 7d.
+    try:
+        await security_alerts_indexes()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"security_alerts_sent index setup failed: {e}")
 
     async def _build_timeseries(
         granularity: str,
