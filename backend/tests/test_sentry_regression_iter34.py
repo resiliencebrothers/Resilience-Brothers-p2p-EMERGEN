@@ -7,7 +7,6 @@ fixed sessions (admin / employee / vip / normal) before every test.
 import os
 import uuid
 import requests
-import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"

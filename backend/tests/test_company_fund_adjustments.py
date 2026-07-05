@@ -6,7 +6,6 @@ Tests:
   - GET  /api/admin/company-funds reflects the manual adjustments in balance
 """
 import os
-import uuid
 
 import pytest
 import requests

@@ -1,7 +1,6 @@
 """iter27 regression — verify auth endpoints behave identically after extraction
 to routes/auth.py. Pure structural refactor, zero behavioral change expected."""
 import os
-import time
 import uuid
 import pytest
 import requests

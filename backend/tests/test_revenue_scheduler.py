@@ -1,5 +1,4 @@
 """Tests for the monthly auto-email scheduler + on-demand send + chart in PDF."""
-import io
 import requests
 
 from conftest import BASE_URL, ADMIN_TOKEN, EMPLOYEE_TOKEN, make_admin_totp
@@ -79,7 +78,8 @@ class TestSendNowEndpoint:
 class TestSchedulerHelper:
     def test_previous_month_helper(self):
         """Direct unit test on the scheduler's _previous_month() — runs in-process."""
-        import sys, os
+        import sys
+        import os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
         from scheduler import _previous_month
         from datetime import datetime, timezone

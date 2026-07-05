@@ -325,7 +325,8 @@ class TestNegativeMarginOnRateUpdate:
         assert rate is not None
         # Flip real_rate to loss-making value — should trigger scan + alert, no crash
         upd = {**rate, "real_rate": 300, "totp_code": make_admin_totp()}
-        upd.pop("id", None); upd.pop("updated_at", None)
+        upd.pop("id", None)
+        upd.pop("updated_at", None)
         ru = requests.put(f"{BASE_URL}/api/admin/rates/{rate['id']}", headers=_h(ADMIN), json=upd)
         assert ru.status_code in (200, 204), ru.text
         time.sleep(0.5)

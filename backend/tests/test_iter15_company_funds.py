@@ -5,11 +5,10 @@
 """
 import os
 import requests
-import pytest
 from pymongo import MongoClient
 
 from conftest import (
-    BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, EMPLOYEE_TOKEN,
+    BASE_URL, ADMIN_TOKEN, NORMAL_TOKEN, EMPLOYEE_TOKEN,
     make_admin_totp, make_employee_totp,
 )
 

@@ -7,7 +7,6 @@
 - legacy users (no phone) unaffected
 """
 import os
-import uuid
 import requests
 from pymongo import MongoClient
 

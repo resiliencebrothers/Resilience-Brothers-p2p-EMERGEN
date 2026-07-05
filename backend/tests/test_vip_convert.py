@@ -2,7 +2,6 @@
 balances. No physical delivery, no admin approval — atomically reshuffles
 funds within the SAME user."""
 import os
-import uuid
 
 import pytest
 import requests

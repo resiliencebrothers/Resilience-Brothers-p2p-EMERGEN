@@ -20,7 +20,6 @@ Covers:
 """
 import os
 import asyncio
-import time
 import requests
 import pytest
 from pymongo import MongoClient

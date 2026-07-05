@@ -138,7 +138,7 @@ export default function KYCView() {
                 <X className="w-4 h-4" /> Motivos de rechazo
               </div>
               <ul className="text-xs text-neutral-300 space-y-1 list-disc pl-5">
-                {v.rejection_reasons.map((r, i) => (<li key={i}>{r}</li>))}
+                {v.rejection_reasons.map((r) => (<li key={r}>{r}</li>))}
               </ul>
               {v.review_notes && (
                 <div className="text-xs text-neutral-400 italic mt-2">Nota del equipo: {v.review_notes}</div>

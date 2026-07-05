@@ -7,8 +7,6 @@ Covers:
   the Emergent ingress rewrites Origin so external tests are inconclusive).
 - Rate limiter blocks excess requests to /auth/forgot-password.
 """
-import os
-import time
 import requests
 
 # Direct-to-backend (bypasses the proxy that rewrites Origin) so we can

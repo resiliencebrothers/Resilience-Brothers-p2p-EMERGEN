@@ -109,7 +109,6 @@ def test_resend_google_account_returns_generic_no_changes(db):
 def test_resend_unverified_user_regenerates_token(db):
     user = _insert_user(db, verified=False)
     old_token = user["verification_token"]
-    old_expires = user["verification_expires_at"]
     try:
         r = requests.post(f"{BASE_URL}/api/auth/resend-verification", json={"email": user["email"]}, timeout=15)
         assert r.status_code == 200, f"got {r.status_code}: {r.text}"

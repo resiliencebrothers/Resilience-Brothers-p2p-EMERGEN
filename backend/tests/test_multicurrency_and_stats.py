@@ -1,5 +1,4 @@
 """Iteration 3 tests: multi-currency vip_balances, /api/vip/balances, /api/admin/stats, currency withdrawals, redemption USD merge."""
-import pytest
 import requests
 
 from conftest import make_vip_totp, make_admin_totp, BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN

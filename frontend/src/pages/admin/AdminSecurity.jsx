@@ -501,9 +501,9 @@ function TableSimple({ headers, rows }) {
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="border-b border-white/5">
+            <tr key={`${row[0]}-${i}`} className="border-b border-white/5">
               {row.map((cell, j) => (
-                <td key={j} className="py-1.5 pr-3 text-neutral-300 font-mono text-[0.7rem]">
+                <td key={`${row[0]}-${j}`} className="py-1.5 pr-3 text-neutral-300 font-mono text-[0.7rem]">
                   {cell}
                 </td>
               ))}

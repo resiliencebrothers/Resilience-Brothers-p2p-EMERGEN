@@ -8,7 +8,6 @@ Covers:
 - Login re-check against blocklist
 """
 import os
-import time
 
 import pytest
 import requests

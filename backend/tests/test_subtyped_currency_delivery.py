@@ -10,7 +10,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, ADMIN_TOKEN, NORMAL_TOKEN, make_admin_totp
+from conftest import BASE_URL, NORMAL_TOKEN
 
 
 MONGO_URL = os.environ["MONGO_URL"]

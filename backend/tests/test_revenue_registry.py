@@ -7,9 +7,7 @@ Verifies:
 - Returns PDF with %PDF magic bytes
 - Only admin (not employee/normal) can access
 """
-import os
 import requests
-import pytest
 
 from conftest import BASE_URL, ADMIN_TOKEN, EMPLOYEE_TOKEN, NORMAL_TOKEN
 

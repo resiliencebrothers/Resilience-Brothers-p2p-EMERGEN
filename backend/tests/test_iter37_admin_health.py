@@ -2,7 +2,8 @@
 import pytest
 import requests
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tests.conftest import BASE_URL, ADMIN_TOKEN, NORMAL_TOKEN, VIP_TOKEN, EMPLOYEE_TOKEN
 

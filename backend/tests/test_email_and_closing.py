@@ -1,5 +1,4 @@
 """Iteration 2 tests: email notifications (approve/reject) + VIP daily closing PDF."""
-import pytest
 import requests
 
 from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp

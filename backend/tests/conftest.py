@@ -80,7 +80,7 @@ def _autoseed_sessions():
 # These ensure the VIP test user has TOTP enabled so existing withdrawal tests
 # can pass through the step-up gate. Returns a callable that produces fresh codes.
 
-import sys as _sys
+import sys as _sys  # noqa: E402 — path manipulation must precede local imports below
 _sys.path.insert(0, str((_ROOT / "backend").resolve()))
 
 

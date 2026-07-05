@@ -8,7 +8,10 @@ import requests
 from pymongo import MongoClient
 
 BASE = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+# Deterministic TOTP secret for reproducible tests. Documented in
+# /app/memory/test_credentials.md — NOT a production credential. Override via
+# TEST_TOTP_SECRET env var in CI environments if needed.
+TOTP_SECRET = os.environ.get("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
 
 
 def _admin_headers():

@@ -5,7 +5,6 @@ Items 1-10 of the iter36 review request live here. Item 11 (regression) is
 exercised by running the named test files in CI.
 """
 import base64
-import json
 import os
 import subprocess
 import sys
@@ -187,11 +186,11 @@ class TestBackfillScript:
         assert r1.returncode == 0 and r2.returncode == 0
 
         def _extract_summary(out):
-            lines = [l.strip() for l in out.splitlines()
-                     if l.strip().startswith(("Scanned:", "Migrated:",
-                                                "Skipped (oversize):",
-                                                "Skipped (invalid):",
-                                                "Errors:"))]
+            lines = [line.strip() for line in out.splitlines()
+                     if line.strip().startswith(("Scanned:", "Migrated:",
+                                                 "Skipped (oversize):",
+                                                 "Skipped (invalid):",
+                                                 "Errors:"))]
             return lines
 
         s1 = _extract_summary(self._output(r1))

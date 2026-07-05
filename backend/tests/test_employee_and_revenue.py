@@ -169,7 +169,6 @@ class TestEmployeeRestrictions:
 
     def test_admin_can_promote_to_employee(self):
         # Create a throwaway user to promote
-        import pymongo
         from pymongo import MongoClient
         client = MongoClient(os.environ.get("MONGO_URL"))
         client[os.environ.get("DB_NAME")].users.update_one(
@@ -241,7 +240,6 @@ class TestRevenueCalculation:
         # missing_real_rate_pairs should NOT contain USD→CUP
         assert "USD→CUP" not in data["missing_real_rate_pairs"]
         # Cleanup: cancel/complete order — leave approved for downstream tests (or delete via mongo)
-        import pymongo
         from pymongo import MongoClient
         client = MongoClient(os.environ.get("MONGO_URL"))
         client[os.environ.get("DB_NAME")].orders.delete_one({"id": oid})
@@ -275,7 +273,6 @@ class TestRevenueCalculation:
         assert "USD→CUP" not in pair_keys, "pair without real_rate should be excluded from by_pair"
 
         # Cleanup order and restore rate
-        import pymongo
         from pymongo import MongoClient
         client = MongoClient(os.environ.get("MONGO_URL"))
         client[os.environ.get("DB_NAME")].orders.delete_one({"id": oid})

@@ -8,7 +8,6 @@ Coverage:
 """
 import os
 import asyncio
-import uuid
 import requests
 import pytest
 from pymongo import MongoClient

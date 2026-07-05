@@ -7,7 +7,7 @@ import uuid
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, make_admin_totp
 
 
 def _mongo():

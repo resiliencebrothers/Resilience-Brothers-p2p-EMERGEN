@@ -17,13 +17,11 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-import pytest
 import requests
 from pymongo import MongoClient
 
 from conftest import (
-    BASE_URL, ADMIN_TOKEN as ADMIN, EMPLOYEE_TOKEN as EMP, VIP_TOKEN as VIP,
-    make_admin_totp, make_employee_totp,
+    BASE_URL, ADMIN_TOKEN as ADMIN, EMPLOYEE_TOKEN as EMP, make_admin_totp, make_employee_totp,
 )
 
 MONGO_URL = os.environ["MONGO_URL"]

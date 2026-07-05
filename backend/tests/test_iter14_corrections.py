@@ -26,14 +26,15 @@ def _set_normal_balance(usd_amount: float):
     cli = MongoClient(os.environ["MONGO_URL"])
     cli[os.environ["DB_NAME"]].users.update_one(
         {"user_id": "user_test_normal01"},
-        {"$set": {f"vip_balances.USD": float(usd_amount), "vip_balance_usd": 0}},
+        {"$set": {"vip_balances.USD": float(usd_amount), "vip_balance_usd": 0}},
     )
     cli.close()
 
 
 def _enable_totp_normal():
     """Enable TOTP on normal user so they can run the withdrawal flow."""
-    import sys; sys.path.insert(0, "/app/backend")
+    import sys
+    sys.path.insert(0, "/app/backend")
     import totp_service
     cli = MongoClient(os.environ["MONGO_URL"])
     secret = os.environ.get("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")  # pyotp docs sample, test-only

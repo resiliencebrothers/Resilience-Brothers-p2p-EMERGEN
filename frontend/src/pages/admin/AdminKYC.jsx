@@ -242,8 +242,8 @@ export default function AdminKYC() {
                   <div className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
                     <AlertTriangle className="w-4 h-4" /> Riesgo: {selected.risk_score}/100
                   </div>
-                  {selected.risk_flags.map((f, i) => (
-                    <div key={i} className="text-[0.7rem] text-amber-200">
+                  {selected.risk_flags.map((f) => (
+                    <div key={f.code} className="text-[0.7rem] text-amber-200">
                       • [{f.severity}] {f.message}
                     </div>
                   ))}
@@ -361,8 +361,8 @@ function VerificationRow({ v, onAction }) {
           </div>
           {v.risk_flags?.length > 0 && (
             <ul className="text-[0.7rem] text-amber-200/80 mt-1 space-y-0.5">
-              {v.risk_flags.slice(0, 3).map((f, i) => (
-                <li key={i}>• {f.message}</li>
+              {v.risk_flags.slice(0, 3).map((f) => (
+                <li key={f.code}>• {f.message}</li>
               ))}
             </ul>
           )}

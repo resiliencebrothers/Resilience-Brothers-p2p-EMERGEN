@@ -11,7 +11,6 @@ Covers:
   through /admin/users/{id}/verify-phone to reactivate).
 """
 import os
-import uuid
 import requests
 from pymongo import MongoClient
 

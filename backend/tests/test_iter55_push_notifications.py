@@ -6,16 +6,14 @@ the payload builders and the fanout side effect via a fake `send_push`.
 import os
 import uuid
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 # Load backend module path
 from pathlib import Path
 import sys as _sys
 _sys.path.insert(0, str((Path(__file__).resolve().parents[1]).resolve()))
 
-import push_service
 from push_service import (
     build_order_completed_payload,
     build_rate_changed_payload,

@@ -14,7 +14,7 @@ import base64
 import requests
 from datetime import datetime, timezone
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
 
 
 def _mongo():

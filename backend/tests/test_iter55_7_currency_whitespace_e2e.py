@@ -125,8 +125,6 @@ class TestStartupMigrationCleansHistoricalData:
         """The startup migration is idempotent — we can simulate it by
         corrupting a row, restarting is expensive so we call the same logic
         directly against the module."""
-        import asyncio
-        from importlib import import_module
         db = _mongo()
 
         # Corrupt one row per collection we migrate

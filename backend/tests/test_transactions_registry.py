@@ -219,7 +219,8 @@ class TestTransactionAmountFilters:
                          headers=_h(ADMIN), params={"min_amount": 50})
         assert r.status_code == 200
         # Decode and check each amount column >= 50 (column index 3)
-        import csv as _csv, io
+        import csv as _csv
+        import io
         text = r.content.decode("utf-8-sig")
         rows = list(_csv.reader(io.StringIO(text)))
         for row in rows[1:]:  # skip header

@@ -8,11 +8,10 @@
    rows with `ref_type=order_payout` — so the accounting log matches reality.
 """
 import os
-import time
 import uuid
 import requests
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, make_admin_totp
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN
 
 H_ADMIN = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
 H_VIP = {"Authorization": f"Bearer {VIP_TOKEN}"}

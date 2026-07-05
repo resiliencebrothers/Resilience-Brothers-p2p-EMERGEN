@@ -95,7 +95,8 @@ class TestDefensiveMode:
 
     def test_registration_works_when_disabled(self):
         # ensure off
-        _toggle(True); _toggle(False)
+        _toggle(True)
+        _toggle(False)
         r = requests.post(
             f"{BASE_URL}/api/auth/register",
             json={"email": "iter24.ok@example.com", "password": "abcd12345",

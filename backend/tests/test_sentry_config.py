@@ -1,7 +1,6 @@
 """Tests for the Sentry config wrapper (iter34)."""
 import importlib
 import logging
-import os
 
 import pytest
 
