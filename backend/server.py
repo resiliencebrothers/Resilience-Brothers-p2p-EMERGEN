@@ -41,6 +41,7 @@ from routes.admin_revenue import router as admin_revenue_router  # noqa: E402
 from routes.files import router as files_router  # noqa: E402
 from routes.appeals import router as appeals_router  # noqa: E402
 from routes.admin_security import router as admin_security_router  # noqa: E402
+from routes.kyc import router as kyc_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -79,6 +80,7 @@ api_router.include_router(admin_revenue_router)
 api_router.include_router(files_router)
 api_router.include_router(appeals_router)
 api_router.include_router(admin_security_router)
+api_router.include_router(kyc_router)
 
 app.include_router(api_router)
 
@@ -137,6 +139,13 @@ async def start_background_jobs() -> None:
         await cloudflare_blocks_indexes(db)
     except Exception as e:  # noqa: BLE001
         logger.error(f"cloudflare_ip_blocks index setup failed: {e}")
+
+    # iter52 — kyc_verifications indexes (idempotent).
+    try:
+        from services.kyc import ensure_indexes as kyc_indexes
+        await kyc_indexes(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"kyc_verifications index setup failed: {e}")
 
     async def _build_timeseries(
         granularity: str,

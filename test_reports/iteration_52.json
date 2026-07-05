@@ -1,0 +1,46 @@
+{
+  "summary": "iter52 KYC light — full validation. Backend: 16/16 iter52 pytest PASS (auth guards, submit/approve/reject/needs_more_info flows, funnel, disposable-email + duplicate-name flags, and the explicit country-check-absence regression). Regression: 42/42 PASS across iter48 admin_security + iter49 security_alerts + iter50 cloudflare_blocks + iter50b IP blocklist middleware. OpenAPI paths count via /api/openapi.json = 106, matching the required snapshot in the review request. Frontend E2E via Playwright: NORMAL user at /dashboard/kyc sees header + status card ('Sin verificar'), 3 upload rows with file-inputs, submit button correctly gated (disabled with 0 docs, enabled with 3). After upload+submit → toast success, status card flips to 'En revisión', upload wizard hides. ADMIN at /admin/kyc sees the full page: 6 funnel cards (funnel-total/pending/high-risk/more-info/verified/rejected), 4 tabs, search input, min-risk input, refresh button, list of pending rows. Approve dialog opens with 3 document previews (id_front/id_back/selfie), risk-flags panel (empty here), notes textarea, Cancelar/Confirmar. Confirming closes the dialog and the row moves to the Verificados tab (funnel Verificados = 1). Client polling /dashboard/kyc post-approval shows 'Verificado'. NORMAL navigating to /admin/kyc is redirected to /dashboard (guard OK).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "AdminKYC — reject reasons checklist",
+        "issues": [
+          "One of the 7 predefined rejection reasons is 'Documento no válido para este país'. The operator explicitly asked to remove country restrictions from KYC. This label is a manual-review label (not an auto-flag), so it is not a functional regression, but it can invite country-based rejections in practice. Consider reworking it to something country-agnostic like 'Tipo de documento no aceptado' or 'Documento no reconocido'."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter52_kyc.py",
+    "/app/test_reports/pytest/iter52_kyc.xml",
+    "/app/test_reports/pytest/iter52_regression.xml"
+  ],
+  "action_items": [
+    "(Nice-to-have, non-blocking) Rename reject-reason label 'Documento no válido para este país' to a country-agnostic phrasing to keep the KYC light UX consistent with the no-geo-restrictions policy."
+  ],
+  "critical_code_review_comments": [
+    "services/kyc.py::compute_funnel counts `verified` from users.kyc_status but `pending/rejected/needs_more_info` from kyc_verifications.status. If a user is rejected and then re-submits (pending), the funnel will count them in BOTH the users.kyc_status='rejected' AND the new verification's status='pending' bucket for a moment (until approval flips kyc_status). It is not strictly wrong — the 'rejected' count reflects rejected verifications, not users — but the semantic asymmetry between the sources of truth is easy to misread. Consider aligning both sources on kyc_verifications collection or documenting the mixed semantics in the returned payload keys.",
+    "routes/kyc.py::admin_kyc_reject — the `_KYCRejectPayload` allows an empty `reasons` list at the Pydantic level; the 400 is emitted manually after. Not a bug, but pushing the validation into Pydantic (`min_length=1`) would give a consistent 422 and remove one branch of manual guarding.",
+    "services/kyc.py::_flag_shared_ip skips when ip == 'unknown' — good. But when submit_ip is empty string it will also be skipped (falsy). Verify _client_ip never returns None/empty; if it can, the flag will silently disappear and there is no logging. Emit a debug log when skipped for observability.",
+    "routes/kyc.py — endpoint order: /admin/kyc/queue, /admin/kyc/funnel, then /admin/kyc/{verification_id}. Correct (specific paths before the parametric one). Please keep this ordering; if a future refactor moves the parametric route above, `funnel` and `queue` would 404. Consider adding a router-level guard/comment.",
+    "AdminKYC.jsx — reject-reason testid selector uses a raw slug of the label ('kyc-reject-reason-documento-no-válido-para-este-país'). URL/testid strings with unicode (á/ñ) are fragile in some tooling. Consider ASCII-only stable ids (e.g., kyc-reject-reason-1..7).",
+    "KYCView.jsx — file size check is on the raw JS File.size (8 MB), then converted to base64 which grows ~33%. The backend proof_upload helper likely has its own upstream limit. If the two limits ever diverge, users may hit a confusing '413' after upload. Document/mirror the limits."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (16/16 iter52 + 42/42 canary regression across iter48/49/50/50b)",
+    "frontend": "100% (client wizard + admin queue + approve dialog + role guard + status polling all verified)"
+  },
+  "test_credentials": "Reused seeded users from /app/memory/test_credentials.md. Sessions: session_token cookie 'test_session_admin_X' for admin flows, 'test_session_normal_X' for the client flow.",
+  "seed_data_creation": "None — the pytest suite is fully self-seeding and cleans up in teardown_module. The E2E Playwright submit-then-approve run left one verified kyc_verifications doc on user_test_normal01; a cleanup script removed it and reset users.kyc_status/kyc_verified_at to their pre-test state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter52 KYC light is fully green. Route ordering in routes/kyc.py is queue -> funnel -> {id} (must stay that way). Test tokens seed into user_sessions via conftest autouse fixture on every function. The 4 auto-flags are: disposable_email (high, +40), duplicate_name (medium, +20 — needs 3+ users with same normalised name), shared_ip (medium, +20 — needs 5+ distinct users from same IP within 24h), early_large_order (medium, +20 — needs an order >= $500 USDT-eq in last 30d before submitting). NO country/geo/OFAC flags exist — the regression test `test_risk_score_no_country_check` explicitly asserts their absence. Frontend testids all present: kyc-submit-btn, kyc-file-input-{docKey}, kyc-remove-{docKey}, kyc-status-card, kyc-tab-{status}, kyc-search-input, kyc-min-risk-input, kyc-refresh-btn, kyc-list, kyc-row-{id}, kyc-approve-btn-{id}, kyc-more-info-btn-{id}, kyc-reject-btn-{id}, kyc-action-dialog, kyc-doc-{docType}, kyc-action-submit, kyc-action-notes, kyc-reject-reason-*, funnel-total/pending/high-risk/more-info/verified/rejected. Non-staff hitting /admin/kyc is redirected to /dashboard by the client-side AdminPanel guard (not a backend redirect — the 403 from GET /admin/kyc/queue is what triggers the client-side bounce).",
+  "rca of the issue": "N/A — no issues found."
+}

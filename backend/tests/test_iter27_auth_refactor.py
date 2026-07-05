@@ -45,7 +45,7 @@ def test_openapi_path_count_unchanged():
     """
     r = requests.get("http://localhost:8001/api/openapi.json")
     assert r.status_code == 200
-    assert len(r.json()["paths"]) == 98
+    assert len(r.json()["paths"]) == 106
 
 
 # ---- /auth/register ----

@@ -247,3 +247,53 @@ async def mark_all_read(request: Request) -> Any:
         {"$set": {"read": True, "read_at": iso(now_utc())}},
     )
     return {"ok": True, "marked": r.modified_count}
+
+
+
+
+# ============================================================
+# iter52 — KYC verification notifications (client-inbound)
+# ============================================================
+
+async def notify_user_kyc_verified(_db: Any, user_id: str) -> Any:
+    """Client identity was approved — they can operate at full capacity."""
+    await _insert_notification(
+        recipient_user_id=user_id,
+        type="kyc_verified",
+        title="Identidad verificada ✓",
+        message=(
+            "Tu documento y selfie fueron aprobados. Ya operas con identidad "
+            "verificada; los límites transaccionales se ajustaron a tu nivel."
+        ),
+        data={},
+    )
+
+
+async def notify_user_kyc_rejected(_db: Any, user_id: str, reasons: list, notes: str) -> Any:
+    """KYC was rejected — user can resubmit new documents."""
+    reason_txt = " · ".join(reasons) if reasons else "Documentación insuficiente"
+    tail = f" Nota del equipo: {notes}" if notes else ""
+    await _insert_notification(
+        recipient_user_id=user_id,
+        type="kyc_rejected",
+        title="Verificación rechazada",
+        message=(
+            f"No pudimos aprobar tu verificación de identidad. Motivo: {reason_txt}.{tail} "
+            f"Puedes subir nuevos documentos desde el menú de tu cuenta."
+        ),
+        data={"reasons": reasons, "notes": notes},
+    )
+
+
+async def notify_user_kyc_needs_more_info(_db: Any, user_id: str, notes: str) -> Any:
+    """Reviewer needs a clearer photo / different document — user can resubmit."""
+    await _insert_notification(
+        recipient_user_id=user_id,
+        type="kyc_needs_more_info",
+        title="Necesitamos más información",
+        message=(
+            f"Tu verificación está pausada. {notes} "
+            f"Actualiza tus documentos y vuelve a enviar desde tu perfil."
+        ),
+        data={"notes": notes},
+    )

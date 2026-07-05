@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, ShieldCheck } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, ShieldCheck, IdCard } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -11,6 +11,7 @@ import MarketplaceView from "@/pages/dashboard/MarketplaceView";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
+import KYCView from "@/pages/dashboard/KYCView";
 import PushToggle from "@/components/PushToggle";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
@@ -38,6 +39,7 @@ export default function Dashboard() {
     { to: "/dashboard/exchange", icon: ArrowLeftRight, label: "Intercambio", id: "nav-exchange" },
     { to: "/dashboard/orders", icon: ListOrdered, label: "Mis Órdenes", id: "nav-orders" },
     { to: "/dashboard/transactions", icon: Receipt, label: "Mi Historial", id: "nav-transactions" },
+    { to: "/dashboard/kyc", icon: IdCard, label: "Verificación", id: "nav-kyc" },
     { to: "/dashboard/security", icon: ShieldCheck, label: "Seguridad", id: "nav-security" },
     ...(isClient ? [
       { to: "/dashboard/vip", icon: Star, label: "Saldo y Retiros", id: "nav-vip" },
@@ -203,6 +205,7 @@ export default function Dashboard() {
             <Route path="exchange" element={<ExchangeView />} />
             <Route path="orders" element={<OrdersView />} />
             <Route path="transactions" element={<MyTransactions />} />
+            <Route path="kyc" element={<KYCView />} />
             <Route path="security" element={<SecuritySettings />} />
             <Route path="vip" element={<VipView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
