@@ -95,9 +95,11 @@ export default function AdminSecurity() {
       if (r.data?.already_blocked) {
         toast.info(`La IP ${ip} ya estaba en la blocklist`);
       } else if (r.data?.cf_ok) {
-        toast.success(`IP ${ip} bloqueada en Cloudflare WAF`);
+        toast.success(`IP ${ip} bloqueada en app + Cloudflare WAF`);
+      } else if (r.data?.created) {
+        toast.success(`IP ${ip} bloqueada a nivel aplicación`);
       } else {
-        toast.warning(`Registro creado pero Cloudflare no confirmó: ${r.data?.reason || "revisa logs"}`);
+        toast.warning(`No se pudo bloquear: ${r.data?.reason || "revisa logs"}`);
       }
       setCfDialogOpen(false);
       setCfForm({ ip: "", notes: "" });
@@ -292,18 +294,21 @@ export default function AdminSecurity() {
         />
       </Panel>
 
-      {/* CLOUDFLARE WAF BLOCKLIST */}
+      {/* IP BLOCKLIST (APP-LEVEL) */}
       <Panel
         icon={Cloud}
-        title="Cloudflare WAF · Blocklist"
-        subtitle="IPs bloqueadas al borde de Cloudflare. El scanner puede añadirlas automáticamente cuando detecta floods si el auto-block está habilitado."
+        title="Blocklist de IPs (aplicación)"
+        subtitle="IPs bloqueadas a nivel aplicación: cualquier request de estas IPs recibe 403 antes de tocar la lógica de negocio. El scanner automático puede añadirlas cuando detecta floods. Si además configuras Cloudflare (CF_API_TOKEN + CF_ZONE_ID), el bloqueo también se aplica al borde."
       >
         <div className="mb-3 flex flex-wrap items-center gap-3 text-[0.7rem]">
+          <span className="px-2 py-1 border border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
+            Enforcement app-level: activo ✓
+          </span>
           <span className={`px-2 py-1 border ${cfData?.configured ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
-            {cfData?.configured ? "Configurado ✓" : "Sin credenciales (CF_API_TOKEN + CF_ZONE_ID)"}
+            Cloudflare edge: {cfData?.configured ? "configurado ✓" : "sin credenciales"}
           </span>
           <span className={`px-2 py-1 border ${cfData?.auto_block_enabled ? "border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
-            Auto-block: {cfData?.auto_block_enabled ? "activo" : "desactivado"}
+            Auto-block: {cfData?.auto_block_enabled ? "activo" : "solo app-level"}
           </span>
           <div className="ml-auto flex gap-2">
             <Button
@@ -407,8 +412,8 @@ export default function AdminSecurity() {
               />
             </div>
             {!cfData?.configured && (
-              <div className="text-[0.7rem] text-amber-300 border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                ⚠ Cloudflare no está configurado. Se creará el registro local en estado <code>failed</code>. Añade <code>CF_API_TOKEN</code> y <code>CF_ZONE_ID</code> en el entorno para activar el bloqueo real.
+              <div className="text-[0.7rem] text-blue-300 border border-blue-500/30 bg-blue-500/5 px-3 py-2">
+                ℹ️ El bloqueo se aplicará a <strong>nivel aplicación</strong> (403 antes de la lógica de negocio). Si además configuras <code>CF_API_TOKEN</code> y <code>CF_ZONE_ID</code>, el bloqueo se replica al borde de Cloudflare para defense-in-depth.
               </div>
             )}
           </div>

@@ -88,6 +88,12 @@ app.include_router(api_router)
 from security_middleware import install_security_middleware  # noqa: E402
 install_security_middleware(app)
 
+# iter50b — App-level IP blocklist enforcement. Added LAST so it runs FIRST
+# for incoming requests (Starlette middleware is LIFO). Blocked IPs are
+# rejected before slowapi consumes a rate-limit slot.
+from middleware.ip_blocklist import install_ip_blocklist_middleware  # noqa: E402
+install_ip_blocklist_middleware(app)
+
 
 logging.basicConfig(
     level=logging.INFO,

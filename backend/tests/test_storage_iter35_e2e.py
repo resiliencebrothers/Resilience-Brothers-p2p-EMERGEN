@@ -57,7 +57,7 @@ class TestStorageBoot:
         assert r.status_code == 200
         paths = r.json().get("paths", {})
         # iter52: added 2 balance-ledger endpoints → 87 paths.
-        assert len(paths) == 89, f"expected 89 paths, got {len(paths)}"
+        assert len(paths) == 98, f"expected 98 paths, got {len(paths)}"
         assert "/api/files/{key}" in paths, (
             f"/api/files/{{key}} missing. sample={list(paths.keys())[:6]}"
         )

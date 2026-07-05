@@ -1,0 +1,34 @@
+{
+  "summary": "iter50b app-level IP blocklist middleware — full validation. Backend: 52/52 pytest tests PASS (9 new iter50b middleware tests + 18 iter50 CF blocks + 6 iter49 security alerts + 9 iter48 admin_security + 10 appeals/authz). Canary regression: 46/46 PASS (iter27 auth refactor + iter36 wiring + iter35 e2e storage). OpenAPI paths count via /api/openapi.json = 98 (matches expected iter50 baseline). E2E curl confirmed: request with X-Forwarded-For matching an active block returns 403 {code: IP_BLOCKED}; leftmost XFF picked; admin unblock invalidates cache immediately (no 30s wait); admin manual block enforces without CF creds. Frontend /admin/security shows panel renamed to 'Blocklist de IPs (aplicación)', all 3 pills present with correct text ('Enforcement app-level: activo ✓' green, 'Cloudflare edge: sin credenciales', 'Auto-block: solo app-level'), and the manual block toast reads 'IP bloqueada a nivel aplicación'. Cache invalidation from admin CRUD verified end-to-end via curl + Playwright. Residual scanner test data cleaned.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CF Block dialog", "issues": ["(carry-over from iter50) Radix DialogContent missing `Description`/`aria-describedby` — a11y warning in console, non-blocking cosmetic."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter50b_ip_blocklist_middleware.py",
+    "/app/backend/tests/test_iter50_cloudflare_blocks.py",
+    "/app/test_reports/pytest/iter50b_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "middleware/ip_blocklist.py: TTL cache is a module-level singleton with a Set[str]. Correct choice for a single-worker uvicorn process, but if the app ever scales to multiple worker processes, each worker has its own cache — invalidate_cache() only reaches the process handling the admin CRUD request. Cross-worker propagation would need a broadcast (e.g., Mongo change stream or a pubsub channel). Not blocking for iter50b (Emergent runs 1 worker), but worth noting in a design doc for future scale.",
+    "The middleware trusts X-Forwarded-For unconditionally. Since Emergent's Cloudflare fronts the app, this is safe here — the ingress rewrites XFF and downstream can trust it. However, if the app is ever exposed without a trusted proxy, an attacker could spoof XFF to bypass a block against their real IP (or to poison the log). Consider documenting the trust model in a comment or gating on a REVERSE_PROXY_TRUSTED env flag.",
+    "Cache-refresh failure path in _BlocklistCache.get() swallows the exception and returns the STALE set (which may be empty on cold-start). Trade-off: fail-open on DB flakiness rather than DoS the whole app. Acceptable for iter50b, but consider emitting a metric/log-warn on repeated failures.",
+    "services/security_alerts.py: auto-block gate reads APP_AUTO_BLOCK_ENABLED at scan time (not startup). Good — allows an ops toggle without restart.",
+    "Frontend AdminSecurity.jsx: pill colors use hardcoded hex #EAB308 for the 'Auto-block: activo' variant instead of a Tailwind token. Minor consistency nit — every other pill uses tailwind palette classes."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (52/52 targeted + 46/46 canary regression)", "frontend": "100% (renamed panel, all 3 pills, manual block toast, unblock cache invalidation all verified)"},
+  "test_credentials": "Reused seeded users from /app/memory/test_credentials.md — session_token cookie 'test_session_admin_X' used for admin browser + curl flows.",
+  "seed_data_creation": "None added by this iteration. Post-test cleanup deleted 6 residual RFC 5737 IP block records (203.0.113.42, 198.51.100.7, 198.51.100.99) left by iter49 scanner tests — cloudflare_ip_blocks now empty for active/failed/pending_create states.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter50b is fully green. Middleware runs FIRST in the chain (LIFO) so blocked IPs never reach slowapi. Cache TTL=30s but is invalidated immediately by admin CRUD + the scanner auto-block path. When testing anything IP-related later, remember: (1) direct DB inserts do NOT propagate until the 30s TTL expires OR you trigger an admin API action (any POST/DELETE to /api/admin/security/cloudflare/blocks calls invalidate_cache()); the pytest suite uses `_invalidate_via_admin_action` helper for this. (2) X-Forwarded-For is trusted leftmost per RFC 7239. (3) The scanner's auto-block gate is now APP_AUTO_BLOCK_ENABLED (not CLOUDFLARE_AUTO_BLOCK_ENABLED). (4) Frontend testids present: cf-refresh-btn, cf-add-block-btn, cf-blocks-table, cf-block-row-{id}, cf-unblock-btn-{id}, cf-block-dialog, cf-block-ip-input, cf-block-notes-input, cf-block-submit-btn."
+}

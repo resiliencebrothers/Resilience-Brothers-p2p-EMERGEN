@@ -400,6 +400,11 @@ def test_ip_flood_triggers_cloudflare_when_auto_block_on(monkeypatch):
 
 
 def test_ip_flood_does_not_call_cloudflare_when_auto_block_off(monkeypatch):
+    """iter50b — semantics changed: the scanner now gates on
+    `APP_AUTO_BLOCK_ENABLED` (default true), not on `CLOUDFLARE_AUTO_BLOCK_ENABLED`.
+    Enforcement is app-level; CF is only a defense-in-depth layer when creds
+    are set. Verify that setting APP_AUTO_BLOCK_ENABLED=false disables the
+    entire auto-block path."""
     _cleanup_blocks("203.0.113.98")
     _sync_db().security_alerts_sent.delete_many({"anomaly_key": {"$regex": "^ip_rate_flood:203.0.113.98"}})
     _sync_db().security_events.delete_many({"kind": "rate_limit_hit", "ip": "203.0.113.98"})
@@ -416,7 +421,7 @@ def test_ip_flood_does_not_call_cloudflare_when_auto_block_off(monkeypatch):
     } for _ in range(101)]
     _sync_db().security_events.insert_many(docs)
 
-    monkeypatch.delenv("CLOUDFLARE_AUTO_BLOCK_ENABLED", raising=False)
+    monkeypatch.setenv("APP_AUTO_BLOCK_ENABLED", "false")
 
     called_with = {"count": 0}
 
@@ -441,7 +446,7 @@ def test_ip_flood_does_not_call_cloudflare_when_auto_block_off(monkeypatch):
 
     summary = _run(_do)
     assert summary["ip_rate_flood"] >= 1
-    assert called_with["count"] == 0  # No CF call when auto-block disabled.
+    assert called_with["count"] == 0  # No auto-block call when APP_AUTO_BLOCK_ENABLED=false
 
     _sync_db().security_events.delete_many({"kind": "rate_limit_hit", "ip": "203.0.113.98"})
     _sync_db().security_alerts_sent.delete_many({"anomaly_key": {"$regex": "^ip_rate_flood:203.0.113.98"}})

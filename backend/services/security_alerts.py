@@ -165,27 +165,39 @@ async def _fire_ip_flood(db: Any, row: dict, *, kind_label: str,
     # Mark BEFORE fanout (see comment in _fire_admin_multi_ip).
     await _mark_alerted(db, key, {"ip": ip, "count": row["count"], "paths": paths})
 
-    # iter50 — auto-block at Cloudflare WAF when enabled. Runs BEFORE the admin
-    # notification so the body can include the block outcome.
+    # iter50/50b — auto-block on detected flood. Persistent record always kept
+    # in `cloudflare_ip_blocks`; enforcement is app-level via
+    # `middleware.ip_blocklist` (see iter50b). If Cloudflare credentials are
+    # ALSO configured, the block is additionally pushed to the CF edge for
+    # defense-in-depth.
     cf_outcome = None
-    if ip != "unknown":
+    auto_block_on = os.environ.get("APP_AUTO_BLOCK_ENABLED", "true").lower() == "true"
+    if ip != "unknown" and auto_block_on:
         try:
-            from services import cloudflare_client, cloudflare_blocks
-            if cloudflare_client.is_auto_block_enabled():
-                res = await cloudflare_blocks.create_block(
-                    db, ip,
-                    notes=f"auto: security_alerts_scanner kind={kind_label} count={row['count']}",
-                    source="scanner",
-                )
-                if res.get("cf_ok"):
-                    cf_outcome = " · IP bloqueada en Cloudflare WAF ✅"
-                elif res.get("already_blocked"):
-                    cf_outcome = " · IP ya estaba en la blocklist ✅"
-                else:
-                    cf_outcome = f" · Cloudflare WAF: no se pudo bloquear ({res.get('reason','error')})"
+            from services import cloudflare_blocks
+            res = await cloudflare_blocks.create_block(
+                db, ip,
+                notes=f"auto: security_alerts_scanner kind={kind_label} count={row['count']}",
+                source="scanner",
+            )
+            if res.get("cf_ok"):
+                cf_outcome = " · IP bloqueada en app + Cloudflare WAF ✅"
+            elif res.get("already_blocked"):
+                cf_outcome = " · IP ya estaba bloqueada ✅"
+            elif res.get("created"):
+                cf_outcome = " · IP bloqueada a nivel app ✅ (CF sin creds)"
+            else:
+                cf_outcome = f" · No se pudo bloquear ({res.get('reason','error')})"
+            # Invalidate app-level cache so the block takes effect within
+            # seconds of the scan (not the 30s TTL).
+            try:
+                from middleware.ip_blocklist import invalidate_cache
+                invalidate_cache()
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as e:  # noqa: BLE001
-            logger.exception(f"cloudflare auto-block failed for {ip}: {e}")
-            cf_outcome = " · Cloudflare auto-block falló (ver logs)"
+            logger.exception(f"auto-block failed for {ip}: {e}")
+            cf_outcome = " · Auto-block falló (ver logs)"
 
     try:
         from admin_alerts import notify_all_admins
@@ -253,5 +265,5 @@ async def run_security_alert_scan(db: Optional[Any] = None) -> dict:
     if total > 0:
         logger.warning(f"[security-scan] fired {total} alert(s): {sent}")
     else:
-        logger.info(f"[security-scan] clean: no anomalies detected")
+        logger.info("[security-scan] clean: no anomalies detected")
     return sent

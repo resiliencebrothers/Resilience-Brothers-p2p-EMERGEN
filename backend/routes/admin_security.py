@@ -205,6 +205,7 @@ async def cloudflare_block_ip(payload: _CloudflareBlockPayload, request: Request
     """Manually block an IP at Cloudflare WAF (source='admin')."""
     admin = await _require_admin_only(request)
     from services import cloudflare_blocks
+    from middleware.ip_blocklist import invalidate_cache
     notes = payload.notes.strip() or f"manual: admin_id={admin['user_id']}"
     if "manual:" not in notes:
         notes = f"manual: {notes} (admin_id={admin['user_id']})"
@@ -213,6 +214,8 @@ async def cloudflare_block_ip(payload: _CloudflareBlockPayload, request: Request
         source="admin",
         user_id=admin["user_id"], user_email=admin.get("email"),
     )
+    # Force app-level middleware to re-read the blocklist immediately.
+    invalidate_cache()
     return res
 
 
@@ -222,7 +225,10 @@ async def cloudflare_unblock_ip(block_id: str, request: Request) -> Any:
     delete fails so the admin UI stays consistent."""
     await _require_admin_only(request)
     from services import cloudflare_blocks
+    from middleware.ip_blocklist import invalidate_cache
     res = await cloudflare_blocks.delete_block(db, block_id)
     if not res.get("ok"):
         raise HTTPException(status_code=404, detail=res.get("error", "not_found"))
+    # Invalidate cache so the unblock takes effect immediately (no 30s wait).
+    invalidate_cache()
     return res
