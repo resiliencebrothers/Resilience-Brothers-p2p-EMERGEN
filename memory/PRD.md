@@ -85,6 +85,24 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Verified GREEN by testing agent (iter51 report): **52/52 iter50b+iter50+iter49+iter48+appeals + 46/46 canary regression + 88 pytest local**. E2E curl confirmed 403 enforcement, cache invalidation instant, frontend labels correct.
   - Trade-off vs Cloudflare WAF: request still reaches our ingress (Emergent's Cloudflare drops it there ~2ms), so this doesn't protect against volumetric DDoS. But Emergent's own Cloudflare + our rate-limits + this middleware handle everything up to L7 attacks fine. Truly volumetric attacks need infrastructure that customers of Emergent don't control.
   - Env var: `APP_AUTO_BLOCK_ENABLED=true` (default). Set to `false` to disable automatic blocking from the scanner (manual blocks continue to work).
+
+- KYC/AML Light — Identity Verification Queue (iter52, Jul 5 2026): first-pass identity check flow for scaling from beta to real users. Explicit operator constraint: **no country/geo restrictions of any kind** — no IP-country vs phone-country mismatch flag, no OFAC country blocklist, no sanctioned-country logic. Country is stored as informational data only.
+  - New collection `kyc_verifications`: `{id, user_id, user_email, user_name, user_phone, status, documents[], risk_score 0-100, risk_flags[], submit_ip, submit_user_agent, reviewed_by, reviewed_at, review_notes, rejection_reasons[], created_at, updated_at}`. Indexes: `(user_id, created_at desc)`, `status`, `submit_ip`.
+  - `users` collection gains 3 nullable fields at approval time: `kyc_status` ∈ {unverified, pending, verified, rejected, needs_more_info}, `kyc_verified_at`, `kyc_last_submit_at`.
+  - Client endpoints: `POST /api/kyc/submit` (uploads 3 base64 documents to R2 via existing `proof_upload.maybe_upload_proof`), `GET /api/kyc/my-status`. Idempotent: cannot re-submit while an active (pending/verified/needs_more_info) verification exists (409).
+  - Admin/staff endpoints: `GET /api/admin/kyc/queue` (filters status+search+min_risk), `GET /api/admin/kyc/funnel`, `GET /api/admin/kyc/{id}`, `POST /api/admin/kyc/{id}/approve|reject|request-more-info`.
+  - Risk scoring (all heuristics NO country-related):
+    * `disposable_email` (high, +40) — email domain in the 15-domain blocklist (mailinator, tempmail, guerrillamail, etc).
+    * `duplicate_name` (medium, +20) — 3+ user accounts share the exact same full name.
+    * `shared_ip` (medium, +20) — 5+ KYC submissions from same IP in last 24h.
+    * `early_large_order` (medium, +20) — user tried an order ≥ $500 USDT-eq in the last 30 days before verification.
+    Score capped at 100. `high_risk_pending` funnel = pending items with score ≥ 40.
+  - Notifications fan-out: 3 new in-app notification types (`kyc_verified`, `kyc_rejected`, `kyc_needs_more_info`) delivered to the client via existing NotificationBell component.
+  - Frontend `/dashboard/kyc` (KYCView.jsx): client-side wizard. Status card with icon-per-state (unverified/pending/verified/rejected/needs_more_info). 3 upload rows for id_front + id_back + selfie with preview thumbnails + remove buttons. Enabled-only-when-all-3-loaded submit button. Rejected users see the reasons list and can resubmit.
+  - Frontend `/admin/kyc` (AdminKYC.jsx): 6 funnel cards + 4 tabs + search + min_risk filter + list with rows showing risk score badge + flag count. Action dialog shows document thumbnails (clickable to open full-size), risk-flags panel, notes textarea; for reject: 7 predefined reason checkboxes + custom notes.
+  - Nav: added `IdCard` icon items in both sidebars (client + admin).
+  - Verified GREEN by testing agent (iter52 report): **16/16 iter52 pytest + 42/42 regression + E2E frontend flow** (client submit + admin approve + client sees "Verificado" post-approval + non-staff blocked from /admin/kyc). Zero regressions. OpenAPI at 106 paths (3 snapshots updated).
+  - Out of scope (deferred to future iterations): OCR (Gemini Nano Banana) auto-extraction of name/dob/doc_number from ID + cross-check against account data · Transactional level-based limits enforcement (unverified $500/order, basic $5k/order) · Auto-promotion to VIP role · Push notifications on status changes.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
