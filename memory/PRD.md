@@ -123,6 +123,16 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **UX polish**: the misleading yellow "ADMIN" badge next to highlighted sidebar items was replaced by a small yellow dot — no longer suggests admin-only when the item is actually staff-accessible.
   - **Verified GREEN by testing agent (iter53 report)**: **16/16 new tests + 76/77 regression** (1 pre-existing skip). Zero regressions. OpenAPI at 107 paths (+1 for catalog endpoint).
   - **Status**: fix en preview. User needs to redeploy to push to production. Once deployed, admin can assign focused responsibilities in `/admin/users` → column "Funciones autorizadas" → checkbox picker per employee.
+
+- Audit Log Enriched with Permissions Snapshot (iter55.16b, Jul 8 2026): follow-up to iter55.16. Every entry in `audit_log` collection now includes an **immutable snapshot** of the actor's permissions at the moment of the action.
+  - **New fields on each entry**: `actor_permissions` (raw list from `user.allowed_permissions` at action time) and `actor_permissions_effective` (human-readable: `"all"` for admins, `"all_staff_default"` for employees with empty list, or the raw list for scoped employees).
+  - **Immutability**: the snapshot is captured at insert time — later revoking a permission does NOT rewrite historical rows. Answers forensic question "what could this employee actually do at that moment?" 6 months after the fact.
+  - **Central helper `audit_log.log_action`** updated once → all 15+ call-sites across `orders.py`, `admin.py`, `admin_users.py`, `admin_company_funds.py`, `blocklist.py`, `market.py`, `withdrawals.py` etc. now auto-enrich with zero code changes at the call site.
+  - **Frontend `/admin/audit`**: new column "Permisos al momento" between Rol and Acción. `PermissionsCell` component with 3 badge states: emerald "Admin · sin límite" · neutral "Staff · sin restricción" · yellow "N permisos" (with hover tooltip listing codes).
+  - **CSV export** at `/admin/audit/export.csv` includes a new `actor_permissions_effective` column (encoded as `;`-joined list or the effective label).
+  - **Backward compat with pre-existing rows**: old audit rows without the new fields render as "0 permisos" (yellow) — visually distinct from post-fix rows so ops can see the boundary at a glance.
+  - **Verified GREEN by tests (iter55.16b)**: **5/5 new tests** covering admin snapshot, employee default, scoped employee, historical immutability, CSV column. **74/74 regression** (kyc + appeals + transactions + permissions + company adjustments). Zero regressions.
+  - **Status**: fix en preview. Deploy pending.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

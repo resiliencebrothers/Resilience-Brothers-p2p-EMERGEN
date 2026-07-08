@@ -178,6 +178,7 @@ export default function AdminAudit() {
                 <th className="px-4 py-3 micro-label text-neutral-500">Cuándo</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">Quién</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">Permisos al momento</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">Acción</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">Resumen</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">Entidad</th>
@@ -185,16 +186,19 @@ export default function AdminAudit() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td></tr>
+                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Cargando...</td></tr>
               )}
               {!loading && entries.length === 0 && (
-                <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Sin registros aún.</td></tr>
+                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Sin registros aún.</td></tr>
               )}
               {entries.map((e) => (
                 <tr key={e.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="px-4 py-3 text-xs text-neutral-400 font-mono whitespace-nowrap">{new Date(e.created_at).toLocaleString()}</td>
                   <td className="px-4 py-3 text-xs">{e.actor_name || e.actor_email}</td>
                   <td className="px-4 py-3"><span className="text-[0.65rem] uppercase tracking-wider text-neutral-500">{e.actor_role}</span></td>
+                  <td className="px-4 py-3">
+                    <PermissionsCell effective={e.actor_permissions_effective} raw={e.actor_permissions} />
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs uppercase tracking-wider border px-2 py-0.5 font-mono ${ACTION_BADGE[e.action] || "bg-neutral-700/40 text-neutral-300 border-neutral-700"}`}>
                       {e.action}
@@ -220,5 +224,43 @@ export default function AdminAudit() {
         />
       )}
     </div>
+  );
+}
+
+
+/**
+ * iter55.16b — Compact "permissions at time of action" cell for the audit log.
+ * Renders a color-coded badge and expands the raw list on hover.
+ *
+ *  - "all"                 → 'ADMIN' badge (green)
+ *  - "all_staff_default"   → 'STAFF · sin restricción' badge (neutral)
+ *  - array of codes        → 'N permisos' badge with tooltip listing codes
+ */
+function PermissionsCell({ effective, raw }) {
+  if (effective === "all") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-emerald-500/10 text-emerald-300 border border-emerald-500/30"
+            data-testid="audit-perms-admin">
+        Admin · sin límite
+      </span>
+    );
+  }
+  if (effective === "all_staff_default" || (Array.isArray(effective) && effective.length === 0)) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-neutral-500/10 text-neutral-400 border border-neutral-500/30"
+            data-testid="audit-perms-open">
+        Staff · sin restricción
+      </span>
+    );
+  }
+  const codes = Array.isArray(effective) ? effective : (raw || []);
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 cursor-help"
+      title={codes.join(" · ")}
+      data-testid="audit-perms-scoped"
+    >
+      {codes.length} permiso{codes.length === 1 ? "" : "s"}
+    </span>
   );
 }

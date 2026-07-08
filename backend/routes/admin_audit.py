@@ -52,14 +52,21 @@ async def export_audit_csv(request: Request, action: Optional[str] = None,
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
     writer.writerow(["created_at", "actor_id", "actor_email", "actor_name", "actor_role",
+                     "actor_permissions_effective",
                      "action", "entity_type", "entity_id", "summary", "details"])
     for e in entries:
+        perms = e.get("actor_permissions_effective")
+        if isinstance(perms, list):
+            perms_str = ";".join(perms) if perms else "all_staff_default"
+        else:
+            perms_str = perms or ""
         writer.writerow([
             e.get("created_at", ""),
             e.get("actor_id", ""),
             e.get("actor_email", ""),
             e.get("actor_name", ""),
             e.get("actor_role", ""),
+            perms_str,
             e.get("action", ""),
             e.get("entity_type", ""),
             e.get("entity_id", ""),
