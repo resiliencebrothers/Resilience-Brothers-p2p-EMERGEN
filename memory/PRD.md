@@ -103,6 +103,13 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Nav: added `IdCard` icon items in both sidebars (client + admin).
   - Verified GREEN by testing agent (iter52 report): **16/16 iter52 pytest + 42/42 regression + E2E frontend flow** (client submit + admin approve + client sees "Verificado" post-approval + non-staff blocked from /admin/kyc). Zero regressions. OpenAPI at 106 paths (3 snapshots updated).
   - Out of scope (deferred to future iterations): OCR (Gemini Nano Banana) auto-extraction of name/dob/doc_number from ID + cross-check against account data · Transactional level-based limits enforcement (unverified $500/order, basic $5k/order) · Auto-promotion to VIP role · Push notifications on status changes.
+
+- BUG FIX iter55.15 — Aportes propios ausentes del Registro de Transacciones (Jul 5 2026): operator-reported on production. Los ajustes manuales de capital (`company_fund_adjustments`, tanto inflow como outflow) y los retiros del fondo empresa (`company_withdrawals` con estado approved/paid) no aparecían en `/admin/transactions` a pesar de estar correctamente reflejados en `/admin/company-funds`.
+  - **Root cause**: `services/transactions.build_transactions()` solo consultaba 3 fuentes (orders aprobadas, withdrawals VIP, order payouts). Las colecciones de capital corporativo estaban desconectadas del registro contable unificado.
+  - **Fix**: 2 nuevos fetchers `_fetch_company_adjustments()` + `_fetch_company_withdrawals()` gated por `user_id is None` (los eventos company-level nunca aparecen en `/me/transactions`). Nuevos mappers `_company_adjustment_to_transaction()` + `_company_withdrawal_to_salida()` con `ref_type` diferenciado.
+  - **Tests**: `test_iter55_15_company_adjustments_in_register.py` con 6 casos (bug reproducer + inflows + outflows + company_withdrawals + status filtering + regresión `/me/transactions` scope).
+  - Verificado con curl E2E en preview: aporte planted +10M CUPT → aparece en `/admin/transactions?currency=CUPT` con totals in=+10M, count=1.
+  - **Status**: fix en preview. El usuario necesita re-desplegar a producción (`Deploy` button) para que llegue a `p2p.resiliencebrothers.com`.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

@@ -142,6 +142,60 @@ def _order_payout_to_salida(o: dict) -> TransactionItem:
     }
 
 
+def _company_adjustment_to_transaction(a: dict) -> TransactionItem:
+    """iter55.15 — Manual capital movements registered from /admin/company-funds
+    (aportes propios y salidas manuales de capital). An `inflow` shows up as an
+    entrada; an `outflow` as a salida. Holder is the source_name (banco, wallet,
+    o persona que aportó el capital)."""
+    direction = "in" if a.get("adjustment_type") == "inflow" else "out"
+    note = a.get("note", "")
+    account = a.get("source_account", "")
+    # Combine source_account + note into delivery_details so the operator can
+    # see the bank/wallet address alongside the free-form note in the register.
+    details = " · ".join(x for x in (account, note) if x)
+    return {
+        "direction": direction,
+        "currency": a.get("currency", ""),
+        "amount": float(a.get("amount", 0.0)),
+        "holder_name": a.get("source_name", ""),
+        "client_name": a.get("actor_name", ""),  # the staff who booked the adjustment
+        "client_email": a.get("actor_email", ""),
+        "method": a.get("method", ""),
+        "status": "approved",  # adjustments are immediate — always effective
+        "ref_id": a.get("id", ""),
+        "ref_type": "company_adjustment",
+        "created_at": a.get("created_at", ""),
+        "proof_image": "",
+        "delivery_details": details,
+        "admin_note": (
+            f"Aporte propio ({a.get('method','')})" if direction == "in"
+            else f"Salida de capital ({a.get('method','')})"
+        ),
+    }
+
+
+def _company_withdrawal_to_salida(cw: dict) -> TransactionItem:
+    """iter55.15 — Company-fund withdrawals (retiros del fondo empresa) that
+    reached `approved` or `paid` status. These are money that physically left
+    the company; the beneficiary is the recipient (proveedor, socio, gasto)."""
+    return {
+        "direction": "out",
+        "currency": cw.get("currency", ""),
+        "amount": float(cw.get("amount", 0.0)),
+        "holder_name": cw.get("beneficiary", ""),
+        "client_name": cw.get("authorized_by_name", ""),
+        "client_email": cw.get("authorized_by_email", ""),
+        "method": "transfer",  # company_withdrawals do not persist method today
+        "status": cw.get("status", ""),
+        "ref_id": cw.get("id", ""),
+        "ref_type": "company_withdrawal",
+        "created_at": cw.get("created_at", ""),
+        "proof_image": cw.get("invoice_image", ""),
+        "delivery_details": cw.get("concept", ""),
+        "admin_note": cw.get("note", ""),
+    }
+
+
 async def _fetch_entradas_orders(date_q: dict, currency: Optional[str], holder: Optional[str],
                                  user_id: Optional[str]) -> List[TransactionItem]:
     q: dict = {
@@ -200,6 +254,45 @@ async def _fetch_salidas_order_payouts(date_q: dict, currency: Optional[str], ho
     return [_order_payout_to_salida(o) for o in rows]
 
 
+async def _fetch_company_adjustments(
+    date_q: dict, currency: Optional[str], holder: Optional[str],
+    direction: Optional[str],
+) -> List[TransactionItem]:
+    """iter55.15 — Manual capital movements (`company_fund_adjustments`).
+
+    Only returned when `user_id is None` (see build_transactions) because these
+    are company-level events, not owned by a specific client. `direction`
+    controls whether we return inflows, outflows or both.
+    """
+    q: dict = {**date_q}
+    if currency:
+        q["currency"] = currency
+    if holder:
+        q["source_name"] = {"$regex": holder, "$options": "i"}
+    if direction == "in":
+        q["adjustment_type"] = "inflow"
+    elif direction == "out":
+        q["adjustment_type"] = "outflow"
+    rows = await db.company_fund_adjustments.find(q, {"_id": 0}).to_list(5000)
+    return [_company_adjustment_to_transaction(a) for a in rows]
+
+
+async def _fetch_company_withdrawals(
+    date_q: dict, currency: Optional[str], holder: Optional[str],
+) -> List[TransactionItem]:
+    """iter55.15 — Approved/paid `company_withdrawals` (retiros del fondo)."""
+    q: dict = {
+        "status": {"$in": ["approved", "paid"]},
+        **date_q,
+    }
+    if currency:
+        q["currency"] = currency
+    if holder:
+        q["beneficiary"] = {"$regex": holder, "$options": "i"}
+    rows = await db.company_withdrawals.find(q, {"_id": 0}).to_list(5000)
+    return [_company_withdrawal_to_salida(cw) for cw in rows]
+
+
 async def build_transactions(direction: Optional[str], currency: Optional[str],
                              holder: Optional[str], since: Optional[str],
                              until: Optional[str],
@@ -222,6 +315,16 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
     if direction in (None, "all", "out"):
         items.extend(await _fetch_salidas_withdrawals(date_q, currency, holder, user_id))
         items.extend(await _fetch_salidas_order_payouts(date_q, currency, holder, user_id))
+
+    # iter55.15 — Company-level capital events (aportes propios + retiros del
+    # fondo). Only included in the ADMIN transactions register (no user_id
+    # filter); the personal /me/transactions endpoint scopes by user_id and
+    # therefore never surfaces these company-scope entries.
+    if user_id is None:
+        adj_dir = direction if direction in ("in", "out") else None
+        items.extend(await _fetch_company_adjustments(date_q, currency, holder, adj_dir))
+        if direction in (None, "all", "out"):
+            items.extend(await _fetch_company_withdrawals(date_q, currency, holder))
 
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     if min_amount is not None:
