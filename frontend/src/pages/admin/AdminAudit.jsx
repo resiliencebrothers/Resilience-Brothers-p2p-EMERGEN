@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
+import MonthlyAuditReport from "@/pages/admin/audit/MonthlyAuditReport";
 import { Shield, Download, FileText } from "lucide-react";
 
 const ACTION_BADGE = {
@@ -92,6 +93,9 @@ export default function AdminAudit() {
           Trazabilidad completa: cada cambio de orden, tasa, usuario y configuración queda registrado con autor y momento exacto.
         </p>
       </div>
+
+      {/* iter55.17 — Monthly executive audit report */}
+      <MonthlyAuditReport />
 
       <div className="flex flex-wrap gap-3 items-end justify-between">
         <div className="flex flex-wrap gap-3 items-end">

@@ -62,6 +62,58 @@ def _send(to: str, subject: str, html: str, attachments: list = None) -> bool:
         return False
 
 
+def notify_monthly_audit(to: str, period_label: str, kpis: dict,
+                          integrity_hash: str, pdf_bytes: bytes) -> bool:
+    """Email the monthly audit PDF to a compliance / owner mailbox."""
+    subject = f"Reporte mensual de auditoría · {period_label}"
+    total = int(kpis.get("total_actions", 0))
+    distinct = int(kpis.get("distinct_actors", 0))
+    anti = sum(item.get("count", 0) for item in (kpis.get("anti_fraud") or []))
+    top_actors_html = ""
+    for a in (kpis.get("top_actors") or [])[:3]:
+        name = a.get("name") or a.get("email") or "—"
+        top_actors_html += (
+            f"<tr><td style='padding:4px 0;color:#A3A3A3;font-size:13px;'>{name}</td>"
+            f"<td style='padding:4px 0;color:#fff;font-family:monospace;text-align:right;'>{a.get('count', 0)}</td></tr>"
+        )
+    if not top_actors_html:
+        top_actors_html = (
+            "<tr><td style='padding:4px 0;color:#A3A3A3;font-size:13px;'>—</td>"
+            "<td style='padding:4px 0;color:#fff;font-family:monospace;text-align:right;'>0</td></tr>"
+        )
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">
+        Reporte automático de trazabilidad del cierre de <strong style="color:#fff;">{period_label}</strong>.
+        Adjunto encontrarás el PDF con resumen ejecutivo, tabla detallada de todas las
+        acciones staff/admin y la firma SHA-256 para integridad forense.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:20px;">
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Acciones totales</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{total}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Actores distintos</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{distinct}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Señales anti-fraude</td>
+            <td style="padding:6px 0;color:{'#EF4444' if anti > 0 else '#22C55E'};font-family:monospace;text-align:right;font-weight:bold;">{anti}</td></tr>
+      </table>
+      <p style="margin:18px 0 6px;color:#EAB308;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Top actores</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:12px 20px;">
+        {top_actors_html}
+      </table>
+      <p style="margin:22px 0 6px;color:#EAB308;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Firma de integridad</p>
+      <p style="margin:0 0 4px;color:#A3A3A3;font-size:12px;">Guarda este hash junto con el PDF — es tu prueba de que las filas no fueron alteradas después de la exportación.</p>
+      <p style="margin:6px 0 0;color:#fff;font-family:monospace;font-size:11px;word-break:break-all;background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:10px 14px;">{integrity_hash}</p>
+      <p style="margin:22px 0 8px;color:#A3A3A3;font-size:13px;">
+        También puedes regenerar el reporte en cualquier momento desde <em>/admin/audit</em>.
+      </p>
+    """
+    attachment = {
+        "filename": f"auditoria-{period_label.replace(' ', '-')}.pdf",
+        "content": base64.b64encode(pdf_bytes).decode("ascii"),
+    }
+    return _send(to, subject, _base_template("Reporte mensual de auditoría", body),
+                 attachments=[attachment])
+
+
 def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: bytes) -> bool:
     """Email the monthly revenue PDF to an admin."""
     subject = f"Reporte mensual de ganancias · {period_label}"

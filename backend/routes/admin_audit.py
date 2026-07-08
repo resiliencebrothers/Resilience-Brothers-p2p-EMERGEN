@@ -9,13 +9,20 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from db_client import db
-from auth_utils import require_admin
+from auth_utils import require_admin, _enforce_totp_step_up
 from audit_pdf import generate_audit_pdf
+from audit_pdf_monthly import generate_monthly_audit_pdf
 from services.transactions import build_audit_query, fetch_audit_entries
+from services.audit_report import (
+    compute_monthly_kpis,
+    compute_integrity_hash,
+    month_range_iso,
+    month_label,
+)
 
 
 router = APIRouter(tags=["Admin"])
@@ -103,3 +110,118 @@ async def export_audit_pdf(request: Request, action: Optional[str] = None,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ============================================================
+# iter55.17 — Monthly audit PDF (exec summary + detail + hash)
+# ============================================================
+
+def _validate_year_month(year: int, month: int) -> None:
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=400, detail="mes inválido (1-12)")
+    if year < 2020 or year > 2100:
+        raise HTTPException(status_code=400, detail="año inválido")
+
+
+async def _build_monthly_bundle(year: int, month: int) -> dict:
+    """Fetch entries for the calendar month and precompute KPIs + integrity
+    hash + human label. Reused by the download and the email endpoint."""
+    since_iso, until_iso = month_range_iso(year, month)
+    # 5000 rows/month upper bound matches the existing CSV export cap.
+    entries = await fetch_audit_entries(
+        action=None, actor_id=None, since=since_iso, until=until_iso, limit=5000,
+    )
+    label = month_label(year, month)
+    kpis = compute_monthly_kpis(entries)
+    integrity = compute_integrity_hash(entries, label)
+    return {
+        "entries": entries,
+        "kpis": kpis,
+        "integrity_hash": integrity,
+        "period_label": label,
+        "period_slug": f"{year}-{month:02d}",
+    }
+
+
+@router.get("/admin/audit/monthly.pdf")
+async def admin_audit_monthly_pdf(request: Request, year: int, month: int) -> Any:
+    """Download the executive monthly audit report as PDF (admin-only)."""
+    await require_admin(request)
+    _validate_year_month(year, month)
+    bundle = await _build_monthly_bundle(year, month)
+    pdf_bytes = generate_monthly_audit_pdf(
+        bundle["entries"], bundle["period_label"],
+        bundle["kpis"], bundle["integrity_hash"],
+    )
+    filename = f"auditoria-{bundle['period_slug']}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/admin/audit/monthly.summary")
+async def admin_audit_monthly_summary(request: Request, year: int, month: int) -> Any:
+    """Return the KPIs of a given month without generating the PDF.
+
+    Used by the frontend to preview the counts before deciding to download or
+    email. Cheap enough to call on-demand — reuses the same DB query."""
+    await require_admin(request)
+    _validate_year_month(year, month)
+    bundle = await _build_monthly_bundle(year, month)
+    return {
+        "period_label": bundle["period_label"],
+        "period_slug": bundle["period_slug"],
+        "integrity_hash": bundle["integrity_hash"],
+        "kpis": bundle["kpis"],
+        "row_count": len(bundle["entries"]),
+    }
+
+
+@router.post("/admin/audit/monthly/send-email")
+async def admin_audit_monthly_send_email(payload: dict, request: Request) -> Any:
+    """Send the monthly audit PDF to the ops mailbox (or all admins). Admin
+    only + TOTP step-up because it moves sensitive data to email."""
+    actor = await require_admin(request)
+    await _enforce_totp_step_up(
+        actor, payload.get("totp_code"),
+        action_label="enviar reporte mensual de auditoría",
+    )
+    year = int(payload.get("year") or 0)
+    month = int(payload.get("month") or 0)
+    _validate_year_month(year, month)
+
+    bundle = await _build_monthly_bundle(year, month)
+    pdf_bytes = generate_monthly_audit_pdf(
+        bundle["entries"], bundle["period_label"],
+        bundle["kpis"], bundle["integrity_hash"],
+    )
+
+    # Reuse the ops-notifications-email precedence: if set, only that inbox;
+    # else all admins.
+    from admin_alerts import resolve_admin_email_recipients
+    import email_service
+
+    recipients = await resolve_admin_email_recipients(db)
+    if not recipients:
+        raise HTTPException(status_code=400,
+                            detail="No hay destinatarios configurados")
+
+    sent = 0
+    for to_addr in recipients:
+        ok = email_service.notify_monthly_audit(
+            to_addr, bundle["period_label"], bundle["kpis"],
+            bundle["integrity_hash"], pdf_bytes,
+        )
+        if ok:
+            sent += 1
+    return {
+        "ok": True,
+        "sent": sent,
+        "recipients": len(recipients),
+        "period": bundle["period_slug"],
+        "period_label": bundle["period_label"],
+        "integrity_hash": bundle["integrity_hash"],
+        "row_count": len(bundle["entries"]),
+    }
