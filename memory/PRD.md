@@ -110,6 +110,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Tests**: `test_iter55_15_company_adjustments_in_register.py` con 6 casos (bug reproducer + inflows + outflows + company_withdrawals + status filtering + regresión `/me/transactions` scope).
   - Verificado con curl E2E en preview: aporte planted +10M CUPT → aparece en `/admin/transactions?currency=CUPT` con totals in=+10M, count=1.
   - **Status**: fix en preview. El usuario necesita re-desplegar a producción (`Deploy` button) para que llegue a `p2p.resiliencebrothers.com`.
+
+- Granular per-Staff Permissions — RBAC-lite (iter55.16, Jul 8 2026): operator reported that when trying to designate specific functions to different staff members, only `allowed_currencies` could be scoped — every "Staff Member" (role=employee) had blanket access to every staff page. Not scalable when the operator has 5+ employees with focused roles.
+  - **Design constraint (from user)**: 12 capability codes, `allowed_permissions=[]` (empty/unset) means "full staff access" for backward compatibility so existing employees keep working with zero admin action.
+  - **New `services/permissions.py`**: `PERMISSION_CATALOG` (12 codes: orders, withdrawals, kyc, appeals, products, rates, currencies, users, company_funds, blocked_contacts, transactions, quick_view) + `_has_permission(user, code)` pure predicate + async `require_permission(request, code)` HTTP gate + `sanitize_permissions()` to drop unknown codes.
+  - **Semantics**: admin → always passes; employee with empty/unset list → passes (backward compat); employee with non-empty list → only if code is in list, else 403 with a message naming the missing permission (e.g. "No tienes el permiso 'Verificación KYC' asignado. Contacta al admin.").
+  - **Endpoints gated (30+)**: KYC (6), Appeals (2), Withdrawals (2), Company Funds (5), Orders (2), Redemptions (2), Transactions register (3), Queue/Quick-view (2), Currencies (3), Rates (3), Products (3), Users list+edit (2). Legacy asserts `_assert_can_manage_blocklist`, `_assert_can_review_appeals`, `_assert_can_manage_company_funds` upgraded to honor the new permission list (new supersedes legacy booleans).
+  - **New endpoint**: `GET /api/admin/permissions/catalog` — staff-only, returns 12 items with `{code, label, description}` for the frontend selector.
+  - **`PUT /api/admin/users/{id}`** now accepts `allowed_permissions`. Only admins can grant/revoke; employees calling with the field get 403. Unknown codes silently sanitized. Requires TOTP step-up (unchanged).
+  - **Frontend `AdminUsers`**: new "Funciones autorizadas" column between "Monedas autorizadas" and "Teléfono". `PermissionMultiSelect.jsx` (Popover + 12 Checkboxes with label+description) mirrors the visual pattern of `CurrencyMultiSelect`. Non-admin viewers see read-only count, no editor. Non-employees show "— n/a —".
+  - **Frontend sidebar (`AdminPanel.jsx`)**: filters items by `hasPerm(code)` = admin OR empty perms OR code in perms. Employee with `["kyc"]` now sees only Resumen + KYC. Empty perms → all 14 staff items visible.
+  - **UX polish**: the misleading yellow "ADMIN" badge next to highlighted sidebar items was replaced by a small yellow dot — no longer suggests admin-only when the item is actually staff-accessible.
+  - **Verified GREEN by testing agent (iter53 report)**: **16/16 new tests + 76/77 regression** (1 pre-existing skip). Zero regressions. OpenAPI at 107 paths (+1 for catalog endpoint).
+  - **Status**: fix en preview. User needs to redeploy to push to production. Once deployed, admin can assign focused responsibilities in `/admin/users` → column "Funciones autorizadas" → checkbox picker per employee.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
