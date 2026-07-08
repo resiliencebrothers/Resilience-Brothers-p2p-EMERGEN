@@ -30,22 +30,50 @@ export default function AdminPanel() {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isStaff = user?.role === "admin" || user?.role === "employee";
+  const isAdmin = user?.role === "admin";
+  const userPerms = user?.allowed_permissions || [];
+  // iter55.16 — Admins pass everything. Employees with an empty list pass
+  // everything (backward compat). Employees with a specific list only pass
+  // when the code is present.
+  const hasPerm = (code) => isAdmin || userPerms.length === 0 || userPerms.includes(code);
 
   const items = [
     { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
-    { to: "/admin/quick", icon: Zap, label: "Vista Rápida", id: "admin-nav-quick", highlight: true },
-    { to: "/admin/queue", icon: Inbox, label: "Mi Cola", id: "admin-nav-queue", highlight: true },
-    { to: "/admin/orders", icon: ListChecks, label: "Órdenes", id: "admin-nav-orders" },
-    { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros", id: "admin-nav-withdrawals" },
-    { to: "/admin/currencies", icon: Coins, label: "Monedas", id: "admin-nav-currencies" },
-    { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
-    { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
-    { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
-    { to: "/admin/blocked-contacts", icon: Ban, label: "Bloqueos", id: "admin-nav-blocked-contacts" },
-    { to: "/admin/appeals", icon: MessageSquare, label: "Apelaciones", id: "admin-nav-appeals" },
-    { to: "/admin/kyc", icon: IdCard, label: "KYC", id: "admin-nav-kyc", highlight: true },
-    { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
-    ...(isStaff ? [
+    ...(hasPerm("quick_view") ? [
+      { to: "/admin/quick", icon: Zap, label: "Vista Rápida", id: "admin-nav-quick", highlight: true },
+      { to: "/admin/queue", icon: Inbox, label: "Mi Cola", id: "admin-nav-queue", highlight: true },
+    ] : []),
+    ...(hasPerm("orders") ? [
+      { to: "/admin/orders", icon: ListChecks, label: "Órdenes", id: "admin-nav-orders" },
+    ] : []),
+    ...(hasPerm("withdrawals") ? [
+      { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros", id: "admin-nav-withdrawals" },
+    ] : []),
+    ...(hasPerm("currencies") ? [
+      { to: "/admin/currencies", icon: Coins, label: "Monedas", id: "admin-nav-currencies" },
+    ] : []),
+    ...(hasPerm("rates") ? [
+      { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
+    ] : []),
+    ...(hasPerm("products") ? [
+      { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
+    ] : []),
+    ...(hasPerm("users") ? [
+      { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
+    ] : []),
+    ...(hasPerm("blocked_contacts") ? [
+      { to: "/admin/blocked-contacts", icon: Ban, label: "Bloqueos", id: "admin-nav-blocked-contacts" },
+    ] : []),
+    ...(hasPerm("appeals") ? [
+      { to: "/admin/appeals", icon: MessageSquare, label: "Apelaciones", id: "admin-nav-appeals" },
+    ] : []),
+    ...(hasPerm("kyc") ? [
+      { to: "/admin/kyc", icon: IdCard, label: "KYC", id: "admin-nav-kyc", highlight: true },
+    ] : []),
+    ...(hasPerm("company_funds") ? [
+      { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
+    ] : []),
+    ...(hasPerm("transactions") ? [
       { to: "/admin/transactions", icon: Receipt, label: "Transacciones", id: "admin-nav-transactions", highlight: true },
     ] : []),
     ...(user?.role === "admin" ? [
@@ -77,7 +105,7 @@ export default function AdminPanel() {
           <it.icon className="w-4 h-4" />
           {it.label}
           {it.highlight && (
-            <span className="ml-auto text-[0.6rem] bg-[#EAB308]/20 text-[#EAB308] px-1.5 py-0.5">ADMIN</span>
+            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#EAB308]" title="Función destacada" />
           )}
         </NavLink>
       ))}

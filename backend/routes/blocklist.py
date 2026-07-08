@@ -22,7 +22,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from db_client import db
 from auth_utils import (
-    require_staff, normalize_phone, now_utc, iso, _enforce_totp_step_up,
+    require_staff, require_permission, normalize_phone, now_utc, iso, _enforce_totp_step_up,
 )
 from audit_log import log_action
 from services.anti_scam import mark_user_under_review, mark_user_active
@@ -43,8 +43,14 @@ router = APIRouter(tags=["Blocklist"])
 async def _assert_can_manage_blocklist(actor: dict) -> Any:
     if actor.get("role") == "admin":
         return
-    if actor.get("role") == "employee" and actor.get("can_manage_blocklist"):
-        return
+    if actor.get("role") == "employee":
+        # iter55.16 — the new per-staff permission system supersedes the legacy
+        # can_manage_blocklist boolean. Either grants access.
+        perms = actor.get("allowed_permissions") or []
+        if not perms or "blocked_contacts" in perms:
+            return
+        if actor.get("can_manage_blocklist"):
+            return
     raise HTTPException(
         status_code=403,
         detail="No tienes permiso para gestionar la lista de bloqueos. Pídeselo a un administrador.",

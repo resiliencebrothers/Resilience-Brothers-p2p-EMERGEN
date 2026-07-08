@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 from db_client import db
 from auth_utils import (
-    require_admin, require_staff,
+    require_admin, require_staff, require_permission,
     now_utc, iso,
     _enforce_totp_step_up,
 )
@@ -123,7 +123,7 @@ async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Re
 async def all_orders(request: Request, status: Optional[str] = None,
                      user_q: Optional[str] = None, currency: Optional[str] = None,
                      limit: int = 1000, offset: int = 0) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "orders")
     q: Dict[str, Any] = {}
     if status:
         q["status"] = status
@@ -197,7 +197,7 @@ def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: s
 
 @router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "orders")
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in VALID_ORDER_STATUSES:
@@ -232,14 +232,14 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
 
 @router.get("/admin/redemptions")
 async def all_redemptions(request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "orders")
     docs = await db.redemptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 
 @router.put("/admin/redemptions/{rid}/status")
 async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "orders")
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in ("approved", "delivered", "rejected", "pending"):
@@ -417,7 +417,7 @@ async def list_transactions(request: Request,
                             min_amount: Optional[float] = None,
                             max_amount: Optional[float] = None,
                             limit: int = 100, offset: int = 0) -> Any:
-    await require_staff(request)
+    await require_permission(request, "transactions")
     _validate_txn_filters(direction, min_amount, max_amount)
     items = await build_transactions(
         direction, currency, holder, since, until, min_amount, max_amount
@@ -446,7 +446,7 @@ async def export_transactions_csv(request: Request,
                                   until: Optional[str] = None,
                                   min_amount: Optional[float] = None,
                                   max_amount: Optional[float] = None) -> Any:
-    await require_staff(request)
+    await require_permission(request, "transactions")
     items = await build_transactions(
         direction, currency, holder, since, until, min_amount, max_amount
     )
@@ -490,7 +490,7 @@ async def export_transactions_pdf(request: Request,
                                   until: Optional[str] = None,
                                   min_amount: Optional[float] = None,
                                   max_amount: Optional[float] = None) -> Any:
-    await require_staff(request)
+    await require_permission(request, "transactions")
     items = await build_transactions(
         direction, currency, holder, since, until, min_amount, max_amount
     )
@@ -518,7 +518,7 @@ async def export_transactions_pdf(request: Request,
 @router.get("/admin/queue")
 async def staff_queue(request: Request) -> Any:
     """Pending items in the actor's scope: orders + withdrawals."""
-    actor = await require_staff(request)
+    actor = await require_permission(request, "quick_view")
     order_q: Dict[str, Any] = {"status": {"$in": ["pending", "requires_double_approval"]}}
     wd_q: Dict[str, Any] = {"status": "pending"}
     if actor.get("role") == "employee":
@@ -546,7 +546,7 @@ async def admin_quick_summary(request: Request) -> Any:
 
     Employee role respects `allowed_currencies` scope on every section.
     """
-    actor = await require_staff(request)
+    actor = await require_permission(request, "quick_view")
     rates = await build_rate_lookup()
 
     # ---- scope filter (employee can only see currencies in allowed_currencies)

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from db_client import db
 from auth_utils import (
-    require_admin, require_staff,
+    require_admin, require_staff, require_permission,
     now_utc, iso,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )
@@ -71,11 +71,16 @@ class CompanyFundAdjustmentCreate(BaseModel):
 
 
 async def _assert_can_manage_company_funds(actor: dict) -> None:
-    """iter54 — Admin always allowed; employees need can_manage_company_funds=True."""
+    """iter54 — Admin always allowed; employees need can_manage_company_funds=True
+    OR (iter55.16) the `company_funds` permission code in allowed_permissions."""
     if actor.get("role") == "admin":
         return
-    if actor.get("role") == "employee" and actor.get("can_manage_company_funds"):
-        return
+    if actor.get("role") == "employee":
+        perms = actor.get("allowed_permissions") or []
+        if not perms or "company_funds" in perms:
+            return
+        if actor.get("can_manage_company_funds"):
+            return
     raise HTTPException(
         status_code=403,
         detail=(
@@ -212,7 +217,7 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
 
 @router.get("/admin/company-funds")
 async def admin_company_funds(request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "company_funds")
     scope = None
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
@@ -223,7 +228,7 @@ async def admin_company_funds(request: Request) -> Any:
 
 @router.post("/admin/company-withdrawals")
 async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "company_funds")
     currency = payload.currency.upper()
     _enforce_employee_currency_scope(actor, currency)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
@@ -258,7 +263,7 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
 async def list_company_withdrawals(request: Request,
                                      status: Optional[str] = None,
                                      currency: Optional[str] = None) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "company_funds")
     q: Dict[str, Any] = {}
     if status:
         q["status"] = status
@@ -314,7 +319,7 @@ async def create_company_fund_adjustment(
     Auth: admin OR employee with `can_manage_company_funds=True`.
     TOTP step-up required (money-moving action).
     """
-    actor = await require_staff(request)
+    actor = await require_permission(request, "company_funds")
     await _assert_can_manage_company_funds(actor)
     await _enforce_totp_step_up(actor, payload.totp_code)
 
@@ -387,7 +392,7 @@ async def list_company_fund_adjustments(
 ) -> Any:
     """Return the history of manual capital movements. Employees scoped to
     their `allowed_currencies` (if any). Newest first."""
-    actor = await require_staff(request)
+    actor = await require_permission(request, "company_funds")
     q: Dict[str, Any] = {}
     if currency:
         q["currency"] = currency.upper()

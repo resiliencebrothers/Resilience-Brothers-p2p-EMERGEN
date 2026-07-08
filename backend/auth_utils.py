@@ -115,6 +115,14 @@ async def require_staff(request: Request) -> dict:
     return user
 
 
+# iter55.16 — Convenience re-export so route files can import from the same
+# module as `require_staff`. Actual implementation lives in
+# `services/permissions.py`.
+async def require_permission(request: Request, code: str) -> dict:
+    from services.permissions import require_permission as _rp
+    return await _rp(request, code)
+
+
 def _enforce_employee_currency_scope(actor: dict, *codes: str) -> None:
     """Iter14: employees may only act on entities involving currencies they're
     authorized for. Admins bypass. Empty `allowed_currencies` = unrestricted."""

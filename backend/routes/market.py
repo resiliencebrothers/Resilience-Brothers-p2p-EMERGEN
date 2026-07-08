@@ -27,7 +27,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from db_client import db
 from auth_utils import (
-    require_staff, _enforce_employee_currency_scope, _enforce_totp_step_up,
+    require_staff, require_permission,
+    _enforce_employee_currency_scope, _enforce_totp_step_up,
     now_utc, iso,
 )
 from audit_log import log_action
@@ -189,7 +190,7 @@ async def _find_currency_lenient(code: str) -> Optional[dict]:
 
 @router.post("/admin/currencies")
 async def create_currency(payload: CurrencyCreate, request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "currencies")
     c = Currency(**payload.model_dump())
     await db.currencies.insert_one(c.model_dump())
     return c.model_dump()
@@ -197,14 +198,14 @@ async def create_currency(payload: CurrencyCreate, request: Request) -> Any:
 
 @router.put("/admin/currencies/{currency_id}")
 async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "currencies")
     await db.currencies.update_one({"id": currency_id}, {"$set": payload.model_dump()})
     return await db.currencies.find_one({"id": currency_id}, {"_id": 0})
 
 
 @router.delete("/admin/currencies/{currency_id}")
 async def delete_currency(currency_id: str, request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "currencies")
     await db.currencies.delete_one({"id": currency_id})
     return {"ok": True}
 
@@ -251,7 +252,7 @@ async def create_rate(payload: ExchangeRateCreate, request: Request) -> Any:
 
 @router.put("/admin/rates/{rate_id}")
 async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "rates")
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar tasa")
     _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
     old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
@@ -418,7 +419,7 @@ async def _scan_rate_change_margin(old: Optional[dict], fresh: Optional[dict]) -
 
 @router.delete("/admin/rates/{rate_id}")
 async def delete_rate(rate_id: str, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "rates")
     existing = await db.rates.find_one({"id": rate_id}, {"_id": 0})
     if existing:
         _enforce_employee_currency_scope(actor, existing["from_code"], existing["to_code"])
@@ -448,7 +449,7 @@ def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_i
 
 @router.post("/admin/products")
 async def create_product(payload: ProductCreate, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "products")
     _check_employee_product_perms(
         actor,
         editing_price=(payload.price_usd is not None and payload.price_usd != 0)
@@ -462,7 +463,7 @@ async def create_product(payload: ProductCreate, request: Request) -> Any:
 
 @router.put("/admin/products/{product_id}")
 async def update_product(product_id: str, payload: ProductCreate, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "products")
     existing = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -478,7 +479,7 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
 
 @router.delete("/admin/products/{product_id}")
 async def delete_product(product_id: str, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "products")
     if actor.get("role") != "admin" and not actor.get("can_delete_products"):
         raise HTTPException(status_code=403, detail="No tienes permiso para eliminar productos")
     await db.products.delete_one({"id": product_id})

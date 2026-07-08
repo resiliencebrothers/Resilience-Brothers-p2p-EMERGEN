@@ -37,7 +37,7 @@ class TestOpenAPIWiring:
         body = r.json()
         paths = body.get("paths", {})
         # iter52: added 2 balance-ledger endpoints → 87 paths.
-        assert len(paths) == 106, f"expected 106 paths, got {len(paths)}"
+        assert len(paths) == 107, f"expected 106 paths, got {len(paths)}"
         assert "/api/files/{key}" in paths
 
     def test_swagger_docs_reachable_publicly(self):

@@ -1,0 +1,33 @@
+{
+  "summary": "iter55.16 granular per-staff RBAC-lite fully verified. Backend: 16/16 new permission tests + 76/77 regression tests pass (1 pre-existing skip). Catalog endpoint returns 12 codes with label+description, gated staff-only (VIP/normal → 403). PUT /admin/users accepts allowed_permissions admin-only with TOTP step-up, sanitizes unknown codes silently. Backward compat verified (empty/unset perms → full access). Narrow-scope employees correctly gated: kyc-only passes /admin/kyc/queue and 403 on orders/withdrawals/transactions/users. Admin never gated. Legacy can_manage_blocklist=false + allowed_permissions=['blocked_contacts'] → grants access (new supersedes legacy boolean). OpenAPI now at 107 paths as expected. Frontend: 'Funciones autorizadas' column renders in AdminUsers, PermissionMultiSelect popover shows 12 checkboxes with all required data-testids (allowed-permissions-row-{id}, open-permissions-{id}, permission-option-{id}-{code}, save-permissions-{id}, clear-permissions-{id}). Sidebar filtering works: employee with perms=['kyc'] sees only Resumen+KYC; with perms=[] sees all 14 staff items (backward compat). Yellow dot replaces ADMIN badge for highlighted items.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_16_permissions.py",
+    "/app/test_reports/pytest/iter55_16_results.xml",
+    "/app/test_reports/pytest/iter55_16_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/permissions.py — clean design; predicate is pure/testable, catalog is single source of truth, sanitize_permissions correctly filters unknown codes. Backward-compat semantics (empty list = full access) documented and enforced.",
+    "admin_users.py PUT — admin-only guard for allowed_permissions is correctly placed before the DB write, sanitized after the check. TOTP step-up is enforced via _enforce_totp_step_up before mutation.",
+    "AdminPanel.jsx hasPerm() correctly OR-combines isAdmin + empty-list backward compat + explicit inclusion — matches backend semantics exactly.",
+    "Non-admin viewers see read-only count of permissions (not the selector) — matches spec.",
+    "Minor: PermissionMultiSelect popover renders inside table cell; consider z-index/overflow tests on smaller viewports (not tested here) but no visible issue at 1920px."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "test_session_admin_X, test_session_employee_X, test_session_vip_X, test_session_normal_X (documented in /app/memory/test_credentials.md); admin & employee have TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP.",
+  "seed_data_creation": "Test file uses direct MongoDB writes to set/reset user_test_employee01.allowed_permissions during tests; teardown restores clean state via _reset_perms(). Frontend E2E also toggled allowed_permissions directly in DB then reset.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter55.16 (RBAC-lite) is fully green. Permission catalog at GET /api/admin/permissions/catalog (12 codes). Gate via require_permission(request, code) — admin bypasses, employee empty-list bypasses, else must include code. PUT /admin/users allowed_permissions is admin-only. Frontend testids: allowed-permissions-row-{user_id}, open-permissions-{user_id}, permission-option-{user_id}-{code}, save-permissions-{user_id}, clear-permissions-{user_id}. Employee session token cookie: test_session_employee_X.",
+  "rca of the issue": "N/A — no issues found."
+}

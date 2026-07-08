@@ -204,17 +204,24 @@ def test_staff_can_reject_appeal():
 
 
 def test_employee_without_permission_is_forbidden():
+    """iter55.16 update — semantics changed. Empty allowed_permissions now
+    means "full staff access" (backward compat). To get 403, the employee
+    must have a NON-EMPTY list that doesn't contain `appeals`."""
     prev = _set_normal_status("under_review")
     _cleanup_appeals()
-    # Ensure employee test user does NOT have can_manage_blocklist
     _db().users.update_one(
         {"user_id": "user_test_employee01"},
-        {"$set": {"can_manage_blocklist": False}},
+        {"$set": {"can_manage_blocklist": False, "allowed_permissions": ["orders"]}},
     )
     try:
         r = requests.get(f"{API}/admin/appeals", headers=_hdr(EMPLOYEE_TOKEN))
         assert r.status_code == 403, r.text
     finally:
+        # Clean up: unset both fields so the employee returns to open-perms state.
+        _db().users.update_one(
+            {"user_id": "user_test_employee01"},
+            {"$unset": {"allowed_permissions": ""}},
+        )
         _cleanup_appeals()
         _set_normal_status(prev)
 

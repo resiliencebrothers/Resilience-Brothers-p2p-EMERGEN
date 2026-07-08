@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from security_middleware import limiter
 from db_client import db
-from auth_utils import require_user, require_staff, now_utc, iso
+from auth_utils import require_user, require_staff, require_permission, now_utc, iso
 from audit_log import log_action
 
 logger = logging.getLogger(__name__)
@@ -41,8 +41,13 @@ router = APIRouter(tags=["Appeals"])
 async def _assert_can_review_appeals(actor: dict) -> None:
     if actor.get("role") == "admin":
         return
-    if actor.get("role") == "employee" and actor.get("can_manage_blocklist"):
-        return
+    if actor.get("role") == "employee":
+        # iter55.16 — new permission system supersedes legacy booleans.
+        perms = actor.get("allowed_permissions") or []
+        if not perms or "appeals" in perms:
+            return
+        if actor.get("can_manage_blocklist"):
+            return
     raise HTTPException(
         status_code=403,
         detail="No tienes permiso para revisar apelaciones. Pídeselo a un administrador.",
@@ -135,7 +140,7 @@ async def list_appeals(
     limit: int = 100,
 ) -> Any:
     """Staff queue of appeals. Default lists all statuses newest-first."""
-    requester = await require_staff(request)
+    requester = await require_permission(request, "appeals")
     await _assert_can_review_appeals(requester)
     q: dict = {}
     if status:
@@ -195,7 +200,7 @@ async def resolve_appeal(
 ) -> Any:
     """Mark the appeal as `resolved` — the staff message is delivered to the
     client. Does NOT re-activate the account; use `verify-phone` for that."""
-    requester = await require_staff(request)
+    requester = await require_permission(request, "appeals")
     await _assert_can_review_appeals(requester)
     fresh = await _resolve_appeal_internal(appeal_id, requester, payload, "resolved")
     return {"ok": True, "appeal": fresh}
@@ -207,7 +212,7 @@ async def reject_appeal(
 ) -> Any:
     """Mark the appeal as `rejected`. Client keeps `under_review` status but is
     told why the appeal did not succeed."""
-    requester = await require_staff(request)
+    requester = await require_permission(request, "appeals")
     await _assert_can_review_appeals(requester)
     fresh = await _resolve_appeal_internal(appeal_id, requester, payload, "rejected")
     return {"ok": True, "appeal": fresh}

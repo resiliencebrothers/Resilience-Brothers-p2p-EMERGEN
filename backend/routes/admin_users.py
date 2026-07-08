@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db_client import db
-from auth_utils import require_staff, _enforce_totp_step_up
+from auth_utils import require_staff, require_permission, _enforce_totp_step_up
 from audit_log import log_action
 from services.balances import build_rate_lookup, convert_to_usdt
 
@@ -22,6 +22,7 @@ class UserUpdate(BaseModel):
     vip_balance_usd: Optional[float] = None
     vip_balances: Optional[Dict[str, float]] = None
     allowed_currencies: Optional[List[str]] = None
+    allowed_permissions: Optional[List[str]] = None  # iter55.16 — capability-based access
     can_edit_product_prices: Optional[bool] = None
     can_upload_product_images: Optional[bool] = None
     can_delete_products: Optional[bool] = None
@@ -35,7 +36,7 @@ class UserUpdate(BaseModel):
 async def list_users(request: Request, q: Optional[str] = None,
                      role: Optional[str] = None,
                      limit: int = 1000, offset: int = 0) -> Any:
-    await require_staff(request)
+    await require_permission(request, "users")
     mongo_q: Dict[str, Any] = {}
     if q:
         rx = {"$regex": q, "$options": "i"}
@@ -78,13 +79,19 @@ async def list_users(request: Request, q: Optional[str] = None,
 
 @router.put("/admin/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate, request: Request) -> Any:
-    requester = await require_staff(request)
+    requester = await require_permission(request, "users")
     await _enforce_totp_step_up(requester, payload.totp_code, action_label="actualizar usuario")
     update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
     if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
+    # iter55.16 — only admins can grant/revoke capabilities to other staff.
+    if "allowed_permissions" in update:
+        if requester.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo un admin puede modificar los permisos de staff")
+        from services.permissions import sanitize_permissions
+        update["allowed_permissions"] = sanitize_permissions(update["allowed_permissions"])
     old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -93,6 +100,15 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
                      details={"changes": update,
                               "prev_role": old_user.get("role") if old_user else None})
     return new_user
+
+
+# iter55.16 — Permission catalog endpoint. Any staff can read the catalog to
+# render the selector; only admins can modify user assignments (see PUT above).
+@router.get("/admin/permissions/catalog")
+async def get_permissions_catalog(request: Request) -> Any:
+    await require_staff(request)
+    from services.permissions import PERMISSION_CATALOG
+    return {"items": PERMISSION_CATALOG}
 
 
 @router.post("/admin/users/{user_id}/verify-email")

@@ -11,7 +11,7 @@ from typing import Optional, Any, Dict
 
 from db_client import db
 from auth_utils import (
-    require_staff,
+    require_staff, require_permission,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )
 from services.proof_upload import maybe_upload_proof
@@ -25,7 +25,7 @@ async def all_withdrawals(request: Request,
                           status: Optional[str] = None,
                           user_q: Optional[str] = None,
                           currency: Optional[str] = None) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "withdrawals")
     q: Dict[str, Any] = {}
     if status:
         q["status"] = status
@@ -100,7 +100,7 @@ def _validate_paid_evidence(withdrawal: dict, update_doc: dict, new_status: str)
 
 @router.put("/admin/withdrawals/{wid}/status")
 async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
-    actor = await require_staff(request)
+    actor = await require_permission(request, "withdrawals")
     new_status = payload.get("status")
     if new_status not in ("approved", "paid", "rejected", "pending"):
         raise HTTPException(status_code=400, detail="status inválido")

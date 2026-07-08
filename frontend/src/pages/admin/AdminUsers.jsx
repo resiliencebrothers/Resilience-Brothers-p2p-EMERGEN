@@ -11,6 +11,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Search, History } from "lucide-react";
 
 import { CurrencyMultiSelect } from "./users/CurrencyMultiSelect";
+import { PermissionMultiSelect } from "./users/PermissionMultiSelect";
 import { MarketPermsCell } from "./users/MarketPermsCell";
 import { UserPhoneCell } from "./users/UserPhoneCell";
 import { RejectPhoneDialog } from "./users/RejectPhoneDialog";
@@ -65,6 +66,8 @@ export default function AdminUsers() {
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [editingCurrencies, setEditingCurrencies] = useState({});
+  const [editingPermissions, setEditingPermissions] = useState({});
+  const [permCatalog, setPermCatalog] = useState([]);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
@@ -111,6 +114,13 @@ export default function AdminUsers() {
     axios.get(`${API}/currencies`).then(r => setCurrencies(r.data || [])).catch(() => {});
   }, []);
 
+  // iter55.16 — load permission catalog once for the multi-select.
+  useEffect(() => {
+    axios.get(`${API}/admin/permissions/catalog`, { withCredentials: true })
+      .then(r => setPermCatalog(r.data?.items || []))
+      .catch(() => {});
+  }, []);
+
   const saveRole = (user_id, role) =>
     setPendingTotp({ user_id, payload: { role }, label: `cambiar rol a ${role}` });
 
@@ -122,6 +132,17 @@ export default function AdminUsers() {
       label: clean.length
         ? `asignar monedas (${clean.join(", ")})`
         : "quitar restricción de monedas",
+    });
+  };
+
+  const saveAllowedPermissions = (user_id, list) => {
+    const clean = (list || []).filter(Boolean);
+    setPendingTotp({
+      user_id,
+      payload: { allowed_permissions: clean },
+      label: clean.length
+        ? `asignar ${clean.length} permiso(s) al staff`
+        : "quitar restricción de permisos (acceso completo staff)",
     });
   };
 
@@ -196,6 +217,9 @@ export default function AdminUsers() {
         toast.success("Usuario actualizado");
         if ("allowed_currencies" in payload) {
           setEditingCurrencies((prev) => ({ ...prev, [user_id]: undefined }));
+        }
+        if ("allowed_permissions" in payload) {
+          setEditingPermissions((prev) => ({ ...prev, [user_id]: undefined }));
         }
       }
       setPendingTotp(null);
@@ -279,6 +303,7 @@ export default function AdminUsers() {
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Saldo (USDT eq.)</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Monedas autorizadas</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Funciones autorizadas</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Teléfono</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Permisos Mercado</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
@@ -287,12 +312,12 @@ export default function AdminUsers() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan="8" className="text-center text-neutral-500 py-8">Cargando...</td>
+                <td colSpan="9" className="text-center text-neutral-500 py-8">Cargando...</td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan="8" className="text-center text-neutral-500 py-8">Sin resultados</td>
+                <td colSpan="9" className="text-center text-neutral-500 py-8">Sin resultados</td>
               </tr>
             )}
             {users.map(u => (
@@ -396,6 +421,41 @@ export default function AdminUsers() {
                     />
                   ) : (
                     <span className="text-neutral-600 text-xs">— sin restricción —</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {u.role === "employee" ? (
+                    isAdmin ? (
+                      <PermissionMultiSelect
+                        userId={u.user_id}
+                        catalog={permCatalog}
+                        selected={editingPermissions[u.user_id] ?? (u.allowed_permissions || [])}
+                        onToggle={(code, isOn) => {
+                          const current = editingPermissions[u.user_id] ?? (u.allowed_permissions || []);
+                          const next = isOn
+                            ? [...new Set([...current, code])]
+                            : current.filter((c) => c !== code);
+                          setEditingPermissions({ ...editingPermissions, [u.user_id]: next });
+                        }}
+                        onSave={() =>
+                          saveAllowedPermissions(
+                            u.user_id,
+                            editingPermissions[u.user_id] ?? (u.allowed_permissions || [])
+                          )
+                        }
+                        onClear={() =>
+                          setEditingPermissions({ ...editingPermissions, [u.user_id]: [] })
+                        }
+                      />
+                    ) : (
+                      <span className="text-neutral-600 text-xs" title="Solo un admin puede modificar permisos de staff">
+                        {(u.allowed_permissions?.length ?? 0) === 0
+                          ? "— sin restricción —"
+                          : `${u.allowed_permissions.length} permiso(s)`}
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-neutral-600 text-xs">— n/a —</span>
                   )}
                 </td>
                 <td className="px-4 py-3">

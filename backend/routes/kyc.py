@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from db_client import db
-from auth_utils import require_user, require_staff
+from auth_utils import require_user, require_permission
 from services import kyc as kyc_service
 from services.proof_upload import maybe_upload_proof
 from services.security_events import _client_ip
@@ -149,7 +149,7 @@ async def admin_kyc_queue(
     min_risk: int = 0,
     limit: int = 100,
 ) -> Any:
-    await require_staff(request)
+    await require_permission(request, "kyc")
     if limit > 500:
         limit = 500
     items = await kyc_service.list_queue(db, status=status, search=search, min_risk=min_risk, limit=limit)
@@ -158,13 +158,13 @@ async def admin_kyc_queue(
 
 @router.get("/admin/kyc/funnel")
 async def admin_kyc_funnel(request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "kyc")
     return await kyc_service.compute_funnel(db)
 
 
 @router.get("/admin/kyc/{verification_id}")
 async def admin_kyc_detail(verification_id: str, request: Request) -> Any:
-    await require_staff(request)
+    await require_permission(request, "kyc")
     v = await db.kyc_verifications.find_one({"id": verification_id}, {"_id": 0})
     if not v:
         raise HTTPException(404, detail="Verificación no encontrada.")
@@ -175,7 +175,7 @@ async def admin_kyc_detail(verification_id: str, request: Request) -> Any:
 async def admin_kyc_approve(
     verification_id: str, payload: _KYCApprovePayload, request: Request,
 ) -> Any:
-    staff = await require_staff(request)
+    staff = await require_permission(request, "kyc")
     v = await kyc_service.approve_verification(db, verification_id, staff, payload.notes)
     if not v:
         raise HTTPException(
@@ -195,7 +195,7 @@ async def admin_kyc_approve(
 async def admin_kyc_reject(
     verification_id: str, payload: _KYCRejectPayload, request: Request,
 ) -> Any:
-    staff = await require_staff(request)
+    staff = await require_permission(request, "kyc")
     if not payload.reasons:
         raise HTTPException(400, detail="Selecciona al menos un motivo de rechazo.")
     v = await kyc_service.reject_verification(
@@ -218,7 +218,7 @@ async def admin_kyc_reject(
 async def admin_kyc_request_more(
     verification_id: str, payload: _KYCMoreInfoPayload, request: Request,
 ) -> Any:
-    staff = await require_staff(request)
+    staff = await require_permission(request, "kyc")
     v = await kyc_service.request_more_info(db, verification_id, staff, payload.notes)
     if not v:
         raise HTTPException(
