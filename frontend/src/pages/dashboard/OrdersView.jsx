@@ -3,6 +3,8 @@ import axios from "axios";
 import { API } from "@/App";
 import { Badge } from "@/components/ui/badge";
 import CopyableText from "@/components/CopyableText";
+import ExplorerLink from "@/components/ExplorerLink";
+import { extractCryptoNetwork } from "@/services/delivery_validators";
 
 const STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
@@ -112,6 +114,11 @@ export default function OrdersView() {
                         testid="my-order-payout-hash-copy"
                       />
                     </span>
+                    <ExplorerLink
+                      network={extractCryptoNetwork(selected.delivery_details, selected.delivery_method)}
+                      txHash={selected.payout_tx_hash}
+                      testid="my-order-explorer-link"
+                    />
                   </div>
                 )}
                 {selected.payout_proof_image && (

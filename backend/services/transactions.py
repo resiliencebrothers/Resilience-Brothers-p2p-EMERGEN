@@ -117,12 +117,15 @@ def _withdrawal_to_salida(w: dict) -> TransactionItem:
         "ref_id": w.get("id", ""),
         "ref_type": "withdrawal",
         "created_at": w.get("created_at", ""),
-        "proof_image": "",
+        "proof_image": w.get("payout_proof_image", ""),
         "delivery_details": w.get("details", ""),
         "admin_note": w.get("admin_note", ""),
         # iter55.19c — surface the on-chain network for crypto withdrawals so
         # the transactions registry (and PDF export) always know which chain.
         "crypto_network": w.get("crypto_network", ""),
+        # iter55.19f — surface the on-chain tx hash so the ledger modal can
+        # link to the block explorer.
+        "payout_tx_hash": w.get("payout_tx_hash", ""),
     }
 
 
@@ -142,6 +145,10 @@ def _order_payout_to_salida(o: dict) -> TransactionItem:
         "proof_image": o.get("payout_proof_image", ""),
         "delivery_details": o.get("delivery_details", ""),
         "admin_note": o.get("admin_note", ""),
+        # iter55.19f — on-chain tx hash for crypto payouts (order-side).
+        # `crypto_network` for orders is inferred from delivery_details at the
+        # frontend (via extractCryptoNetwork), no dedicated column needed.
+        "payout_tx_hash": o.get("payout_tx_hash", ""),
     }
 
 

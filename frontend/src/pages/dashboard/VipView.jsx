@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import CopyableText from "@/components/CopyableText";
+import ExplorerLink from "@/components/ExplorerLink";
 import { toast } from "sonner";
 import { Wallet, ArrowDownToLine, FileDown, Coins, ShieldCheck, History, Eye } from "lucide-react";
 
@@ -514,11 +516,23 @@ export default function VipView() {
                     }`}>{label}</span>
                   </div>
                   {(w.payout_proof_image || w.payout_tx_hash) && (
-                    <div className="mt-3 border-t border-white/5 pt-2 space-y-1">
+                    <div className="mt-3 border-t border-white/5 pt-2 space-y-2">
                       {w.payout_tx_hash && (
-                        <div className="text-[0.65rem] text-neutral-400 break-all" data-testid={`payout-hash-${w.id}`}>
-                          <span className="text-neutral-600">Hash: </span>
-                          <span className="font-mono text-[#22C55E]">{w.payout_tx_hash}</span>
+                        <div className="text-[0.65rem] text-neutral-400 flex flex-wrap items-center gap-2" data-testid={`payout-hash-${w.id}`}>
+                          <span className="text-neutral-600">Hash:</span>
+                          <span className="text-[#22C55E]">
+                            <CopyableText
+                              value={w.payout_tx_hash}
+                              label="Copiar hash"
+                              toastMessage="Hash copiado"
+                              testid={`payout-hash-copy-${w.id}`}
+                            />
+                          </span>
+                          <ExplorerLink
+                            network={w.crypto_network}
+                            txHash={w.payout_tx_hash}
+                            testid={`payout-explorer-${w.id}`}
+                          />
                         </div>
                       )}
                       {w.payout_proof_image && (

@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import CopyableText from "@/components/CopyableText";
+import ExplorerLink from "@/components/ExplorerLink";
+import { extractCryptoNetwork } from "@/services/delivery_validators";
 import { ArrowDown, ArrowUp, Download, Receipt, X, ExternalLink } from "lucide-react";
 
 export function TransactionDetailModal({ selected, onClose, onNavigate }) {
@@ -113,6 +115,36 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             <div className="border border-[#EAB308]/30 p-4 bg-[#EAB308]/5">
               <div className="micro-label text-[#EAB308] mb-2">Nota admin</div>
               <div className="text-sm text-neutral-300">{selected.admin_note}</div>
+            </div>
+          )}
+
+          {/* iter55.19f — on-chain payout hash + explorer link. Only visible
+              for crypto salidas that have a hash recorded. Works for both
+              withdrawals (crypto_network stored) and orders (network inferred
+              from delivery_details). */}
+          {selected.method === "crypto" && selected.payout_tx_hash && (
+            <div className="border border-[#22C55E]/30 p-4 bg-[#22C55E]/5">
+              <div className="micro-label text-[#22C55E] mb-2">
+                Hash on-chain del pago
+              </div>
+              <div className="text-xs flex items-start flex-wrap gap-2">
+                <span className="text-[#22C55E]">
+                  <CopyableText
+                    value={selected.payout_tx_hash}
+                    label="Copiar hash"
+                    toastMessage="Hash copiado"
+                    testid="tx-payout-hash-copy"
+                  />
+                </span>
+                <ExplorerLink
+                  network={
+                    selected.crypto_network
+                    || extractCryptoNetwork(selected.delivery_details, selected.method)
+                  }
+                  txHash={selected.payout_tx_hash}
+                  testid="tx-payout-explorer-link"
+                />
+              </div>
             </div>
           )}
 

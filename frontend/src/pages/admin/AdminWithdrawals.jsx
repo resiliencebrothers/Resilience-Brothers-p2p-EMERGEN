@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import CopyableText from "@/components/CopyableText";
+import ExplorerLink from "@/components/ExplorerLink";
 import { toast } from "sonner";
 import { Search } from "lucide-react";
 
@@ -338,6 +339,18 @@ export default function AdminWithdrawals() {
                       }
                       className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono text-xs"
                     />
+                    {open.payout_tx_hash && (
+                      <div className="mt-2 flex items-center flex-wrap gap-2">
+                        <ExplorerLink
+                          network={open.crypto_network}
+                          txHash={open.payout_tx_hash}
+                          testid="admin-withdrawal-explorer-link"
+                        />
+                        <span className="text-[0.65rem] text-neutral-500">
+                          verifica que la tx llegó a la wallet del cliente
+                        </span>
+                      </div>
+                    )}
                     <p className="text-[0.65rem] text-neutral-500 mt-2 leading-relaxed">
                       Con el hash es suficiente — no hace falta subir captura.
                       El cliente podrá verificar la transacción en el explorer.
