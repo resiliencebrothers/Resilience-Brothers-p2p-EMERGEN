@@ -308,6 +308,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- WhatsApp shortcut on Celular row (iter55.22c, Feb 2026) — follow-up to iter55.22b mini-table. Ops asked for a 1-click flow: copy the phone AND open WhatsApp with a pre-loaded greeting instead of the operator having to manually strip the `+53` prefix, open WhatsApp Web, paste, then type "Hola, soy de Resilience…".
+  - **Update to** `/app/frontend/src/components/CashDetailsTable.jsx`:
+    - New pure helper `normalisePhone(raw)` strips everything except digits (wa.me requires bare digits). Handles `+53 5555-1234`, `(535) 555-1234`, `null`, empty string.
+    - New `<WhatsappCell phone={…} />` sub-component. Renders a green-hover `MessageCircle` icon **only** in the Celular row. Click:
+      1. best-effort `navigator.clipboard.writeText(phone)` (async, `.catch()` wrapped so a permission-denied doesn't crash the UI — a real regression I hit in QA when the initial version used `try/catch` around a Promise-returning call);
+      2. `window.open("https://wa.me/{normalised}?text={template}", "_blank", "noopener,noreferrer")` with `WHATSAPP_TEMPLATE = "Hola, soy del equipo de Resilience Brothers. Estamos coordinando la entrega de su retiro en efectivo. ¿Puede confirmar disponibilidad para recibirlo?"`;
+      3. sonner toast "Abriendo WhatsApp…".
+    - Row layout tweaked (`w-16 whitespace-nowrap`) so the celular cell hosts BOTH icons (WhatsApp + Copy); other rows keep the single Copy icon.
+  - **Testids added**: `cash-details-whatsapp`.
+  - **Validation**: normaliser unit test — **5/5 pass** (bare +53, spaces+dash, parens, empty, null). Playwright E2E — clicked the WA button, intercepted `window.open`, asserted URL is exactly `https://wa.me/5355551234?text=Hola%2C%20soy%20del%20equipo%20de%20Resilience%20Brothers…` and the celular row shows 2 buttons vs 1 in every other row. **Zero runtime errors** after the async clipboard fix. `yarn lint` clean.
+
+
+
 - Admin cash-details mini table (iter55.22b, Feb 2026) — follow-up to iter55.22 structured cash form. Ops asked to display the composed `details` block as a compact table in the admin withdrawal modal so operators can grab the phone in 1 click while on the phone with the courier, instead of scanning a paragraph.
   - **New component** `/app/frontend/src/components/CashDetailsTable.jsx` (~110 LOC): exports a named `parseCashDetails(raw)` pure function + a default `<CashDetailsTable details={…} />` React component.
     - `parseCashDetails` walks the newline-separated block, splits each line on the first `:`, and only accepts labels in the whitelist `["Nombre","Celular","Dirección","ID / Carné"]`. Requires **≥2 recognised labels** to avoid false-positives on legacy free-form details that happen to contain a colon. Returns `null` for legacy / empty / single-field inputs.

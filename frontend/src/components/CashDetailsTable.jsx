@@ -22,12 +22,25 @@
  * as a plain <CopyableText> — the caller decides which mode via the
  * `structured` boolean returned by `parseCashDetails`.
  */
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, MessageCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 // Labels we recognise. Order matters — we render rows in this order.
 const KNOWN_LABELS = ["Nombre", "Celular", "Dirección", "ID / Carné"];
+
+// Default WhatsApp message pre-loaded when the operator hits the WA button.
+// Kept short and professional — Cuban ops asked for something they can send
+// as-is without editing.
+const WHATSAPP_TEMPLATE =
+  "Hola, soy del equipo de Resilience Brothers. " +
+  "Estamos coordinando la entrega de su retiro en efectivo. " +
+  "¿Puede confirmar disponibilidad para recibirlo?";
+
+/** Strip everything that isn't a digit — wa.me requires bare digits. */
+function normalisePhone(raw) {
+  return String(raw || "").replace(/\D+/g, "");
+}
 
 /** Parse the composed block. Returns `null` if not recognisable. */
 export function parseCashDetails(raw) {
@@ -76,6 +89,38 @@ function CopyCell({ value, label }) {
   );
 }
 
+function WhatsappCell({ phone }) {
+  const normalised = normalisePhone(phone);
+  if (!normalised) return null;
+
+  const openWhatsApp = () => {
+    // Best-effort copy to keep parity with the plain copy button — nice when
+    // the operator wants the raw number too (e.g. paste into CRM). Wrapped
+    // in `.catch()` because navigator.clipboard.writeText returns a Promise
+    // that rejects on lost-focus / permission denied — WA is the primary
+    // action and we don't want an unhandled rejection to crash the UI.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(phone).catch(() => {});
+    }
+    const url = `https://wa.me/${normalised}?text=${encodeURIComponent(WHATSAPP_TEMPLATE)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    toast.success("Abriendo WhatsApp…");
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={openWhatsApp}
+      data-testid="cash-details-whatsapp"
+      title="Abrir WhatsApp con saludo pre-cargado"
+      aria-label="Abrir WhatsApp"
+      className="p-1 text-neutral-500 hover:text-[#25D366] transition-colors shrink-0"
+    >
+      <MessageCircle className="w-3.5 h-3.5" />
+    </button>
+  );
+}
+
 export default function CashDetailsTable({ details }) {
   const parsed = parseCashDetails(details);
   if (!parsed) return null;
@@ -96,7 +141,8 @@ export default function CashDetailsTable({ details }) {
               {label}
             </td>
             <td className="px-2 py-1.5 text-white break-all">{parsed[label]}</td>
-            <td className="pr-2 py-1 w-8 text-right align-middle">
+            <td className="pr-2 py-1 w-16 text-right align-middle whitespace-nowrap">
+              {label === "Celular" && <WhatsappCell phone={parsed[label]} />}
               <CopyCell value={parsed[label]} label={label} />
             </td>
           </tr>
