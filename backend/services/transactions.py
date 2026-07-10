@@ -120,6 +120,9 @@ def _withdrawal_to_salida(w: dict) -> TransactionItem:
         "proof_image": "",
         "delivery_details": w.get("details", ""),
         "admin_note": w.get("admin_note", ""),
+        # iter55.19c — surface the on-chain network for crypto withdrawals so
+        # the transactions registry (and PDF export) always know which chain.
+        "crypto_network": w.get("crypto_network", ""),
     }
 
 

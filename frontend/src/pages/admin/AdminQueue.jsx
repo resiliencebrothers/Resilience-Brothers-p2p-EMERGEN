@@ -125,7 +125,14 @@ export default function AdminQueue() {
                     <td className="px-4 py-3">{w.user_name}</td>
                     <td className="px-4 py-3 font-mono text-[#EAB308]">{w.amount_usd}</td>
                     <td className="px-4 py-3 font-mono">{w.currency || "USD"}</td>
-                    <td className="px-4 py-3 text-xs">{w.method}</td>
+                    <td className="px-4 py-3 text-xs">
+                      {w.method}
+                      {w.method === "crypto" && w.crypto_network && (
+                        <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[0.55rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono">
+                          {w.crypto_network}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-xs text-neutral-500">{new Date(w.created_at).toLocaleString()}</td>
                   </tr>
                 ))}

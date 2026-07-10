@@ -194,7 +194,17 @@ export default function AdminWithdrawals() {
                   <td className="px-3 py-3">{w.user_name}</td>
                   <td className="px-3 py-3 font-mono text-[#EAB308]">{w.amount_usd}</td>
                   <td className="px-3 py-3 font-mono">{w.currency || "USD"}</td>
-                  <td className="px-3 py-3">{w.method}</td>
+                  <td className="px-3 py-3">
+                    <span>{w.method}</span>
+                    {w.method === "crypto" && w.crypto_network && (
+                      <span
+                        data-testid={`withdrawal-network-${w.id}`}
+                        className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono"
+                      >
+                        {w.crypto_network}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-xs max-w-xs truncate">{w.details}</td>
                   <td className="px-3 py-3">
                     <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[w.status] || STATUS_STYLES.pending}`}>
@@ -264,6 +274,14 @@ export default function AdminWithdrawals() {
                 <div><span className="text-neutral-500">Cliente:</span> {open.user_name}</div>
                 <div><span className="text-neutral-500">Monto:</span> {open.amount_usd} {open.currency || "USD"}</div>
                 <div><span className="text-neutral-500">Método:</span> {open.method}</div>
+                {open.method === "crypto" && open.crypto_network && (
+                  <div data-testid="withdrawal-modal-network">
+                    <span className="text-neutral-500">Red on-chain:</span>{" "}
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-[0.7rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono ml-1">
+                      {open.crypto_network}
+                    </span>
+                  </div>
+                )}
                 <div><span className="text-neutral-500">Detalles:</span> {open.details}</div>
                 <div><span className="text-neutral-500">Beneficiario:</span> {open.beneficiary_name || "—"}</div>
                 <div><span className="text-neutral-500">Estado:</span> <span className="uppercase tracking-wider">{STATUS_LABEL(open.status, open.method)}</span></div>

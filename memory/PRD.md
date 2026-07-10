@@ -192,6 +192,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Verified GREEN by tests (iter55.19c)**: **11/11 new tests** in `test_iter55_19c_crypto_network_validation.py` covering pure predicates (supported networks list, family detection with real TRC20/EVM/garbage, cross-family mismatches, unsupported network rejection, mismatch-reason wording) + HTTP endpoint enforcement (missing network → 400, unsupported network → 400, TRC20 addr on BEP20 → structured 400 with `code: CRYPTO_NETWORK_MISMATCH`, BEP20 addr on TRC20 → 400, matching TRC20 → 200 + persisted network, matching BEP20 → 200 + persisted, transfer flow ignores stray `crypto_network` field). **Total 40/40 regression** across `iter55.19 + 19c + payout_evidence + email_and_closing`.
   - **Frontend E2E smoke**: on USDT wallet — pasting BEP20 address while TRC20 selected → red mismatch badge; switching to BEP20 network → green OK badge; pasting TRC20 address while BEP20 selected → red mismatch badge again. Exactly the BingX behavior the operator saw in the screenshot.
   - **Status**: fix en preview. User needs to redeploy to push to production. Once deployed, crypto withdrawals are safer by design — no more mistaken chain sends.
+
+- Crypto network badge in admin views (iter55.19c-followup, Jul 10 2026): follow-up right after iter55.19c. Now that clients declare which chain their crypto withdrawal targets, staff needs to see it before approving so they release on the correct chain.
+  - **`AdminWithdrawals.jsx`**: method column now appends a yellow `TRC20` / `BEP20` badge next to `crypto`. Modal detail gained a dedicated "Red on-chain" row with `data-testid="withdrawal-modal-network"`.
+  - **`AdminQueue.jsx`**: the withdrawals-pending queue table shows the same compact badge so a staff scanning "Mi Cola" knows which chain to release before opening.
+  - **`services/transactions._withdrawal_to_salida`**: `TransactionItem` now includes `crypto_network`. Flows through the transactions registry API + PDF/CSV exports (backward-compatible: empty string for pre-19c rows).
+  - **`TransactionDetailModal.jsx`**: "Método" cell surfaces the badge (same visual as AdminWithdrawals) so an admin auditing the ledger sees the chain at a glance.
+  - **Testids added**: `withdrawal-network-{id}`, `withdrawal-modal-network`, `tx-detail-crypto-network`.
+  - **Verified GREEN**: 11/11 iter55.19c + 9/9 iter55.19 + 35/35 (transactions_registry + company_adjustments) = **55/55** all pass. Frontend smoke: planted a TRC20 pending withdrawal → both the row badge and the modal "Red on-chain: TRC20" render correctly on `/admin/withdrawals`.
+  - **Status**: fix en preview. User needs to redeploy to push to production.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

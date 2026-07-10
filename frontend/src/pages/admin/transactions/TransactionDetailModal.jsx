@@ -57,7 +57,17 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             </div>
             <div>
               <div className="micro-label text-neutral-500 mb-1">Método</div>
-              <div className="uppercase text-xs">{selected.method}</div>
+              <div className="uppercase text-xs">
+                {selected.method}
+                {selected.method === "crypto" && selected.crypto_network && (
+                  <span
+                    data-testid="tx-detail-crypto-network"
+                    className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono"
+                  >
+                    {selected.crypto_network}
+                  </span>
+                )}
+              </div>
             </div>
             <div>
               <div className="micro-label text-neutral-500 mb-1">Estado</div>
