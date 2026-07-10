@@ -90,6 +90,10 @@ class WithdrawalRequest(BaseModel):
     method: Literal["transfer", "cash", "crypto"]
     details: str
     beneficiary_name: str = ""
+    # iter55.19c — crypto withdrawals persist the declared network so admins
+    # know which chain to release on (and audit trail is preserved). Empty
+    # string for non-crypto flows.
+    crypto_network: str = ""
     status: Literal["pending", "approved", "paid", "rejected"] = "pending"
     admin_note: str = ""
     payout_proof_image: str = ""
@@ -104,6 +108,8 @@ class WithdrawalCreate(BaseModel):
     details: str
     beneficiary_name: str = Field(..., min_length=2,
                                     description="Nombre del titular de la cuenta beneficiaria")
+    # iter55.19c — only required (and validated) when method == "crypto".
+    crypto_network: Optional[str] = Field(None, description="Red on-chain (TRC20 / BEP20)")
     totp_code: Optional[str] = Field(None, min_length=6, max_length=11,
                                       description="Código TOTP (6 dígitos) o código de recuperación (XXXXX-XXXXX)")
 
@@ -274,6 +280,35 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
                     "(mínimo 20 caracteres en Detalles)."
                 ),
             )
+    # iter55.19c — crypto withdrawals must declare the on-chain network and
+    # the details field must contain an address that matches that network.
+    # Mirrors the BingX "No coinciden" flow to prevent irrecoverable fund loss.
+    crypto_network = ""
+    if payload.method == "crypto":
+        from services.crypto_networks import (
+            SUPPORTED_NETWORKS, is_supported_network,
+            is_address_valid_for_network, mismatch_reason,
+        )
+        network = (payload.crypto_network or "").strip().upper()
+        if not is_supported_network(network):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Debes elegir la red on-chain del retiro. "
+                    f"Redes soportadas: {', '.join(SUPPORTED_NETWORKS)}."
+                ),
+            )
+        # Address is stored in `details` (same field the client fills in the UI).
+        if not is_address_valid_for_network(payload.details or "", network):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "CRYPTO_NETWORK_MISMATCH",
+                    "message": mismatch_reason(payload.details or "", network),
+                    "network": network,
+                },
+            )
+        crypto_network = network
     if get_user_balance(user, currency) < payload.amount_usd:
         raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
     w = WithdrawalRequest(
@@ -285,6 +320,7 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         method=payload.method,
         details=payload.details,
         beneficiary_name=payload.beneficiary_name,
+        crypto_network=crypto_network,
     )
     await db.withdrawals.insert_one(w.model_dump())
     await decrement_balance(user["user_id"], currency, payload.amount_usd)

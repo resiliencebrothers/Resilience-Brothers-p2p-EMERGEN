@@ -181,7 +181,9 @@ def test_crypto_currency_rejects_transfer_accepts_crypto():
             "amount_usd": 50,
             "currency": "USDT_TEST",
             "method": "crypto",
-            "details": "TXxxxxxxxx TRC20 address",
+            # iter55.19c — address must match the declared network
+            "details": "TJRabRWQdrJc7iCPFy4gnPCJcXbc17ncCk",
+            "crypto_network": "TRC20",
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
         },

@@ -32,6 +32,33 @@ function getWithdrawalLabel(method, status) {
   return map[status] ?? status;
 }
 
+// iter55.19c — Client-side crypto address ↔ network validation. Mirrors
+// backend `services/crypto_networks.py` — kept in sync intentionally. Only 2
+// networks supported today (TRC20 + BEP20); adding a new one means updating
+// both files.
+const CRYPTO_NETWORKS = [
+  { value: "TRC20", label: "Tron (TRC20)", placeholder: "T + 33 caracteres alfanuméricos (ej. TJRabc123...)" },
+  { value: "BEP20", label: "BSC (BEP20)", placeholder: "0x + 40 caracteres hexadecimales (ej. 0xAbCdEf...)" },
+];
+
+const TRC20_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
+const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
+
+function detectAddressFamily(addr) {
+  if (!addr) return "unknown";
+  const a = addr.trim();
+  if (TRC20_RE.test(a)) return "tron";
+  if (EVM_RE.test(a)) return "evm";
+  return "unknown";
+}
+
+function validateCryptoAddress(addr, network) {
+  const fam = detectAddressFamily(addr);
+  if (network === "TRC20") return fam === "tron";
+  if (network === "BEP20") return fam === "evm";
+  return false;
+}
+
 export default function VipView() {
   const { user, refresh } = useAuth();
   const navigate = useNavigate();
@@ -55,6 +82,9 @@ export default function VipView() {
   // of truth, iter43), so an admin marking "USD Efectivo" as cash-only will
   // instantly narrow the dropdown here without a frontend deploy.
   const [allowedMethods, setAllowedMethods] = useState([]);
+  // iter55.19c — crypto network selector (TRC20 / BEP20). Default TRC20 —
+  // the dominant network for USDT payouts in LatAm operations.
+  const [cryptoNetwork, setCryptoNetwork] = useState("TRC20");
 
   const downloadClosing = async () => {
     setDownloading(true);
@@ -135,6 +165,17 @@ export default function VipView() {
     }
   }, [withdrawalMethodOptions, method]);
 
+  // iter55.19c — Live crypto address ↔ network validation. `null` means the
+  // check does not apply (non-crypto method or empty address); otherwise
+  // returns the boolean the UI badge + submit gate consume.
+  const cryptoAddressMatch = useMemo(() => {
+    if (method !== "crypto") return null;
+    if (!details || !details.trim()) return null;
+    return validateCryptoAddress(details, cryptoNetwork);
+  }, [method, details, cryptoNetwork]);
+
+  const activeNetwork = CRYPTO_NETWORKS.find((n) => n.value === cryptoNetwork) || CRYPTO_NETWORKS[0];
+
   const submit = async () => {
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return toast.error("Monto inválido");
@@ -147,6 +188,19 @@ export default function VipView() {
       return toast.error(
         "Para retiros en efectivo incluye nombre y apellidos, número de ID/carné y teléfono celular del receptor (mínimo 20 caracteres)."
       );
+    }
+    // iter55.19c — Hard block crypto withdrawals when the address doesn't
+    // match the declared network. Prevents irrecoverable transfers to the
+    // wrong chain (BingX-style "No coinciden" gate).
+    if (method === "crypto") {
+      if (!cryptoNetwork) {
+        return toast.error("Selecciona la red on-chain del retiro.");
+      }
+      if (cryptoAddressMatch !== true) {
+        return toast.error(
+          `La dirección no coincide con ${activeNetwork.label}. Revisa la red o pega otra dirección — enviar por la red incorrecta puede perder los fondos permanentemente.`
+        );
+      }
     }
     if (!beneficiaryName || beneficiaryName.trim().length < 2) {
       return toast.error("Nombre del titular beneficiario requerido");
@@ -162,6 +216,7 @@ export default function VipView() {
         method,
         details,
         beneficiary_name: beneficiaryName.trim(),
+        crypto_network: method === "crypto" ? cryptoNetwork : null,
         totp_code: totpCode.trim(),
       }, { withCredentials: true });
       toast.success("Solicitud de retiro enviada");
@@ -333,29 +388,70 @@ export default function VipView() {
                 </p>
               )}
             </div>
+            {method === "crypto" && (
+              <div data-testid="crypto-network-block">
+                <Label className="micro-label text-neutral-500">
+                  Red on-chain <span className="text-[#EAB308]">*</span>
+                </Label>
+                <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
+                  <SelectTrigger data-testid="withdraw-crypto-network" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                    {CRYPTO_NETWORKS.map((n) => (
+                      <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[0.65rem] text-neutral-500 mt-1">
+                  Elige la red correcta. Enviar por la red equivocada puede perder los fondos permanentemente.
+                </p>
+              </div>
+            )}
             <div>
               <Label className="micro-label text-neutral-500">
-                Detalles {method === "cash" && <span className="text-[#EAB308]">*</span>}
+                Detalles {(method === "cash" || method === "crypto") && <span className="text-[#EAB308]">*</span>}
               </Label>
               <Textarea
                 data-testid="withdraw-details"
                 value={details}
                 onChange={e => setDetails(e.target.value)}
-                rows={method === "cash" ? 5 : 3}
+                rows={method === "cash" ? 5 : method === "crypto" ? 2 : 3}
                 placeholder={
                   method === "cash"
                     ? "Nombre y apellidos, número de ID/carné y teléfono celular de la persona que recibirá el dinero"
                     : method === "crypto"
-                      ? "Dirección de la wallet (TRC20 / BEP20 / ERC20) y red"
+                      ? activeNetwork.placeholder
                       : "Banco, número de cuenta y titular"
                 }
-                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10"
+                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"
               />
               {method === "cash" && (
                 <p className="text-[0.7rem] text-[#EAB308] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
                   Para retiros en efectivo, indica del receptor: <strong>nombre y apellidos</strong>,
                   <strong> número de ID / carné</strong> y <strong>teléfono celular</strong> — el equipo lo
                   necesita para coordinar la entrega.
+                </p>
+              )}
+              {method === "crypto" && cryptoAddressMatch === true && (
+                <p
+                  data-testid="crypto-address-match-ok"
+                  className="text-[0.75rem] text-[#22C55E] mt-1 leading-relaxed flex items-center gap-1.5"
+                >
+                  <span aria-hidden>✓</span>
+                  <span>Dirección compatible con <strong>{activeNetwork.label}</strong></span>
+                </p>
+              )}
+              {method === "crypto" && cryptoAddressMatch === false && (
+                <p
+                  data-testid="crypto-address-mismatch"
+                  className="text-[0.75rem] text-[#EF4444] mt-1 leading-relaxed flex items-start gap-1.5"
+                >
+                  <span aria-hidden className="mt-0.5">⚠</span>
+                  <span>
+                    <strong>No coincide con {activeNetwork.label}</strong>. Revisa la red seleccionada o pega otra dirección —
+                    enviar por la red incorrecta puede perder los fondos permanentemente.
+                  </span>
                 </p>
               )}
             </div>
@@ -410,7 +506,7 @@ export default function VipView() {
                 <div key={w.id} className="border border-white/10 p-3 text-sm" data-testid={`withdrawal-row-${w.id}`}>
                   <div className="flex justify-between items-start">
                     <div>
-                      <div className="font-mono">{w.amount_usd} {w.currency || "USD"} · {w.method}</div>
+                      <div className="font-mono">{w.amount_usd} {w.currency || "USD"} · {w.method}{w.crypto_network ? ` · ${w.crypto_network}` : ""}</div>
                       <div className="text-xs text-neutral-500 mt-1">{new Date(w.created_at).toLocaleString()}</div>
                     </div>
                     <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${

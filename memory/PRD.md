@@ -172,6 +172,26 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Backend `routes/orders.py::create_withdrawal`**: mirror validation for defense in depth (an API-direct caller can't bypass the UI). Same Spanish HTTP-400 message. Only fires when `method == "cash"`; transfer/crypto flows are untouched.
   - **Verified GREEN by tests (iter55.19b)**: **3/3 additional tests** appended to `test_iter55_19_withdrawal_method_matches_currency.py` (cash rejected with 4-char details, cash accepted with full "Juan Pérez · ID 87050112345 · +5355551234", transfer flow untouched by the new rule). Total: **9/9** in this iter. **20/20 regression** on `test_order_payout_evidence.py` + `test_email_and_closing.py`.
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- BingX-style crypto network mismatch detection (iter55.19c, Jul 10 2026): operator saw BingX-style "No coinciden" badge on USDT withdrawal screen and asked to replicate it. Prevents irrecoverable fund loss when a client pastes a TRC20 address but selects BEP20 (or vice versa) — the address family (Tron vs EVM) is validated live in the UI and enforced hard at the backend.
+  - **New pure service `services/crypto_networks.py`**: 2 supported networks (TRC20, BEP20 — cover 95% of LatAm/Cuba USDT operations per operator decision), regex per family (`^T[1-9A-HJ-NP-Za-km-z]{33}$` for Tron base58, `^0x[0-9a-fA-F]{40}$` for EVM), `detect_family(addr)` → `tron|evm|unknown`, `is_address_valid_for_network(addr, net)` predicate, `mismatch_reason(addr, net)` returning a Spanish-friendly diagnosis ("La dirección parece de la red EVM (BSC/ETH/Polygon…), pero seleccionaste Tron (TRC20)..."). Explicit design note in the module docstring: BEP20/ERC20/Polygon/Arbitrum/Optimism all share the EVM `0x...` format so we can only distinguish families — mirrors what BingX itself does.
+  - **New fields on `WithdrawalRequest` + `WithdrawalCreate`** in `routes/orders.py`: `crypto_network: str = ""` (persisted, empty for non-crypto) / `Optional[str]` (ingest). `create_withdrawal` now:
+    * Rejects with 400 when `method == "crypto"` and no supported network is declared.
+    * Rejects with structured 400 `{code: "CRYPTO_NETWORK_MISMATCH", message: "...", network: "BEP20"}` when the address does not match the family expected by the declared network.
+    * Persists `crypto_network` on approval so admin panel + audit log always know which chain to release on.
+  - **Frontend `pages/dashboard/VipView.jsx`**:
+    * Client-side twin of the backend predicates: `TRC20_RE`, `EVM_RE`, `detectAddressFamily`, `validateCryptoAddress`. Kept in sync intentionally with `services/crypto_networks.py` (only 2 networks — trivial to maintain).
+    * New state `cryptoNetwork` (default `TRC20`, the dominant network for USDT in LatAm).
+    * New conditional block "Red on-chain *" (visible only when `method === "crypto"`, `data-testid="crypto-network-block"`) with a `<Select>` (`data-testid="withdraw-crypto-network"`) showing "Tron (TRC20)" / "BSC (BEP20)".
+    * Details placeholder becomes network-specific (`"T + 33 caracteres alfanuméricos (ej. TJRabc123...)"` or `"0x + 40 caracteres hexadecimales (ej. 0xAbCdEf...)"`).
+    * Live badges below the address input:
+      - `crypto-address-match-ok`: green `✓ Dirección compatible con {network label}` when address matches.
+      - `crypto-address-mismatch`: red `⚠ No coincide con {network label}. Revisa la red seleccionada o pega otra dirección — enviar por la red incorrecta puede perder los fondos permanentemente.` when it doesn't.
+    * Hard block in `submit()`: if `method === "crypto"` and the address doesn't match the network, an error toast fires and no HTTP request is issued. Consistent with the "bloqueo duro" operator choice.
+    * Retiro history now displays `{amount} {currency} · {method}{crypto_network ? " · " + crypto_network : ""}` so the client remembers which chain was used per past withdrawal.
+  - **Verified GREEN by tests (iter55.19c)**: **11/11 new tests** in `test_iter55_19c_crypto_network_validation.py` covering pure predicates (supported networks list, family detection with real TRC20/EVM/garbage, cross-family mismatches, unsupported network rejection, mismatch-reason wording) + HTTP endpoint enforcement (missing network → 400, unsupported network → 400, TRC20 addr on BEP20 → structured 400 with `code: CRYPTO_NETWORK_MISMATCH`, BEP20 addr on TRC20 → 400, matching TRC20 → 200 + persisted network, matching BEP20 → 200 + persisted, transfer flow ignores stray `crypto_network` field). **Total 40/40 regression** across `iter55.19 + 19c + payout_evidence + email_and_closing`.
+  - **Frontend E2E smoke**: on USDT wallet — pasting BEP20 address while TRC20 selected → red mismatch badge; switching to BEP20 network → green OK badge; pasting TRC20 address while BEP20 selected → red mismatch badge again. Exactly the BingX behavior the operator saw in the screenshot.
+  - **Status**: fix en preview. User needs to redeploy to push to production. Once deployed, crypto withdrawals are safer by design — no more mistaken chain sends.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
