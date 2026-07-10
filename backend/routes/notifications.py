@@ -249,6 +249,34 @@ async def mark_all_read(request: Request) -> Any:
     return {"ok": True, "marked": r.modified_count}
 
 
+# ============================================================
+# iter55.18 — Delete notifications (individual + bulk read cleanup)
+# ============================================================
+
+@router.delete("/notifications/read")
+async def delete_all_read_notifications(request: Request) -> Any:
+    """Bulk-delete every read notification for the current user. Useful to
+    empty the inbox after a triage session. Unread items are preserved."""
+    user = await require_user(request)
+    r = await db.notifications.delete_many(
+        {"recipient_user_id": user["user_id"], "read": True},
+    )
+    return {"ok": True, "deleted": r.deleted_count}
+
+
+@router.delete("/notifications/{notification_id}")
+async def delete_notification(notification_id: str, request: Request) -> Any:
+    """Delete a single notification. Owner-scoped: users can only delete their
+    own inbox items. Idempotent — deleting an already-gone id returns 200."""
+    user = await require_user(request)
+    r = await db.notifications.delete_one(
+        {"id": notification_id, "recipient_user_id": user["user_id"]},
+    )
+    if r.deleted_count == 0:
+        return {"ok": True, "already_gone": True}
+    return {"ok": True}
+
+
 
 
 # ============================================================

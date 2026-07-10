@@ -71,6 +71,37 @@ export function useNotifications() {
     }
   }, []);
 
+  const deleteOne = useCallback(async (id) => {
+    // Optimistic UI: drop the row immediately, roll back on failure.
+    let snapshot = [];
+    setItems((prev) => {
+      snapshot = prev;
+      return prev.filter((it) => it.id !== id);
+    });
+    try {
+      await axios.delete(`${API}/notifications/${id}`, { withCredentials: true });
+      refreshCount();
+    } catch (err) {
+      captureError(err, { stage: "notifications.delete_one", id });
+      setItems(snapshot);  // rollback
+    }
+  }, [refreshCount]);
+
+  const deleteAllRead = useCallback(async () => {
+    let snapshot = [];
+    setItems((prev) => {
+      snapshot = prev;
+      return prev.filter((it) => !it.read);
+    });
+    try {
+      await axios.delete(`${API}/notifications/read`, { withCredentials: true });
+      refreshCount();
+    } catch (err) {
+      captureError(err, { stage: "notifications.delete_read" });
+      setItems(snapshot);
+    }
+  }, [refreshCount]);
+
   useEffect(() => {
     if (!user) return;
     refreshCount();
@@ -80,5 +111,5 @@ export function useNotifications() {
     };
   }, [user, refreshCount]);
 
-  return { unreadCount, items, loading, loadList, markRead, markAllRead };
+  return { unreadCount, items, loading, loadList, markRead, markAllRead, deleteOne, deleteAllRead };
 }
