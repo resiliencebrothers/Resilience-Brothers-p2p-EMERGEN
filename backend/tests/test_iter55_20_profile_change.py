@@ -274,6 +274,78 @@ def test_admin_reject_requires_reason_and_clears_pending():
 
 
 # ============================================================
+# iter55.20b — Panel accessible to designated staff (profile_changes perm)
+# ============================================================
+
+def test_staff_with_profile_changes_perm_can_list():
+    """Employee with the profile_changes permission should be able to hit
+    the same admin endpoints. Backward-compat default (empty perms) also
+    passes, mirroring the RBAC-lite rules from iter55.16."""
+    from tests.conftest import EMPLOYEE_TOKEN
+    # Employee with empty allowed_permissions = has everything (default).
+    _sync_db().users.update_one(
+        {"user_id": "user_test_employee01"},
+        {"$set": {"allowed_permissions": []}},
+    )
+    r = requests.get(f"{API}/admin/profile-change-requests",
+                      headers=_hdr(EMPLOYEE_TOKEN))
+    assert r.status_code == 200, r.text
+
+
+def test_staff_without_profile_changes_perm_is_403():
+    """Scoped employee whose perms don't include profile_changes → 403."""
+    from tests.conftest import EMPLOYEE_TOKEN
+    # Scope employee to a permission other than profile_changes
+    _sync_db().users.update_one(
+        {"user_id": "user_test_employee01"},
+        {"$set": {"allowed_permissions": ["orders"]}},  # no profile_changes
+    )
+    r = requests.get(f"{API}/admin/profile-change-requests",
+                      headers=_hdr(EMPLOYEE_TOKEN))
+    assert r.status_code == 403
+    detail = r.json().get("detail", "")
+    assert "Cambios de datos" in detail or "profile" in detail.lower()
+    # Restore default (empty = permissive)
+    _sync_db().users.update_one(
+        {"user_id": "user_test_employee01"},
+        {"$set": {"allowed_permissions": []}},
+    )
+
+
+def test_staff_with_profile_changes_perm_can_approve():
+    from tests.conftest import EMPLOYEE_TOKEN, make_employee_totp
+    _cleanup_user_state("user_test_vip01")
+    db = _sync_db()
+    original_phone = db.users.find_one({"user_id": "user_test_vip01"}).get("phone", "")
+    new_phone = "+5355000555"
+    db.users.update_one(
+        {"user_id": "user_test_vip01"},
+        {"$set": {"pending_phone_change": {
+            "new_phone": new_phone, "requested_at": "2026-07-10T14:00:00+00:00",
+            "status": "pending_admin_review",
+        }}},
+    )
+    # Grant profile_changes explicitly (so we test the scoped path too)
+    db.users.update_one(
+        {"user_id": "user_test_employee01"},
+        {"$set": {"allowed_permissions": ["profile_changes"]}},
+    )
+    r = requests.post(
+        f"{API}/admin/profile-change-requests/user_test_vip01/approve-phone",
+        headers=_hdr(EMPLOYEE_TOKEN),
+        json={"totp_code": make_employee_totp()},
+    )
+    assert r.status_code == 200, r.text
+    updated = db.users.find_one({"user_id": "user_test_vip01"})
+    assert updated["phone"] == new_phone
+    # Cleanup
+    db.users.update_one({"user_id": "user_test_vip01"},
+                        {"$set": {"phone": original_phone}})
+    db.users.update_one({"user_id": "user_test_employee01"},
+                        {"$set": {"allowed_permissions": []}})
+
+
+# ============================================================
 # 10. Client can cancel their own pending phone change
 # ============================================================
 

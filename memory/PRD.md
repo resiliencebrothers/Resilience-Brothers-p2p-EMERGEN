@@ -264,6 +264,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Regression**: 70/70 combined tests pass (iter55.17 + 18 + 19 + 19c + 19g + 20).
   - **Frontend E2E smoke**: `/dashboard/profile` rendered with all 3 cards, all edit buttons present, sidebar highlights "Mi Perfil" correctly.
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- Admin panel for pending profile changes + delegated to staff (iter55.20b, Jul 10 2026): follow-up right after iter55.20. Operator wanted the phone-change queue accessible from the admin UI AND delegable to designated staff members (same RBAC-lite pattern as KYC).
+  - **New RBAC permission `profile_changes`**: added to `services/permissions.py::PERMISSION_CATALOG` — bumps the catalog from 12 → 13 entries. Label "Cambios de datos", description "Aprobar cambios de teléfono/email solicitados por clientes". Admin gets it implicitly (`role == "admin"`); staff needs it in their `allowed_permissions` array (edited from `/admin/users`).
+  - **Backend `routes/profile.py`**: replaced 3 uses of `require_admin` with `require_permission(request, "profile_changes")` on the endpoints:
+    * `GET /admin/profile-change-requests`
+    * `POST /admin/profile-change-requests/{uid}/approve-phone`
+    * `POST /admin/profile-change-requests/{uid}/reject-phone`
+  - **New frontend page `pages/admin/AdminProfileChangeRequests.jsx`** (~230 lines): table with cliente + país + tel actual + tel nuevo (yellow highlight) + fecha + `[Aprobar]` (green) / `[Rechazar]` (red) per row. Approve action opens `TotpPromptDialog`. Reject flow: first collects the mandatory reason via a modal, then chains to `TotpPromptDialog` for 2FA. Empty state renders friendly "No hay solicitudes pendientes." Refresh button in header.
+  - **Sidebar `AdminPanel.jsx`**: new entry "Cambios de datos" (icon `UserCog`, testid `admin-nav-profile-changes`) between "KYC" and "Fondo Empresa", gated by `hasPerm("profile_changes")` — appears for admins + any employee with the permission granted. Route wired at `/admin/profile-change-requests`.
+  - **New testids**: `admin-profile-change-requests`, `profile-changes-refresh`, `profile-changes-loading/empty`, `profile-change-row-{uid}`, `profile-change-approve-{uid}`, `profile-change-reject-{uid}`, `profile-change-reject-dialog/-reason/-continue`, `admin-nav-profile-changes`.
+  - **Tests**: 3 new pytest cases appended to `test_iter55_20_profile_change.py` (staff with empty perms = permissive default can list, staff with scoped perms *without* profile_changes → 403, staff with profile_changes explicit → can approve). Total **17/17** in the file. Regression on `test_iter55_16_permissions.py` catalog test updated to expect 13 items instead of 12. **61/61 combined pass** (iter55.16 + 16b + 20 + 19g + 19 + 19c).
+  - **Frontend E2E smoke**: planted a pending phone change → opened `/admin/profile-change-requests` → panel renders row with VIP data + Aprobar/Rechazar buttons visible; sidebar highlights "Cambios de datos".
+  - **Status**: fix en preview. User needs to redeploy to push to production.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

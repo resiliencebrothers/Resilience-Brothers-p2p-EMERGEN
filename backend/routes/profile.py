@@ -328,8 +328,8 @@ async def change_country(payload: CountryChangeRequest, request: Request) -> Any
 
 @router.get("/admin/profile-change-requests")
 async def list_pending_profile_changes(request: Request) -> Any:
-    from auth_utils import require_admin
-    await require_admin(request)
+    from services.permissions import require_permission
+    await require_permission(request, "profile_changes")
     cursor = db.users.find(
         {"pending_phone_change": {"$exists": True, "$ne": None}},
         {"_id": 0, "user_id": 1, "name": 1, "email": 1, "phone": 1,
@@ -358,8 +358,8 @@ class ApprovePhoneChange(BaseModel):
 @router.post("/admin/profile-change-requests/{target_user_id}/approve-phone")
 async def approve_phone_change(target_user_id: str, payload: ApprovePhoneChange,
                                 request: Request) -> Any:
-    from auth_utils import require_admin
-    actor = await require_admin(request)
+    from services.permissions import require_permission
+    actor = await require_permission(request, "profile_changes")
     await _enforce_totp_step_up(actor, payload.totp_code,
                                  action_label="aprobar cambio de teléfono")
     target = await db.users.find_one({"user_id": target_user_id}, {"_id": 0})
@@ -402,8 +402,8 @@ class RejectPhoneChange(BaseModel):
 @router.post("/admin/profile-change-requests/{target_user_id}/reject-phone")
 async def reject_phone_change(target_user_id: str, payload: RejectPhoneChange,
                                request: Request) -> Any:
-    from auth_utils import require_admin
-    actor = await require_admin(request)
+    from services.permissions import require_permission
+    actor = await require_permission(request, "profile_changes")
     await _enforce_totp_step_up(actor, payload.totp_code,
                                  action_label="rechazar cambio de teléfono")
     target = await db.users.find_one({"user_id": target_user_id}, {"_id": 0})

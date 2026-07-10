@@ -37,6 +37,7 @@ PERMISSION_CATALOG: List[Dict[str, str]] = [
     {"code": "blocked_contacts", "label": "Bloqueos",             "description": "Gestionar la lista de contactos bloqueados"},
     {"code": "transactions",     "label": "Registro Contable",    "description": "Ver el registro de transacciones (auditoría)"},
     {"code": "quick_view",       "label": "Vista Rápida / Cola",  "description": "Acceso a la vista rápida y a mi cola de trabajo"},
+    {"code": "profile_changes",  "label": "Cambios de datos",     "description": "Aprobar cambios de teléfono/email solicitados por clientes"},
 ]
 
 VALID_CODES = {p["code"] for p in PERMISSION_CATALOG}

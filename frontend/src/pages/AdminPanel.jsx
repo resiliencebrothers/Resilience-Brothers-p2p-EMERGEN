@@ -1,7 +1,7 @@
 import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap, MessageSquare, IdCard } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap, MessageSquare, IdCard, UserCog } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -22,6 +22,7 @@ import AdminQuickDashboard from "@/pages/admin/AdminQuickDashboard";
 import AdminAppeals from "@/pages/admin/AdminAppeals";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
 import AdminKYC from "@/pages/admin/AdminKYC";
+import AdminProfileChangeRequests from "@/pages/admin/AdminProfileChangeRequests";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -69,6 +70,9 @@ export default function AdminPanel() {
     ] : []),
     ...(hasPerm("kyc") ? [
       { to: "/admin/kyc", icon: IdCard, label: "KYC", id: "admin-nav-kyc", highlight: true },
+    ] : []),
+    ...(hasPerm("profile_changes") ? [
+      { to: "/admin/profile-change-requests", icon: UserCog, label: "Cambios de datos", id: "admin-nav-profile-changes" },
     ] : []),
     ...(hasPerm("company_funds") ? [
       { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
@@ -218,6 +222,7 @@ export default function AdminPanel() {
             <Route path="blocked-contacts" element={<AdminBlockedContacts />} />
             <Route path="appeals" element={<AdminAppeals />} />
             <Route path="kyc" element={<AdminKYC />} />
+            <Route path="profile-change-requests" element={<AdminProfileChangeRequests />} />
             <Route path="security" element={<AdminSecurity />} />
             {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}

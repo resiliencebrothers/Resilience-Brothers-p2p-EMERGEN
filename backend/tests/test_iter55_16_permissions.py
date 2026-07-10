@@ -71,16 +71,16 @@ def teardown_module(module):
 # 1. Catalog endpoint
 # ------------------------------------------------------------------
 
-def test_permissions_catalog_returns_12_items():
+def test_permissions_catalog_returns_13_items():
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 12
+    assert len(items) == 13
     codes = {i["code"] for i in items}
     assert codes == {
         "orders", "withdrawals", "kyc", "appeals", "products", "rates",
         "currencies", "users", "company_funds", "blocked_contacts",
-        "transactions", "quick_view",
+        "transactions", "quick_view", "profile_changes",
     }
     # Each item has label + description
     for it in items:
