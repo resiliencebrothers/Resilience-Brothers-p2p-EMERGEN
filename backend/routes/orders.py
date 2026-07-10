@@ -258,6 +258,22 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     # transfer for a cash-only USD balance). Reuses the shared helper that
     # also gates order creation, so both flows stay in sync.
     await _assert_delivery_method_matches_currency(currency, payload.method)
+    # iter55.19b — cash withdrawals require receiver's name+ID+phone in the
+    # details field so staff can coordinate the physical hand-off. Mirrors
+    # the frontend validation for defense-in-depth (API-direct callers can't
+    # skip it). 20 chars is a good proxy: "Juan Pérez 12345678 +53555..."
+    # already exceeds it.
+    if payload.method == "cash":
+        details_trimmed = (payload.details or "").strip()
+        if len(details_trimmed) < 20:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Para retiros en efectivo incluye nombre y apellidos, "
+                    "número de ID/carné y teléfono celular del receptor "
+                    "(mínimo 20 caracteres en Detalles)."
+                ),
+            )
     if get_user_balance(user, currency) < payload.amount_usd:
         raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
     w = WithdrawalRequest(

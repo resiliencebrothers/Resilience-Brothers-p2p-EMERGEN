@@ -139,6 +139,15 @@ export default function VipView() {
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return toast.error("Monto inválido");
     if (!details) return toast.error("Detalles requeridos");
+    // iter55.19b — cash withdrawals must include the receiver's full name,
+    // ID number and cell phone so staff can coordinate the physical delivery.
+    // A 20-char minimum on the trimmed input is a good proxy: "Juan Pérez
+    // 12345678 +5355555555" already exceeds it.
+    if (method === "cash" && details.trim().length < 20) {
+      return toast.error(
+        "Para retiros en efectivo incluye nombre y apellidos, número de ID/carné y teléfono celular del receptor (mínimo 20 caracteres)."
+      );
+    }
     if (!beneficiaryName || beneficiaryName.trim().length < 2) {
       return toast.error("Nombre del titular beneficiario requerido");
     }

@@ -113,7 +113,7 @@ def test_cash_only_currency_accepts_cash_withdrawal():
             "amount_usd": 100,
             "currency": "USDCASH_TEST",
             "method": "cash",
-            "details": "recogida en oficina",
+            "details": "Ana López · ID 91020212345 · +5355559999",
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
         },
@@ -222,6 +222,82 @@ def test_default_transfer_currency_still_accepts_transfer():
             "currency": "USD_TEST_XFR",
             "method": "transfer",
             "details": "banco X cuenta 999",
+            "beneficiary_name": "Test",
+            "totp_code": make_vip_totp(),
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    _sync_db().withdrawals.delete_many({"id": body["id"]})
+    _clear_balance("USD_TEST_XFR")
+
+
+# ------------------------------------------------------------------
+# iter55.19b — Cash details minimum length (name + ID + phone)
+# ------------------------------------------------------------------
+
+def test_cash_withdrawal_rejected_when_details_too_short():
+    _upsert_currency("USDCASH_TEST", "USD Efectivo Test", "fiat",
+                     delivery_methods=["cash"])
+    _seed_vip_balance("USDCASH_TEST", 500)
+
+    r = requests.post(
+        f"{API}/vip/withdraw", headers=_hdr(VIP_TOKEN),
+        json={
+            "amount_usd": 50,
+            "currency": "USDCASH_TEST",
+            "method": "cash",
+            "details": "Pedro",  # Too short — no ID, no phone
+            "beneficiary_name": "Test",
+            "totp_code": make_vip_totp(),
+        },
+    )
+    assert r.status_code == 400, r.text
+    detail = r.json().get("detail", "")
+    # Message must guide the client on what's missing
+    assert "ID" in detail or "carné" in detail
+    assert "teléfono" in detail or "celular" in detail
+
+    _clear_balance("USDCASH_TEST")
+
+
+def test_cash_withdrawal_accepted_with_full_receiver_details():
+    _upsert_currency("USDCASH_TEST", "USD Efectivo Test", "fiat",
+                     delivery_methods=["cash"])
+    _seed_vip_balance("USDCASH_TEST", 500)
+
+    r = requests.post(
+        f"{API}/vip/withdraw", headers=_hdr(VIP_TOKEN),
+        json={
+            "amount_usd": 50,
+            "currency": "USDCASH_TEST",
+            "method": "cash",
+            "details": "Juan Pérez López · ID 87050112345 · +5355551234",
+            "beneficiary_name": "Juan Pérez López",
+            "totp_code": make_vip_totp(),
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["method"] == "cash"
+
+    _sync_db().withdrawals.delete_many({"id": body["id"]})
+    _clear_balance("USDCASH_TEST")
+
+
+def test_transfer_details_length_not_restricted():
+    """Regression: the cash-details rule must NOT leak into transfer flows.
+    A concise "Banco X cuenta 999" is still valid for transfer."""
+    _upsert_currency("USD_TEST_XFR", "USD", "fiat", delivery_methods=None)
+    _seed_vip_balance("USD_TEST_XFR", 500)
+
+    r = requests.post(
+        f"{API}/vip/withdraw", headers=_hdr(VIP_TOKEN),
+        json={
+            "amount_usd": 10,
+            "currency": "USD_TEST_XFR",
+            "method": "transfer",
+            "details": "BCV 111",  # Short but transfer is not gated on length
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
         },
