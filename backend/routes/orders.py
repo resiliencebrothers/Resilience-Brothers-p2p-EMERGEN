@@ -254,6 +254,10 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         )
     await _enforce_totp_step_up(user, payload.totp_code, action_label="retiro")
     currency = payload.currency or "USD"
+    # iter55.19 — reject method↔currency mismatches (e.g. requesting a bank
+    # transfer for a cash-only USD balance). Reuses the shared helper that
+    # also gates order creation, so both flows stay in sync.
+    await _assert_delivery_method_matches_currency(currency, payload.method)
     if get_user_balance(user, currency) < payload.amount_usd:
         raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
     w = WithdrawalRequest(

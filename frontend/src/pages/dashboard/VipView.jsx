@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
@@ -50,6 +50,11 @@ export default function VipView() {
   const [busy, setBusy] = useState(false);
   const [closingDate, setClosingDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [downloading, setDownloading] = useState(false);
+  // iter55.19 — Delivery methods allowed for the selected balance currency.
+  // Fetched from GET /api/currencies/{code}/delivery-methods (backend source
+  // of truth, iter43), so an admin marking "USD Efectivo" as cash-only will
+  // instantly narrow the dropdown here without a frontend deploy.
+  const [allowedMethods, setAllowedMethods] = useState([]);
 
   const downloadClosing = async () => {
     setDownloading(true);
@@ -91,6 +96,44 @@ export default function VipView() {
     } catch (_) { setLedger({ by_currency: {}, total_orders: 0 }); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // iter55.19 — Refresh the allowed delivery methods when the withdrawal
+  // currency changes. If the admin didn't set delivery_methods on the
+  // currency, the backend falls back to the name heuristic (e.g. "USD
+  // Efectivo" → cash-only). Guarded by a cancellation flag so a fast
+  // currency-flip doesn't clobber the state.
+  useEffect(() => {
+    if (!currency) { setAllowedMethods([]); return; }
+    let cancelled = false;
+    axios.get(`${API}/currencies/${encodeURIComponent(currency)}/delivery-methods`)
+      .then(r => { if (!cancelled) setAllowedMethods(r.data?.allowed || []); })
+      .catch(() => { if (!cancelled) setAllowedMethods([]); });
+    return () => { cancelled = true; };
+  }, [currency]);
+
+  const withdrawalMethodOptions = useMemo(() => {
+    const LABELS = {
+      transfer: { value: "transfer", label: "Transferencia bancaria" },
+      cash: { value: "cash", label: "Efectivo (CUP/USD)" },
+      crypto: { value: "crypto", label: "Wallet Cripto" },
+    };
+    // Fallback: while the endpoint is loading OR the currency doesn't declare
+    // any method, keep the historical 3-option UX so users aren't stuck with
+    // an empty dropdown.
+    if (!allowedMethods || allowedMethods.length === 0) {
+      return [LABELS.transfer, LABELS.cash, LABELS.crypto];
+    }
+    return allowedMethods.filter((m) => LABELS[m]).map((m) => LABELS[m]);
+  }, [allowedMethods]);
+
+  // Auto-correct the selected method whenever the allowed options change so
+  // the user can never submit a combination the backend will reject.
+  useEffect(() => {
+    if (withdrawalMethodOptions.length === 0) return;
+    if (!withdrawalMethodOptions.some((o) => o.value === method)) {
+      setMethod(withdrawalMethodOptions[0].value);
+    }
+  }, [withdrawalMethodOptions, method]);
 
   const submit = async () => {
     const amt = parseFloat(amount);
@@ -270,9 +313,9 @@ export default function VipView() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
-                  <SelectItem value="transfer">Transferencia bancaria</SelectItem>
-                  <SelectItem value="cash">Efectivo (CUP/USD)</SelectItem>
-                  <SelectItem value="crypto">Wallet Cripto</SelectItem>
+                  {withdrawalMethodOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               {method === "cash" && (
@@ -282,8 +325,30 @@ export default function VipView() {
               )}
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Detalles</Label>
-              <Textarea data-testid="withdraw-details" value={details} onChange={e => setDetails(e.target.value)} rows={3} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10" />
+              <Label className="micro-label text-neutral-500">
+                Detalles {method === "cash" && <span className="text-[#EAB308]">*</span>}
+              </Label>
+              <Textarea
+                data-testid="withdraw-details"
+                value={details}
+                onChange={e => setDetails(e.target.value)}
+                rows={method === "cash" ? 5 : 3}
+                placeholder={
+                  method === "cash"
+                    ? "Nombre y apellidos, número de ID/carné y teléfono celular de la persona que recibirá el dinero"
+                    : method === "crypto"
+                      ? "Dirección de la wallet (TRC20 / BEP20 / ERC20) y red"
+                      : "Banco, número de cuenta y titular"
+                }
+                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10"
+              />
+              {method === "cash" && (
+                <p className="text-[0.7rem] text-[#EAB308] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
+                  Para retiros en efectivo, indica del receptor: <strong>nombre y apellidos</strong>,
+                  <strong> número de ID / carné</strong> y <strong>teléfono celular</strong> — el equipo lo
+                  necesita para coordinar la entrega.
+                </p>
+              )}
             </div>
             <div>
               <Label className="micro-label text-neutral-500">
