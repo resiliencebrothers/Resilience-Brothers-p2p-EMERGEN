@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
-import { Users, ListChecks, Package, Database, ArrowDownUp, ArrowUpRight, ArrowDownLeft, Coins, TrendingUp, BellRing } from "lucide-react";
+import { Users, ListChecks, Package, Database, ArrowDownUp, ArrowUpRight, ArrowDownLeft, Coins, TrendingUp, BellRing, FileText } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 export default function AdminOverview() {
   const navigate = useNavigate();
@@ -15,8 +16,10 @@ export default function AdminOverview() {
   const [threshold, setThreshold] = useState("");
   const [defensivePct, setDefensivePct] = useState("");
   const [opsEmail, setOpsEmail] = useState("");
+  const [autoMonthlyAudit, setAutoMonthlyAudit] = useState(true);
   const [savingThreshold, setSavingThreshold] = useState(false);
   const [pendingSettings, setPendingSettings] = useState(null);
+  const [pendingAudit, setPendingAudit] = useState(null); // pending bool value to persist
 
   const load = async () => {
     setLoading(true);
@@ -29,6 +32,7 @@ export default function AdminOverview() {
       setThreshold(String(set.data.vip_threshold_usdt));
       setDefensivePct(set.data.defensive_margin_pct == null ? "" : String(set.data.defensive_margin_pct));
       setOpsEmail(set.data.ops_notifications_email || "");
+      setAutoMonthlyAudit(set.data.auto_send_monthly_audit !== false);
     } catch (e) {
       toast.error("Error al cargar estadísticas");
     } finally {
@@ -67,6 +71,38 @@ export default function AdminOverview() {
     } finally {
       setSavingThreshold(false);
     }
+  };
+
+  const toggleAutoMonthlyAudit = (checked) => {
+    // Optimistic UI: reflect the switch state; the actual persist waits for TOTP confirm.
+    setAutoMonthlyAudit(checked);
+    setPendingAudit(checked);
+  };
+
+  const confirmAuditToggleWithTotp = async (code) => {
+    setSavingThreshold(true);
+    try {
+      await axios.put(
+        `${API}/admin/settings`,
+        { auto_send_monthly_audit: pendingAudit, totp_code: code },
+        { withCredentials: true }
+      );
+      toast.success(pendingAudit
+        ? "Envío mensual del audit activado"
+        : "Envío mensual del audit desactivado");
+      setPendingAudit(null);
+    } catch (e) {
+      // Roll back UI on failure
+      setAutoMonthlyAudit(!pendingAudit);
+      if (!handleTotpError(e, navigate)) toast.error("Error al actualizar");
+    } finally {
+      setSavingThreshold(false);
+    }
+  };
+
+  const cancelAuditToggle = () => {
+    setAutoMonthlyAudit(!pendingAudit); // roll back the visual switch
+    setPendingAudit(null);
   };
 
   const seed = async () => {
@@ -160,6 +196,44 @@ export default function AdminOverview() {
             login, 2FA y avisos personales. Déjalo vacío para volver al fan-out por admin.
           </p>
         </div>
+
+        {/* Auto-send monthly audit report toggle (iter55.21 UI hookup) */}
+        <div
+          className="mt-6 pt-6 border-t border-white/5"
+          data-testid="auto-audit-toggle-card"
+        >
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-start gap-3 min-w-0">
+              <FileText className="w-5 h-5 text-[#EAB308] mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <label className="micro-label text-neutral-500 text-[0.65rem] block">
+                  INFORME MENSUAL DE AUDITORÍA · ENVÍO AUTOMÁTICO
+                </label>
+                <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed max-w-xl">
+                  Cuando está <strong className="text-neutral-300">activo</strong>, cada día
+                  <strong className="text-neutral-300"> 1 a las 09:15 UTC</strong> se envía por email el PDF
+                  de auditoría del mes anterior a la bandeja de operaciones (o a todos los admins si no está configurada).
+                  Puedes desactivarlo si prefieres descargarlo manualmente desde <strong className="text-neutral-300">Auditoría → Informe mensual</strong>.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span
+                className={`micro-label text-[0.65rem] ${autoMonthlyAudit ? "text-[#EAB308]" : "text-neutral-500"}`}
+                data-testid="auto-audit-status-label"
+              >
+                {autoMonthlyAudit ? "ACTIVO" : "DESACTIVADO"}
+              </span>
+              <Switch
+                checked={autoMonthlyAudit}
+                onCheckedChange={toggleAutoMonthlyAudit}
+                disabled={savingThreshold || pendingAudit !== null}
+                data-testid="auto-audit-toggle"
+                aria-label="Envío automático del informe mensual de auditoría"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* MAIN STATS GRID */}
@@ -204,6 +278,19 @@ export default function AdminOverview() {
         busy={savingThreshold}
         onConfirm={confirmSettingsWithTotp}
         onCancel={() => setPendingSettings(null)}
+      />
+
+      <TotpPromptDialog
+        open={pendingAudit !== null}
+        title={pendingAudit ? "Activar envío automático" : "Desactivar envío automático"}
+        description={
+          pendingAudit
+            ? "El informe mensual de auditoría se enviará el día 1 a las 09:15 UTC. Ingresa tu código 2FA para confirmar."
+            : "Al desactivar dejarás de recibir el informe mensual por email. Ingresa tu código 2FA para confirmar."
+        }
+        busy={savingThreshold}
+        onConfirm={confirmAuditToggleWithTotp}
+        onCancel={cancelAuditToggle}
       />
     </div>
   );

@@ -307,6 +307,16 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
+
+- UI toggle for monthly-audit auto-send (iter55.21b, Feb 2026): follow-up right after iter55.21 — owner asked for a UI switch instead of having to edit MongoDB by hand to flip the `settings.global.auto_send_monthly_audit` flag.
+  - **Backend `routes/admin.py`**: extended `AdminSettings` model with `auto_send_monthly_audit: Optional[bool]` (nullable, matches scheduler.py opt-out semantics: `is False` = off, anything else = on). `GET /admin/settings` now returns the resolved boolean (missing → True). `PUT /admin/settings` migrated from `exclude={"totp_code"}` to `exclude={"totp_code"} + exclude_unset=True` so partial PATCH-style requests (e.g. only the flag) no longer clobber unrelated settings like `ops_notifications_email` or `vip_threshold_usdt` — critical regression guard.
+  - **Frontend `pages/admin/AdminOverview.jsx`**: new "Informe mensual de auditoría · envío automático" section inside the existing "Alertas Automáticas" card. Yellow `FileText` icon + explanation copy ("Cada día 1 a las 09:15 UTC se envía por email el PDF de auditoría del mes anterior…"). Right-aligned Shadcn `<Switch>` (`data-testid="auto-audit-toggle"`) + status pill ("ACTIVO"/"DESACTIVADO", `data-testid="auto-audit-status-label"`).
+  - **UX flow**: flipping the switch triggers optimistic UI + opens the existing `TotpPromptDialog` with a context-aware title ("Activar…" / "Desactivar envío automático"). Confirming sends `PUT /admin/settings` with only the flag + `totp_code`. Cancel or TOTP failure rolls the switch back to its previous position — no risk of a client-only state diverging from the server.
+  - **Testids added**: `auto-audit-toggle-card`, `auto-audit-toggle`, `auto-audit-status-label`.
+  - **Tests**: 6 new pytest cases in `test_iter55_21b_audit_toggle_ui.py` — (a) default flag=True when missing, (b) admin can disable, (c) admin can re-enable, (d) employee 403 (staff cannot flip global settings), (e) partial PUT (only flag) does NOT clobber ops_email or threshold, (f) explicitly-False flag surfaces in GET. **31/31 regression pass** on `test_iter55_17_monthly_audit_pdf.py + test_iter55_21_monthly_audit_scheduler.py`. Frontend E2E smoke: card renders with "ACTIVO" pill by default, PUT/GET round-trip end-to-end verified via curl.
+  - **Status**: fix en preview. User needs to redeploy to push to production. Once deployed, owner can head to `/admin` → "Alertas Automáticas" card → toggle the switch and confirm with 2FA — no more direct Mongo edits.
+
+
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

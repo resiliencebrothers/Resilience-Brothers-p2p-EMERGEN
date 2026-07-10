@@ -71,6 +71,10 @@ class AdminSettings(BaseModel):
         default=None, max_length=254,
         description="Bandeja única que recibe los emails operativos (nuevos órdenes, retiros, alertas). Si está vacío, cada admin recibe en su correo personal.",
     )
+    auto_send_monthly_audit: Optional[bool] = Field(
+        default=None,
+        description="Si es False, desactiva el envío automático mensual del informe de auditoría (día 1 09:15 UTC). Cualquier otro valor = activo.",
+    )
     totp_code: Optional[str] = Field(default=None, max_length=11,
                                        description="Código 2FA requerido")
 
@@ -394,11 +398,15 @@ async def get_admin_settings(request: Request) -> Any:
             "vip_threshold_usdt": float(os.environ.get("VIP_ALERT_THRESHOLD_USDT", 5000)),
             "defensive_margin_pct": None,
             "ops_notifications_email": None,
+            "auto_send_monthly_audit": True,
         }
+    # Missing / non-False → treated as enabled (matches scheduler.py opt-out semantics)
+    raw_flag = doc.get("auto_send_monthly_audit")
     return {
         "vip_threshold_usdt": float(doc.get("vip_threshold_usdt", 5000)),
         "defensive_margin_pct": doc.get("defensive_margin_pct"),
         "ops_notifications_email": doc.get("ops_notifications_email"),
+        "auto_send_monthly_audit": raw_flag is not False,
     }
 
 
@@ -406,12 +414,13 @@ async def get_admin_settings(request: Request) -> Any:
 async def update_admin_settings(payload: AdminSettings, request: Request) -> Any:
     actor = await require_admin(request)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar configuración")
-    data = payload.model_dump(exclude={"totp_code"})
+    data = payload.model_dump(exclude={"totp_code"}, exclude_unset=True)
     # Normalise empty string → None and validate light email shape
-    ops_email = (data.get("ops_notifications_email") or "").strip() or None
-    if ops_email and ("@" not in ops_email or " " in ops_email):
-        raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
-    data["ops_notifications_email"] = ops_email
+    if "ops_notifications_email" in data:
+        ops_email = (data.get("ops_notifications_email") or "").strip() or None
+        if ops_email and ("@" not in ops_email or " " in ops_email):
+            raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
+        data["ops_notifications_email"] = ops_email
     data["id"] = "global"
     await db.settings.update_one({"id": "global"}, {"$set": data}, upsert=True)
     await log_action(db, actor, "settings.update", "settings", "global",
