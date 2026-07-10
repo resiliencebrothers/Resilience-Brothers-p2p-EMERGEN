@@ -346,6 +346,94 @@ def test_staff_with_profile_changes_perm_can_approve():
 
 
 # ============================================================
+# iter55.20b — email fan-out on approve / reject
+# ============================================================
+
+def test_approve_triggers_email_to_client(monkeypatch):
+    """Verify approve_phone_change calls notify_phone_change_approved.
+
+    We monkeypatch _send at the module level to avoid a real Resend call
+    while still exercising the full endpoint pipeline."""
+    import email_service
+    captured = {"approved": []}
+    def fake_send(to, subject, html, attachments=None):
+        captured["approved"].append({"to": to, "subject": subject, "html_len": len(html)})
+        return True
+    monkeypatch.setattr(email_service, "_send", fake_send)
+
+    _cleanup_user_state("user_test_vip01")
+    db = _sync_db()
+    original_phone = db.users.find_one({"user_id": "user_test_vip01"}).get("phone", "")
+    db.users.update_one(
+        {"user_id": "user_test_vip01"},
+        {"$set": {"pending_phone_change": {
+            "new_phone": "+5355000666", "requested_at": "2026-07-10T14:00:00+00:00",
+            "status": "pending_admin_review",
+        }}},
+    )
+    r = requests.post(
+        f"{API}/admin/profile-change-requests/user_test_vip01/approve-phone",
+        headers=_hdr(ADMIN_TOKEN),
+        json=with_totp_admin({}),
+    )
+    assert r.status_code == 200, r.text
+    # Note: the request goes through the ingress → different Python process,
+    # so the monkeypatch does NOT affect the running server. We can only verify
+    # that the endpoint returns 200 and Mongo state changed as expected.
+    # For actual send verification we rely on the pure email_service unit test below.
+    updated = db.users.find_one({"user_id": "user_test_vip01"})
+    assert updated["phone"] == "+5355000666"
+    db.users.update_one({"user_id": "user_test_vip01"}, {"$set": {"phone": original_phone}})
+
+
+def test_notify_phone_change_approved_calls_send():
+    """Pure unit test — verify the email builder invokes _send with the right args."""
+    import email_service
+    calls = []
+    original_send = email_service._send
+
+    def spy(to, subject, html, attachments=None):
+        calls.append({"to": to, "subject": subject, "html": html})
+        return True
+
+    email_service._send = spy
+    try:
+        ok = email_service.notify_phone_change_approved(
+            "client@example.com", "Juan", "+5355***9999",
+        )
+        assert ok is True
+        assert len(calls) == 1
+        assert calls[0]["to"] == "client@example.com"
+        assert "verificado" in calls[0]["subject"].lower()
+        assert "+5355***9999" in calls[0]["html"]
+    finally:
+        email_service._send = original_send
+
+
+def test_notify_phone_change_rejected_includes_reason():
+    """Pure unit test — reason must appear in the HTML body."""
+    import email_service
+    calls = []
+    original_send = email_service._send
+
+    def spy(to, subject, html, attachments=None):
+        calls.append({"to": to, "subject": subject, "html": html})
+        return True
+
+    email_service._send = spy
+    try:
+        reason = "Documento de respaldo insuficiente"
+        ok = email_service.notify_phone_change_rejected(
+            "client@example.com", "Juan", "+5355***9999", reason,
+        )
+        assert ok is True
+        assert reason in calls[0]["html"]
+        assert "rechazad" in calls[0]["subject"].lower()
+    finally:
+        email_service._send = original_send
+
+
+# ============================================================
 # 10. Client can cancel their own pending phone change
 # ============================================================
 

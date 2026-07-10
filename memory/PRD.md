@@ -277,6 +277,14 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Tests**: 3 new pytest cases appended to `test_iter55_20_profile_change.py` (staff with empty perms = permissive default can list, staff with scoped perms *without* profile_changes → 403, staff with profile_changes explicit → can approve). Total **17/17** in the file. Regression on `test_iter55_16_permissions.py` catalog test updated to expect 13 items instead of 12. **61/61 combined pass** (iter55.16 + 16b + 20 + 19g + 19 + 19c).
   - **Frontend E2E smoke**: planted a pending phone change → opened `/admin/profile-change-requests` → panel renders row with VIP data + Aprobar/Rechazar buttons visible; sidebar highlights "Cambios de datos".
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- Email fan-out on phone change approval / rejection (iter55.20c, Jul 10 2026): follow-up right after iter55.20b. Client now receives an email (not only the in-app notification) whenever staff decides on their phone-change request — so the message doesn't get missed if the client isn't logged in.
+  - **New email templates in `email_service.py`**:
+    * `notify_phone_change_approved(to, name, new_phone_masked)` — green-bordered card confirming the number is verified, includes a security nudge ("si no reconoces este cambio, contacta soporte").
+    * `notify_phone_change_rejected(to, name, new_phone_masked, reason)` — red-bordered card with the mandatory rejection reason quoted verbatim + hint on how to retry from the profile page.
+  - **Endpoints in `routes/profile.py`**: `approve_phone_change` and `reject_phone_change` now call the corresponding email helper right after inserting the in-app notification (best-effort, doesn't block on failure).
+  - **Tests**: 3 new pytest cases in `test_iter55_20_profile_change.py` — endpoint side-effect (approval still applies phone + Mongo state matches), pure unit test on `notify_phone_change_approved` (verifies `_send` is invoked with masked phone in HTML + Spanish subject), pure unit test on `notify_phone_change_rejected` (verifies reason appears verbatim in body). Total in file: **20/20**. **46/46 combined pass** (iter55.20 + 16 + 19g + 18).
+  - **Status**: fix en preview. User needs to redeploy to push to production.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

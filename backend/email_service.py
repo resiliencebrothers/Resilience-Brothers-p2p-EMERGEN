@@ -212,6 +212,49 @@ def notify_email_change_success(to: str, name: str, other_email_masked: str) -> 
     return _send(to, subject, _base_template("Email actualizado", body))
 
 
+def notify_phone_change_approved(to: str, name: str, new_phone_masked: str) -> bool:
+    """iter55.20b — inform the client their phone-change request was approved."""
+    subject = "Tu nuevo teléfono fue verificado · Resilience Brothers"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        Hola {name or 'usuario'} — el equipo aprobó tu solicitud de cambio de
+        teléfono. A partir de ahora recibirás los avisos SMS en
+        <strong style="color:#fff;font-family:monospace;">{new_phone_masked}</strong>.
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(34,197,94,0.4);padding:18px;">
+        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">Cambio aplicado</p>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        Si <strong style="color:#fff;">no</strong> reconoces este cambio, contacta al equipo de
+        soporte de inmediato — el número recién verificado podría permitir
+        recuperar la cuenta.
+      </p>
+    """
+    return _send(to, subject, _base_template("Teléfono verificado", body))
+
+
+def notify_phone_change_rejected(to: str, name: str, new_phone_masked: str,
+                                  reason: str) -> bool:
+    """iter55.20b — inform the client their phone-change request was rejected."""
+    subject = "Solicitud de cambio de teléfono rechazada · Resilience Brothers"
+    safe_reason = (reason or "").strip()[:400] or "Sin motivo especificado"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        Hola {name or 'usuario'} — el equipo revisó tu solicitud de cambio de
+        teléfono a <strong style="color:#fff;font-family:monospace;">{new_phone_masked}</strong>
+        y decidió no aplicarlo por ahora. Tu número actual sigue activo.
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(239,68,68,0.4);padding:18px;">
+        <p style="margin:0 0 8px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">Motivo</p>
+        <p style="margin:0;color:#fff;font-size:13px;line-height:1.6;">{safe_reason}</p>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        Puedes volver a solicitar el cambio desde tu perfil aportando la
+        documentación de respaldo que el equipo indique, o contactar a soporte
+        para cualquier duda.
+      </p>
+    """
+    return _send(to, subject, _base_template("Cambio de teléfono rechazado", body))
 
 
 def notify_email_verification(to: str, name: str, token: str) -> bool:

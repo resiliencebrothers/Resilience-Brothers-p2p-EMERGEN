@@ -385,6 +385,12 @@ async def approve_phone_change(target_user_id: str, payload: ApprovePhoneChange,
         message=f"El equipo aprobó tu cambio a {_redact_phone(new_phone)}.",
         data={"new_phone_masked": _redact_phone(new_phone)},
     )
+    # iter55.20b — also email the client so the notification isn't missed.
+    if target.get("email"):
+        import email_service
+        email_service.notify_phone_change_approved(
+            target["email"], target.get("name", ""), _redact_phone(new_phone),
+        )
     from audit_log import log_action
     await log_action(db, actor, "profile.phone_change_approved", "user", target_user_id,
                       summary=f"Aprobó cambio de teléfono {_redact_phone(old_phone)} → {_redact_phone(new_phone)}",
@@ -426,6 +432,14 @@ async def reject_phone_change(target_user_id: str, payload: RejectPhoneChange,
         message=payload.reason[:200],
         data={"new_phone_masked": _redact_phone(new_phone), "reason": payload.reason},
     )
+    # iter55.20b — email the rejection so the client sees the reason even
+    # outside the app.
+    if target.get("email"):
+        import email_service
+        email_service.notify_phone_change_rejected(
+            target["email"], target.get("name", ""),
+            _redact_phone(new_phone), payload.reason,
+        )
     from audit_log import log_action
     await log_action(db, actor, "profile.phone_change_rejected", "user", target_user_id,
                       summary=f"Rechazó cambio a {_redact_phone(new_phone)}: {payload.reason[:80]}",
