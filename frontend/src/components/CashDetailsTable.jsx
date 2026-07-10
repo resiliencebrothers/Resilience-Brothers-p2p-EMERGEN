@@ -22,7 +22,7 @@
  * as a plain <CopyableText> — the caller decides which mode via the
  * `structured` boolean returned by `parseCashDetails`.
  */
-import { Copy, Check, MessageCircle } from "lucide-react";
+import { Copy, Check, MessageCircle, MapPin } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -121,6 +121,30 @@ function WhatsappCell({ phone }) {
   );
 }
 
+function MapsCell({ address }) {
+  const clean = String(address || "").trim();
+  if (!clean) return null;
+  const openMaps = () => {
+    // Google Maps universal search URL — works on web and deep-links to the
+    // native Maps app on mobile.
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(clean)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    toast.success("Abriendo Google Maps…");
+  };
+  return (
+    <button
+      type="button"
+      onClick={openMaps}
+      data-testid="cash-details-maps"
+      title="Ver dirección en Google Maps"
+      aria-label="Ver en Google Maps"
+      className="p-1 text-neutral-500 hover:text-[#4285F4] transition-colors shrink-0"
+    >
+      <MapPin className="w-3.5 h-3.5" />
+    </button>
+  );
+}
+
 export default function CashDetailsTable({ details }) {
   const parsed = parseCashDetails(details);
   if (!parsed) return null;
@@ -143,6 +167,7 @@ export default function CashDetailsTable({ details }) {
             <td className="px-2 py-1.5 text-white break-all">{parsed[label]}</td>
             <td className="pr-2 py-1 w-16 text-right align-middle whitespace-nowrap">
               {label === "Celular" && <WhatsappCell phone={parsed[label]} />}
+              {label === "Dirección" && <MapsCell address={parsed[label]} />}
               <CopyCell value={parsed[label]} label={label} />
             </td>
           </tr>

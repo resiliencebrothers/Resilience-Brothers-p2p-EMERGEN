@@ -308,6 +308,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Google Maps shortcut on Dirección row (iter55.22d, Feb 2026) — follow-up to iter55.22c. Same rationale as the WhatsApp shortcut: reduces coordination friction for the mensajero.
+  - **Update to** `/app/frontend/src/components/CashDetailsTable.jsx`:
+    - New `<MapsCell address={…} />` sub-component. Renders a blue-hover `MapPin` icon **only** in the Dirección row. Click opens `https://www.google.com/maps/search/?api=1&query={encodeURIComponent(address)}` in a new tab (deep-links to native Maps on mobile). Toast: "Abriendo Google Maps…".
+    - Row selector logic composes naturally with the existing WA shortcut: Celular → WhatsApp + Copy · Dirección → Maps + Copy · Nombre / ID → Copy only.
+  - **Testids added**: `cash-details-maps`.
+  - **Validation**: Playwright E2E — intercepted `window.open`, asserted URL is `https://www.google.com/maps/search/?api=1&query=Calle%2023%20n%C2%BA%20456...La%20Habana`. Dirección row = 2 buttons, Nombre row = 1 button. Zero runtime errors. `yarn lint` clean.
+
+
+
 - WhatsApp shortcut on Celular row (iter55.22c, Feb 2026) — follow-up to iter55.22b mini-table. Ops asked for a 1-click flow: copy the phone AND open WhatsApp with a pre-loaded greeting instead of the operator having to manually strip the `+53` prefix, open WhatsApp Web, paste, then type "Hola, soy de Resilience…".
   - **Update to** `/app/frontend/src/components/CashDetailsTable.jsx`:
     - New pure helper `normalisePhone(raw)` strips everything except digits (wa.me requires bare digits). Handles `+53 5555-1234`, `(535) 555-1234`, `null`, empty string.
