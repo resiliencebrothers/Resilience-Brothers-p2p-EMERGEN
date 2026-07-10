@@ -271,7 +271,7 @@ async def all_redemptions(request: Request) -> Any:
 
 @router.put("/admin/redemptions/{rid}/status")
 async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
-    await require_permission(request, "orders")
+    actor = await require_permission(request, "orders")
     new_status = payload.get("status")
     note = payload.get("admin_note", "")
     if new_status not in ("approved", "delivered", "rejected", "pending"):
@@ -289,7 +289,24 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     await db.redemptions.update_one(
         {"id": rid}, {"$set": {"status": new_status, "admin_note": note}}
     )
-    return await db.redemptions.find_one({"id": rid}, {"_id": 0})
+    updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
+
+    # iter55.23 — audit trail so "quién rechazó este canje?" can be answered.
+    if new_status != r["status"]:
+        await log_action(
+            db, actor, f"redemption.{new_status}", "redemption", rid,
+            summary=f"Canje {r.get('total_usd','?')} USD → {new_status}",
+            details={
+                "prev": r["status"],
+                "new": new_status,
+                "user_id": r.get("user_id"),
+                "product_id": r.get("product_id"),
+                "quantity": r.get("quantity"),
+                "total_usd": r.get("total_usd"),
+                "admin_note": note,
+            },
+        )
+    return updated
 
 
 # ============================================================

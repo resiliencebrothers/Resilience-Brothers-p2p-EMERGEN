@@ -15,6 +15,7 @@ from auth_utils import (
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )
 from services.proof_upload import maybe_upload_proof
+from audit_log import log_action
 
 
 router = APIRouter(tags=["Admin"])
@@ -139,4 +140,29 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     _collect_payout_evidence(payload, update_doc, w)
     _validate_paid_evidence(w, update_doc, new_status)
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
-    return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+
+    # iter55.23 — audit trail. Without this, "quién rechazó este retiro?" is
+    # unanswerable from the audit log (the endpoint used to be silent). We
+    # log the actor + before/after status + amount + method + user affected
+    # so the operator's action is always traceable.
+    if new_status != w["status"]:
+        await log_action(
+            db, actor, f"withdrawal.{new_status}", "withdrawal", wid,
+            summary=(
+                f"Retiro {w.get('method','?')} "
+                f"{w.get('amount_usd','?')} USD ({w.get('currency','?')}) "
+                f"→ {new_status}"
+            ),
+            details={
+                "prev": w["status"],
+                "new": new_status,
+                "user_id": w.get("user_id"),
+                "amount_usd": w.get("amount_usd"),
+                "currency": w.get("currency"),
+                "method": w.get("method"),
+                "admin_note": payload.get("admin_note", ""),
+                "payout_tx_hash": update_doc.get("payout_tx_hash"),
+            },
+        )
+    return updated

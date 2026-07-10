@@ -308,6 +308,22 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Audit trail for withdrawal + redemption status changes (iter55.23, Feb 2026) — bug reported by owner on production: **"en auditoría cuando se rechaza un pago no sale quién lo rechazó"**. Root cause: two admin endpoints mutated the row but silently skipped `log_action`, leaving the audit ledger blind to those actions.
+  - **Endpoints fixed**:
+    - `routes/admin_withdrawals.py::update_withdrawal` (PUT `/admin/withdrawals/{wid}/status`) — every approve/pay/reject/pending transition now emits `action="withdrawal.{status}"` with the full actor snapshot (id/email/name/role/permissions), before/after status, amount_usd, currency, method, user_id, admin_note, and payout_tx_hash if provided.
+    - `routes/admin.py::update_redemption` (PUT `/admin/redemptions/{rid}/status`) — same fix with `action="redemption.{status}"` + product_id, quantity, total_usd. Refactored the endpoint to capture `actor` from `require_permission()` once (was being discarded before).
+  - **Idempotency guard**: `if new_status != current_status:` prevents duplicate rows when ops accidentally re-submits the same status (regression tested).
+  - **Tests**: new `test_iter55_23_withdrawal_audit_trail.py` — 5 cases:
+    1. Rejecting a withdrawal writes exactly 1 audit row with actor + amount + note.
+    2. Approving also logs (happy path).
+    3. Setting the same status again does NOT double-log.
+    4. Rejecting a redemption also logs.
+    5. New entries appear in the audit CSV export (E2E through `/admin/audit/export.csv`).
+    **5/5 pass**. Regression run over the audit/permissions/withdrawals corpus: **55/55 green** — no regression.
+  - **Impact on prod ops**: from this iter forward, any "quién rechazó este retiro" question has a single-query answer via `/admin/audit` (or the monthly PDF export). Historical retiros that were rejected BEFORE this deploy remain unauditable (no time-travel possible), but no new gap will appear.
+
+
+
 - Google Maps shortcut on Dirección row (iter55.22d, Feb 2026) — follow-up to iter55.22c. Same rationale as the WhatsApp shortcut: reduces coordination friction for the mensajero.
   - **Update to** `/app/frontend/src/components/CashDetailsTable.jsx`:
     - New `<MapsCell address={…} />` sub-component. Renders a blue-hover `MapPin` icon **only** in the Dirección row. Click opens `https://www.google.com/maps/search/?api=1&query={encodeURIComponent(address)}` in a new tab (deep-links to native Maps on mobile). Toast: "Abriendo Google Maps…".
