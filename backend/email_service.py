@@ -150,6 +150,69 @@ def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: 
 def _app_url() -> str:
     return APP_URL.rstrip("/") if APP_URL else "https://p2p.resiliencebrothers.com"
 
+def notify_email_change_code(to: str, name: str, code: str) -> bool:
+    """iter55.20 — send OTP to the NEW email during profile email change."""
+    subject = "Confirma tu nuevo email · Resilience Brothers"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">
+        Hola {name or 'usuario'} — recibimos una solicitud para actualizar tu email
+        a esta dirección. Ingresa el siguiente código en la plataforma para confirmar.
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(234,179,8,0.4);padding:24px;text-align:center;">
+        <div style="color:#EAB308;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de confirmación</div>
+        <div style="color:#fff;font-family:monospace;font-size:32px;letter-spacing:8px;font-weight:bold;">{code}</div>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        El código expira en 15 minutos. Si no solicitaste este cambio, ignora
+        este mensaje — tu email actual seguirá activo.
+      </p>
+    """
+    return _send(to, subject, _base_template("Confirma tu nuevo email", body))
+
+
+def notify_email_change_alert(to: str, name: str, new_email_masked: str) -> bool:
+    """iter55.20 — heads-up to the OLD email so silent takeovers get noticed."""
+    subject = "Alerta de seguridad · Cambio de email en curso"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        Hola {name or 'usuario'} — se solicitó cambiar el email de tu cuenta a
+        <strong style="color:#fff;font-family:monospace;">{new_email_masked}</strong>.
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(239,68,68,0.4);padding:18px;">
+        <p style="margin:0 0 10px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">¿No fuiste tú?</p>
+        <p style="margin:0;color:#A3A3A3;font-size:13px;line-height:1.6;">
+          Si <strong style="color:#fff;">no</strong> reconoces esta solicitud, cambia
+          tu contraseña de inmediato y contacta al equipo. El cambio no se aplicará
+          hasta que se confirme el código enviado al nuevo email.
+        </p>
+      </div>
+      <p style="color:#A3A3A3;font-size:12px;margin:22px 0 0;">
+        Si sí fuiste tú, ignora este correo — recibirás una notificación cuando el cambio se complete.
+      </p>
+    """
+    return _send(to, subject, _base_template("Alerta de seguridad", body))
+
+
+def notify_email_change_success(to: str, name: str, other_email_masked: str) -> bool:
+    """iter55.20 — post-change confirmation, sent to both old and new inbox."""
+    subject = "Email actualizado · Resilience Brothers"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        Hola {name or 'usuario'} — el email de tu cuenta fue actualizado correctamente.
+        La otra dirección asociada es <strong style="color:#fff;font-family:monospace;">{other_email_masked}</strong>.
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(34,197,94,0.4);padding:18px;">
+        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">Cambio aplicado</p>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;margin:22px 0 0;line-height:1.6;">
+        A partir de ahora recibirás todos los avisos en tu email actualizado.
+        Si no reconoces este cambio, contacta al equipo de soporte de inmediato.
+      </p>
+    """
+    return _send(to, subject, _base_template("Email actualizado", body))
+
+
+
 
 def notify_email_verification(to: str, name: str, token: str) -> bool:
     link = f"{_app_url()}/auth/verify-email/{token}"

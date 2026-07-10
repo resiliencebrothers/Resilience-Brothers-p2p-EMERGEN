@@ -299,19 +299,54 @@ async def create_inapp_order_notification(order: dict, new_status: str) -> None:
             title = f"Orden #{order['id'][:8]} rechazada"
             note = (order.get("admin_note") or "").strip()[:120]
             msg = note or "Por favor revisa los detalles en tu dashboard."
+        # iter55.19g — enrich the payload with the on-chain artefacts so the
+        # frontend renders "Ver en explorer" directly from the notification.
+        data_payload: dict = {
+            "order_id": order["id"],
+            "from_code": order.get("from_code"),
+            "to_code": code,
+            "amount_from": order.get("amount_from"),
+            "amount_to": amt,
+            "delivery_method": method,
+        }
+        if new_status == "completed" and method == "crypto":
+            tx_hash = (order.get("payout_tx_hash") or "").strip()
+            if tx_hash:
+                # Infer the network from delivery_details (same helper used in
+                # the UI). Only build the URL if network is unambiguous.
+                from services.crypto_networks import detect_family
+                delivery = order.get("delivery_details") or ""
+                network = ""
+                # Simple detection matching the frontend logic
+                if "TRC20" in delivery.upper() or detect_family(delivery) == "tron":
+                    network = "TRC20"
+                elif "BEP20" in delivery.upper():
+                    network = "BEP20"
+                elif "ERC20" in delivery.upper() or "ETH" in delivery.upper():
+                    network = "ERC20"
+                elif "POLYGON" in delivery.upper() or "MATIC" in delivery.upper():
+                    network = "POLYGON"
+                explorer_urls = {
+                    "TRC20": f"https://tronscan.org/#/transaction/{tx_hash}",
+                    "BEP20": f"https://bscscan.com/tx/{tx_hash}",
+                    "ERC20": f"https://etherscan.io/tx/{tx_hash}",
+                    "POLYGON": f"https://polygonscan.com/tx/{tx_hash}",
+                }
+                data_payload["payout_tx_hash"] = tx_hash
+                if network:
+                    data_payload["crypto_network"] = network
+                    if network in explorer_urls:
+                        data_payload["explorer_url"] = explorer_urls[network]
+                        # Enrich the message with a clickable-style hint. The
+                        # frontend still uses the structured `data` to render
+                        # the actual link — this is just human-readable prose.
+                        msg = f"Enviamos {amt} {code} a tu wallet. Verifica la transacción en {network}."
         await _insert_notification(
             recipient_user_id=order["user_id"],
             type=f"order_{new_status}",
             title=title,
             message=msg,
-            data={
-                "order_id": order["id"],
-                "from_code": order.get("from_code"),
-                "to_code": code,
-                "amount_from": order.get("amount_from"),
-                "amount_to": amt,
-                "delivery_method": method,
-            },
+            data=data_payload,
         )
     except Exception as e:
         logger.error(f"In-app order notification failed: {e}")

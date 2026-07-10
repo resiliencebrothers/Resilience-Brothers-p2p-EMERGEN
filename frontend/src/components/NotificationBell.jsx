@@ -1,7 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2 } from "lucide-react";
+import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { useNotifications } from "@/hooks/useNotifications";
 
@@ -24,6 +24,8 @@ function timeAgo(iso) {
 
 function NotificationRow({ item, onClick, onDelete }) {
   const { Icon, color } = TYPE_ICON[item.type] || TYPE_ICON.info;
+  const explorerUrl = item.data?.explorer_url;
+  const network = item.data?.crypto_network;
   return (
     <div
       className={`group relative w-full border-b border-white/5 hover:bg-white/[0.02] transition-colors ${item.read ? "opacity-60" : ""}`}
@@ -41,6 +43,19 @@ function NotificationRow({ item, onClick, onDelete }) {
             <span className="text-[0.6rem] text-neutral-600 flex-shrink-0">{timeAgo(item.created_at)}</span>
           </div>
           <p className="text-[0.7rem] text-neutral-400 mt-0.5 line-clamp-2">{item.message}</p>
+          {explorerUrl && (
+            <a
+              href={explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid={`notification-explorer-${item.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 inline-flex items-center gap-1 text-[0.65rem] font-mono uppercase tracking-wider text-[#EAB308] hover:text-[#FACC15] hover:underline"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>Verificar en {network || "explorer"}</span>
+            </a>
+          )}
         </div>
         {!item.read && <span className="w-2 h-2 rounded-full bg-[#EAB308] mt-1.5 flex-shrink-0" />}
       </button>

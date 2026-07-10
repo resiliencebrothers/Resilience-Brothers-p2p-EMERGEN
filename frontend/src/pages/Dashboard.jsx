@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, ShieldCheck, IdCard } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, ShieldCheck, IdCard, UserCircle } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -12,6 +12,7 @@ import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import KYCView from "@/pages/dashboard/KYCView";
+import ProfileView from "@/pages/dashboard/ProfileView";
 import PushToggle from "@/components/PushToggle";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
@@ -39,6 +40,7 @@ export default function Dashboard() {
     { to: "/dashboard/exchange", icon: ArrowLeftRight, label: "Intercambio", id: "nav-exchange" },
     { to: "/dashboard/orders", icon: ListOrdered, label: "Mis Órdenes", id: "nav-orders" },
     { to: "/dashboard/transactions", icon: Receipt, label: "Mi Historial", id: "nav-transactions" },
+    { to: "/dashboard/profile", icon: UserCircle, label: "Mi Perfil", id: "nav-profile" },
     { to: "/dashboard/kyc", icon: IdCard, label: "Verificación", id: "nav-kyc" },
     { to: "/dashboard/security", icon: ShieldCheck, label: "Seguridad", id: "nav-security" },
     ...(isClient ? [
@@ -207,6 +209,7 @@ export default function Dashboard() {
             <Route path="transactions" element={<MyTransactions />} />
             <Route path="kyc" element={<KYCView />} />
             <Route path="security" element={<SecuritySettings />} />
+            <Route path="profile" element={<ProfileView />} />
             <Route path="vip" element={<VipView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
           </Routes>

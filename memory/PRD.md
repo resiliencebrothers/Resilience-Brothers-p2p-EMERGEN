@@ -233,6 +233,37 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Backend regression**: 53/53 tests pass across `test_order_payout_evidence.py + iter55.19c + transactions_registry + company_adjustments_in_register`. The new `payout_tx_hash` field additions do not break any existing shape (fields are additive strings, defaulting to empty).
   - **Frontend E2E smoke**: planted a paid TRC20 withdrawal with a mock 64-char hash → opened `/admin/withdrawals` modal → verified `admin-withdrawal-explorer-link` renders with `href=https://tronscan.org/#/transaction/{hash}` exactly. Button label "VER EN TRONSCAN" as expected.
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- Order-completed notification with explorer link + Mi Perfil section (iter55.19g + 55.20, Jul 10 2026): two features shipped in the same iteration since they compose the client-side "trust & control" cluster.
+
+  **Feature A — Notification-to-explorer link (iter55.19g)**
+  - **`services/orders_helpers.py::create_inapp_order_notification`**: when `new_status == "completed"` and `method == "crypto"` and a `payout_tx_hash` exists, the notification `data` payload now carries `payout_tx_hash`, `crypto_network` (detected via the same regex/keyword logic as the frontend) and a ready-to-render `explorer_url` (Tronscan/BscScan/Etherscan/Polygonscan). Message copy also becomes network-aware ("Verifica la transacción en TRC20").
+  - **`components/NotificationBell.jsx`**: `<NotificationRow>` now renders a yellow `↗ Verificar en {Explorer}` inline link when `data.explorer_url` is present. Click stops propagation so the user can jump to the explorer without also marking the notification as read. Testid: `notification-explorer-{id}`.
+  - **Tests**: 3 new pytest cases (`test_iter55_19g_notification_explorer_link.py`) — TRC20 order emits Tronscan URL, BEP20 order emits BscScan URL, order without hash omits `explorer_url` entirely.
+
+  **Feature B — "Mi Perfil" section (iter55.20)**
+  - **New backend router `routes/profile.py`** (~10 endpoints) — client-facing view + change flows:
+    * `GET /profile/me` — full snapshot: name, email, phone (+verified), country, role, created_at, twofa_enabled, kyc_status + any pending change requests (masked).
+    * `POST /profile/email/request-change` — 2FA-guarded; generates a hashed 6-digit OTP (15-min TTL), emails it to the NEW address, and sends a "someone tried to change your email" alert to the OLD address. Duplicate email + same-as-current + expired-code all return 400.
+    * `POST /profile/email/confirm-change` — validates the code, applies the change, sends a "email actualizado" confirmation to both inboxes, logs an audit entry.
+    * `POST /profile/phone/request-change` — 2FA-guarded; stores `pending_phone_change` on the user doc + fan-out notification to admin + staff with `can_manage_blocklist`. Client sees "Pendiente revisión admin" state.
+    * `DELETE /profile/phone/pending` — client can cancel their own pending phone request.
+    * `POST /profile/country/change` — instant, no 2FA needed. If the client had an APPROVED KYC, the KYC row is flipped to `pending_review` with `reset_reason=country_change:{old}→{new}` so operators re-verify.
+    * `GET /admin/profile-change-requests` — admin lists pending phone changes.
+    * `POST /admin/profile-change-requests/{uid}/approve-phone` — admin approve (TOTP step-up) — applies phone + marks `phone_verified=true` + notifies client.
+    * `POST /admin/profile-change-requests/{uid}/reject-phone` — admin reject with mandatory reason + client notif + audit entry.
+  - **New email templates in `email_service.py`**: `notify_email_change_code` (branded card with the 6-digit code), `notify_email_change_alert` (red-bordered security notice to the old inbox), `notify_email_change_success` (green-bordered post-change confirmation for both inboxes).
+  - **New frontend page `pages/dashboard/ProfileView.jsx`** (~500 lines but each dialog is a focused sub-component) with:
+    * Personal data card — Name/Email/Phone/Country/Created-at rows with a `<Pencil>` "Cambiar" button per editable field. Pending changes rendered inline in yellow.
+    * Verification card — status badge + link to `/dashboard/kyc`.
+    * Security card — 2FA status badge + link to `/dashboard/security`.
+    * Three dialogs (`EmailChangeDialog`, `PhoneChangeDialog`, `CountryChangeDialog`) — each is 2FA-gated where appropriate, uses the existing `handleTotpError` helper, and shows destination masking (`sent_to_masked` from backend) so the user sees a sanitized preview of the new value before confirming.
+  - **Sidebar `Dashboard.jsx`**: new nav item "Mi Perfil" (icon `UserCircle`, testid `nav-profile`) between "Mi Historial" and "Verificación". Route wired at `/dashboard/profile`.
+  - **Testids added**: `profile-view`, `profile-personal/kyc/security`, `profile-email/phone/country-row(-edit)`, `email-change-dialog/-new-input/-totp-input/-code-input/-send-btn/-confirm-btn`, `phone-change-dialog/-new-input/-totp-input/-submit-btn/-cancel-pending-btn`, `country-change-dialog/-new-input/-submit-btn`, `notification-explorer-{id}`.
+  - **Tests**: 14 new pytest cases (`test_iter55_20_profile_change.py`) — profile shape + email happy path + wrong code + already-taken + same-as-current + phone requires 2FA + phone creates admin-review + country change resets approved KYC + country change without KYC + admin lists pending + admin approve + admin reject + client cancels own pending.
+  - **Regression**: 70/70 combined tests pass (iter55.17 + 18 + 19 + 19c + 19g + 20).
+  - **Frontend E2E smoke**: `/dashboard/profile` rendered with all 3 cards, all edit buttons present, sidebar highlights "Mi Perfil" correctly.
+  - **Status**: fix en preview. User needs to redeploy to push to production.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
