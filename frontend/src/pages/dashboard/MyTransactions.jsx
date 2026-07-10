@@ -274,7 +274,7 @@ export default function MyTransactions() {
 
       {/* Detail modal */}
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent data-testid="my-tx-modal" className="bg-[#0c0c0c] border border-white/10 text-white max-w-2xl rounded-none">
+        <DialogContent data-testid="my-tx-modal" className="bg-[#0c0c0c] border border-white/10 text-white max-w-2xl rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
               <Receipt className="w-5 h-5 text-[#EAB308]" />

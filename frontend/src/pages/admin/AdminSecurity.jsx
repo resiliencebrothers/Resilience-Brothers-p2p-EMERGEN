@@ -390,7 +390,7 @@ export default function AdminSecurity() {
       </Panel>
 
       <Dialog open={cfDialogOpen} onOpenChange={setCfDialogOpen}>
-        <DialogContent data-testid="cf-block-dialog" className="bg-neutral-950 border-white/10">
+        <DialogContent data-testid="cf-block-dialog" className="bg-neutral-950 border-white/10 max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
               <Cloud className="w-5 h-5 text-[#EAB308]" /> Bloquear IP en Cloudflare WAF

@@ -213,7 +213,7 @@ export default function BalanceConverterCard({ onConverted }) {
 
       {/* Conversion dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#111] border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#111] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2" data-testid="converter-dialog-title">
               Convertir {fromCode}

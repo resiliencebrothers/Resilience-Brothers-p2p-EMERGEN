@@ -225,7 +225,7 @@ export default function SecuritySettings() {
 
       {/* Disable modal */}
       <Dialog open={disableModal} onOpenChange={setDisableModal}>
-        <DialogContent className="bg-[#0c0c0c] border border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#0c0c0c] border border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Desactivar 2FA</DialogTitle>
           </DialogHeader>
@@ -247,7 +247,7 @@ export default function SecuritySettings() {
 
       {/* Regenerate codes modal */}
       <Dialog open={regenModal} onOpenChange={setRegenModal}>
-        <DialogContent className="bg-[#0c0c0c] border border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#0c0c0c] border border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Regenerar códigos de recuperación</DialogTitle>
           </DialogHeader>

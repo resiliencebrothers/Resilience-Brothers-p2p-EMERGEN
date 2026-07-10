@@ -52,7 +52,7 @@ export default function TotpPromptDialog({
     <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel?.(); }}>
       <DialogContent
         data-testid="totp-prompt-dialog"
-        className="bg-[#141414] border-white/10 text-white rounded-none max-w-md"
+        className="bg-[#141414] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">

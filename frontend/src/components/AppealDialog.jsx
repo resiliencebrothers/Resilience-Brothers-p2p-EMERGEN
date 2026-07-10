@@ -102,7 +102,7 @@ export default function AppealDialog() {
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent data-testid="appeal-dialog" className="max-w-lg bg-[#0c0c0c] border-white/10 text-white">
+        <DialogContent data-testid="appeal-dialog" className="max-w-lg bg-[#0c0c0c] border-white/10 text-white max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-white">Apelación al staff</DialogTitle>
             <DialogDescription className="text-neutral-400 text-xs leading-relaxed">

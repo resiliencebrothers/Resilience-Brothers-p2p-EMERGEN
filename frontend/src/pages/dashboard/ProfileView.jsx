@@ -265,7 +265,7 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md" data-testid="email-change-dialog">
+      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="email-change-dialog">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">Cambiar email</DialogTitle>
         </DialogHeader>
@@ -372,7 +372,7 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md" data-testid="phone-change-dialog">
+      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="phone-change-dialog">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">Cambiar teléfono</DialogTitle>
         </DialogHeader>
@@ -456,7 +456,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md" data-testid="country-change-dialog">
+      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="country-change-dialog">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">Cambiar país</DialogTitle>
         </DialogHeader>
@@ -472,7 +472,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
               </div>
               <p className="text-[0.7rem] text-neutral-400 leading-relaxed">
                 Tu KYC está aprobado. Al cambiar de país volverá a
-                <strong className="text-white"> "En revisión"</strong> para que el equipo
+                <strong className="text-white"> &ldquo;En revisión&rdquo;</strong> para que el equipo
                 confirme los documentos en la nueva jurisdicción.
               </p>
             </div>

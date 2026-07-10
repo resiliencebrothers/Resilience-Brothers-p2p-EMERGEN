@@ -91,7 +91,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
       >
         <DialogContent
           data-testid="adjustment-dialog"
-          className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg"
+          className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto"
         >
           <DialogHeader>
             <DialogTitle className="font-display">

@@ -192,7 +192,7 @@ export default function AdminAppeals() {
       </Tabs>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent data-testid="appeal-action-dialog" className="bg-[#0c0c0c] border-white/10 text-white max-w-md">
+        <DialogContent data-testid="appeal-action-dialog" className="bg-[#0c0c0c] border-white/10 text-white max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-white">
               {action === "resolve" ? "Aprobar apelación" : "Rechazar apelación"}

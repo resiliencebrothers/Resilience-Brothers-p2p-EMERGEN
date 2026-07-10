@@ -107,7 +107,7 @@ export default function DefensiveModePanel() {
 
       {/* ENABLE DIALOG — requires reason */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A0A] border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#0A0A0A] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl flex items-center gap-2">
               <ShieldAlert className="w-6 h-6 text-[#EF4444]" /> Activar Modo Defensivo
