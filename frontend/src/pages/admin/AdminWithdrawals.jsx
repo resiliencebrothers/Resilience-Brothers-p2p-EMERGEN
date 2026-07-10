@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import CopyableText from "@/components/CopyableText";
+import CashDetailsTable, { parseCashDetails } from "@/components/CashDetailsTable";
 import ExplorerLink from "@/components/ExplorerLink";
 import { validateCryptoHash, findNetwork } from "@/services/cryptoValidators";
 import { toast } from "sonner";
@@ -289,12 +290,30 @@ export default function AdminWithdrawals() {
                   <span className="text-neutral-500 flex-shrink-0">
                     {open.method === "crypto" ? "Wallet:" : "Detalles:"}
                   </span>
-                  <CopyableText
-                    value={open.details}
-                    label={open.method === "crypto" ? "Copiar wallet" : "Copiar detalles"}
-                    toastMessage={open.method === "crypto" ? "Wallet copiada" : "Detalles copiados"}
-                    testid="withdrawal-copy-details"
-                  />
+                  {/* iter55.22 — cash withdrawals ship a structured details
+                      block from the client (Nombre / Celular / Dirección / ID).
+                      Render it as a mini-table with per-row copy so the operator
+                      can grab the phone in 1 click while coordinating delivery.
+                      Legacy free-form details fall back to the plain
+                      CopyableText renderer. */}
+                  {open.method === "cash" && parseCashDetails(open.details) ? (
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <CashDetailsTable details={open.details} />
+                      <CopyableText
+                        value={open.details}
+                        label="Copiar bloque completo"
+                        toastMessage="Detalles copiados"
+                        testid="withdrawal-copy-details"
+                      />
+                    </div>
+                  ) : (
+                    <CopyableText
+                      value={open.details}
+                      label={open.method === "crypto" ? "Copiar wallet" : "Copiar detalles"}
+                      toastMessage={open.method === "crypto" ? "Wallet copiada" : "Detalles copiados"}
+                      testid="withdrawal-copy-details"
+                    />
+                  )}
                 </div>
                 <div className="flex items-start gap-2 flex-wrap">
                   <span className="text-neutral-500 flex-shrink-0">Beneficiario:</span>
