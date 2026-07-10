@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import CopyableText from "@/components/CopyableText";
 import { ArrowDown, ArrowUp, Download, Receipt, X, ExternalLink } from "lucide-react";
 
 export function TransactionDetailModal({ selected, onClose, onNavigate }) {
@@ -89,11 +90,21 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
 
           {selected.delivery_details && (
             <div className="border border-white/5 p-4 bg-[#0a0a0a]">
-              <div className="micro-label text-neutral-500 mb-2">
-                {selected.direction === "in" ? "Datos del envío" : "Datos del beneficiario"}
+              <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between gap-2">
+                <span>
+                  {selected.direction === "in" ? "Datos del envío" : "Datos del beneficiario"}
+                </span>
               </div>
-              <div className="text-sm whitespace-pre-wrap font-mono text-neutral-300">
-                {selected.delivery_details}
+              <div className="text-sm text-neutral-300">
+                <CopyableText
+                  value={selected.delivery_details}
+                  label="Copiar"
+                  toastMessage={
+                    selected.method === "crypto" ? "Wallet copiada" : "Datos copiados"
+                  }
+                  testid="tx-copy-delivery-details"
+                  className="whitespace-pre-wrap"
+                />
               </div>
             </div>
           )}

@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import CopyableText from "@/components/CopyableText";
 import { toast } from "sonner";
 import { Search } from "lucide-react";
 
@@ -282,8 +283,31 @@ export default function AdminWithdrawals() {
                     </span>
                   </div>
                 )}
-                <div><span className="text-neutral-500">Detalles:</span> {open.details}</div>
-                <div><span className="text-neutral-500">Beneficiario:</span> {open.beneficiary_name || "—"}</div>
+                <div className="flex items-start gap-2 flex-wrap">
+                  <span className="text-neutral-500 flex-shrink-0">
+                    {open.method === "crypto" ? "Wallet:" : "Detalles:"}
+                  </span>
+                  <CopyableText
+                    value={open.details}
+                    label={open.method === "crypto" ? "Copiar wallet" : "Copiar detalles"}
+                    toastMessage={open.method === "crypto" ? "Wallet copiada" : "Detalles copiados"}
+                    testid="withdrawal-copy-details"
+                  />
+                </div>
+                <div className="flex items-start gap-2 flex-wrap">
+                  <span className="text-neutral-500 flex-shrink-0">Beneficiario:</span>
+                  {open.beneficiary_name ? (
+                    <CopyableText
+                      value={open.beneficiary_name}
+                      label="Copiar beneficiario"
+                      toastMessage="Beneficiario copiado"
+                      testid="withdrawal-copy-beneficiary"
+                      monospace={false}
+                    />
+                  ) : (
+                    <span>—</span>
+                  )}
+                </div>
                 <div><span className="text-neutral-500">Estado:</span> <span className="uppercase tracking-wider">{STATUS_LABEL(open.status, open.method)}</span></div>
               </div>
               <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />

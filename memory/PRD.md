@@ -201,6 +201,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Testids added**: `withdrawal-network-{id}`, `withdrawal-modal-network`, `tx-detail-crypto-network`.
   - **Verified GREEN**: 11/11 iter55.19c + 9/9 iter55.19 + 35/35 (transactions_registry + company_adjustments) = **55/55** all pass. Frontend smoke: planted a TRC20 pending withdrawal → both the row badge and the modal "Red on-chain: TRC20" render correctly on `/admin/withdrawals`.
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- Copy-to-clipboard button on wallet/details (iter55.19d, Jul 10 2026): operator asked for a copy button next to the client's wallet address in the withdrawal management modal — currently they had to manually highlight the text to copy, error-prone especially on mobile.
+  - **New reusable component `components/CopyableText.jsx`**: renders `value` as monospace text with an inline icon-only copy button. Handles `navigator.clipboard.writeText` in secure contexts + falls back to a hidden textarea + `document.execCommand("copy")` for insecure/legacy contexts. Post-click swaps the copy icon for a green checkmark for 1.5s + fires a sonner toast (`"Wallet copiada"` / `"Datos copiados"` / configurable). Testable via `testid` prop.
+  - **`AdminWithdrawals.jsx` modal**: replaced the plain `Detalles:` and `Beneficiario:` rows with `<CopyableText>` blocks. Label swaps between `"Wallet:"` (for crypto) and `"Detalles:"` (for transfer/cash). Beneficiary field is non-monospace (name, not wallet) — one prop away.
+  - **`transactions/TransactionDetailModal.jsx`**: the "Datos del envío / Datos del beneficiario" block now wraps the delivery details in `<CopyableText>` so admins auditing the ledger can copy an address in one click.
+  - **Testids added**: `withdrawal-copy-details`, `withdrawal-copy-beneficiary`, `tx-copy-delivery-details`.
+  - **Note**: `AdminOrders.jsx` already had its own inline `CopyBtn` with the same UX (iter earlier), left untouched to avoid unnecessary refactor.
+  - **Verified E2E in preview**: planted a pending TRC20 withdrawal → opened modal → clicked copy on the wallet → clipboard verified to hold `TJRabRWQdrJc7iCPFy4gnPCJcXbc17ncCk` exactly + green checkmark icon appears + sonner toast "Wallet copiada" surfaces. Beneficiary copy button also confirmed rendering.
+  - **Status**: fix en preview. User needs to redeploy to push to production.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
