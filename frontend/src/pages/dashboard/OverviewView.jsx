@@ -10,19 +10,38 @@ export default function OverviewView() {
   const { user } = useAuth();
   const [rates, setRates] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [withdrawals, setWithdrawals] = useState([]);
   const [balances, setBalances] = useState(null);
 
   useEffect(() => {
     axios.get(`${API}/rates`).then(r => setRates(r.data)).catch(() => {});
     axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => setOrders(r.data)).catch(() => {});
     axios.get(`${API}/vip/balances`, { withCredentials: true }).then(r => setBalances(r.data)).catch(() => {});
+    // iter55.22 — include VIP withdrawals so a "cash approved / En progreso" retiro
+    // counts as pending until it's actually delivered/paid.
+    axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true })
+      .then(r => setWithdrawals(r.data))
+      .catch(() => {});
   }, []);
 
   const isVip = user?.role === "vip" || user?.role === "admin";
   const isStaff = user?.role === "admin" || user?.role === "employee";
   const isClient = user && !isStaff;
-  const pending = orders.filter(o => o.status === "pending").length;
-  const approved = orders.filter(o => o.status === "approved" || o.status === "completed").length;
+
+  // iter55.22 — an order/withdrawal counts as "pendiente" for the client while
+  // the operation is not yet finalised. That means anything still moving
+  // through the pipeline: pending, approved (staff accepted but not paid),
+  // in_progress, requires_double_approval. Only fully terminal successful
+  // states (delivered/completed/paid) count as "Completadas"; rejected drops off.
+  const IN_FLIGHT = new Set(["pending", "approved", "in_progress", "requires_double_approval"]);
+
+  const pendingOrders = orders.filter(o => IN_FLIGHT.has(o.status)).length;
+  const pendingWithdrawals = withdrawals.filter(w => IN_FLIGHT.has(w.status)).length;
+  const pending = pendingOrders + pendingWithdrawals;
+
+  const completedOrders = orders.filter(o => o.status === "delivered" || o.status === "completed").length;
+  const completedWithdrawals = withdrawals.filter(w => w.status === "paid").length;
+  const approved = completedOrders + completedWithdrawals; // "Completadas" — successful terminal states
 
   return (
     <div className="space-y-8" data-testid="overview-view">

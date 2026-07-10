@@ -50,6 +50,11 @@ export default function VipView() {
   const [currency, setCurrency] = useState("USD");
   const [method, setMethod] = useState("transfer");
   const [details, setDetails] = useState("");
+  // iter55.22 — cash retiros: 3 obligatorios + 1 opcional. Ver composeCashDetails().
+  const [cashReceiverName, setCashReceiverName] = useState("");
+  const [cashReceiverPhone, setCashReceiverPhone] = useState("");
+  const [cashReceiverAddress, setCashReceiverAddress] = useState("");
+  const [cashReceiverId, setCashReceiverId] = useState(""); // opcional (Cuba: carné)
   const [beneficiaryName, setBeneficiaryName] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -154,18 +159,37 @@ export default function VipView() {
 
   const activeNetwork = CRYPTO_NETWORKS.find((n) => n.value === cryptoNetwork) || CRYPTO_NETWORKS[0];
 
+  // iter55.22 — compose the structured cash `details` string from the 4
+  // sub-fields. Persisted verbatim in withdrawals.details so admin sees
+  // exactly the same labelled block, and PDFs / emails inherit it too.
+  const composedCashDetails = useMemo(() => {
+    if (method !== "cash") return "";
+    const lines = [
+      `Nombre: ${cashReceiverName.trim()}`,
+      `Celular: ${cashReceiverPhone.trim()}`,
+      `Dirección: ${cashReceiverAddress.trim()}`,
+    ];
+    if (cashReceiverId.trim()) lines.push(`ID / Carné: ${cashReceiverId.trim()}`);
+    return lines.join("\n");
+  }, [method, cashReceiverName, cashReceiverPhone, cashReceiverAddress, cashReceiverId]);
+
   const submit = async () => {
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return toast.error("Monto inválido");
-    if (!details) return toast.error("Detalles requeridos");
-    // iter55.19b — cash withdrawals must include the receiver's full name,
-    // ID number and cell phone so staff can coordinate the physical delivery.
-    // A 20-char minimum on the trimmed input is a good proxy: "Juan Pérez
-    // 12345678 +5355555555" already exceeds it.
-    if (method === "cash" && details.trim().length < 20) {
-      return toast.error(
-        "Para retiros en efectivo incluye nombre y apellidos, número de ID/carné y teléfono celular del receptor (mínimo 20 caracteres)."
-      );
+    // iter55.22 — cash: 3 sub-campos obligatorios (nombre, celular, dirección).
+    // Otros métodos siguen usando el textarea `details` como antes.
+    if (method === "cash") {
+      if (!cashReceiverName.trim() || cashReceiverName.trim().length < 3) {
+        return toast.error("Nombre y apellidos del receptor son obligatorios");
+      }
+      if (!cashReceiverPhone.trim() || cashReceiverPhone.trim().length < 6) {
+        return toast.error("Teléfono celular del receptor es obligatorio");
+      }
+      if (!cashReceiverAddress.trim() || cashReceiverAddress.trim().length < 5) {
+        return toast.error("Dirección de entrega es obligatoria");
+      }
+    } else {
+      if (!details) return toast.error("Detalles requeridos");
     }
     // iter55.19c — Hard block crypto withdrawals when the address doesn't
     // match the declared network. Prevents irrecoverable transfers to the
@@ -192,13 +216,14 @@ export default function VipView() {
         amount_usd: amt,
         currency,
         method,
-        details,
+        details: method === "cash" ? composedCashDetails : details,
         beneficiary_name: beneficiaryName.trim(),
         crypto_network: method === "crypto" ? cryptoNetwork : null,
         totp_code: totpCode.trim(),
       }, { withCredentials: true });
       toast.success("Solicitud de retiro enviada");
       setAmount(""); setDetails(""); setBeneficiaryName(""); setTotpCode("");
+      setCashReceiverName(""); setCashReceiverPhone(""); setCashReceiverAddress(""); setCashReceiverId("");
       await load(); await refresh();
     } catch (e) {
       const detail = e.response?.data?.detail;
@@ -386,53 +411,107 @@ export default function VipView() {
                 </p>
               </div>
             )}
-            <div>
-              <Label className="micro-label text-neutral-500">
-                Detalles {(method === "cash" || method === "crypto") && <span className="text-[#EAB308]">*</span>}
-              </Label>
-              <Textarea
-                data-testid="withdraw-details"
-                value={details}
-                onChange={e => setDetails(e.target.value)}
-                rows={method === "cash" ? 5 : method === "crypto" ? 2 : 3}
-                placeholder={
-                  method === "cash"
-                    ? "Nombre y apellidos, número de ID/carné y teléfono celular de la persona que recibirá el dinero"
-                    : method === "crypto"
+            {/* iter55.22 — cash: formulario estructurado (Nombre / Celular / Dirección / ID opcional) */}
+            {method === "cash" ? (
+              <div className="space-y-3" data-testid="cash-receiver-block">
+                <div>
+                  <Label className="micro-label text-neutral-500">
+                    Nombre y apellidos del receptor <span className="text-[#EAB308]">*</span>
+                  </Label>
+                  <Input
+                    data-testid="cash-receiver-name"
+                    value={cashReceiverName}
+                    onChange={(e) => setCashReceiverName(e.target.value)}
+                    placeholder="ej. Juan Pérez Rodríguez"
+                    className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label className="micro-label text-neutral-500">
+                    Teléfono celular <span className="text-[#EAB308]">*</span>
+                  </Label>
+                  <Input
+                    data-testid="cash-receiver-phone"
+                    value={cashReceiverPhone}
+                    onChange={(e) => setCashReceiverPhone(e.target.value)}
+                    placeholder="+5355555555"
+                    inputMode="tel"
+                    className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label className="micro-label text-neutral-500">
+                    Dirección de entrega <span className="text-[#EAB308]">*</span>
+                  </Label>
+                  <Textarea
+                    data-testid="cash-receiver-address"
+                    value={cashReceiverAddress}
+                    onChange={(e) => setCashReceiverAddress(e.target.value)}
+                    rows={2}
+                    placeholder="Calle, número, entre calles, municipio, provincia"
+                    className="rounded-none mt-2 bg-[#0a0a0a] border-white/10"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label className="micro-label text-neutral-500">
+                    Número de ID / Carné <span className="text-neutral-600 normal-case">(opcional)</span>
+                  </Label>
+                  <Input
+                    data-testid="cash-receiver-id"
+                    value={cashReceiverId}
+                    onChange={(e) => setCashReceiverId(e.target.value)}
+                    placeholder="Solo si el equipo lo pide para coordinar"
+                    inputMode="numeric"
+                    className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono"
+                  />
+                </div>
+                <p className="text-[0.7rem] text-[#EAB308] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
+                  El equipo usa estos datos para coordinar la entrega en efectivo. Verifica que el <strong>celular</strong> esté activo y la <strong>dirección</strong> sea clara.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <Label className="micro-label text-neutral-500">
+                  Detalles {method === "crypto" && <span className="text-[#EAB308]">*</span>}
+                </Label>
+                <Textarea
+                  data-testid="withdraw-details"
+                  value={details}
+                  onChange={e => setDetails(e.target.value)}
+                  rows={method === "crypto" ? 2 : 3}
+                  placeholder={
+                    method === "crypto"
                       ? activeNetwork.addressPlaceholder
                       : "Banco, número de cuenta y titular"
-                }
-                className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"
-              />
-              {method === "cash" && (
-                <p className="text-[0.7rem] text-[#EAB308] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
-                  Para retiros en efectivo, indica del receptor: <strong>nombre y apellidos</strong>,
-                  <strong> número de ID / carné</strong> y <strong>teléfono celular</strong> — el equipo lo
-                  necesita para coordinar la entrega.
-                </p>
-              )}
-              {method === "crypto" && cryptoAddressMatch === true && (
-                <p
-                  data-testid="crypto-address-match-ok"
-                  className="text-[0.75rem] text-[#22C55E] mt-1 leading-relaxed flex items-center gap-1.5"
-                >
-                  <span aria-hidden>✓</span>
-                  <span>Dirección compatible con <strong>{activeNetwork.label}</strong></span>
-                </p>
-              )}
-              {method === "crypto" && cryptoAddressMatch === false && (
-                <p
-                  data-testid="crypto-address-mismatch"
-                  className="text-[0.75rem] text-[#EF4444] mt-1 leading-relaxed flex items-start gap-1.5"
-                >
-                  <span aria-hidden className="mt-0.5">⚠</span>
-                  <span>
-                    <strong>No coincide con {activeNetwork.label}</strong>. Revisa la red seleccionada o pega otra dirección —
-                    enviar por la red incorrecta puede perder los fondos permanentemente.
-                  </span>
-                </p>
-              )}
-            </div>
+                  }
+                  className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"
+                />
+                {method === "crypto" && cryptoAddressMatch === true && (
+                  <p
+                    data-testid="crypto-address-match-ok"
+                    className="text-[0.75rem] text-[#22C55E] mt-1 leading-relaxed flex items-center gap-1.5"
+                  >
+                    <span aria-hidden>✓</span>
+                    <span>Dirección compatible con <strong>{activeNetwork.label}</strong></span>
+                  </p>
+                )}
+                {method === "crypto" && cryptoAddressMatch === false && (
+                  <p
+                    data-testid="crypto-address-mismatch"
+                    className="text-[0.75rem] text-[#EF4444] mt-1 leading-relaxed flex items-start gap-1.5"
+                  >
+                    <span aria-hidden className="mt-0.5">⚠</span>
+                    <span>
+                      <strong>No coincide con {activeNetwork.label}</strong>. Revisa la red seleccionada o pega otra dirección —
+                      enviar por la red incorrecta puede perder los fondos permanentemente.
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
             <div>
               <Label className="micro-label text-neutral-500">
                 Titular de la cuenta beneficiaria <span className="text-[#EAB308]">*</span>

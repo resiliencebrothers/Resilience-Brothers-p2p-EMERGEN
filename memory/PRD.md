@@ -308,6 +308,22 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Client dashboard "Pendientes" fix + structured cash withdrawal form (iter55.22, Feb 2026):
+  - **Bug 1 — dashboard counter**: on production `p2p.resiliencebrothers.com`, a VIP client with a **cash retiro in status="approved"** (rendered as "En progreso" in the UI) was seeing **PENDIENTES: 0** on their dashboard. Root cause: `pages/dashboard/OverviewView.jsx:24` only counted `orders.filter(o => o.status === "pending").length` — it ignored withdrawals entirely and dropped `approved` (which for cash means "en progreso"). Fix: dashboard now also fetches `/api/vip/withdrawals/mine` and counts anything in the in-flight set `{pending, approved, in_progress, requires_double_approval}` from both orders and withdrawals. "Completadas" tightened to only successful terminals (`delivered`, `completed`, `paid`) — `approved` no longer double-counts as completed.
+  - **Bug 2 — free-form cash details**: the "Detalles" textarea for cash withdrawals let each client type receiver info in a different order/format ("Juan Pérez CI 91020 tel 55555"). Ops asked for a mandatory standard layout. Fix: when `method === "cash"`, the single textarea is replaced by 4 structured inputs: **Nombre y apellidos** (obligatorio, `data-testid="cash-receiver-name"`), **Teléfono celular** (obligatorio, `data-testid="cash-receiver-phone"`), **Dirección de entrega** (obligatorio, `data-testid="cash-receiver-address"`), **Número de ID / Carné** (opcional, `data-testid="cash-receiver-id"`). The frontend composes a labelled multiline block:
+    ```
+    Nombre: Juan Pérez Rodríguez
+    Celular: +5355551234
+    Dirección: Calle 23 nº 456, Vedado
+    ID / Carné: 91020412345   (only if provided)
+    ```
+    …and posts it as `details`, so the backend / admin panel / PDFs / emails all inherit the same clean structure without any schema change. Per-field validation prevents empty/too-short receiver name, phone, or address before the request is fired.
+  - **Backend compatibility**: the existing iter55.19b >=20 char gate remains untouched — the composed block is always >=40 chars — so all 9/9 iter55.19 tests continue passing.
+  - **Tests**: new `test_iter55_22_client_pending_and_cash_structured.py` with 3 cases: (a) 200 + verbatim persistence of the composed block, (b) optional ID line preserved when present, (c) `/vip/withdrawals/mine` regression guard — must keep returning `approved` status so the dashboard counter stays honest. **3/3 pass**.
+  - **Verified**: screenshot at 900×900 on `/dashboard/vip` with CUP + Efectivo (CUP/USD) shows the 4 structured inputs, hint copy, beneficiary + 2FA + submit button all reachable. Cash-only currencies work; non-cash flows unchanged.
+
+
+
 - Modal-scroll audit + ESLint guardrail (Feb 2026) — triggered by owner report: on production `p2p.resiliencebrothers.com`, the "Editar Moneda" modal hid its Guardar button on a smaller laptop because `<DialogContent>` had no `max-h` cap. Radix DialogContent does NOT cap height by default → any content taller than the viewport is silently truncated with no scrollbar.
   - **Sweep** — 14 modals were missing `max-h-*`. Added `max-h-[85vh] overflow-y-auto` to all of them (still discoverable in git via the single-classname diff pattern):
     - **Admin**: `AdminCurrencies`, `AdminProducts`, `AdminRates`, `AdminWithdrawals`, `AdminKYC`, `AdminCompanyFunds`, `AdminProfileChangeRequests`, `AdminAppeals`, `AdminBlockedContacts` (block + bulk-import), `AdminSecurity` (cf-block), `users/RejectPhoneDialog`, `company-funds/AdjustmentDialog`, `transactions/TransactionDetailModal` (caught by the ESLint rule after the manual sweep).
