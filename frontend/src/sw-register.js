@@ -21,7 +21,13 @@ export function registerSW() {
           });
         });
       })
-      // eslint-disable-next-line no-console -- intentional: SW registration failures must be visible for PWA debugging
-      .catch((err) => console.error("SW registration failed:", err));
+      .catch((err) => {
+        // SW registration failures are silent in production because they
+        // don't block core UX (the app still works without offline support).
+        // In non-production we surface it in the console for PWA debugging.
+        if (process.env.NODE_ENV !== "production") {
+          console.error("SW registration failed:", err);
+        }
+      });
   });
 }

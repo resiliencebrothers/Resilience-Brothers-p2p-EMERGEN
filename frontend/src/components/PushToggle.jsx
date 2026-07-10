@@ -105,7 +105,16 @@ export default function PushToggle() {
       } catch (err) {
         toast.error("El servidor rechazó la suscripción. Contacta al administrador.");
         // best-effort cleanup: undo the browser subscription so the user can retry
-        try { await sub.unsubscribe(); } catch { /* ignore */ }
+        try {
+          await sub.unsubscribe();
+        } catch (unsubErr) {
+          // Non-fatal: the browser subscription persists locally; report it so
+          // we notice if unsubscribe reliably fails on any device.
+          captureError(unsubErr, {
+            where: "PushToggle.subscribe.rollbackUnsubscribe",
+            level: "info",
+          });
+        }
         captureError(err, { where: "PushToggle.subscribe.serverPost" });
         return;
       }

@@ -70,9 +70,11 @@ export function setSentryUser(user) {
 /** Shortcut to manually capture an exception with extra context. */
 export function captureError(err, context) {
   if (!process.env.REACT_APP_SENTRY_DSN) {
-    // Fallback to console in dev so we don't swallow errors.
-    // eslint-disable-next-line no-console
-    console.error(err, context);
+    // Fallback to console ONLY in dev so we don't swallow errors during
+    // local development. In production without DSN the error is dropped.
+    if (process.env.NODE_ENV !== "production") {
+      console.error(err, context);
+    }
     return;
   }
   Sentry.withScope((scope) => {

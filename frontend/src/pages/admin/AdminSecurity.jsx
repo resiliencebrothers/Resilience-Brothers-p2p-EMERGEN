@@ -10,6 +10,13 @@ import {
 import { toast } from "sonner";
 import { Shield, RefreshCw, Users, MapPin, Ban, AlertOctagon, Wifi, LogOut, Cloud, Plus, Trash2 } from "lucide-react";
 
+// Static column headers — hoisted to module scope to avoid re-allocation
+// on every render (each Panel had inline arrays in its `headers` prop).
+const HEADERS_NEW_IP = ["Fecha", "Email", "Rol", "IP", "User-Agent"];
+const HEADERS_RATE_LIMITED = ["IP", "Hits", "Último", "Endpoints"];
+const HEADERS_ORIGIN_VIOLATIONS = ["Fecha", "Origin", "IP", "Método", "Path"];
+const HEADERS_LOGIN_BURSTS = ["Identifier", "Fallos", "Último intento"];
+
 /**
  * AdminSecurity — read-only operational security dashboard.
  *
@@ -229,7 +236,7 @@ export default function AdminSecurity() {
       >
         {data.admin_new_ip_logins.length === 0 && <Empty text="Ningún login desde IP nueva. ✅" />}
         <TableSimple
-          headers={["Fecha", "Email", "Rol", "IP", "User-Agent"]}
+          headers={HEADERS_NEW_IP}
           rows={data.admin_new_ip_logins.map((e) => [
             e.created_at?.slice(0, 16).replace("T", " "),
             e.user_email || "-",
@@ -248,7 +255,7 @@ export default function AdminSecurity() {
       >
         {data.top_rate_limited_ips.length === 0 && <Empty text="Ninguna IP alcanzó el límite. ✅" />}
         <TableSimple
-          headers={["IP", "Hits", "Último", "Endpoints"]}
+          headers={HEADERS_RATE_LIMITED}
           rows={data.top_rate_limited_ips.map((r) => [
             r.ip,
             r.hits,
@@ -266,7 +273,7 @@ export default function AdminSecurity() {
       >
         {data.recent_origin_violations.length === 0 && <Empty text="Ninguna violación. ✅" />}
         <TableSimple
-          headers={["Fecha", "Origin", "IP", "Método", "Path"]}
+          headers={HEADERS_ORIGIN_VIOLATIONS}
           rows={data.recent_origin_violations.map((e) => [
             e.created_at?.slice(0, 16).replace("T", " "),
             e.origin || "-",
@@ -285,7 +292,7 @@ export default function AdminSecurity() {
       >
         {data.recent_login_bursts.length === 0 && <Empty text="Sin ráfagas anormales. ✅" />}
         <TableSimple
-          headers={["Identifier", "Fallos", "Último intento"]}
+          headers={HEADERS_LOGIN_BURSTS}
           rows={data.recent_login_bursts.map((r) => [
             r.identifier,
             r.failed_attempts,

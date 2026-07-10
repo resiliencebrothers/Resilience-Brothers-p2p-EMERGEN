@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from db_client import db
 from auth_utils import (
-    require_admin, require_staff, require_permission,
+    require_admin, require_permission,
     now_utc, iso,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )

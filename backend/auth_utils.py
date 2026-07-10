@@ -15,6 +15,11 @@ from fastapi import HTTPException, Request, Response
 
 from db_client import db
 import totp_service
+from services.permissions import (
+    VALID_CODES as _PERM_VALID_CODES,
+    _has_permission as _has_perm,
+    permission_label as _perm_label,
+)
 
 
 # ---------- Time helpers ----------
@@ -115,12 +120,39 @@ async def require_staff(request: Request) -> dict:
     return user
 
 
-# iter55.16 — Convenience re-export so route files can import from the same
-# module as `require_staff`. Actual implementation lives in
-# `services/permissions.py`.
+# iter55.16 — HTTP gate for per-staff permissions. The catalog + pure
+# predicate live in `services.permissions` (data-only, zero FastAPI deps);
+# the actual HTTP gate lives HERE so we don't cycle with `require_user`.
 async def require_permission(request: Request, code: str) -> dict:
-    from services.permissions import require_permission as _rp
-    return await _rp(request, code)
+    """Gate an admin/staff endpoint by a specific permission code.
+
+    Admins bypass. Employees pass if their `allowed_permissions` is empty OR
+    contains the code. Everything else → 403 with a message that names the
+    missing permission (so the admin can grant it in 1 click).
+
+    Usage:
+        actor = await require_permission(request, "kyc")
+    """
+    if code not in _PERM_VALID_CODES:
+        # Programmer error — refuse silently in prod, loud in tests.
+        raise HTTPException(status_code=500, detail=f"unknown_permission_code:{code}")
+
+    user = await require_user(request)
+    if _has_perm(user, code):
+        return user
+
+    role = user.get("role")
+    if role not in ("admin", "employee"):
+        raise HTTPException(status_code=403, detail="Staff only")
+
+    # Employee without the required permission — explain clearly.
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"No tienes el permiso '{_perm_label(code)}' asignado. "
+            f"Contacta al admin para que te lo habilite."
+        ),
+    )
 
 
 def _enforce_employee_currency_scope(actor: dict, *codes: str) -> None:

@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from security_middleware import limiter
 from db_client import db
-from auth_utils import require_user, require_staff, require_permission, now_utc, iso
+from auth_utils import require_user, require_permission, now_utc, iso
 from audit_log import log_action
 
 logger = logging.getLogger(__name__)

@@ -24,7 +24,7 @@ from push_service import (
 )
 
 from services.balances import (
-    convert_to_usdt, compute_total_usdt,
+    compute_total_usdt,
     accumulate_vip_balance,
 )
 

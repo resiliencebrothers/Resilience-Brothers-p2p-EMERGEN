@@ -1,4 +1,4 @@
-"""iter55.16 — Granular per-staff permissions catalog + gate helper.
+"""iter55.16 — Granular per-staff permissions catalog + pure predicates.
 
 Rationale: prior to this iter, employees were gated by `role="employee"` only.
 The admin could restrict them to specific currencies via `allowed_currencies`,
@@ -16,11 +16,11 @@ Semantics:
   missing.
 
 The catalog below is the single source of truth. Any admin route that needs
-a gate should call `await require_permission(request, "code")`.
+a gate should call `await require_permission(request, "code")` — the HTTP
+gate lives in `auth_utils` to avoid a circular import (this module stays a
+pure data + predicate layer with zero FastAPI dependencies).
 """
 from typing import Any, Dict, List
-
-from fastapi import HTTPException, Request
 
 
 # Codes are stable strings — do NOT rename them once persisted in user docs.
@@ -57,41 +57,9 @@ def _has_permission(user: dict, code: str) -> bool:
     return code in perms
 
 
-async def require_permission(request: Request, code: str) -> dict:
-    """Gate an admin/staff endpoint by a specific permission code.
-
-    Admins bypass. Employees pass if their `allowed_permissions` is empty OR
-    contains the code. Everything else → 403 with a message that names the
-    missing permission (so the admin can grant it in 1 click).
-
-    Usage:
-        actor = await require_permission(request, "kyc")
-    """
-    # Local import avoids a circular import at module load (auth_utils imports
-    # from this module for the /me endpoint enrichment).
-    from auth_utils import require_user
-
-    if code not in VALID_CODES:
-        # Programmer error — refuse silently in prod, loud in tests.
-        raise HTTPException(status_code=500, detail=f"unknown_permission_code:{code}")
-
-    user = await require_user(request)
-    if _has_permission(user, code):
-        return user
-
-    role = user.get("role")
-    if role not in ("admin", "employee"):
-        raise HTTPException(status_code=403, detail="Staff only")
-
-    # Employee without the required permission — explain clearly.
-    label = next((p["label"] for p in PERMISSION_CATALOG if p["code"] == code), code)
-    raise HTTPException(
-        status_code=403,
-        detail=(
-            f"No tienes el permiso '{label}' asignado. "
-            f"Contacta al admin para que te lo habilite."
-        ),
-    )
+def permission_label(code: str) -> str:
+    """Human-readable label for a code (falls back to the code itself)."""
+    return next((p["label"] for p in PERMISSION_CATALOG if p["code"] == code), code)
 
 
 def sanitize_permissions(raw: Any) -> List[str]:

@@ -22,7 +22,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from db_client import db
 from auth_utils import (
-    require_staff, require_permission, normalize_phone, now_utc, iso, _enforce_totp_step_up,
+    require_staff, normalize_phone, now_utc, iso, _enforce_totp_step_up,
 )
 from audit_log import log_action
 from services.anti_scam import mark_user_under_review, mark_user_active

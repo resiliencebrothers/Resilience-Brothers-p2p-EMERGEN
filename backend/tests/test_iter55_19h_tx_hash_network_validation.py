@@ -12,7 +12,7 @@ import uuid
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, with_totp_admin, make_vip_totp
+from tests.conftest import BASE_URL, ADMIN_TOKEN, with_totp_admin
 
 from services.crypto_networks import (
     is_tx_hash_valid_for_network,

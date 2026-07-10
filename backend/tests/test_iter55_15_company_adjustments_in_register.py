@@ -18,7 +18,7 @@ client).
 """
 import os
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import requests
 from pymongo import MongoClient

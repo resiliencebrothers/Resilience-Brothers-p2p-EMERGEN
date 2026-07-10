@@ -6,7 +6,6 @@ so the frontend can render a "Verificar en Tronscan / BscScan" button.
 """
 import os
 import uuid
-import pytest
 from pymongo import MongoClient
 
 from tests.conftest import ADMIN_TOKEN, BASE_URL

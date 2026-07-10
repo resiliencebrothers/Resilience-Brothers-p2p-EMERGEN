@@ -5,8 +5,6 @@ bundle for the previous calendar month and fans it out to admin recipients.
 The APScheduler cron wiring is trivially exercised (idempotency + job list).
 """
 import os
-import uuid
-import asyncio
 import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 

@@ -10,7 +10,6 @@ All business logic lives in `routes/*` and `services/*`. Shared auth helpers
 live in `auth_utils.py`; the Mongo client in `db_client.py`.
 """
 import logging
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI

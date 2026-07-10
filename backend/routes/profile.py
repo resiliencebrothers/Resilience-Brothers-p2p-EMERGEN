@@ -21,14 +21,14 @@ from __future__ import annotations
 import hashlib
 import secrets
 import string
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 from db_client import db
-from auth_utils import require_user, _enforce_totp_step_up, now_utc, iso
+from auth_utils import require_user, require_permission, _enforce_totp_step_up, now_utc, iso
 
 
 router = APIRouter(tags=["Profile"])
@@ -328,7 +328,6 @@ async def change_country(payload: CountryChangeRequest, request: Request) -> Any
 
 @router.get("/admin/profile-change-requests")
 async def list_pending_profile_changes(request: Request) -> Any:
-    from services.permissions import require_permission
     await require_permission(request, "profile_changes")
     cursor = db.users.find(
         {"pending_phone_change": {"$exists": True, "$ne": None}},
@@ -358,7 +357,6 @@ class ApprovePhoneChange(BaseModel):
 @router.post("/admin/profile-change-requests/{target_user_id}/approve-phone")
 async def approve_phone_change(target_user_id: str, payload: ApprovePhoneChange,
                                 request: Request) -> Any:
-    from services.permissions import require_permission
     actor = await require_permission(request, "profile_changes")
     await _enforce_totp_step_up(actor, payload.totp_code,
                                  action_label="aprobar cambio de teléfono")
@@ -408,7 +406,6 @@ class RejectPhoneChange(BaseModel):
 @router.post("/admin/profile-change-requests/{target_user_id}/reject-phone")
 async def reject_phone_change(target_user_id: str, payload: RejectPhoneChange,
                                request: Request) -> Any:
-    from services.permissions import require_permission
     actor = await require_permission(request, "profile_changes")
     await _enforce_totp_step_up(actor, payload.totp_code,
                                  action_label="rechazar cambio de teléfono")

@@ -11,7 +11,7 @@ from typing import Optional, Any, Dict
 
 from db_client import db
 from auth_utils import (
-    require_staff, require_permission,
+    require_permission,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )
 from services.proof_upload import maybe_upload_proof

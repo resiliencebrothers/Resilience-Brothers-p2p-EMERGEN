@@ -4,7 +4,7 @@ and account-status guards. Extracted from server.py during iter33 refactor.
 Pure business helpers, no HTTP layer; the only side effect is MongoDB I/O via
 the shared `db_client`.
 """
-from typing import Optional, List
+from typing import Optional
 
 from fastapi import HTTPException
 

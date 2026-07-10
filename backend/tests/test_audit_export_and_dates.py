@@ -79,6 +79,7 @@ class TestAuditCSVExport:
         header = next(reader)
         assert header == [
             "created_at", "actor_id", "actor_email", "actor_name", "actor_role",
+            "actor_permissions_effective",
             "action", "entity_type", "entity_id", "summary", "details",
         ]
 
@@ -90,8 +91,11 @@ class TestAuditCSVExport:
         reader = csv.reader(io.StringIO(text))
         rows = list(reader)
         # Skip header — every data row must have action == rate.update (or be empty)
+        # Column indices (post-iter55.16b, `actor_permissions_effective` at index 5):
+        # 0 created_at · 1 actor_id · 2 actor_email · 3 actor_name · 4 actor_role
+        # 5 actor_permissions_effective · 6 action · ...
         for row in rows[1:]:
-            assert row[5] == "rate.update"
+            assert row[6] == "rate.update"
 
 
 # -------- PDF EXPORT --------
