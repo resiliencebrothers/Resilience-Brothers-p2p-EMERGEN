@@ -19,7 +19,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
     <Dialog open={!!selected} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         data-testid="tx-detail-modal"
-        className="bg-[#0c0c0c] border border-white/10 text-white max-w-2xl rounded-none"
+        className="bg-[#0c0c0c] border border-white/10 text-white max-w-2xl rounded-none max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-white">
