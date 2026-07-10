@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { Badge } from "@/components/ui/badge";
+import CopyableText from "@/components/CopyableText";
 
 const STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
@@ -101,10 +102,15 @@ export default function OrdersView() {
                   ✓ Comprobante del pago realizado a ti
                 </div>
                 {selected.payout_tx_hash && (
-                  <div className="text-xs font-mono break-all bg-[#0a0a0a] border border-white/10 p-2 mb-2">
-                    <span className="text-neutral-500">Hash: </span>
+                  <div className="text-xs bg-[#0a0a0a] border border-white/10 p-2 mb-2 flex items-start gap-2 flex-wrap">
+                    <span className="text-neutral-500 flex-shrink-0">Hash:</span>
                     <span className="text-[#22C55E]" data-testid="my-order-payout-hash">
-                      {selected.payout_tx_hash}
+                      <CopyableText
+                        value={selected.payout_tx_hash}
+                        label="Copiar hash"
+                        toastMessage="Hash copiado"
+                        testid="my-order-payout-hash-copy"
+                      />
                     </span>
                   </div>
                 )}

@@ -312,41 +312,57 @@ export default function AdminWithdrawals() {
               </div>
               <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
 
-              {/* Iter14: payout proof / tx_hash */}
+              {/* Iter14 + iter55.19e — payout proof / tx_hash.
+                  For crypto withdrawals the operator opted to require ONLY the
+                  tx hash (no screenshot upload) — the hash is enough evidence
+                  and the block-explorer link on the ledger is the source of
+                  truth. For transfer/cash we still require the receipt image. */}
               <div className="border border-white/10 p-3 space-y-3 bg-[#0a0a0a]/50">
-                <div className="micro-label text-[#EAB308]">Evidencia de pago al cliente</div>
-                {open.method === "crypto" && (
+                <div className="micro-label text-[#EAB308]">
+                  {open.method === "crypto"
+                    ? "Hash de transacción on-chain"
+                    : "Evidencia de pago al cliente"}
+                </div>
+                {open.method === "crypto" ? (
                   <div>
-                    <label className="micro-label text-neutral-500">Hash de transacción</label>
                     <Input
                       data-testid="payout-tx-hash"
                       value={payoutHash}
                       onChange={(e) => setPayoutHash(e.target.value)}
-                      placeholder="0x... (cripto)"
-                      className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono text-xs"
+                      placeholder={
+                        open.crypto_network === "TRC20"
+                          ? "TRC20 · 64 caracteres hex (ej. abc123...)"
+                          : open.crypto_network === "BEP20"
+                            ? "BEP20 · 0x + 64 caracteres hex"
+                            : "hash de la transacción on-chain"
+                      }
+                      className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono text-xs"
                     />
+                    <p className="text-[0.65rem] text-neutral-500 mt-2 leading-relaxed">
+                      Con el hash es suficiente — no hace falta subir captura.
+                      El cliente podrá verificar la transacción en el explorer.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="micro-label text-neutral-500">
+                      Captura de la transferencia bancaria realizada
+                    </label>
+                    <input
+                      ref={fileRef}
+                      data-testid="payout-proof-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleProofUpload}
+                      className="block mt-1 text-xs text-neutral-400"
+                    />
+                    {payoutProof && (
+                      <div className="mt-2">
+                        <img src={payoutProof} alt="proof" className="max-h-40 border border-white/10" data-testid="payout-proof-preview" />
+                      </div>
+                    )}
                   </div>
                 )}
-                <div>
-                  <label className="micro-label text-neutral-500">
-                    {open.method === "crypto"
-                      ? "Captura del envío a wallet (opcional si hay hash)"
-                      : "Captura de la transferencia bancaria realizada"}
-                  </label>
-                  <input
-                    ref={fileRef}
-                    data-testid="payout-proof-input"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleProofUpload}
-                    className="block mt-1 text-xs text-neutral-400"
-                  />
-                  {payoutProof && (
-                    <div className="mt-2">
-                      <img src={payoutProof} alt="proof" className="max-h-40 border border-white/10" data-testid="payout-proof-preview" />
-                    </div>
-                  )}
-                </div>
               </div>
 
               <div className="grid grid-cols-3 gap-2">

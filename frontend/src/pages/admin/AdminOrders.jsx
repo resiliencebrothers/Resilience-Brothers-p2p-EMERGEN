@@ -402,16 +402,20 @@ export default function AdminOrders() {
               )}
 
               {/* Payout evidence — staff uploads the screenshot of the payment made TO the client.
-                  Skipped for 'cash' (no artefact) and 'accumulate' (stays in client's VIP balance). */}
+              {/* iter55.19e — For crypto orders operator opted to require ONLY
+                  the tx hash (no screenshot upload). For transfer we still
+                  require the bank receipt. Cash + accumulate keep no artefact. */}
               {open.delivery_method !== "cash" && open.delivery_method !== "accumulate" && (
                 <div className="border-t border-white/5 pt-4">
                   <div className="micro-label text-[#EAB308] mb-2">
-                    Comprobante del pago AL cliente ({open.delivery_method === "transfer" ? "transferencia" : "envío crypto"})
+                    {open.delivery_method === "crypto"
+                      ? "Hash de transacción on-chain"
+                      : "Comprobante del pago AL cliente (transferencia)"}
                   </div>
                   <p className="text-[0.7rem] text-neutral-500 mb-3 leading-relaxed">
                     {open.delivery_method === "transfer"
                       ? "Adjunta la captura del banco mostrando que enviaste los " + open.to_code + " al cliente. Es obligatorio antes de marcar como completada."
-                      : "Adjunta el hash de la transacción y/o la captura del wallet. Obligatorio antes de marcar como completada."}
+                      : "Pega solo el hash de la transacción — con eso es suficiente, no hace falta subir captura. El cliente podrá verificarla en el explorer on-chain."}
                   </p>
                   <div className="space-y-2">
                     {open.delivery_method === "crypto" && (
@@ -420,39 +424,43 @@ export default function AdminOrders() {
                         value={payoutHash}
                         onChange={(e) => setPayoutHash(e.target.value)}
                         placeholder="Hash de transacción (TXID)"
-                        className="rounded-none bg-[#0a0a0a] border-white/10 h-9 font-mono text-xs"
+                        className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono text-xs"
                       />
                     )}
-                    <div className="flex items-center gap-2">
-                      <label className="flex-1 flex items-center gap-2 cursor-pointer bg-[#0a0a0a] border border-white/10 hover:border-[#EAB308]/40 px-3 py-2 text-xs text-neutral-300">
-                        <Upload className="w-3.5 h-3.5 text-[#EAB308]" />
-                        <span>{payoutProof ? "Cambiar captura" : "Subir captura (PNG/JPG, máx 4MB)"}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handlePayoutUpload}
-                          data-testid="order-payout-proof-upload"
-                          className="hidden"
-                        />
-                      </label>
-                      {payoutProof && (
-                        <button
-                          type="button"
-                          data-testid="order-payout-proof-clear"
-                          onClick={() => setPayoutProof("")}
-                          className="text-[0.7rem] text-neutral-500 hover:text-[#EF4444] underline underline-offset-4"
-                        >
-                          quitar
-                        </button>
-                      )}
-                    </div>
-                    {payoutProof && (
-                      <img
-                        src={payoutProof}
-                        alt="Captura del pago al cliente"
-                        data-testid="order-payout-proof-preview"
-                        className="w-full max-h-72 object-contain border border-[#EAB308]/30"
-                      />
+                    {open.delivery_method === "transfer" && (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <label className="flex-1 flex items-center gap-2 cursor-pointer bg-[#0a0a0a] border border-white/10 hover:border-[#EAB308]/40 px-3 py-2 text-xs text-neutral-300">
+                            <Upload className="w-3.5 h-3.5 text-[#EAB308]" />
+                            <span>{payoutProof ? "Cambiar captura" : "Subir captura (PNG/JPG, máx 4MB)"}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handlePayoutUpload}
+                              data-testid="order-payout-proof-upload"
+                              className="hidden"
+                            />
+                          </label>
+                          {payoutProof && (
+                            <button
+                              type="button"
+                              data-testid="order-payout-proof-clear"
+                              onClick={() => setPayoutProof("")}
+                              className="text-[0.7rem] text-neutral-500 hover:text-[#EF4444] underline underline-offset-4"
+                            >
+                              quitar
+                            </button>
+                          )}
+                        </div>
+                        {payoutProof && (
+                          <img
+                            src={payoutProof}
+                            alt="Captura del pago al cliente"
+                            data-testid="order-payout-proof-preview"
+                            className="w-full max-h-72 object-contain border border-[#EAB308]/30"
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

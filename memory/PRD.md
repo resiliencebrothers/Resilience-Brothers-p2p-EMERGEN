@@ -210,6 +210,14 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Note**: `AdminOrders.jsx` already had its own inline `CopyBtn` with the same UX (iter earlier), left untouched to avoid unnecessary refactor.
   - **Verified E2E in preview**: planted a pending TRC20 withdrawal → opened modal → clicked copy on the wallet → clipboard verified to hold `TJRabRWQdrJc7iCPFy4gnPCJcXbc17ncCk` exactly + green checkmark icon appears + sonner toast "Wallet copiada" surfaces. Beneficiary copy button also confirmed rendering.
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- Crypto payout: only tx hash, no screenshot required (iter55.19e, Jul 10 2026): operator asked to remove the "sube captura" UX burden for crypto payouts — the tx hash on-chain is the source of truth (the client can verify it on the explorer), so requiring a screenshot on top was noise.
+  - **Backend was already correct** (iter14): for `crypto` the guard is `existing_hash OR existing_proof`, so hash alone was always accepted. No backend changes were needed.
+  - **Frontend `AdminWithdrawals.jsx` modal**: replaced the mixed "hash + captura opcional" block. For `method === "crypto"` now shows ONLY the hash input (`payout-tx-hash`) with a network-aware placeholder ("TRC20 · 64 caracteres hex..." or "BEP20 · 0x + 64 hex...") and the hint *"Con el hash es suficiente — no hace falta subir captura."*. The file-upload input is omitted entirely on this branch. Transfer/cash paths untouched.
+  - **Frontend `AdminOrders.jsx` modal**: same treatment. When `delivery_method === "crypto"`, only the `order-payout-tx-hash` input is rendered; the file upload label + preview live under an `else if transfer` branch. Cash + accumulate paths untouched.
+  - **Frontend `dashboard/OrdersView.jsx`**: the "Comprobante del pago realizado a ti" block on the client-side detail modal now wraps the hash in `<CopyableText>` so the client copies it in one click (before it was a plain green span the client had to highlight manually).
+  - **Verified GREEN**: 27/27 combined tests (payout_evidence + iter55.19 + iter55.19c). Frontend E2E smoke on `/admin/withdrawals`: planted a TRC20 pending withdrawal → opened modal → `payout-tx-hash` visible (count=1), `payout-proof-input` NOT rendered (count=0), placeholder shows "TRC20 · 64 caracteres hex...", hint copy visible. Exactly the operator's request.
+  - **Status**: fix en preview. User needs to redeploy to push to production.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).
