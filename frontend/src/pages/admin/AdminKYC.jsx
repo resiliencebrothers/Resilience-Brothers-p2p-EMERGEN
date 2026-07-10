@@ -203,7 +203,7 @@ export default function AdminKYC() {
 
       {/* ACTION DIALOG */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="bg-neutral-950 border-white/10 max-w-2xl" data-testid="kyc-action-dialog">
+        <DialogContent className="bg-neutral-950 border-white/10 max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="kyc-action-dialog">
           {selected && (
             <>
               <DialogHeader>

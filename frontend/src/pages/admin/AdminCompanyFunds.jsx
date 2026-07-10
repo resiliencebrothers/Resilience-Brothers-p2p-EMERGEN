@@ -228,7 +228,7 @@ export default function AdminCompanyFunds() {
 
       {/* Create dialog */}
       <Dialog open={openCreate} onOpenChange={setOpenCreate}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg">
+        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Nuevo retiro del fondo</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">

@@ -94,7 +94,7 @@ export default function AdminCurrencies() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Moneda</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>

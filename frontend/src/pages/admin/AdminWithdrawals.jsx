@@ -264,7 +264,7 @@ export default function AdminWithdrawals() {
       </div>
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg">
+        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
