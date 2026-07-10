@@ -162,14 +162,42 @@ async def all_orders(request: Request, status: Optional[str] = None,
     )
 
 
-def _collect_order_payout_evidence(payload: dict, update_doc: dict) -> None:
+def _collect_order_payout_evidence(payload: dict, update_doc: dict,
+                                    order: dict = None) -> None:
     """Persist optional payout proof image + tx hash on the update document.
-    Used by staff/admin when marking an order as completed."""
+    Used by staff/admin when marking an order as completed.
+
+    iter55.19h: for crypto orders we sniff the network from `delivery_details`
+    (same heuristic used elsewhere) and validate the tx_hash format against
+    that family — prevents copy-paste errors between explorers.
+    """
     proof = payload.get("payout_proof_image")
     if proof:
         update_doc["payout_proof_image"] = maybe_upload_proof(proof, "order_payouts") or proof
     tx_hash = payload.get("payout_tx_hash")
     if tx_hash:
+        tx_hash = tx_hash.strip()
+        method = (order or {}).get("delivery_method") or ""
+        if method == "crypto":
+            delivery = ((order or {}).get("delivery_details") or "").upper()
+            network = ""
+            if "TRC20" in delivery:
+                network = "TRC20"
+            elif "BEP20" in delivery:
+                network = "BEP20"
+            if network:
+                from services.crypto_networks import (
+                    is_tx_hash_valid_for_network, tx_hash_mismatch_reason,
+                )
+                if not is_tx_hash_valid_for_network(tx_hash, network):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "code": "TX_HASH_NETWORK_MISMATCH",
+                            "message": tx_hash_mismatch_reason(tx_hash, network),
+                            "network": network,
+                        },
+                    )
         update_doc["payout_tx_hash"] = tx_hash
 
 
@@ -210,7 +238,7 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
     prev_status = order["status"]
     update_doc = {"status": new_status, "admin_note": note,
                   "updated_at": iso(now_utc())}
-    _collect_order_payout_evidence(payload, update_doc)
+    _collect_order_payout_evidence(payload, update_doc, order)
     _validate_order_payout_evidence(order, update_doc, new_status)
 
     await db.orders.update_one({"id": order_id}, {"$set": update_doc})

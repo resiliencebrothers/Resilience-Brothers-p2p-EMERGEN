@@ -285,6 +285,28 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Endpoints in `routes/profile.py`**: `approve_phone_change` and `reject_phone_change` now call the corresponding email helper right after inserting the in-app notification (best-effort, doesn't block on failure).
   - **Tests**: 3 new pytest cases in `test_iter55_20_profile_change.py` — endpoint side-effect (approval still applies phone + Mongo state matches), pure unit test on `notify_phone_change_approved` (verifies `_send` is invoked with masked phone in HTML + Spanish subject), pure unit test on `notify_phone_change_rejected` (verifies reason appears verbatim in body). Total in file: **20/20**. **46/46 combined pass** (iter55.20 + 16 + 19g + 18).
   - **Status**: fix en preview. User needs to redeploy to push to production.
+
+- Two-in-one: tx_hash format guard + monthly audit auto-send (iter55.19h + 55.21, Jul 10 2026): both were long-standing P2 items on the backlog and share the same crypto/audit compliance theme.
+
+  **Feature A — TX hash format validation vs declared network (iter55.19h)**
+  - Extended `services/crypto_networks.py`: new regexes `_TRC20_HASH_RE` (64 hex, no `0x`) and `_EVM_HASH_RE` (`0x` + 64 hex) plus `detect_hash_family`, `is_tx_hash_valid_for_network`, `tx_hash_mismatch_reason`, `TX_HASH_PLACEHOLDERS`.
+  - **Withdrawals** `routes/admin_withdrawals.py::_collect_payout_evidence`: when the withdrawal declares `crypto_network` AND method=crypto AND admin pastes `payout_tx_hash`, we validate the hash format against the declared family. Wrong family → structured `HTTPException(400, detail={"code": "TX_HASH_NETWORK_MISMATCH", "message": "...", "network": ...})`. Backward-compat: legacy withdrawals without `crypto_network` skip the guard.
+  - **Orders** `routes/admin.py::_collect_order_payout_evidence`: same guard, but network is sniffed from `delivery_details` (looking for `TRC20` / `BEP20` substring — same heuristic used elsewhere).
+  - **New reusable frontend module `services/cryptoValidators.js`**: extracted the previously-inline TRC20/EVM address regexes from `VipView.jsx` + added hash regexes + `validateCryptoHash` + `CRYPTO_NETWORKS` config with per-network `addressPlaceholder` / `hashPlaceholder`. Kept `services/blockExplorers.js` untouched (that's the URL builder). `VipView.jsx` refactored to import from the shared module.
+  - **`AdminWithdrawals.jsx` modal**: live tx_hash badge under the input — green `✓ Hash compatible con Tron (TRC20)` when the pasted hash matches the family, red `⚠ No coincide con Tron (TRC20). Revisa el hash pegado — probablemente lo copiaste del explorer equivocado.` when it doesn't. Same "no coinciden" visual as the address guard. Testids: `payout-hash-match-ok`, `payout-hash-mismatch`.
+  - **Tests**: 9 pytest cases in `test_iter55_19h_tx_hash_network_validation.py` — pure predicates (detect family, matrix cross-family, unknown, unsupported, address-not-mistaken-for-hash), HTTP guard on withdrawals (TRC20 rejects BEP20 hash + BEP20 rejects TRC20 + matching accepts + no-network legacy skips), orders (TRC20 order with wrong hash → 400, matching → 200).
+  - Frontend E2E smoke on `/admin/withdrawals`: TRC20 withdrawal → paste BEP20 hash → red mismatch badge; paste TRC20 hash → green OK badge. Exactly the "no coinciden" behavior BingX shows.
+
+  **Feature B — Monthly audit auto-send scheduler (iter55.21)**
+  - **`scheduler.py`**: new async function `run_monthly_audit_email(db)` — reuses everything from iter55.17 (`_build_monthly_bundle` semantics via direct calls to `services.audit_report.compute_monthly_kpis` + `compute_integrity_hash` + `audit_pdf_monthly.generate_monthly_audit_pdf`). Fetches audit entries for the previous calendar month (via `services.transactions.fetch_audit_entries`), renders the PDF, then fans out via `email_service.notify_monthly_audit` to `resolve_admin_email_recipients` (respects `ops_notifications_email` override).
+  - **Opt-out flag**: `settings.global.auto_send_monthly_audit == False` short-circuits the job silently. Any other value (including missing) = enabled. Owner can disable from Mongo without needing a code deploy.
+  - **APScheduler wiring**: new job `monthly_audit_email` with `CronTrigger(day=1, hour=9, minute=15, timezone="UTC")` — 15 min after the existing `monthly_revenue_email` so both arrive as a natural pair. `misfire_grace_time=3600` + `coalesce=True` handle container restarts gracefully.
+  - **Tests**: 5 pytest cases in `test_iter55_21_monthly_audit_scheduler.py` — `_previous_month` helper regular case + January year-rollback, `run_monthly_audit_email` calls `notify_monthly_audit` for admin recipients with PDF attachment, opt-out flag short-circuits before any send, scheduler wiring registers the new job with the expected cron string.
+  - **Manual trigger already existed**: `POST /admin/audit/monthly/send-email` from iter55.17 lets the operator email any past month on demand (with TOTP step-up).
+  - Supervisor logs confirm the job is registered on startup: *"Scheduler started: monthly_revenue_email (day 1 09:00 UTC) + monthly_audit_email (day 1 09:15 UTC) + security_alert_scan (every 5m)"*.
+
+  **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
+  - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 ## What's Been Implemented (Feb 2026)
 - Public landing page with hero, about, services, how-it-works, VIP section, CTA.
 - Google OAuth flow (login → callback → cookie session, /api/auth/me).

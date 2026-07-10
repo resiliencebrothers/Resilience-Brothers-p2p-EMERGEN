@@ -11,6 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
+import {
+  CRYPTO_NETWORKS, validateCryptoAddress,
+} from "@/services/cryptoValidators";
 import { toast } from "sonner";
 import { Wallet, ArrowDownToLine, FileDown, Coins, ShieldCheck, History, Eye } from "lucide-react";
 
@@ -32,33 +35,6 @@ const WITHDRAWAL_LABELS_BY_METHOD = {
 function getWithdrawalLabel(method, status) {
   const map = WITHDRAWAL_LABELS_BY_METHOD[method] ?? WITHDRAWAL_LABELS_BY_METHOD.transfer;
   return map[status] ?? status;
-}
-
-// iter55.19c — Client-side crypto address ↔ network validation. Mirrors
-// backend `services/crypto_networks.py` — kept in sync intentionally. Only 2
-// networks supported today (TRC20 + BEP20); adding a new one means updating
-// both files.
-const CRYPTO_NETWORKS = [
-  { value: "TRC20", label: "Tron (TRC20)", placeholder: "T + 33 caracteres alfanuméricos (ej. TJRabc123...)" },
-  { value: "BEP20", label: "BSC (BEP20)", placeholder: "0x + 40 caracteres hexadecimales (ej. 0xAbCdEf...)" },
-];
-
-const TRC20_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
-const EVM_RE = /^0x[0-9a-fA-F]{40}$/;
-
-function detectAddressFamily(addr) {
-  if (!addr) return "unknown";
-  const a = addr.trim();
-  if (TRC20_RE.test(a)) return "tron";
-  if (EVM_RE.test(a)) return "evm";
-  return "unknown";
-}
-
-function validateCryptoAddress(addr, network) {
-  const fam = detectAddressFamily(addr);
-  if (network === "TRC20") return fam === "tron";
-  if (network === "BEP20") return fam === "evm";
-  return false;
 }
 
 export default function VipView() {
@@ -423,7 +399,7 @@ export default function VipView() {
                   method === "cash"
                     ? "Nombre y apellidos, número de ID/carné y teléfono celular de la persona que recibirá el dinero"
                     : method === "crypto"
-                      ? activeNetwork.placeholder
+                      ? activeNetwork.addressPlaceholder
                       : "Banco, número de cuenta y titular"
                 }
                 className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"

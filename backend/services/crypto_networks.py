@@ -23,6 +23,12 @@ from typing import Final, List
 _TRC20_RE: Final = re.compile(r"^T[1-9A-HJ-NP-Za-km-z]{33}$")
 _EVM_RE: Final = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
+# iter55.19h — TX HASH patterns (distinct from address patterns above).
+# * TRC20 tx hash: 64 hex characters, NO 0x prefix (Tronscan convention).
+# * EVM tx hash:   0x + 64 hex characters (Ethereum/BSC/Polygon convention).
+_TRC20_HASH_RE: Final = re.compile(r"^[0-9a-fA-F]{64}$")
+_EVM_HASH_RE: Final = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
 
 SUPPORTED_NETWORKS: List[str] = ["TRC20", "BEP20"]
 
@@ -93,4 +99,55 @@ def mismatch_reason(address: str, network: str) -> str:
         f"La dirección parece de la red {fam_label}, pero seleccionaste {label}. "
         f"Revisa la red o pega otra dirección — enviar por la red incorrecta "
         f"puede perder los fondos permanentemente."
+    )
+
+
+# ============================================================
+# iter55.19h — TX HASH validation
+# ============================================================
+
+# Human-readable formats for the UI + error messages.
+TX_HASH_PLACEHOLDERS = {
+    "TRC20": "64 caracteres hexadecimales sin 0x (ej. abc123def456...)",
+    "BEP20": "0x + 64 caracteres hexadecimales (ej. 0xabc123...)",
+}
+
+
+def detect_hash_family(tx_hash: str) -> str:
+    """Return the hash family: 'tron' | 'evm' | 'unknown'."""
+    if not tx_hash:
+        return "unknown"
+    h = tx_hash.strip()
+    if _EVM_HASH_RE.match(h):
+        return "evm"
+    if _TRC20_HASH_RE.match(h):
+        return "tron"
+    return "unknown"
+
+
+def is_tx_hash_valid_for_network(tx_hash: str, network: str) -> bool:
+    """Strict predicate — True only when the hash matches the declared
+    network's family. Empty / unknown / unsupported network → False."""
+    if not is_supported_network(network):
+        return False
+    if not tx_hash or not tx_hash.strip():
+        return False
+    return detect_hash_family(tx_hash) == _NETWORK_FAMILY[network]
+
+
+def tx_hash_mismatch_reason(tx_hash: str, network: str) -> str:
+    """Spanish diagnosis for an invalid hash + declared network combo."""
+    if not is_supported_network(network):
+        return f"Red '{network}' no soportada — usa {' o '.join(SUPPORTED_NETWORKS)}."
+    fam = detect_hash_family(tx_hash)
+    label = NETWORK_LABELS.get(network, network)
+    if fam == "unknown":
+        return (
+            f"El hash no tiene el formato de {label}. "
+            f"Se espera: {TX_HASH_PLACEHOLDERS[network]}."
+        )
+    fam_label = "Tron" if fam == "tron" else "EVM (BSC/ETH/Polygon…)"
+    return (
+        f"El hash parece de la red {fam_label}, pero el retiro está declarado en {label}. "
+        f"Revisa el hash pegado — probablemente lo copiaste del explorer equivocado."
     )

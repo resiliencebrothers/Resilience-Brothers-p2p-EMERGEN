@@ -68,13 +68,36 @@ async def _refund_balance_on_reject(withdrawal: dict, new_status: str) -> None:
     )
 
 
-def _collect_payout_evidence(payload: dict, update_doc: dict) -> None:
-    """Persist optional payout proof image + tx hash on the update document."""
+def _collect_payout_evidence(payload: dict, update_doc: dict,
+                              withdrawal: dict = None) -> None:
+    """Persist optional payout proof image + tx hash on the update document.
+
+    iter55.19h: when the withdrawal declares a crypto_network (TRC20/BEP20)
+    we also validate the tx_hash format against that network — same "no
+    coinciden" guard as the address at creation time, but for the tx hash
+    the operator pastes at payout time.
+    """
     proof = payload.get("payout_proof_image")
     if proof:
         update_doc["payout_proof_image"] = maybe_upload_proof(proof, "withdrawals") or proof
     tx_hash = payload.get("payout_tx_hash")
     if tx_hash:
+        tx_hash = tx_hash.strip()
+        network = (withdrawal or {}).get("crypto_network") or ""
+        method = (withdrawal or {}).get("method") or ""
+        if method == "crypto" and network:
+            from services.crypto_networks import (
+                is_tx_hash_valid_for_network, tx_hash_mismatch_reason,
+            )
+            if not is_tx_hash_valid_for_network(tx_hash, network):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "TX_HASH_NETWORK_MISMATCH",
+                        "message": tx_hash_mismatch_reason(tx_hash, network),
+                        "network": network,
+                    },
+                )
         update_doc["payout_tx_hash"] = tx_hash
 
 
@@ -113,7 +136,7 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     _enforce_employee_currency_scope(actor, w.get("currency"))
     await _refund_balance_on_reject(w, new_status)
     update_doc = {"status": new_status, "admin_note": payload.get("admin_note", "")}
-    _collect_payout_evidence(payload, update_doc)
+    _collect_payout_evidence(payload, update_doc, w)
     _validate_paid_evidence(w, update_doc, new_status)
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     return await db.withdrawals.find_one({"id": wid}, {"_id": 0})

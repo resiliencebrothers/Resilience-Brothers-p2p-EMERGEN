@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
+import { validateCryptoHash, findNetwork } from "@/services/cryptoValidators";
 import { toast } from "sonner";
 import { Search } from "lucide-react";
 
@@ -331,14 +332,34 @@ export default function AdminWithdrawals() {
                       value={payoutHash}
                       onChange={(e) => setPayoutHash(e.target.value)}
                       placeholder={
-                        open.crypto_network === "TRC20"
-                          ? "TRC20 · 64 caracteres hex (ej. abc123...)"
-                          : open.crypto_network === "BEP20"
-                            ? "BEP20 · 0x + 64 caracteres hex"
-                            : "hash de la transacción on-chain"
+                        open.crypto_network
+                          ? findNetwork(open.crypto_network).hashPlaceholder
+                          : "hash de la transacción on-chain"
                       }
                       className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono text-xs"
                     />
+                    {/* iter55.19h — live tx_hash validation vs declared network */}
+                    {payoutHash && open.crypto_network && (
+                      validateCryptoHash(payoutHash, open.crypto_network) ? (
+                        <p
+                          data-testid="payout-hash-match-ok"
+                          className="text-[0.7rem] text-[#22C55E] mt-1.5 flex items-center gap-1.5"
+                        >
+                          <span aria-hidden>✓</span>
+                          <span>Hash compatible con <strong>{findNetwork(open.crypto_network).label}</strong></span>
+                        </p>
+                      ) : (
+                        <p
+                          data-testid="payout-hash-mismatch"
+                          className="text-[0.7rem] text-[#EF4444] mt-1.5 flex items-start gap-1.5 leading-relaxed"
+                        >
+                          <span aria-hidden className="mt-0.5">⚠</span>
+                          <span>
+                            <strong>No coincide con {findNetwork(open.crypto_network).label}</strong>. Revisa el hash pegado — probablemente lo copiaste del explorer equivocado.
+                          </span>
+                        </p>
+                      )
+                    )}
                     {open.payout_tx_hash && (
                       <div className="mt-2 flex items-center flex-wrap gap-2">
                         <ExplorerLink
