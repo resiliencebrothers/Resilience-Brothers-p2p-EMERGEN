@@ -5,6 +5,12 @@ import { useAuth } from "@/context/AuthContext";
 import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
+import {
+  ORDER_IN_FLIGHT,
+  ORDER_COMPLETED,
+  WITHDRAWAL_IN_FLIGHT,
+  WITHDRAWAL_COMPLETED,
+} from "@/constants/orderStatus";
 
 export default function OverviewView() {
   const { user } = useAuth();
@@ -28,29 +34,16 @@ export default function OverviewView() {
   const isStaff = user?.role === "admin" || user?.role === "employee";
   const isClient = user && !isStaff;
 
-  // iter55.22 / .25 — an order/withdrawal counts as "pendiente" for the
-  // client while the operation is not yet finalised, but the semantics of
-  // `approved` differ by type:
-  //   • orders.approved      = "Confirmado" (staff validated + paid) → NOT pending
-  //   • withdrawals.approved = "En progreso" for cash (approved but coins not
-  //                             handed out yet) → still pending
-  // If we lumped both together, a client with one confirmed order plus one
-  // pending order would see "PENDIENTES: 2" but only 1 row in the history
-  // — reported as a bug on 11 Feb 2026.
-  const ORDER_IN_FLIGHT = new Set(["pending", "requires_double_approval"]);
-  const WITHDRAWAL_IN_FLIGHT = new Set(["pending", "approved", "requires_double_approval"]);
-
+  // iter55.22 / .25 — status semantics are the single source of truth in
+  // src/constants/orderStatus.js so the dashboard counter and the
+  // /orders filter pills can't drift again (that drift caused the bug fixed
+  // in iter55.25 — "Pendientes: 2" showing when the table had 1 row).
   const pendingOrders = orders.filter(o => ORDER_IN_FLIGHT.has(o.status)).length;
   const pendingWithdrawals = withdrawals.filter(w => WITHDRAWAL_IN_FLIGHT.has(w.status)).length;
   const pending = pendingOrders + pendingWithdrawals;
 
-  // Completed = terminal successful state for each type.
-  //   • orders: delivered / completed / approved (Confirmado is a success)
-  //   • withdrawals: paid
-  const completedOrders = orders.filter(
-    o => o.status === "delivered" || o.status === "completed" || o.status === "approved"
-  ).length;
-  const completedWithdrawals = withdrawals.filter(w => w.status === "paid").length;
+  const completedOrders = orders.filter(o => ORDER_COMPLETED.has(o.status)).length;
+  const completedWithdrawals = withdrawals.filter(w => WITHDRAWAL_COMPLETED.has(w.status)).length;
   const approved = completedOrders + completedWithdrawals;
 
   return (

@@ -308,6 +308,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Cleanup post-testing (iter55.26b, Feb 2026) — the testing_agent (iteration_54.json) reported 100% pass + 3 non-blocking code review comments. Addressed 2 of them:
+  1. **Dead imports** in `pages/Dashboard.jsx` removed (`IdCard`, `ShieldCheck` — leftover from the iter55.26 sidebar cleanup).
+  2. **Extracted shared status constants** to `/app/frontend/src/constants/orderStatus.js` — single source of truth for `ORDER_IN_FLIGHT`, `ORDER_COMPLETED`, `WITHDRAWAL_IN_FLIGHT`, `WITHDRAWAL_COMPLETED`, `ORDER_FILTER_STATUSES`. Both `OverviewView.jsx` and `OrdersView.jsx` now import from this module. This eliminates the exact drift pattern that caused the iter55.25 bug (dashboard counter and orders filter had duplicated sets; a future change to one but not the other would re-introduce a mismatch). All sets are `Object.freeze`d to signal immutability.
+  3. **Not addressed**: the `type === "fiat"` speculative safety check on `isCashUsdDelivery` — kept simple since the only cash currency in production is USD, adding the check would gain nothing today.
+  - **Regression**: 16/16 tests pass (iter55.22 + 23 + 24 + 25). `yarn lint` still clean.
+  - **Deploy status of pending block**: iter55.24 (cash-USD floor) + 55.25 (counter fix) + 55.25b (deep-link pills) + 55.26 (sidebar reorder + Mi Perfil tabs) + 55.26b (this cleanup) are all **verified in preview via testing_agent (8/8 backend + 4/4 frontend E2E)** and waiting for the next production redeploy.
+
+
+
 - Nested "Verificación" + "Seguridad" under Mi Perfil (iter55.26, Feb 2026) — owner asked for two UX standard changes:
   1. **Mi Perfil leads the sidebar** — most users click their profile first.
   2. **Verificación (KYC) y Seguridad (2FA) belong inside Mi Perfil** — they're account settings, not top-level destinations.

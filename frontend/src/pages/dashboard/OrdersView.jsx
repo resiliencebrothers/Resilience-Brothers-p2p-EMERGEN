@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
+import { ORDER_FILTER_STATUSES } from "@/constants/orderStatus";
 
 const STATUS_STYLES = {
   pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
@@ -36,18 +37,10 @@ export default function OrdersView() {
     axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => setOrders(r.data));
   }, []);
 
-  const FILTER_STATUSES = {
-    all: null,
-    pending: ["pending", "requires_double_approval"],
-    completed: ["approved", "completed", "delivered"],
-    rejected: ["rejected"],
-  };
-
   const filteredOrders = useMemo(() => {
-    const statuses = FILTER_STATUSES[filter];
+    const statuses = ORDER_FILTER_STATUSES[filter];
     if (!statuses) return orders;
     return orders.filter((o) => statuses.includes(o.status));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders, filter]);
 
   const applyFilter = (next) => {
