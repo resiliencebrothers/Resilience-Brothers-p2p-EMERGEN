@@ -49,7 +49,7 @@ export default function OverviewView() {
   return (
     <div className="space-y-8" data-testid="overview-view">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Dashboard</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Dashboard</div>
         <h1 className="font-display text-3xl lg:text-4xl">Hola, {user?.name?.split(" ")[0]}.</h1>
         <p className="text-neutral-400 mt-2">
           {isVip ? "Cuenta VIP · Tasas preferenciales activas" : "Cuenta Estándar · Tasa según estatus"}
@@ -91,8 +91,8 @@ export default function OverviewView() {
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 tactile-card p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="font-display text-xl flex items-center gap-2"><TrendingUp className="w-5 h-5 text-[#EAB308]" /> Tasas Vigentes</h2>
-            <Link to="/dashboard/exchange" className="micro-label text-[#EAB308] hover:underline">Operar →</Link>
+            <h2 className="font-display text-xl flex items-center gap-2"><TrendingUp className="w-5 h-5 text-[#8B5CF6]" /> Tasas Vigentes</h2>
+            <Link to="/dashboard/exchange" className="micro-label text-[#8B5CF6] hover:underline">Operar →</Link>
           </div>
           <div className="space-y-2">
             {rates.length === 0 && <p className="text-neutral-500 text-sm">No hay tasas configuradas aún.</p>}
@@ -120,25 +120,25 @@ export default function OverviewView() {
         <div className="tactile-card p-6">
           <h2 className="font-display text-xl mb-4">Acciones Rápidas</h2>
           <div className="space-y-2">
-            <Link to="/dashboard/exchange" data-testid="quick-exchange" className="block border border-white/10 hover:border-[#EAB308] p-4 transition-colors group">
+            <Link to="/dashboard/exchange" data-testid="quick-exchange" className="block border border-white/10 hover:border-[#8B5CF6] p-4 transition-colors group">
               <div className="flex items-center justify-between">
                 <span className="font-medium">Nuevo Intercambio</span>
-                <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#EAB308]" />
+                <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#8B5CF6]" />
               </div>
               <div className="micro-label text-neutral-500 mt-1">Cripto ↔ Fiat</div>
             </Link>
-            <Link to="/dashboard/orders" data-testid="quick-orders" className="block border border-white/10 hover:border-[#EAB308] p-4 transition-colors group">
+            <Link to="/dashboard/orders" data-testid="quick-orders" className="block border border-white/10 hover:border-[#8B5CF6] p-4 transition-colors group">
               <div className="flex items-center justify-between">
                 <span className="font-medium">Ver Órdenes</span>
-                <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#EAB308]" />
+                <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#8B5CF6]" />
               </div>
               <div className="micro-label text-neutral-500 mt-1">Historial completo</div>
             </Link>
             {isClient && (
-              <Link to="/dashboard/marketplace" data-testid="quick-marketplace" className="block border border-white/10 hover:border-[#EAB308] p-4 transition-colors group">
+              <Link to="/dashboard/marketplace" data-testid="quick-marketplace" className="block border border-white/10 hover:border-[#8B5CF6] p-4 transition-colors group">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">Marketplace</span>
-                  <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#EAB308]" />
+                  <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#8B5CF6]" />
                 </div>
                 <div className="micro-label text-neutral-500 mt-1">Canjea tu saldo</div>
               </Link>
@@ -153,7 +153,7 @@ export default function OverviewView() {
 function StatCard({ icon: Icon, label, value, sub, to, testid }) {
   const body = (
     <>
-      <Icon className="w-5 h-5 text-[#EAB308] mb-3" />
+      <Icon className="w-5 h-5 text-[#8B5CF6] mb-3" />
       <div className="micro-label text-neutral-500">{label}</div>
       <div className="font-display text-2xl mt-1">{value}</div>
       <div className="text-xs text-neutral-500 mt-1">{sub}</div>
@@ -167,7 +167,7 @@ function StatCard({ icon: Icon, label, value, sub, to, testid }) {
       <Link
         to={to}
         data-testid={testid}
-        className="tactile-card p-5 block hover:border-[#EAB308]/50 hover:bg-white/[0.02] transition-colors focus:outline-none focus:ring-2 focus:ring-[#EAB308]/60"
+        className="tactile-card p-5 block hover:border-[#8B5CF6]/50 hover:bg-white/[0.02] transition-colors focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/60"
       >
         {body}
       </Link>

@@ -38,7 +38,7 @@ export function TransactionsTable({ items, loading, onRowClick }) {
                 key={`${it.ref_type}-${it.ref_id}`}
                 data-testid={`tx-row-${it.ref_id}`}
                 onClick={() => onRowClick(it)}
-                className="border-b border-white/5 hover:bg-[#EAB308]/5 cursor-pointer transition-colors"
+                className="border-b border-white/5 hover:bg-[#8B5CF6]/5 cursor-pointer transition-colors"
               >
                 <td className="px-3 py-2 font-mono text-xs text-neutral-400">
                   {new Date(it.created_at).toLocaleString()}
@@ -54,7 +54,7 @@ export function TransactionsTable({ items, loading, onRowClick }) {
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2 font-mono text-[#EAB308]">{it.currency}</td>
+                <td className="px-3 py-2 font-mono text-[#8B5CF6]">{it.currency}</td>
                 <td className="px-3 py-2 font-mono text-right">{it.amount.toLocaleString()}</td>
                 <td className="px-3 py-2">
                   {it.holder_name || <span className="text-neutral-600">—</span>}

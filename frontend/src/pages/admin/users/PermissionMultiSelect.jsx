@@ -38,7 +38,7 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
             className="rounded-none w-52 h-9 justify-between bg-[#0a0a0a] border border-white/10 hover:bg-[#1a1a1a] text-xs font-mono"
           >
             <span className="flex items-center gap-1.5">
-              <ShieldCheck className={`w-3 h-3 ${selectedSet.size === 0 ? "text-neutral-600" : "text-[#EAB308]"}`} />
+              <ShieldCheck className={`w-3 h-3 ${selectedSet.size === 0 ? "text-neutral-600" : "text-[#8B5CF6]"}`} />
               <span className={selectedSet.size === 0 ? "text-neutral-500" : "text-white"}>
                 {label}
               </span>
@@ -48,7 +48,7 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-80 p-0 bg-[#141414] border border-white/10 rounded-none text-white"
+          className="w-80 p-0 bg-[#141322] border border-white/10 rounded-none text-white"
         >
           <div className="px-3 py-2 micro-label text-neutral-500 border-b border-white/10">
             Selecciona funciones autorizadas
@@ -70,7 +70,7 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
                   <Checkbox
                     checked={isOn}
                     onCheckedChange={(v) => onToggle(p.code, !!v)}
-                    className="border-white/20 data-[state=checked]:bg-[#EAB308] data-[state=checked]:text-black mt-0.5"
+                    className="border-white/20 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:text-white mt-0.5"
                   />
                   <div className="flex-1">
                     <div className="text-xs font-semibold text-white">{p.label}</div>
@@ -96,7 +96,7 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
               size="sm"
               data-testid={`save-permissions-${userId}`}
               onClick={() => { setOpen(false); onSave(); }}
-              className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-8 text-xs"
+              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-8 text-xs"
             >
               Guardar
             </Button>

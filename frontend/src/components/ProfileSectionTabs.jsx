@@ -23,7 +23,7 @@ const TABS = [
 export default function ProfileSectionTabs() {
   return (
     <div className="mb-6" data-testid="profile-section-tabs">
-      <div className="micro-label text-[#EAB308] mb-2">/ Mi Perfil</div>
+      <div className="micro-label text-[#8B5CF6] mb-2">/ Mi Perfil</div>
       <div
         className="flex gap-1 border-b border-white/10 overflow-x-auto no-scrollbar"
         role="tablist"
@@ -39,7 +39,7 @@ export default function ProfileSectionTabs() {
             className={({ isActive }) =>
               "flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors " +
               (isActive
-                ? "border-[#EAB308] text-[#EAB308]"
+                ? "border-[#8B5CF6] text-[#8B5CF6]"
                 : "border-transparent text-neutral-400 hover:text-white hover:border-white/20")
             }
           >

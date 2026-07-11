@@ -14,9 +14,9 @@ const ACTION_BADGE = {
   "order.rejected": "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
   "order.completed": "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   "order.pending": "bg-neutral-700/40 text-neutral-400 border-neutral-700",
-  "rate.update": "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  "rate.update": "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
   "user.update": "bg-[#3B82F6]/10 text-[#3B82F6] border-[#3B82F6]/30",
-  "settings.update": "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  "settings.update": "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
 };
 
 const PAGE_SIZE = 50;
@@ -85,9 +85,9 @@ export default function AdminAudit() {
   return (
     <div className="space-y-6" data-testid="admin-audit">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Auditoría</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Auditoría</div>
         <h1 className="font-display text-3xl flex items-center gap-3">
-          <Shield className="w-8 h-8 text-[#EAB308]" /> Registro de Acciones
+          <Shield className="w-8 h-8 text-[#8B5CF6]" /> Registro de Acciones
         </h1>
         <p className="text-neutral-400 mt-2 text-sm">
           Trazabilidad completa: cada cambio de orden, tasa, usuario y configuración queda registrado con autor y momento exacto.
@@ -105,7 +105,7 @@ export default function AdminAudit() {
               <SelectTrigger data-testid="audit-action-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-52">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                 <SelectItem value="all">Todas las acciones</SelectItem>
                 <SelectItem value="order.approved">Órdenes aprobadas</SelectItem>
                 <SelectItem value="order.rejected">Órdenes rechazadas</SelectItem>
@@ -150,7 +150,7 @@ export default function AdminAudit() {
             <button
               data-testid="audit-clear-dates"
               onClick={clearDates}
-              className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10"
+              className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
             >
               limpiar fechas
             </button>
@@ -160,14 +160,14 @@ export default function AdminAudit() {
           <Button
             data-testid="audit-export-csv"
             onClick={() => downloadExport("csv")}
-            className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider"
+            className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider"
           >
             <Download className="w-3.5 h-3.5 mr-2" /> CSV
           </Button>
           <Button
             data-testid="audit-export-pdf"
             onClick={() => downloadExport("pdf")}
-            className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold"
+            className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold"
           >
             <FileText className="w-3.5 h-3.5 mr-2" /> PDF
           </Button>
@@ -260,7 +260,7 @@ function PermissionsCell({ effective, raw }) {
   const codes = Array.isArray(effective) ? effective : (raw || []);
   return (
     <span
-      className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 cursor-help"
+      className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 cursor-help"
       title={codes.join(" · ")}
       data-testid="audit-perms-scoped"
     >

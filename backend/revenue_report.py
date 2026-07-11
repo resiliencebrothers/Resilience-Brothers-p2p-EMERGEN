@@ -14,9 +14,9 @@ from reportlab.graphics.charts.lineplots import LinePlot
 from reportlab.graphics.widgets.markers import makeMarker
 
 
-BRAND_YELLOW = colors.HexColor("#EAB308")
-BG_DARK = colors.HexColor("#0A0A0A")
-PANEL = colors.HexColor("#141414")
+BRAND_PURPLE = colors.HexColor("#8B5CF6")
+BG_DARK = colors.HexColor("#0A0A0F")
+PANEL = colors.HexColor("#141322")
 BORDER = colors.HexColor("#2a2a2a")
 TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")
@@ -175,7 +175,7 @@ def _header_footer(canvas, doc):
     canvas.drawString(88, h - 42, "Ganancia mensual · Auditoría contable interna")
     canvas.drawRightString(w - 32, h - 28,
                             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-    canvas.setFillColor(BRAND_YELLOW)
+    canvas.setFillColor(BRAND_PURPLE)
     canvas.rect(0, h - 67, w, 2, fill=1, stroke=0)
     canvas.restoreState()
 
@@ -191,7 +191,7 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
     meta = ParagraphStyle("meta", parent=styles["Normal"],
                           fontName="Helvetica", fontSize=9, textColor=TEXT_MUTED)
     big = ParagraphStyle("big", parent=styles["Normal"],
-                         fontName="Helvetica-Bold", fontSize=14, textColor=BRAND_YELLOW)
+                         fontName="Helvetica-Bold", fontSize=14, textColor=BRAND_PURPLE)
 
     story = [
         Paragraph("Ganancia Mensual", title),
@@ -253,8 +253,8 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
     tbl2 = Table(data, colWidths=[1.1*inch, 0.7*inch, 1.1*inch, 0.9*inch,
                                     1.1*inch, 0.9*inch, 0.9*inch])
     tbl2.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), BRAND_YELLOW),
-        ("TEXTCOLOR", (0,0), (-1,0), BG_DARK),
+        ("BACKGROUND", (0,0), (-1,0), BRAND_PURPLE),
+        ("TEXTCOLOR", (0,0), (-1,0), TEXT),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
         ("BACKGROUND", (0,1), (-1,-1), PANEL),
         ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
@@ -307,7 +307,7 @@ def _revenue_chart(rows) -> Drawing:
     bar.categoryAxis.labels.fillColor = TEXT_MUTED
     bar.valueAxis.labels.fontSize = 6
     bar.valueAxis.labels.fillColor = TEXT_MUTED
-    bar.bars[0].fillColor = BRAND_YELLOW
+    bar.bars[0].fillColor = BRAND_PURPLE
     bar.bars[0].strokeColor = None
     bar.barWidth = max(2, (bar.width / max(1, len(daily))) * 0.6)
     bar.valueAxis.gridStrokeColor = BORDER
@@ -348,7 +348,7 @@ def _revenue_chart(rows) -> Drawing:
         d.add(line)
 
     # Legend
-    d.add(Rect(50, height - 18, 12, 6, fillColor=BRAND_YELLOW, strokeColor=None))
+    d.add(Rect(50, height - 18, 12, 6, fillColor=BRAND_PURPLE, strokeColor=None))
     d.add(String(66, height - 14, "Ganancia diaria",
                   fontSize=7, fillColor=TEXT_MUTED))
     d.add(Line(150, height - 15, 162, height - 15, strokeColor=GREEN, strokeWidth=1.5))

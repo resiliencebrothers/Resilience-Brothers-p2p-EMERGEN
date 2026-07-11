@@ -24,7 +24,7 @@ export function Pagination({ page, total, pageSize, loading = false, onPageChang
           data-testid={`${testidPrefix}-prev`}
           disabled={atFirst || loading}
           onClick={() => onPageChange(Math.max(0, page - 1))}
-          className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
+          className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
         >
           <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Anterior
         </Button>
@@ -38,7 +38,7 @@ export function Pagination({ page, total, pageSize, loading = false, onPageChang
           data-testid={`${testidPrefix}-next`}
           disabled={atLast || loading}
           onClick={() => onPageChange(page + 1)}
-          className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
+          className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 disabled:opacity-30 disabled:cursor-not-allowed text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
         >
           Siguiente <ChevronRight className="w-3.5 h-3.5 ml-1" />
         </Button>

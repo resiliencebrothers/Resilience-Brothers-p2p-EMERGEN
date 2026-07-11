@@ -37,7 +37,7 @@ export function RevenueByPairTable({ byPair, profitMarginPct, ordersTotal, fmt }
                 <td className="px-4 py-3 font-mono text-xs">
                   <div>
                     {p.rate_normal} /{" "}
-                    <span className="text-[#EAB308]">{p.rate_vip}</span> /{" "}
+                    <span className="text-[#8B5CF6]">{p.rate_vip}</span> /{" "}
                     <span className="text-[#22C55E]">{p.real_rate}</span>
                   </div>
                 </td>

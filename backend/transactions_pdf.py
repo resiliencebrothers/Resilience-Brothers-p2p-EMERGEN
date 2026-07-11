@@ -9,9 +9,9 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 
-BRAND_YELLOW = colors.HexColor("#EAB308")
-BG_DARK = colors.HexColor("#0A0A0A")
-PANEL = colors.HexColor("#141414")
+BRAND_PURPLE = colors.HexColor("#8B5CF6")
+BG_DARK = colors.HexColor("#0A0A0F")
+PANEL = colors.HexColor("#141322")
 BORDER = colors.HexColor("#2a2a2a")
 TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")
@@ -40,7 +40,7 @@ def _header_footer(canvas, doc):
     canvas.setFillColor(TEXT_MUTED)
     canvas.setFont("Helvetica", 7)
     canvas.drawString(88, h - 42, "Registro de Transacciones — Contabilidad")
-    canvas.setFillColor(BRAND_YELLOW)
+    canvas.setFillColor(BRAND_PURPLE)
     canvas.setFont("Helvetica-Bold", 10)
     canvas.drawRightString(w - 36, h - 28, "TRANSACCIONES")
     canvas.setFillColor(TEXT_MUTED)
@@ -88,7 +88,7 @@ def _build_totals_paragraph(totals: dict, style: ParagraphStyle) -> Paragraph | 
         net = in_amt - out_amt
         net_color = "#22C55E" if net >= 0 else "#EF4444"
         lines.append(
-            f"<font color='#EAB308'><b>{code}</b></font>: "
+            f"<font color='#8B5CF6'><b>{code}</b></font>: "
             f"Entradas <font color='#22C55E'>+{in_amt:,.2f}</font> · "
             f"Salidas <font color='#EF4444'>-{out_amt:,.2f}</font> · "
             f"Neto <font color='{net_color}'><b>{net:+,.2f}</b></font>"
@@ -129,7 +129,7 @@ def _build_transactions_table(entries: list) -> Table:
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
     style: list = [
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_YELLOW),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
@@ -160,7 +160,7 @@ def generate_transactions_pdf(entries: list, filters: dict, totals: dict) -> byt
     )
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT, fontSize=20, leading=22, fontName="Helvetica-Bold", spaceAfter=4)
-    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_YELLOW, fontSize=8, leading=10, fontName="Helvetica-Bold", spaceAfter=2)
+    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_PURPLE, fontSize=8, leading=10, fontName="Helvetica-Bold", spaceAfter=2)
     sub = ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=9, leading=12, spaceAfter=10)
     totals_style = ParagraphStyle('totals', parent=styles['Normal'], textColor=TEXT, fontSize=10, leading=14, spaceAfter=14)
 
@@ -173,7 +173,7 @@ def generate_transactions_pdf(entries: list, filters: dict, totals: dict) -> byt
     if totals_para is not None:
         story.append(totals_para)
     story.append(Paragraph(
-        f"Total de transacciones: <font color='#EAB308'><b>{len(entries)}</b></font>",
+        f"Total de transacciones: <font color='#8B5CF6'><b>{len(entries)}</b></font>",
         sub,
     ))
     story.append(_build_transactions_table(entries))

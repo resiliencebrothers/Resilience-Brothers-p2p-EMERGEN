@@ -52,7 +52,7 @@ export default function Dashboard() {
 
   const navLinkClass = ({ isActive }) =>
     `flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
-      isActive ? "bg-[#EAB308] text-black font-semibold" : "text-neutral-400 hover:bg-white/5 hover:text-white"
+      isActive ? "bg-[#8B5CF6] text-white font-semibold" : "text-neutral-400 hover:bg-white/5 hover:text-white"
     }`;
 
   const renderNavLinks = (onItemClick) => (
@@ -74,7 +74,7 @@ export default function Dashboard() {
         <button
           data-testid="nav-admin"
           onClick={() => { onItemClick?.(); navigate("/admin"); }}
-          className="w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors mt-4 border border-[#EAB308]/40 text-[#EAB308] hover:bg-[#EAB308]/10"
+          className="w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors mt-4 border border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10"
         >
           <Shield className="w-4 h-4" />
           {user?.role === "admin" ? "Panel Admin" : "Panel Equipo"}
@@ -111,7 +111,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white flex">
+    <div className="min-h-screen bg-[#0A0A0F] text-white flex">
       <OnboardingDialog open={showOnboarding} onClose={() => setShowOnboarding(false)} />
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
@@ -133,7 +133,7 @@ export default function Dashboard() {
             <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
             <span className="font-display text-sm">RESILIENCE</span>
             {isStaff && (
-              <span className="micro-label text-[#EAB308] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
+              <span className="micro-label text-[#8B5CF6] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -142,7 +142,7 @@ export default function Dashboard() {
             <SheetTrigger asChild>
               <button
                 data-testid="dashboard-mobile-menu-trigger"
-                className="flex items-center gap-2 border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#EAB308] px-3 py-1.5 text-xs uppercase tracking-wider font-mono"
+                className="flex items-center gap-2 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6] px-3 py-1.5 text-xs uppercase tracking-wider font-mono"
               >
                 <Menu className="w-4 h-4" /> Menú
               </button>
@@ -176,11 +176,11 @@ export default function Dashboard() {
           {user?.account_status === "under_review" && user?.role !== "admin" && user?.role !== "employee" && (
             <div
               data-testid="under-review-banner"
-              className="mb-6 border-l-4 border-[#EAB308] bg-[#EAB308]/5 px-4 py-3 text-sm text-[#FEF3C7] flex items-start gap-3"
+              className="mb-6 border-l-4 border-[#8B5CF6] bg-[#8B5CF6]/5 px-4 py-3 text-sm text-[#FEF3C7] flex items-start gap-3"
             >
               <span className="text-2xl leading-none">⚠️</span>
               <div>
-                <div className="font-semibold text-[#EAB308] uppercase tracking-wider text-xs mb-1">Cuenta bajo revisión</div>
+                <div className="font-semibold text-[#8B5CF6] uppercase tracking-wider text-xs mb-1">Cuenta bajo revisión</div>
                 <p className="text-neutral-300 text-xs leading-relaxed">
                   Tu cuenta aún no está activa. Un miembro del staff debe verificar tu teléfono antes de que puedas operar (intercambios, retiros y canjes están temporalmente deshabilitados).
                   Si llevas más de 24h esperando, contacta a soporte por WhatsApp.

@@ -59,13 +59,13 @@ export default function OnboardingDialog({ open, onClose }) {
         <DialogTitle className="sr-only">{slide.title}</DialogTitle>
         <DialogDescription className="sr-only">{slide.body}</DialogDescription>
 
-        <div className="relative h-64 bg-gradient-to-br from-[#EAB308]/15 via-[#141414] to-[#0a0a0a] flex items-center justify-center border-b border-white/10">
+        <div className="relative h-64 bg-gradient-to-br from-[#8B5CF6]/15 via-[#141322] to-[#0a0a0a] flex items-center justify-center border-b border-white/10">
           <div className="absolute inset-0 opacity-[0.04] pointer-events-none" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, #FFF 1px, transparent 0)", backgroundSize: "16px 16px" }} />
-          <Icon className="w-24 h-24 text-[#EAB308]" strokeWidth={1.2} />
+          <Icon className="w-24 h-24 text-[#8B5CF6]" strokeWidth={1.2} />
         </div>
 
         <div className="p-8 pb-6">
-          <div className="micro-label text-[#EAB308] mb-3">/ {slide.eyebrow}</div>
+          <div className="micro-label text-[#8B5CF6] mb-3">/ {slide.eyebrow}</div>
           <h2 className="font-display text-3xl mb-3 leading-tight" data-testid={`onboarding-title-${idx}`}>{slide.title}</h2>
           <p className="text-neutral-400 text-sm leading-relaxed mb-6">{slide.body}</p>
 
@@ -77,7 +77,7 @@ export default function OnboardingDialog({ open, onClose }) {
                 type="button"
                 aria-label={`Ir a paso ${i + 1}`}
                 onClick={() => setIdx(i)}
-                className={`h-1.5 transition-all ${i === idx ? "w-8 bg-[#EAB308]" : "w-1.5 bg-white/20 hover:bg-white/40"}`}
+                className={`h-1.5 transition-all ${i === idx ? "w-8 bg-[#8B5CF6]" : "w-1.5 bg-white/20 hover:bg-white/40"}`}
               />
             ))}
           </div>
@@ -111,7 +111,7 @@ export default function OnboardingDialog({ open, onClose }) {
                 data-testid={isLast ? "onboarding-finish-btn" : "onboarding-next-btn"}
                 onClick={() => (isLast ? finish() : setIdx(idx + 1))}
                 disabled={saving}
-                className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-10 px-5"
+                className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-10 px-5"
               >
                 {isLast ? (saving ? "..." : "Empezar a operar →") : "Siguiente"}
               </Button>

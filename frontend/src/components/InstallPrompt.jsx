@@ -58,7 +58,7 @@ export default function InstallPrompt() {
   return (
     <div
       data-testid="install-prompt"
-      className="fixed bottom-4 left-4 right-4 sm:left-auto sm:bottom-6 sm:right-6 sm:max-w-sm z-50 glass-panel border border-[#EAB308]/40 p-4 shadow-2xl"
+      className="fixed bottom-4 left-4 right-4 sm:left-auto sm:bottom-6 sm:right-6 sm:max-w-sm z-50 glass-panel border border-[#8B5CF6]/40 p-4 shadow-2xl"
     >
       <button
         data-testid="install-dismiss"
@@ -69,9 +69,9 @@ export default function InstallPrompt() {
         <X className="w-4 h-4" />
       </button>
       <div className="flex items-start gap-3 pr-6">
-        <div className="w-10 h-10 bg-[#EAB308] flex items-center justify-center font-display text-black shrink-0">RB</div>
+        <div className="w-10 h-10 bg-[#8B5CF6] flex items-center justify-center font-display text-white shrink-0">RB</div>
         <div className="min-w-0">
-          <div className="micro-label text-[#EAB308] mb-1">INSTALAR APP</div>
+          <div className="micro-label text-[#8B5CF6] mb-1">INSTALAR APP</div>
           <p className="text-sm text-white leading-snug">
             {iosHint ? (
               <>Toca <span className="font-mono">Compartir</span> → <span className="font-mono">Añadir a pantalla de inicio</span> para usar Resilience como app.</>
@@ -83,7 +83,7 @@ export default function InstallPrompt() {
             <button
               data-testid="install-trigger"
               onClick={install}
-              className="mt-3 inline-flex items-center gap-2 bg-[#EAB308] hover:bg-[#FACC15] text-black font-semibold px-4 py-2 text-sm"
+              className="mt-3 inline-flex items-center gap-2 bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold px-4 py-2 text-sm"
             >
               <Download className="w-4 h-4" /> Instalar app
             </button>

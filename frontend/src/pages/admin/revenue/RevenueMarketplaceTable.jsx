@@ -6,7 +6,7 @@ export function RevenueMarketplaceTable({ marketplace, fmt }) {
       <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="font-display text-lg flex items-center gap-2">
-            <Boxes className="w-5 h-5 text-[#EAB308]" /> Ganancia del Marketplace
+            <Boxes className="w-5 h-5 text-[#8B5CF6]" /> Ganancia del Marketplace
           </h2>
           <p className="text-xs text-neutral-500 mt-1">
             Solo redenciones entregadas (status=delivered).

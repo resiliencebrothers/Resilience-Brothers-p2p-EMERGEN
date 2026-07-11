@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useNotifications } from "@/hooks/useNotifications";
 
 const TYPE_ICON = {
-  new_user_pending: { Icon: UserCheck, color: "text-[#EAB308]" },
+  new_user_pending: { Icon: UserCheck, color: "text-[#8B5CF6]" },
   phone_verified: { Icon: UserCheck, color: "text-[#22C55E]" },
   phone_rejected: { Icon: UserX, color: "text-[#EF4444]" },
   info: { Icon: BellRing, color: "text-neutral-400" },
@@ -50,14 +50,14 @@ function NotificationRow({ item, onClick, onDelete }) {
               rel="noopener noreferrer"
               data-testid={`notification-explorer-${item.id}`}
               onClick={(e) => e.stopPropagation()}
-              className="mt-2 inline-flex items-center gap-1 text-[0.65rem] font-mono uppercase tracking-wider text-[#EAB308] hover:text-[#FACC15] hover:underline"
+              className="mt-2 inline-flex items-center gap-1 text-[0.65rem] font-mono uppercase tracking-wider text-[#8B5CF6] hover:text-[#A78BFA] hover:underline"
             >
               <ExternalLink className="w-3 h-3" />
               <span>Verificar en {network || "explorer"}</span>
             </a>
           )}
         </div>
-        {!item.read && <span className="w-2 h-2 rounded-full bg-[#EAB308] mt-1.5 flex-shrink-0" />}
+        {!item.read && <span className="w-2 h-2 rounded-full bg-[#8B5CF6] mt-1.5 flex-shrink-0" />}
       </button>
       <button
         type="button"
@@ -137,7 +137,7 @@ export default function NotificationBell() {
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-[380px] p-0 bg-[#0A0A0A] border-white/10 text-white rounded-none"
+        className="w-[380px] p-0 bg-[#0A0A0F] border-white/10 text-white rounded-none"
         data-testid="notifications-popover"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 gap-2">
@@ -151,7 +151,7 @@ export default function NotificationBell() {
                 type="button"
                 data-testid="mark-all-read-btn"
                 onClick={markAllRead}
-                className="text-[0.65rem] uppercase tracking-widest text-[#EAB308] hover:text-[#FACC15] flex items-center gap-1"
+                className="text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] flex items-center gap-1"
               >
                 <CheckCheck className="w-3 h-3" /> Marcar todo
               </button>

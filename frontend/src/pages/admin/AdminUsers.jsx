@@ -53,7 +53,7 @@ function renderUserBalance(u) {
     <span className="inline-flex flex-col" data-testid={`user-balance-${u.user_id}`}>
       <span className="text-xs text-neutral-300">{parts.join(" · ")}</span>
       {totalUsdt > 0 && (
-        <span className="text-[0.65rem] text-[#EAB308] font-mono">
+        <span className="text-[0.65rem] text-[#8B5CF6] font-mono">
           ≈ {totalUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
         </span>
       )}
@@ -244,7 +244,7 @@ export default function AdminUsers() {
   return (
     <div data-testid="admin-users" className="space-y-4">
       <div className="mb-6">
-        <div className="micro-label text-[#EAB308] mb-2">/ Usuarios</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Usuarios</div>
         <h1 className="font-display text-3xl">Gestión de Clientes</h1>
       </div>
 
@@ -271,7 +271,7 @@ export default function AdminUsers() {
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todos los roles</SelectItem>
               <SelectItem value="normal">Cliente Normal</SelectItem>
               <SelectItem value="vip">VIP</SelectItem>
@@ -284,7 +284,7 @@ export default function AdminUsers() {
           <button
             data-testid="users-clear-search"
             onClick={() => { setSearchInput(""); setRoleFilter("all"); }}
-            className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10"
+            className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
           >
             limpiar filtros
           </button>
@@ -342,7 +342,7 @@ export default function AdminUsers() {
                           type="button"
                           data-testid={`verify-email-btn-${u.user_id}`}
                           onClick={() => verifyEmailManually(u.user_id, u.email)}
-                          className="text-[0.65rem] uppercase tracking-widest text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4"
+                          className="text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-4"
                           title="Marcar este email como verificado manualmente (requiere 2FA)"
                         >
                           Verificar
@@ -363,7 +363,7 @@ export default function AdminUsers() {
                     >
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                    <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                       {allowedRoles.map(role => (
                         <SelectItem key={role} value={role}>
                           {ROLE_LABELS[role] || role}
@@ -387,7 +387,7 @@ export default function AdminUsers() {
                       <button
                         type="button"
                         onClick={() => setLedgerUser(u)}
-                        className="text-neutral-500 hover:text-[#EAB308] transition-colors p-0.5"
+                        className="text-neutral-500 hover:text-[#8B5CF6] transition-colors p-0.5"
                         title="Ver auditoría de saldo (qué órdenes contribuyeron)"
                         data-testid={`open-ledger-${u.user_id}`}
                       >
@@ -473,7 +473,7 @@ export default function AdminUsers() {
                       onToggle={(perm, value) => saveMarketPerm(u.user_id, perm, value)}
                     />
                   ) : u.role === "admin" ? (
-                    <span className="text-[0.65rem] text-[#EAB308] uppercase tracking-widest">
+                    <span className="text-[0.65rem] text-[#8B5CF6] uppercase tracking-widest">
                       acceso total
                     </span>
                   ) : (

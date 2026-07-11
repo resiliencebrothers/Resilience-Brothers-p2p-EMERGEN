@@ -14,7 +14,7 @@ export function VipLedgerDialog({ open, onOpenChange, currency, bucket }) {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <History className="w-5 h-5 text-[#EAB308]" />
+            <History className="w-5 h-5 text-[#8B5CF6]" />
             Órdenes que acreditaron {currency}
           </DialogTitle>
         </DialogHeader>
@@ -25,9 +25,9 @@ export function VipLedgerDialog({ open, onOpenChange, currency, bucket }) {
             </p>
           ) : (
             <>
-              <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 p-3 flex justify-between items-baseline">
+              <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-3 flex justify-between items-baseline">
                 <span className="text-xs text-neutral-400">Total acreditado:</span>
-                <span className="font-mono text-lg text-[#EAB308]">
+                <span className="font-mono text-lg text-[#8B5CF6]">
                   {bucket.total.toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
                 </span>
               </div>

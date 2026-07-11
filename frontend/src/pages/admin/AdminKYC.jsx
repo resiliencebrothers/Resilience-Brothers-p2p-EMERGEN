@@ -119,7 +119,7 @@ export default function AdminKYC() {
       {/* HEADER */}
       <header>
         <h1 className="text-3xl font-bold flex items-center gap-3">
-          <IdCard className="w-8 h-8 text-[#EAB308]" />
+          <IdCard className="w-8 h-8 text-[#8B5CF6]" />
           Verificación de identidad (KYC)
         </h1>
         <p className="text-sm text-neutral-500 mt-1">
@@ -144,7 +144,7 @@ export default function AdminKYC() {
         <Tabs value={tab} onValueChange={setTab} className="w-full md:w-auto">
           <TabsList className="bg-black/40 border border-white/10">
             {STATUS_TABS.map(({ key, label, icon: Icon }) => (
-              <TabsTrigger key={key} value={key} data-testid={`kyc-tab-${key}`} className="data-[state=active]:bg-[#EAB308] data-[state=active]:text-black text-xs">
+              <TabsTrigger key={key} value={key} data-testid={`kyc-tab-${key}`} className="data-[state=active]:bg-[#8B5CF6] data-[state=active]:text-white text-xs">
                 <Icon className="w-3.5 h-3.5 mr-1.5" /> {label}
               </TabsTrigger>
             ))}
@@ -210,7 +210,7 @@ export default function AdminKYC() {
                 <DialogTitle className="text-white flex items-center gap-2">
                   {action === "approve" && <><CheckCircle2 className="w-5 h-5 text-emerald-400" /> Aprobar verificación</>}
                   {action === "reject" && <><XCircle className="w-5 h-5 text-[#EF4444]" /> Rechazar verificación</>}
-                  {action === "more_info" && <><Info className="w-5 h-5 text-[#EAB308]" /> Pedir más información</>}
+                  {action === "more_info" && <><Info className="w-5 h-5 text-[#8B5CF6]" /> Pedir más información</>}
                 </DialogTitle>
                 <DialogDescription className="text-neutral-500">
                   Cliente: <span className="text-white">{selected.user_name}</span> · {selected.user_email}
@@ -296,7 +296,7 @@ export default function AdminKYC() {
                   className={
                     action === "approve" ? "bg-emerald-500 text-black hover:bg-emerald-500/90" :
                     action === "reject" ? "bg-[#EF4444] text-white hover:bg-[#EF4444]/90" :
-                    "bg-[#EAB308] text-black hover:bg-[#EAB308]/90"
+                    "bg-[#8B5CF6] text-white hover:bg-[#8B5CF6]/90"
                   }
                 >
                   {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -314,7 +314,7 @@ export default function AdminKYC() {
 function FunnelCard({ label, value, icon: Icon, tone, testid }) {
   const toneClasses = {
     neutral: "border-white/10 bg-black/30 text-white",
-    warn: "border-[#EAB308]/40 bg-[#EAB308]/5 text-[#FEF3C7]",
+    warn: "border-[#8B5CF6]/40 bg-[#8B5CF6]/5 text-[#FEF3C7]",
     danger: "border-[#EF4444]/40 bg-[#EF4444]/5 text-[#FEE2E2]",
     ok: "border-emerald-500/40 bg-emerald-500/5 text-emerald-200",
     muted: "border-white/5 bg-black/20 text-neutral-400",
@@ -332,12 +332,12 @@ function FunnelCard({ label, value, icon: Icon, tone, testid }) {
 
 function VerificationRow({ v, onAction }) {
   const statusStyle = {
-    pending: "border-[#EAB308]/40 bg-[#EAB308]/5",
+    pending: "border-[#8B5CF6]/40 bg-[#8B5CF6]/5",
     needs_more_info: "border-blue-500/40 bg-blue-500/5",
     verified: "border-emerald-500/40 bg-emerald-500/5",
     rejected: "border-neutral-500/30 bg-neutral-500/5",
   }[v.status];
-  const riskColor = v.risk_score >= 60 ? "text-[#EF4444]" : v.risk_score >= 30 ? "text-[#EAB308]" : "text-emerald-400";
+  const riskColor = v.risk_score >= 60 ? "text-[#EF4444]" : v.risk_score >= 30 ? "text-[#8B5CF6]" : "text-emerald-400";
 
   return (
     <div className={`border ${statusStyle} p-4`} data-testid={`kyc-row-${v.id}`}>
@@ -393,7 +393,7 @@ function VerificationRow({ v, onAction }) {
               size="sm"
               variant="outline"
               onClick={() => onAction(v, "more_info")}
-              className="border-[#EAB308]/40 text-[#EAB308] hover:bg-[#EAB308]/10 h-8"
+              className="border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 h-8"
             >
               <Info className="w-3.5 h-3.5 mr-1" /> Más info
             </Button>

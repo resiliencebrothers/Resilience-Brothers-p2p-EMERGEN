@@ -26,9 +26,9 @@ from reportlab.platypus import (
 )
 
 
-BRAND_YELLOW = colors.HexColor("#EAB308")
-BG_DARK = colors.HexColor("#0A0A0A")
-PANEL = colors.HexColor("#141414")
+BRAND_PURPLE = colors.HexColor("#8B5CF6")
+BG_DARK = colors.HexColor("#0A0A0F")
+PANEL = colors.HexColor("#141322")
 BORDER = colors.HexColor("#2a2a2a")
 TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")
@@ -61,7 +61,7 @@ def _header_footer(canvas, doc):
     canvas.setFillColor(TEXT_MUTED)
     canvas.setFont("Helvetica", 7)
     canvas.drawString(88, h - 42, "Reporte mensual de auditoría — uso interno")
-    canvas.setFillColor(BRAND_YELLOW)
+    canvas.setFillColor(BRAND_PURPLE)
     canvas.setFont("Helvetica-Bold", 10)
     canvas.drawRightString(w - 36, h - 28, "AUDIT · MENSUAL")
     canvas.setFillColor(TEXT_MUTED)
@@ -81,7 +81,7 @@ def _header_footer(canvas, doc):
 
 def _kpi_card(label: str, value: str, styles) -> Table:
     """Small stacked card (label above value) used in the summary strip."""
-    label_p = Paragraph(f"<font color='#EAB308'>{label}</font>", styles["kpi_label"])
+    label_p = Paragraph(f"<font color='#8B5CF6'>{label}</font>", styles["kpi_label"])
     value_p = Paragraph(f"<font color='#FFFFFF'>{value}</font>", styles["kpi_value"])
     inner = Table([[label_p], [value_p]], colWidths=[2.4 * inch])
     inner.setStyle(TableStyle([
@@ -164,7 +164,7 @@ def _table_anti_fraud(kpis: Dict[str, Any], styles) -> Table:
 def _summary_table_style() -> TableStyle:
     return TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_YELLOW),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
@@ -226,7 +226,7 @@ def _build_detail_table(entries: List[dict]) -> Table:
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_YELLOW),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
@@ -252,10 +252,10 @@ def _build_styles():
     return {
         "h1": ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT,
                              fontSize=22, leading=24, fontName="Helvetica-Bold", spaceAfter=4),
-        "h2": ParagraphStyle('h2', parent=styles['Heading2'], textColor=BRAND_YELLOW,
+        "h2": ParagraphStyle('h2', parent=styles['Heading2'], textColor=BRAND_PURPLE,
                              fontSize=11, leading=14, fontName="Helvetica-Bold", spaceBefore=8,
                              spaceAfter=6),
-        "label": ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_YELLOW,
+        "label": ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_PURPLE,
                                 fontSize=8, leading=10, fontName="Helvetica-Bold", spaceAfter=2),
         "sub": ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED,
                               fontSize=9, leading=12, spaceAfter=14),
@@ -283,8 +283,8 @@ def generate_monthly_audit_pdf(entries: List[dict], period_label: str,
     story.append(Paragraph(f"Auditoría · {period_label}", S["h1"]))
     story.append(Paragraph(
         f"Total de acciones registradas en el período: "
-        f"<font color='#EAB308'><b>{kpis.get('total_actions', 0)}</b></font> · "
-        f"Actores distintos: <font color='#EAB308'><b>{kpis.get('distinct_actors', 0)}</b></font>",
+        f"<font color='#8B5CF6'><b>{kpis.get('total_actions', 0)}</b></font> · "
+        f"Actores distintos: <font color='#8B5CF6'><b>{kpis.get('distinct_actors', 0)}</b></font>",
         S["sub"],
     ))
 

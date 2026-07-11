@@ -6,7 +6,7 @@
 
 body {
     margin: 0;
-    background: #0A0A0A;
+    background: #0A0A0F;
     color: #FFFFFF;
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -14,8 +14,8 @@ body {
 }
 
 ::selection {
-    background: #EAB308;
-    color: #000;
+    background: #8B5CF6;
+    color: #FFF;
 }
 
 ::-webkit-scrollbar {
@@ -23,14 +23,14 @@ body {
     height: 10px;
 }
 ::-webkit-scrollbar-track {
-    background: #0A0A0A;
+    background: #0A0A0F;
 }
 ::-webkit-scrollbar-thumb {
-    background: #2a2a2a;
+    background: #2a2436;
     border-radius: 0;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: #3a3a3a;
+    background: #3a3348;
 }
 
 .font-display {
@@ -58,16 +58,20 @@ body {
 }
 
 .tactile-card {
-    background: #141414;
+    background: #141322;
     border: 1px solid rgba(255, 255, 255, 0.08);
     transition: border-color 0.2s ease, transform 0.2s ease;
 }
 .tactile-card:hover {
-    border-color: rgba(234, 179, 8, 0.4);
+    border-color: rgba(139, 92, 246, 0.4);
 }
 
 .glow-yellow {
-    box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.5), 0 8px 32px rgba(234, 179, 8, 0.15);
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.5), 0 8px 32px rgba(139, 92, 246, 0.15);
+}
+
+.glow-purple {
+    box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.5), 0 8px 32px rgba(139, 92, 246, 0.15);
 }
 
 .grain-overlay {
@@ -101,25 +105,25 @@ body {
 
 @layer base {
     :root {
-        --background: 0 0% 4%;
+        --background: 249 22% 4%;
         --foreground: 0 0% 100%;
-        --card: 0 0% 8%;
+        --card: 250 18% 11%;
         --card-foreground: 0 0% 100%;
-        --popover: 0 0% 6%;
+        --popover: 250 20% 8%;
         --popover-foreground: 0 0% 100%;
-        --primary: 47 96% 53%;
-        --primary-foreground: 0 0% 0%;
-        --secondary: 0 0% 12%;
+        --primary: 258 90% 66%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 250 15% 14%;
         --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 12%;
+        --muted: 250 15% 14%;
         --muted-foreground: 0 0% 65%;
-        --accent: 47 96% 53%;
-        --accent-foreground: 0 0% 0%;
+        --accent: 258 90% 66%;
+        --accent-foreground: 0 0% 100%;
         --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 100%;
-        --border: 0 0% 14%;
-        --input: 0 0% 14%;
-        --ring: 47 96% 53%;
+        --border: 250 15% 18%;
+        --input: 250 15% 18%;
+        --ring: 258 90% 66%;
         --radius: 0.25rem;
     }
 }

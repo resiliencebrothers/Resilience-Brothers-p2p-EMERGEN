@@ -173,14 +173,14 @@ export default function BalanceConverterCard({ onConverted }) {
     <div className="tactile-card p-6" data-testid="balance-converter-card">
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-display text-xl flex items-center gap-2">
-          <ArrowRightLeft className="w-5 h-5 text-[#EAB308]" />
+          <ArrowRightLeft className="w-5 h-5 text-[#8B5CF6]" />
           Convertir Saldos
         </h2>
         <div
           className="text-xs text-neutral-500"
           data-testid="balance-converter-total"
         >
-          Total ≈ <span className="text-[#EAB308] font-mono">
+          Total ≈ <span className="text-[#8B5CF6] font-mono">
             {(balances.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
           </span>
         </div>
@@ -193,7 +193,7 @@ export default function BalanceConverterCard({ onConverted }) {
       {positive.length > 3 && (
         <button
           onClick={() => setShowAll(!showAll)}
-          className="text-xs text-neutral-400 hover:text-[#EAB308] mt-3 flex items-center gap-1 transition-colors mx-auto"
+          className="text-xs text-neutral-400 hover:text-[#8B5CF6] mt-3 flex items-center gap-1 transition-colors mx-auto"
           data-testid="balance-converter-show-all"
         >
           {showAll ? "Mostrar menos" : `Ver todas (${positive.length})`}
@@ -209,7 +209,7 @@ export default function BalanceConverterCard({ onConverted }) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2" data-testid="converter-dialog-title">
               Convertir {fromCode}
-              <ArrowRightLeft className="w-4 h-4 text-[#EAB308]" />
+              <ArrowRightLeft className="w-4 h-4 text-[#8B5CF6]" />
               {toCode}
             </DialogTitle>
             <DialogDescription className="text-neutral-400 text-xs">
@@ -258,7 +258,7 @@ export default function BalanceConverterCard({ onConverted }) {
                 />
                 <Button
                   variant="ghost"
-                  className="text-xs text-[#EAB308] h-12 rounded-none px-3 hover:bg-[#EAB308]/10"
+                  className="text-xs text-[#8B5CF6] h-12 rounded-none px-3 hover:bg-[#8B5CF6]/10"
                   onClick={() => {
                     const b = positive.find((x) => x.currency === fromCode);
                     if (b) setAmount(String(b.amount));
@@ -287,7 +287,7 @@ export default function BalanceConverterCard({ onConverted }) {
               data-testid="confirm-converter"
               onClick={submit}
               disabled={busy || !amount || previewRate === null || belowMinNet}
-              className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12 flex items-center justify-center gap-2"
+              className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 flex items-center justify-center gap-2"
             >
               <ArrowRightLeft className="w-4 h-4" />
               {busy ? "Convirtiendo..." : "Confirmar conversión"}

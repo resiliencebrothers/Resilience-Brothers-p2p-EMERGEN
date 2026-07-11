@@ -60,7 +60,7 @@ export default function CopyableText({
         data-testid={testid}
         title={copied ? "¡Copiado!" : label}
         aria-label={label}
-        className="flex-shrink-0 w-6 h-6 inline-flex items-center justify-center text-neutral-500 hover:text-[#EAB308] hover:bg-[#EAB308]/10 border border-transparent hover:border-[#EAB308]/30 transition-colors"
+        className="flex-shrink-0 w-6 h-6 inline-flex items-center justify-center text-neutral-500 hover:text-[#8B5CF6] hover:bg-[#8B5CF6]/10 border border-transparent hover:border-[#8B5CF6]/30 transition-colors"
       >
         {copied ? (
           <Check className="w-3.5 h-3.5 text-[#22C55E]" />

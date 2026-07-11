@@ -6,7 +6,7 @@ export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend,
     <div className="tactile-card overflow-hidden" data-testid="revenue-monthly-card">
       <div className="px-6 py-4 border-b border-white/10">
         <h2 className="font-display text-lg flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-[#EAB308]" /> Registro Mensual
+          <Calendar className="w-5 h-5 text-[#8B5CF6]" /> Registro Mensual
         </h2>
         <p className="text-xs text-neutral-500 mt-1">
           Descarga el detalle diario de cada mes en CSV o PDF.
@@ -68,7 +68,7 @@ export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend,
                       data-testid={`export-pdf-${m.bucket}`}
                       disabled={exporting === `${m.bucket}-pdf`}
                       onClick={() => onDownload(m.bucket, "pdf")}
-                      className="rounded-none bg-[#EAB308] hover:bg-[#FACC15] text-black h-8 text-xs"
+                      className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white h-8 text-xs"
                     >
                       <Download className="w-3 h-3 mr-1" /> PDF
                     </Button>

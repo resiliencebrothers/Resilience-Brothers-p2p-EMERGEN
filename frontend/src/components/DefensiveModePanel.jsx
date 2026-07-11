@@ -107,7 +107,7 @@ export default function DefensiveModePanel() {
 
       {/* ENABLE DIALOG — requires reason */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-[#0A0A0A] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#0A0A0F] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl flex items-center gap-2">
               <ShieldAlert className="w-6 h-6 text-[#EF4444]" /> Activar Modo Defensivo
@@ -177,7 +177,7 @@ export function DefensiveBanner() {
     <div
       data-testid="defensive-banner"
       role="status"
-      className="bg-[#EAB308] text-black text-center text-xs sm:text-sm font-semibold py-2 px-4 z-50"
+      className="bg-[#8B5CF6] text-white text-center text-xs sm:text-sm font-semibold py-2 px-4 z-50"
     >
       <Loader2 className="w-3.5 h-3.5 inline-block mr-2 animate-spin" />
       Plataforma en mantenimiento de seguridad. Los retiros y nuevos registros están temporalmente suspendidos. Disculpa las molestias.

@@ -38,7 +38,7 @@ export default function Landing() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white">
+    <div className="min-h-screen bg-[#0A0A0F] text-white">
       {/* HEADER */}
       <header className="sticky top-0 inset-x-0 z-50 glass-panel">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 h-16 flex items-center justify-between">
@@ -58,7 +58,7 @@ export default function Landing() {
           <Button
             data-testid="header-login-btn"
             onClick={user ? handleEnter : handleEmailAuth}
-            className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-semibold rounded-none px-5 h-10"
+            className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none px-5 h-10"
           >
             {user ? "Entrar al Panel" : "Iniciar Sesión"} <ArrowUpRight className="w-4 h-4 ml-1" />
           </Button>
@@ -71,7 +71,7 @@ export default function Landing() {
           className="absolute inset-0 bg-cover bg-center opacity-30"
           style={{ backgroundImage: "url(https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85)" }}
         ></div>
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0A]/40 via-[#0A0A0A]/70 to-[#0A0A0A]"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0F]/40 via-[#0A0A0F]/70 to-[#0A0A0F]"></div>
         <div className="relative max-w-7xl mx-auto px-6 lg:px-12 grid lg:grid-cols-12 gap-8 items-end">
           <div className="lg:col-span-8 fade-up">
             <div className="flex items-center gap-3 mb-6">
@@ -80,7 +80,7 @@ export default function Landing() {
             </div>
             <h1 className="font-display text-4xl sm:text-5xl lg:text-7xl leading-[0.95] mb-6">
               Comercio P2P<br />
-              <span className="text-[#EAB308]">sin fronteras.</span><br />
+              <span className="text-[#8B5CF6]">sin fronteras.</span><br />
               Sin fricción.
             </h1>
             <p className="text-neutral-300 text-base md:text-lg max-w-2xl leading-relaxed mb-8">
@@ -92,7 +92,7 @@ export default function Landing() {
               <Button
                 data-testid="hero-start-btn"
                 onClick={handleEnter}
-                className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none px-8 h-14 text-base"
+                className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none px-8 h-14 text-base"
               >
                 Comenzar con Google <ChevronRight className="w-5 h-5 ml-1" />
               </Button>
@@ -100,13 +100,13 @@ export default function Landing() {
                 data-testid="hero-email-btn"
                 onClick={handleEmailAuth}
                 variant="ghost"
-                className="border border-white/20 hover:border-[#EAB308] hover:bg-transparent text-white rounded-none px-8 h-14 text-sm font-semibold"
+                className="border border-white/20 hover:border-[#8B5CF6] hover:bg-transparent text-white rounded-none px-8 h-14 text-sm font-semibold"
               >
                 <Mail className="w-4 h-4 mr-2" /> Iniciar con email
               </Button>
             </div>
             <p className="text-[0.7rem] text-neutral-500 mt-3 max-w-md">
-              ¿Tu región bloquea Google? Usa <button onClick={handleEmailAuth} className="text-[#EAB308] hover:underline" data-testid="hero-email-link">acceso por email</button> — registro instantáneo, sin terceros.
+              ¿Tu región bloquea Google? Usa <button onClick={handleEmailAuth} className="text-[#8B5CF6] hover:underline" data-testid="hero-email-link">acceso por email</button> — registro instantáneo, sin terceros.
             </p>
           </div>
           <div className="lg:col-span-4 grid grid-cols-2 gap-4 mt-8 lg:mt-0">
@@ -117,7 +117,7 @@ export default function Landing() {
               { v: "100%", l: "P2P" },
             ].map((s) => (
               <div key={s.l} className="tactile-card p-4">
-                <div className="font-display text-2xl text-[#EAB308]">{s.v}</div>
+                <div className="font-display text-2xl text-[#8B5CF6]">{s.v}</div>
                 <div className="micro-label text-neutral-500 mt-2">{s.l}</div>
               </div>
             ))}
@@ -130,7 +130,7 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto px-6 lg:px-12">
           <div className="flex items-start justify-between mb-12 flex-wrap gap-4">
             <div>
-              <div className="micro-label text-[#EAB308] mb-3">/ 01 — Quiénes Somos</div>
+              <div className="micro-label text-[#8B5CF6] mb-3">/ 01 — Quiénes Somos</div>
               <h2 className="font-display text-3xl lg:text-5xl max-w-2xl">Un puente operativo entre mercados.</h2>
             </div>
             <p className="text-neutral-400 max-w-md text-sm md:text-base leading-relaxed">
@@ -140,7 +140,7 @@ export default function Landing() {
           </div>
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 lg:col-span-7 tactile-card p-8 relative overflow-hidden min-h-[280px] grain-overlay">
-              <Globe2 className="w-10 h-10 text-[#EAB308] mb-6" />
+              <Globe2 className="w-10 h-10 text-[#8B5CF6] mb-6" />
               <h3 className="font-display text-2xl mb-3">Alcance Global</h3>
               <p className="text-neutral-400 max-w-md">
                 Cuba, Brasil, México y más. Entregamos en moneda local —CUP, BRL, MXN— vía transferencia o efectivo, con
@@ -148,24 +148,24 @@ export default function Landing() {
               </p>
             </div>
             <div className="col-span-6 lg:col-span-5 tactile-card p-6 min-h-[280px] flex flex-col justify-between">
-              <ShieldCheck className="w-10 h-10 text-[#EAB308]" />
+              <ShieldCheck className="w-10 h-10 text-[#8B5CF6]" />
               <div>
                 <h3 className="font-display text-xl mb-2">Comprobantes Verificados</h3>
                 <p className="text-neutral-400 text-sm">Cada transacción exige comprobante con titular. Equipo contable confirma antes de liberar fondos.</p>
               </div>
             </div>
             <div className="col-span-6 lg:col-span-4 tactile-card p-6 min-h-[220px]">
-              <Zap className="w-9 h-9 text-[#EAB308] mb-4" />
+              <Zap className="w-9 h-9 text-[#8B5CF6] mb-4" />
               <h3 className="font-display text-xl mb-2">Liquidación Rápida</h3>
               <p className="text-neutral-400 text-sm">Operaciones aprobadas se procesan en cuestión de horas, no días.</p>
             </div>
             <div className="col-span-12 lg:col-span-4 tactile-card p-6 min-h-[220px]">
-              <Activity className="w-9 h-9 text-[#EAB308] mb-4" />
+              <Activity className="w-9 h-9 text-[#8B5CF6] mb-4" />
               <h3 className="font-display text-xl mb-2">Tasas Dinámicas</h3>
               <p className="text-neutral-400 text-sm">Nuestros admins actualizan tasas cripto/fiat en tiempo real. VIPs reciben tasas preferenciales.</p>
             </div>
             <div className="col-span-12 lg:col-span-4 tactile-card p-6 min-h-[220px]">
-              <Boxes className="w-9 h-9 text-[#EAB308] mb-4" />
+              <Boxes className="w-9 h-9 text-[#8B5CF6] mb-4" />
               <h3 className="font-display text-xl mb-2">Mercancías Físicas</h3>
               <p className="text-neutral-400 text-sm">Canjea tu saldo VIP por contenedores de arroz, harina, refrescos y más.</p>
             </div>
@@ -176,7 +176,7 @@ export default function Landing() {
       {/* SERVICES */}
       <section id="services" className="py-20 border-t border-white/5 bg-[#0c0c0c]">
         <div className="max-w-7xl mx-auto px-6 lg:px-12">
-          <div className="micro-label text-[#EAB308] mb-3">/ 02 — Servicios</div>
+          <div className="micro-label text-[#8B5CF6] mb-3">/ 02 — Servicios</div>
           <h2 className="font-display text-3xl lg:text-5xl mb-12 max-w-3xl">Dos plataformas. Un solo flujo.</h2>
           <div className="grid lg:grid-cols-2 gap-6">
             <div className="tactile-card p-8 hover:glow-yellow transition-shadow">
@@ -189,7 +189,7 @@ export default function Landing() {
               <ul className="space-y-3 text-sm">
                 {["Tasas en vivo gestionadas por admin", "Sube comprobante de pago al instante", "Confirmación humana por equipo contable", "Entrega en transferencia, efectivo o cripto"].map((t) => (
                   <li key={t} className="flex items-center gap-3 text-neutral-300">
-                    <BadgeCheck className="w-4 h-4 text-[#EAB308] shrink-0" />
+                    <BadgeCheck className="w-4 h-4 text-[#8B5CF6] shrink-0" />
                     {t}
                   </li>
                 ))}
@@ -203,14 +203,14 @@ export default function Landing() {
               <div className="relative">
                 <div className="flex items-center justify-between mb-6">
                   <span className="micro-label text-neutral-500">SECCIÓN 02</span>
-                  <span className="text-xs font-mono text-[#EAB308]">VIP ONLY</span>
+                  <span className="text-xs font-mono text-[#8B5CF6]">VIP ONLY</span>
                 </div>
                 <h3 className="font-display text-3xl mb-4">Marketplace Físico</h3>
                 <p className="text-neutral-400 mb-6">Canjea tu saldo VIP acumulado por mercancía: arroz, harina, refrescos, aceite y más.</p>
                 <ul className="space-y-3 text-sm">
                   {["Stock en tiempo real", "Sin comisión, sin mensajería para VIP", "Logística incluida", "Pedidos consolidados diarios"].map((t) => (
                     <li key={t} className="flex items-center gap-3 text-neutral-300">
-                      <BadgeCheck className="w-4 h-4 text-[#EAB308] shrink-0" />
+                      <BadgeCheck className="w-4 h-4 text-[#8B5CF6] shrink-0" />
                       {t}
                     </li>
                   ))}
@@ -224,7 +224,7 @@ export default function Landing() {
       {/* HOW IT WORKS */}
       <section id="how" className="py-20 border-t border-white/5">
         <div className="max-w-7xl mx-auto px-6 lg:px-12">
-          <div className="micro-label text-[#EAB308] mb-3">/ 03 — Cómo Funciona</div>
+          <div className="micro-label text-[#8B5CF6] mb-3">/ 03 — Cómo Funciona</div>
           <h2 className="font-display text-3xl lg:text-5xl mb-12 max-w-3xl">Cuatro pasos. Cero confusión.</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
@@ -234,7 +234,7 @@ export default function Landing() {
               { n: "04", t: "Recibe tus fondos", d: "Transferencia, efectivo, cripto o acumula en saldo VIP." },
             ].map((s) => (
               <div key={s.n} className="tactile-card p-6">
-                <div className="font-display text-5xl text-[#EAB308]/30">{s.n}</div>
+                <div className="font-display text-5xl text-[#8B5CF6]/30">{s.n}</div>
                 <h3 className="font-display text-lg mt-4 mb-2">{s.t}</h3>
                 <p className="text-neutral-400 text-sm">{s.d}</p>
               </div>
@@ -247,7 +247,7 @@ export default function Landing() {
       <section id="vip" className="py-20 border-t border-white/5 bg-[#0c0c0c]">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 grid lg:grid-cols-2 gap-12 items-center">
           <div>
-            <div className="micro-label text-[#EAB308] mb-3">/ 04 — Programa VIP</div>
+            <div className="micro-label text-[#8B5CF6] mb-3">/ 04 — Programa VIP</div>
             <h2 className="font-display text-3xl lg:text-5xl mb-6">Para quien mueve volumen.</h2>
             <p className="text-neutral-400 mb-8 text-base leading-relaxed">
               Si tienes tus propios clientes y operas múltiples transacciones diarias, el programa VIP de Resilience Brothers
@@ -262,14 +262,14 @@ export default function Landing() {
                 ["Acumula", "Tu saldo"],
               ].map(([v, l]) => (
                 <div key={l} className="border border-white/10 p-4">
-                  <div className="font-display text-2xl text-[#EAB308]">{v}</div>
+                  <div className="font-display text-2xl text-[#8B5CF6]">{v}</div>
                   <div className="micro-label text-neutral-500 mt-1">{l}</div>
                 </div>
               ))}
             </div>
           </div>
           <div className="relative">
-            <div className="aspect-square bg-black flex items-center justify-center border border-[#EAB308]/20 overflow-hidden">
+            <div className="aspect-square bg-black flex items-center justify-center border border-[#8B5CF6]/20 overflow-hidden">
               <img
                 src="/branding/logo-1200.png"
                 alt="Resilience Brothers"
@@ -277,7 +277,7 @@ export default function Landing() {
               />
             </div>
             <div className="absolute bottom-0 left-0 right-0 p-6 glass-panel">
-              <div className="micro-label text-[#EAB308] mb-2">Status: VIP Tier</div>
+              <div className="micro-label text-[#8B5CF6] mb-2">Status: VIP Tier</div>
               <p className="font-display text-xl">Confianza verificada. Operación priorizada.</p>
             </div>
           </div>
@@ -294,7 +294,7 @@ export default function Landing() {
           <Button
             data-testid="cta-signup-btn"
             onClick={handleEnter}
-            className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none px-10 h-14 text-base"
+            className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none px-10 h-14 text-base"
           >
             Crear Cuenta con Google <ArrowUpRight className="w-5 h-5 ml-1" />
           </Button>
@@ -302,7 +302,7 @@ export default function Landing() {
             <button
               data-testid="cta-email-link"
               onClick={handleEmailAuth}
-              className="text-sm text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
+              className="text-sm text-neutral-400 hover:text-[#8B5CF6] underline underline-offset-4"
             >
               o crear cuenta con email →
             </button>

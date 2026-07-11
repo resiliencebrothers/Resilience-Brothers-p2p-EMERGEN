@@ -92,7 +92,7 @@ export default function AdminProfileChangeRequests() {
           onClick={load}
           disabled={loading}
           data-testid="profile-changes-refresh"
-          className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
+          className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-9 px-3 font-mono text-xs uppercase tracking-wider"
         >
           <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refrescar
         </Button>
@@ -136,7 +136,7 @@ export default function AdminProfileChangeRequests() {
                   <td className="px-4 py-3 text-xs font-mono text-neutral-400">
                     {it.current_phone || "—"}
                   </td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#EAB308]">
+                  <td className="px-4 py-3 text-xs font-mono text-[#8B5CF6]">
                     <span className="flex items-center gap-1">
                       <Phone className="w-3 h-3" /> {it.new_phone}
                     </span>
@@ -172,7 +172,7 @@ export default function AdminProfileChangeRequests() {
 
       {/* Reject reason dialog — collects the mandatory reason before 2FA */}
       <Dialog open={!!rejectFor} onOpenChange={(v) => !v && setRejectFor(null)}>
-        <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        <DialogContent className="bg-[#141322] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
                        data-testid="profile-change-reject-dialog">
           <DialogHeader>
             <DialogTitle className="font-display text-xl">Rechazar cambio</DialogTitle>

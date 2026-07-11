@@ -5,7 +5,7 @@ const WITHDRAWAL_STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
-  pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
 };
 
 // Labels are method-specific: cash deliveries use "Entregado / En progreso"
@@ -89,7 +89,7 @@ function WithdrawalRow({ w }) {
               href={w.payout_proof_image}
               target="_blank"
               rel="noreferrer"
-              className="text-xs text-[#EAB308] underline underline-offset-4"
+              className="text-xs text-[#8B5CF6] underline underline-offset-4"
               data-testid={`payout-proof-${w.id}`}
             >
               Ver captura de la transferencia

@@ -77,14 +77,14 @@ export default function VipView() {
   return (
     <div className="space-y-8" data-testid="vip-view">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Saldo y Retiros</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Saldo y Retiros</div>
         <h1 className="font-display text-3xl">Tu balance acumulado</h1>
       </div>
 
       <div className="tactile-card p-8 glow-yellow">
-        <Wallet className="w-8 h-8 text-[#EAB308] mb-3" />
+        <Wallet className="w-8 h-8 text-[#8B5CF6] mb-3" />
         <div className="micro-label text-neutral-500">Valor total (USDT)</div>
-        <div className="font-display text-5xl text-[#EAB308] mt-2">
+        <div className="font-display text-5xl text-[#8B5CF6] mt-2">
           {balances.total_usdt?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || "0.00"}{" "}
           <span className="text-2xl text-neutral-400">USDT</span>
         </div>
@@ -103,7 +103,7 @@ export default function VipView() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h2 className="font-display text-xl flex items-center gap-2">
-              <FileDown className="w-5 h-5 text-[#EAB308]" /> Cierre Diario
+              <FileDown className="w-5 h-5 text-[#8B5CF6]" /> Cierre Diario
             </h2>
             <p className="text-sm text-neutral-400 mt-1">
               Descarga el reporte PDF de tus órdenes aprobadas del día.
@@ -121,7 +121,7 @@ export default function VipView() {
               data-testid="download-closing-btn"
               onClick={downloadClosing}
               disabled={downloading}
-              className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-semibold rounded-none h-11"
+              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-11"
             >
               <FileDown className="w-4 h-4 mr-2" />
               {downloading ? "Generando..." : "Descargar PDF"}

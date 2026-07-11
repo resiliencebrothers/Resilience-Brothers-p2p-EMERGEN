@@ -167,7 +167,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
   return (
     <div className="tactile-card p-6">
       <h2 className="font-display text-xl mb-4 flex items-center gap-2">
-        <ArrowDownToLine className="w-5 h-5 text-[#EAB308]" /> Solicitar Retiro
+        <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> Solicitar Retiro
       </h2>
       <div className="space-y-4">
         <FormField label="Monto">
@@ -182,7 +182,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               {currencyOptions.map(c => (
                 <SelectItem key={c} value={c}>{c}</SelectItem>
               ))}
@@ -197,14 +197,14 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               {withdrawalMethodOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
           {method === "cash" && (
-            <p className="text-[0.65rem] text-[#EAB308] mt-1">
+            <p className="text-[0.65rem] text-[#8B5CF6] mt-1">
               Recogida en efectivo: estará <strong>En progreso</strong> hasta que el equipo lo marque como <strong>Entregado</strong>.
             </p>
           )}
@@ -213,14 +213,14 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
         {method === "crypto" && (
           <div data-testid="crypto-network-block">
             <Label className="micro-label text-neutral-500">
-              Red on-chain <span className="text-[#EAB308]">*</span>
+              Red on-chain <span className="text-[#8B5CF6]">*</span>
             </Label>
             <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
               <SelectTrigger data-testid="withdraw-crypto-network"
                 className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                 {CRYPTO_NETWORKS.map((n) => (
                   <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
                 ))}
@@ -249,7 +249,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
 
         <div>
           <Label className="micro-label text-neutral-500">
-            Titular de la cuenta beneficiaria <span className="text-[#EAB308]">*</span>
+            Titular de la cuenta beneficiaria <span className="text-[#8B5CF6]">*</span>
           </Label>
           <Input
             data-testid="withdraw-beneficiary"
@@ -267,7 +267,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
         <TotpField totpCode={totpCode} setTotpCode={setTotpCode} />
 
         <Button data-testid="submit-withdraw-btn" onClick={submit} disabled={busy}
-          className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12">
+          className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
           {busy ? "Enviando..." : "Solicitar Retiro"}
         </Button>
       </div>
@@ -291,7 +291,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
     <div className="space-y-3" data-testid="cash-receiver-block">
       <div>
         <Label className="micro-label text-neutral-500">
-          Nombre y apellidos del receptor <span className="text-[#EAB308]">*</span>
+          Nombre y apellidos del receptor <span className="text-[#8B5CF6]">*</span>
         </Label>
         <Input
           data-testid="cash-receiver-name"
@@ -304,7 +304,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
       </div>
       <div>
         <Label className="micro-label text-neutral-500">
-          Teléfono celular <span className="text-[#EAB308]">*</span>
+          Teléfono celular <span className="text-[#8B5CF6]">*</span>
         </Label>
         <Input
           data-testid="cash-receiver-phone"
@@ -318,7 +318,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
       </div>
       <div>
         <Label className="micro-label text-neutral-500">
-          Dirección de entrega <span className="text-[#EAB308]">*</span>
+          Dirección de entrega <span className="text-[#8B5CF6]">*</span>
         </Label>
         <Textarea
           data-testid="cash-receiver-address"
@@ -343,7 +343,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
           className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono"
         />
       </div>
-      <p className="text-[0.7rem] text-[#EAB308] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
+      <p className="text-[0.7rem] text-[#8B5CF6] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
         El equipo usa estos datos para coordinar la entrega en efectivo. Verifica que el <strong>celular</strong> esté activo y la <strong>dirección</strong> sea clara.
       </p>
     </div>
@@ -355,7 +355,7 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
   return (
     <div>
       <Label className="micro-label text-neutral-500">
-        Detalles {method === "crypto" && <span className="text-[#EAB308]">*</span>}
+        Detalles {method === "crypto" && <span className="text-[#8B5CF6]">*</span>}
       </Label>
       <Textarea
         data-testid="withdraw-details"
@@ -397,9 +397,9 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
 
 function TotpField({ totpCode, setTotpCode }) {
   return (
-    <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-3">
-      <Label className="micro-label text-[#EAB308] flex items-center gap-1.5">
-        <ShieldCheck className="w-3.5 h-3.5" /> Código 2FA <span className="text-[#EAB308]">*</span>
+    <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-3">
+      <Label className="micro-label text-[#8B5CF6] flex items-center gap-1.5">
+        <ShieldCheck className="w-3.5 h-3.5" /> Código 2FA <span className="text-[#8B5CF6]">*</span>
       </Label>
       <Input
         data-testid="withdraw-totp"
@@ -413,7 +413,7 @@ function TotpField({ totpCode, setTotpCode }) {
       />
       <p className="text-[0.65rem] text-neutral-500 mt-1">
         Código de 6 dígitos de tu app autenticadora o un código de recuperación.{" "}
-        <a href="/dashboard/security" className="text-[#EAB308] hover:underline">¿Aún no configuras 2FA?</a>
+        <a href="/dashboard/security" className="text-[#8B5CF6] hover:underline">¿Aún no configuras 2FA?</a>
       </p>
     </div>
   );

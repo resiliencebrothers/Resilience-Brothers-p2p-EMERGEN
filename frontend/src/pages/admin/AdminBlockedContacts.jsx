@@ -119,7 +119,7 @@ export default function AdminBlockedContacts() {
           <Button data-testid="bulk-import-blocked-btn"
             onClick={() => { setImportText(""); setImportResult(null); setImportOpen(true); }}
             variant="outline"
-            className="border-white/20 hover:border-[#EAB308] hover:bg-[#EAB308]/10 text-white rounded-none">
+            className="border-white/20 hover:border-[#8B5CF6] hover:bg-[#8B5CF6]/10 text-white rounded-none">
             <Upload className="w-4 h-4 mr-1" /> Importar lista
           </Button>
           <Button data-testid="add-blocked-contact-btn"
@@ -187,7 +187,7 @@ export default function AdminBlockedContacts() {
 
       {/* CREATE DIALOG */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent data-testid="block-contact-dialog" className="bg-[#0A0A0A] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent data-testid="block-contact-dialog" className="bg-[#0A0A0F] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl">Bloquear contacto</DialogTitle>
           </DialogHeader>
@@ -262,10 +262,10 @@ export default function AdminBlockedContacts() {
 
       {/* BULK IMPORT DIALOG */}
       <Dialog open={importOpen} onOpenChange={(o) => { if (!o) resetImport(); else setImportOpen(true); }}>
-        <DialogContent data-testid="bulk-import-dialog" className="bg-[#0A0A0A] border-white/10 text-white rounded-none max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent data-testid="bulk-import-dialog" className="bg-[#0A0A0F] border-white/10 text-white rounded-none max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl flex items-center gap-2">
-              <Upload className="w-6 h-6 text-[#EAB308]" /> Importar lista de estafadores
+              <Upload className="w-6 h-6 text-[#8B5CF6]" /> Importar lista de estafadores
             </DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
               Pega el chat de WhatsApp tal cual. El sistema detectará automáticamente teléfonos, nombres y motivos.
@@ -305,7 +305,7 @@ export default function AdminBlockedContacts() {
                     data-testid="bulk-import-submit"
                     onClick={submitBulkImport}
                     disabled={importing || !importText.trim()}
-                    className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none"
+                    className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none"
                   >
                     {importing ? "Importando..." : "Importar"}
                   </Button>
@@ -321,8 +321,8 @@ export default function AdminBlockedContacts() {
                   <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500">Importados</div>
                 </div>
                 <div className="tactile-card p-4 text-center">
-                  <SkipForward className="w-6 h-6 mx-auto text-[#EAB308] mb-1" />
-                  <div className="font-display text-2xl text-[#EAB308]" data-testid="import-count-skipped">{importResult.skipped_count}</div>
+                  <SkipForward className="w-6 h-6 mx-auto text-[#8B5CF6] mb-1" />
+                  <div className="font-display text-2xl text-[#8B5CF6]" data-testid="import-count-skipped">{importResult.skipped_count}</div>
                   <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500">Duplicados</div>
                 </div>
                 <div className="tactile-card p-4 text-center">
@@ -332,7 +332,7 @@ export default function AdminBlockedContacts() {
                 </div>
               </div>
               {importResult.affected_active_accounts > 0 && (
-                <div className="border-l-2 border-[#EAB308] bg-[#EAB308]/5 p-3 text-xs text-[#FEF3C7]">
+                <div className="border-l-2 border-[#8B5CF6] bg-[#8B5CF6]/5 p-3 text-xs text-[#FEF3C7]">
                   ⚠️ <span className="font-semibold">{importResult.affected_active_accounts}</span> cuenta(s) activa(s) en la plataforma coincidía(n) con números importados. Se han movido a <strong>&quot;bajo revisión&quot;</strong> automáticamente y no pueden operar hasta que un miembro autorizado del staff las re-verifique.
                 </div>
               )}
@@ -350,7 +350,7 @@ export default function AdminBlockedContacts() {
                 <Button
                   data-testid="bulk-import-close"
                   onClick={resetImport}
-                  className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none"
+                  className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none"
                 >
                   Cerrar
                 </Button>

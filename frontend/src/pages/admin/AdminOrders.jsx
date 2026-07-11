@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { getDeliveryBadge, extractCryptoNetwork, NETWORK_META } from "@/services/delivery_validators";
 
 const STATUS_STYLES = {
-  pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
   requires_double_approval: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/40",
   approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   completed: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -42,7 +42,7 @@ function CopyBtn({ label, value, testid }) {
       type="button"
       data-testid={testid}
       onClick={copy}
-      className="inline-flex items-center gap-1.5 border border-white/10 hover:border-[#EAB308]/50 bg-[#141414] hover:bg-[#EAB308]/5 px-2.5 py-1 text-[0.7rem] font-mono text-neutral-300 transition-colors"
+      className="inline-flex items-center gap-1.5 border border-white/10 hover:border-[#8B5CF6]/50 bg-[#141322] hover:bg-[#8B5CF6]/5 px-2.5 py-1 text-[0.7rem] font-mono text-neutral-300 transition-colors"
     >
       {ok ? <Check className="w-3 h-3 text-[#22C55E]" /> : <Copy className="w-3 h-3" />}
       {label}
@@ -155,7 +155,7 @@ export default function AdminOrders() {
   return (
     <div data-testid="admin-orders" className="space-y-4">
       <div className="mb-6">
-        <div className="micro-label text-[#EAB308] mb-2">/ Órdenes</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Órdenes</div>
         <h1 className="font-display text-3xl">Cola de Operaciones P2P</h1>
       </div>
       <div className="flex gap-2 mb-3 flex-wrap items-end">
@@ -173,7 +173,7 @@ export default function AdminOrders() {
           <SelectTrigger data-testid="orders-currency-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-40">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+          <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
             <SelectItem value="all">Todas las monedas</SelectItem>
             {currencies.map((c) => (
               <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
@@ -184,7 +184,7 @@ export default function AdminOrders() {
           <button
             data-testid="orders-clear-filters"
             onClick={() => { setUserInput(""); setCurrencyFilter("all"); }}
-            className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-9"
+            className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-9"
           >
             limpiar
           </button>
@@ -195,7 +195,7 @@ export default function AdminOrders() {
       </div>
       <div className="flex gap-2 mb-4 flex-wrap">
         {["all", "pending", "requires_double_approval", "approved", "rejected", "completed"].map(f => (
-          <button key={f} data-testid={`orders-filter-${f}`} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#EAB308] text-black border-[#EAB308]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
+          <button key={f} data-testid={`orders-filter-${f}`} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#8B5CF6] text-white border-[#8B5CF6]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
             {f}
           </button>
         ))}
@@ -226,7 +226,7 @@ export default function AdminOrders() {
                   <td className="px-3 py-3"><span className="text-xs uppercase">{o.user_role}</span></td>
                   <td className="px-3 py-3 font-mono">{o.from_code}→{o.to_code}</td>
                   <td className="px-3 py-3 font-mono">{o.amount_from}</td>
-                  <td className="px-3 py-3 font-mono text-[#EAB308]">{o.amount_to}</td>
+                  <td className="px-3 py-3 font-mono text-[#8B5CF6]">{o.amount_to}</td>
                   <td className="px-3 py-3 text-xs">
                     <div className="flex flex-col gap-1">
                       <span>{o.delivery_method}</span>
@@ -248,7 +248,7 @@ export default function AdminOrders() {
                     </div>
                   </td>
                   <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
-                  <td className="px-3 py-3"><button onClick={() => openOrder(o)} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#EAB308]"><Eye className="w-4 h-4" /></button></td>
+                  <td className="px-3 py-3"><button onClick={() => openOrder(o)} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#8B5CF6]"><Eye className="w-4 h-4" /></button></td>
                 </tr>
               ))}
             </tbody>
@@ -266,7 +266,7 @@ export default function AdminOrders() {
       />
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Orden #{open?.id?.slice(0,8)}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
@@ -407,7 +407,7 @@ export default function AdminOrders() {
                   require the bank receipt. Cash + accumulate keep no artefact. */}
               {open.delivery_method !== "cash" && open.delivery_method !== "accumulate" && (
                 <div className="border-t border-white/5 pt-4">
-                  <div className="micro-label text-[#EAB308] mb-2">
+                  <div className="micro-label text-[#8B5CF6] mb-2">
                     {open.delivery_method === "crypto"
                       ? "Hash de transacción on-chain"
                       : "Comprobante del pago AL cliente (transferencia)"}
@@ -430,8 +430,8 @@ export default function AdminOrders() {
                     {open.delivery_method === "transfer" && (
                       <>
                         <div className="flex items-center gap-2">
-                          <label className="flex-1 flex items-center gap-2 cursor-pointer bg-[#0a0a0a] border border-white/10 hover:border-[#EAB308]/40 px-3 py-2 text-xs text-neutral-300">
-                            <Upload className="w-3.5 h-3.5 text-[#EAB308]" />
+                          <label className="flex-1 flex items-center gap-2 cursor-pointer bg-[#0a0a0a] border border-white/10 hover:border-[#8B5CF6]/40 px-3 py-2 text-xs text-neutral-300">
+                            <Upload className="w-3.5 h-3.5 text-[#8B5CF6]" />
                             <span>{payoutProof ? "Cambiar captura" : "Subir captura (PNG/JPG, máx 4MB)"}</span>
                             <input
                               type="file"
@@ -457,7 +457,7 @@ export default function AdminOrders() {
                             src={payoutProof}
                             alt="Captura del pago al cliente"
                             data-testid="order-payout-proof-preview"
-                            className="w-full max-h-72 object-contain border border-[#EAB308]/30"
+                            className="w-full max-h-72 object-contain border border-[#8B5CF6]/30"
                           />
                         )}
                       </>
@@ -480,7 +480,7 @@ export default function AdminOrders() {
                   data-testid="complete-order"
                   onClick={() => updateStatus("completed")}
                   disabled={!isAdmin && (open?.status === "completed" || open?.status === "rejected")}
-                  className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none disabled:opacity-40"
+                  className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none disabled:opacity-40"
                 >
                   Completar
                 </Button>

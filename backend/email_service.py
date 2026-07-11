@@ -14,7 +14,7 @@ APP_URL = os.environ.get("APP_PUBLIC_URL", "")
 
 def _base_template(title: str, body_html: str) -> str:
     logo_url = f"{APP_URL}/branding/logo-300.png" if APP_URL else ""
-    logo_html = f'<img src="{logo_url}" alt="Resilience Brothers" width="48" height="48" style="display:block;border:0;outline:none;">' if logo_url else '<span style="display:inline-block;background:#EAB308;color:#000;font-weight:900;padding:6px 10px;letter-spacing:0.5px;">RB</span>'
+    logo_html = f'<img src="{logo_url}" alt="Resilience Brothers" width="48" height="48" style="display:block;border:0;outline:none;">' if logo_url else '<span style="display:inline-block;background:#8B5CF6;color:#000;font-weight:900;padding:6px 10px;letter-spacing:0.5px;">RB</span>'
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#0A0A0A;font-family:'Helvetica Neue',Arial,sans-serif;color:#FFFFFF;">
@@ -95,11 +95,11 @@ def notify_monthly_audit(to: str, period_label: str, kpis: dict,
         <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Señales anti-fraude</td>
             <td style="padding:6px 0;color:{'#EF4444' if anti > 0 else '#22C55E'};font-family:monospace;text-align:right;font-weight:bold;">{anti}</td></tr>
       </table>
-      <p style="margin:18px 0 6px;color:#EAB308;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Top actores</p>
+      <p style="margin:18px 0 6px;color:#8B5CF6;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Top actores</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:12px 20px;">
         {top_actors_html}
       </table>
-      <p style="margin:22px 0 6px;color:#EAB308;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Firma de integridad</p>
+      <p style="margin:22px 0 6px;color:#8B5CF6;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Firma de integridad</p>
       <p style="margin:0 0 4px;color:#A3A3A3;font-size:12px;">Guarda este hash junto con el PDF — es tu prueba de que las filas no fueron alteradas después de la exportación.</p>
       <p style="margin:6px 0 0;color:#fff;font-family:monospace;font-size:11px;word-break:break-all;background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:10px 14px;">{integrity_hash}</p>
       <p style="margin:22px 0 8px;color:#A3A3A3;font-size:13px;">
@@ -161,7 +161,7 @@ def notify_email_change_code(to: str, name: str, code: str) -> bool:
         a esta dirección. Ingresa el siguiente código en la plataforma para confirmar.
       </p>
       <div style="background:#0a0a0a;border:1px solid rgba(234,179,8,0.4);padding:24px;text-align:center;">
-        <div style="color:#EAB308;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de confirmación</div>
+        <div style="color:#8B5CF6;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de confirmación</div>
         <div style="color:#fff;font-family:monospace;font-size:32px;letter-spacing:8px;font-weight:bold;">{code}</div>
       </div>
       <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
@@ -269,7 +269,7 @@ def notify_email_verification(to: str, name: str, token: str) -> bool:
       </p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr><td align="center" style="padding:8px 0 24px;">
-          <a href="{link}" style="background:#EAB308;color:#000;text-decoration:none;
+          <a href="{link}" style="background:#8B5CF6;color:#000;text-decoration:none;
              padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
              display:inline-block;">VERIFICAR MI EMAIL</a>
         </td></tr>
@@ -291,7 +291,7 @@ def notify_password_reset(to: str, name: str, token: str) -> bool:
       </p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr><td align="center" style="padding:8px 0 24px;">
-          <a href="{link}" style="background:#EAB308;color:#000;text-decoration:none;
+          <a href="{link}" style="background:#8B5CF6;color:#000;text-decoration:none;
              padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
              display:inline-block;">CREAR NUEVA CONTRASEÑA</a>
         </td></tr>
@@ -309,12 +309,12 @@ def notify_order_approved(order: dict, user: dict) -> bool:
     rows = f"""
       <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Par</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['from_code']} → {order['to_code']}</td></tr>
       <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Enviaste</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['amount_from']} {order['from_code']}</td></tr>
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Recibes</td><td style="padding:6px 0;color:#EAB308;font-family:monospace;text-align:right;font-weight:bold;">{order['amount_to']} {order['to_code']}</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Recibes</td><td style="padding:6px 0;color:#8B5CF6;font-family:monospace;text-align:right;font-weight:bold;">{order['amount_to']} {order['to_code']}</td></tr>
       <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Tasa aplicada</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['rate_applied']}</td></tr>
       <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Comisión</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['commission_percent']}%</td></tr>
       <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Método entrega</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['delivery_method']}</td></tr>
     """
-    note = f'<div style="background:#0a0a0a;border-left:3px solid #EAB308;padding:12px 16px;margin-top:20px;"><p style="margin:0;color:#fff;font-size:13px;">Nota del equipo: {order.get("admin_note","")}</p></div>' if order.get("admin_note") else ""
+    note = f'<div style="background:#0a0a0a;border-left:3px solid #8B5CF6;padding:12px 16px;margin-top:20px;"><p style="margin:0;color:#fff;font-size:13px;">Nota del equipo: {order.get("admin_note","")}</p></div>' if order.get("admin_note") else ""
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">Hola <strong style="color:#fff;">{name}</strong>, tu pago fue verificado por nuestro equipo contable. Tu orden ya está <span style="color:#22C55E;font-weight:bold;">APROBADA</span>.</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:20px;">
@@ -322,7 +322,7 @@ def notify_order_approved(order: dict, user: dict) -> bool:
       </table>
       {note}
       <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">Procesaremos la entrega según el método seleccionado. Recibirás otra notificación cuando se complete.</p>
-      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#EAB308;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">VER ORDEN →</a>
+      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">VER ORDEN →</a>
     """
     return _send(user.get("email", ""), subject, _base_template("Orden aprobada", body))
 
@@ -344,6 +344,6 @@ def notify_order_rejected(order: dict, user: dict) -> bool:
         <p style="margin:0;color:#fff;font-size:13px;">{reason}</p>
       </div>
       <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">Si crees que es un error, responde a este correo o crea una nueva orden con la información corregida.</p>
-      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#EAB308;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">REVISAR ORDEN →</a>
+      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">REVISAR ORDEN →</a>
     """
     return _send(user.get("email", ""), subject, _base_template("Orden rechazada", body))

@@ -183,7 +183,7 @@ export default function PushToggle() {
       className={`flex items-center gap-2 px-3 py-2 text-sm border transition-colors ${
         isOn
           ? "border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10"
-          : "border-white/10 text-neutral-400 hover:border-[#EAB308] hover:text-[#EAB308]"
+          : "border-white/10 text-neutral-400 hover:border-[#8B5CF6] hover:text-[#8B5CF6]"
       }`}
     >
       <Icon className="w-4 h-4" />

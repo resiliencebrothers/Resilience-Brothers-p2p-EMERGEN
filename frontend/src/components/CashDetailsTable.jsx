@@ -81,7 +81,7 @@ function CopyCell({ value, label }) {
       onClick={doCopy}
       data-testid={`cash-details-copy-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
       title={`Copiar ${label.toLowerCase()}`}
-      className="p-1 text-neutral-500 hover:text-[#EAB308] transition-colors shrink-0"
+      className="p-1 text-neutral-500 hover:text-[#8B5CF6] transition-colors shrink-0"
       aria-label={`Copiar ${label}`}
     >
       <Icon className={`w-3.5 h-3.5 ${copied ? "text-[#22C55E]" : ""}`} />

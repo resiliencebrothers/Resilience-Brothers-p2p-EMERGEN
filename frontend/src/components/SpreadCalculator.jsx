@@ -31,7 +31,7 @@ export default function SpreadCalculator({ rates }) {
   return (
     <div className="tactile-card p-5 lg:p-6 mb-6" data-testid="spread-calculator">
       <div className="flex items-center gap-2 mb-4">
-        <Calculator className="w-4 h-4 text-[#EAB308]" />
+        <Calculator className="w-4 h-4 text-[#8B5CF6]" />
         <h2 className="font-display text-lg">Calculadora de Spread</h2>
         <span className="micro-label text-neutral-500 ml-2">/ comparativo por orden</span>
       </div>
@@ -43,7 +43,7 @@ export default function SpreadCalculator({ rates }) {
             <SelectTrigger data-testid="spread-pair-select" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10">
               <SelectValue placeholder="Selecciona un par" />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               {rates.map((r) => (
                 <SelectItem key={r.id} value={r.id} className="rounded-none">
                   {r.from_code} → {r.to_code}
@@ -84,8 +84,8 @@ export default function SpreadCalculator({ rates }) {
                 {fmt(calc.normalOut)} <span className="text-sm text-neutral-500">{pair.to_code}</span>
               </div>
             </div>
-            <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-4">
-              <div className="micro-label text-[#EAB308] mb-1">/ Cliente VIP</div>
+            <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-4">
+              <div className="micro-label text-[#8B5CF6] mb-1">/ Cliente VIP</div>
               <div className="text-[0.65rem] text-neutral-600 font-mono mb-2">tasa {fmt(pair.rate_vip, 6)}</div>
               <div className="font-mono text-2xl text-white" data-testid="spread-vip-out">
                 {fmt(calc.vipOut)} <span className="text-sm text-neutral-500">{pair.to_code}</span>

@@ -31,9 +31,9 @@ export default function AuthCallback() {
   }, [navigate, setUser]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0A0A0A]">
+    <div className="min-h-screen flex items-center justify-center bg-[#0A0A0F]">
       <div className="text-center">
-        <div className="w-12 h-12 border-2 border-[#EAB308] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <div className="w-12 h-12 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
         <p className="text-neutral-400 micro-label">Autenticando sesión segura</p>
       </div>
     </div>

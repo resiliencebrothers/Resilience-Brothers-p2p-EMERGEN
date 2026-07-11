@@ -21,7 +21,7 @@ export function MarketPermsCell({ user, onToggle }) {
               checked={on}
               onChange={(e) => onToggle(key, e.target.checked)}
               data-testid={`market-perm-${key}-${user.user_id}`}
-              className="accent-[#EAB308] w-3.5 h-3.5"
+              className="accent-[#8B5CF6] w-3.5 h-3.5"
             />
             <span className="font-mono">{label}</span>
           </label>

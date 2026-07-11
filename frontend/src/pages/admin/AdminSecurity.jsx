@@ -143,7 +143,7 @@ export default function AdminSecurity() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl flex items-center gap-2">
-            <Shield className="w-7 h-7 text-[#EAB308]" /> Auditoría de Seguridad
+            <Shield className="w-7 h-7 text-[#8B5CF6]" /> Auditoría de Seguridad
           </h1>
           <p className="text-sm text-neutral-400 mt-1">
             Ventana: <span className="text-white">últimos {data.window_days} días</span> · Generado: {data.generated_at?.slice(0, 16).replace("T", " ")}
@@ -208,7 +208,7 @@ export default function AdminSecurity() {
               <div className="min-w-0">
                 <div className="text-sm text-white font-semibold truncate">{s.email || s.user_id}</div>
                 <div className="text-[0.65rem] text-neutral-500">
-                  <span className="text-[#EAB308] uppercase font-bold">{s.role}</span>
+                  <span className="text-[#8B5CF6] uppercase font-bold">{s.role}</span>
                   {" · "}Creada {s.created_at?.slice(0, 16).replace("T", " ")}
                   {" · "}Expira {s.expires_at?.slice(0, 16).replace("T", " ")}
                 </div>
@@ -314,7 +314,7 @@ export default function AdminSecurity() {
           <span className={`px-2 py-1 border ${cfData?.configured ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
             Cloudflare edge: {cfData?.configured ? "configurado ✓" : "sin credenciales"}
           </span>
-          <span className={`px-2 py-1 border ${cfData?.auto_block_enabled ? "border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
+          <span className={`px-2 py-1 border ${cfData?.auto_block_enabled ? "border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#FEF3C7]" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
             Auto-block: {cfData?.auto_block_enabled ? "activo" : "solo app-level"}
           </span>
           <div className="ml-auto flex gap-2">
@@ -331,7 +331,7 @@ export default function AdminSecurity() {
               data-testid="cf-add-block-btn"
               onClick={() => setCfDialogOpen(true)}
               size="sm"
-              className="bg-[#EAB308] text-black hover:bg-[#EAB308]/90"
+              className="bg-[#8B5CF6] text-white hover:bg-[#8B5CF6]/90"
             >
               <Plus className="w-3.5 h-3.5 mr-1.5" /> Bloquear IP
             </Button>
@@ -393,7 +393,7 @@ export default function AdminSecurity() {
         <DialogContent data-testid="cf-block-dialog" className="bg-neutral-950 border-white/10 max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
-              <Cloud className="w-5 h-5 text-[#EAB308]" /> Bloquear IP en Cloudflare WAF
+              <Cloud className="w-5 h-5 text-[#8B5CF6]" /> Bloquear IP en Cloudflare WAF
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
@@ -450,8 +450,8 @@ export default function AdminSecurity() {
 function statusStyle(status) {
   const map = {
     active: "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-    pending_create: "border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]",
-    pending_delete: "border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#FEF3C7]",
+    pending_create: "border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#FEF3C7]",
+    pending_delete: "border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#FEF3C7]",
     deleted: "border border-neutral-500/40 bg-neutral-500/10 text-neutral-400",
     failed: "border border-[#EF4444]/40 bg-[#EF4444]/10 text-[#FEE2E2]",
   };
@@ -461,7 +461,7 @@ function statusStyle(status) {
 function SummaryCard({ icon: Icon, label, value, hint, tone = "default", testId }) {
   const cls = {
     default: "border-white/5 bg-black/30 text-white",
-    warn: "border-[#EAB308]/30 bg-[#EAB308]/5 text-[#FEF3C7]",
+    warn: "border-[#8B5CF6]/30 bg-[#8B5CF6]/5 text-[#FEF3C7]",
     danger: "border-[#EF4444]/40 bg-[#EF4444]/5 text-[#FEE2E2]",
   }[tone];
   return (
@@ -479,7 +479,7 @@ function Panel({ icon: Icon, title, subtitle, children }) {
   return (
     <div className="border border-white/5 bg-black/20 p-4">
       <div className="flex items-start gap-2 mb-3">
-        <Icon className="w-4 h-4 text-[#EAB308] mt-0.5" />
+        <Icon className="w-4 h-4 text-[#8B5CF6] mt-0.5" />
         <div>
           <div className="text-sm font-semibold text-white">{title}</div>
           <div className="text-[0.7rem] text-neutral-500 leading-relaxed">{subtitle}</div>

@@ -77,7 +77,7 @@ export default function ProfileView() {
       {/* --- Personal data card --- */}
       <section className="tactile-card p-6 space-y-4" data-testid="profile-personal">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
-          <User className="w-4 h-4 text-[#EAB308]" />
+          <User className="w-4 h-4 text-[#8B5CF6]" />
           <span className="micro-label text-neutral-500">Datos personales</span>
         </div>
         <PersonalRow icon={User} label="Nombre" value={profile.name || "—"} readOnly />
@@ -103,7 +103,7 @@ export default function ProfileView() {
       <section className="tactile-card p-6 space-y-3" data-testid="profile-kyc">
         <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-3">
           <div className="flex items-center gap-2">
-            <IdCard className="w-4 h-4 text-[#EAB308]" />
+            <IdCard className="w-4 h-4 text-[#8B5CF6]" />
             <span className="micro-label text-neutral-500">Verificación de identidad</span>
           </div>
           <span className={`text-[0.65rem] uppercase tracking-widest border px-2 py-0.5 ${kycBadge.className}`}>
@@ -117,7 +117,7 @@ export default function ProfileView() {
         <Button
           onClick={() => navigate("/dashboard/kyc")}
           data-testid="profile-open-kyc"
-          className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-9 px-4 font-mono text-xs uppercase tracking-wider"
+          className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-9 px-4 font-mono text-xs uppercase tracking-wider"
         >
           Abrir verificación
         </Button>
@@ -127,13 +127,13 @@ export default function ProfileView() {
       <section className="tactile-card p-6 space-y-3" data-testid="profile-security">
         <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-3">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#EAB308]" />
+            <ShieldCheck className="w-4 h-4 text-[#8B5CF6]" />
             <span className="micro-label text-neutral-500">Seguridad</span>
           </div>
           <span className={`text-[0.65rem] uppercase tracking-widest border px-2 py-0.5 ${
             profile.twofa_enabled
               ? "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30"
-              : "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30"
+              : "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30"
           }`}>
             {profile.twofa_enabled ? "2FA activo" : "2FA no configurado"}
           </span>
@@ -145,7 +145,7 @@ export default function ProfileView() {
         <Button
           onClick={() => navigate("/dashboard/security")}
           data-testid="profile-open-security"
-          className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-9 px-4 font-mono text-xs uppercase tracking-wider"
+          className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-9 px-4 font-mono text-xs uppercase tracking-wider"
         >
           Abrir seguridad
         </Button>
@@ -178,7 +178,7 @@ export default function ProfileView() {
 
 const KYC_BADGE = {
   not_started: { label: "No iniciada", className: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
-  pending_review: { label: "En revisión", className: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30" },
+  pending_review: { label: "En revisión", className: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30" },
   approved: { label: "Verificada", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
   rejected: { label: "Rechazada", className: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" },
 };
@@ -196,7 +196,7 @@ function PersonalRow({ icon: Icon, label, value, onEdit, readOnly, verified, pen
             {verified && <CheckCircle2 className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />}
           </div>
           {pending && (
-            <div className="text-[0.65rem] text-[#EAB308] mt-0.5 flex items-center gap-1">
+            <div className="text-[0.65rem] text-[#8B5CF6] mt-0.5 flex items-center gap-1">
               <AlertTriangle className="w-2.5 h-2.5" /> {pending}
             </div>
           )}
@@ -207,7 +207,7 @@ function PersonalRow({ icon: Icon, label, value, onEdit, readOnly, verified, pen
           type="button"
           onClick={onEdit}
           data-testid={`${testid}-edit`}
-          className="flex-shrink-0 text-[0.65rem] uppercase tracking-widest text-[#EAB308] hover:text-[#FACC15] border border-[#EAB308]/40 hover:border-[#EAB308] px-3 py-1.5 flex items-center gap-1"
+          className="flex-shrink-0 text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] border border-[#8B5CF6]/40 hover:border-[#8B5CF6] px-3 py-1.5 flex items-center gap-1"
         >
           <Pencil className="w-3 h-3" /> Cambiar
         </button>
@@ -267,7 +267,7 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="email-change-dialog">
+      <DialogContent className="bg-[#141322] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="email-change-dialog">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">Cambiar email</DialogTitle>
         </DialogHeader>
@@ -294,7 +294,7 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
             </div>
             <Button onClick={requestCode} disabled={busy}
                     data-testid="email-change-send-btn"
-                    className="w-full rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-11 font-mono uppercase tracking-wider">
+                    className="w-full rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-11 font-mono uppercase tracking-wider">
               {busy ? "Enviando..." : "Enviar código"}
             </Button>
           </div>
@@ -374,14 +374,14 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="phone-change-dialog">
+      <DialogContent className="bg-[#141322] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="phone-change-dialog">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">Cambiar teléfono</DialogTitle>
         </DialogHeader>
         {pending ? (
           <div className="space-y-3">
-            <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-4">
-              <div className="micro-label text-[#EAB308] mb-2">Solicitud pendiente</div>
+            <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-4">
+              <div className="micro-label text-[#8B5CF6] mb-2">Solicitud pendiente</div>
               <div className="text-xs text-neutral-400">
                 Ya tienes una solicitud de cambio a <strong className="text-white font-mono">{pending.new_phone_masked}</strong>.
                 El equipo la revisará y aprobará manualmente.
@@ -416,7 +416,7 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
             </div>
             <Button onClick={submit} disabled={busy}
                     data-testid="phone-change-submit-btn"
-                    className="w-full rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-11 font-mono uppercase tracking-wider">
+                    className="w-full rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-11 font-mono uppercase tracking-wider">
               {busy ? "Enviando..." : "Solicitar cambio"}
             </Button>
           </div>
@@ -458,7 +458,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#141414] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="country-change-dialog">
+      <DialogContent className="bg-[#141322] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="country-change-dialog">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">Cambiar país</DialogTitle>
         </DialogHeader>
@@ -468,8 +468,8 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
             Puedes actualizarlo cuando cambies de residencia.
           </p>
           {willResetKyc && (
-            <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-3">
-              <div className="micro-label text-[#EAB308] mb-1 flex items-center gap-1">
+            <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-3">
+              <div className="micro-label text-[#8B5CF6] mb-1 flex items-center gap-1">
                 <AlertTriangle className="w-3 h-3" /> Impacto en verificación
               </div>
               <p className="text-[0.7rem] text-neutral-400 leading-relaxed">
@@ -488,7 +488,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
           </div>
           <Button onClick={submit} disabled={busy}
                   data-testid="country-change-submit-btn"
-                  className="w-full rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-11 font-mono uppercase tracking-wider">
+                  className="w-full rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-11 font-mono uppercase tracking-wider">
             {busy ? "Guardando..." : "Guardar"}
           </Button>
         </div>

@@ -164,7 +164,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
       <DialogContent
         data-testid="email-auth-dialog"
-        className="bg-[#141414] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        className="bg-[#141322] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle className="font-display text-2xl">{TITLES[mode]}</DialogTitle>
@@ -219,7 +219,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                   data-testid="auth-remember-24h"
                   checked={remember24h}
                   onCheckedChange={(v) => setRemember24h(v === true)}
-                  className="border-white/30 data-[state=checked]:bg-[#EAB308] data-[state=checked]:text-black data-[state=checked]:border-[#EAB308]"
+                  className="border-white/30 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:text-white data-[state=checked]:border-[#8B5CF6]"
                 />
                 Mantener sesión 24 horas (entrar 1 vez al día)
               </label>
@@ -229,7 +229,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               type="submit"
               data-testid="auth-submit"
               disabled={loading}
-              className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12"
+              className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
             >
               {loading ? "..." : SUBMIT_LABELS[mode]}
             </Button>
@@ -239,7 +239,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 type="button"
                 data-testid="auth-toggle-mode"
                 onClick={() => setMode(mode === "login" ? "register" : "login")}
-                className="text-xs text-neutral-400 hover:text-[#EAB308] underline underline-offset-4"
+                className="text-xs text-neutral-400 hover:text-[#8B5CF6] underline underline-offset-4"
               >
                 {mode === "register"
                   ? "Ya tengo cuenta, iniciar sesión"
@@ -253,7 +253,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                     type="button"
                     data-testid="auth-forgot-link"
                     onClick={() => setMode("forgot")}
-                    className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4"
+                    className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4"
                   >
                     ¿Olvidaste tu contraseña?
                   </button>
@@ -262,7 +262,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                     data-testid="auth-resend-verification-link"
                     onClick={handleResendVerification}
                     disabled={resending}
-                    className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 disabled:opacity-50"
+                    className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 disabled:opacity-50"
                   >
                     {resending ? "Reenviando..." : "¿No recibiste el correo de verificación?"}
                   </button>

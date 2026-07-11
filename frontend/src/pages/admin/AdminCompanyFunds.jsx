@@ -17,7 +17,7 @@ import AdjustmentsTable from "./company-funds/AdjustmentsTable";
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
-  approved: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  approved: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
   pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
 };
@@ -105,7 +105,7 @@ export default function AdminCompanyFunds() {
   return (
     <div data-testid="admin-company-funds" className="space-y-8">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Fondo de la Empresa</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Fondo de la Empresa</div>
         <h1 className="font-display text-3xl">Capital operativo por moneda</h1>
         <p className="text-neutral-500 text-sm mt-2">
           Saldo = entradas (órdenes confirmadas + aportes propios) − entregas a clientes (P2P + retiros VIP) − salidas de la empresa.
@@ -117,7 +117,7 @@ export default function AdminCompanyFunds() {
         {funds.length === 0 && <div className="col-span-full text-neutral-500 text-sm">Sin movimientos registrados aún.</div>}
         {funds.map(f => (
           <div key={f.currency} className="tactile-card p-5" data-testid={`fund-${f.currency}`}>
-            <Wallet className="w-4 h-4 text-[#EAB308] mb-2" />
+            <Wallet className="w-4 h-4 text-[#8B5CF6] mb-2" />
             <div className="micro-label text-neutral-500">{f.currency}</div>
             <div
               className={`font-display text-2xl mt-1 ${
@@ -167,7 +167,7 @@ export default function AdminCompanyFunds() {
             data-testid="create-company-withdrawal"
             onClick={() => setOpenCreate(true)}
             disabled={createCurrencies.length === 0}
-            className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none"
+            className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
           >
             <Plus className="w-4 h-4 mr-1" /> Nuevo retiro
           </Button>
@@ -192,14 +192,14 @@ export default function AdminCompanyFunds() {
             {items.length === 0 && <tr><td colSpan="8" className="text-center text-neutral-500 py-8">Sin retiros aún</td></tr>}
             {items.map(w => (
               <tr key={w.id} className="border-b border-white/5" data-testid={`company-withdrawal-row-${w.id}`}>
-                <td className="px-4 py-3 font-mono text-[#EAB308]">{w.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                <td className="px-4 py-3 font-mono text-[#8B5CF6]">{w.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                 <td className="px-4 py-3 font-mono">{w.currency}</td>
                 <td className="px-4 py-3 text-xs max-w-xs truncate">{w.beneficiary}</td>
                 <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">{w.concept || "—"}</td>
                 <td className="px-4 py-3 text-xs">{w.authorized_by_name}</td>
                 <td className="px-4 py-3">
                   {w.invoice_image ? (
-                    <a href={w.invoice_image} target="_blank" rel="noreferrer" className="text-[#EAB308] hover:underline text-xs inline-flex items-center gap-1">
+                    <a href={w.invoice_image} target="_blank" rel="noreferrer" className="text-[#8B5CF6] hover:underline text-xs inline-flex items-center gap-1">
                       <FileImage className="w-3 h-3" /> Ver
                     </a>
                   ) : <span className="text-neutral-600 text-xs">—</span>}
@@ -213,7 +213,7 @@ export default function AdminCompanyFunds() {
                   <td className="px-4 py-3">
                     {w.status !== "paid" && w.status !== "rejected" && (
                       <div className="flex gap-1">
-                        <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "approved" })} className="bg-[#EAB308] text-black rounded-none h-7 text-xs">Aprobar</Button>
+                        <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "approved" })} className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs">Aprobar</Button>
                         <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "paid" })} className="bg-[#22C55E] text-black rounded-none h-7 text-xs">Pagado</Button>
                         <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "rejected" })} className="bg-[#EF4444] text-white rounded-none h-7 text-xs">×</Button>
                       </div>
@@ -228,7 +228,7 @@ export default function AdminCompanyFunds() {
 
       {/* Create dialog */}
       <Dialog open={openCreate} onOpenChange={setOpenCreate}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Nuevo retiro del fondo</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
@@ -241,7 +241,7 @@ export default function AdminCompanyFunds() {
                 <Label className="micro-label text-neutral-500">Moneda</Label>
                 <Select value={form.currency} onValueChange={(v) => setForm({ ...form, currency: v })}>
                   <SelectTrigger data-testid="company-form-currency" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
-                  <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                  <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                     {createCurrencies.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -274,7 +274,7 @@ export default function AdminCompanyFunds() {
               data-testid="company-form-submit"
               disabled={pendingSubmit || !form.currency || !form.amount || !form.beneficiary}
               onClick={() => setPendingStatus({ submit: true })}
-              className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none"
+              className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
             >
               Continuar (2FA)
             </Button>

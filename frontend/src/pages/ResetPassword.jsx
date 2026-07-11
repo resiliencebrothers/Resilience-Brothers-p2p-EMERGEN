@@ -42,7 +42,7 @@ export default function ResetPassword() {
           </div>
         ) : (
           <>
-            <div className="micro-label text-[#EAB308] mb-2">/ recuperar acceso</div>
+            <div className="micro-label text-[#8B5CF6] mb-2">/ recuperar acceso</div>
             <h1 className="font-display text-2xl mb-6">Crear nueva contraseña</h1>
             <form onSubmit={submit} className="space-y-4">
               <div>
@@ -56,10 +56,10 @@ export default function ResetPassword() {
                 <Label className="micro-label text-neutral-500">Confirmar</Label>
                 <Input type="password" required minLength={8} value={confirm} onChange={(e) => setConfirm(e.target.value)} data-testid="reset-confirm-input" className="rounded-none bg-[#0a0a0a] border-white/10 h-11 mt-1" />
               </div>
-              <Button type="submit" disabled={loading} data-testid="reset-submit" className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-11">
+              <Button type="submit" disabled={loading} data-testid="reset-submit" className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
                 {loading ? "..." : "Guardar nueva contraseña"}
               </Button>
-              <Link to="/" className="block text-center text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4">← Volver al inicio</Link>
+              <Link to="/" className="block text-center text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4">← Volver al inicio</Link>
             </form>
           </>
         )}

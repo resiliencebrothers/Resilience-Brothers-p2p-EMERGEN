@@ -7,7 +7,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
       <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-display text-lg flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-[#EAB308]" /> Registro Diario
+            <Calendar className="w-5 h-5 text-[#8B5CF6]" /> Registro Diario
           </h2>
           <p className="text-xs text-neutral-500 mt-1">
           Ganancia consolidada por día (P2P + Marketplace + comisiones USDT).
@@ -20,7 +20,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+          <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
             <SelectItem value="7">Últimos 7 días</SelectItem>
             <SelectItem value="14">Últimos 14 días</SelectItem>
             <SelectItem value="30">Últimos 30 días</SelectItem>

@@ -66,21 +66,21 @@ export default function AdminQuickDashboard() {
     <div className="space-y-4 max-w-2xl mx-auto" data-testid="admin-quick-dashboard">
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
-        <Zap className="w-5 h-5 text-[#EAB308]" />
+        <Zap className="w-5 h-5 text-[#8B5CF6]" />
         <div>
-          <div className="micro-label text-[#EAB308]">/ Vista Rápida</div>
+          <div className="micro-label text-[#8B5CF6]">/ Vista Rápida</div>
           <h1 className="font-display text-2xl">Resumen de un vistazo</h1>
         </div>
       </div>
 
       {/* 1. Pendientes — top priority */}
       <section
-        className="tactile-card p-5 border-l-2 border-l-[#EAB308]"
+        className="tactile-card p-5 border-l-2 border-l-[#8B5CF6]"
         data-testid="quick-pending-card"
       >
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <ListChecks className="w-5 h-5 text-[#EAB308]" />
+            <ListChecks className="w-5 h-5 text-[#8B5CF6]" />
             <h2 className="font-display text-lg">Pendientes</h2>
           </div>
         </div>
@@ -121,7 +121,7 @@ export default function AdminQuickDashboard() {
       {/* 2. Fondos Totales */}
       <section className="tactile-card p-5" data-testid="quick-funds-card">
         <div className="flex items-center gap-2 mb-3">
-          <Wallet className="w-5 h-5 text-[#EAB308]" />
+          <Wallet className="w-5 h-5 text-[#8B5CF6]" />
           <h2 className="font-display text-lg">Fondos de la empresa</h2>
         </div>
         <BigUsdtValue value={fundsTotalUsdt} testId="quick-funds-total" />
@@ -140,7 +140,7 @@ export default function AdminQuickDashboard() {
       {/* 3. Saldos VIP */}
       <section className="tactile-card p-5" data-testid="quick-vip-card">
         <div className="flex items-center gap-2 mb-3">
-          <Coins className="w-5 h-5 text-[#EAB308]" />
+          <Coins className="w-5 h-5 text-[#8B5CF6]" />
           <h2 className="font-display text-lg">Acumulado VIP</h2>
           <span className="text-xs text-neutral-500 ml-auto">
             (lo que debemos)
@@ -170,7 +170,7 @@ export default function AdminQuickDashboard() {
         data-testid="quick-action-cta"
       >
         <Button
-          className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none font-semibold py-6 text-base"
+          className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none font-semibold py-6 text-base"
         >
           Ver todas las órdenes pendientes
           <ChevronRight className="w-5 h-5 ml-1" />
@@ -184,12 +184,12 @@ function PendingStat({ icon: Icon, label, value, testId }) {
   const isActive = value > 0;
   return (
     <div
-      className={`p-3 ${isActive ? "bg-[#EAB308]/10 border border-[#EAB308]/30" : "bg-white/5 border border-white/5"}`}
+      className={`p-3 ${isActive ? "bg-[#8B5CF6]/10 border border-[#8B5CF6]/30" : "bg-white/5 border border-white/5"}`}
       data-testid={testId}
     >
       {Icon && <Icon className="w-4 h-4 text-neutral-400 mb-1" />}
       <div className="micro-label text-neutral-500 text-[0.6rem]">{label}</div>
-      <div className={`font-display text-3xl mt-1 ${isActive ? "text-[#EAB308]" : "text-neutral-400"}`}>
+      <div className={`font-display text-3xl mt-1 ${isActive ? "text-[#8B5CF6]" : "text-neutral-400"}`}>
         {value}
       </div>
     </div>
@@ -200,7 +200,7 @@ function BigUsdtValue({ value, testId }) {
   return (
     <div data-testid={testId}>
       <div className="micro-label text-neutral-500 text-[0.6rem]">TOTAL ≈</div>
-      <div className="font-display text-3xl text-[#EAB308] mt-1">
+      <div className="font-display text-3xl text-[#8B5CF6] mt-1">
         {(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
         <span className="text-sm text-neutral-400 ml-1">USDT</span>
       </div>

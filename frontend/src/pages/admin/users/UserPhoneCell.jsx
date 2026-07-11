@@ -49,7 +49,7 @@ export function UserPhoneCell({ user, canManageBlocklist, onVerify, onReject }) 
           className={`text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 self-start ${
             user.account_status === "blocked"
               ? "border border-[#EF4444]/40 text-[#EF4444] bg-[#EF4444]/10"
-              : "border border-[#EAB308]/40 text-[#EAB308] bg-[#EAB308]/10"
+              : "border border-[#8B5CF6]/40 text-[#8B5CF6] bg-[#8B5CF6]/10"
           }`}
         >
           {user.account_status === "blocked" ? "Bloqueada" : "En revisión"}

@@ -10,7 +10,7 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
     <div className="tactile-card p-6" data-testid="vip-balances-card">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h2 className="font-display text-xl flex items-center gap-2">
-          <Coins className="w-5 h-5 text-[#EAB308]" /> Saldo por moneda
+          <Coins className="w-5 h-5 text-[#8B5CF6]" /> Saldo por moneda
         </h2>
         {ledger.total_orders > 0 && (
           <span
@@ -42,7 +42,7 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
                   disabled={!hasDrillDown}
                   className={`text-left border border-white/10 p-4 transition-colors ${
                     hasDrillDown
-                      ? "hover:border-[#EAB308]/60 hover:bg-white/5 cursor-pointer"
+                      ? "hover:border-[#8B5CF6]/60 hover:bg-white/5 cursor-pointer"
                       : "opacity-80 cursor-default"
                   }`}
                   data-testid={`balance-card-${b.currency}`}
@@ -55,7 +55,7 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
                     {b.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                   </div>
                   {hasDrillDown && (
-                    <div className="text-[0.65rem] text-[#EAB308] mt-2 flex items-center gap-1">
+                    <div className="text-[0.65rem] text-[#8B5CF6] mt-2 flex items-center gap-1">
                       <Eye className="w-3 h-3" />
                       {orderCount} {orderCount === 1 ? "orden" : "órdenes"} · ver desglose
                     </div>

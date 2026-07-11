@@ -87,10 +87,10 @@ export default function AdminRates() {
     <div data-testid="admin-rates">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="micro-label text-[#EAB308] mb-2">/ Tasas</div>
+          <div className="micro-label text-[#8B5CF6] mb-2">/ Tasas</div>
           <h1 className="font-display text-3xl">Tipo de Cambio</h1>
         </div>
-        <Button data-testid="add-rate-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
+        <Button data-testid="add-rate-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
           <Plus className="w-4 h-4 mr-1" /> Nueva tasa
         </Button>
       </div>
@@ -116,13 +116,13 @@ export default function AdminRates() {
                 <tr key={r.id} className={`border-b border-white/5 ${editable ? "" : "opacity-60"}`} data-testid={`rate-row-${r.id}`}>
                   <td className="px-4 py-3 font-mono font-semibold">{r.from_code} → {r.to_code}</td>
                   <td className="px-4 py-3 font-mono">{r.rate_normal}</td>
-                  <td className="px-4 py-3 font-mono text-[#EAB308]">{r.rate_vip}</td>
+                  <td className="px-4 py-3 font-mono text-[#8B5CF6]">{r.rate_vip}</td>
                   <td className="px-4 py-3 font-mono text-[#22C55E]">{r.real_rate ?? "—"}</td>
                   <td className="px-4 py-3 text-xs text-neutral-500">{new Date(r.updated_at).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right">
                     {editable ? (
                       <>
-                        <button data-testid={`edit-rate-${r.id}`} onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "" }); setOpen(true); }} className="text-neutral-400 hover:text-[#EAB308] mr-3"><Edit2 className="w-4 h-4" /></button>
+                        <button data-testid={`edit-rate-${r.id}`} onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "" }); setOpen(true); }} className="text-neutral-400 hover:text-[#8B5CF6] mr-3"><Edit2 className="w-4 h-4" /></button>
                         <button data-testid={`delete-rate-${r.id}`} onClick={() => remove(r.id)} className="text-neutral-400 hover:text-[#EF4444]"><Trash2 className="w-4 h-4" /></button>
                       </>
                     ) : (
@@ -139,14 +139,14 @@ export default function AdminRates() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Tasa</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>
               <Label className="micro-label text-neutral-500">Desde</Label>
               <Select value={form.from_code} onValueChange={v => setForm({ ...form, from_code: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
-                <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                   {currencies.map(c => <SelectItem key={c.id} value={c.code}>{c.code}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -155,7 +155,7 @@ export default function AdminRates() {
               <Label className="micro-label text-neutral-500">Hacia</Label>
               <Select value={form.to_code} onValueChange={v => setForm({ ...form, to_code: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
-                <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                   {currencies.map(c => <SelectItem key={c.id} value={c.code}>{c.code}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -167,7 +167,7 @@ export default function AdminRates() {
               <Input data-testid="rate-real" type="number" step="any" value={form.real_rate} onChange={e => setForm({ ...form, real_rate: e.target.value })} placeholder="ej: 905 (USDT→CUP)" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
               <p className="text-[0.65rem] text-neutral-500 mt-1">Usada solo para calcular ingresos del negocio. Opcional.</p>
             </div>
-            <Button data-testid="save-rate-btn" onClick={save} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">Guardar</Button>
+            <Button data-testid="save-rate-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">Guardar</Button>
           </div>
         </DialogContent>
       </Dialog>

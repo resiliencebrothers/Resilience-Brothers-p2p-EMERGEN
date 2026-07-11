@@ -85,7 +85,7 @@ export default function AdminAppeals() {
 
   const statusChip = (status) => {
     const cfg = {
-      pending: { icon: Clock, cls: "text-[#EAB308] border-[#EAB308]/40 bg-[#EAB308]/5", label: "PENDIENTE" },
+      pending: { icon: Clock, cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", label: "PENDIENTE" },
       resolved: { icon: CheckCircle2, cls: "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/5", label: "APROBADA" },
       rejected: { icon: XCircle, cls: "text-[#EF4444] border-[#EF4444]/40 bg-[#EF4444]/5", label: "RECHAZADA" },
     }[status] || { icon: Clock, cls: "text-neutral-400 border-white/10", label: status };
@@ -108,7 +108,7 @@ export default function AdminAppeals() {
           </p>
         </div>
         <div className="text-xs text-neutral-400">
-          Pendientes: <span className="text-[#EAB308] font-bold text-base">{pendingCount}</span>
+          Pendientes: <span className="text-[#8B5CF6] font-bold text-base">{pendingCount}</span>
         </div>
       </div>
 
@@ -119,7 +119,7 @@ export default function AdminAppeals() {
               key={s.key}
               value={s.key}
               data-testid={`appeals-tab-${s.key}`}
-              className="data-[state=active]:bg-[#EAB308] data-[state=active]:text-black text-neutral-400"
+              className="data-[state=active]:bg-[#8B5CF6] data-[state=active]:text-white text-neutral-400"
             >
               <s.icon className="w-3.5 h-3.5 mr-1.5" />
               {s.label}
@@ -159,8 +159,8 @@ export default function AdminAppeals() {
                 </div>
                 <div className="text-sm text-neutral-200 whitespace-pre-wrap">{a.message}</div>
                 {a.staff_response && (
-                  <div className="text-xs text-neutral-400 border-l-2 border-[#EAB308]/60 pl-3 py-1">
-                    <span className="text-[#EAB308] font-semibold">Respuesta staff ({a.resolved_by_email}): </span>
+                  <div className="text-xs text-neutral-400 border-l-2 border-[#8B5CF6]/60 pl-3 py-1">
+                    <span className="text-[#8B5CF6] font-semibold">Respuesta staff ({a.resolved_by_email}): </span>
                     {a.staff_response}
                   </div>
                 )}
@@ -200,7 +200,7 @@ export default function AdminAppeals() {
             <DialogDescription className="text-neutral-400 text-xs">
               El cliente recibirá tu respuesta como notificación in-app + push.
               {action === "resolve" && (
-                <span className="block mt-2 text-[#EAB308]">
+                <span className="block mt-2 text-[#8B5CF6]">
                   ⚠️ Aprobar la apelación NO activa la cuenta. Debes ir a <b>Usuarios → Verificar teléfono</b> por separado.
                 </span>
               )}

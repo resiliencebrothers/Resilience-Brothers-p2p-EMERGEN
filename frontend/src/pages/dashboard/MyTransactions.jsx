@@ -101,7 +101,7 @@ export default function MyTransactions() {
   return (
     <div data-testid="my-transactions" className="space-y-5">
       <div className="mb-2">
-        <div className="micro-label text-[#EAB308] mb-2 flex items-center gap-2">
+        <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
           <Receipt className="w-3.5 h-3.5" /> / Mi Historial
         </div>
         <h1 className="font-display text-3xl">Mis Transacciones</h1>
@@ -149,7 +149,7 @@ export default function MyTransactions() {
               <SelectTrigger data-testid="my-tx-direction" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-44">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                 <SelectItem value="all">Todas</SelectItem>
                 <SelectItem value="in">Solo Entradas ↓</SelectItem>
                 <SelectItem value="out">Solo Salidas ↑</SelectItem>
@@ -162,7 +162,7 @@ export default function MyTransactions() {
               <SelectTrigger data-testid="my-tx-currency" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-36">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                 <SelectItem value="all">Todas</SelectItem>
                 {currencies.map((c) => (
                   <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
@@ -194,18 +194,18 @@ export default function MyTransactions() {
           </div>
           {hasFilters && (
             <button data-testid="my-tx-clear" onClick={clearFilters}
-              className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10">
+              className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10">
               limpiar
             </button>
           )}
         </div>
         <div className="flex gap-2">
           <Button data-testid="my-tx-export-csv" onClick={() => downloadExport("csv")}
-            className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider">
+            className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider">
             <Download className="w-3.5 h-3.5 mr-2" /> CSV
           </Button>
           <Button data-testid="my-tx-export-pdf" onClick={() => downloadExport("pdf")}
-            className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold">
+            className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold">
             <FileText className="w-3.5 h-3.5 mr-2" /> PDF
           </Button>
         </div>
@@ -237,7 +237,7 @@ export default function MyTransactions() {
                 <tr key={`${it.ref_type}-${it.ref_id}`}
                   data-testid={`my-tx-row-${it.ref_id}`}
                   onClick={() => setSelected(it)}
-                  className="border-b border-white/5 hover:bg-[#EAB308]/5 cursor-pointer transition-colors"
+                  className="border-b border-white/5 hover:bg-[#8B5CF6]/5 cursor-pointer transition-colors"
                 >
                   <td className="px-3 py-2 font-mono text-xs text-neutral-400">{new Date(it.created_at).toLocaleString()}</td>
                   <td className="px-3 py-2">
@@ -251,7 +251,7 @@ export default function MyTransactions() {
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 font-mono text-[#EAB308]">{it.currency}</td>
+                  <td className="px-3 py-2 font-mono text-[#8B5CF6]">{it.currency}</td>
                   <td className="px-3 py-2 font-mono text-right">{it.amount.toLocaleString()}</td>
                   <td className="px-3 py-2">{it.holder_name || "—"}</td>
                   <td className="px-3 py-2 text-xs uppercase text-neutral-500">{it.method}</td>
@@ -277,7 +277,7 @@ export default function MyTransactions() {
         <DialogContent data-testid="my-tx-modal" className="bg-[#0c0c0c] border border-white/10 text-white max-w-2xl rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
-              <Receipt className="w-5 h-5 text-[#EAB308]" />
+              <Receipt className="w-5 h-5 text-[#8B5CF6]" />
               Detalle
               {selected?.direction === "in" ? (
                 <span className="ml-2 text-[#22C55E] text-xs font-bold uppercase flex items-center gap-1">
@@ -295,7 +295,7 @@ export default function MyTransactions() {
               <div className="grid grid-cols-2 gap-3 border border-white/5 p-4 bg-[#0a0a0a]">
                 <div>
                   <div className="micro-label text-neutral-500 mb-1">Moneda</div>
-                  <div className="font-mono text-[#EAB308] text-lg">{selected.currency}</div>
+                  <div className="font-mono text-[#8B5CF6] text-lg">{selected.currency}</div>
                 </div>
                 <div>
                   <div className="micro-label text-neutral-500 mb-1">Monto</div>

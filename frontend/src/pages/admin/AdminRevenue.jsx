@@ -111,7 +111,7 @@ export default function AdminRevenue() {
     <div className="space-y-8" data-testid="admin-revenue">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="micro-label text-[#EAB308] mb-2">/ Ingresos</div>
+          <div className="micro-label text-[#8B5CF6] mb-2">/ Ingresos</div>
           <h1 className="font-display text-3xl flex items-center gap-3">
             <TrendingUp className="w-8 h-8 text-[#22C55E]" /> Ganancia del Negocio
           </h1>
@@ -127,7 +127,7 @@ export default function AdminRevenue() {
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+          <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
             <SelectItem value="all">Todo el tiempo</SelectItem>
             <SelectItem value="7">Últimos 7 días</SelectItem>
             <SelectItem value="30">Últimos 30 días</SelectItem>
@@ -152,10 +152,10 @@ export default function AdminRevenue() {
       </div>
 
       {data.missing_real_rate_pairs.length > 0 && (
-        <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-4 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-[#EAB308] shrink-0 mt-0.5" />
+        <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#8B5CF6] shrink-0 mt-0.5" />
           <div className="text-sm">
-            <div className="font-semibold text-[#EAB308] mb-1">Tasas reales faltantes</div>
+            <div className="font-semibold text-[#8B5CF6] mb-1">Tasas reales faltantes</div>
             <p className="text-neutral-300">
               Estos pares tienen órdenes pero NO tienen tasa real configurada — sus ganancias no se contabilizan:
             </p>
@@ -182,7 +182,7 @@ export default function AdminRevenue() {
           title="Clientes VIP"
           subtitle="Margen del spread (tasa preferencial)"
           data={data.by_role.vip}
-          accent="border-[#EAB308]/40"
+          accent="border-[#8B5CF6]/40"
         />
       </div>
 

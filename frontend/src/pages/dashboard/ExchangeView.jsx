@@ -156,13 +156,13 @@ export default function ExchangeView() {
         <p className="text-neutral-400 mb-6">Tu orden #{success.id.slice(0,8)} está en revisión por nuestro equipo contable.</p>
         <div className="text-left space-y-2 border border-white/10 p-4 mb-6 font-mono text-sm">
           <div className="flex justify-between"><span className="text-neutral-500">Envías:</span> <span>{success.amount_from} {success.from_code}</span></div>
-          <div className="flex justify-between"><span className="text-neutral-500">Recibes:</span> <span className="text-[#EAB308]">{success.amount_to} {success.to_code}</span></div>
+          <div className="flex justify-between"><span className="text-neutral-500">Recibes:</span> <span className="text-[#8B5CF6]">{success.amount_to} {success.to_code}</span></div>
           <div className="flex justify-between"><span className="text-neutral-500">Tasa:</span> <span>{success.rate_applied}</span></div>
           {success.commission_percent > 0 && (
             <div className="flex justify-between"><span className="text-neutral-500">Comisión:</span> <span>{success.commission_percent}%</span></div>
           )}
         </div>
-        <Button data-testid="new-order-btn" onClick={() => { setSuccess(null); setAmount(""); setProofImage(""); setSenderName(""); setDeliveryDetails(""); setCryptoNetwork(""); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
+        <Button data-testid="new-order-btn" onClick={() => { setSuccess(null); setAmount(""); setProofImage(""); setSenderName(""); setDeliveryDetails(""); setCryptoNetwork(""); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
           Nueva Orden
         </Button>
       </div>
@@ -172,7 +172,7 @@ export default function ExchangeView() {
   return (
     <div className="max-w-4xl space-y-6" data-testid="exchange-view">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Intercambio</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Intercambio</div>
         <h1 className="font-display text-3xl">Cripto ↔ Fiat</h1>
         <p className="text-neutral-400 mt-2">
           {isVip ? "Tasas VIP preferenciales" : "Tasa estándar según tu estatus"}
@@ -187,7 +187,7 @@ export default function ExchangeView() {
               <SelectTrigger data-testid="from-currency-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
                 <SelectValue placeholder="Selecciona moneda" />
               </SelectTrigger>
-              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                 {currencies.map(c => (
                   <SelectItem key={c.id} value={c.code} className="rounded-none">{c.code} — {c.name}</SelectItem>
                 ))}
@@ -200,7 +200,7 @@ export default function ExchangeView() {
               <SelectTrigger data-testid="to-currency-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
                 <SelectValue placeholder="Selecciona moneda" />
               </SelectTrigger>
-              <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                 {currencies.map(c => (
                   <SelectItem key={c.id} value={c.code} className="rounded-none">{c.code} — {c.name}</SelectItem>
                 ))}
@@ -227,9 +227,9 @@ export default function ExchangeView() {
         {isCashFiatDelivery && (
           <div
             data-testid="cash-fiat-guidance"
-            className="border border-[#EAB308]/40 bg-[#EAB308]/10 p-4 text-xs font-mono text-neutral-200 leading-relaxed"
+            className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 p-4 text-xs font-mono text-neutral-200 leading-relaxed"
           >
-            <div className="micro-label text-[#EAB308] text-[0.65rem] mb-2">
+            <div className="micro-label text-[#8B5CF6] text-[0.65rem] mb-2">
               ⓘ Entrega en efectivo · {toCode}
             </div>
             <p>
@@ -244,7 +244,7 @@ export default function ExchangeView() {
         )}
 
         {selectedRate && amt > 0 && (
-          <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 p-5 space-y-2 font-mono text-sm">
+          <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-5 space-y-2 font-mono text-sm">
             <div className="flex justify-between"><span className="text-neutral-400">Tasa aplicada:</span><span>{rate} {toCode}/{fromCode}</span></div>
             <div className="flex justify-between"><span className="text-neutral-400">Bruto:</span><span>{gross.toFixed(4)} {toCode}</span></div>
             {commission > 0 && (
@@ -252,7 +252,7 @@ export default function ExchangeView() {
             )}
             {isCashFiatDelivery && residueCredited > 0 && (
               <div
-                className="flex justify-between text-[#EAB308]"
+                className="flex justify-between text-[#8B5CF6]"
                 data-testid="cash-fiat-residue-credit"
               >
                 <span>Residuo a tu saldo:</span>
@@ -262,7 +262,7 @@ export default function ExchangeView() {
             <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-base">
               <span className="text-white">Recibirás en efectivo:</span>
               <span
-                className="text-[#EAB308] font-bold"
+                className="text-[#8B5CF6] font-bold"
                 data-testid="final-amount-display"
               >
                 {isCashFiatDelivery ? finalAmount.toFixed(0) : finalAmount.toFixed(4)} {toCode}
@@ -276,7 +276,7 @@ export default function ExchangeView() {
             <div className="micro-label text-neutral-500 mb-2">Cuenta destino — envía tu pago aquí:</div>
             <div className="flex items-center justify-between gap-3">
               <code className="text-sm break-all">{fromCurr.payment_account}</code>
-              <button onClick={copyAccount} data-testid="copy-account-btn" className="text-[#EAB308] hover:text-[#FACC15] shrink-0">
+              <button onClick={copyAccount} data-testid="copy-account-btn" className="text-[#8B5CF6] hover:text-[#A78BFA] shrink-0">
                 {copied ? <CheckCircle2 className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
               </button>
             </div>
@@ -285,7 +285,7 @@ export default function ExchangeView() {
 
         <div>
           <Label className="micro-label text-neutral-500">
-            Nombre del titular que envía el pago <span className="text-[#EAB308]">*</span>
+            Nombre del titular que envía el pago <span className="text-[#8B5CF6]">*</span>
           </Label>
           <Input
             data-testid="sender-name-input"
@@ -302,7 +302,7 @@ export default function ExchangeView() {
 
         <div>
           <Label className="micro-label text-neutral-500">Comprobante de pago (captura)</Label>
-          <label className="block mt-2 border-2 border-dashed border-white/15 hover:border-[#EAB308] p-6 cursor-pointer transition-colors">
+          <label className="block mt-2 border-2 border-dashed border-white/15 hover:border-[#8B5CF6] p-6 cursor-pointer transition-colors">
             <input type="file" accept="image/*" onChange={handleFile} className="hidden" data-testid="proof-upload" />
             {proofImage ? (
               <img src={proofImage} alt="proof" className="max-h-40 mx-auto" />
@@ -334,7 +334,7 @@ export default function ExchangeView() {
             >
               <SelectValue placeholder={toCurr ? "Selecciona método" : "Elige primero la moneda destino"} />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               {deliveryOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
@@ -377,7 +377,7 @@ export default function ExchangeView() {
               {validator?.hint ? (
                 <p
                   data-testid={`delivery-hint-${toCurr?.code}-${deliveryMethod}`}
-                  className="mt-2 text-[0.7rem] text-[#EAB308]/90 font-mono flex items-center gap-1.5"
+                  className="mt-2 text-[0.7rem] text-[#8B5CF6]/90 font-mono flex items-center gap-1.5"
                 >
                   <span className="opacity-70">{validator.icon}</span>
                   {validator.hint}
@@ -426,9 +426,9 @@ export default function ExchangeView() {
                     >
                       <SelectValue placeholder="Selecciona la red de destino" />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                    <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                       <SelectItem value="BEP20">
-                        BEP20 · Binance Smart Chain <span className="text-[0.65rem] text-[#EAB308] ml-1">(recomendada)</span>
+                        BEP20 · Binance Smart Chain <span className="text-[0.65rem] text-[#8B5CF6] ml-1">(recomendada)</span>
                       </SelectItem>
                       <SelectItem value="TRC20">TRC20 · Tron</SelectItem>
                       <SelectItem value="ERC20">ERC20 · Ethereum</SelectItem>
@@ -471,7 +471,7 @@ export default function ExchangeView() {
             (deliveryMethod === "crypto" && !cryptoNetwork) ||
             (toCurr?.type === "crypto" && deliveryMethod !== "accumulate" && !cryptoNetwork)
           }
-          className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-14 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-14 text-base disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? "Enviando..." : (<>Confirmar Orden <ArrowRight className="w-4 h-4 ml-2" /></>)}
         </Button>

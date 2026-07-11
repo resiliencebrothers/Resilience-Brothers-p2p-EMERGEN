@@ -16,13 +16,13 @@ const RootApp = process.env.REACT_APP_SENTRY_DSN
       fallback: ({ error, resetError }) => (
         <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a] text-white p-8">
           <div className="max-w-md text-center space-y-4">
-            <h1 className="font-display text-2xl text-[#EAB308]">Algo salió mal</h1>
+            <h1 className="font-display text-2xl text-[#8B5CF6]">Algo salió mal</h1>
             <p className="text-neutral-400 text-sm">
               Hemos recibido el error y nuestro equipo ya está al tanto. Por favor recarga la página.
             </p>
             <button
               onClick={resetError}
-              className="px-6 py-2 bg-[#EAB308] text-black font-medium hover:bg-[#fbc02d]"
+              className="px-6 py-2 bg-[#8B5CF6] text-white font-medium hover:bg-[#fbc02d]"
               data-testid="error-boundary-reset"
             >
               Reintentar

@@ -121,7 +121,7 @@ export default function KYCView() {
       <ProfileSectionTabs />
       <header>
         <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-          <IdCard className="w-7 h-7 text-[#EAB308]" /> Verificación de identidad
+          <IdCard className="w-7 h-7 text-[#8B5CF6]" /> Verificación de identidad
         </h1>
         <p className="text-neutral-500 text-sm mt-2">
           Sube 3 fotos para verificar tu identidad. Tus documentos se almacenan cifrados y solo el equipo de revisión puede verlos.
@@ -184,7 +184,7 @@ export default function KYCView() {
                   data-testid="kyc-submit-btn"
                   onClick={submit}
                   disabled={!allReady || submitting}
-                  className="bg-[#EAB308] text-black hover:bg-[#EAB308]/90 disabled:opacity-40"
+                  className="bg-[#8B5CF6] text-white hover:bg-[#8B5CF6]/90 disabled:opacity-40"
                 >
                   {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Enviar para verificación
@@ -225,7 +225,7 @@ function StatusCard({ status, verification }) {
   const Icon = cfg.icon;
   const toneClasses = {
     muted: "border-white/10 bg-black/30 text-neutral-300",
-    warn: "border-[#EAB308]/40 bg-[#EAB308]/5 text-[#FEF3C7]",
+    warn: "border-[#8B5CF6]/40 bg-[#8B5CF6]/5 text-[#FEF3C7]",
     ok: "border-emerald-500/40 bg-emerald-500/5 text-emerald-200",
     danger: "border-[#EF4444]/40 bg-[#EF4444]/5 text-[#FEE2E2]",
   }[cfg.tone];
@@ -249,7 +249,7 @@ function DocUploadRow({ docKey, label, hint, preview, fileRef, onSelect, onRemov
       <div className="flex items-start gap-3">
         <div className="flex-1 space-y-1">
           <div className="text-sm font-semibold text-white flex items-center gap-2">
-            {docKey === "selfie" ? <Camera className="w-4 h-4 text-[#EAB308]" /> : <FileImage className="w-4 h-4 text-[#EAB308]" />}
+            {docKey === "selfie" ? <Camera className="w-4 h-4 text-[#8B5CF6]" /> : <FileImage className="w-4 h-4 text-[#8B5CF6]" />}
             {label}
           </div>
           <div className="text-xs text-neutral-500">{hint}</div>
@@ -277,7 +277,7 @@ function DocUploadRow({ docKey, label, hint, preview, fileRef, onSelect, onRemov
               className="hidden"
               data-testid={`kyc-file-input-${docKey}`}
             />
-            <span className="inline-flex items-center gap-1.5 px-3 py-2 border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#EAB308] text-xs font-semibold hover:bg-[#EAB308]/20 transition">
+            <span className="inline-flex items-center gap-1.5 px-3 py-2 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6] text-xs font-semibold hover:bg-[#8B5CF6]/20 transition">
               <Upload className="w-3.5 h-3.5" /> Elegir archivo
             </span>
           </label>

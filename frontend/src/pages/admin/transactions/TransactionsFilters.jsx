@@ -28,7 +28,7 @@ export function TransactionsFilters({
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todas</SelectItem>
               <SelectItem value="in">Solo Entradas ↓</SelectItem>
               <SelectItem value="out">Solo Salidas ↑</SelectItem>
@@ -47,7 +47,7 @@ export function TransactionsFilters({
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todas</SelectItem>
               {currencies.map((c) => (
                 <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
@@ -115,7 +115,7 @@ export function TransactionsFilters({
           <button
             data-testid="tx-clear-filters"
             onClick={onClear}
-            className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-10"
+            className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
           >
             limpiar filtros
           </button>
@@ -125,14 +125,14 @@ export function TransactionsFilters({
         <Button
           data-testid="tx-export-csv"
           onClick={() => onExport("csv")}
-          className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider"
+          className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider"
         >
           <Download className="w-3.5 h-3.5 mr-2" /> CSV
         </Button>
         <Button
           data-testid="tx-export-pdf"
           onClick={() => onExport("pdf")}
-          className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold"
+          className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold"
         >
           <FileText className="w-3.5 h-3.5 mr-2" /> PDF
         </Button>

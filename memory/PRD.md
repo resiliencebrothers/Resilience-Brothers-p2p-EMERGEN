@@ -371,8 +371,27 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Todos los testids preservados verbatim para que los tests E2E existentes sigan pasando sin cambios.
   - **Lint**: 0 issues nuevos (frontend ESLint + Python pylint).
   - **Regresión**: **76/76 pass** en `iter55_28 + 28b + 27 + 19 + 19c + employee_and_revenue + revenue_registry + revenue_scheduler`. **188/189 iter55.*** — el 1 fallo restante (`test_iter55_19g::test_completed_crypto_order_notification_bep20_hint`) es un bug de test-fixture PRE-EXISTENTE (hash de 66 chars donde el guard iter55.19h espera 64) — no relacionado con este refactor.
-  - **Frontend smoke E2E**: `/dashboard/vip` con VIP renderiza todos los 7 testids del formulario refactorizado + grid de saldos. `/admin/revenue` muestra la nueva columna "Comisiones USDT" en Registro Mensual con `0.01 USDT · 1` para el mes en curso.
   - **Status**: fix en preview. User needs to redeploy to push to production (`https://p2p.resiliencebrothers.com`).
+
+- Migración cromática amarillo → morado (iter55.30, 11 Feb 2026) — operator reported *"tenemos los mismos colores que Binance y quisiéramos tener nuestra propia marca visual"*. Reemplazo global de la paleta amarillo/gold por una paleta morada distintiva alineada con el landing site (`resiliencebrothers.com`).
+  - **Paleta nueva**:
+    - Primario: **`#8B5CF6`** (violet-500, HSL 258 90% 66%) — reemplaza `#EAB308`.
+    - Hover: **`#A78BFA`** (violet-400, HSL 258 90% 76%) — reemplaza `#FACC15`.
+    - Fondo: **`#0A0A0F`** (con tinte morado, HSL 249 22% 4%) — reemplaza `#0A0A0A`.
+    - Card: **`#141322`** (dark purple-tinted) — reemplaza `#141414`.
+    - Positivo (verde): sin cambios `#22C55E`.
+    - Negativo (rojo): sin cambios `#EF4444`.
+  - **Backend** (5 archivos PDF/email): find/replace `#EAB308` → `#8B5CF6`, `#FACC15` → `#A78BFA`. Constante `BRAND_YELLOW` renombrada globalmente a `BRAND_PURPLE`. Fondo `BG_DARK` migrado a `#0A0A0F`, `PANEL` a `#141322`. En `revenue_report.py::revenue_monthly_pdf` el header table cambió `TEXTCOLOR=BG_DARK` (invisible sobre morado) a `TEXTCOLOR=TEXT` (blanco).
+  - **Frontend** (77 archivos): find/replace masivo de hexes + fix de contraste — cualquier `bg-[#8B5CF6] ... text-black` se corrigió a `text-white` (AA contrast). Los data-[state=checked/active]:text-black también se corrigieron.
+  - **CSS central `index.css`**: `body` bg + `::selection` + scrollbar thumb + tokens shadcn (`--primary/accent/ring: 258 90% 66%`, `--background: 249 22% 4%`, `--card: 250 18% 11%`, `--border/input: 250 15% 18%`) + `.tactile-card:hover` border + `.glow-yellow` (kept class name for backward-compat) ahora usa `rgba(139, 92, 246, ...)`. Añadido alias `.glow-purple`.
+  - **Backward compat**: la clase CSS `.glow-yellow` se mantiene con el mismo nombre pero renderea morado — no hace falta modificar los ~10 componentes que la referencian.
+  - **PDF verification**: `revenue_monthly_pdf` genera PDF de 607 KB con magic bytes válidos usando la paleta nueva.
+  - **Regresión backend**: 40/40 pass en `iter55_28 + 28b + 27 + 17_monthly_audit_pdf`. Zero regressions.
+  - **Frontend smoke E2E**:
+    - `/` landing renderiza el título "Comercio P2P sin fronteras. Sin fricción" con acento morado + botón "Comenzar con Google" en violet sólido + KPIs (+12 países, VIP, 24h, 100%) todos en morado.
+    - `/admin/revenue` breadcrumb "/ INGRESOS" morado + tarjetas KPI (Ganancia Total, P2P, Marketplace, Comisiones USDT, Volumen) con íconos violet.
+    - `/dashboard/vip` "VALOR TOTAL (USDT) 2,393.26" en violet + sidebar "Saldo y Retiros" activo morado.
+  - **Status**: fix en preview. User needs to redeploy to push to production. Impacto visual: **la plataforma ya no se confunde con Binance** — identidad de marca única alineada con el landing site.
 
 
 

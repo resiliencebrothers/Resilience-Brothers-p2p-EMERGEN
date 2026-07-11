@@ -49,7 +49,7 @@ export default function AdminUserLedgerDialog({ user, open, onClose }) {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
-            <History className="w-5 h-5 text-[#EAB308]" />
+            <History className="w-5 h-5 text-[#8B5CF6]" />
             Auditoría de saldo · {user.name}
             <span className="text-xs text-neutral-500 font-mono">{user.email}</span>
           </DialogTitle>
@@ -81,7 +81,7 @@ export default function AdminUserLedgerDialog({ user, open, onClose }) {
                     onClick={() => setActiveCurrency(code)}
                     className={`text-sm px-3 py-2 transition-colors flex items-center gap-2 ${
                       activeCurrency === code
-                        ? "text-[#EAB308] border-b-2 border-[#EAB308] font-semibold"
+                        ? "text-[#8B5CF6] border-b-2 border-[#8B5CF6] font-semibold"
                         : "text-neutral-400 hover:text-white"
                     }`}
                     data-testid={`ledger-tab-${code}`}
@@ -96,10 +96,10 @@ export default function AdminUserLedgerDialog({ user, open, onClose }) {
               </div>
               {bucket && (
                 <>
-                  <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 p-3 flex justify-between items-baseline mb-3">
+                  <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-3 flex justify-between items-baseline mb-3">
                     <span className="text-xs text-neutral-400">Total acreditado en {activeCurrency}:</span>
                     <span
-                      className="font-mono text-lg text-[#EAB308]"
+                      className="font-mono text-lg text-[#8B5CF6]"
                       data-testid={`ledger-total-${activeCurrency}`}
                     >
                       {bucket.total.toLocaleString(undefined, { maximumFractionDigits: 4 })} {activeCurrency}
@@ -109,7 +109,7 @@ export default function AdminUserLedgerDialog({ user, open, onClose }) {
                     {bucket.orders.map((o) => (
                       <div
                         key={o.id}
-                        className="border border-white/10 p-3 text-sm hover:border-[#EAB308]/30 transition-colors"
+                        className="border border-white/10 p-3 text-sm hover:border-[#8B5CF6]/30 transition-colors"
                         data-testid={`admin-ledger-order-${o.id}`}
                       >
                         <div className="flex justify-between items-start gap-2 flex-wrap">

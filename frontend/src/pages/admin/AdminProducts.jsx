@@ -64,10 +64,10 @@ export default function AdminProducts() {
     <div data-testid="admin-products">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="micro-label text-[#EAB308] mb-2">/ Marketplace</div>
+          <div className="micro-label text-[#8B5CF6] mb-2">/ Marketplace</div>
           <h1 className="font-display text-3xl">Productos</h1>
         </div>
-        <Button data-testid="add-product-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
+        <Button data-testid="add-product-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
           <Plus className="w-4 h-4 mr-1" /> Nuevo
         </Button>
       </div>
@@ -80,7 +80,7 @@ export default function AdminProducts() {
               <h3 className="font-display text-lg mt-1">{p.name}</h3>
               <div className="flex items-center justify-between mt-3">
                 <div>
-                  <div className="font-display text-xl text-[#EAB308]">${p.price_usd}</div>
+                  <div className="font-display text-xl text-[#8B5CF6]">${p.price_usd}</div>
                   <div className="text-xs text-neutral-500">Stock: {p.stock}</div>
                   {p.cost_usd > 0 && (
                     <div className="text-xs text-[#22C55E] mt-1">Margen: ${(p.price_usd - p.cost_usd).toFixed(2)}/u</div>
@@ -90,7 +90,7 @@ export default function AdminProducts() {
                   <button
                     onClick={() => { setEditing(p); setForm(p); setOpen(true); }}
                     data-testid={`edit-product-${p.id}`}
-                    className="text-neutral-400 hover:text-[#EAB308]"
+                    className="text-neutral-400 hover:text-[#8B5CF6]"
                     title="Editar producto"
                   >
                     <Edit2 className="w-4 h-4" />
@@ -112,7 +112,7 @@ export default function AdminProducts() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nuevo"} Producto</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div><Label className="micro-label text-neutral-500">Nombre</Label><Input data-testid="prod-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
@@ -175,7 +175,7 @@ export default function AdminProducts() {
             <div><Label className="micro-label text-neutral-500">Stock</Label><Input data-testid="prod-stock" type="number" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" /></div>
             <div><Label className="micro-label text-neutral-500">Categoría</Label><Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
             <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">Activo</span></div>
-            <Button data-testid="save-product-btn" onClick={save} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">Guardar</Button>
+            <Button data-testid="save-product-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">Guardar</Button>
           </div>
         </DialogContent>
       </Dialog>

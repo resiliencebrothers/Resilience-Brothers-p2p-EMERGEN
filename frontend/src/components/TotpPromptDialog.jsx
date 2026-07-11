@@ -52,11 +52,11 @@ export default function TotpPromptDialog({
     <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel?.(); }}>
       <DialogContent
         data-testid="totp-prompt-dialog"
-        className="bg-[#141414] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        className="bg-[#141322] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-[#EAB308]" /> {title}
+            <ShieldCheck className="w-5 h-5 text-[#8B5CF6]" /> {title}
           </DialogTitle>
           <DialogDescription className="text-neutral-400">
             {description}
@@ -64,7 +64,7 @@ export default function TotpPromptDialog({
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <Label className="micro-label text-[#EAB308]">Código 2FA</Label>
+            <Label className="micro-label text-[#8B5CF6]">Código 2FA</Label>
             <Input
               data-testid="totp-prompt-input"
               value={code}
@@ -82,7 +82,7 @@ export default function TotpPromptDialog({
               <button
                 type="button"
                 onClick={() => navigate("/dashboard/security")}
-                className="text-[#EAB308] hover:underline"
+                className="text-[#8B5CF6] hover:underline"
               >
                 Configurar 2FA
               </button>
@@ -101,7 +101,7 @@ export default function TotpPromptDialog({
               data-testid="totp-prompt-confirm"
               onClick={handleSubmit}
               disabled={busy}
-              className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none"
+              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none"
             >
               {busy ? "Verificando..." : "Confirmar"}
             </Button>

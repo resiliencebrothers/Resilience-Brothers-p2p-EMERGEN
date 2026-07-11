@@ -5,7 +5,7 @@ export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
       data-testid="auth-notice"
       className={`border-l-2 px-3 py-3 text-xs ${
         notice.kind === "register"
-          ? "border-[#EAB308] bg-[#EAB308]/5 text-[#FEF3C7]"
+          ? "border-[#8B5CF6] bg-[#8B5CF6]/5 text-[#FEF3C7]"
           : "border-[#3B82F6] bg-[#3B82F6]/5 text-[#DBEAFE]"
       }`}
     >
@@ -15,7 +15,7 @@ export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
           type="button"
           data-testid="auth-notice-register-btn"
           onClick={onSwitchToRegister}
-          className="text-[#EAB308] hover:text-[#FACC15] font-semibold underline underline-offset-4"
+          className="text-[#8B5CF6] hover:text-[#A78BFA] font-semibold underline underline-offset-4"
         >
           → Crear cuenta con este email
         </button>

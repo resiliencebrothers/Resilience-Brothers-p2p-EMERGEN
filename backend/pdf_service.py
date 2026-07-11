@@ -11,9 +11,9 @@ from reportlab.platypus import (
 )
 
 
-BRAND_YELLOW = colors.HexColor("#EAB308")
-BG_DARK = colors.HexColor("#0A0A0A")
-PANEL = colors.HexColor("#141414")
+BRAND_PURPLE = colors.HexColor("#8B5CF6")
+BG_DARK = colors.HexColor("#0A0A0F")
+PANEL = colors.HexColor("#141322")
 BORDER = colors.HexColor("#2a2a2a")
 TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")
@@ -45,7 +45,7 @@ def _header_footer(canvas, doc):
     canvas.setFont("Helvetica", 8)
     canvas.drawString(96, h - 46, "Global P2P Trade Infrastructure")
     # Top-right doc label
-    canvas.setFillColor(BRAND_YELLOW)
+    canvas.setFillColor(BRAND_PURPLE)
     canvas.setFont("Helvetica-Bold", 10)
     canvas.drawRightString(w - 36, h - 32, "CIERRE VIP")
     canvas.setFillColor(TEXT_MUTED)
@@ -107,7 +107,7 @@ def _build_currency_breakdown_table(total_in_native: dict) -> Table:
     tbl = Table(rows, colWidths=[2*inch, 2*inch])
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_YELLOW),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
@@ -136,7 +136,7 @@ def generate_vip_closing_pdf(
 
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT, fontSize=22, leading=24, spaceAfter=4, fontName="Helvetica-Bold")
-    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_YELLOW, fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold")
+    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_PURPLE, fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold")
     sub = ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=10, leading=12, spaceAfter=18)
     body = ParagraphStyle('body', parent=styles['Normal'], textColor=TEXT, fontSize=10, leading=14)
     body_muted = ParagraphStyle('bodym', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=9, leading=12)
@@ -160,7 +160,7 @@ def generate_vip_closing_pdf(
         [
             Paragraph(f"<font size=18 color='#FFFFFF'><b>{total_orders}</b></font>", body),
             Paragraph(f"<font size=14 color='#FFFFFF'><b>{total_volume_from:,.2f}</b></font>", body),
-            Paragraph(f"<font size=14 color='#EAB308'><b>${total_received:,.2f}</b></font>", body),
+            Paragraph(f"<font size=14 color='#8B5CF6'><b>${total_received:,.2f}</b></font>", body),
             Paragraph(f"<font size=14 color='#22C55E'><b>${final_balance:,.2f}</b></font>", body),
         ],
     ]
@@ -191,7 +191,7 @@ def generate_vip_closing_pdf(
     orders_tbl = Table(data, colWidths=[0.7*inch, 0.6*inch, 1.0*inch, 1.2*inch, 1.3*inch, 0.9*inch, 1.0*inch])
     orders_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), PANEL),
-        ("TEXTCOLOR", (0,0), (-1,0), BRAND_YELLOW),
+        ("TEXTCOLOR", (0,0), (-1,0), BRAND_PURPLE),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE", (0,0), (-1,0), 8),
         ("LEADING", (0,0), (-1,0), 10),
@@ -199,7 +199,7 @@ def generate_vip_closing_pdf(
         ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
         ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
         ("FONTSIZE", (0,1), (-1,-1), 8.5),
-        ("TEXTCOLOR", (4,1), (4,-1), BRAND_YELLOW),
+        ("TEXTCOLOR", (4,1), (4,-1), BRAND_PURPLE),
         ("GRID", (0,0), (-1,-1), 0.4, BORDER),
         ("TOPPADDING", (0,0), (-1,-1), 7),
         ("BOTTOMPADDING", (0,0), (-1,-1), 7),

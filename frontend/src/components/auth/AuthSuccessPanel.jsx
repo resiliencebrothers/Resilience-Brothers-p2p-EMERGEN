@@ -14,14 +14,14 @@ export function AuthSuccessPanel({ message, mode, resending, onResend, onClose }
           data-testid="auth-resend-verification-btn"
           onClick={onResend}
           disabled={resending}
-          className="block mx-auto mb-4 text-xs text-[#EAB308] hover:text-[#FACC15] underline underline-offset-4 disabled:opacity-50"
+          className="block mx-auto mb-4 text-xs text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-4 disabled:opacity-50"
         >
           {resending ? "Reenviando..." : "¿No recibiste el correo? Reenviar"}
         </button>
       )}
       <Button
         onClick={onClose}
-        className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none"
+        className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
       >
         Entendido
       </Button>

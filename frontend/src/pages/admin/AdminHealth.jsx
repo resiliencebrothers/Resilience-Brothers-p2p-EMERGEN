@@ -34,7 +34,7 @@ const StatCard = ({ icon: Icon, label, value, sub, tone = "default", testid, act
 const Section = ({ title, children, action }) => (
   <section className="space-y-4">
     <div className="flex items-end justify-between">
-      <h2 className="font-display text-lg text-[#EAB308]">{title}</h2>
+      <h2 className="font-display text-lg text-[#8B5CF6]">{title}</h2>
       {action}
     </div>
     {children}
@@ -138,7 +138,7 @@ export default function AdminHealth() {
                 action={
                   <a
                     href="/admin/orders"
-                    className="text-xs text-[#EAB308] hover:underline inline-flex items-center gap-1"
+                    className="text-xs text-[#8B5CF6] hover:underline inline-flex items-center gap-1"
                     data-testid="health-go-to-orders"
                   >
                     Revisar órdenes <ExternalLink className="w-3 h-3" />
@@ -170,7 +170,7 @@ export default function AdminHealth() {
                   href={s.sentry.deep_link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-[#EAB308] hover:underline inline-flex items-center gap-1"
+                  className="text-xs text-[#8B5CF6] hover:underline inline-flex items-center gap-1"
                   data-testid="health-open-sentry"
                 >
                   Abrir Sentry <ExternalLink className="w-3 h-3" />

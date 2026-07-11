@@ -24,7 +24,7 @@ const STATUS_LABEL = (status, method) => {
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
-  approved: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  approved: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
   pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
 };
@@ -125,7 +125,7 @@ export default function AdminWithdrawals() {
   return (
     <div data-testid="admin-withdrawals" className="space-y-8">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Retiros</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Retiros</div>
         <h1 className="font-display text-3xl">Retiros & Canjes</h1>
       </div>
 
@@ -146,7 +146,7 @@ export default function AdminWithdrawals() {
             <SelectTrigger data-testid="withdrawals-status-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-44">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todos los estados</SelectItem>
               <SelectItem value="pending">Pendiente</SelectItem>
               <SelectItem value="approved">Confirmado / En progreso</SelectItem>
@@ -158,7 +158,7 @@ export default function AdminWithdrawals() {
             <SelectTrigger data-testid="withdrawals-currency-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-40">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todas las monedas</SelectItem>
               {currencies.map((c) => (
                 <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
@@ -169,7 +169,7 @@ export default function AdminWithdrawals() {
             <button
               data-testid="withdrawals-clear-filters"
               onClick={() => { setUserInput(""); setStatusFilter("all"); setCurrencyFilter("all"); }}
-              className="text-xs text-neutral-500 hover:text-[#EAB308] underline underline-offset-4 h-9"
+              className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-9"
             >
               limpiar
             </button>
@@ -196,14 +196,14 @@ export default function AdminWithdrawals() {
               {items.map(w => (
                 <tr key={w.id} className="border-b border-white/5">
                   <td className="px-3 py-3">{w.user_name}</td>
-                  <td className="px-3 py-3 font-mono text-[#EAB308]">{w.amount_usd}</td>
+                  <td className="px-3 py-3 font-mono text-[#8B5CF6]">{w.amount_usd}</td>
                   <td className="px-3 py-3 font-mono">{w.currency || "USD"}</td>
                   <td className="px-3 py-3">
                     <span>{w.method}</span>
                     {w.method === "crypto" && w.crypto_network && (
                       <span
                         data-testid={`withdrawal-network-${w.id}`}
-                        className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono"
+                        className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono"
                       >
                         {w.crypto_network}
                       </span>
@@ -216,7 +216,7 @@ export default function AdminWithdrawals() {
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    <Button size="sm" onClick={() => openDialog(w)} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-8" data-testid={`manage-withdrawal-${w.id}`}>Gestionar</Button>
+                    <Button size="sm" onClick={() => openDialog(w)} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-8" data-testid={`manage-withdrawal-${w.id}`}>Gestionar</Button>
                   </td>
                 </tr>
               ))}
@@ -247,13 +247,13 @@ export default function AdminWithdrawals() {
                   <td className="px-3 py-3">{r.user_name}</td>
                   <td className="px-3 py-3">{r.product_name}</td>
                   <td className="px-3 py-3 font-mono">{r.quantity}</td>
-                  <td className="px-3 py-3 font-mono text-[#EAB308]">${r.total_usd}</td>
+                  <td className="px-3 py-3 font-mono text-[#8B5CF6]">${r.total_usd}</td>
                   <td className="px-3 py-3 text-xs max-w-xs truncate">{r.delivery_address}</td>
                   <td className="px-3 py-3 text-xs uppercase">{r.status}</td>
                   <td className="px-3 py-3">
                     <div className="flex gap-1">
                       <Button size="sm" onClick={() => updateR(r.id, "approved")} className="bg-[#22C55E] text-black rounded-none h-7 text-xs">✓</Button>
-                      <Button size="sm" onClick={() => updateR(r.id, "delivered")} className="bg-[#EAB308] text-black rounded-none h-7 text-xs">⇪</Button>
+                      <Button size="sm" onClick={() => updateR(r.id, "delivered")} className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs">⇪</Button>
                       <Button size="sm" onClick={() => updateR(r.id, "rejected")} className="bg-[#EF4444] text-white rounded-none h-7 text-xs">✕</Button>
                     </div>
                   </td>
@@ -265,7 +265,7 @@ export default function AdminWithdrawals() {
       </div>
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
@@ -281,7 +281,7 @@ export default function AdminWithdrawals() {
                 {open.method === "crypto" && open.crypto_network && (
                   <div data-testid="withdrawal-modal-network">
                     <span className="text-neutral-500">Red on-chain:</span>{" "}
-                    <span className="inline-flex items-center px-1.5 py-0.5 text-[0.7rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono ml-1">
+                    <span className="inline-flex items-center px-1.5 py-0.5 text-[0.7rem] uppercase tracking-wider bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono ml-1">
                       {open.crypto_network}
                     </span>
                   </div>
@@ -339,7 +339,7 @@ export default function AdminWithdrawals() {
                   and the block-explorer link on the ledger is the source of
                   truth. For transfer/cash we still require the receipt image. */}
               <div className="border border-white/10 p-3 space-y-3 bg-[#0a0a0a]/50">
-                <div className="micro-label text-[#EAB308]">
+                <div className="micro-label text-[#8B5CF6]">
                   {open.method === "crypto"
                     ? "Hash de transacción on-chain"
                     : "Evidencia de pago al cliente"}
@@ -422,7 +422,7 @@ export default function AdminWithdrawals() {
                 <Button data-testid="withdrawal-approve" onClick={() => askChange("approved")} className="bg-[#22C55E] text-black rounded-none">
                   {open.method === "cash" ? "En progreso" : "Confirmar"}
                 </Button>
-                <Button data-testid="withdrawal-pay" onClick={() => askChange("paid")} className="bg-[#EAB308] text-black rounded-none">
+                <Button data-testid="withdrawal-pay" onClick={() => askChange("paid")} className="bg-[#8B5CF6] text-white rounded-none">
                   {open.method === "cash" ? "Entregado" : "Pagado"}
                 </Button>
                 <Button data-testid="withdrawal-reject" onClick={() => askChange("rejected")} className="bg-[#EF4444] text-white rounded-none">Rechazar</Button>

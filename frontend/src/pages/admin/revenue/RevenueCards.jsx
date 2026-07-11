@@ -13,7 +13,7 @@ export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testi
       className={`tactile-card p-5 ${highlight ? "glow-yellow" : ""}`}
       data-testid={testid}
     >
-      <Icon className={`w-5 h-5 mb-3 ${highlight ? "text-[#22C55E]" : "text-[#EAB308]"}`} />
+      <Icon className={`w-5 h-5 mb-3 ${highlight ? "text-[#22C55E]" : "text-[#8B5CF6]"}`} />
       <div className="micro-label text-neutral-500">{label}</div>
       <div className="font-display text-2xl mt-1">
         {value} <span className="text-sm text-neutral-400">{unit}</span>

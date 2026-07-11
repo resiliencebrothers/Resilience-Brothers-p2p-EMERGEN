@@ -9,7 +9,7 @@ import { extractCryptoNetwork } from "@/services/delivery_validators";
 import { ORDER_FILTER_STATUSES } from "@/constants/orderStatus";
 
 const STATUS_STYLES = {
-  pending: "bg-[#EAB308]/10 text-[#EAB308] border-[#EAB308]/30",
+  pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
   approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   completed: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
@@ -63,7 +63,7 @@ export default function OrdersView() {
   return (
     <div data-testid="orders-view">
       <div className="mb-6">
-        <div className="micro-label text-[#EAB308] mb-2">/ Historial</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Historial</div>
         <h1 className="font-display text-3xl">Mis Órdenes</h1>
       </div>
 
@@ -79,8 +79,8 @@ export default function OrdersView() {
             className={
               "text-xs uppercase tracking-wider border px-3 py-1.5 rounded-none transition-colors " +
               (filter === p.key
-                ? "bg-[#EAB308] text-black border-[#EAB308]"
-                : "border-white/15 text-neutral-400 hover:border-[#EAB308]/60 hover:text-white")
+                ? "bg-[#8B5CF6] text-white border-[#8B5CF6]"
+                : "border-white/15 text-neutral-400 hover:border-[#8B5CF6]/60 hover:text-white")
             }
           >
             {p.label}
@@ -112,7 +112,7 @@ export default function OrdersView() {
                   <td className="px-4 py-4 font-mono text-xs">{o.id.slice(0, 8)}</td>
                   <td className="px-4 py-4 font-mono text-sm">{o.from_code} → {o.to_code}</td>
                   <td className="px-4 py-4 font-mono text-sm">{o.amount_from}</td>
-                  <td className="px-4 py-4 font-mono text-sm text-[#EAB308]">{o.amount_to}</td>
+                  <td className="px-4 py-4 font-mono text-sm text-[#8B5CF6]">{o.amount_to}</td>
                   <td className="px-4 py-4">
                     <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span>
                   </td>
@@ -126,7 +126,7 @@ export default function OrdersView() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur" onClick={() => setSelected(null)}>
-          <div className="bg-[#141414] border border-white/10 max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-[#141322] border border-white/10 max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display text-xl">Orden #{selected.id.slice(0,8)}</h3>
               <button onClick={() => setSelected(null)} className="text-neutral-500 hover:text-white">✕</button>

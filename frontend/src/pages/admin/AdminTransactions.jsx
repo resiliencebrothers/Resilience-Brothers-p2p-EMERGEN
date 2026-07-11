@@ -126,7 +126,7 @@ export default function AdminTransactions() {
   return (
     <div data-testid="admin-transactions" className="space-y-5">
       <div className="mb-2">
-        <div className="micro-label text-[#EAB308] mb-2 flex items-center gap-2">
+        <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
           <Banknote className="w-3.5 h-3.5" /> / Contabilidad
         </div>
         <h1 className="font-display text-3xl">Registro de Transacciones</h1>

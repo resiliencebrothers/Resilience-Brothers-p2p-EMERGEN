@@ -125,7 +125,7 @@ export default function SecuritySettings() {
               </>
             ) : (
               <>
-                <ShieldAlert className="w-6 h-6 text-[#EAB308]" />
+                <ShieldAlert className="w-6 h-6 text-[#8B5CF6]" />
                 <div>
                   <div className="text-white font-semibold" data-testid="security-status">2FA no configurado</div>
                   <div className="text-xs text-neutral-500">No podrás realizar retiros hasta activarlo.</div>
@@ -135,14 +135,14 @@ export default function SecuritySettings() {
           </div>
           {!status?.enabled && !setupData && (
             <Button data-testid="security-setup-btn" onClick={startSetup} disabled={busy}
-              className="rounded-none bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold h-10 px-4 uppercase tracking-wider text-xs">
+              className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold h-10 px-4 uppercase tracking-wider text-xs">
               {busy ? "Cargando..." : "Activar 2FA"}
             </Button>
           )}
           {status?.enabled && (
             <div className="flex gap-2">
               <Button data-testid="security-regen-btn" onClick={() => setRegenModal(true)}
-                className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 text-white h-10 px-3 uppercase tracking-wider text-xs">
+                className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 text-white h-10 px-3 uppercase tracking-wider text-xs">
                 <RefreshCw className="w-3.5 h-3.5 mr-2" /> Regenerar códigos
               </Button>
               <Button data-testid="security-disable-btn" onClick={() => setDisableModal(true)}
@@ -184,7 +184,7 @@ export default function SecuritySettings() {
               placeholder="123456"
               className="rounded-none bg-[#0a0a0a] border-white/10 h-12 w-32 font-mono text-center text-xl tracking-widest" />
             <Button data-testid="security-verify-btn" onClick={verifySetup} disabled={busy || verifyCode.length !== 6}
-              className="rounded-none bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold h-12 px-6 uppercase tracking-wider text-xs">
+              className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold h-12 px-6 uppercase tracking-wider text-xs">
               {busy ? "Verificando..." : "Activar"}
             </Button>
           </div>
@@ -193,11 +193,11 @@ export default function SecuritySettings() {
 
       {/* Recovery codes (shown after activation) */}
       {recoveryCodes && (
-        <div className="border border-[#EAB308]/40 bg-[#EAB308]/5 p-5" data-testid="security-recovery-codes">
+        <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-5" data-testid="security-recovery-codes">
           <div className="flex items-start gap-3 mb-3">
-            <AlertTriangle className="w-5 h-5 text-[#EAB308] mt-0.5" />
+            <AlertTriangle className="w-5 h-5 text-[#8B5CF6] mt-0.5" />
             <div>
-              <div className="font-semibold text-[#EAB308]">Guarda estos códigos de recuperación</div>
+              <div className="font-semibold text-[#8B5CF6]">Guarda estos códigos de recuperación</div>
               <div className="text-xs text-neutral-400 mt-1">
                 Solo se muestran <strong>una vez</strong>. Úsalos para entrar si pierdes tu autenticador. Cada código sirve una sola vez.
               </div>
@@ -212,7 +212,7 @@ export default function SecuritySettings() {
             ))}
           </div>
           <div className="flex justify-end mt-3 gap-2">
-            <button onClick={() => copyText(recoveryCodes.join("\n"))} className="text-xs text-[#EAB308] underline">
+            <button onClick={() => copyText(recoveryCodes.join("\n"))} className="text-xs text-[#8B5CF6] underline">
               Copiar todos
             </button>
             <button onClick={() => setRecoveryCodes(null)} data-testid="security-codes-acknowledged" className="text-xs text-neutral-500 hover:text-white underline">
@@ -257,7 +257,7 @@ export default function SecuritySettings() {
           <DialogFooter>
             <Button onClick={() => setRegenModal(false)} className="rounded-none bg-transparent border border-white/15 text-white">Cancelar</Button>
             <Button onClick={regenerateCodes} disabled={busy}
-              className="rounded-none bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold">
+              className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold">
               Regenerar
             </Button>
           </DialogFooter>

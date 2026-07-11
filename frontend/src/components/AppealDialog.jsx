@@ -76,7 +76,7 @@ export default function AppealDialog() {
 
   const statusChip = (status) => {
     const config = {
-      pending: { icon: Clock, cls: "text-[#EAB308] border-[#EAB308]/40 bg-[#EAB308]/5", label: "PENDIENTE" },
+      pending: { icon: Clock, cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", label: "PENDIENTE" },
       resolved: { icon: CheckCircle2, cls: "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/5", label: "APROBADA" },
       rejected: { icon: XCircle, cls: "text-[#EF4444] border-[#EF4444]/40 bg-[#EF4444]/5", label: "RECHAZADA" },
     }[status] || { icon: Clock, cls: "text-neutral-400 border-white/10", label: status };
@@ -95,7 +95,7 @@ export default function AppealDialog() {
         onClick={() => setOpen(true)}
         variant="outline"
         size="sm"
-        className="border-[#EAB308]/40 text-[#EAB308] hover:bg-[#EAB308]/10 mt-3"
+        className="border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 mt-3"
       >
         <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
         Enviar apelación al staff
@@ -129,7 +129,7 @@ export default function AppealDialog() {
           )}
 
           {hasPending && (
-            <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 px-3 py-2.5 text-xs text-[#FEF3C7]">
+            <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 px-3 py-2.5 text-xs text-[#FEF3C7]">
               Ya tienes una apelación pendiente. El staff la está revisando. Espera la respuesta antes de enviar otra.
             </div>
           )}
@@ -151,8 +151,8 @@ export default function AppealDialog() {
                     </div>
                     <div className="text-xs text-neutral-300 line-clamp-3">{a.message}</div>
                     {a.staff_response && (
-                      <div className="text-[0.7rem] text-neutral-400 border-l-2 border-[#EAB308]/60 pl-2 mt-1">
-                        <span className="text-[#EAB308] font-semibold">Staff: </span>{a.staff_response}
+                      <div className="text-[0.7rem] text-neutral-400 border-l-2 border-[#8B5CF6]/60 pl-2 mt-1">
+                        <span className="text-[#8B5CF6] font-semibold">Staff: </span>{a.staff_response}
                       </div>
                     )}
                   </li>
@@ -175,7 +175,7 @@ export default function AppealDialog() {
                 data-testid="appeal-submit-btn"
                 onClick={submit}
                 disabled={sending || message.trim().length < 10}
-                className="bg-[#EAB308] hover:bg-[#EAB308]/90 text-black font-semibold"
+                className="bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white font-semibold"
               >
                 {sending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
                 Enviar

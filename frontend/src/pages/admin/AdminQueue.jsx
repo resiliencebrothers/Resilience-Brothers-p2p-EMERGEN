@@ -36,7 +36,7 @@ export default function AdminQueue() {
   return (
     <div data-testid="admin-queue" className="space-y-8">
       <div>
-        <div className="micro-label text-[#EAB308] mb-2">/ Mi Cola</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">/ Mi Cola</div>
         <h1 className="font-display text-3xl">Pendientes en tu scope</h1>
         <p className="text-neutral-500 text-sm mt-2">
           Sólo los ítems pendientes dentro de tus monedas autorizadas. Los admins ven todo.
@@ -56,10 +56,10 @@ export default function AdminQueue() {
         <section data-testid="queue-orders">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-xl flex items-center gap-2">
-              <ListChecks className="w-5 h-5 text-[#EAB308]" /> Órdenes pendientes
+              <ListChecks className="w-5 h-5 text-[#8B5CF6]" /> Órdenes pendientes
               <span className="text-xs text-neutral-500 font-mono">({data.counts.orders})</span>
             </h2>
-            <Link to="/admin/orders" className="micro-label text-[#EAB308] hover:underline">
+            <Link to="/admin/orders" className="micro-label text-[#8B5CF6] hover:underline">
               Ir a Órdenes →
             </Link>
           </div>
@@ -80,7 +80,7 @@ export default function AdminQueue() {
                   <tr key={o.id} className="border-b border-white/5" data-testid={`queue-order-${o.id}`}>
                     <td className="px-4 py-3">{o.user_name}</td>
                     <td className="px-4 py-3 font-mono">{o.from_code} → {o.to_code}</td>
-                    <td className="px-4 py-3 font-mono text-[#EAB308]">{o.amount_from} {o.from_code}</td>
+                    <td className="px-4 py-3 font-mono text-[#8B5CF6]">{o.amount_from} {o.from_code}</td>
                     <td className="px-4 py-3 text-xs">{o.delivery_method}</td>
                     <td className="px-4 py-3 text-xs uppercase">{ORDER_STATUS[o.status] || o.status}</td>
                     <td className="px-4 py-3 text-xs text-neutral-500">{new Date(o.created_at).toLocaleString()}</td>
@@ -101,10 +101,10 @@ export default function AdminQueue() {
         <section data-testid="queue-withdrawals">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-xl flex items-center gap-2">
-              <ArrowDownToLine className="w-5 h-5 text-[#EAB308]" /> Retiros pendientes
+              <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> Retiros pendientes
               <span className="text-xs text-neutral-500 font-mono">({data.counts.withdrawals})</span>
             </h2>
-            <Link to="/admin/withdrawals" className="micro-label text-[#EAB308] hover:underline">
+            <Link to="/admin/withdrawals" className="micro-label text-[#8B5CF6] hover:underline">
               Ir a Retiros →
             </Link>
           </div>
@@ -123,12 +123,12 @@ export default function AdminQueue() {
                 {data.withdrawals.slice(0, 50).map(w => (
                   <tr key={w.id} className="border-b border-white/5" data-testid={`queue-withdrawal-${w.id}`}>
                     <td className="px-4 py-3">{w.user_name}</td>
-                    <td className="px-4 py-3 font-mono text-[#EAB308]">{w.amount_usd}</td>
+                    <td className="px-4 py-3 font-mono text-[#8B5CF6]">{w.amount_usd}</td>
                     <td className="px-4 py-3 font-mono">{w.currency || "USD"}</td>
                     <td className="px-4 py-3 text-xs">
                       {w.method}
                       {w.method === "crypto" && w.crypto_network && (
-                        <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[0.55rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono">
+                        <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[0.55rem] uppercase tracking-wider bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono">
                           {w.crypto_network}
                         </span>
                       )}

@@ -56,7 +56,7 @@ export function ConvertPreview({
           <div className="flex justify-between items-baseline border-t border-white/10 pt-1.5 mt-1.5">
             <span className="text-xs text-neutral-400">Recibirás:</span>
             <span
-              className={"font-mono text-lg " + (belowMinNet ? "text-[#EF4444]" : "text-[#EAB308]")}
+              className={"font-mono text-lg " + (belowMinNet ? "text-[#EF4444]" : "text-[#8B5CF6]")}
               data-testid="converter-preview-amount"
             >
               {previewNet === null

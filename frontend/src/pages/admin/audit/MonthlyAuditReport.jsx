@@ -117,7 +117,7 @@ export default function MonthlyAuditReport() {
     <div className="tactile-card p-5 space-y-4" data-testid="audit-monthly-card">
       <div className="flex flex-wrap items-start gap-3 justify-between">
         <div>
-          <div className="micro-label text-[#EAB308] mb-1 flex items-center gap-2">
+          <div className="micro-label text-[#8B5CF6] mb-1 flex items-center gap-2">
             <CalendarClock className="w-3.5 h-3.5" /> Reporte mensual de auditoría
           </div>
           <div className="text-xs text-neutral-400 max-w-xl leading-relaxed">
@@ -135,7 +135,7 @@ export default function MonthlyAuditReport() {
             <SelectTrigger data-testid="audit-monthly-month" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               {monthOptions.map((m) => (
                 <SelectItem key={m.value} value={String(m.value)}>{m.label}</SelectItem>
               ))}
@@ -148,7 +148,7 @@ export default function MonthlyAuditReport() {
             <SelectTrigger data-testid="audit-monthly-year" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-28">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
               {yearOptions.map((y) => (
                 <SelectItem key={y} value={String(y)}>{y}</SelectItem>
               ))}
@@ -160,7 +160,7 @@ export default function MonthlyAuditReport() {
             data-testid="audit-monthly-download"
             onClick={downloadPdf}
             disabled={downloading || loadingSummary}
-            className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold disabled:opacity-50"
+            className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold disabled:opacity-50"
           >
             {downloading
               ? <><Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> Generando...</>
@@ -171,7 +171,7 @@ export default function MonthlyAuditReport() {
             onClick={() => setShowTotp(true)}
             disabled={emailBusy || loadingSummary || emptyMonth}
             title={emptyMonth ? "No hay acciones registradas para enviar" : "Enviar por email al buzón de operaciones"}
-            className="rounded-none bg-transparent border border-white/15 hover:border-[#EAB308]/60 hover:bg-[#EAB308]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider disabled:opacity-40"
+            className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider disabled:opacity-40"
           >
             <Mail className="w-3.5 h-3.5 mr-2" /> Enviar por email
           </Button>
@@ -208,7 +208,7 @@ export default function MonthlyAuditReport() {
               </div>
             </div>
             <div className="pt-2 border-t border-white/5 flex items-center gap-2 text-[0.7rem] text-neutral-500 font-mono break-all">
-              <Fingerprint className="w-3 h-3 flex-shrink-0 text-[#EAB308]" />
+              <Fingerprint className="w-3 h-3 flex-shrink-0 text-[#8B5CF6]" />
               <span className="truncate" title={summary.integrity_hash} data-testid="audit-monthly-hash">
                 SHA-256 · {summary.integrity_hash.slice(0, 32)}...
               </span>

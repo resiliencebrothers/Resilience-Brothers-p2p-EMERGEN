@@ -53,10 +53,10 @@ export default function AdminCurrencies() {
     <div data-testid="admin-currencies">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="micro-label text-[#EAB308] mb-2">/ Monedas</div>
+          <div className="micro-label text-[#8B5CF6] mb-2">/ Monedas</div>
           <h1 className="font-display text-3xl">Cripto & Fiat</h1>
         </div>
-        <Button data-testid="add-currency-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">
+        <Button data-testid="add-currency-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
           <Plus className="w-4 h-4 mr-1" /> Nueva moneda
         </Button>
       </div>
@@ -79,12 +79,12 @@ export default function AdminCurrencies() {
               <tr key={c.id} className="border-b border-white/5">
                 <td className="px-4 py-3 font-mono font-semibold">{c.code}</td>
                 <td className="px-4 py-3">{c.name}</td>
-                <td className="px-4 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${c.type === "crypto" ? "border-[#EAB308]/40 text-[#EAB308]" : "border-white/20 text-neutral-400"}`}>{c.type}</span></td>
+                <td className="px-4 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${c.type === "crypto" ? "border-[#8B5CF6]/40 text-[#8B5CF6]" : "border-white/20 text-neutral-400"}`}>{c.type}</span></td>
                 <td className="px-4 py-3 text-neutral-400">{c.country || "—"}</td>
                 <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">{c.payment_account || "—"}</td>
                 <td className="px-4 py-3">{c.is_active ? "✓" : "✕"}</td>
                 <td className="px-4 py-3 text-right">
-                  <button onClick={() => edit(c)} className="text-neutral-400 hover:text-[#EAB308] mr-3"><Edit2 className="w-4 h-4" /></button>
+                  <button onClick={() => edit(c)} className="text-neutral-400 hover:text-[#8B5CF6] mr-3"><Edit2 className="w-4 h-4" /></button>
                   <button onClick={() => remove(c.id)} className="text-neutral-400 hover:text-[#EF4444]"><Trash2 className="w-4 h-4" /></button>
                 </td>
               </tr>
@@ -94,7 +94,7 @@ export default function AdminCurrencies() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Moneda</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>
@@ -108,10 +108,10 @@ export default function AdminCurrencies() {
               {form.code && form.code !== form.code.trim() && (
                 <div
                   data-testid="cur-code-preview"
-                  className="mt-1.5 text-[0.7rem] text-[#EAB308] font-mono flex items-center gap-1"
+                  className="mt-1.5 text-[0.7rem] text-[#8B5CF6] font-mono flex items-center gap-1"
                 >
                   <span className="opacity-60">Se guardará como:</span>
-                  <span className="border border-[#EAB308]/40 bg-[#EAB308]/5 px-1.5 py-0.5">
+                  <span className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 px-1.5 py-0.5">
                     {form.code.trim()}
                   </span>
                 </div>
@@ -127,7 +127,7 @@ export default function AdminCurrencies() {
               <Label className="micro-label text-neutral-500">Tipo</Label>
               <Select value={form.type} onValueChange={v => setForm({ ...form, type: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                   <SelectItem value="crypto">Crypto</SelectItem>
                   <SelectItem value="fiat">Fiat</SelectItem>
                 </SelectContent>
@@ -168,7 +168,7 @@ export default function AdminCurrencies() {
               </div>
             </div>
             <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">Activa</span></div>
-            <Button data-testid="save-currency-btn" onClick={save} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none">Guardar</Button>
+            <Button data-testid="save-currency-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">Guardar</Button>
           </div>
         </DialogContent>
       </Dialog>

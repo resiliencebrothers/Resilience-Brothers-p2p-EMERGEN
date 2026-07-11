@@ -31,7 +31,7 @@ export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle,
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-56 p-0 bg-[#141414] border border-white/10 rounded-none text-white"
+          className="w-56 p-0 bg-[#141322] border border-white/10 rounded-none text-white"
         >
           <div className="px-3 py-2 micro-label text-neutral-500 border-b border-white/10">
             Selecciona monedas autorizadas
@@ -52,7 +52,7 @@ export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle,
                   <Checkbox
                     checked={isOn}
                     onCheckedChange={(v) => onToggle(code, !!v)}
-                    className="border-white/20 data-[state=checked]:bg-[#EAB308] data-[state=checked]:text-black"
+                    className="border-white/20 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:text-white"
                   />
                   <span className="font-mono text-sm">{code}</span>
                   {c.name && <span className="text-xs text-neutral-500 truncate">· {c.name}</span>}
@@ -73,7 +73,7 @@ export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle,
               size="sm"
               data-testid={`save-currencies-${userId}`}
               onClick={() => { setOpen(false); onSave(); }}
-              className="bg-[#EAB308] hover:bg-[#FACC15] text-black rounded-none h-8 text-xs"
+              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-8 text-xs"
             >
               Guardar
             </Button>

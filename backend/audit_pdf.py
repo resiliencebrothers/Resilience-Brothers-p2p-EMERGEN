@@ -9,9 +9,9 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 
-BRAND_YELLOW = colors.HexColor("#EAB308")
-BG_DARK = colors.HexColor("#0A0A0A")
-PANEL = colors.HexColor("#141414")
+BRAND_PURPLE = colors.HexColor("#8B5CF6")
+BG_DARK = colors.HexColor("#0A0A0F")
+PANEL = colors.HexColor("#141322")
 BORDER = colors.HexColor("#2a2a2a")
 TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")
@@ -38,7 +38,7 @@ def _header_footer(canvas, doc):
     canvas.setFillColor(TEXT_MUTED)
     canvas.setFont("Helvetica", 7)
     canvas.drawString(88, h - 42, "Audit Log Export — Internal use only")
-    canvas.setFillColor(BRAND_YELLOW)
+    canvas.setFillColor(BRAND_PURPLE)
     canvas.setFont("Helvetica-Bold", 10)
     canvas.drawRightString(w - 36, h - 28, "AUDIT LOG")
     canvas.setFillColor(TEXT_MUTED)
@@ -84,7 +84,7 @@ def _build_filters_paragraph(filters: dict, total: int, sub_style) -> Paragraph:
         f"Actor: <font color='#FFFFFF'><b>{f_actor}</b></font> · "
         f"Desde: <font color='#FFFFFF'><b>{f_since}</b></font> · "
         f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font> · "
-        f"Total: <font color='#EAB308'><b>{total}</b></font>",
+        f"Total: <font color='#8B5CF6'><b>{total}</b></font>",
         sub_style,
     )
 
@@ -97,7 +97,7 @@ def generate_audit_pdf(entries: list, filters: dict) -> bytes:
     )
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT, fontSize=20, leading=22, fontName="Helvetica-Bold", spaceAfter=4)
-    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_YELLOW, fontSize=8, leading=10, fontName="Helvetica-Bold", spaceAfter=2)
+    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_PURPLE, fontSize=8, leading=10, fontName="Helvetica-Bold", spaceAfter=2)
     sub = ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=9, leading=12, spaceAfter=14)
 
     story = []
@@ -114,7 +114,7 @@ def generate_audit_pdf(entries: list, filters: dict) -> bytes:
     tbl = Table(data, colWidths=col_widths, repeatRows=1)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_YELLOW),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),

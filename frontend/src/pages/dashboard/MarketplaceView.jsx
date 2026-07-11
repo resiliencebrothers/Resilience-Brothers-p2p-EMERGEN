@@ -56,13 +56,13 @@ export default function MarketplaceView() {
     <div className="space-y-8" data-testid="marketplace-view">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="micro-label text-[#EAB308] mb-2">/ Marketplace</div>
-          <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#EAB308]" /> Canjea por Mercancía</h1>
+          <div className="micro-label text-[#8B5CF6] mb-2">/ Marketplace</div>
+          <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#8B5CF6]" /> Canjea por Mercancía</h1>
         </div>
         <div className="tactile-card px-5 py-3 min-w-[180px]" data-testid="marketplace-balance-widget">
           <div className="micro-label text-neutral-500">Saldo total</div>
           <div
-            className="font-display text-2xl text-[#EAB308]"
+            className="font-display text-2xl text-[#8B5CF6]"
             data-testid="marketplace-balance-usdt"
           >
             {(balances.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
@@ -93,10 +93,10 @@ export default function MarketplaceView() {
               <p className="text-sm text-neutral-400 mb-4 line-clamp-2">{p.description}</p>
               <div className="mt-auto flex items-center justify-between">
                 <div>
-                  <div className="font-display text-xl text-[#EAB308]">${p.price_usd}</div>
+                  <div className="font-display text-xl text-[#8B5CF6]">${p.price_usd}</div>
                   <div className="text-xs text-neutral-500">Stock: {p.stock}</div>
                 </div>
-                <Button data-testid={`redeem-${p.id}`} onClick={() => setOpen(p)} disabled={p.stock === 0} className="bg-[#EAB308] hover:bg-[#FACC15] text-black font-semibold rounded-none">
+                <Button data-testid={`redeem-${p.id}`} onClick={() => setOpen(p)} disabled={p.stock === 0} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none">
                   Canjear
                 </Button>
               </div>
@@ -124,7 +124,7 @@ export default function MarketplaceView() {
                 <tr key={h.id} className="border-b border-white/5">
                   <td className="px-4 py-3">{h.product_name}</td>
                   <td className="px-4 py-3 font-mono">{h.quantity}</td>
-                  <td className="px-4 py-3 font-mono text-[#EAB308]">${h.total_usd}</td>
+                  <td className="px-4 py-3 font-mono text-[#8B5CF6]">${h.total_usd}</td>
                   <td className="px-4 py-3"><span className="text-xs uppercase tracking-wider">{h.status}</span></td>
                   <td className="px-4 py-3 text-xs text-neutral-500">{new Date(h.created_at).toLocaleDateString()}</td>
                 </tr>
@@ -135,7 +135,7 @@ export default function MarketplaceView() {
       </div>
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141414] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Canjear: {open?.name}</DialogTitle>
           </DialogHeader>
@@ -150,9 +150,9 @@ export default function MarketplaceView() {
             </div>
             <div className="border border-white/10 p-3 font-mono text-sm flex justify-between">
               <span className="text-neutral-500">Total:</span>
-              <span className="text-[#EAB308]">${(open?.price_usd * qty || 0).toFixed(2)}</span>
+              <span className="text-[#8B5CF6]">${(open?.price_usd * qty || 0).toFixed(2)}</span>
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy} className="w-full bg-[#EAB308] hover:bg-[#FACC15] text-black font-bold rounded-none h-12">
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
               {busy ? "Procesando..." : "Confirmar Canje"}
             </Button>
           </div>

@@ -28,7 +28,7 @@ export default function ExplorerLink({
       target="_blank"
       rel="noopener noreferrer"
       data-testid={testid}
-      className={`inline-flex items-center gap-1.5 font-mono uppercase tracking-wider text-[#EAB308] hover:text-[#FACC15] hover:bg-[#EAB308]/10 border border-[#EAB308]/30 hover:border-[#EAB308]/60 transition-colors ${sizeCls} ${className}`}
+      className={`inline-flex items-center gap-1.5 font-mono uppercase tracking-wider text-[#8B5CF6] hover:text-[#A78BFA] hover:bg-[#8B5CF6]/10 border border-[#8B5CF6]/30 hover:border-[#8B5CF6]/60 transition-colors ${sizeCls} ${className}`}
       title={`Ver esta transacción en ${label}`}
     >
       <ExternalLink className="w-3 h-3" />

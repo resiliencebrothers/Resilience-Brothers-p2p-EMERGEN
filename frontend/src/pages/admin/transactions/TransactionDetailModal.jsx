@@ -23,7 +23,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-white">
-            <Receipt className="w-5 h-5 text-[#EAB308]" />
+            <Receipt className="w-5 h-5 text-[#8B5CF6]" />
             Detalle de Transacción
             {selected.direction === "in" ? (
               <span className="ml-2 text-[#22C55E] text-xs font-bold uppercase flex items-center gap-1">
@@ -41,7 +41,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
           <div className="grid grid-cols-2 gap-3 border border-white/5 p-4 bg-[#0a0a0a]">
             <div>
               <div className="micro-label text-neutral-500 mb-1">Moneda</div>
-              <div className="font-mono text-[#EAB308] text-lg">{selected.currency}</div>
+              <div className="font-mono text-[#8B5CF6] text-lg">{selected.currency}</div>
             </div>
             <div>
               <div className="micro-label text-neutral-500 mb-1">Monto</div>
@@ -65,7 +65,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
                 {selected.method === "crypto" && selected.crypto_network && (
                   <span
                     data-testid="tx-detail-crypto-network"
-                    className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#EAB308]/10 text-[#EAB308] border border-[#EAB308]/30 font-mono"
+                    className="ml-2 inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono"
                   >
                     {selected.crypto_network}
                   </span>
@@ -112,8 +112,8 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
           )}
 
           {selected.admin_note && (
-            <div className="border border-[#EAB308]/30 p-4 bg-[#EAB308]/5">
-              <div className="micro-label text-[#EAB308] mb-2">Nota admin</div>
+            <div className="border border-[#8B5CF6]/30 p-4 bg-[#8B5CF6]/5">
+              <div className="micro-label text-[#8B5CF6] mb-2">Nota admin</div>
               <div className="text-sm text-neutral-300">{selected.admin_note}</div>
             </div>
           )}
@@ -161,7 +161,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
                     href={selected.proof_image}
                     download={`comprobante_${selected.ref_id?.slice(0, 8)}.png`}
                     data-testid="tx-proof-download"
-                    className="text-[#EAB308] hover:underline normal-case tracking-normal flex items-center gap-1"
+                    className="text-[#8B5CF6] hover:underline normal-case tracking-normal flex items-center gap-1"
                   >
                     <Download className="w-3 h-3" /> Descargar
                   </a>
@@ -201,7 +201,7 @@ export function TransactionDetailModal({ selected, onClose, onNavigate }) {
             <Button
               data-testid="tx-modal-goto-source"
               onClick={() => onNavigate(selected)}
-              className="rounded-none bg-[#EAB308] hover:bg-[#EAB308]/90 text-black font-bold h-10 px-4 text-xs uppercase tracking-wider"
+              className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white font-bold h-10 px-4 text-xs uppercase tracking-wider"
             >
               <ExternalLink className="w-3.5 h-3.5 mr-2" />
               {selected.ref_type === "withdrawal" ? "Ir a Retiros VIP" : "Ir a Órdenes"}

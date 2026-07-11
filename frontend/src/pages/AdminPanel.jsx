@@ -91,7 +91,7 @@ export default function AdminPanel() {
   const navLinkClass = ({ isActive }) =>
     `flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
       isActive
-        ? "bg-[#EAB308] text-black font-semibold"
+        ? "bg-[#8B5CF6] text-white font-semibold"
         : "text-neutral-400 hover:bg-white/5 hover:text-white"
     }`;
 
@@ -109,7 +109,7 @@ export default function AdminPanel() {
           <it.icon className="w-4 h-4" />
           {it.label}
           {it.highlight && (
-            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#EAB308]" title="Función destacada" />
+            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#8B5CF6]" title="Función destacada" />
           )}
         </NavLink>
       ))}
@@ -124,14 +124,14 @@ export default function AdminPanel() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white flex">
+    <div className="min-h-screen bg-[#0A0A0F] text-white flex">
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
         <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3 shrink-0">
           <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-10 w-10 object-contain" />
           <div>
             <div className="font-display text-sm">ADMIN</div>
-            <div className="micro-label text-[#EAB308] text-[0.6rem]">Control Room</div>
+            <div className="micro-label text-[#8B5CF6] text-[0.6rem]">Control Room</div>
           </div>
         </div>
         <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto">
@@ -141,7 +141,7 @@ export default function AdminPanel() {
           <div className="flex items-center justify-between gap-2 mb-3">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium truncate">{user?.name}</div>
-              <div className="micro-label text-[#EAB308]">{user?.role?.toUpperCase()}</div>
+              <div className="micro-label text-[#8B5CF6]">{user?.role?.toUpperCase()}</div>
             </div>
             <NotificationBell />
           </div>
@@ -158,7 +158,7 @@ export default function AdminPanel() {
           <div className="flex items-center gap-2">
             <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
             <span className="font-display text-sm">ADMIN</span>
-            <span className="micro-label text-[#EAB308] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
+            <span className="micro-label text-[#8B5CF6] text-[0.55rem]">{user?.role?.toUpperCase()}</span>
           </div>
           <div className="flex items-center gap-2">
             <NotificationBell />
@@ -166,7 +166,7 @@ export default function AdminPanel() {
             <SheetTrigger asChild>
               <button
                 data-testid="admin-mobile-menu-trigger"
-                className="flex items-center gap-2 border border-[#EAB308]/40 bg-[#EAB308]/10 text-[#EAB308] px-3 py-1.5 text-xs uppercase tracking-wider font-mono"
+                className="flex items-center gap-2 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6] px-3 py-1.5 text-xs uppercase tracking-wider font-mono"
               >
                 <Menu className="w-4 h-4" /> Menú
               </button>
@@ -182,7 +182,7 @@ export default function AdminPanel() {
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
                   <div>
                     <div className="font-display text-sm">ADMIN</div>
-                    <div className="micro-label text-[#EAB308] text-[0.55rem]">Control Room</div>
+                    <div className="micro-label text-[#8B5CF6] text-[0.55rem]">Control Room</div>
                   </div>
                 </div>
                 {/* Close button provided by SheetContent (top-right X). */}
@@ -192,7 +192,7 @@ export default function AdminPanel() {
               </nav>
               <div className="p-4 border-t border-white/5 shrink-0">
                 <div className="text-sm font-medium truncate">{user?.name}</div>
-                <div className="micro-label text-[#EAB308] mb-3">{user?.role?.toUpperCase()}</div>
+                <div className="micro-label text-[#8B5CF6] mb-3">{user?.role?.toUpperCase()}</div>
                 <div className="mb-2"><PushToggle /></div>
                 <button
                   data-testid="admin-mobile-logout"

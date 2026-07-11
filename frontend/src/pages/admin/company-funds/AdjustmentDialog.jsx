@@ -91,7 +91,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
       >
         <DialogContent
           data-testid="adjustment-dialog"
-          className="bg-[#141414] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto"
+          className="bg-[#141322] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto"
         >
           <DialogHeader>
             <DialogTitle className="font-display">
@@ -145,7 +145,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                   >
                     <SelectValue placeholder="Selecciona" />
                   </SelectTrigger>
-                  <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                  <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                     {currencies.map((c) => (
                       <SelectItem key={c.code} value={c.code}>
                         {c.code} · {c.name}
@@ -180,7 +180,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-[#141414] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
                   {Object.entries(METHOD_LABELS).map(([v, label]) => (
                     <SelectItem key={v} value={v}>
                       {label}

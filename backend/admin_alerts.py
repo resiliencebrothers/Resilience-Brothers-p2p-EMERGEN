@@ -80,7 +80,7 @@ async def notify_all_admins(db, *, title: str, body: str, url_path: str = "/admi
     }
     html_body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 16px;">{body}</p>
-      <a href="{target_url}" style="display:inline-block;margin-top:12px;background:#EAB308;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">REVISAR EN EL PANEL →</a>
+      <a href="{target_url}" style="display:inline-block;margin-top:12px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">REVISAR EN EL PANEL →</a>
     """
     html = _base_template(title, html_body)
 
