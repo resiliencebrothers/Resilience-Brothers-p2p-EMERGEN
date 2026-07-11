@@ -202,8 +202,11 @@ export default function Landing() {
             </div>
             <div className="tactile-card p-8 hover:glow-yellow transition-shadow relative overflow-hidden">
               <div
-                className="absolute inset-0 bg-cover bg-center opacity-10"
-                style={{ backgroundImage: "url(https://images.unsplash.com/photo-1493946740644-2d8a1f1a6aff?crop=entropy&cs=srgb&fm=jpg&q=85)" }}
+                className="absolute inset-0 bg-cover bg-center opacity-20 will-change-transform"
+                style={{
+                  backgroundImage: "url(https://images.unsplash.com/photo-1493946740644-2d8a1f1a6aff?crop=entropy&cs=srgb&fm=jpg&q=85)",
+                  transform: `translate3d(0, ${scrollY * 0.08}px, 0)`,
+                }}
               ></div>
               <div className="relative">
                 <div className="flex items-center justify-between mb-6">

@@ -457,6 +457,12 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Verificado E2E**: capturé el landing en `scrollY=0` y `scrollY=250`. El título "sin fronteras. Sin fricción." se movió los 250px completos, pero las constelaciones solo ~87.5px (35%) → **profundidad clara sin distraer**.
   - **Zero deps nuevas**, zero libraries, sin impacto en performance (RAF throttled).
 
+- Parallax extendido + imagen Marketplace más visible (iter55.30h, 11 Feb 2026) — completa el look premium en toda la landing.
+  - **Segunda imagen Unsplash** (contenedores del puerto en la card "Marketplace Físico"): reutilicé el hook `useScrollParallax` con factor sutil `0.08` para que la imagen no se salga de los bounds del card. Añadí `will-change-transform` para GPU accel.
+  - **Opacidad mejorada**: `opacity-10` → `opacity-20`. Antes la imagen era casi invisible; ahora se aprecian claramente los contenedores como fondo atmosférico coherente con la promesa "Mercancías físicas".
+  - **Zero nuevos hooks**, reutilización pura del `useScrollParallax` de iter55.30g.
+  - **Verificado E2E**: scrolleado a `#services`, la card SECCIÓN 02 ahora muestra los contenedores del puerto con parallax sutil sin romper el layout.
+
 
 
 
