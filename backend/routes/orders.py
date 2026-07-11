@@ -168,8 +168,39 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
     # iter35 — if proof_image is a base64 data URL, persist it to object storage.
     # When storage is disabled the helper returns the value untouched (base64 fallback).
     payload.proof_image = maybe_upload_proof(payload.proof_image, "orders") or ""
-    order = build_order_from_payload(payload, user, rate)
+    # iter55.27 — fetch destination currency type so we can apply the fiat-cash
+    # floor rule and credit the residue to the client's balance.
+    to_currency_doc = await db.currencies.find_one(
+        {"code": payload.to_code}, {"_id": 0, "type": 1}
+    ) or {}
+    to_currency_type = to_currency_doc.get("type", "")
+    order = build_order_from_payload(payload, user, rate, to_currency_type)
+    residue = getattr(order, "_residue_to_credit", 0.0)
     await db.orders.insert_one(order.model_dump())
+    # If cash-to-fiat produced sub-unit residue, credit it to the client's
+    # on-platform balance in the SAME currency. Client can accumulate across
+    # trades or convert to USDT (with 0.01 USDT fee) later.
+    if residue > 0:
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$inc": {f"vip_balances.{payload.to_code}": residue}},
+        )
+        try:
+            from audit_log import log_action
+            await log_action(
+                db, actor=user, action="order.residue_credited",
+                entity_type="order", entity_id=order.id,
+                summary=f"Residuo {residue:.6f} {payload.to_code} acreditado al saldo",
+                details={
+                    "order_id": order.id,
+                    "user_id": user["user_id"],
+                    "currency": payload.to_code,
+                    "residue": residue,
+                    "reason": "fiat_cash_floor",
+                },
+            )
+        except Exception as e:
+            logger.error(f"residue audit log failed: {e}")
     await maybe_flag_defensive_margin(order)
     await dispatch_new_order_alerts(order, user)
     return await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
@@ -515,8 +546,29 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             detail=(f"No hay tasa cotizada para {from_code} → {to_code}. "
                     "Contacta a soporte para habilitarla."),
         )
-    amount_to = round(payload.amount_from * rate_used, 4)
-    # Atomic swap: decrement from + increment to
+    amount_to_gross = round(payload.amount_from * rate_used, 4)
+    # iter55.27 — flat 0.01 USDT service fee for ANY conversion to USDT.
+    # Enforced when to_code == "USDT" only; other pairs stay fee-free.
+    # Also enforce a 1.00 USDT minimum NET (post-fee) to prevent dust
+    # conversions that would leave the client with < 1 USDT after the fee.
+    USDT_CONVERT_FEE = 0.01
+    USDT_MIN_NET = 1.00
+    fee = 0.0
+    amount_to = amount_to_gross
+    if to_code == "USDT":
+        fee = USDT_CONVERT_FEE
+        amount_to = round(amount_to_gross - fee, 4)
+        if amount_to < USDT_MIN_NET:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Conversión insuficiente: recibirías {amount_to:.4f} USDT "
+                    f"después de la comisión de {USDT_CONVERT_FEE} USDT. "
+                    f"El mínimo neto para convertir es {USDT_MIN_NET:.2f} USDT — "
+                    f"acumula más saldo antes de convertir."
+                ),
+            )
+    # Atomic swap: decrement from + increment to (net of fee)
     await decrement_balance(user["user_id"], from_code, payload.amount_from)
     await db.users.update_one(
         {"user_id": user["user_id"]},
@@ -528,11 +580,16 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         await log_action(
             db, actor=user, action="vip.convert",
             entity_type="user", entity_id=user["user_id"],
-            summary=f"{payload.amount_from} {from_code} → {amount_to} {to_code}",
+            summary=(
+                f"{payload.amount_from} {from_code} → {amount_to} {to_code}"
+                + (f" (fee {fee} USDT)" if fee > 0 else "")
+            ),
             details={
                 "from_code": from_code, "to_code": to_code,
                 "amount_from": payload.amount_from,
+                "amount_to_gross": amount_to_gross,
                 "amount_to": amount_to, "rate": rate_used,
+                "usdt_fee": fee,
             },
         )
     except Exception as e:
@@ -542,6 +599,8 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         "from_code": from_code, "to_code": to_code,
         "amount_from": payload.amount_from,
         "amount_to": amount_to,
+        "amount_to_gross": amount_to_gross,
+        "usdt_fee": fee,
         "rate": rate_used,
     }
 

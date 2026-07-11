@@ -1,0 +1,26 @@
+{
+  "summary": "iter55.27 backend + frontend E2E verified. Ran 12/12 backend tests in test_iter55_27_residue_credit_and_usdt_fee.py + test_iter55_24_cash_usd_floor.py (all pass). Ran regression test_vip_convert.py (11/11 pass). Frontend E2E: ExchangeView cash-fiat banner + residue row + floored final amount confirmed on ZELLE27E2E → CUP order at rate 100.5 for 325 units (delivered 32662 CUP, +0.5000 CUP residue). BalanceConverterCard dialog confirmed: fee row -0.01 USDT visible, below-min warning + red amount + disabled Confirm at 2 CUPCASH27E2E → 0.99 net; at 5 CUPCASH27E2E → 2.49 net the warning clears and Confirm is enabled.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_27_residue_credit_and_usdt_fee.py",
+    "/app/backend/tests/test_iter55_24_cash_usd_floor.py",
+    "/app/test_reports/pytest/iter55_27_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: DialogContent in BalanceConverterCard.jsx logs a React Radix warning: 'Missing Description or aria-describedby'. Add a DialogDescription or aria-describedby to silence it and improve a11y. Non-blocking.",
+    "orders_helpers.build_order_from_payload attaches _residue_to_credit via setattr on a pydantic model with extra='ignore' — works today, but a small helper dict returned alongside the Order would be cleaner and survive future pydantic strictness changes."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "Used VIP session cookie 'session_token=test_session_vip_X' (user_test_vip01) per /app/memory/test_credentials.md.",
+  "seed_data_creation": "Temporarily seeded currencies ZELLE27E2E (fiat/transfer), CUPCASH27E2E (fiat/cash), rate ZELLE27E2E→CUP=100.5 and CUPCASH27E2E→USDT=0.5, and 5.0 CUPCASH27E2E to VIP user for E2E flows. Cleaned up after tests. CUP already had 'cash' in delivery_methods.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter55.27 backend & frontend fully green. If reworking BalanceConverterCard, keep the constants USDT_CONVERT_FEE=0.01 and USDT_MIN_NET=1.00 in sync with routes/orders.py::vip_convert (currently duplicated as JS constants). E2E test uses cookie auth; VIP token can be seeded via conftest._seed_test_sessions or by inserting user_sessions row directly."
+}

@@ -79,15 +79,19 @@ def _disable_usd_cash():
 def test_pure_helper_matches_screenshot_scenario():
     """The reported bug scenario: send 325 ZELLE @ 0.95 → gross 308.75, expect
     to receive exactly 308 in cash USD."""
-    from services.orders_helpers import _cash_usd_rounds_down
+    from services.orders_helpers import _cash_no_cents
 
-    # Rule: only trips for cash + USD
-    assert _cash_usd_rounds_down("USD", "cash") is True
-    assert _cash_usd_rounds_down("usd", "cash") is True  # case-insensitive
-    assert _cash_usd_rounds_down("USD", "transfer") is False
-    assert _cash_usd_rounds_down("USD", "crypto") is False
-    assert _cash_usd_rounds_down("EUR", "cash") is False  # doesn't apply to EUR yet
-    assert _cash_usd_rounds_down("", "cash") is False
+    # iter55.27 broadened the rule to any fiat + cash. Signature now includes
+    # `to_type` so we can gate on currency category (not just USD).
+    assert _cash_no_cents("USD", "fiat", "cash") is True
+    assert _cash_no_cents("usd", "fiat", "cash") is True  # case doesn't matter for code
+    assert _cash_no_cents("USD", "fiat", "transfer") is False
+    assert _cash_no_cents("USD", "fiat", "crypto") is False
+    # EUR fiat now also floors when cash — this is a positive change from iter55.24.
+    assert _cash_no_cents("EUR", "fiat", "cash") is True
+    assert _cash_no_cents("", "fiat", "cash") is True  # code is not the gate; type is
+    # Non-fiat: False
+    assert _cash_no_cents("USDT", "crypto", "cash") is False
 
 
 def test_backend_floors_cash_usd_amount_end_to_end():
@@ -149,9 +153,10 @@ def test_backend_does_not_floor_transfer_delivery():
     _cleanup()
 
 
-def test_backend_does_not_floor_cash_to_non_usd():
-    """Cash delivery to a non-USD currency (e.g. CUP) must NOT floor — CUP is
-    unaffected by the sub-dollar limitation."""
+def test_backend_does_not_floor_cash_to_non_fiat():
+    """iter55.27 broadened the floor to any fiat+cash. Non-fiat destinations
+    (e.g. USDT) never floor. CUP now DOES floor per iter55.27 — the residue
+    is credited to the client's balance instead of being lost."""
     _upsert_currency("ZELLE24", ["transfer"])
     _upsert_currency("CUP", ["cash", "transfer"])  # ensure CUP allows cash
     _upsert_rate("ZELLE24", "CUP", 100.5)  # 325 * 100.5 = 32662.5
@@ -171,8 +176,9 @@ def test_backend_does_not_floor_cash_to_non_usd():
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    # CUP is not USD → 4-decimal round preserved (no floor).
-    assert body["amount_to"] == 32662.5, f"Expected 32662.5, got {body['amount_to']}"
+    # iter55.27 semantics: CUP is fiat + cash → FLOOR applied. 32662.5 → 32662.
+    # (See iter55.27 tests for full residue-credit assertion.)
+    assert body["amount_to"] == 32662.0, f"Expected 32662.0 (floor), got {body['amount_to']}"
 
     _cleanup()
 

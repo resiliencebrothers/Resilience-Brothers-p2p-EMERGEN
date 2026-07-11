@@ -111,35 +111,45 @@ async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[
     return rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"], rate_doc
 
 
-def _cash_usd_rounds_down(to_code: str, delivery_method: str) -> bool:
-    """iter55.24 — Cash USD delivery has no sub-dollar denominations available
-    (Cuba ops does not stock coins). If the client sends a value that would
-    resolve to fractional dollars, we floor the delivered amount and Resilience
-    keeps the sub-dollar remainder as an operational buffer.
+def _cash_no_cents(to_code: str, to_type: str, delivery_method: str) -> bool:
+    """iter55.27 — Cash physical delivery to any fiat currency floors the
+    delivered amount (Cuba ops doesn't stock coins for USD/CUP/etc.). The
+    sub-unit residue is credited to the client's on-platform balance in the
+    SAME currency so nothing is lost — the client can accumulate residues
+    across trades until they form a whole unit OR convert them to USDT
+    (with a 0.01 USDT service fee) via `POST /vip/convert`.
 
-    Applies to `USD` (Dolar Efectivo). Kept as a small pure helper so it can
-    be unit-tested and swapped for a per-currency flag later if we add more
-    physical-cash currencies (EUR effectivo, etc.).
+    Applies when: delivery_method == "cash" AND to_type == "fiat".
+    Does NOT apply to crypto/USDT destinations (already integer-ish precision).
     """
-    return delivery_method == "cash" and (to_code or "").upper() == "USD"
+    return delivery_method == "cash" and (to_type or "").lower() == "fiat"
 
 
-def build_order_from_payload(payload: "OrderCreate", user: dict, rate: float) -> "Order":
+# Backward-compat alias — some tests still import the old name.
+_cash_usd_rounds_down = _cash_no_cents
+
+
+def build_order_from_payload(payload: "OrderCreate", user: dict, rate: float,
+                              to_currency_type: str = "") -> "Order":
     """iter19: commission removed. New orders carry commission_percent=0.0;
     historical orders keep their original 5% value untouched.
 
-    iter55.24: for USD cash delivery we floor the delivered amount because
-    ops cannot hand out cents. The sub-dollar remainder becomes Resilience
-    revenue — the frontend surfaces this to the client as a warning before
-    they submit."""
+    iter55.24 → 55.27: for cash delivery to any fiat, we floor the delivered
+    amount. The fractional residue is written to `order.residue_credited` and
+    credited to `user.vip_balances[to_code]` by the caller (create_order).
+    We do NOT do the credit here to keep this pure/sync — the caller owns
+    the DB writes.
+    """
     import math
     commission = 0.0
     raw = payload.amount_from * rate * (1 - commission / 100)
-    if _cash_usd_rounds_down(payload.to_code, payload.delivery_method):
+    if _cash_no_cents(payload.to_code, to_currency_type, payload.delivery_method):
         amount_to = float(math.floor(raw))
+        residue = round(raw - amount_to, 6)  # 6 dp: sub-cent precision
     else:
         amount_to = round(raw, 4)
-    return Order(
+        residue = 0.0
+    order = Order(
         user_id=user["user_id"],
         user_email=user["email"],
         user_name=user["name"],
@@ -155,6 +165,10 @@ def build_order_from_payload(payload: "OrderCreate", user: dict, rate: float) ->
         sender_name=payload.sender_name,
         proof_image=payload.proof_image,
     )
+    # Attach the residue as a plain attribute so callers can credit it after
+    # persisting the order. Not part of the pydantic schema (transient hint).
+    setattr(order, "_residue_to_credit", residue)
+    return order
 
 
 async def compute_order_profit(order: dict, rate_doc: Optional[dict]) -> Optional[dict]:

@@ -67,14 +67,16 @@ export default function ExchangeView() {
   const commission = 0;
   const amt = parseFloat(amount) || 0;
   const gross = amt * rate;
-  // iter55.24 — Cash USD has no sub-dollar denominations available (Cuba ops
-  // doesn't stock coins). Floor the deliverable and surface the remainder to
-  // the client so they can adjust their input for an exact-dollar payout.
-  // Mirror of _cash_usd_rounds_down() in backend/services/orders_helpers.py.
-  const isCashUsdDelivery = deliveryMethod === "cash" && (toCode || "").toUpperCase() === "USD";
+  // iter55.24 → 55.27 — Cash delivery to any fiat has no sub-unit
+  // denominations available (Cuba ops doesn't stock coins). We floor the
+  // deliverable and CREDIT the residue to the client's on-platform balance
+  // in the same currency — nothing is lost. The client can accumulate
+  // residues across trades or convert them to USDT (0.01 USDT service fee)
+  // via /vip/convert. Mirror of _cash_no_cents() in backend/services/orders_helpers.py.
+  const isCashFiatDelivery = deliveryMethod === "cash" && (toCurr?.type || "").toLowerCase() === "fiat";
   const finalAmountRaw = gross * (1 - commission / 100);
-  const finalAmount = isCashUsdDelivery ? Math.floor(finalAmountRaw) : finalAmountRaw;
-  const cashUsdRoundingLoss = isCashUsdDelivery ? finalAmountRaw - finalAmount : 0;
+  const finalAmount = isCashFiatDelivery ? Math.floor(finalAmountRaw) : finalAmountRaw;
+  const residueCredited = isCashFiatDelivery ? finalAmountRaw - finalAmount : 0;
 
   const deliveryOptions = useMemo(() => {
     if (!toCurr) return [];
@@ -219,21 +221,24 @@ export default function ExchangeView() {
           />
         </div>
 
-        {/* iter55.24 — orient the client on cash-USD delivery BEFORE they
-            calculate/submit. Shown when they've already picked cash delivery
-            to USD, so the guidance appears at the exact decision moment. */}
-        {isCashUsdDelivery && (
+        {/* iter55.24 → 55.27 — orient the client on cash-fiat delivery BEFORE
+            they calculate/submit. The residue is credited to their balance,
+            not lost — copy updated to reflect the new "no funds lost" policy. */}
+        {isCashFiatDelivery && (
           <div
-            data-testid="cash-usd-guidance"
+            data-testid="cash-fiat-guidance"
             className="border border-[#EAB308]/40 bg-[#EAB308]/10 p-4 text-xs font-mono text-neutral-200 leading-relaxed"
           >
             <div className="micro-label text-[#EAB308] text-[0.65rem] mb-2">
-              ⓘ Entrega en USD efectivo
+              ⓘ Entrega en efectivo · {toCode}
             </div>
             <p>
-              No manejamos <strong className="text-white">centavos en dólar</strong> físico.
-              Envía un monto que resulte en un valor <strong className="text-white">sin decimales</strong> al que recibe.
-              Si el cálculo da fracción, redondeamos hacia abajo y la diferencia queda a favor de <strong>Resilience</strong>.
+              No manejamos <strong className="text-white">fracciones</strong> en efectivo físico.
+              Si el cálculo da decimales, entregamos el <strong className="text-white">entero</strong> y
+              el residuo se acredita a <strong className="text-white">tu saldo en {toCode}</strong>.
+              Puedes acumularlo hasta llegar a un entero o convertirlo a{" "}
+              <strong className="text-white">USDT</strong> desde <em>Saldo y Retiros</em>
+              {" "}(comisión fija <strong className="text-white">0.01 USDT</strong>, mínimo neto 1 USDT).
             </p>
           </div>
         )}
@@ -245,22 +250,22 @@ export default function ExchangeView() {
             {commission > 0 && (
               <div className="flex justify-between"><span className="text-neutral-400">Comisión ({commission}%):</span><span className="text-[#EF4444]">-{(gross - finalAmountRaw).toFixed(4)}</span></div>
             )}
-            {isCashUsdDelivery && cashUsdRoundingLoss > 0 && (
+            {isCashFiatDelivery && residueCredited > 0 && (
               <div
-                className="flex justify-between text-[#EF4444]"
-                data-testid="cash-usd-rounding-loss"
+                className="flex justify-between text-[#EAB308]"
+                data-testid="cash-fiat-residue-credit"
               >
-                <span>Redondeo cash USD:</span>
-                <span>-{cashUsdRoundingLoss.toFixed(2)} USD</span>
+                <span>Residuo a tu saldo:</span>
+                <span>+{residueCredited.toFixed(4)} {toCode}</span>
               </div>
             )}
             <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-base">
-              <span className="text-white">Recibirás:</span>
+              <span className="text-white">Recibirás en efectivo:</span>
               <span
                 className="text-[#EAB308] font-bold"
                 data-testid="final-amount-display"
               >
-                {isCashUsdDelivery ? finalAmount.toFixed(2) : finalAmount.toFixed(4)} {toCode}
+                {isCashFiatDelivery ? finalAmount.toFixed(0) : finalAmount.toFixed(4)} {toCode}
               </span>
             </div>
           </div>
