@@ -308,6 +308,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Nested "Verificación" + "Seguridad" under Mi Perfil (iter55.26, Feb 2026) — owner asked for two UX standard changes:
+  1. **Mi Perfil leads the sidebar** — most users click their profile first.
+  2. **Verificación (KYC) y Seguridad (2FA) belong inside Mi Perfil** — they're account settings, not top-level destinations.
+  - **`pages/Dashboard.jsx`**: reorder — Mi Perfil is now nav item #1. `/dashboard/kyc` and `/dashboard/security` removed from the sidebar entirely.
+  - **New shared component** `/app/frontend/src/components/ProfileSectionTabs.jsx` (~60 LOC): renders `/ Mi Perfil` breadcrumb + 3-tab strip (**Datos personales** · **Verificación** · **Seguridad**). Uses `NavLink` with `end` matching so the active tab highlights correctly (`border-b-2` + yellow text). Real react-router nav means bookmarks to `/dashboard/kyc` still land users on that tab with the shared header — zero backward-compat break.
+  - **Inserted into 3 pages**: `ProfileView.jsx`, `KYCView.jsx`, `SecuritySettings.jsx`. Each page kept its own `<h1>` + body content unchanged — only the header wrapper was swapped.
+  - **Testids added**: `profile-section-tabs`, `profile-tab-datos`, `profile-tab-kyc`, `profile-tab-security`.
+  - **Verified E2E** in preview: `/dashboard/profile` renders tabs, sidebar no longer lists Verificación/Seguridad; clicking each tab navigates + swaps content + keeps the tab strip; all 3 URLs remain bookmarkable. `yarn lint` clean.
+
+
+
 - Dashboard → Mis Órdenes deep-link filtering (iter55.25b, Feb 2026) — turns the "PENDIENTES"/"COMPLETADAS" counter cards into clickable shortcuts. Owner mental model: "the counter and the table should be in lock-step" → make it 1-click.
   - **`OverviewView.jsx`**: `<StatCard>` gained optional `to` + `testid` props. When `to` is set, the card renders as a `react-router-dom` `<Link>` with hover ring, focus outline, and sub-label suffixed with "· ver →". Wired: Pendientes → `/dashboard/orders?filter=pending`, Completadas → `/dashboard/orders?filter=completed`. Static cards (Saldo, Estatus) render as plain divs (no navigation).
   - **`OrdersView.jsx`**: switched to `useSearchParams()` so the initial filter comes from `?filter=…`. New filter pills row above the table (`data-testid="orders-filter-pills"`) with 4 pills: `Todas / Pendientes / Completadas / Rechazadas`. Each pill uses `aria-pressed` for state and `data-testid="orders-filter-{key}"`. Clicking a pill patches the URL via `setSearchParams(..., {replace:true})` — bookmark/reload safe. Filter map:

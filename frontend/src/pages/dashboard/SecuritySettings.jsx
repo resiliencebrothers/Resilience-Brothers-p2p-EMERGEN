@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Shield, CheckCircle2, ShieldAlert, Copy, RefreshCw, AlertTriangle } from "lucide-react";
+import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 
 export default function SecuritySettings() {
   const [status, setStatus] = useState(null);
@@ -100,10 +101,8 @@ export default function SecuritySettings() {
 
   return (
     <div data-testid="security-settings" className="space-y-6 max-w-2xl">
+      <ProfileSectionTabs />
       <div>
-        <div className="micro-label text-[#EAB308] mb-2 flex items-center gap-2">
-          <Shield className="w-3.5 h-3.5" /> / Seguridad
-        </div>
         <h1 className="font-display text-3xl">Verificación en Dos Pasos</h1>
         <p className="text-neutral-500 text-sm mt-1">
           Protege tus retiros con un código generado por una app de autenticador (Google Authenticator, Authy, 1Password, etc.). Obligatorio para realizar retiros.

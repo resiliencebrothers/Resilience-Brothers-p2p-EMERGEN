@@ -7,6 +7,7 @@ import {
   IdCard, Upload, Check, X, Loader2, Camera, FileImage, ShieldCheck,
   AlertTriangle, Info, RefreshCw, ArrowRight,
 } from "lucide-react";
+import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 
 const DOC_STEPS = [
   {
@@ -117,6 +118,7 @@ export default function KYCView() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6" data-testid="client-kyc-page">
+      <ProfileSectionTabs />
       <header>
         <h1 className="text-3xl font-bold text-white flex items-center gap-3">
           <IdCard className="w-7 h-7 text-[#EAB308]" /> Verificación de identidad

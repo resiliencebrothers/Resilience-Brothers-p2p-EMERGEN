@@ -35,14 +35,15 @@ export default function Dashboard() {
   // Onboarding shows ONLY for users explicitly marked as not-onboarded (legacy users have the field missing and are treated as completed).
   const [showOnboarding, setShowOnboarding] = useState(user?.onboarding_completed === false);
 
+  // iter55.26 — "Mi Perfil" leads the sidebar (owner request, 11 Feb 2026).
+  // Verificación y Seguridad quedan AGRUPADAS dentro de Mi Perfil como
+  // tabs internos (ver ProfileSectionTabs) — ya no aparecen en el sidebar.
   const navItems = [
+    { to: "/dashboard/profile", icon: UserCircle, label: "Mi Perfil", id: "nav-profile" },
     { to: "/dashboard", icon: LayoutDashboard, label: "Resumen", end: true, id: "nav-overview" },
     { to: "/dashboard/exchange", icon: ArrowLeftRight, label: "Intercambio", id: "nav-exchange" },
     { to: "/dashboard/orders", icon: ListOrdered, label: "Mis Órdenes", id: "nav-orders" },
     { to: "/dashboard/transactions", icon: Receipt, label: "Mi Historial", id: "nav-transactions" },
-    { to: "/dashboard/profile", icon: UserCircle, label: "Mi Perfil", id: "nav-profile" },
-    { to: "/dashboard/kyc", icon: IdCard, label: "Verificación", id: "nav-kyc" },
-    { to: "/dashboard/security", icon: ShieldCheck, label: "Seguridad", id: "nav-security" },
     ...(isClient ? [
       { to: "/dashboard/vip", icon: Star, label: "Saldo y Retiros", id: "nav-vip" },
       { to: "/dashboard/marketplace", icon: Boxes, label: "Marketplace", id: "nav-marketplace" },

@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import CopyableText from "@/components/CopyableText";
+import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 import {
   User, Mail, Phone, Globe, ShieldCheck, IdCard, Clock, CheckCircle2,
   AlertTriangle, Pencil,
@@ -62,9 +63,10 @@ export default function ProfileView() {
   const kycBadge = KYC_BADGE[profile.kyc_status] || KYC_BADGE.not_started;
 
   return (
-    <div className="space-y-8" data-testid="profile-view">
+    <div className="space-y-6" data-testid="profile-view">
+      <ProfileSectionTabs />
       <div>
-        <h1 className="font-display text-3xl">Mi Perfil</h1>
+        <h1 className="font-display text-3xl">Datos personales</h1>
         <p className="text-neutral-400 mt-2 text-sm max-w-2xl">
           Todos los datos con los que te registraste. Puedes actualizarlos si
           cambias de país, celular o email — solo pedimos verificación adicional
