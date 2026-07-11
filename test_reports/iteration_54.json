@@ -1,0 +1,31 @@
+{
+  "summary": "E2E validation of iter55.24 (cash-USD floor + banner), iter55.25 (dashboard pending semantics split orders vs withdrawals), iter55.25b (clickable Pendientes/Completadas cards + deep-link pills on OrdersView), iter55.26 (sidebar reorder: Mi Perfil leads, no Verificación/Seguridad in sidebar; shared ProfileSectionTabs on /profile /kyc /security). Ran 8 backend pytests (test_iter55_24_cash_usd_floor.py + test_iter55_25_dashboard_pending_semantics.py) — all PASS. Ran Playwright E2E on the VIP test session against the preview URL — all 4 UI scenarios PASS (sidebar order, deep-link stat cards + pill sync + reload preservation, ProfileSectionTabs on all 3 URLs incl. active-tab highlighting and tab navigation, cash-USD banner + rounding loss + 308.00 USD final vs 308.7500 on transfer vs no-banner on cash-to-CUP).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_24_cash_usd_floor.py",
+    "/app/backend/tests/test_iter55_25_dashboard_pending_semantics.py",
+    "/app/test_reports/pytest/iter55_25_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "OverviewView.jsx L40-41: ORDER_IN_FLIGHT / WITHDRAWAL_IN_FLIGHT are duplicated in OrdersView.jsx L39-44 (FILTER_STATUSES.pending = ['pending','requires_double_approval']). If a new in-flight status is added, both files must be updated in lock-step. Consider extracting to a shared module (e.g., src/constants/orderStatus.js) to prevent drift — a similar drift was the root cause of the iter55.25 bug being tested here.",
+    "ExchangeView.jsx L74: isCashUsdDelivery duplicates the backend rule in services/orders_helpers.py (_cash_usd_rounds_down). Two-sided rule with implicit contract — a comment already flags this but the code paths could also compare (toCurr?.type === 'fiat') to be safer if a non-USD synthetic currency named 'USD' is ever added.",
+    "Dashboard.jsx: imports for IdCard and ShieldCheck are unused now that KYC/Security items were removed from the sidebar — harmless but dead code."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (all 4 scenarios)"},
+  "test_credentials": "VIP: session_token cookie = test_session_vip_X (user_test_vip01, role=vip). Seeded into user_sessions collection by conftest / manual reseed for cookie use in Playwright.",
+  "seed_data_creation": "Temporarily added 'cash' to USD.delivery_methods during the cash-USD Playwright flow, then removed it. Backend tests already handle their own seeding via _enable_usd_cash().",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The 4 iter55.24-26 features are all working end-to-end against the preview URL (https://p2p-exchange-hub-2.preview.emergentagent.com). VIP session cookie flow (test_session_vip_X) is stable for future UI E2E. To exercise cash-USD flow again, either (a) temporarily $addToSet 'cash' into USD.delivery_methods, or (b) use the seeded 'USDCASH_TEST' currency (which allows cash by default). Backend pytest iter55_24 and iter55_25 pass with zero flakes.",
+  "rca of the issue": "N/A — no issues found; all iter55.24/25/26 acceptance criteria met."
+}
