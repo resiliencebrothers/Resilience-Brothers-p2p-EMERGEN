@@ -417,6 +417,20 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
     - Admin orders (`/admin/orders`): tabla dense + filtros pill + status badges color-coded.
   - **Status**: fix en preview. Redespliegue pendiente para producción (`https://p2p.resiliencebrothers.com`).
 
+- Status "Confirmado" ámbar + logo PDF transparente (iter55.30d, 11 Feb 2026) — dos ajustes finales de branding pre-deploy:
+
+  **Status "Confirmado" → ámbar `#F59E0B`** — operator reportó que `approved` ("Confirmado", estado intermedio antes de pago/entrega) y `completed` ("Completado") ambos usaban verde `#22C55E`, imposible distinguirlos de un vistazo. Ámbar es semánticamente correcto: "en progreso, esperando finalización".
+    - **Cambios en 3 archivos**: `OrdersView.jsx` (client), `AdminOrders.jsx` (admin), `AdminAudit.jsx` (audit filter). Ahora la escala de status va: PENDIENTE (morado) → CONFIRMADO (ámbar) → COMPLETADO (verde) — progresión visual clara.
+    - **Ya estaba correcto**: `AdminWithdrawals.jsx` — `approved` ya usaba morado + `paid` verde. Sin cambios ahí.
+
+  **Logo PDF con fondo transparente** — operator pidió que el logo `RB Resilience Brothers` en los PDFs (Cierre VIP + Ganancia Mensual + Auditoría + Registro de Transacciones) fundiera con el header morado. El logo original tenía fondo negro sólido que dejaba un edge visible sobre el header `PANEL = #141322`.
+    - **PIL processing**: cargué `assets/logo.png`, detecté píxeles con `all(rgb < 35)` (929,369 píxeles quasi-negros), les puse `alpha=0`, guardé versión transparente sobre el mismo path. Backup del original guardado como `logo_original_black_bg.png`.
+    - **ReportLab compat**: los 5 PDFs (`pdf_service.py`, `revenue_report.py`, `audit_pdf.py`, `audit_pdf_monthly.py`, `transactions_pdf.py`) ya usan `drawImage(..., mask='auto')` — respetan el canal alpha automáticamente. Cero cambios de código Python.
+    - **Verificado visualmente**: renderizado el PDF Ganancia Mensual + Cierre VIP con pymupdf@110dpi. Logo dorado fluye limpio sobre el header morado, sin edge negro. Consistencia total app + PDFs.
+
+  **Regresión**: 14/14 backend tests pass (iter55.27 + 28 + 28b). Cero cambios de contrato.
+  **Status**: fix en preview. Ya con este último ajuste la plataforma está **100% lista para redeploy**: paleta morada consistente en app + PDFs, status semánticamente diferenciados, jerarquía visual premium.
+
 
 
 

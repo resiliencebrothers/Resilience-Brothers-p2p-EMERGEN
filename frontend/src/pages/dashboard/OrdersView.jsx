@@ -10,7 +10,7 @@ import { ORDER_FILTER_STATUSES } from "@/constants/orderStatus";
 
 const STATUS_STYLES = {
   pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
-  approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
+  approved: "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30",
   completed: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
 };

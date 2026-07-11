@@ -10,7 +10,7 @@ import MonthlyAuditReport from "@/pages/admin/audit/MonthlyAuditReport";
 import { Shield, Download, FileText } from "lucide-react";
 
 const ACTION_BADGE = {
-  "order.approved": "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
+  "order.approved": "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30",
   "order.rejected": "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
   "order.completed": "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   "order.pending": "bg-neutral-700/40 text-neutral-400 border-neutral-700",
