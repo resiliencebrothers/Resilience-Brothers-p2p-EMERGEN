@@ -81,14 +81,17 @@ export default function VipView() {
         <h1 className="font-display text-3xl">Tu balance acumulado</h1>
       </div>
 
-      <div className="tactile-card p-8 glow-yellow">
-        <Wallet className="w-8 h-8 text-[#8B5CF6] mb-3" />
-        <div className="micro-label text-neutral-500">Valor total (USDT)</div>
-        <div className="font-display text-5xl text-[#8B5CF6] mt-2">
+      <div className="relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#141322] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50 hover:border-violet-500/20 transition-colors duration-500">
+        <div className="absolute -top-24 -right-24 w-64 h-64 bg-violet-500/20 blur-[100px] rounded-full pointer-events-none" />
+        <Wallet className="w-8 h-8 text-violet-400 mb-3 relative" />
+        <div className="text-xs font-semibold tracking-[0.22em] text-violet-300/70 uppercase mb-3 block relative">
+          Valor total (USDT)
+        </div>
+        <div className="text-5xl sm:text-6xl font-mono tabular-nums tracking-tight font-semibold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)] relative">
           {balances.total_usdt?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || "0.00"}{" "}
           <span className="text-2xl text-neutral-400">USDT</span>
         </div>
-        <div className="text-sm text-neutral-500 mt-1">
+        <div className="text-sm text-neutral-500 mt-2 relative">
           Equivalente consolidado de todas tus monedas · usa tasa normal
         </div>
       </div>

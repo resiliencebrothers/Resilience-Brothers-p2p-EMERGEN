@@ -92,7 +92,7 @@ export default function Landing() {
               <Button
                 data-testid="hero-start-btn"
                 onClick={handleEnter}
-                className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none px-8 h-14 text-base"
+                className="inline-flex items-center justify-center bg-violet-600 hover:bg-violet-500 text-white font-medium text-base py-3 px-8 h-14 rounded-full transition-all duration-300 shadow-[0_4px_14px_0_rgba(139,92,246,0.39)] hover:shadow-[0_6px_20px_rgba(139,92,246,0.5)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]"
               >
                 Comenzar con Google <ChevronRight className="w-5 h-5 ml-1" />
               </Button>
@@ -100,7 +100,7 @@ export default function Landing() {
                 data-testid="hero-email-btn"
                 onClick={handleEmailAuth}
                 variant="ghost"
-                className="border border-white/20 hover:border-[#8B5CF6] hover:bg-transparent text-white rounded-none px-8 h-14 text-sm font-semibold"
+                className="inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-8 h-14 rounded-full transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]"
               >
                 <Mail className="w-4 h-4 mr-2" /> Iniciar con email
               </Button>

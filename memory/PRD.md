@@ -401,6 +401,22 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
     - `#F0B90B` (BEP20 network badge en `services/delivery_validators.js`): color oficial de la Binance Smart Chain. Se muestra en `NETWORK_META.BEP20.bg` para que el usuario reconozca visualmente la red — mismo criterio que TRC20 en rojo Tron.
   - **Zero regressions**: paleta consistente sin romper semántica financiera (verde=positivo, rojo=negativo, amber=warning, chain colors=oficial de cada red).
 
+- Pulido visual premium (iter55.30c, 11 Feb 2026) — pasada del `design_agent_full_stack` post-migración morada para elevar la sensación premium tipo Linear/Vercel. Guía completa persistida en `/app/design_guidelines.json`.
+  - **BigStat KPI cards** (`RevenueCards.jsx::BigStat`): rediseñado con ícono absolute top-right, número en `font-mono tabular-nums tracking-tight text-3xl`, micro-label `text-[11px] tracking-[0.2em]`, hover con `-translate-y-0.5` + shadow morada ambiental. Card highlighted añade `shadow-[0_0_20px_rgba(139,92,246,0.15)]` + borde violeta.
+  - **Sidebar nav items** (`Dashboard.jsx` + `AdminPanel.jsx`): active state completamente nuevo — `bg-violet-500/10 text-violet-300` + **left-border acento morado 3px** con `before:` pseudo-element + shadow inset. Hover suave `bg-white/[0.04]`. Focus ring accessible. Highlighted dots ganan `shadow-[0_0_8px_rgba(139,92,246,0.8)]` para efecto glow.
+  - **VIP "Valor Total" hero card** (VipView): gradient sutil `from-[#181628] to-[#141322]`, `rounded-2xl`, **glow ambiental en la esquina** (`w-64 h-64 bg-violet-500/20 blur-[100px]`), número en `text-6xl font-mono tabular-nums` con `drop-shadow`, hover border sutil violeta.
+  - **Balance grid buttons** (VipBalancesGrid): rounded-xl + hover lift + hover elevation shadow + **dot indicator** absoluto morado con glow para las monedas con drill-down. Focus ring accessible.
+  - **Landing hero CTAs**: **pill shape** (`rounded-full`) + shadow ambiental morada (`shadow-[0_4px_14px_0_rgba(139,92,246,0.39)]`) + hover lift + focus ring. Botón secundario outline blanco con hover sutil.
+  - **Preservado**: TODOS los `data-testid` (verificado post-cambios). Backwards-compat: `.glow-yellow` class name se preservó (renderea morado). Cero cambios de lógica JSX.
+  - **Lint**: 0 issues nuevos.
+  - **Regression backend**: 14/14 pass en iter55_28 + 28b + 27.
+  - **Smoke E2E screenshots** (adjuntos al finish):
+    - Landing (`/`): título "Comercio P2P sin fronteras · Sin fricción" + CTAs pill morados con shadow ambient + KPIs +12/VIP/24h/100% morados.
+    - VIP dashboard (`/dashboard/vip`): Hero card con **glow morado en la esquina** + número tabular-nums enorme + sidebar left-border morado + balance grid con dots morados.
+    - Admin revenue (`/admin/revenue`): 5 KPI cards con tabular-nums alineados + ícono top-right + highlight con glow + sidebar dots con shadow glow.
+    - Admin orders (`/admin/orders`): tabla dense + filtros pill + status badges color-coded.
+  - **Status**: fix en preview. Redespliegue pendiente para producción (`https://p2p.resiliencebrothers.com`).
+
 
 
 

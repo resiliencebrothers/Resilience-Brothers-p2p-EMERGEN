@@ -10,16 +10,33 @@ function Row({ label, value, accent }) {
 export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testid }) {
   return (
     <div
-      className={`tactile-card p-5 ${highlight ? "glow-yellow" : ""}`}
+      className={
+        "relative overflow-hidden bg-[#141322] border border-white/5 rounded-xl p-5 " +
+        "transition-all duration-300 ease-out " +
+        "hover:-translate-y-0.5 hover:border-violet-500/30 " +
+        "hover:shadow-[0_8px_24px_-12px_rgba(139,92,246,0.2)] " +
+        (highlight
+          ? "shadow-[0_0_20px_rgba(139,92,246,0.15)] border-violet-500/40 "
+          : "")
+      }
       data-testid={testid}
     >
-      <Icon className={`w-5 h-5 mb-3 ${highlight ? "text-[#22C55E]" : "text-[#8B5CF6]"}`} />
-      <div className="micro-label text-neutral-500">{label}</div>
-      <div className="font-display text-2xl mt-1">
-        {value} <span className="text-sm text-neutral-400">{unit}</span>
+      <Icon
+        className={
+          "absolute top-5 right-5 w-5 h-5 " +
+          (highlight ? "text-[#22C55E]" : "text-violet-400/60")
+        }
+      />
+      <div className="text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase mb-2">
+        {label}
+      </div>
+      <div className="font-mono tabular-nums tracking-tight text-3xl font-medium text-white">
+        {value} <span className="text-sm text-neutral-400 font-sans">{unit}</span>
       </div>
       {hint ? (
-        <div className="text-xs text-neutral-500 mt-2 font-mono">{hint}</div>
+        <div className="text-xs text-neutral-500 mt-2 font-mono tabular-nums">
+          {hint}
+        </div>
       ) : null}
     </div>
   );

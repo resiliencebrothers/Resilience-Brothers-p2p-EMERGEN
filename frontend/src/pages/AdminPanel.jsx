@@ -89,10 +89,10 @@ export default function AdminPanel() {
   ];
 
   const navLinkClass = ({ isActive }) =>
-    `flex items-center gap-3 px-3 py-2.5 text-sm transition-colors ${
+    `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
       isActive
-        ? "bg-[#8B5CF6] text-white font-semibold"
-        : "text-neutral-400 hover:bg-white/5 hover:text-white"
+        ? "bg-violet-500/10 text-violet-300 before:absolute before:left-0 before:top-[15%] before:bottom-[15%] before:w-[3px] before:bg-violet-500 before:rounded-r-full shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+        : "text-white/60 hover:text-white hover:bg-white/[0.04]"
     }`;
 
   const renderNavLinks = (onItemClick) => (
@@ -109,7 +109,7 @@ export default function AdminPanel() {
           <it.icon className="w-4 h-4" />
           {it.label}
           {it.highlight && (
-            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#8B5CF6]" title="Función destacada" />
+            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.8)]" title="Función destacada" />
           )}
         </NavLink>
       ))}
