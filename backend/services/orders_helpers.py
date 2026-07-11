@@ -111,11 +111,34 @@ async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[
     return rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"], rate_doc
 
 
+def _cash_usd_rounds_down(to_code: str, delivery_method: str) -> bool:
+    """iter55.24 — Cash USD delivery has no sub-dollar denominations available
+    (Cuba ops does not stock coins). If the client sends a value that would
+    resolve to fractional dollars, we floor the delivered amount and Resilience
+    keeps the sub-dollar remainder as an operational buffer.
+
+    Applies to `USD` (Dolar Efectivo). Kept as a small pure helper so it can
+    be unit-tested and swapped for a per-currency flag later if we add more
+    physical-cash currencies (EUR effectivo, etc.).
+    """
+    return delivery_method == "cash" and (to_code or "").upper() == "USD"
+
+
 def build_order_from_payload(payload: "OrderCreate", user: dict, rate: float) -> "Order":
     """iter19: commission removed. New orders carry commission_percent=0.0;
-    historical orders keep their original 5% value untouched."""
+    historical orders keep their original 5% value untouched.
+
+    iter55.24: for USD cash delivery we floor the delivered amount because
+    ops cannot hand out cents. The sub-dollar remainder becomes Resilience
+    revenue — the frontend surfaces this to the client as a warning before
+    they submit."""
+    import math
     commission = 0.0
-    amount_to = round(payload.amount_from * rate * (1 - commission / 100), 4)
+    raw = payload.amount_from * rate * (1 - commission / 100)
+    if _cash_usd_rounds_down(payload.to_code, payload.delivery_method):
+        amount_to = float(math.floor(raw))
+    else:
+        amount_to = round(raw, 4)
     return Order(
         user_id=user["user_id"],
         user_email=user["email"],

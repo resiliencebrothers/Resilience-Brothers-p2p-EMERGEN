@@ -156,7 +156,11 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     total_volume_usdt = 0.0
 
     for o in orders:
-        rate_doc = rate_by_pair.get((o["from_code"], o["to_code"]))
+        # Defensive: skip orders missing required fields (data hygiene guard).
+        fc, tc = o.get("from_code"), o.get("to_code")
+        if not fc or not tc:
+            continue
+        rate_doc = rate_by_pair.get((fc, tc))
         vol, prof = await _accumulate_revenue_order(
             o, rate_doc, fx, by_pair, by_role, missing_rate_pairs,
         )

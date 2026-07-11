@@ -308,6 +308,28 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Cash-USD delivery floors sub-dollar amounts (iter55.24, Feb 2026) — owner reported: "en el caso de las entregas de USD efectivo a domicilio orientarle al cliente que debe enviar un monto que dé un valor sin centavos ya que no tenemos disponibilidad de centavos dolar. Si envía un valor con centavos la plataforma da la tasa de cambio por defecto a favor de Resilience para que dé un numero sin centavos". Cuba ops does not stock coins — every cash USD payout has to be exact whole dollars.
+  - **Backend** `services/orders_helpers.py`:
+    - New pure helper `_cash_usd_rounds_down(to_code, delivery_method)` returns True only when `delivery_method=="cash"` AND `to_code` (case-insensitive) equals `"USD"`. Kept as small unit-testable helper so it can be swapped for a per-currency `cash_no_cents` flag later if EUR/GBP effectivo appear.
+    - `build_order_from_payload()` now branches: cash-USD uses `math.floor()` for `amount_to`; every other case keeps the original `round(..., 4)` semantics. Guarantees fractional dollars can't leak into the ledger even if a modified frontend sends them.
+  - **Frontend** `pages/dashboard/ExchangeView.jsx`:
+    - Mirror helper `isCashUsdDelivery = deliveryMethod === "cash" && toCode.toUpperCase() === "USD"`.
+    - New yellow guidance banner `data-testid="cash-usd-guidance"` appears the moment cash+USD is selected — before the user calculates — with copy: "No manejamos **centavos en dólar** físico. Envía un monto que resulte en un valor **sin decimales** al que recibe. Si el cálculo da fracción, redondeamos hacia abajo y la diferencia queda a favor de **Resilience**."
+    - New row inside the calculation summary `data-testid="cash-usd-rounding-loss"` shows the exact fractional loss in red (e.g. "Redondeo cash USD: -0.75 USD") so the client sees the impact before submitting.
+    - "Recibirás" now displays `.toFixed(2)` for cash-USD (whole dollars) vs `.toFixed(4)` for the rest.
+  - **Bonus defensive fix** in `routes/admin_revenue.py`: `admin_revenue()` crashed with `KeyError: 'from_code'` when any order lacked required fields (found via a stray seed doc in preview). Now skips malformed orders instead of 500-ing the whole revenue page.
+  - **Tests**: new `test_iter55_24_cash_usd_floor.py` — 5 cases:
+    1. Pure helper matches all combinations (usd/USD/lowercase, transfer/crypto rejected, EUR not affected).
+    2. E2E 325 ZELLE24 @ 0.95 → USD cash = 308.0 (screenshot scenario).
+    3. Regression guard: cash+USD floors, transfer keeps 308.75 (precision preserved for wire transfers).
+    4. Regression guard: cash+CUP does NOT floor (rule is USD-specific).
+    5. Integer amounts stay unchanged (floor is a no-op).
+    **5/5 pass**. `test_marketplace_profit_and_margin.py::TestRevenueMarketplaceSection` regains its 3/3 after the admin_revenue KeyError fix. `yarn lint` clean.
+  - **Verified E2E** in preview: enabled USD cash temporarily → filled 325 → banner rendered, rounding row read "-0.75 USD" in red, "Recibirás" showed exactly "308.00 USD".
+  - **Note for prod redeploy**: the rule keys off `to_code.upper() === "USD"`. If in production the cash currency was seeded with a different code (e.g. `USDCASH`, `USD_EFECTIVO`), the floor rule will NOT trigger. Recommendation: keep the currency code as `USD` OR extend the helper's whitelist to include the actual production code.
+
+
+
 - Audit trail for withdrawal + redemption status changes (iter55.23, Feb 2026) — bug reported by owner on production: **"en auditoría cuando se rechaza un pago no sale quién lo rechazó"**. Root cause: two admin endpoints mutated the row but silently skipped `log_action`, leaving the audit ledger blind to those actions.
   - **Endpoints fixed**:
     - `routes/admin_withdrawals.py::update_withdrawal` (PUT `/admin/withdrawals/{wid}/status`) — every approve/pay/reject/pending transition now emits `action="withdrawal.{status}"` with the full actor snapshot (id/email/name/role/permissions), before/after status, amount_usd, currency, method, user_id, admin_note, and payout_tx_hash if provided.

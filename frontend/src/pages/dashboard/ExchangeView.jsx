@@ -67,7 +67,14 @@ export default function ExchangeView() {
   const commission = 0;
   const amt = parseFloat(amount) || 0;
   const gross = amt * rate;
-  const finalAmount = gross * (1 - commission / 100);
+  // iter55.24 — Cash USD has no sub-dollar denominations available (Cuba ops
+  // doesn't stock coins). Floor the deliverable and surface the remainder to
+  // the client so they can adjust their input for an exact-dollar payout.
+  // Mirror of _cash_usd_rounds_down() in backend/services/orders_helpers.py.
+  const isCashUsdDelivery = deliveryMethod === "cash" && (toCode || "").toUpperCase() === "USD";
+  const finalAmountRaw = gross * (1 - commission / 100);
+  const finalAmount = isCashUsdDelivery ? Math.floor(finalAmountRaw) : finalAmountRaw;
+  const cashUsdRoundingLoss = isCashUsdDelivery ? finalAmountRaw - finalAmount : 0;
 
   const deliveryOptions = useMemo(() => {
     if (!toCurr) return [];
@@ -212,16 +219,49 @@ export default function ExchangeView() {
           />
         </div>
 
+        {/* iter55.24 — orient the client on cash-USD delivery BEFORE they
+            calculate/submit. Shown when they've already picked cash delivery
+            to USD, so the guidance appears at the exact decision moment. */}
+        {isCashUsdDelivery && (
+          <div
+            data-testid="cash-usd-guidance"
+            className="border border-[#EAB308]/40 bg-[#EAB308]/10 p-4 text-xs font-mono text-neutral-200 leading-relaxed"
+          >
+            <div className="micro-label text-[#EAB308] text-[0.65rem] mb-2">
+              ⓘ Entrega en USD efectivo
+            </div>
+            <p>
+              No manejamos <strong className="text-white">centavos en dólar</strong> físico.
+              Envía un monto que resulte en un valor <strong className="text-white">sin decimales</strong> al que recibe.
+              Si el cálculo da fracción, redondeamos hacia abajo y la diferencia queda a favor de <strong>Resilience</strong>.
+            </p>
+          </div>
+        )}
+
         {selectedRate && amt > 0 && (
           <div className="border border-[#EAB308]/30 bg-[#EAB308]/5 p-5 space-y-2 font-mono text-sm">
             <div className="flex justify-between"><span className="text-neutral-400">Tasa aplicada:</span><span>{rate} {toCode}/{fromCode}</span></div>
             <div className="flex justify-between"><span className="text-neutral-400">Bruto:</span><span>{gross.toFixed(4)} {toCode}</span></div>
             {commission > 0 && (
-              <div className="flex justify-between"><span className="text-neutral-400">Comisión ({commission}%):</span><span className="text-[#EF4444]">-{(gross - finalAmount).toFixed(4)}</span></div>
+              <div className="flex justify-between"><span className="text-neutral-400">Comisión ({commission}%):</span><span className="text-[#EF4444]">-{(gross - finalAmountRaw).toFixed(4)}</span></div>
+            )}
+            {isCashUsdDelivery && cashUsdRoundingLoss > 0 && (
+              <div
+                className="flex justify-between text-[#EF4444]"
+                data-testid="cash-usd-rounding-loss"
+              >
+                <span>Redondeo cash USD:</span>
+                <span>-{cashUsdRoundingLoss.toFixed(2)} USD</span>
+              </div>
             )}
             <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-base">
               <span className="text-white">Recibirás:</span>
-              <span className="text-[#EAB308] font-bold">{finalAmount.toFixed(4)} {toCode}</span>
+              <span
+                className="text-[#EAB308] font-bold"
+                data-testid="final-amount-display"
+              >
+                {isCashUsdDelivery ? finalAmount.toFixed(2) : finalAmount.toFixed(4)} {toCode}
+              </span>
             </div>
           </div>
         )}
