@@ -1,94 +1,60 @@
 {
-  "theme": "Dark",
-  "archetype": "Archetype 2: Performance Pro (Dark Theme)",
-  "emotional_tone": "Professional, secure, high-performance, and tactical. It feels like a high-end command center for global P2P trading.",
-  "typography": {
-    "headings": {
-      "family": "Outfit",
-      "style": "font-black tracking-tight",
-      "sizes": {
-        "h1": "text-4xl sm:text-5xl lg:text-6xl",
-        "h2": "text-2xl sm:text-3xl lg:text-4xl",
-        "h3": "text-xl sm:text-2xl",
-        "h4": "text-lg sm:text-xl"
-      }
-    },
-    "body": {
-      "family": "IBM Plex Sans",
-      "style": "leading-relaxed text-neutral-300",
-      "sizes": {
-        "base": "text-base md:text-sm",
-        "small": "text-sm",
-        "micro": "text-xs tracking-[0.2em] uppercase"
-      }
-    }
-  },
+  "theme": "dark",
+  "vibe": "Premium Fintech, Linear/Vercel inspired, authoritative, sleek, tactile",
   "colors": {
-    "background": {
-      "primary": "#0A0A0A",
-      "secondary": "#121212",
-      "glass": "bg-black/60 backdrop-blur-xl"
-    },
-    "surface": {
-      "card": "#171717",
-      "border": "rgba(255, 255, 255, 0.1)"
-    },
-    "accent": {
-      "primary": "#EAB308",
-      "primary_hover": "#FACC15",
-      "success": "#22C55E",
-      "danger": "#EF4444"
-    },
-    "text": {
-      "primary": "#FFFFFF",
-      "secondary": "#A3A3A3",
-      "inverse": "#000000"
-    }
+    "primary": "#8B5CF6",
+    "primary_hover": "#A78BFA",
+    "background": "#0A0A0F",
+    "card": "#141322",
+    "border": "rgba(255,255,255,0.08)",
+    "positive": "#22C55E",
+    "negative": "#EF4444",
+    "warning": "#F59E0B"
   },
-  "layout": {
-    "spacing_system": "Use generous padding: p-6, p-8, p-12. Containers must have internal padding. For marketing pages, use the 'Tetris' grid (asymmetrical, gap-8 to gap-12). For dashboards, use 'Control Room' bento grid (dense, gap-4 to gap-6).",
-    "alignment": "Mobile-first responsive. Optical alignment over geometrical alignment. Left-align data and forms.",
-    "navigation": "Sticky header (z-50) using 'Crystal Glass' style (backdrop-blur-xl bg-black/60) with a 1px delicate inner stroke (border-white/10). Explicit CTA for login."
+  "typography": {
+    "display": "Outfit (900 weight, tight tracking)",
+    "body": "IBM Plex Sans",
+    "numbers": "IBM Plex Mono (tabular-nums)"
   },
-  "surfaces_and_micro_themes": {
-    "cards": "Neumorphic tactile variant: flat background (#171717), sharp 1px border (border-white/10), no soft shadows by default. Use 'Tracing Beam' dynamic glowing border on hover for VIP and core P2P action cards.",
-    "inputs": "Shadcn components heavily customized: flat backgrounds, 1px borders, high-contrast focus rings (focus:ring-2 focus:ring-[#EAB308]).",
-    "modals": "Crystal glass overlays with solid modal backgrounds, sharp borders."
+  "component_instructions": {
+    "KPI_Cards_revenue_RevenueCards_BigStat": [
+      "Container: Replace basic styling with `bg-[#141322] border border-white/5 rounded-xl p-5 relative overflow-hidden transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-12px_rgba(139,92,246,0.2)] hover:border-violet-500/30`",
+      "Active Glow ('glow-yellow' legacy mapping): If highlighted, append `shadow-[0_0_20px_rgba(139,92,246,0.15)] border-violet-500/40`",
+      "Micro-label: Apply `.micro-label` aesthetics directly `text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase mb-2`",
+      "Value/Digits: Must use `font-mono tabular-nums tracking-tight text-3xl font-medium text-white`",
+      "Icon container: `absolute top-5 right-5 text-violet-400/50`"
+    ],
+    "Sidebar_Nav_Dashboard_AdminPanel": [
+      "Base Item: `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative outline-none`",
+      "Active State: `bg-violet-500/10 text-violet-400 before:absolute before:left-0 before:top-[15%] before:bottom-[15%] before:w-[3px] before:bg-violet-500 before:rounded-r-full shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]`",
+      "Inactive State: `text-white/60 hover:text-white hover:bg-white/[0.04]`",
+      "Focus State: `focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:bg-white/[0.04] focus:outline-none`",
+      "Highlighted Dot Indicator: `w-1.5 h-1.5 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.8)] ml-auto`"
+    ],
+    "VIP_Valor_Total_Hero_Card": [
+      "Container: `relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#141322] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50 hover:border-violet-500/20 transition-colors duration-500`",
+      "Ambient Glow: Add an absolute div inside the container: `<div className=\"absolute -top-24 -right-24 w-64 h-64 bg-violet-500/20 blur-[100px] rounded-full pointer-events-none\"></div>`",
+      "Label: `text-sm font-semibold tracking-[0.22em] text-violet-300/70 uppercase mb-4 block`",
+      "Big Value: `text-5xl sm:text-6xl font-mono tabular-nums tracking-tight font-semibold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)]`"
+    ],
+    "Balance_Grid_Buttons": [
+      "Container/Button: `relative flex flex-col items-start w-full bg-[#141322] border border-white/5 rounded-xl p-5 text-left transition-all duration-200 ease-out cursor-pointer hover:-translate-y-0.5 hover:bg-[#181628] hover:border-violet-500/40 hover:shadow-[0_8px_20px_-12px_rgba(139,92,246,0.15)]`",
+      "Focus State: `focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]`",
+      "Active Dot (If data exists): `<div className=\"absolute top-4 right-4 w-2 h-2 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.6)]\"></div>`"
+    ],
+    "Landing_Hero_CTA": [
+      "Action Group Wrapper: `flex flex-wrap items-center gap-4 mt-8`",
+      "Primary Button: `inline-flex items-center justify-center bg-violet-600 hover:bg-violet-500 text-white font-medium text-sm sm:text-base py-3 px-8 rounded-full transition-all duration-300 shadow-[0_4px_14px_0_rgba(139,92,246,0.39)] hover:shadow-[0_6px_20px_rgba(139,92,246,0.23)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]`",
+      "Secondary Button: `inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm sm:text-base py-3 px-8 rounded-full transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]`"
+    ]
   },
-  "motion_and_interaction": {
-    "hover": "All interactive elements MUST have explicit hover states (e.g., hover:bg-neutral-800 hover:text-white). Buttons lift slightly (-translate-y-1).",
-    "transitions": "Use specific properties (transition: transform 0.2s ease, opacity 0.2s ease). Do not use 'transition: all'.",
-    "data_viz": "Use Recharts or Shadcn charts with color-blind friendly palettes. Apply glowing effects (drop-shadow) to chart lines."
-  },
-  "icons_and_assets": {
-    "library": "lucide-react (default) and @phosphor-icons/react (for high-end duotone elements if needed).",
-    "images": {
-      "hero_background": {
-        "url": "https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGRhcmslMjB0ZWNoJTIwbm9kZXN8ZW58MHx8fHwxNzgxNDUzMzk5fDA&ixlib=rb-4.1.0&q=85",
-        "description": "Abstract blue tech nodes for the landing page hero background. Apply a bg-black/50 overlay."
-      },
-      "marketplace_products": {
-        "url": "https://images.unsplash.com/photo-1493946740644-2d8a1f1a6aff?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwyfHxjYXJnbyUyMHNoaXBwaW5nJTIwY29udGFpbmVyc3xlbnwwfHx8fDE3ODE0NTMzOTl8MA&ixlib=rb-4.1.0&q=85",
-        "description": "Cargo shipping containers for the VIP Marketplace section."
-      },
-      "p2p_trust": {
-        "url": "https://images.unsplash.com/photo-1638262052640-82e94d64664a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MDV8MHwxfHNlYXJjaHwxfHxidXNpbmVzcyUyMGhhbmRzaGFrZSUyMGRhcmt8ZW58MHx8fHwxNzgxNDUzMzk5fDA&ixlib=rb-4.1.0&q=85",
-        "description": "Business handshake in a dark setting, representing secure P2P transactions."
-      }
-    }
-  },
-  "testing_attributes": {
-    "requirement": "All interactive elements MUST include a data-testid attribute using kebab-case and role-based naming (e.g., data-testid='p2p-exchange-submit')."
-  },
-  "instructions_to_main_agent": [
-    "Build the platform as a hybrid fullstack SaaS.",
-    "Implement Google Auth for login.",
-    "Create three main zones: Public Landing Page, Client Dashboard (Normal + VIP), and Admin Panel.",
-    "Use standard pure HTML+Tailwind for the landing page (Tetris Grid, scroll animations, hero background image).",
-    "Use Shadcn UI components for the Dashboard and Admin Panel (Control Room bento grid, dense data tables).",
-    "For the VIP marketplace, showcase the 'cargo shipping containers' image.",
-    "Ensure all text has a WCAG AA compliant contrast ratio against dark backgrounds.",
-    "Implement the P2P flow: select pair, enter amount, show target account, upload screenshot, await admin approval.",
-    "Add 'data-testid' to all buttons, links, and forms."
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "CRITICAL: Do NOT modify, remove, or change ANY `data-testid` attributes.",
+    "Do NOT introduce new CSS files. Use Tailwind utility classes and inline styles ONLY.",
+    "Ensure `tabular-nums` is applied to all metric values and numbers to prevent layout shifting during updates.",
+    "Preserve existing Shadcn UI structure; simply inject these design classes via the `className` prop.",
+    "Legacy '.glow-yellow' class usage MUST be styled with violet palette utility classes instead (e.g. shadow-violet-500, border-violet-500).",
+    "Focus heavily on subtle elevation (`-translate-y-0.5`) and ambient shadows (`shadow-[...]`) on hover to create the tactile Linear/Vercel premium feel.",
+    "Never replace functional JSX logic, only alter presentation strings."
   ]
 }
