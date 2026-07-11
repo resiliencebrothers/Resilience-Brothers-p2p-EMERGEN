@@ -308,6 +308,35 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Residuo-a-saldo + comisión USDT 0.01 (iter55.27, 11 Feb 2026) — replaces iter55.24's "sub-dollar goes to Resilience" rule with a client-friendly model per owner: **cash delivery to ANY fiat floors the delivered amount and CREDITS the fractional residue to the client's on-platform balance in the same currency**. Nothing is lost — the client can accumulate residues across trades or convert to USDT (0.01 USDT flat fee, 1.00 USDT minimum net).
+  - **Backend `services/orders_helpers.py`**:
+    - `_cash_no_cents(to_code, to_type, delivery_method)` — new signature. Trips for **any** fiat + cash (broader than iter55.24's USD-only). `_cash_usd_rounds_down` kept as backward-compat alias.
+    - `build_order_from_payload(payload, user, rate, to_currency_type)` — new 4th arg; computes `residue = raw - floor(raw)` and attaches it to the order as `_residue_to_credit` (transient, not persisted on the Order model).
+  - **Backend `routes/orders.py::create_order`**:
+    - Fetches `to_currency.type` from Mongo, passes it to `build_order_from_payload`.
+    - After insert, if residue > 0, does `$inc vip_balances.{to_code}` on the user + writes an audit log with `action="order.residue_credited"` including order_id, currency, residue, reason="fiat_cash_floor" so accounting can reconcile.
+  - **Backend `routes/orders.py::vip_convert`**:
+    - `USDT_CONVERT_FEE = 0.01`, `USDT_MIN_NET = 1.00`. When `to_code == "USDT"`, subtract fee and validate net ≥ min; return 400 with actionable Spanish message otherwise.
+    - Response body extended: `amount_to_gross`, `usdt_fee`, `amount_to`.
+    - Audit log details include `usdt_fee` + `amount_to_gross` for revenue reconciliation.
+  - **Frontend `pages/dashboard/ExchangeView.jsx`**:
+    - Renamed `isCashUsdDelivery` → `isCashFiatDelivery` (`toCurr.type === "fiat"`).
+    - Banner copy rewritten: **"El residuo se acredita a tu saldo en {code}. Puedes acumularlo hasta llegar a un entero o convertirlo a USDT desde Saldo y Retiros (comisión 0.01 USDT, mínimo neto 1 USDT)."** — no more "goes to Resilience" language.
+    - Rounding row rebranded: `data-testid="cash-fiat-residue-credit"`, rendered in yellow (positive, not red).
+    - "Recibirás" → "Recibirás en efectivo" for clarity. Cash flows show whole units (`.toFixed(0)`).
+  - **Frontend `components/BalanceConverterCard.jsx`**:
+    - New `previewGross` / `previewNet` / `belowMinNet` derived state.
+    - Fee row (`data-testid="converter-preview-fee"`) shown in red when `toCode === "USDT"`.
+    - Warning message + red "Recibirás" + disabled submit when below min-net (`data-testid="converter-below-min"`).
+    - `DialogDescription` added (a11y fix from testing_agent review) with fee/min info when USDT destination.
+  - **Tests**:
+    - New `test_iter55_27_residue_credit_and_usdt_fee.py` — 7 cases: helper accepts any fiat+cash, CUP order credits +0.5 residue to balance, transfer doesn't credit, USDT fee applied, dust conversion blocked with 400, non-USDT destinations still fee-free, audit log includes fee+gross. **7/7 pass**.
+    - Updated `test_iter55_24_cash_usd_floor.py` — helper signature migration + CUP now also floors (iter55.27 expansion). **5/5 pass** on the updated cases.
+  - **Testing agent (iteration_55.json)**: **100% pass backend (12/12) + 100% pass frontend (all 8 flows)**. Cero critical/minor issues. E2E confirmed: ZELLE→CUP order at 100.5 rate for 325 units delivered 32662 CUP + credited +0.5000 CUP residue; BalanceConverter fee row -0.01 USDT visible, below-min warning + disabled Confirm at 0.99 net, cleared at 2.49 net.
+  - **Deploy status**: waiting for next production redeploy alongside iter55.24/25/25b/26/26b block.
+
+
+
 - Cleanup post-testing (iter55.26b, Feb 2026) — the testing_agent (iteration_54.json) reported 100% pass + 3 non-blocking code review comments. Addressed 2 of them:
   1. **Dead imports** in `pages/Dashboard.jsx` removed (`IdCard`, `ShieldCheck` — leftover from the iter55.26 sidebar cleanup).
   2. **Extracted shared status constants** to `/app/frontend/src/constants/orderStatus.js` — single source of truth for `ORDER_IN_FLIGHT`, `ORDER_COMPLETED`, `WITHDRAWAL_IN_FLIGHT`, `WITHDRAWAL_COMPLETED`, `ORDER_FILTER_STATUSES`. Both `OverviewView.jsx` and `OrdersView.jsx` now import from this module. This eliminates the exact drift pattern that caused the iter55.25 bug (dashboard counter and orders filter had duplicated sets; a future change to one but not the other would re-introduce a mismatch). All sets are `Object.freeze`d to signal immutability.

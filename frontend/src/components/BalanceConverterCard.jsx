@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -236,12 +236,12 @@ export default function BalanceConverterCard({ onConverted }) {
               <ArrowRightLeft className="w-4 h-4 text-[#EAB308]" />
               {toCode}
             </DialogTitle>
+            <DialogDescription className="text-neutral-400 text-xs">
+              Mueve fondos entre tus propias monedas al tipo de cambio {isVip ? "VIP" : "estándar"}.
+              {isToUsdt && ` La conversión a USDT tiene una comisión fija de ${USDT_CONVERT_FEE} USDT (mínimo neto ${USDT_MIN_NET.toFixed(2)} USDT).`}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-4">
-            <div className="text-xs text-neutral-400">
-              Mueve fondos entre tus propias monedas al tipo de cambio {isVip ? "VIP" : "estándar"}.
-              No requiere aprobación del staff.
-            </div>
             <div>
               <Label className="micro-label text-neutral-500">Moneda destino</Label>
               <Select value={toCode} onValueChange={setToCode}>
