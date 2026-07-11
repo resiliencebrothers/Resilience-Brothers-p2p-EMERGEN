@@ -87,14 +87,14 @@ def test_completed_crypto_order_notification_bep20_hint():
     # Delivery details explicitly declare BEP20 → notif should link to BscScan
     oid = _seed_completed_order_with_hash(
         delivery_details="0x1234567890abcdef1234567890abcdef12345678 · red BEP20",
-        tx_hash="0xabcdef123456789012345678901234567890abcdef123456789012345678901234",
+        tx_hash="0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
     )
     r = requests.put(
         f"{API}/admin/orders/{oid}/status",
         headers=_hdr(ADMIN_TOKEN),
         json={
             "status": "completed",
-            "payout_tx_hash": "0xabcdef123456789012345678901234567890abcdef123456789012345678901234",
+            "payout_tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
         },
     )
     assert r.status_code == 200, r.text

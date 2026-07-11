@@ -49,6 +49,20 @@ class TestVipBalancesEndpoint:
         assert isinstance(data["total_usdt"], (int, float))
 
     def test_vip_legacy_plus_dict_usdt_conversion(self):
+        """iter55.30i — reads the SEEDED USDT→USD and USDT→CUP rates from Mongo
+        instead of hardcoding 0.98/378. Keeps the test green under rate drift."""
+        from pymongo import MongoClient
+        import os
+        _db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+        def _rate(f, t):
+            row = _db.rates.find_one({"from_code": f, "to_code": t}, {"_id": 0, "rate_normal": 1})
+            return float(row["rate_normal"]) if row and row.get("rate_normal") else None
+
+        rate_usd = _rate("USDT", "USD")
+        rate_cup = _rate("USDT", "CUP")
+        assert rate_usd and rate_cup, "USDT rates must be seeded"
+
         # Set explicit balances: legacy 500 USD + dict {CUP: 38000}
         me = _vip_me()
         uid = me["user_id"]
@@ -60,13 +74,12 @@ class TestVipBalancesEndpoint:
         assert "USD" in balances and "CUP" in balances
         assert balances["USD"]["amount"] == 500.0
         assert balances["CUP"]["amount"] == 38000.0
-        # Conversion check: 500 USD via USDT->USD=0.98 → 500/0.98 ≈ 510.20
-        # 38000 CUP via USDT->CUP=378 → 38000/378 ≈ 100.53
+        # Conversion checks — computed from live rates.
         usd_usdt = balances["USD"]["usdt_equivalent"]
         cup_usdt = balances["CUP"]["usdt_equivalent"]
         assert usd_usdt is not None and cup_usdt is not None
-        assert abs(usd_usdt - (500 / 0.98)) < 1.0
-        assert abs(cup_usdt - (38000 / 378)) < 1.0
+        assert abs(usd_usdt - (500 / rate_usd)) < 1.0
+        assert abs(cup_usdt - (38000 / rate_cup)) < 1.0
         # Total
         assert abs(data["total_usdt"] - (usd_usdt + cup_usdt)) < 0.01
 
