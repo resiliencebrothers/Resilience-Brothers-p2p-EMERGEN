@@ -80,9 +80,8 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
-.env
-.env.*
-*.env
+# NOTE: .env files must be tracked — Emergent's deploy system rewrites them
+# with production values on push. Do NOT re-add .env / .env.* / *.env here.
 credentials.json
 *.key
 .credentials
