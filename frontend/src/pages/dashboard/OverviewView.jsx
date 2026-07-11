@@ -28,20 +28,30 @@ export default function OverviewView() {
   const isStaff = user?.role === "admin" || user?.role === "employee";
   const isClient = user && !isStaff;
 
-  // iter55.22 — an order/withdrawal counts as "pendiente" for the client while
-  // the operation is not yet finalised. That means anything still moving
-  // through the pipeline: pending, approved (staff accepted but not paid),
-  // in_progress, requires_double_approval. Only fully terminal successful
-  // states (delivered/completed/paid) count as "Completadas"; rejected drops off.
-  const IN_FLIGHT = new Set(["pending", "approved", "in_progress", "requires_double_approval"]);
+  // iter55.22 / .25 — an order/withdrawal counts as "pendiente" for the
+  // client while the operation is not yet finalised, but the semantics of
+  // `approved` differ by type:
+  //   • orders.approved      = "Confirmado" (staff validated + paid) → NOT pending
+  //   • withdrawals.approved = "En progreso" for cash (approved but coins not
+  //                             handed out yet) → still pending
+  // If we lumped both together, a client with one confirmed order plus one
+  // pending order would see "PENDIENTES: 2" but only 1 row in the history
+  // — reported as a bug on 11 Feb 2026.
+  const ORDER_IN_FLIGHT = new Set(["pending", "requires_double_approval"]);
+  const WITHDRAWAL_IN_FLIGHT = new Set(["pending", "approved", "requires_double_approval"]);
 
-  const pendingOrders = orders.filter(o => IN_FLIGHT.has(o.status)).length;
-  const pendingWithdrawals = withdrawals.filter(w => IN_FLIGHT.has(w.status)).length;
+  const pendingOrders = orders.filter(o => ORDER_IN_FLIGHT.has(o.status)).length;
+  const pendingWithdrawals = withdrawals.filter(w => WITHDRAWAL_IN_FLIGHT.has(w.status)).length;
   const pending = pendingOrders + pendingWithdrawals;
 
-  const completedOrders = orders.filter(o => o.status === "delivered" || o.status === "completed").length;
+  // Completed = terminal successful state for each type.
+  //   • orders: delivered / completed / approved (Confirmado is a success)
+  //   • withdrawals: paid
+  const completedOrders = orders.filter(
+    o => o.status === "delivered" || o.status === "completed" || o.status === "approved"
+  ).length;
   const completedWithdrawals = withdrawals.filter(w => w.status === "paid").length;
-  const approved = completedOrders + completedWithdrawals; // "Completadas" — successful terminal states
+  const approved = completedOrders + completedWithdrawals;
 
   return (
     <div className="space-y-8" data-testid="overview-view">

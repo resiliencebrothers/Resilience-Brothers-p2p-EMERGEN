@@ -308,6 +308,24 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Dashboard "Pendientes" counter regression fix (iter55.25, 11 Feb 2026) — owner reported: user Obrayan (Cuenta Estándar) had 1 pending order + 1 "Confirmado" (approved) order in Mis Órdenes, but the dashboard showed **PENDIENTES: 2**. iter55.22 introduced the bug by lumping `approved` into a single IN_FLIGHT set for both entity types — but the label/semantics of `approved` differ:
+  - `orders.approved` = **"Confirmado"** (staff validated + paid) → **NOT** pending; success state
+  - `withdrawals.approved` = **"En progreso"** for cash retiros (approved but coins not handed out yet) → **still** pending
+  - The old shared set was double-counting confirmed orders as pending, breaking the invariant "counter = rows-with-Pendiente-badge".
+  - **Fix** in `pages/dashboard/OverviewView.jsx`:
+    - Split into two per-entity sets: `ORDER_IN_FLIGHT = {pending, requires_double_approval}` and `WITHDRAWAL_IN_FLIGHT = {pending, approved, requires_double_approval}`.
+    - "Completadas" for orders now includes `approved` (Confirmado is a success state), plus `completed` / `delivered`.
+    - Comment block in-file explaining the semantic divergence + link to iter55.22 origin so future refactors don't collapse them again.
+  - **Numerical verification** against real preview data (`user_test_vip01`): with 250 pending, 905 approved, 68 RDA, 131 completed, 148 rejected orders + 143 pending, 64 approved, 37 paid, 370 rejected withdrawals →
+    - OLD (buggy): PENDIENTES=**1430** (over-counted the 905 confirmed orders as pending)
+    - NEW (fixed): PENDIENTES=**525** (318 in-flight orders + 207 in-flight withdrawals). COMPLETADAS=1073 (1036 finalized orders + 37 paid withdrawals).
+  - **Tests**: new `test_iter55_25_dashboard_pending_semantics.py` — 3 cases: `/orders/mine` returns all statuses verbatim, `/vip/withdrawals/mine` too, and a doc-as-code assertion pinning the exact sets so a future frontend rewrite that diverges will fail lock-step (the frontend file references iter55.25 in a comment). **3/3 pass**. Combined with iter55.22 tests: **6/6 pass**.
+  - `yarn lint` clean.
+
+- **Production currency confirmation for iter55.24**: owner's screenshot of Mis Órdenes shows the pair `USDT → USD` — confirms the "Dolar Efectivo" currency in production has `code=USD` exactly as the iter55.24 rule expects. **Cash-USD floor will trigger correctly on prod after redeploy** with no additional config.
+
+
+
 - Cash-USD delivery floors sub-dollar amounts (iter55.24, Feb 2026) — owner reported: "en el caso de las entregas de USD efectivo a domicilio orientarle al cliente que debe enviar un monto que dé un valor sin centavos ya que no tenemos disponibilidad de centavos dolar. Si envía un valor con centavos la plataforma da la tasa de cambio por defecto a favor de Resilience para que dé un numero sin centavos". Cuba ops does not stock coins — every cash USD payout has to be exact whole dollars.
   - **Backend** `services/orders_helpers.py`:
     - New pure helper `_cash_usd_rounds_down(to_code, delivery_method)` returns True only when `delivery_method=="cash"` AND `to_code` (case-insensitive) equals `"USD"`. Kept as small unit-testable helper so it can be swapped for a per-currency `cash_no_cents` flag later if EUR/GBP effectivo appear.
