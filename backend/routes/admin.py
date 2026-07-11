@@ -166,43 +166,52 @@ async def all_orders(request: Request, status: Optional[str] = None,
     )
 
 
+def _detect_crypto_network_from_delivery(delivery_details: str) -> str:
+    """Sniff TRC20/BEP20 from `delivery_details` (same heuristic used across
+    the codebase). Returns '' when the network cannot be inferred."""
+    delivery = (delivery_details or "").upper()
+    if "TRC20" in delivery:
+        return "TRC20"
+    if "BEP20" in delivery:
+        return "BEP20"
+    return ""
+
+
+def _validate_crypto_tx_hash(tx_hash: str, network: str) -> None:
+    """iter55.19h — guard against copy-paste errors between explorers."""
+    from services.crypto_networks import (
+        is_tx_hash_valid_for_network, tx_hash_mismatch_reason,
+    )
+    if not is_tx_hash_valid_for_network(tx_hash, network):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "TX_HASH_NETWORK_MISMATCH",
+                "message": tx_hash_mismatch_reason(tx_hash, network),
+                "network": network,
+            },
+        )
+
+
 def _collect_order_payout_evidence(payload: dict, update_doc: dict,
                                     order: dict = None) -> None:
     """Persist optional payout proof image + tx hash on the update document.
-    Used by staff/admin when marking an order as completed.
-
-    iter55.19h: for crypto orders we sniff the network from `delivery_details`
-    (same heuristic used elsewhere) and validate the tx_hash format against
-    that family — prevents copy-paste errors between explorers.
-    """
+    Used by staff/admin when marking an order as completed."""
     proof = payload.get("payout_proof_image")
     if proof:
         update_doc["payout_proof_image"] = maybe_upload_proof(proof, "order_payouts") or proof
     tx_hash = payload.get("payout_tx_hash")
-    if tx_hash:
-        tx_hash = tx_hash.strip()
-        method = (order or {}).get("delivery_method") or ""
-        if method == "crypto":
-            delivery = ((order or {}).get("delivery_details") or "").upper()
-            network = ""
-            if "TRC20" in delivery:
-                network = "TRC20"
-            elif "BEP20" in delivery:
-                network = "BEP20"
-            if network:
-                from services.crypto_networks import (
-                    is_tx_hash_valid_for_network, tx_hash_mismatch_reason,
-                )
-                if not is_tx_hash_valid_for_network(tx_hash, network):
-                    raise HTTPException(
-                        status_code=400,
-                        detail={
-                            "code": "TX_HASH_NETWORK_MISMATCH",
-                            "message": tx_hash_mismatch_reason(tx_hash, network),
-                            "network": network,
-                        },
-                    )
-        update_doc["payout_tx_hash"] = tx_hash
+    if not tx_hash:
+        return
+    tx_hash = tx_hash.strip()
+    method = (order or {}).get("delivery_method") or ""
+    if method == "crypto":
+        network = _detect_crypto_network_from_delivery(
+            (order or {}).get("delivery_details") or ""
+        )
+        if network:
+            _validate_crypto_tx_hash(tx_hash, network)
+    update_doc["payout_tx_hash"] = tx_hash
 
 
 def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: str) -> None:
@@ -339,11 +348,8 @@ async def _aggregate_flow(group_field: str, rates: dict) -> dict:
     return {"items": items, "total_usdt": round(total_usdt, 4)}
 
 
-async def _aggregate_vip_holdings(rates: dict) -> dict:
-    """Sum vip_balances across all VIP/admin users and convert to USDT."""
-    users = await db.users.find(
-        {"role": {"$in": ["vip", "admin"]}}, {"_id": 0}
-    ).to_list(1000)
+def _sum_users_balances(users: list) -> Dict[str, float]:
+    """Sum every currency across the user set, folding the legacy USD field."""
     totals: Dict[str, float] = {}
     for u in users:
         for code, amt in (u.get("vip_balances") or {}).items():
@@ -351,6 +357,11 @@ async def _aggregate_vip_holdings(rates: dict) -> dict:
         legacy = float(u.get("vip_balance_usd") or 0.0)
         if legacy > 0:
             totals["USD"] = totals.get("USD", 0.0) + legacy
+    return totals
+
+
+def _totals_to_usdt_breakdown(totals: Dict[str, float], rates: dict) -> tuple:
+    """Convert each currency total to USDT and return (items, total_usdt)."""
     items: List[Dict[str, Any]] = []
     total_usdt = 0.0
     for code, amt in totals.items():
@@ -363,7 +374,17 @@ async def _aggregate_vip_holdings(rates: dict) -> dict:
             "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
         })
     items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
-    return {"items": items, "total_usdt": round(total_usdt, 4)}
+    return items, round(total_usdt, 4)
+
+
+async def _aggregate_vip_holdings(rates: dict) -> dict:
+    """Sum vip_balances across all VIP/admin users and convert to USDT."""
+    users = await db.users.find(
+        {"role": {"$in": ["vip", "admin"]}}, {"_id": 0}
+    ).to_list(1000)
+    totals = _sum_users_balances(users)
+    items, total_usdt = _totals_to_usdt_breakdown(totals, rates)
+    return {"items": items, "total_usdt": total_usdt}
 
 
 async def _platform_counters() -> dict:

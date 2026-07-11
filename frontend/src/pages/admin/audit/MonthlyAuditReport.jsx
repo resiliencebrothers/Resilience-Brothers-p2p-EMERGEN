@@ -135,7 +135,7 @@ export default function MonthlyAuditReport() {
             <SelectTrigger data-testid="audit-monthly-month" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {monthOptions.map((m) => (
                 <SelectItem key={m.value} value={String(m.value)}>{m.label}</SelectItem>
               ))}
@@ -148,7 +148,7 @@ export default function MonthlyAuditReport() {
             <SelectTrigger data-testid="audit-monthly-year" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-28">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {yearOptions.map((y) => (
                 <SelectItem key={y} value={String(y)}>{y}</SelectItem>
               ))}

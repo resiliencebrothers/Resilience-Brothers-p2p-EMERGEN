@@ -127,7 +127,7 @@ export default function AdminRevenue() {
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+          <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
             <SelectItem value="all">Todo el tiempo</SelectItem>
             <SelectItem value="7">Últimos 7 días</SelectItem>
             <SelectItem value="30">Últimos 30 días</SelectItem>

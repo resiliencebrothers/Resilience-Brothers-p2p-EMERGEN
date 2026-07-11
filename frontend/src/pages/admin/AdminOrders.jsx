@@ -42,7 +42,7 @@ function CopyBtn({ label, value, testid }) {
       type="button"
       data-testid={testid}
       onClick={copy}
-      className="inline-flex items-center gap-1.5 border border-white/10 hover:border-[#8B5CF6]/50 bg-[#141322] hover:bg-[#8B5CF6]/5 px-2.5 py-1 text-[0.7rem] font-mono text-neutral-300 transition-colors"
+      className="inline-flex items-center gap-1.5 border border-white/10 hover:border-[#8B5CF6]/50 bg-[#1A1730] hover:bg-[#8B5CF6]/5 px-2.5 py-1 text-[0.7rem] font-mono text-neutral-300 transition-colors"
     >
       {ok ? <Check className="w-3 h-3 text-[#22C55E]" /> : <Copy className="w-3 h-3" />}
       {label}
@@ -173,7 +173,7 @@ export default function AdminOrders() {
           <SelectTrigger data-testid="orders-currency-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-40">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+          <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
             <SelectItem value="all">Todas las monedas</SelectItem>
             {currencies.map((c) => (
               <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
@@ -266,7 +266,7 @@ export default function AdminOrders() {
       />
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Orden #{open?.id?.slice(0,8)}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">

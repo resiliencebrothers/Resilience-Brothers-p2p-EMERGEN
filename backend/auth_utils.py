@@ -249,6 +249,42 @@ def _decode_jwt_payload(token: str) -> dict:
 
 # ---------- 2FA / TOTP step-up (iter12) ----------
 
+async def _try_recovery_code(user: dict, submitted: str) -> bool:
+    """Return True if `submitted` matched and was consumed as a recovery code.
+    False means it doesn't look like a recovery code — caller should try TOTP.
+    Raises 401 only when it looks like a recovery code but fails to match."""
+    if len(submitted) < 10 or not any(c.isalpha() for c in submitted):
+        return False
+    ok, remaining = totp_service.consume_recovery_code(
+        user.get("totp_recovery_codes", []) or [], submitted,
+    )
+    if ok:
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$set": {"totp_recovery_codes": remaining}},
+        )
+        return True
+    raise HTTPException(
+        status_code=401,
+        detail={"code": "TOTP_INVALID", "message": "Código de recuperación inválido."},
+    )
+
+
+def _verify_totp_code(user: dict, submitted: str) -> None:
+    """Verify a 6-digit TOTP against the user's encrypted secret. Raises on failure."""
+    if not user.get("totp_secret_encrypted"):
+        raise HTTPException(status_code=409, detail="Estado 2FA inconsistente. Re-configura tu autenticador.")
+    try:
+        secret = totp_service.decrypt_secret(user["totp_secret_encrypted"])
+    except Exception:
+        raise HTTPException(status_code=500, detail="No se pudo verificar el código 2FA.")
+    if not totp_service.verify_totp(secret, submitted):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOTP_INVALID", "message": "Código 2FA inválido o expirado."},
+        )
+
+
 async def _enforce_totp_step_up(user: dict, code: Optional[str], action_label: str = "esta acción"):
     """Raise HTTPException if user has no 2FA enabled OR submitted code is invalid.
     Consumes a recovery code if `code` matches one. Otherwise verifies TOTP."""
@@ -267,29 +303,6 @@ async def _enforce_totp_step_up(user: dict, code: Optional[str], action_label: s
             detail={"code": "TOTP_CODE_REQUIRED", "message": f"Se requiere código 2FA para {action_label}."},
         )
     submitted = code.strip()
-    # Recovery code first (>=10 chars containing letters)
-    if len(submitted) >= 10 and any(c.isalpha() for c in submitted):
-        ok, remaining = totp_service.consume_recovery_code(
-            user.get("totp_recovery_codes", []) or [], submitted
-        )
-        if ok:
-            await db.users.update_one(
-                {"user_id": user["user_id"]},
-                {"$set": {"totp_recovery_codes": remaining}},
-            )
-            return
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "TOTP_INVALID", "message": "Código de recuperación inválido."},
-        )
-    if not user.get("totp_secret_encrypted"):
-        raise HTTPException(status_code=409, detail="Estado 2FA inconsistente. Re-configura tu autenticador.")
-    try:
-        secret = totp_service.decrypt_secret(user["totp_secret_encrypted"])
-    except Exception:
-        raise HTTPException(status_code=500, detail="No se pudo verificar el código 2FA.")
-    if not totp_service.verify_totp(secret, submitted):
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "TOTP_INVALID", "message": "Código 2FA inválido o expirado."},
-        )
+    if await _try_recovery_code(user, submitted):
+        return
+    _verify_totp_code(user, submitted)

@@ -9,7 +9,7 @@ export function RejectPhoneDialog({ target, reason, setReason, onClose, onConfir
     <Dialog open={!!target} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent
         data-testid="reject-phone-dialog"
-        className="bg-[#0A0A0F] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto"
+        className="bg-[#14101F] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle className="font-display text-2xl flex items-center gap-2">

@@ -172,7 +172,7 @@ export default function AdminProfileChangeRequests() {
 
       {/* Reject reason dialog — collects the mandatory reason before 2FA */}
       <Dialog open={!!rejectFor} onOpenChange={(v) => !v && setRejectFor(null)}>
-        <DialogContent className="bg-[#141322] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        <DialogContent className="bg-[#1A1730] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
                        data-testid="profile-change-reject-dialog">
           <DialogHeader>
             <DialogTitle className="font-display text-xl">Rechazar cambio</DialogTitle>

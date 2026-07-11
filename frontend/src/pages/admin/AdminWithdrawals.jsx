@@ -146,7 +146,7 @@ export default function AdminWithdrawals() {
             <SelectTrigger data-testid="withdrawals-status-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-44">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todos los estados</SelectItem>
               <SelectItem value="pending">Pendiente</SelectItem>
               <SelectItem value="approved">Confirmado / En progreso</SelectItem>
@@ -158,7 +158,7 @@ export default function AdminWithdrawals() {
             <SelectTrigger data-testid="withdrawals-currency-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-40">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todas las monedas</SelectItem>
               {currencies.map((c) => (
                 <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
@@ -265,7 +265,7 @@ export default function AdminWithdrawals() {
       </div>
 
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
-        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">

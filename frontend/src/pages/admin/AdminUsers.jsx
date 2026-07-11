@@ -271,7 +271,7 @@ export default function AdminUsers() {
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todos los roles</SelectItem>
               <SelectItem value="normal">Cliente Normal</SelectItem>
               <SelectItem value="vip">VIP</SelectItem>
@@ -363,7 +363,7 @@ export default function AdminUsers() {
                     >
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+                    <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                       {allowedRoles.map(role => (
                         <SelectItem key={role} value={role}>
                           {ROLE_LABELS[role] || role}

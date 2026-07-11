@@ -124,7 +124,7 @@ export default function AdminPanel() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0A0A0F] text-white flex">
+    <div className="min-h-screen bg-[#14101F] text-white flex">
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">
         <div className="h-16 border-b border-white/5 flex items-center px-6 gap-3 shrink-0">

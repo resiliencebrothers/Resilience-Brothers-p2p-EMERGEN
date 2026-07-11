@@ -32,40 +32,51 @@ class UserUpdate(BaseModel):
     totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
 
-@router.get("/admin/users")
-async def list_users(request: Request, q: Optional[str] = None,
-                     role: Optional[str] = None,
-                     limit: int = 1000, offset: int = 0) -> Any:
-    await require_permission(request, "users")
+def _build_users_query(q: Optional[str], role: Optional[str]) -> Dict[str, Any]:
+    """Compose the Mongo filter for GET /admin/users."""
     mongo_q: Dict[str, Any] = {}
     if q:
         rx = {"$regex": q, "$options": "i"}
         mongo_q["$or"] = [{"name": rx}, {"email": rx}]
     if role and role in ("normal", "vip", "employee", "admin"):
         mongo_q["role"] = role
+    return mongo_q
+
+
+def _enrich_user_with_usdt_total(user_doc: dict, rates: dict) -> None:
+    """Iter47 enrichment — attaches `vip_balance_usdt` to any non-staff user
+    by summing every currency in `vip_balances` (plus the legacy USD balance)
+    converted to USDT via the shared rates snapshot. Mutates in place."""
+    if user_doc.get("role") not in ("normal", "vip"):
+        return
+    bals: Dict[str, float] = dict(user_doc.get("vip_balances") or {})
+    legacy = float(user_doc.get("vip_balance_usd") or 0.0)
+    if legacy:
+        bals["USD"] = bals.get("USD", 0.0) + legacy
+    total_usdt = 0.0
+    for code, amount in bals.items():
+        amt = float(amount or 0.0)
+        if amt == 0:
+            continue
+        u = convert_to_usdt(amt, code, rates)
+        if u is not None:
+            total_usdt += u
+    user_doc["vip_balance_usdt"] = round(total_usdt, 4)
+
+
+@router.get("/admin/users")
+async def list_users(request: Request, q: Optional[str] = None,
+                     role: Optional[str] = None,
+                     limit: int = 1000, offset: int = 0) -> Any:
+    await require_permission(request, "users")
+    mongo_q = _build_users_query(q, role)
     limit = max(1, min(limit, 1000))
     offset = max(0, offset)
     total = await db.users.count_documents(mongo_q)
     docs = await db.users.find(mongo_q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
-    # iter47 — enrich each non-staff user with a server-side USDT-equivalent
-    # so the admin list can render a multi-currency total without an extra
-    # rates roundtrip on the frontend.
     rates = await build_rate_lookup()
     for d in docs:
-        if d.get("role") in ("normal", "vip"):
-            bals: Dict[str, float] = dict(d.get("vip_balances") or {})
-            legacy = float(d.get("vip_balance_usd") or 0.0)
-            if legacy:
-                bals["USD"] = bals.get("USD", 0.0) + legacy
-            total_usdt = 0.0
-            for code, amount in bals.items():
-                amt = float(amount or 0.0)
-                if amt == 0:
-                    continue
-                u = convert_to_usdt(amt, code, rates)
-                if u is not None:
-                    total_usdt += u
-            d["vip_balance_usdt"] = round(total_usdt, 4)
+        _enrich_user_with_usdt_total(d, rates)
     return JSONResponse(
         content=docs,
         headers={

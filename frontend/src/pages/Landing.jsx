@@ -38,7 +38,7 @@ export default function Landing() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0F] text-white">
+    <div className="min-h-screen bg-[#14101F] text-white">
       {/* HEADER */}
       <header className="sticky top-0 inset-x-0 z-50 glass-panel">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 h-16 flex items-center justify-between">
@@ -68,10 +68,10 @@ export default function Landing() {
       {/* HERO */}
       <section className="relative pt-32 pb-24 overflow-hidden">
         <div
-          className="absolute inset-0 bg-cover bg-center opacity-30"
+          className="absolute inset-0 bg-cover bg-center opacity-55"
           style={{ backgroundImage: "url(https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85)" }}
         ></div>
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0A0A0F]/40 via-[#0A0A0F]/70 to-[#0A0A0F]"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-[#14101F]/20 via-[#14101F]/55 to-[#14101F]"></div>
         <div className="relative max-w-7xl mx-auto px-6 lg:px-12 grid lg:grid-cols-12 gap-8 items-end">
           <div className="lg:col-span-8 fade-up">
             <div className="flex items-center gap-3 mb-6">
@@ -92,7 +92,7 @@ export default function Landing() {
               <Button
                 data-testid="hero-start-btn"
                 onClick={handleEnter}
-                className="inline-flex items-center justify-center bg-violet-600 hover:bg-violet-500 text-white font-medium text-base py-3 px-8 h-14 rounded-full transition-all duration-300 shadow-[0_4px_14px_0_rgba(139,92,246,0.39)] hover:shadow-[0_6px_20px_rgba(139,92,246,0.5)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]"
+                className="inline-flex items-center justify-center bg-violet-600 hover:bg-violet-500 text-white font-medium text-base py-3 px-8 h-14 rounded-full transition-all duration-300 shadow-[0_4px_14px_0_rgba(139,92,246,0.39)] hover:shadow-[0_6px_20px_rgba(139,92,246,0.5)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#14101F]"
               >
                 Comenzar con Google <ChevronRight className="w-5 h-5 ml-1" />
               </Button>
@@ -100,7 +100,7 @@ export default function Landing() {
                 data-testid="hero-email-btn"
                 onClick={handleEmailAuth}
                 variant="ghost"
-                className="inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-8 h-14 rounded-full transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F]"
+                className="inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-8 h-14 rounded-full transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#14101F]"
               >
                 <Mail className="w-4 h-4 mr-2" /> Iniciar con email
               </Button>

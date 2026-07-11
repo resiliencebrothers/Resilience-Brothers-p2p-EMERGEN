@@ -43,7 +43,7 @@ export default function SpreadCalculator({ rates }) {
             <SelectTrigger data-testid="spread-pair-select" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10">
               <SelectValue placeholder="Selecciona un par" />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {rates.map((r) => (
                 <SelectItem key={r.id} value={r.id} className="rounded-none">
                   {r.from_code} → {r.to_code}

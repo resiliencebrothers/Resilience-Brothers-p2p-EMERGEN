@@ -187,7 +187,7 @@ export default function ExchangeView() {
               <SelectTrigger data-testid="from-currency-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
                 <SelectValue placeholder="Selecciona moneda" />
               </SelectTrigger>
-              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 {currencies.map(c => (
                   <SelectItem key={c.id} value={c.code} className="rounded-none">{c.code} — {c.name}</SelectItem>
                 ))}
@@ -200,7 +200,7 @@ export default function ExchangeView() {
               <SelectTrigger data-testid="to-currency-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
                 <SelectValue placeholder="Selecciona moneda" />
               </SelectTrigger>
-              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 {currencies.map(c => (
                   <SelectItem key={c.id} value={c.code} className="rounded-none">{c.code} — {c.name}</SelectItem>
                 ))}
@@ -334,7 +334,7 @@ export default function ExchangeView() {
             >
               <SelectValue placeholder={toCurr ? "Selecciona método" : "Elige primero la moneda destino"} />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {deliveryOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
@@ -426,7 +426,7 @@ export default function ExchangeView() {
                     >
                       <SelectValue placeholder="Selecciona la red de destino" />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+                    <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                       <SelectItem value="BEP20">
                         BEP20 · Binance Smart Chain <span className="text-[0.65rem] text-[#8B5CF6] ml-1">(recomendada)</span>
                       </SelectItem>

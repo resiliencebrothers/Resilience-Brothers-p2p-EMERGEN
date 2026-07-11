@@ -126,7 +126,7 @@ export default function OrdersView() {
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur" onClick={() => setSelected(null)}>
-          <div className="bg-[#141322] border border-white/10 max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-[#1A1730] border border-white/10 max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display text-xl">Orden #{selected.id.slice(0,8)}</h3>
               <button onClick={() => setSelected(null)} className="text-neutral-500 hover:text-white">✕</button>

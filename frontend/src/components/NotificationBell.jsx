@@ -137,7 +137,7 @@ export default function NotificationBell() {
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="w-[380px] p-0 bg-[#0A0A0F] border-white/10 text-white rounded-none"
+        className="w-[380px] p-0 bg-[#14101F] border-white/10 text-white rounded-none"
         data-testid="notifications-popover"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 gap-2">

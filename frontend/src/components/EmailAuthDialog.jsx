@@ -164,7 +164,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
       <DialogContent
         data-testid="email-auth-dialog"
-        className="bg-[#141322] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
           <DialogTitle className="font-display text-2xl">{TITLES[mode]}</DialogTitle>

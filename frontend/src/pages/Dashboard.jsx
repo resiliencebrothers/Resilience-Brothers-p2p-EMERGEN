@@ -113,7 +113,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0A0A0F] text-white flex">
+    <div className="min-h-screen bg-[#14101F] text-white flex">
       <OnboardingDialog open={showOnboarding} onClose={() => setShowOnboarding(false)} />
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex w-64 border-r border-white/5 flex-col fixed inset-y-0 left-0 z-40 bg-[#0c0c0c]">

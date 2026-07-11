@@ -228,7 +228,7 @@ export default function AdminCompanyFunds() {
 
       {/* Create dialog */}
       <Dialog open={openCreate} onOpenChange={setOpenCreate}>
-        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">Nuevo retiro del fondo</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
@@ -241,7 +241,7 @@ export default function AdminCompanyFunds() {
                 <Label className="micro-label text-neutral-500">Moneda</Label>
                 <Select value={form.currency} onValueChange={(v) => setForm({ ...form, currency: v })}>
                   <SelectTrigger data-testid="company-form-currency" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
-                  <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+                  <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                     {createCurrencies.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>

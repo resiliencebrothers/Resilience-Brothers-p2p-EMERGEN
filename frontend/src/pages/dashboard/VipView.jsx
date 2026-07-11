@@ -81,7 +81,7 @@ export default function VipView() {
         <h1 className="font-display text-3xl">Tu balance acumulado</h1>
       </div>
 
-      <div className="relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#141322] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50 hover:border-violet-500/20 transition-colors duration-500">
+      <div className="relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#1A1730] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50 hover:border-violet-500/20 transition-colors duration-500">
         <div className="absolute -top-24 -right-24 w-64 h-64 bg-violet-500/20 blur-[100px] rounded-full pointer-events-none" />
         <Wallet className="w-8 h-8 text-violet-400 mb-3 relative" />
         <div className="text-xs font-semibold tracking-[0.22em] text-violet-300/70 uppercase mb-3 block relative">

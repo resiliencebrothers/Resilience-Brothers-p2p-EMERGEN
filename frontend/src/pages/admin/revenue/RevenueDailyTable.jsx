@@ -20,7 +20,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+          <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
             <SelectItem value="7">Últimos 7 días</SelectItem>
             <SelectItem value="14">Últimos 14 días</SelectItem>
             <SelectItem value="30">Últimos 30 días</SelectItem>

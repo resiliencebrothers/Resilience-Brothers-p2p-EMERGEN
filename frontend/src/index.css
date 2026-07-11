@@ -6,7 +6,7 @@
 
 body {
     margin: 0;
-    background: #0A0A0F;
+    background: #14101F;
     color: #FFFFFF;
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -23,7 +23,7 @@ body {
     height: 10px;
 }
 ::-webkit-scrollbar-track {
-    background: #0A0A0F;
+    background: #14101F;
 }
 ::-webkit-scrollbar-thumb {
     background: #2a2436;
@@ -58,7 +58,7 @@ body {
 }
 
 .tactile-card {
-    background: #141322;
+    background: #1A1730;
     border: 1px solid rgba(255, 255, 255, 0.08);
     transition: border-color 0.2s ease, transform 0.2s ease;
 }
@@ -105,24 +105,24 @@ body {
 
 @layer base {
     :root {
-        --background: 249 22% 4%;
+        --background: 254 33% 9%;
         --foreground: 0 0% 100%;
-        --card: 250 18% 11%;
+        --card: 254 30% 14%;
         --card-foreground: 0 0% 100%;
-        --popover: 250 20% 8%;
+        --popover: 254 30% 11%;
         --popover-foreground: 0 0% 100%;
         --primary: 258 90% 66%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 250 15% 14%;
+        --secondary: 254 20% 18%;
         --secondary-foreground: 0 0% 98%;
-        --muted: 250 15% 14%;
+        --muted: 254 20% 18%;
         --muted-foreground: 0 0% 65%;
         --accent: 258 90% 66%;
         --accent-foreground: 0 0% 100%;
         --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 100%;
-        --border: 250 15% 18%;
-        --input: 250 15% 18%;
+        --border: 254 20% 22%;
+        --input: 254 20% 22%;
         --ring: 258 90% 66%;
         --radius: 0.25rem;
     }

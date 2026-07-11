@@ -11,7 +11,7 @@ export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testi
   return (
     <div
       className={
-        "relative overflow-hidden bg-[#141322] border border-white/5 rounded-xl p-5 " +
+        "relative overflow-hidden bg-[#1A1730] border border-white/5 rounded-xl p-5 " +
         "transition-all duration-300 ease-out " +
         "hover:-translate-y-0.5 hover:border-violet-500/30 " +
         "hover:shadow-[0_8px_24px_-12px_rgba(139,92,246,0.2)] " +

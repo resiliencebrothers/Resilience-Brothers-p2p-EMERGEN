@@ -40,7 +40,7 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
                   key={b.currency}
                   onClick={() => hasDrillDown && onDrillDown(b.currency)}
                   disabled={!hasDrillDown}
-                  className={`relative flex flex-col items-start w-full bg-[#141322] border border-white/5 rounded-xl p-5 text-left transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0A0A0F] ${
+                  className={`relative flex flex-col items-start w-full bg-[#1A1730] border border-white/5 rounded-xl p-5 text-left transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#14101F] ${
                     hasDrillDown
                       ? "cursor-pointer hover:-translate-y-0.5 hover:bg-[#181628] hover:border-violet-500/40 hover:shadow-[0_8px_20px_-12px_rgba(139,92,246,0.25)]"
                       : "opacity-80 cursor-default"

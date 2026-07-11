@@ -12,8 +12,8 @@ from reportlab.platypus import (
 
 
 BRAND_PURPLE = colors.HexColor("#8B5CF6")
-BG_DARK = colors.HexColor("#0A0A0F")
-PANEL = colors.HexColor("#141322")
+BG_DARK = colors.HexColor("#14101F")
+PANEL = colors.HexColor("#1A1730")
 BORDER = colors.HexColor("#2a2a2a")
 TEXT_MUTED = colors.HexColor("#A3A3A3")
 TEXT = colors.HexColor("#FFFFFF")

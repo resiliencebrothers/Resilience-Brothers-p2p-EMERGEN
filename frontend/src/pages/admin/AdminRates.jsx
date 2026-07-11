@@ -139,14 +139,14 @@ export default function AdminRates() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Tasa</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>
               <Label className="micro-label text-neutral-500">Desde</Label>
               <Select value={form.from_code} onValueChange={v => setForm({ ...form, from_code: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
-                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                   {currencies.map(c => <SelectItem key={c.id} value={c.code}>{c.code}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -155,7 +155,7 @@ export default function AdminRates() {
               <Label className="micro-label text-neutral-500">Hacia</Label>
               <Select value={form.to_code} onValueChange={v => setForm({ ...form, to_code: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
-                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                   {currencies.map(c => <SelectItem key={c.id} value={c.code}>{c.code}</SelectItem>)}
                 </SelectContent>
               </Select>

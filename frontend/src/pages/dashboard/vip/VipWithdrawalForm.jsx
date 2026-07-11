@@ -182,7 +182,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {currencyOptions.map(c => (
                 <SelectItem key={c} value={c}>{c}</SelectItem>
               ))}
@@ -197,7 +197,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {withdrawalMethodOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
               ))}
@@ -220,7 +220,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
                 className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 {CRYPTO_NETWORKS.map((n) => (
                   <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
                 ))}

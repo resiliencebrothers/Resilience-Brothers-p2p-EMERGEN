@@ -105,7 +105,7 @@ export default function AdminAudit() {
               <SelectTrigger data-testid="audit-action-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-52">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 <SelectItem value="all">Todas las acciones</SelectItem>
                 <SelectItem value="order.approved">Órdenes aprobadas</SelectItem>
                 <SelectItem value="order.rejected">Órdenes rechazadas</SelectItem>

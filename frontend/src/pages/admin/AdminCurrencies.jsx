@@ -94,7 +94,7 @@ export default function AdminCurrencies() {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#141322] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Moneda</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>
@@ -127,7 +127,7 @@ export default function AdminCurrencies() {
               <Label className="micro-label text-neutral-500">Tipo</Label>
               <Select value={form.type} onValueChange={v => setForm({ ...form, type: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
-                <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+                <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                   <SelectItem value="crypto">Crypto</SelectItem>
                   <SelectItem value="fiat">Fiat</SelectItem>
                 </SelectContent>

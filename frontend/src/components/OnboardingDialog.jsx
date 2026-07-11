@@ -59,7 +59,7 @@ export default function OnboardingDialog({ open, onClose }) {
         <DialogTitle className="sr-only">{slide.title}</DialogTitle>
         <DialogDescription className="sr-only">{slide.body}</DialogDescription>
 
-        <div className="relative h-64 bg-gradient-to-br from-[#8B5CF6]/15 via-[#141322] to-[#0a0a0a] flex items-center justify-center border-b border-white/10">
+        <div className="relative h-64 bg-gradient-to-br from-[#8B5CF6]/15 via-[#1A1730] to-[#0a0a0a] flex items-center justify-center border-b border-white/10">
           <div className="absolute inset-0 opacity-[0.04] pointer-events-none" style={{ backgroundImage: "radial-gradient(circle at 1px 1px, #FFF 1px, transparent 0)", backgroundSize: "16px 16px" }} />
           <Icon className="w-24 h-24 text-[#8B5CF6]" strokeWidth={1.2} />
         </div>

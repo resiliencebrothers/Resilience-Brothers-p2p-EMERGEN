@@ -31,7 +31,7 @@ export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle,
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-56 p-0 bg-[#141322] border border-white/10 rounded-none text-white"
+          className="w-56 p-0 bg-[#1A1730] border border-white/10 rounded-none text-white"
         >
           <div className="px-3 py-2 micro-label text-neutral-500 border-b border-white/10">
             Selecciona monedas autorizadas

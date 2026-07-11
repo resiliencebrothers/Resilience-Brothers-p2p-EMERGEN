@@ -42,7 +42,7 @@ function ProtectedRoute({ children, staffOnly = false }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0A0A0F]">
+      <div className="min-h-screen flex items-center justify-center bg-[#14101F]">
         <div className="text-neutral-400 micro-label">Cargando...</div>
       </div>
     );
@@ -54,7 +54,7 @@ function ProtectedRoute({ children, staffOnly = false }) {
 
 const TOAST_OPTIONS = {
   style: {
-    background: "#141322",
+    background: "#1A1730",
     border: "1px solid rgba(255,255,255,0.1)",
     color: "#fff",
   },

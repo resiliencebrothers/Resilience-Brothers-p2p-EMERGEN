@@ -187,7 +187,7 @@ export default function AdminBlockedContacts() {
 
       {/* CREATE DIALOG */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent data-testid="block-contact-dialog" className="bg-[#0A0A0F] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
+        <DialogContent data-testid="block-contact-dialog" className="bg-[#14101F] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl">Bloquear contacto</DialogTitle>
           </DialogHeader>
@@ -262,7 +262,7 @@ export default function AdminBlockedContacts() {
 
       {/* BULK IMPORT DIALOG */}
       <Dialog open={importOpen} onOpenChange={(o) => { if (!o) resetImport(); else setImportOpen(true); }}>
-        <DialogContent data-testid="bulk-import-dialog" className="bg-[#0A0A0F] border-white/10 text-white rounded-none max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent data-testid="bulk-import-dialog" className="bg-[#14101F] border-white/10 text-white rounded-none max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-2xl flex items-center gap-2">
               <Upload className="w-6 h-6 text-[#8B5CF6]" /> Importar lista de estafadores

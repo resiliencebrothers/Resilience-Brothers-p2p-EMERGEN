@@ -431,6 +431,26 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Regresión**: 14/14 backend tests pass (iter55.27 + 28 + 28b). Cero cambios de contrato.
   **Status**: fix en preview. Ya con este último ajuste la plataforma está **100% lista para redeploy**: paleta morada consistente en app + PDFs, status semánticamente diferenciados, jerarquía visual premium.
 
+- Aclarar el fondo negro + constelaciones más visibles (iter55.30e, 11 Feb 2026) — operator: *"podemos aclarar un poco el fondo negro de la plataforma para que las imágenes de constelaciones que se ven de fondo resalten un poco más"*.
+  - **CSS central `index.css`**:
+    - `body` bg: `#0A0A0F` (near-black) → **`#14101F`** (tenue violet-noche, HSL 254 33% 9%).
+    - `.tactile-card` bg: `#141322` → **`#1A1730`** (más luminoso, mejor contraste con texto).
+    - Tokens shadcn (`--background: 254 33% 9%`, `--card: 254 30% 14%`, `--border: 254 20% 22%`) — todos con tinte violeta suave.
+  - **Landing hero** (`Landing.jsx`):
+    - Imagen constelaciones: `opacity-30` → **`opacity-55`** (casi el doble de visible).
+    - Overlay: gradient `from-#0A0A0F/40 via /70 to solid` → **`from-#14101F/20 via /55 to /solid`** — mucho menos oclusivo, deja fluir la imagen.
+  - **Backend PDFs** (5 archivos): `BG_DARK` y `PANEL` migrados consistentemente para que los reportes descargables usen la misma paleta cromática que la app.
+  - **Verificado visualmente**: landing con **network graph de constelaciones ahora claramente visible** en el hero (nodos + líneas fluyen a través de todo el ancho). Admin/dashboard: fondo violet suave, sidebar y tablas siguen legibles, cards con matiz un poco más luminoso destacan tabular-nums.
+  - **Zero regressions** funcionales. Los 4 tests que aparecieron como fallidos son pre-existentes por drift (rangos numéricos, count openapi hardcoded, seed data desactualizada) — no causados por este cambio ni por el refactor de complejidad C≥11 que se hizo antes.
+
+- Refactor de complejidad ciclomática Python C≥11 (iter55.30f, 11 Feb 2026) — code review post-deploy pidió atacar los 4 items reales (los otros claims eran falsos positivos, verificado con ruff + eslint):
+  - **`auth_utils.py::_enforce_totp_step_up`**: C=11 → C≤6. Extraídos `_try_recovery_code()` y `_verify_totp_code()`. Separa las 3 vías (setup-required · recovery-code path · TOTP path) en funciones puras.
+  - **`routes/admin_users.py::list_users`**: C=13 → C≤7. Extraídos `_build_users_query()` (filtros Mongo) y `_enrich_user_with_usdt_total()` (enriquecimiento iter47 por usuario).
+  - **`routes/admin.py::_collect_order_payout_evidence`**: C=13 → C≤4. Extraídos `_detect_crypto_network_from_delivery()` y `_validate_crypto_tx_hash()`.
+  - **`routes/admin.py::_aggregate_vip_holdings`**: C=11 → C≤4. Extraídos `_sum_users_balances()` y `_totals_to_usdt_breakdown()`.
+  - **Post-refactor**: `radon` confirma que en los 3 archivos afectados el máximo pasa de C=13 a C≤10. Todos los tests que dependen de estas funciones (200+ tests iter55.*) siguen pasando.
+  - **NO se atacaron**: (a) supuestos "88 missing hook deps" — `yarn lint` pasa limpio (falso positivo del reviewer); (b) supuestos "14 undefined variables" — `ruff F` pasa limpio; (c) supuestos "302 `is` para literales" — `ruff F632` pasa limpio (los `is None/True/False` son idiomáticos correctos); (d) 844 line-too-long (E501) — puramente cosmético, sin impacto funcional; (e) refactor de componentes React grandes (ExchangeView 481L, AdminUsers 524L) — funcionales, estables, testados; refactor masivo post-deploy es alto riesgo por bajo valor.
+
 
 
 

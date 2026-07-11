@@ -28,7 +28,7 @@ export function TransactionsFilters({
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todas</SelectItem>
               <SelectItem value="in">Solo Entradas ↓</SelectItem>
               <SelectItem value="out">Solo Salidas ↑</SelectItem>
@@ -47,7 +47,7 @@ export function TransactionsFilters({
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               <SelectItem value="all">Todas</SelectItem>
               {currencies.map((c) => (
                 <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>

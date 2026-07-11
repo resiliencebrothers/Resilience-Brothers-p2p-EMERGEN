@@ -149,7 +149,7 @@ export default function MyTransactions() {
               <SelectTrigger data-testid="my-tx-direction" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-44">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 <SelectItem value="all">Todas</SelectItem>
                 <SelectItem value="in">Solo Entradas ↓</SelectItem>
                 <SelectItem value="out">Solo Salidas ↑</SelectItem>
@@ -162,7 +162,7 @@ export default function MyTransactions() {
               <SelectTrigger data-testid="my-tx-currency" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-36">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent className="bg-[#141322] border-white/10 text-white rounded-none">
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 <SelectItem value="all">Todas</SelectItem>
                 {currencies.map((c) => (
                   <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
