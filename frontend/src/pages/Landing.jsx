@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ArrowUpRight, ShieldCheck, Globe2, Zap, Activity, Boxes, BadgeCheck, ChevronRight, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import EmailAuthDialog from "@/components/EmailAuthDialog";
+import { useScrollParallax } from "@/hooks/useScrollParallax";
 
 export default function Landing() {
   const { user, login } = useAuth();
@@ -12,6 +13,7 @@ export default function Landing() {
   const location = useLocation();
   const [emailAuthOpen, setEmailAuthOpen] = useState(false);
   const [prefillEmail, setPrefillEmail] = useState("");
+  const scrollY = useScrollParallax();
 
   // Handle "?verified=1&email=..." from the verify-email flow:
   // show a success toast and auto-open the login dialog with the email pre-filled.
@@ -68,8 +70,11 @@ export default function Landing() {
       {/* HERO */}
       <section className="relative pt-32 pb-24 overflow-hidden">
         <div
-          className="absolute inset-0 bg-cover bg-center opacity-55"
-          style={{ backgroundImage: "url(https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85)" }}
+          className="absolute inset-0 bg-cover bg-center opacity-55 will-change-transform"
+          style={{
+            backgroundImage: "url(https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85)",
+            transform: `translate3d(0, ${scrollY * 0.35}px, 0)`,
+          }}
         ></div>
         <div className="absolute inset-0 bg-gradient-to-b from-[#14101F]/20 via-[#14101F]/55 to-[#14101F]"></div>
         <div className="relative max-w-7xl mx-auto px-6 lg:px-12 grid lg:grid-cols-12 gap-8 items-end">

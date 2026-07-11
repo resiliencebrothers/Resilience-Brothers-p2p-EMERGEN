@@ -451,6 +451,12 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Post-refactor**: `radon` confirma que en los 3 archivos afectados el máximo pasa de C=13 a C≤10. Todos los tests que dependen de estas funciones (200+ tests iter55.*) siguen pasando.
   - **NO se atacaron**: (a) supuestos "88 missing hook deps" — `yarn lint` pasa limpio (falso positivo del reviewer); (b) supuestos "14 undefined variables" — `ruff F` pasa limpio; (c) supuestos "302 `is` para literales" — `ruff F632` pasa limpio (los `is None/True/False` son idiomáticos correctos); (d) 844 line-too-long (E501) — puramente cosmético, sin impacto funcional; (e) refactor de componentes React grandes (ExchangeView 481L, AdminUsers 524L) — funcionales, estables, testados; refactor masivo post-deploy es alto riesgo por bajo valor.
 
+- Parallax sutil en constelaciones del landing (iter55.30g, 11 Feb 2026) — cerrar el ciclo visual con profundidad tipo Stripe/Apple. Operator aprobó añadir *"micro-animación de parallax sutil"*.
+  - **Nuevo hook `hooks/useScrollParallax.js`**: retorna `window.scrollY` throttled vía `requestAnimationFrame` (max 1 update por frame, sin re-renders por píxel). Respeta `prefers-reduced-motion` — si el usuario tiene motion effects deshabilitados el hook retorna `0` estable y no aplica ninguna transform (accesibilidad WCAG).
+  - **Landing hero** (`Landing.jsx`): el fondo de constelaciones usa ahora `transform: translate3d(0, ${scrollY * 0.35}px, 0)` + `will-change-transform` para GPU acceleration. Factor 0.35 = las constelaciones avanzan solo 35% del scroll → efecto sutil pero perceptible.
+  - **Verificado E2E**: capturé el landing en `scrollY=0` y `scrollY=250`. El título "sin fronteras. Sin fricción." se movió los 250px completos, pero las constelaciones solo ~87.5px (35%) → **profundidad clara sin distraer**.
+  - **Zero deps nuevas**, zero libraries, sin impacto en performance (RAF throttled).
+
 
 
 
