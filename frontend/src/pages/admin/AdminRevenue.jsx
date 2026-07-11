@@ -3,7 +3,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 
@@ -136,10 +136,18 @@ export default function AdminRevenue() {
         </Select>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         <BigStat icon={Banknote} label="Ganancia total" value={fmt(data.total_profit_usdt)} unit="USDT" highlight />
         <BigStat icon={TrendingUp} label="Ganancia P2P" value={fmt(data.p2p_profit_usdt)} unit="USDT" />
         <BigStat icon={Boxes} label="Ganancia Marketplace" value={fmt(data.marketplace_profit_usdt)} unit="USDT" />
+        <BigStat
+          icon={Coins}
+          label="Comisiones USDT"
+          value={fmt(data.conversion_fees_usdt)}
+          unit="USDT"
+          hint={`${data.conversion_fees_count || 0} conversiones`}
+          testid="revenue-usdt-fees"
+        />
         <BigStat icon={Users} label="Volumen P2P" value={fmt(data.total_volume_usdt)} unit="USDT" />
       </div>
 

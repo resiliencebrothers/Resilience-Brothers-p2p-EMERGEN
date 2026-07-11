@@ -25,6 +25,33 @@ from services.orders_helpers import compute_order_profit
 router = APIRouter(tags=["Admin"])
 
 
+async def _compute_conversion_fees(days: Optional[int]) -> dict:
+    """Sum the 0.01 USDT service fees charged on `POST /vip/convert` when
+    a user converts fiat balance → USDT. Source of truth is the `audit_log`
+    collection (see routes/orders.py::vip_convert, iter55.27).
+
+    Returns `{total_usdt, count}`. Both fields are always numeric so the
+    frontend can render safely even when no fees are recorded.
+    """
+    q: Dict[str, Any] = {
+        "action": "vip.convert",
+        "details.usdt_fee": {"$gt": 0},
+    }
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["created_at"] = {"$gte": cutoff}
+    rows = await db.audit_log.find(
+        q, {"_id": 0, "details.usdt_fee": 1}
+    ).to_list(20000)
+    total = 0.0
+    for r in rows:
+        try:
+            total += float(r.get("details", {}).get("usdt_fee") or 0.0)
+        except (TypeError, ValueError):
+            continue
+    return {"total_usdt": round(total, 4), "count": len(rows)}
+
+
 async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
     """Profit from delivered redemptions: total_usd - cost_usd. USD ≈ USDT for simplicity."""
     q: Dict[str, Any] = {"status": "delivered"}
@@ -175,11 +202,19 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
         r["volume_usdt"] = round(r["volume_usdt"], 4)
 
     marketplace = await _compute_marketplace_revenue(days)
+    conversion_fees = await _compute_conversion_fees(days)
 
     return {
-        "total_profit_usdt": round(total_profit_usdt + marketplace["total_profit_usd"], 4),
+        "total_profit_usdt": round(
+            total_profit_usdt
+            + marketplace["total_profit_usd"]
+            + conversion_fees["total_usdt"],
+            4,
+        ),
         "p2p_profit_usdt": round(total_profit_usdt, 4),
         "marketplace_profit_usdt": round(marketplace["total_profit_usd"], 4),
+        "conversion_fees_usdt": conversion_fees["total_usdt"],
+        "conversion_fees_count": conversion_fees["count"],
         "total_volume_usdt": round(total_volume_usdt, 4),
         "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
         "by_pair": pair_items,

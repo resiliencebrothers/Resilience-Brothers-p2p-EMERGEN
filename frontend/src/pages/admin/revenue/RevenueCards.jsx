@@ -7,14 +7,20 @@ function Row({ label, value, accent }) {
   );
 }
 
-export function BigStat({ icon: Icon, label, value, unit, highlight }) {
+export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testid }) {
   return (
-    <div className={`tactile-card p-5 ${highlight ? "glow-yellow" : ""}`}>
+    <div
+      className={`tactile-card p-5 ${highlight ? "glow-yellow" : ""}`}
+      data-testid={testid}
+    >
       <Icon className={`w-5 h-5 mb-3 ${highlight ? "text-[#22C55E]" : "text-[#EAB308]"}`} />
       <div className="micro-label text-neutral-500">{label}</div>
       <div className="font-display text-2xl mt-1">
         {value} <span className="text-sm text-neutral-400">{unit}</span>
       </div>
+      {hint ? (
+        <div className="text-xs text-neutral-500 mt-2 font-mono">{hint}</div>
+      ) : null}
     </div>
   );
 }

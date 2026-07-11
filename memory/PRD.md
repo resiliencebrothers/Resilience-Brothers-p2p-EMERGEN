@@ -335,6 +335,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Testing agent (iteration_55.json)**: **100% pass backend (12/12) + 100% pass frontend (all 8 flows)**. Cero critical/minor issues. E2E confirmed: ZELLE→CUP order at 100.5 rate for 325 units delivered 32662 CUP + credited +0.5000 CUP residue; BalanceConverter fee row -0.01 USDT visible, below-min warning + disabled Confirm at 0.99 net, cleared at 2.49 net.
   - **Deploy status**: waiting for next production redeploy alongside iter55.24/25/25b/26/26b block.
 
+- Ingresos por comisiones USDT en Admin Revenue (iter55.28, 11 Feb 2026) — follow-up right after iter55.27. Owner wanted visibility on the newly-introduced 0.01 USDT service fee as its own revenue stream. Kept grouped inside the existing "Ingresos" section (owner's explicit request: *"agrupar los mismos temas en una sola sección"*).
+  - **Backend `routes/admin_revenue.py`**:
+    - New helper `_compute_conversion_fees(days)` — queries `audit_log` for `action == "vip.convert"` and `details.usdt_fee > 0`, honors the same `days` window as the rest of the revenue endpoint. Returns `{total_usdt, count}`.
+    - `GET /admin/revenue` response gains 2 new fields: `conversion_fees_usdt` (sum of all fees in period) + `conversion_fees_count` (audit rows counted).
+    - `total_profit_usdt` now aggregates **p2p + marketplace + conversion_fees** (was p2p + marketplace only).
+  - **Frontend `pages/admin/AdminRevenue.jsx`**:
+    - The 4-card top strip becomes 5 cards (`grid xl:grid-cols-5`) — new "COMISIONES USDT" card sits between "Ganancia Marketplace" and "Volumen P2P". Icon: `Coins`, subtitle: `{count} conversiones`. Testid: `revenue-usdt-fees`.
+    - `BigStat` component (`revenue/RevenueCards.jsx`) extended with optional `hint` and `testid` props (backward-compatible; existing callers unchanged).
+  - **Tests**: `test_iter55_28_admin_revenue_usdt_fees.py` — 4 cases: field surfaces in response, total-profit delta = fee delta, `days=7` filter excludes >7d rows, admin-only access. **4/4 pass** + **49/49 regression** across iter55.27 + employee_and_revenue + revenue_registry + revenue_scheduler.
+  - **Frontend smoke E2E** on preview `/admin/revenue`: new "COMISIONES USDT" card renders with `0.01 USDT` value + `1 conversiones` subtitle in the exact same row as the other revenue metrics. Grid layout: `sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5` — responsive fallback keeps 4 cards + orphan on medium screens.
+  - **Status**: fix en preview. User needs to redeploy to push to production (`https://p2p.resiliencebrothers.com`).
+
+
 
 
 - Cleanup post-testing (iter55.26b, Feb 2026) — the testing_agent (iteration_54.json) reported 100% pass + 3 non-blocking code review comments. Addressed 2 of them:
