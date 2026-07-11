@@ -225,6 +225,28 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     }
 
 
+async def _fetch_conversion_fees(
+    year: Optional[int], month: Optional[int], days: Optional[int]
+) -> list:
+    """iter55.28 — pull `vip.convert` audit rows with a positive `usdt_fee`
+    scoped to the same window as the caller (year/month or last N days)."""
+    q: Dict[str, Any] = {
+        "action": "vip.convert",
+        "details.usdt_fee": {"$gt": 0},
+    }
+    if year and month:
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+               if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
+        q["created_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
+    elif days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["created_at"] = {"$gte": cutoff}
+    return await db.audit_log.find(
+        q, {"_id": 0, "created_at": 1, "details.usdt_fee": 1}
+    ).to_list(20000)
+
+
 async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
                                     year: Optional[int] = None, month: Optional[int] = None) -> Any:
     """Build per-day or per-month buckets for the admin revenue dashboard.
@@ -263,7 +285,10 @@ async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
         prof_usdt = convert_to_usdt(prof["amount"], prof["currency"], fx) or 0.0
         profit_map[o["id"]] = prof_usdt
 
-    return build_buckets(orders, redemptions, profit_map, granularity)
+    conversion_fees = await _fetch_conversion_fees(year, month, days)
+
+    return build_buckets(orders, redemptions, profit_map, granularity,
+                          conversion_fees=conversion_fees)
 
 
 @router.get("/admin/revenue/timeseries")
@@ -295,16 +320,23 @@ async def admin_revenue_monthly_export(request: Request, year: int, month: int,
         headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.csv"'}
         return Response(content=payload, media_type="text/csv; charset=utf-8", headers=headers)
 
-    totals = {
+    totals = _build_totals(rows_asc)
+    payload = revenue_monthly_pdf(rows_asc, period_label, totals)
+    headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.pdf"'}
+    return Response(content=payload, media_type="application/pdf", headers=headers)
+
+
+def _build_totals(rows_asc: list) -> dict:
+    """Aggregate the totals card for the monthly export/email — includes
+    iter55.28 conversion fees."""
+    return {
         "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
         "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
+        "conversion_fees": sum(r.get("conversion_fees_usdt", 0.0) for r in rows_asc),
         "total": sum(r["total_profit_usdt"] for r in rows_asc),
         "volume": sum(r["volume_usdt"] for r in rows_asc),
         "orders": sum(r["orders"] for r in rows_asc),
     }
-    payload = revenue_monthly_pdf(rows_asc, period_label, totals)
-    headers = {"Content-Disposition": f'attachment; filename="ganancia-{period_label}.pdf"'}
-    return Response(content=payload, media_type="application/pdf", headers=headers)
 
 
 @router.post("/admin/revenue/monthly/send-now")
@@ -319,13 +351,7 @@ async def admin_revenue_send_now(payload: dict, request: Request) -> Any:
         raise HTTPException(status_code=400, detail="año/mes inválido")
     rows = await build_revenue_timeseries("day", year=year, month=month)
     rows_asc = sorted(rows, key=lambda x: x["bucket"])
-    totals = {
-        "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
-        "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
-        "total": sum(r["total_profit_usdt"] for r in rows_asc),
-        "volume": sum(r["volume_usdt"] for r in rows_asc),
-        "orders": sum(r["orders"] for r in rows_asc),
-    }
+    totals = _build_totals(rows_asc)
     pdf_bytes = revenue_monthly_pdf(rows_asc, f"{year}-{month:02d}", totals)
     from admin_alerts import resolve_admin_email_recipients
     recipients = await resolve_admin_email_recipients(db)

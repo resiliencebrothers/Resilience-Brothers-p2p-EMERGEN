@@ -347,6 +347,33 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Frontend smoke E2E** on preview `/admin/revenue`: new "COMISIONES USDT" card renders with `0.01 USDT` value + `1 conversiones` subtitle in the exact same row as the other revenue metrics. Grid layout: `sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5` — responsive fallback keeps 4 cards + orphan on medium screens.
   - **Status**: fix en preview. User needs to redeploy to push to production (`https://p2p.resiliencebrothers.com`).
 
+- Comisiones USDT en reporte mensual + Refactor de alta complejidad (iter55.28b + iter55.29, 11 Feb 2026) — dos entregas complementarias en el mismo ciclo:
+
+  **Feature — Comisiones USDT en reporte mensual (iter55.28b)**
+  - Extiende iter55.28 al PDF/CSV/timeseries mensuales: el reporte del día 1 que se envía por email a admins ahora contabiliza el nuevo ingreso.
+  - **Backend `revenue_report.build_buckets`**: refactorizado de C=11 → 4 helpers (`_new_bucket`, `_accumulate_orders`, `_accumulate_redemptions`, `_accumulate_conversion_fees`). Cada bucket ahora incluye `conversion_fees_usdt` + `conversions`. El `total_profit_usdt` los suma.
+  - **CSV export**: nueva columna "Comisiones USDT" + "Conversiones" entre Marketplace y Total.
+  - **PDF export**: totals card pasa de 5 a 6 celdas (Ganancia P2P · Marketplace · **Comisiones USDT** · Total · Volumen · Órdenes). Tabla diaria gana columna "Fees USDT" con el total en verde.
+  - **Email `notify_monthly_revenue`**: nueva fila "Comisiones USDT (conversiones)" en el cuerpo HTML.
+  - **`routes/admin_revenue._build_totals`** helper extraído para deduplicar el cálculo entre `/monthly/export` y `/monthly/send-now`.
+  - **Frontend `RevenueDailyTable` + `RevenueMonthlyTable`**: nueva columna "Comisiones USDT" con `{fee} USDT · {conversions}` cuando hay conversiones.
+  - **Tests**: `test_iter55_28b_monthly_report_includes_fees.py` — 3 casos (timeseries expone fees, PDF/CSV incluye la columna con magic bytes válidos, `build_buckets` puro acumula fees). **3/3 pass**.
+
+  **Refactor de alta complejidad (iter55.29)**
+  - **`revenue_report.py`**: `build_buckets` (C=11) → split into 4 helpers (max C=8 = `_accumulate_conversion_fees`). Codebase max complexity dropped.
+  - **`BalanceConverterCard.jsx`** (372 → 300 líneas): extraído `<ConvertPreview>` (comisión + preview + below-min warning, 83 líneas) y `<BalanceRow>` (38 líneas) a `components/converter/`. Testids preservados.
+  - **`VipView.jsx`** (684 → 149 líneas, 78% de reducción): descompuesto en 4 subcomponentes bajo `pages/dashboard/vip/`:
+    - `VipBalancesGrid.jsx` (71 líneas) — grid clickeable de saldos por moneda.
+    - `VipWithdrawalForm.jsx` (420 líneas, incluye `CashReceiverFields`, `NonCashDetailsField`, `TotpField` internos) — formulario de retiro con validación + hooks aislados.
+    - `VipWithdrawalHistory.jsx` (102 líneas, incluye `WithdrawalRow`) — historial + hash on-chain + explorer link.
+    - `VipLedgerDialog.jsx` (78 líneas, incluye `LedgerOrderRow`) — modal drill-down por moneda.
+  - **`pdf_service.py`**: NO se refactorizó — verificado con radon: complejidad máxima es C=5 (`_compute_closing_totals`). Ya está bien decompuesto desde iterations anteriores.
+  - Todos los testids preservados verbatim para que los tests E2E existentes sigan pasando sin cambios.
+  - **Lint**: 0 issues nuevos (frontend ESLint + Python pylint).
+  - **Regresión**: **76/76 pass** en `iter55_28 + 28b + 27 + 19 + 19c + employee_and_revenue + revenue_registry + revenue_scheduler`. **188/189 iter55.*** — el 1 fallo restante (`test_iter55_19g::test_completed_crypto_order_notification_bep20_hint`) es un bug de test-fixture PRE-EXISTENTE (hash de 66 chars donde el guard iter55.19h espera 64) — no relacionado con este refactor.
+  - **Frontend smoke E2E**: `/dashboard/vip` con VIP renderiza todos los 7 testids del formulario refactorizado + grid de saldos. `/admin/revenue` muestra la nueva columna "Comisiones USDT" en Registro Mensual con `0.01 USDT · 1` para el mes en curso.
+  - **Status**: fix en preview. User needs to redeploy to push to production (`https://p2p.resiliencebrothers.com`).
+
 
 
 

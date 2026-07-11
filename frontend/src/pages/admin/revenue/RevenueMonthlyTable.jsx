@@ -23,6 +23,7 @@ export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend,
               <th className="px-4 py-3 micro-label text-neutral-500">Volumen</th>
               <th className="px-4 py-3 micro-label text-neutral-500">P2P</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Marketplace</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Comisiones USDT</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Total</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Exportar</th>
             </tr>
@@ -30,7 +31,7 @@ export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend,
           <tbody data-testid="monthly-rows">
             {monthly.length === 0 && (
               <tr>
-                <td colSpan="7" className="text-center text-neutral-500 py-8">
+                <td colSpan="8" className="text-center text-neutral-500 py-8">
                   Aún no hay meses con datos.
                 </td>
               </tr>
@@ -42,6 +43,12 @@ export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend,
                 <td className="px-4 py-3 font-mono text-neutral-400">{fmt(m.volume_usdt)} USDT</td>
                 <td className="px-4 py-3 font-mono">{fmt(m.p2p_profit_usdt)} USDT</td>
                 <td className="px-4 py-3 font-mono">{fmt(m.marketplace_profit_usdt)} USDT</td>
+                <td className="px-4 py-3 font-mono text-neutral-300">
+                  {fmt(m.conversion_fees_usdt || 0)} USDT
+                  {m.conversions > 0 && (
+                    <span className="text-neutral-500 text-xs"> · {m.conversions}</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 font-mono text-[#22C55E] font-bold">
                   {fmt(m.total_profit_usdt)} USDT
                 </td>

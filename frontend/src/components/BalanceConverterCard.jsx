@@ -30,6 +30,8 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { ArrowRightLeft, Wallet, ChevronDown } from "lucide-react";
+import { BalanceRow } from "@/components/converter/BalanceRow";
+import { ConvertPreview } from "@/components/converter/ConvertPreview";
 
 export default function BalanceConverterCard({ onConverted }) {
   const { user } = useAuth();
@@ -185,33 +187,7 @@ export default function BalanceConverterCard({ onConverted }) {
       </div>
       <div className="space-y-2">
         {visible.map((b) => (
-          <div
-            key={b.currency}
-            className="flex items-center justify-between border border-white/5 hover:border-[#EAB308]/30 transition-colors p-3"
-            data-testid={`converter-row-${b.currency}`}
-          >
-            <div>
-              <div className="font-mono text-sm text-neutral-200">
-                {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                <span className="text-neutral-500 ml-1">{b.currency}</span>
-              </div>
-              {b.usdt_equivalent != null && b.currency !== "USDT" && (
-                <div className="text-[0.65rem] text-neutral-600 font-mono mt-0.5">
-                  ≈ {b.usdt_equivalent.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
-                </div>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => openDialog(b.currency)}
-              className="text-[#EAB308] hover:bg-[#EAB308]/10 rounded-none gap-1"
-              data-testid={`converter-trigger-${b.currency}`}
-            >
-              <ArrowRightLeft className="w-3.5 h-3.5" />
-              Convertir
-            </Button>
-          </div>
+          <BalanceRow key={b.currency} balance={b} onConvert={openDialog} />
         ))}
       </div>
       {positive.length > 3 && (
@@ -296,65 +272,17 @@ export default function BalanceConverterCard({ onConverted }) {
                 </div>
               )}
             </div>
-            <div
-              className="border border-white/10 p-3 bg-[#0a0a0a]"
-              data-testid="converter-preview"
-            >
-              {previewRate === null && toCode && fromCode && toCode !== fromCode && (
-                <div className="text-xs text-red-400" data-testid="converter-preview-no-rate">
-                  No hay tasa cotizada para {fromCode} → {toCode}.
-                </div>
-              )}
-              {previewRate !== null && (
-                <>
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-xs text-neutral-500">Bruto:</span>
-                    <span
-                      className="font-mono text-sm text-neutral-300"
-                      data-testid="converter-preview-gross"
-                    >
-                      {previewGross === null
-                        ? `~ ${toCode}`
-                        : `${Number(previewGross.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${toCode}`}
-                    </span>
-                  </div>
-                  {isToUsdt && previewGross !== null && (
-                    <div className="flex justify-between items-baseline mt-1">
-                      <span className="text-xs text-neutral-500">Comisión:</span>
-                      <span
-                        className="font-mono text-sm text-[#EF4444]"
-                        data-testid="converter-preview-fee"
-                      >
-                        -{USDT_CONVERT_FEE.toFixed(2)} USDT
-                      </span>
-                    </div>
-                  )}
-                  <div className="flex justify-between items-baseline border-t border-white/10 pt-1.5 mt-1.5">
-                    <span className="text-xs text-neutral-400">Recibirás:</span>
-                    <span
-                      className={"font-mono text-lg " + (belowMinNet ? "text-[#EF4444]" : "text-[#EAB308]")}
-                      data-testid="converter-preview-amount"
-                    >
-                      {previewNet === null
-                        ? `~ ${toCode}`
-                        : `${Number(previewNet.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${toCode}`}
-                    </span>
-                  </div>
-                  <div className="text-[0.65rem] text-neutral-600 font-mono mt-1">
-                    Tasa: 1 {fromCode} = {previewRate.toFixed(6)} {toCode}
-                  </div>
-                  {belowMinNet && (
-                    <div
-                      className="text-[0.7rem] text-[#EF4444] mt-2 leading-relaxed"
-                      data-testid="converter-below-min"
-                    >
-                      Mínimo neto {USDT_MIN_NET.toFixed(2)} USDT tras la comisión —
-                      acumula más saldo antes de convertir.
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            <ConvertPreview
+              fromCode={fromCode}
+              toCode={toCode}
+              previewRate={previewRate}
+              previewGross={previewGross}
+              previewNet={previewNet}
+              isToUsdt={isToUsdt}
+              belowMinNet={belowMinNet}
+              usdtFee={USDT_CONVERT_FEE}
+              usdtMinNet={USDT_MIN_NET}
+            />
             <Button
               data-testid="confirm-converter"
               onClick={submit}

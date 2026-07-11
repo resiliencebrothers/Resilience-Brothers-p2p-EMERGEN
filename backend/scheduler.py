@@ -44,6 +44,7 @@ async def run_monthly_revenue_email(db, build_timeseries):
     totals = {
         "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
         "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
+        "conversion_fees": sum(r.get("conversion_fees_usdt", 0.0) for r in rows_asc),
         "total": sum(r["total_profit_usdt"] for r in rows_asc),
         "volume": sum(r["volume_usdt"] for r in rows_asc),
         "orders": sum(r["orders"] for r in rows_asc),

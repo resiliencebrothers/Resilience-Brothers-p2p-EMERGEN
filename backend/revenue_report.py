@@ -34,51 +34,76 @@ def _bucket_key(iso_str: str, granularity: str) -> str:
     return dt.strftime("%Y-%m-%d") if granularity == "day" else dt.strftime("%Y-%m")
 
 
-def build_buckets(orders, redemptions, profit_per_order_usdt, granularity: str):
-    """Group orders + delivered redemptions into day/month buckets.
+def _new_bucket(key: str) -> dict:
+    return {
+        "bucket": key,
+        "p2p_profit_usdt": 0.0,
+        "marketplace_profit_usdt": 0.0,
+        "conversion_fees_usdt": 0.0,
+        "total_profit_usdt": 0.0,
+        "orders": 0,
+        "deliveries": 0,
+        "conversions": 0,
+        "volume_usdt": 0.0,
+    }
 
-    profit_per_order_usdt: dict mapping order_id -> profit_usdt (already computed by caller).
-    Returns sorted list (most recent first) of dicts with: bucket, label,
-    p2p_profit_usdt, marketplace_profit_usdt, total_profit_usdt, orders, deliveries, volume_usdt.
-    """
-    buckets: dict = {}
 
-    def _ensure(key):
-        if key not in buckets:
-            buckets[key] = {
-                "bucket": key,
-                "p2p_profit_usdt": 0.0,
-                "marketplace_profit_usdt": 0.0,
-                "total_profit_usdt": 0.0,
-                "orders": 0,
-                "deliveries": 0,
-                "volume_usdt": 0.0,
-            }
-        return buckets[key]
-
+def _accumulate_orders(buckets: dict, orders, profit_per_order_usdt, granularity: str) -> None:
     for o in orders:
         ts = o.get("updated_at") or o.get("created_at") or ""
-        key = _bucket_key(ts, granularity)
-        b = _ensure(key)
+        b = buckets.setdefault(_bucket_key(ts, granularity), _new_bucket(_bucket_key(ts, granularity)))
         b["orders"] += 1
-        # Caller pre-computes volume in USDT and stores under o["_volume_usdt"]
         b["volume_usdt"] += float(o.get("_volume_usdt") or 0.0)
         prof = float(profit_per_order_usdt.get(o["id"], 0.0))
         b["p2p_profit_usdt"] += prof
         b["total_profit_usdt"] += prof
 
+
+def _accumulate_redemptions(buckets: dict, redemptions, granularity: str) -> None:
     for r in redemptions:
         ts = r.get("created_at") or ""
-        key = _bucket_key(ts, granularity)
-        b = _ensure(key)
+        b = buckets.setdefault(_bucket_key(ts, granularity), _new_bucket(_bucket_key(ts, granularity)))
         b["deliveries"] += 1
         prof = float(r.get("total_usd") or 0.0) - float(r.get("cost_usd") or 0.0)
         b["marketplace_profit_usdt"] += prof
         b["total_profit_usdt"] += prof
 
+
+def _accumulate_conversion_fees(buckets: dict, fee_entries, granularity: str) -> None:
+    """iter55.28 — bucket the 0.01 USDT conversion fees per period."""
+    for row in fee_entries or []:
+        ts = row.get("created_at") or ""
+        b = buckets.setdefault(_bucket_key(ts, granularity), _new_bucket(_bucket_key(ts, granularity)))
+        try:
+            fee = float((row.get("details") or {}).get("usdt_fee") or 0.0)
+        except (TypeError, ValueError):
+            fee = 0.0
+        if fee <= 0:
+            continue
+        b["conversions"] += 1
+        b["conversion_fees_usdt"] += fee
+        b["total_profit_usdt"] += fee
+
+
+def build_buckets(orders, redemptions, profit_per_order_usdt, granularity: str,
+                   conversion_fees: list = None):
+    """Group orders + delivered redemptions + USDT conversion fees into
+    day/month buckets.
+
+    profit_per_order_usdt: dict mapping order_id -> profit_usdt.
+    conversion_fees: optional list of `audit_log` rows for `vip.convert` with
+                     `details.usdt_fee > 0` (iter55.28).
+    Returns sorted list (most recent first) of per-period aggregates.
+    """
+    buckets: dict = {}
+    _accumulate_orders(buckets, orders, profit_per_order_usdt, granularity)
+    _accumulate_redemptions(buckets, redemptions, granularity)
+    _accumulate_conversion_fees(buckets, conversion_fees, granularity)
+
     rows = []
     for v in buckets.values():
-        for k in ("p2p_profit_usdt", "marketplace_profit_usdt", "total_profit_usdt", "volume_usdt"):
+        for k in ("p2p_profit_usdt", "marketplace_profit_usdt",
+                  "conversion_fees_usdt", "total_profit_usdt", "volume_usdt"):
             v[k] = round(v[k], 4)
         rows.append(v)
     rows.sort(key=lambda x: x["bucket"], reverse=True)
@@ -98,26 +123,32 @@ def revenue_monthly_csv(rows, period_label: str) -> bytes:
     w.writerow([f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"])
     w.writerow([])
     w.writerow(["Fecha", "Órdenes", "Volumen (USDT)", "Ganancia P2P (USDT)",
-                "Ganancia Marketplace (USDT)", "Ganancia Total (USDT)"])
-    tot_p2p = tot_mkt = tot_total = tot_vol = 0.0
-    tot_ords = 0
+                "Ganancia Marketplace (USDT)", "Comisiones USDT",
+                "Conversiones", "Ganancia Total (USDT)"])
+    tot_p2p = tot_mkt = tot_fees = tot_total = tot_vol = 0.0
+    tot_ords = tot_convs = 0
     for r in rows:
         tot_p2p += r["p2p_profit_usdt"]
         tot_mkt += r["marketplace_profit_usdt"]
+        tot_fees += r.get("conversion_fees_usdt", 0.0)
         tot_total += r["total_profit_usdt"]
         tot_vol += r["volume_usdt"]
         tot_ords += r["orders"]
+        tot_convs += r.get("conversions", 0)
         w.writerow([
             r["bucket"],
             r["orders"],
             f"{r['volume_usdt']:.4f}",
             f"{r['p2p_profit_usdt']:.4f}",
             f"{r['marketplace_profit_usdt']:.4f}",
+            f"{r.get('conversion_fees_usdt', 0.0):.4f}",
+            r.get("conversions", 0),
             f"{r['total_profit_usdt']:.4f}",
         ])
     w.writerow([])
     w.writerow(["TOTAL", tot_ords, f"{tot_vol:.4f}", f"{tot_p2p:.4f}",
-                f"{tot_mkt:.4f}", f"{tot_total:.4f}"])
+                f"{tot_mkt:.4f}", f"{tot_fees:.4f}", tot_convs,
+                f"{tot_total:.4f}"])
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -171,18 +202,20 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
     # Totals card
     totals_data = [[
         Paragraph("Ganancia P2P", meta),
-        Paragraph("Ganancia Marketplace", meta),
+        Paragraph("Marketplace", meta),
+        Paragraph("Comisiones USDT", meta),
         Paragraph("Ganancia Total", meta),
         Paragraph("Volumen", meta),
         Paragraph("Órdenes", meta),
     ], [
         Paragraph(f"{totals['p2p']:.2f} USDT", big),
         Paragraph(f"{totals['marketplace']:.2f} USDT", big),
+        Paragraph(f"{totals.get('conversion_fees', 0.0):.2f} USDT", big),
         Paragraph(f"{totals['total']:.2f} USDT", big),
         Paragraph(f"{totals['volume']:.2f} USDT", big),
         Paragraph(f"{totals['orders']}", big),
     ]]
-    tbl = Table(totals_data, colWidths=[1.5*inch]*5)
+    tbl = Table(totals_data, colWidths=[1.25*inch]*6)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,-1), PANEL),
         ("BOX", (0,0), (-1,-1), 0.5, BORDER),
@@ -204,7 +237,8 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
         story.append(Spacer(1, 14))
 
     # Daily table
-    head = ["Fecha", "Órdenes", "Volumen USDT", "P2P", "Marketplace", "Total"]
+    head = ["Fecha", "Órdenes", "Volumen USDT", "P2P", "Marketplace",
+            "Fees USDT", "Total"]
     data = [head]
     for r in rows:
         data.append([
@@ -213,16 +247,18 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
             f"{r['volume_usdt']:.2f}",
             f"{r['p2p_profit_usdt']:.2f}",
             f"{r['marketplace_profit_usdt']:.2f}",
+            f"{r.get('conversion_fees_usdt', 0.0):.2f}",
             f"{r['total_profit_usdt']:.2f}",
         ])
-    tbl2 = Table(data, colWidths=[1.2*inch, 0.8*inch, 1.2*inch, 1.0*inch, 1.3*inch, 1.0*inch])
+    tbl2 = Table(data, colWidths=[1.1*inch, 0.7*inch, 1.1*inch, 0.9*inch,
+                                    1.1*inch, 0.9*inch, 0.9*inch])
     tbl2.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), BRAND_YELLOW),
         ("TEXTCOLOR", (0,0), (-1,0), BG_DARK),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
         ("BACKGROUND", (0,1), (-1,-1), PANEL),
         ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
-        ("TEXTCOLOR", (5,1), (5,-1), GREEN),  # total column green
+        ("TEXTCOLOR", (6,1), (6,-1), GREEN),  # total column green
         ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
         ("FONTSIZE", (0,0), (-1,-1), 9),
         ("ALIGN", (1,0), (-1,-1), "RIGHT"),

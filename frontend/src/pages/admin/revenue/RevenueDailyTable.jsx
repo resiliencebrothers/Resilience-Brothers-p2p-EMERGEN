@@ -10,7 +10,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
             <Calendar className="w-5 h-5 text-[#EAB308]" /> Registro Diario
           </h2>
           <p className="text-xs text-neutral-500 mt-1">
-            Ganancia consolidada por día (P2P + Marketplace, en USDT).
+          Ganancia consolidada por día (P2P + Marketplace + comisiones USDT).
           </p>
         </div>
         <Select value={dailyRange} onValueChange={setDailyRange}>
@@ -38,13 +38,14 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
               <th className="px-4 py-3 micro-label text-neutral-500">Volumen</th>
               <th className="px-4 py-3 micro-label text-neutral-500">P2P</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Marketplace</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Comisiones USDT</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Total</th>
             </tr>
           </thead>
           <tbody data-testid="daily-rows">
             {daily.length === 0 && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">
+                <td colSpan="7" className="text-center text-neutral-500 py-8">
                   Sin movimientos en este rango.
                 </td>
               </tr>
@@ -56,6 +57,12 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
                 <td className="px-4 py-3 font-mono text-neutral-400">{fmt(d.volume_usdt)} USDT</td>
                 <td className="px-4 py-3 font-mono">{fmt(d.p2p_profit_usdt)} USDT</td>
                 <td className="px-4 py-3 font-mono">{fmt(d.marketplace_profit_usdt)} USDT</td>
+                <td className="px-4 py-3 font-mono text-neutral-300">
+                  {fmt(d.conversion_fees_usdt || 0)} USDT
+                  {d.conversions > 0 && (
+                    <span className="text-neutral-500 text-xs"> · {d.conversions}</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 font-mono text-[#22C55E] font-bold">
                   {fmt(d.total_profit_usdt)} USDT
                 </td>

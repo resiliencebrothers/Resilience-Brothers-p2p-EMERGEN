@@ -127,6 +127,8 @@ def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: 
             <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals['p2p']:.2f} USDT</td></tr>
         <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Ganancia Marketplace</td>
             <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals['marketplace']:.2f} USDT</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Comisiones USDT (conversiones)</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{totals.get('conversion_fees', 0.0):.2f} USDT</td></tr>
         <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Ganancia TOTAL</td>
             <td style="padding:6px 0;color:#22C55E;font-family:monospace;text-align:right;font-weight:bold;font-size:15px;">{totals['total']:.2f} USDT</td></tr>
         <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Volumen P2P</td>
