@@ -393,6 +393,14 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
     - `/dashboard/vip` "VALOR TOTAL (USDT) 2,393.26" en violet + sidebar "Saldo y Retiros" activo morado.
   - **Status**: fix en preview. User needs to redeploy to push to production. Impacto visual: **la plataforma ya no se confunde con Binance** — identidad de marca única alineada con el landing site.
 
+- Consistencia cromática final (iter55.30b, 11 Feb 2026) — barrido de verificación post-migración:
+  - **Sidebar dots** ya se migraron en el barrido masivo de iter55.30 (`bg-[#EAB308]` → `bg-[#8B5CF6]`). Confirmado visualmente en admin sidebar.
+  - **Favicon** — verificado: `/app/frontend/public/icons/favicon-64.png` ya tiene fondo morado con logo dorado RB, alineado con la nueva paleta (sin cambios necesarios).
+  - **Amarillos que SE MANTIENEN por decisión de diseño**:
+    - `amber-500` (KYC risk flags, health warnings): color estándar UI para warning/riesgo (Material, Tailwind convention). Cambiarlo confundiría al usuario.
+    - `#F0B90B` (BEP20 network badge en `services/delivery_validators.js`): color oficial de la Binance Smart Chain. Se muestra en `NETWORK_META.BEP20.bg` para que el usuario reconozca visualmente la red — mismo criterio que TRC20 en rojo Tron.
+  - **Zero regressions**: paleta consistente sin romper semántica financiera (verde=positivo, rojo=negativo, amber=warning, chain colors=oficial de cada red).
+
 
 
 
