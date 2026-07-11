@@ -308,6 +308,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   **Combined regression**: **67/67 tests pass** across iter55.17 + 19 + 19c + 19h + 21 + order_payout_evidence. Zero new lint errors (backend + frontend).
   - **Status**: fix en preview. User needs to redeploy to push to production. Next month's audit report will be delivered automatically to the owner's inbox on day 1 at 09:15 UTC.
 
+- Dashboard → Mis Órdenes deep-link filtering (iter55.25b, Feb 2026) — turns the "PENDIENTES"/"COMPLETADAS" counter cards into clickable shortcuts. Owner mental model: "the counter and the table should be in lock-step" → make it 1-click.
+  - **`OverviewView.jsx`**: `<StatCard>` gained optional `to` + `testid` props. When `to` is set, the card renders as a `react-router-dom` `<Link>` with hover ring, focus outline, and sub-label suffixed with "· ver →". Wired: Pendientes → `/dashboard/orders?filter=pending`, Completadas → `/dashboard/orders?filter=completed`. Static cards (Saldo, Estatus) render as plain divs (no navigation).
+  - **`OrdersView.jsx`**: switched to `useSearchParams()` so the initial filter comes from `?filter=…`. New filter pills row above the table (`data-testid="orders-filter-pills"`) with 4 pills: `Todas / Pendientes / Completadas / Rechazadas`. Each pill uses `aria-pressed` for state and `data-testid="orders-filter-{key}"`. Clicking a pill patches the URL via `setSearchParams(..., {replace:true})` — bookmark/reload safe. Filter map:
+    - `pending`   → `{pending, requires_double_approval}`
+    - `completed` → `{approved, completed, delivered}` (mirrors the fixed dashboard semantics)
+    - `rejected`  → `{rejected}`
+  - **Testids added**: `stat-pendientes`, `stat-completadas`, `orders-filter-pills`, `orders-filter-all|pending|completed|rejected`.
+  - **Verified E2E**: Playwright clicked the Pendientes card on `/dashboard` → landed on `/dashboard/orders?filter=pending` with the yellow PENDIENTES pill aria-pressed=true and the table showing only pending + doble-aprobación rows. Reload preserves the filter. `yarn lint` clean.
+
+
+
 - Dashboard "Pendientes" counter regression fix (iter55.25, 11 Feb 2026) — owner reported: user Obrayan (Cuenta Estándar) had 1 pending order + 1 "Confirmado" (approved) order in Mis Órdenes, but the dashboard showed **PENDIENTES: 2**. iter55.22 introduced the bug by lumping `approved` into a single IN_FLIGHT set for both entity types — but the label/semantics of `approved` differ:
   - `orders.approved` = **"Confirmado"** (staff validated + paid) → **NOT** pending; success state
   - `withdrawals.approved` = **"En progreso"** for cash retiros (approved but coins not handed out yet) → **still** pending

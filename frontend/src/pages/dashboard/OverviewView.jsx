@@ -65,8 +65,22 @@ export default function OverviewView() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Wallet} label="Saldo Total" value={`${(balances?.total_usdt || 0).toFixed(2)}`} sub="USDT equivalente" />
-        <StatCard icon={Clock} label="Pendientes" value={pending} sub="órdenes" />
-        <StatCard icon={CheckCircle} label="Completadas" value={approved} sub="órdenes" />
+        <StatCard
+          icon={Clock}
+          label="Pendientes"
+          value={pending}
+          sub="órdenes · ver →"
+          to="/dashboard/orders?filter=pending"
+          testid="stat-pendientes"
+        />
+        <StatCard
+          icon={CheckCircle}
+          label="Completadas"
+          value={approved}
+          sub="órdenes · ver →"
+          to="/dashboard/orders?filter=completed"
+          testid="stat-completadas"
+        />
         <StatCard icon={Activity} label="Estatus" value={user?.role?.toUpperCase()} sub="nivel" />
       </div>
 
@@ -143,13 +157,32 @@ export default function OverviewView() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, sub }) {
-  return (
-    <div className="tactile-card p-5">
+function StatCard({ icon: Icon, label, value, sub, to, testid }) {
+  const body = (
+    <>
       <Icon className="w-5 h-5 text-[#EAB308] mb-3" />
       <div className="micro-label text-neutral-500">{label}</div>
       <div className="font-display text-2xl mt-1">{value}</div>
       <div className="text-xs text-neutral-500 mt-1">{sub}</div>
+    </>
+  );
+  // iter55.25b — when the card represents a filtered list (Pendientes,
+  // Completadas), wrap it in a Link so the user can jump straight to the
+  // matching filtered view. Static cards (Saldo, Estatus) render as plain divs.
+  if (to) {
+    return (
+      <Link
+        to={to}
+        data-testid={testid}
+        className="tactile-card p-5 block hover:border-[#EAB308]/50 hover:bg-white/[0.02] transition-colors focus:outline-none focus:ring-2 focus:ring-[#EAB308]/60"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <div className="tactile-card p-5" data-testid={testid}>
+      {body}
     </div>
   );
 }

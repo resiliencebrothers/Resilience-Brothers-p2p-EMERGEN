@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { useSearchParams } from "react-router-dom";
 import { API } from "@/App";
 import { Badge } from "@/components/ui/badge";
 import CopyableText from "@/components/CopyableText";
@@ -24,10 +25,47 @@ const STATUS_LABELS = {
 export default function OrdersView() {
   const [orders, setOrders] = useState([]);
   const [selected, setSelected] = useState(null);
+  // iter55.25b — allow deep-linking from the dashboard StatCards so a click on
+  // "Pendientes" jumps here already scoped to `filter=pending` (mirrors the
+  // owner's mental model that the counter and the table should be in lock-step).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialFilter = searchParams.get("filter") || "all";
+  const [filter, setFilter] = useState(initialFilter);
 
   useEffect(() => {
     axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => setOrders(r.data));
   }, []);
+
+  const FILTER_STATUSES = {
+    all: null,
+    pending: ["pending", "requires_double_approval"],
+    completed: ["approved", "completed", "delivered"],
+    rejected: ["rejected"],
+  };
+
+  const filteredOrders = useMemo(() => {
+    const statuses = FILTER_STATUSES[filter];
+    if (!statuses) return orders;
+    return orders.filter((o) => statuses.includes(o.status));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, filter]);
+
+  const applyFilter = (next) => {
+    setFilter(next);
+    if (next === "all") {
+      searchParams.delete("filter");
+    } else {
+      searchParams.set("filter", next);
+    }
+    setSearchParams(searchParams, { replace: true });
+  };
+
+  const FILTER_PILLS = [
+    { key: "all", label: "Todas" },
+    { key: "pending", label: "Pendientes" },
+    { key: "completed", label: "Completadas" },
+    { key: "rejected", label: "Rechazadas" },
+  ];
 
   return (
     <div data-testid="orders-view">
@@ -35,6 +73,28 @@ export default function OrdersView() {
         <div className="micro-label text-[#EAB308] mb-2">/ Historial</div>
         <h1 className="font-display text-3xl">Mis Órdenes</h1>
       </div>
+
+      {/* Filter pills — deep-link aware */}
+      <div className="flex gap-2 mb-4 flex-wrap" data-testid="orders-filter-pills">
+        {FILTER_PILLS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => applyFilter(p.key)}
+            data-testid={`orders-filter-${p.key}`}
+            aria-pressed={filter === p.key}
+            className={
+              "text-xs uppercase tracking-wider border px-3 py-1.5 rounded-none transition-colors " +
+              (filter === p.key
+                ? "bg-[#EAB308] text-black border-[#EAB308]"
+                : "border-white/15 text-neutral-400 hover:border-[#EAB308]/60 hover:text-white")
+            }
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       <div className="tactile-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -49,10 +109,12 @@ export default function OrdersView() {
               </tr>
             </thead>
             <tbody>
-              {orders.length === 0 && (
-                <tr><td colSpan="6" className="text-center text-neutral-500 py-12">Sin órdenes aún.</td></tr>
+              {filteredOrders.length === 0 && (
+                <tr><td colSpan="6" className="text-center text-neutral-500 py-12">
+                  {filter === "all" ? "Sin órdenes aún." : "Ninguna orden en este filtro."}
+                </td></tr>
               )}
-              {orders.map(o => (
+              {filteredOrders.map(o => (
                 <tr key={o.id} onClick={() => setSelected(o)} className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors">
                   <td className="px-4 py-4 font-mono text-xs">{o.id.slice(0, 8)}</td>
                   <td className="px-4 py-4 font-mono text-sm">{o.from_code} → {o.to_code}</td>
