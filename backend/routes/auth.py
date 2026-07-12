@@ -71,7 +71,7 @@ class AuthRegisterPayload(BaseModel):
 class AuthLoginPayload(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=200)
-    remember_hours: Optional[int] = None  # if set (e.g. 24), session = ttl_hours; else 7d default
+    remember_hours: Optional[int] = None  # request TTL in hours; hard-capped at 24 by policy (iter55.37)
 
 
 class AuthResendVerificationPayload(BaseModel):
@@ -132,7 +132,8 @@ async def auth_session(payload: dict, response: Response) -> Any:
         await db.users.insert_one(user_doc)
 
     session_token = data["session_token"]
-    expires_at = now_utc() + timedelta(days=7)
+    # iter55.37 — 24h cap for all sessions (was hardcoded 7 days).
+    expires_at = now_utc() + timedelta(hours=24)
     await db.user_sessions.insert_one({
         "user_id": user_doc["user_id"],
         "session_token": session_token,
@@ -141,7 +142,7 @@ async def auth_session(payload: dict, response: Response) -> Any:
     })
     response.set_cookie(
         key="session_token", value=session_token, httponly=True, secure=True,
-        samesite="none", path="/", max_age=7 * 24 * 3600,
+        samesite="none", path="/", max_age=24 * 3600,
     )
     user_doc.pop("_id", None)
     return user_doc
@@ -307,7 +308,9 @@ async def google_callback(request: Request, code: Optional[str] = None,
     )
 
     response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
-    await _create_session(user_id, response, ttl_hours=168)
+    # iter55.37 — All sessions capped at 24h. `_create_session` enforces the
+    # cap internally too, but we pass 24 explicitly for auditability.
+    await _create_session(user_id, response, ttl_hours=24)
     return response
 
 
@@ -526,7 +529,8 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
             await mark_user_under_review(user["user_id"])
             user["phone_verified"] = False
             user["account_status"] = "under_review"
-    ttl = payload.remember_hours if payload.remember_hours else 168
+    # iter55.37 — Session TTL is hard-capped at 24h by _create_session policy.
+    ttl = payload.remember_hours if payload.remember_hours else 24
     await _create_session(user["user_id"], response, ttl_hours=ttl)
     user.pop("password_hash", None)
     user.pop("verification_token", None)

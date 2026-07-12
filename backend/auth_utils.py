@@ -47,10 +47,21 @@ def _verify_password(pw: str, hashed: str) -> bool:
 
 # ---------- Session helpers ----------
 
-async def _create_session(user_id: str, response: Response, ttl_hours: int = 168):
-    """Issue a session_token + set cookie. Default TTL = 7 days (168h).
-    Pass ttl_hours=24 for a 'remember me 24h' short-lived session."""
-    ttl_hours = max(1, min(int(ttl_hours), 168))  # clamp 1h..7d
+# iter55.37 — Security policy: ALL sessions are capped at 24 hours regardless
+# of what the caller requests. Financial platform requirement: session tokens
+# must expire within 24h to limit exposure of leaked cookies / device theft.
+# Users re-authenticate daily (custom Google OAuth or email/password re-login).
+SESSION_MAX_HOURS = 24
+
+
+async def _create_session(user_id: str, response: Response, ttl_hours: int = SESSION_MAX_HOURS):
+    """Issue a session_token + set cookie. Hard-capped at 24 hours by policy.
+
+    Legacy callers may pass ttl_hours > 24 (e.g. 168 for "remember me 7d") —
+    those get silently clamped to 24 to enforce the security policy across
+    every entry point (Google OAuth, email login, Emergent OAuth bridge).
+    """
+    ttl_hours = max(1, min(int(ttl_hours), SESSION_MAX_HOURS))  # clamp 1h..24h
     session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
     expires_at = now_utc() + timedelta(hours=ttl_hours)
     await db.user_sessions.insert_one({

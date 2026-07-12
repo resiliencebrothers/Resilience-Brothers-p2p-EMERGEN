@@ -1,0 +1,42 @@
+{
+  "summary": "iter55.37 backend-only testing — verified 24h session TTL cap across all auth entry points (email login, custom Google OAuth callback, legacy Emergent OAuth bridge). Ran the 4 tests provided by main agent + added 6 regression tests. All 10/10 pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_37_session_ttl_24h.py",
+    "/app/backend/tests/test_iter55_37_session_regression.py",
+    "/app/test_reports/pytest/iter55_37_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is well-localized: SESSION_MAX_HOURS=24 defined once in auth_utils.py; the clamp `max(1, min(ttl_hours, 24))` inside _create_session guarantees every entry point respects the cap, even if a future caller forgets to pass ttl_hours. Good defensive design.",
+    "Legacy /api/auth/session (routes/auth.py line 136-145) bypasses _create_session helper and inlines its own cookie/DB write with timedelta(hours=24) + max_age=24*3600. Values are correct but this is a DRY violation and a future regression risk — recommend refactoring to call _create_session(user_id, response, ttl_hours=24) like the Google callback does. Non-blocking for this iter.",
+    "reset-password endpoint (line 579) calls `_create_session(user_id, response)` without explicit ttl — relies on the default arg value of SESSION_MAX_HOURS=24, which is fine but worth adding an explicit `ttl_hours=24` for consistency and auditability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter55_37_session_regression.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "Seeded ephemeral email-login users on the fly per test (bcrypt password_hash, phone_verified=true, auth_provider=email). Cleaned up in each test.",
+  "seed_data_creation": "Each test seeds a unique user via direct MongoClient insert into db.users, then deletes both user + session rows on teardown. No test_credentials.md accounts touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter55.37 (session TTL 24h cap) is fully validated. Two test files live under /app/backend/tests/: test_iter55_37_session_ttl_24h.py (4 tests: default 24h, over-request→clamp, under-request→respected, constant guard) and test_iter55_37_session_regression.py (6 tests: DB expires_at parity for clamp/under, /auth/me authorized, /auth/logout clears cookie + kills DB row + subsequent /auth/me 401, expired session → 401, unit test of _create_session clamp for 168/3/0 hours). Both suites should be run together as regression whenever auth code changes. Google OAuth callback was verified by code inspection + the _create_session unit test — hitting the real Google exchange from CI is impractical, but since both callback and email-login route through _create_session (same helper, same clamp), the 24h cap is guaranteed by construction. Legacy /api/auth/session (Emergent OAuth bridge) still inlines its own session insert instead of calling _create_session — code inspection confirms it uses timedelta(hours=24) + max_age=86400, but it's a DRY smell; flagged as low-priority refactor.",
+  "verified_matrix": {
+    "POST /api/auth/login default (no remember_hours)": "cookie Max-Age=86400, DB expires_at ~24h — PASS",
+    "POST /api/auth/login remember_hours=168": "cookie Max-Age=86400 (clamped), DB expires_at ~24h — PASS",
+    "POST /api/auth/login remember_hours=6": "cookie Max-Age=21600 (respected), DB expires_at ~6h — PASS",
+    "GET /api/auth/google/callback": "code passes ttl_hours=24 explicit + helper clamp — verified via unit test",
+    "POST /api/auth/session (Emergent bridge)": "hardcoded 24h everywhere (line 136, 145) — verified by inspection",
+    "POST /api/auth/logout": "clears cookie (Max-Age=0), deletes DB row, subsequent /auth/me→401 — PASS",
+    "GET /api/auth/me with expired DB session": "returns 401 even with valid cookie — PASS",
+    "SESSION_MAX_HOURS constant": "= 24 (regression guard) — PASS"
+  }
+}
