@@ -2,30 +2,33 @@
  * ProfileSectionTabs — shared sub-navigation for the "Mi Perfil" hub.
  *
  * iter55.26 (Feb 2026): Verificación (KYC) and Seguridad (2FA / sessions) used
- * to live at the top level of the sidebar. The owner asked to nest them
- * under Mi Perfil since they're all "account settings" from the user's POV.
+ * to live at the top level of the sidebar. Nested them under Mi Perfil.
  *
- * Rather than merge the 3 pages into one giant component (would explode
- * ProfileView.jsx which is already 500 LOC), we keep each page as-is and
- * render a shared tab strip at the top. Clicking a tab is a real react-router
- * navigation — bookmark/share links to `/dashboard/kyc` still work exactly as
- * before, they just render under the same visual header now.
+ * iter55.32: added the "Notificaciones" tab (elevated PushToggle from tiny
+ * sidebar-footer widget to a proper page) + rewrote the visual to match the
+ * admin AdminUsersHub — violet after-underline, aria-selected, focus rings.
+ * Rather than merge the 4 pages into one giant component, we keep each as
+ * its own route so bookmarks `/dashboard/kyc`, `/dashboard/security`, etc.
+ * still work exactly as before.
  */
 import { NavLink } from "react-router-dom";
-import { UserCircle, IdCard, ShieldCheck } from "lucide-react";
+import { UserCircle, IdCard, ShieldCheck, Bell } from "lucide-react";
 
 const TABS = [
-  { to: "/dashboard/profile",  icon: UserCircle,  label: "Datos personales", end: true, testid: "profile-tab-datos" },
-  { to: "/dashboard/kyc",      icon: IdCard,      label: "Verificación",     end: true, testid: "profile-tab-kyc" },
-  { to: "/dashboard/security", icon: ShieldCheck, label: "Seguridad",        end: true, testid: "profile-tab-security" },
+  { to: "/dashboard/profile",       icon: UserCircle,  label: "Datos personales", end: true, testid: "profile-tab-datos" },
+  { to: "/dashboard/kyc",           icon: IdCard,      label: "Verificación",     end: true, testid: "profile-tab-kyc" },
+  { to: "/dashboard/security",      icon: ShieldCheck, label: "Seguridad",        end: true, testid: "profile-tab-security" },
+  { to: "/dashboard/notifications", icon: Bell,        label: "Notificaciones",   end: true, testid: "profile-tab-notifications" },
 ];
 
 export default function ProfileSectionTabs() {
   return (
     <div className="mb-6" data-testid="profile-section-tabs">
-      <div className="micro-label text-[#8B5CF6] mb-2">/ Mi Perfil</div>
-      <div
-        className="flex gap-1 border-b border-white/10 overflow-x-auto no-scrollbar"
+      <div className="text-[11px] font-semibold tracking-[0.22em] text-violet-400 uppercase mb-2">
+        / Mi Perfil
+      </div>
+      <nav
+        className="flex items-center gap-1 border-b border-white/10 overflow-x-auto scrollbar-none"
         role="tablist"
         aria-label="Secciones de mi perfil"
       >
@@ -37,17 +40,19 @@ export default function ProfileSectionTabs() {
             role="tab"
             data-testid={testid}
             className={({ isActive }) =>
-              "flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors " +
+              "relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap " +
+              "transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 " +
               (isActive
-                ? "border-[#8B5CF6] text-[#8B5CF6]"
-                : "border-transparent text-neutral-400 hover:text-white hover:border-white/20")
+                ? "text-violet-300 after:absolute after:left-3 after:right-3 after:-bottom-[1px] after:h-[2px] after:bg-violet-500 after:rounded-full"
+                : "text-white/50 hover:text-white hover:bg-white/[0.03] rounded-md")
             }
+            aria-selected={undefined /* NavLink handles active state visually */}
           >
             <Icon className="w-4 h-4" />
             <span>{label}</span>
           </NavLink>
         ))}
-      </div>
+      </nav>
     </div>
   );
 }

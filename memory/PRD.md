@@ -500,6 +500,15 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Verificado E2E**: 4 tabs presentes, active state correcto (`aria-selected=true`), legacy redirect `/admin/kyc` → `/admin/users?tab=kyc` funciona con la tab KYC ya activa. Smoke suite: 12/12 pass. Lint clean.
   - **Ganancia UX**: menos context-switching (todo lo relacionado a personas en un lugar), menor cognitive load, sidebar más limpio.
 
+- Consolidar sidebar cliente + elevar Notificaciones a tab (iter55.32, 12 Feb 2026) — extiende la misma pauta de consolidación de admin al cliente. Complementa iter55.26 (que consolidó Perfil + KYC + Seguridad en tabs).
+  - **Antes**: `PushToggle` (widget de 193 líneas) escondido en el footer del sidebar. Poco descubrible.
+  - **Después**: nueva página `/dashboard/notifications` con contexto explicativo + guía para iOS (Añadir a pantalla de inicio), servida como **4ta tab** dentro de "Mi Perfil": `Datos personales · Verificación · Seguridad · Notificaciones`.
+  - **`ProfileSectionTabs`** rediseñado para matching visual del `AdminUsersHub` — misma underline morada `after:` pseudo-element, focus rings accessible, active state `text-violet-300`, transiciones suaves. Consistencia total admin ↔ cliente.
+  - **`Dashboard.jsx`**: nueva route `/dashboard/notifications` → `NotificationsView`. `PushToggle` removido del footer del sidebar (donde estaba oculto) — solo `NotificationBell` + Cerrar Sesión quedan.
+  - **Nueva página `NotificationsView.jsx`** (48 líneas): pill icon morado + título + copy + `PushToggle` (reutilizado sin cambios) + tip informativo iOS.
+  - **Verificado E2E**: 4 tabs detectados por testid, tab Notificaciones activa muestra el widget completo. Screenshot muestra sidebar limpio, tabs con underline morado, card premium.
+  - **Ganancia UX**: notificaciones push ahora descubribles (era invisible al 80% de usuarios en el footer). Sidebar del cliente aún más limpio. Ratio de activación push debería subir.
+
 
 
 

@@ -13,7 +13,7 @@ import MyTransactions from "@/pages/dashboard/MyTransactions";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import KYCView from "@/pages/dashboard/KYCView";
 import ProfileView from "@/pages/dashboard/ProfileView";
-import PushToggle from "@/components/PushToggle";
+import NotificationsView from "@/pages/dashboard/NotificationsView";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
 import AppealDialog from "@/components/AppealDialog";
@@ -101,7 +101,6 @@ export default function Dashboard() {
         </div>
         <NotificationBell />
       </div>
-      <div className="mb-2"><PushToggle /></div>
       <button
         data-testid={logoutTestid}
         onClick={logout}
@@ -213,6 +212,7 @@ export default function Dashboard() {
             <Route path="kyc" element={<KYCView />} />
             <Route path="security" element={<SecuritySettings />} />
             <Route path="profile" element={<ProfileView />} />
+            <Route path="notifications" element={<NotificationsView />} />
             <Route path="vip" element={<VipView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
           </Routes>
