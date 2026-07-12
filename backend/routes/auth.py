@@ -131,18 +131,11 @@ async def auth_session(payload: dict, response: Response) -> Any:
         }
         await db.users.insert_one(user_doc)
 
-    session_token = data["session_token"]
-    # iter55.37 — 24h cap for all sessions (was hardcoded 7 days).
-    expires_at = now_utc() + timedelta(hours=24)
-    await db.user_sessions.insert_one({
-        "user_id": user_doc["user_id"],
-        "session_token": session_token,
-        "expires_at": iso(expires_at),
-        "created_at": iso(now_utc()),
-    })
-    response.set_cookie(
-        key="session_token", value=session_token, httponly=True, secure=True,
-        samesite="none", path="/", max_age=24 * 3600,
+    # iter55.37 — Single source of truth for session creation (24h cap).
+    # We forward the upstream Emergent token as-is to keep the bridge stable.
+    await _create_session(
+        user_doc["user_id"], response,
+        ttl_hours=24, session_token=data["session_token"],
     )
     user_doc.pop("_id", None)
     return user_doc

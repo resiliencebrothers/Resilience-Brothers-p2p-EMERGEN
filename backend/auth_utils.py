@@ -54,15 +54,22 @@ def _verify_password(pw: str, hashed: str) -> bool:
 SESSION_MAX_HOURS = 24
 
 
-async def _create_session(user_id: str, response: Response, ttl_hours: int = SESSION_MAX_HOURS):
+async def _create_session(user_id: str, response: Response, ttl_hours: int = SESSION_MAX_HOURS,
+                          session_token: Optional[str] = None):
     """Issue a session_token + set cookie. Hard-capped at 24 hours by policy.
 
     Legacy callers may pass ttl_hours > 24 (e.g. 168 for "remember me 7d") —
     those get silently clamped to 24 to enforce the security policy across
     every entry point (Google OAuth, email login, Emergent OAuth bridge).
+
+    `session_token` (optional): when the caller already has a token from an
+    upstream provider (Emergent OAuth), pass it here. Otherwise a fresh 64-char
+    hex token is generated. Either way the DB row + cookie are written the
+    exact same way — one place enforces the TTL cap for all auth flows.
     """
     ttl_hours = max(1, min(int(ttl_hours), SESSION_MAX_HOURS))  # clamp 1h..24h
-    session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
+    if not session_token:
+        session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
     expires_at = now_utc() + timedelta(hours=ttl_hours)
     await db.user_sessions.insert_one({
         "user_id": user_id,

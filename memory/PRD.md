@@ -579,6 +579,22 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Ganancia UX**: usuarios internacionales en waitlist verán el landing en su idioma nativo desde la primera visita, sin fricción. Impacto directo en conversión.
   - **Cero código nuevo**: solo 2 líneas añadidas a la config i18n.
 
+- BUG FIX — Session TTL policy 24h para toda la plataforma (iter55.37, 12 Feb 2026) — operator: *"la sesión en la plataforma por seguridad para todos los miembros solo debe durar 24 horas, ya eso se había implementado anteriormente, revisar"*.
+  - **Root cause**: `auth_utils._create_session` tenía `ttl_hours=168` (7 días) por default. `routes/auth.py::/auth/session` (legacy Emergent OAuth bridge) hardcodeaba `timedelta(days=7)` inline. El Google OAuth callback también llamaba `_create_session(user_id, response, ttl_hours=168)`. Todos → 7 días, incumpliendo política.
+  - **Fix (single source of truth)**:
+    - Nueva constante `SESSION_MAX_HOURS = 24` en `auth_utils.py`.
+    - `_create_session` ahora tiene `ttl_hours=SESSION_MAX_HOURS` default + `session_token` param opcional para el bridge legacy. Clamp `max(1, min(ttl_hours, 24))` — cualquier request con TTL > 24h es silenciosamente clamped, no rechazado (backward-compat).
+    - `/auth/session` legacy refactorizado para llamar `_create_session(..., session_token=data["session_token"])` en vez de inlinear cookie/DB write. DRY completo — 1 sola función controla el TTL de toda la plataforma.
+    - `/auth/google/callback` pasa `ttl_hours=24` explícito.
+    - `/auth/login` (email) usa `ttl = payload.remember_hours if payload.remember_hours else 24` y confía en el clamp interno para requests fraudulentos.
+  - **Cobertura**: TTL cap se aplica en (1) Google OAuth, (2) email login con `remember_hours=None`, (3) email login con `remember_hours=168` (clamped), (4) email login con `remember_hours=6` (respetado), (5) Emergent OAuth bridge legacy.
+  - **Testing**:
+    - Main agent creó `tests/test_iter55_37_session_ttl_24h.py` (4 tests) — todos pass.
+    - **Testing agent verificó independientemente**: 10/10 pass (4 main + 6 regression que añadió sobre `db.user_sessions.expires_at`, `/auth/me` con token fresco/expirado, `/auth/logout` invalidation, invocación directa a `_create_session` con `ttl_hours=999` clamped). Testing report: `/app/test_reports/iteration_56.json`.
+    - Testing agent flagged DRY violation en el bridge → refactor aplicado post-verificación → 10/10 siguen pass.
+  - **Regresión**: 12/12 smoke tests pass. Cero endpoints rotos. `Set-Cookie` header y `db.user_sessions.expires_at` ambos reflejan el clamp.
+  - **Impacto operacional**: usuarios actualmente logeados con sesión pre-fix (7d) mantienen su sesión hasta que expire naturalmente O hasta que hagan logout. Nuevas sesiones tras el redeploy serán 24h automáticamente.
+
 
 
 
