@@ -1235,3 +1235,24 @@ Operator ask: *"agrupar la seccion ingresos en la seccion fondos de la empresa"*
 - Routes: `/admin/company-funds` now renders the hub. Legacy `/admin/revenue` redirects to `/admin/company-funds?tab=revenue` (preserves shared/bookmarked links).
 - Translations: `companyFundsHub.tabs.{funds,revenue}` added to both `es.json` and `en.json`.
 - Smoke E2E: admin session → both tabs render, URL swaps correctly, legacy `/admin/revenue` redirects seamlessly. No new backend tests needed (pure frontend consolidation). Regression: 16/16 iter55.29+30 tests still green.
+
+### iter55.32 — VIP Capital Requests + Admin User Stats page
+Operator ask (12 Feb 2026): (a) replace the cluttered per-currency balance breakdown in `/admin/users` with a "Ver estadísticas" button that opens a dedicated stats page per user showing balance breakdown + net position; (b) add a "Solicitud de Fondos" feature so VIP clients can request working capital from company funds, admin approves with a discount %, and every accumulated order auto-deducts that % until the debt is repaid.
+
+**Feature A · Admin User Stats page**
+- New `GET /api/admin/users/{user_id}/stats` returning `{user, balances, balance_total_usdt, orders:{total_lifetime,count_last_30d,volume_last_30d_usdt}, capital:{active_requests,debt_by_currency,total_debt_usdt}, net_position:{platform_owes_client_usdt,client_owes_platform_usdt,net_usdt,direction}}`.
+- New page `/admin/users/:userId/stats` (component `AdminUserStatsPage.jsx`) with hero net-position card, 3 KPIs, per-currency balance grid, active capital debts (with progress bars), quick-nav to capital-requests hub.
+- `AdminUsers.jsx`: balance column simplified — shows only USDT-equivalent total + a `user-stats-btn-{userId}` button. Removed the inline per-currency breakdown and the ledger-dialog shortcut (superseded by the stats page). Removed unused `AdminUserLedgerDialog` reference.
+
+**Feature B · Capital Requests**
+- New backend router `routes/capital_requests.py` with 5 endpoints (VIP create/list, admin list/approve/reject). Admin approve requires 2FA step-up. Rejection requires ≥5-char reason. Rejected/disbursed requests cannot be re-approved (400).
+- Data model: `capital_requests` collection with `{id, user_id, amount, currency_code, reason, status: pending|disbursed|paid_off|rejected, discount_pct, debt_original, debt_remaining, disbursed_at, reviewed_by, reviewed_at, admin_notes, reject_reason, paid_off_at, repayment_events:[{order_id,amount,at}]}`.
+- **Auto-discount hook** in `services/balances.py::_apply_capital_request_repayment` (called BEFORE the `$inc` to `vip_balances` inside `accumulate_vip_balance`, covering every credit path — P2P confirm, direct 'Completar', backfill). Rules:
+  - Only matches debts where `status='disbursed'` AND `currency_code == order.to_code`.
+  - FIFO: oldest disbursed-first.
+  - Per-order discount cap = oldest active debt's `discount_pct × amount_to`. This budget is then FIFO-distributed across debts (older debts consume budget first). The VIP never pays more than `pct%` per order regardless of how many debts are active.
+  - When `debt_remaining` hits 0 → status flips to `paid_off` + `paid_off_at` set. Repayment event pushed for audit.
+- New frontend `AdminCapitalRequests.jsx` (3rd tab of `AdminCompanyFundsHub` — testid `admin-capital-requests`) with status filter, per-item card, approve dialog (discount% + notes) and reject dialog (reason required). TOTP step-up handled via existing `handleTotpError` retry pattern.
+- New frontend `VipCapitalRequestsView.jsx` (route `/dashboard/capital-requests`, sidebar item `nav-capital-requests` only visible for `role=vip`) with create-request form + list + progress bars for active debts.
+- Translations: `sidebar.client.capitalRequests` + `companyFundsHub.tabs.requests` in both ES/EN.
+- Tests: `backend/tests/test_iter55_32_capital_requests.py` (15/15 green — create/list role-gating, currency validation, approve credits balance, reject locks status, auto-discount partial paydown, paid_off cap, FIFO multi-debt, currency scope, user stats structure, net_position direction, 404 on unknown user, double-approve idempotency). Regression across iter55.29/30/32 + accumulate_idempotent + balance_ledger: 45/45 green. Full E2E validation in `/app/test_reports/iteration_59.json` (backend 100% + frontend 100%).

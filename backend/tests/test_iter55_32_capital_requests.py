@@ -455,6 +455,44 @@ def test_admin_user_stats_net_position_reflects_debt():
         _clear_all_capital_requests_for("user_test_vip01")
 
 
+def test_admin_cannot_double_approve_disbursed_request():
+    """Reviewer note (iter59): after approve → disbursed, a second approve
+    click within a short window (double-click or race) must be rejected with
+    a 400 so we don't credit the VIP twice."""
+    _clear_all_capital_requests_for("user_test_vip01")
+    _clear_vip_balance("user_test_vip01", "USDT32")
+    _upsert_currency("USDT32")
+    try:
+        cr = requests.post(
+            f"{API}/vip/capital-requests", headers=_hdr(VIP_TOKEN),
+            json={"amount": 100.0, "currency_code": "USDT32",
+                  "reason": "double approve guard rail check"},
+        ).json()
+
+        # First approve → 200
+        r1 = requests.post(
+            f"{API}/admin/capital-requests/{cr['id']}/approve", headers=_hdr(ADMIN_TOKEN),
+            json={"discount_pct": 20, "totp_code": _totp()},
+        )
+        assert r1.status_code == 200, r1.text
+
+        # Second approve on the same (already disbursed) request → 400
+        r2 = requests.post(
+            f"{API}/admin/capital-requests/{cr['id']}/approve", headers=_hdr(ADMIN_TOKEN),
+            json={"discount_pct": 20, "totp_code": _totp()},
+        )
+        assert r2.status_code == 400, r2.text
+
+        # Balance credited exactly once (100 USDT32, not 200)
+        u = _db().users.find_one({"user_id": "user_test_vip01"},
+                                   {"_id": 0, "vip_balances": 1})
+        assert float(u["vip_balances"]["USDT32"]) == 100.0
+    finally:
+        _clear_all_capital_requests_for("user_test_vip01")
+        _clear_vip_balance("user_test_vip01", "USDT32")
+        _db().currencies.delete_many({"code": "USDT32"})
+
+
 def test_admin_user_stats_404_for_unknown_user():
     r = requests.get(f"{API}/admin/users/user_does_not_exist_xxx/stats",
                       headers=_hdr(ADMIN_TOKEN))
