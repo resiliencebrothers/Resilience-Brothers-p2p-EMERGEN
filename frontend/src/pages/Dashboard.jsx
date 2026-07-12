@@ -17,6 +17,7 @@ import ProfileView from "@/pages/dashboard/ProfileView";
 import NotificationsView from "@/pages/dashboard/NotificationsView";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
+import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import AppealDialog from "@/components/AppealDialog";
 
 const ROLE_LABELS = {
@@ -109,13 +110,16 @@ export default function Dashboard() {
         </div>
         <NotificationBell />
       </div>
-      <button
-        data-testid={logoutTestid}
-        onClick={logout}
-        className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 hover:border-white/30 px-3 py-2 transition-colors"
-      >
-        <LogOut className="w-4 h-4" /> {t("common.logout")}
-      </button>
+      <div className="flex items-center gap-2">
+        <CompactLanguageSwitcher testid="dashboard-lang-switcher" />
+        <button
+          data-testid={logoutTestid}
+          onClick={logout}
+          className="flex-1 flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 hover:border-white/30 px-3 py-2 transition-colors"
+        >
+          <LogOut className="w-4 h-4" /> {t("common.logout")}
+        </button>
+      </div>
     </div>
   );
 

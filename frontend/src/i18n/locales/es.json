@@ -79,5 +79,33 @@
     "spanish": "Español",
     "english": "English",
     "current": "Idioma actual"
+  },
+  "landing": {
+    "nav": {
+      "about": "Nosotros",
+      "services": "Servicios",
+      "how": "Cómo Funciona",
+      "vip": "VIP"
+    },
+    "header": {
+      "loginButton": "Iniciar Sesión",
+      "enterPanel": "Entrar al Panel"
+    },
+    "hero": {
+      "livePill": "Live Network · 24/7 Settlement",
+      "titleLine1": "Comercio P2P",
+      "titleAccent": "sin fronteras.",
+      "titleLine3": "Sin fricción.",
+      "descriptionA": "Resilience Brothers conecta empresas y clientes mediante una plataforma global de comercio P2P. Intercambia activos digitales, bienes, productos y servicios con herramientas financieras integradas para operaciones",
+      "descriptionHighlight": "más rápidas, seguras y eficientes",
+      "descriptionB": "a escala internacional.",
+      "startButton": "Comenzar con Google",
+      "emailButton": "Iniciar con email",
+      "emailFallback": "¿Tu región bloquea Google? Usa <1>acceso por email</1> — registro instantáneo, sin terceros.",
+      "kpiCountries": "Países",
+      "kpiVipRate": "Tasa preferencial",
+      "kpiSettlement": "Settlement",
+      "kpiP2p": "P2P"
+    }
   }
 }

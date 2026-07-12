@@ -6,6 +6,7 @@ import { ArrowUpRight, ShieldCheck, Globe2, Zap, Activity, Boxes, BadgeCheck, Ch
 import { Button } from "@/components/ui/button";
 import EmailAuthDialog from "@/components/EmailAuthDialog";
 import { useScrollParallax } from "@/hooks/useScrollParallax";
+import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 
 export default function Landing() {
   const { user, login } = useAuth();
@@ -57,13 +58,16 @@ export default function Landing() {
             <a href="#how" className="hover:text-white transition-colors">Cómo Funciona</a>
             <a href="#vip" className="hover:text-white transition-colors">VIP</a>
           </nav>
-          <Button
-            data-testid="header-login-btn"
-            onClick={user ? handleEnter : handleEmailAuth}
-            className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none px-5 h-10"
-          >
-            {user ? "Entrar al Panel" : "Iniciar Sesión"} <ArrowUpRight className="w-4 h-4 ml-1" />
-          </Button>
+          <div className="flex items-center gap-3">
+            <CompactLanguageSwitcher testid="landing-lang-switcher" />
+            <Button
+              data-testid="header-login-btn"
+              onClick={user ? handleEnter : handleEmailAuth}
+              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none px-5 h-10"
+            >
+              {user ? "Entrar al Panel" : "Iniciar Sesión"} <ArrowUpRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
         </div>
       </header>
 

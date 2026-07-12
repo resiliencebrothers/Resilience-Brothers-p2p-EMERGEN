@@ -23,6 +23,7 @@ import AdminQuickDashboard from "@/pages/admin/AdminQuickDashboard";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
+import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 
 export default function AdminPanel() {
   const { user, logout } = useAuth();
@@ -143,9 +144,12 @@ export default function AdminPanel() {
             <NotificationBell />
           </div>
           <div className="mb-2"><PushToggle /></div>
-          <button data-testid="admin-logout" onClick={logout} className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 px-3 py-2">
-            <LogOut className="w-4 h-4" /> Cerrar Sesión
-          </button>
+          <div className="flex items-center gap-2">
+            <CompactLanguageSwitcher testid="admin-lang-switcher" />
+            <button data-testid="admin-logout" onClick={logout} className="flex-1 flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 hover:border-white/30 px-3 py-2 transition-colors">
+              <LogOut className="w-4 h-4" /> {t("common.logout")}
+            </button>
+          </div>
         </div>
       </aside>
 

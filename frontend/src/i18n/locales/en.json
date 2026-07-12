@@ -79,5 +79,33 @@
     "spanish": "Español",
     "english": "English",
     "current": "Current language"
+  },
+  "landing": {
+    "nav": {
+      "about": "About",
+      "services": "Services",
+      "how": "How it works",
+      "vip": "VIP"
+    },
+    "header": {
+      "loginButton": "Sign in",
+      "enterPanel": "Enter Panel"
+    },
+    "hero": {
+      "livePill": "Live Network · 24/7 Settlement",
+      "titleLine1": "Borderless",
+      "titleAccent": "P2P trading.",
+      "titleLine3": "Zero friction.",
+      "descriptionA": "Resilience Brothers connects businesses and clients through a global P2P trading platform. Exchange digital assets, goods, products and services with integrated financial tooling for operations that are",
+      "descriptionHighlight": "faster, safer and more efficient",
+      "descriptionB": "at international scale.",
+      "startButton": "Continue with Google",
+      "emailButton": "Sign in with email",
+      "emailFallback": "Google blocked in your region? Use <1>email access</1> — instant signup, no third parties.",
+      "kpiCountries": "Countries",
+      "kpiVipRate": "Preferential rate",
+      "kpiSettlement": "Settlement",
+      "kpiP2p": "P2P"
+    }
   }
 }

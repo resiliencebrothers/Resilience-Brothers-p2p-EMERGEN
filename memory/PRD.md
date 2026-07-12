@@ -532,6 +532,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Progresivo**: el resto de la app (Landing, Orders, Withdrawals, etc.) sigue en español por default. Cada PR futuro puede añadir keys sin cambios infraestructurales.
   - **Regresión**: 12/12 smoke tests pass. Cero problemas de lint nuevos (los 127 issues existentes son pre-existentes en `command.jsx`, `calendar.jsx` y test files sin jest globals).
 
+- CompactLanguageSwitcher global (iter55.34, 12 Feb 2026) — operator: *"language está dentro de notificaciones por lo que a un usuario que no domine uno de los idiomas le sería difícil encontrarlo"*. Fix crítico de descubribilidad.
+  - **Problema**: el `<LanguageSwitcher>` completo estaba enterrado en Mi Perfil → Notificaciones. Un usuario que no entiende Español no puede navegar hasta ahí.
+  - **Nuevo componente `<CompactLanguageSwitcher>`**: pill de 36px con globo + bandera + código de idioma alternativo (`🇺🇸 EN` cuando estás en ES, `🇪🇸 ES` cuando estás en EN). Click = switch instantáneo. Accessible con `aria-label`, focus ring morado.
+  - **Ubicaciones (siempre visibles)**:
+    - **Landing header** top-right, al lado del CTA "Iniciar Sesión". Anonymous users flip antes de siquiera registrarse.
+    - **Dashboard sidebar footer**, al lado izquierdo del "Sign out".
+    - **Admin sidebar footer**, misma pauta que dashboard.
+  - **El switcher completo** (con radiogroup + descripción) sigue en NotificationsView como opción secundaria "power-user".
+  - **Verificado E2E**: 3 testids presentes en las 3 páginas (`landing-lang-switcher`, `dashboard-lang-switcher`, `admin-lang-switcher`). Screenshots confirman posiciones correctas.
+  - **Ganancia UX**: usuarios pueden cambiar idioma **desde CUALQUIER pantalla**, incluyendo el landing anónimo. Persistencia sigue funcionando via `localStorage`.
+
 
 
 
