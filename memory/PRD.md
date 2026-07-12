@@ -1192,3 +1192,37 @@ See `/app/memory/test_credentials.md` and `/app/auth_testing.md`.
 - `/app/frontend/src/pages/Landing.jsx`, `Dashboard.jsx`, `AdminPanel.jsx` — Main shells.
 - `/app/frontend/src/pages/dashboard/*` and `/admin/*` — Feature views.
 - `/app/design_guidelines.json` — Design system reference.
+
+
+## Changelog — 12 Feb 2026
+
+### iter55.29 — Convertible destination flag (Zelle bug)
+Operator report: *"el sistema permite convertir usdt a zelle y ese cambio no lo tenemos implementado"*. Platform receives Zelle but cannot SEND Zelle, so the conversion dropdown must exclude it.
+
+- Backend `Currency` model + `CurrencyCreate` (in `routes/market.py`) gain `is_convertible_to: bool = True` (default preserves existing behavior).
+- Backend `POST /vip/convert` (in `routes/orders.py`) rejects `to_code` when its currency has `is_convertible_to=False` with a Spanish 400: *"La plataforma no puede enviar X — no está disponible como destino de conversión."*. Missing flag → treated as True (backward compat with pre-flag rows).
+- Backend seed (`routes/admin.py`) creates USD (Zelle) with `is_convertible_to=False` on fresh installs.
+- Frontend `BalanceConverterCard.jsx` filters destination dropdown (`converter-to-option-*`) to only show convertible currencies.
+- Admin UI `AdminCurrencies.jsx`: new Switch `currency-convertible-toggle` inside the edit dialog + new "Convertible" column with amber "Sólo entrada" badge for non-convertible rows.
+- Tests: `backend/tests/test_iter55_29_convertible_destination_flag.py` (6/6 green, includes P2P orders regression guard confirming the flag does NOT affect `/orders`). Full validation in `/app/test_reports/iteration_57.json` (backend 100% + frontend 3/3 flows PASS).
+- **Scope confirmed with operator**: applies ONLY to `/vip/convert`. P2P orders (`/orders`) and withdrawals (`/withdrawals`) are NOT gated by this flag.
+
+### iter55.30 — Self-service password change + Landing i18n coverage
+Two operator asks landed together:
+
+1. **New endpoint** `POST /api/profile/password/change` with `{current_password, new_password, totp_code}` for email/password accounts (`auth_provider="password"`). Rules:
+   - Google users → 403 with Spanish message pointing them to Google account.
+   - Verifies current password with existing bcrypt helper `_verify_password`.
+   - `new_password` min 8 chars (Pydantic); must differ from current.
+   - Requires 2FA setup + valid TOTP (consistent with the email/phone change pattern in `profile.py`).
+   - Persists new bcrypt hash + `password_changed_at` timestamp.
+   - Revokes **all OTHER sessions** of the user (keeps current session alive so the operator's active tab doesn't get bounced mid-action).
+   - Sends security email (`email_service.notify_password_changed`) — fire-and-forget.
+   - Writes `profile.password_changed` entry to `audit_log`.
+   - Also: `GET /profile/me` now exposes `auth_provider` so the frontend can gate the UI branch.
+
+2. **Frontend `SecuritySettings.jsx`**: adds a new `password-change-card` (email/password users) OR `password-change-google` (Google users) below the 2FA panel. Testids: `pwd-current-input`, `pwd-new-input`, `pwd-confirm-input`, `pwd-totp-input`, `pwd-submit-btn`, `pwd-mismatch`, `pwd-needs-2fa-hint`, `pwd-show-toggle`.
+
+3. **Landing.jsx i18n**: the six previously-hardcoded Spanish sections (About / Services / How it works / VIP program / CTA / Footer) are now fully wired to `useTranslation()`. New i18n blocks `landing.about`, `landing.services`, `landing.how`, `landing.vipSection`, `landing.cta`, `landing.footer` added to both `es.json` and `en.json` with full English translations. The language switcher now toggles the ENTIRE landing (no orphan Spanish strings).
+
+- Tests: `backend/tests/test_iter55_30_password_change.py` (10/10 green — happy path, wrong current, same-as-current, too-short, Google forbidden, no-2FA guard, wrong TOTP, session revocation, `/profile/me` exposes auth_provider, audit log). Full validation in `/app/test_reports/iteration_58.json` (backend 100% + frontend 3/3 UI branches PASS).
