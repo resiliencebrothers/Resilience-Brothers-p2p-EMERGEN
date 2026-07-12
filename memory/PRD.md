@@ -487,6 +487,19 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Uso**: en clones nuevos ejecutar `make install-hooks` una sola vez. Bypass emergencia con `git commit --no-verify`. Ejecución manual: `pre-commit run --all-files`.
   - **Costo/beneficio**: 3-15s por commit contra futuras regresiones catastróficas (undefined vars, path count regressions, rate drift). ROI enorme.
 
+- Consolidar 4 secciones people-centric bajo "Usuarios" (iter55.31, 12 Feb 2026) — operator: *"agrupar en una sola sección KYC, Apelaciones y Cambios de datos"*. El sidebar admin tenía 5 items relacionados a personas dispersos; ahora son un solo hub con tabs.
+  - **Antes**: sidebar mostraba `Usuarios · Bloqueos · Apelaciones · KYC · Cambios de datos` (5 slots, 3 dots morados).
+  - **Después**: sidebar muestra `Usuarios (con 4 tabs internas) · Bloqueos`. De 5 items → 2. **13 items totales en el sidebar** (era 16, -19%).
+  - **Nuevo componente `pages/admin/AdminUsersHub.jsx`**: wrapper que renderiza tabs sticky (`Lista · Apelaciones · KYC · Cambios de datos`) con active state morado (`after:` pseudo underline) + focus rings accessible. Sincroniza con `?tab=` query param — deep-linking preserved.
+  - **URL contract**:
+    - `/admin/users` → default `tab=list`
+    - `/admin/users?tab=appeals|kyc|changes` → tab correspondiente
+    - `/admin/appeals`, `/admin/kyc`, `/admin/profile-change-requests` → **legacy redirects** vía `<Navigate replace />`, preservan enlaces existentes (emails, bookmarks) sin romperlos.
+  - **Sidebar dot lógica**: item "Usuarios" enciende el dot morado si hay pendientes de KYC (aprovecha `hasPerm("kyc")` como proxy). Permisos preservados — el hub aparece si el staff tiene AL MENOS UNO de `users/appeals/kyc/profile_changes`.
+  - **Cero cambios en los 4 sub-componentes**: `AdminUsers`, `AdminAppeals`, `AdminKYC`, `AdminProfileChangeRequests` siguen exactamente igual; solo se re-usan dentro del hub.
+  - **Verificado E2E**: 4 tabs presentes, active state correcto (`aria-selected=true`), legacy redirect `/admin/kyc` → `/admin/users?tab=kyc` funciona con la tab KYC ya activa. Smoke suite: 12/12 pass. Lint clean.
+  - **Ganancia UX**: menos context-switching (todo lo relacionado a personas en un lugar), menor cognitive load, sidebar más limpio.
+
 
 
 

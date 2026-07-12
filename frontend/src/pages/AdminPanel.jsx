@@ -1,12 +1,12 @@
-import { NavLink, Routes, Route, useNavigate } from "react-router-dom";
+import { NavLink, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap, MessageSquare, IdCard, UserCog } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
-import AdminUsers from "@/pages/admin/AdminUsers";
+import AdminUsersHub from "@/pages/admin/AdminUsersHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
@@ -19,10 +19,7 @@ import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
 import AdminQuickDashboard from "@/pages/admin/AdminQuickDashboard";
-import AdminAppeals from "@/pages/admin/AdminAppeals";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
-import AdminKYC from "@/pages/admin/AdminKYC";
-import AdminProfileChangeRequests from "@/pages/admin/AdminProfileChangeRequests";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -59,20 +56,12 @@ export default function AdminPanel() {
     ...(hasPerm("products") ? [
       { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
     ] : []),
-    ...(hasPerm("users") ? [
-      { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users" },
+    ...(hasPerm("users") || hasPerm("appeals") || hasPerm("kyc") || hasPerm("profile_changes") ? [
+      { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users",
+        highlight: hasPerm("kyc") },
     ] : []),
     ...(hasPerm("blocked_contacts") ? [
       { to: "/admin/blocked-contacts", icon: Ban, label: "Bloqueos", id: "admin-nav-blocked-contacts" },
-    ] : []),
-    ...(hasPerm("appeals") ? [
-      { to: "/admin/appeals", icon: MessageSquare, label: "Apelaciones", id: "admin-nav-appeals" },
-    ] : []),
-    ...(hasPerm("kyc") ? [
-      { to: "/admin/kyc", icon: IdCard, label: "KYC", id: "admin-nav-kyc", highlight: true },
-    ] : []),
-    ...(hasPerm("profile_changes") ? [
-      { to: "/admin/profile-change-requests", icon: UserCog, label: "Cambios de datos", id: "admin-nav-profile-changes" },
     ] : []),
     ...(hasPerm("company_funds") ? [
       { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
@@ -218,11 +207,12 @@ export default function AdminPanel() {
             <Route path="currencies" element={<AdminCurrencies />} />
             <Route path="rates" element={<AdminRates />} />
             <Route path="products" element={<AdminProducts />} />
-            <Route path="users" element={<AdminUsers />} />
+            <Route path="users" element={<AdminUsersHub />} />
             <Route path="blocked-contacts" element={<AdminBlockedContacts />} />
-            <Route path="appeals" element={<AdminAppeals />} />
-            <Route path="kyc" element={<AdminKYC />} />
-            <Route path="profile-change-requests" element={<AdminProfileChangeRequests />} />
+            {/* iter55.31 — legacy routes redirect into the consolidated hub. */}
+            <Route path="appeals" element={<Navigate to="/admin/users?tab=appeals" replace />} />
+            <Route path="kyc" element={<Navigate to="/admin/users?tab=kyc" replace />} />
+            <Route path="profile-change-requests" element={<Navigate to="/admin/users?tab=changes" replace />} />
             <Route path="security" element={<AdminSecurity />} />
             {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
