@@ -1226,3 +1226,12 @@ Two operator asks landed together:
 3. **Landing.jsx i18n**: the six previously-hardcoded Spanish sections (About / Services / How it works / VIP program / CTA / Footer) are now fully wired to `useTranslation()`. New i18n blocks `landing.about`, `landing.services`, `landing.how`, `landing.vipSection`, `landing.cta`, `landing.footer` added to both `es.json` and `en.json` with full English translations. The language switcher now toggles the ENTIRE landing (no orphan Spanish strings).
 
 - Tests: `backend/tests/test_iter55_30_password_change.py` (10/10 green — happy path, wrong current, same-as-current, too-short, Google forbidden, no-2FA guard, wrong TOTP, session revocation, `/profile/me` exposes auth_provider, audit log). Full validation in `/app/test_reports/iteration_58.json` (backend 100% + frontend 3/3 UI branches PASS).
+
+### iter55.31 — Consolidate "Ingresos" under "Fondos de la Empresa"
+Operator ask: *"agrupar la seccion ingresos en la seccion fondos de la empresa"*. Reduces sidebar clutter following the same pattern as `AdminUsersHub` and `AdminOverviewHub`.
+
+- New `AdminCompanyFundsHub.jsx` with 2 tabs: **Fondos** (default) + **Ingresos**.
+- Sidebar: standalone "Ingresos" nav item removed. "Fondos de la Empresa" now shows chevron `>` (via `hasSubsections: user?.role === "admin"`).
+- Routes: `/admin/company-funds` now renders the hub. Legacy `/admin/revenue` redirects to `/admin/company-funds?tab=revenue` (preserves shared/bookmarked links).
+- Translations: `companyFundsHub.tabs.{funds,revenue}` added to both `es.json` and `en.json`.
+- Smoke E2E: admin session → both tabs render, URL swaps correctly, legacy `/admin/revenue` redirects seamlessly. No new backend tests needed (pure frontend consolidation). Regression: 16/16 iter55.29+30 tests still green.

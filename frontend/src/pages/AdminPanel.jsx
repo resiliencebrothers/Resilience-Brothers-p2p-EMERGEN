@@ -2,7 +2,7 @@ import { NavLink, Routes, Route, Navigate, useNavigate } from "react-router-dom"
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -12,11 +12,10 @@ import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
-import AdminRevenue from "@/pages/admin/AdminRevenue";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import AdminTransactions from "@/pages/admin/AdminTransactions";
 import AdminQueue from "@/pages/admin/AdminQueue";
-import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
+import AdminCompanyFundsHub from "@/pages/admin/AdminCompanyFundsHub";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
@@ -65,13 +64,13 @@ export default function AdminPanel() {
       { to: "/admin/blocked-contacts", icon: Ban, label: t("sidebar.admin.blockedContacts"), id: "admin-nav-blocked-contacts" },
     ] : []),
     ...(hasPerm("company_funds") ? [
-      { to: "/admin/company-funds", icon: Wallet, label: t("sidebar.admin.companyFunds"), id: "admin-nav-company-funds" },
+      { to: "/admin/company-funds", icon: Wallet, label: t("sidebar.admin.companyFunds"), id: "admin-nav-company-funds",
+        hasSubsections: user?.role === "admin" },
     ] : []),
     ...(hasPerm("transactions") ? [
       { to: "/admin/transactions", icon: Receipt, label: t("sidebar.admin.transactions"), id: "admin-nav-transactions", highlight: true },
     ] : []),
     ...(user?.role === "admin" ? [
-      { to: "/admin/revenue", icon: Banknote, label: t("sidebar.admin.revenue"), id: "admin-nav-revenue", highlight: true },
       { to: "/admin/health", icon: Activity, label: t("sidebar.admin.health"), id: "admin-nav-health", highlight: true },
       { to: "/admin/security", icon: ShieldAlert, label: t("sidebar.admin.security"), id: "admin-nav-security", highlight: true },
       { to: "/admin/audit", icon: Shield, label: t("sidebar.admin.audit"), id: "admin-nav-audit" },
@@ -211,7 +210,7 @@ export default function AdminPanel() {
             <Route index element={<AdminOverviewHub />} />
             <Route path="quick" element={<Navigate to="/admin?tab=quick" replace />} />
             <Route path="queue" element={<AdminQueue />} />
-            <Route path="company-funds" element={<AdminCompanyFunds />} />
+            <Route path="company-funds" element={<AdminCompanyFundsHub />} />
             <Route path="orders" element={<AdminOrders />} />
             <Route path="withdrawals" element={<AdminWithdrawals />} />
             <Route path="currencies" element={<AdminCurrencies />} />
@@ -224,7 +223,7 @@ export default function AdminPanel() {
             <Route path="kyc" element={<Navigate to="/admin/users?tab=kyc" replace />} />
             <Route path="profile-change-requests" element={<Navigate to="/admin/users?tab=changes" replace />} />
             <Route path="security" element={<AdminSecurity />} />
-            {user?.role === "admin" && <Route path="revenue" element={<AdminRevenue />} />}
+            {user?.role === "admin" && <Route path="revenue" element={<Navigate to="/admin/company-funds?tab=revenue" replace />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
             {user?.role === "admin" && <Route path="audit" element={<AdminAudit />} />}

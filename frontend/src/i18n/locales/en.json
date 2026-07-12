@@ -74,6 +74,12 @@
       "quick": "Quick view"
     }
   },
+  "companyFundsHub": {
+    "tabs": {
+      "funds": "Funds",
+      "revenue": "Revenue"
+    }
+  },
   "notifications": {
     "pushTitle": "Push notifications",
     "pushDescription": "Get instant alerts when your order is approved, your withdrawal delivered or additional info is requested.",

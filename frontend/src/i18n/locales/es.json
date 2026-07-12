@@ -74,6 +74,12 @@
       "quick": "Vista rápida"
     }
   },
+  "companyFundsHub": {
+    "tabs": {
+      "funds": "Fondos",
+      "revenue": "Ingresos"
+    }
+  },
   "notifications": {
     "pushTitle": "Notificaciones push",
     "pushDescription": "Recibe alertas al instante cuando el equipo apruebe tu orden, entregue tu retiro o solicite información adicional.",
