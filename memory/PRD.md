@@ -543,6 +543,31 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Verificado E2E**: 3 testids presentes en las 3 páginas (`landing-lang-switcher`, `dashboard-lang-switcher`, `admin-lang-switcher`). Screenshots confirman posiciones correctas.
   - **Ganancia UX**: usuarios pueden cambiar idioma **desde CUALQUIER pantalla**, incluyendo el landing anónimo. Persistencia sigue funcionando via `localStorage`.
 
+- Consolidar Resumen + Vista Rápida + Landing hero en inglés (iter55.35, 12 Feb 2026) — dos entregas en el mismo ciclo:
+
+  **A) Consolidación admin: Resumen general + Vista rápida bajo un solo hub**
+  - Operator: *"agrupar la sección resumen y vista rápida en una sola sección ya que tienen el mismo objetivo"*.
+  - Ambos son dashboards "de un vistazo": Resumen general (`AdminOverview`) = stats + settings + tabla KPIs. Vista rápida (`AdminQuickDashboard`) = 4 tarjetas móvil-friendly con órdenes/retiros pendientes.
+  - **Nuevo componente `AdminOverviewHub.jsx`**: tabs sticky (`Resumen general · Vista rápida`) con misma UX que AdminUsersHub — underline morada `after:`, focus rings, tabular-nums.
+  - **URL contract**: `/admin` → `?tab=general` (default). Legacy `/admin/quick` → `<Navigate to="/admin?tab=quick">`.
+  - **Sidebar más limpio**: "Vista Rápida" ya no aparece — solo "Resumen" con chevron `>`. Sidebar admin pasa de 13 → **12 items** (**-25%** acumulado desde iter55.31 con la primera consolidación).
+  - **Reutilización pura**: `AdminOverview` y `AdminQuickDashboard` no cambian; se re-usan verbatim dentro del hub.
+  - **i18n**: keys `overviewHub.tabs.general/quick` añadidas a `es.json` + `en.json`.
+
+  **B) Landing hero completo en inglés (i18n extension)**
+  - **Nav superior**: About / Services / How it works / VIP
+  - **Header CTAs**: `Sign in` / `Enter Panel`
+  - **Hero title**: "Borderless P2P trading. Zero friction." (el `titleAccent` del medio se preserva en morado)
+  - **Descripción completa**: 3 partes concatenadas (`descriptionA`, `descriptionHighlight`, `descriptionB`) para respetar el enfatizado en blanco del texto medio.
+  - **CTAs**: `Continue with Google` / `Sign in with email` / `Google blocked in your region? Use email access...` (usando `<Trans>` con `components={[<button ...>]}` para el link inline).
+  - **KPIs**: `+12 Countries · VIP Preferential rate · 24h Settlement · 100% P2P`.
+  - **Progresivo**: el resto del landing (secciones About, How it works, VIP) sigue en español — impacto immediato ya es enorme porque el hero es lo que ve el 90% de visitantes internacionales.
+
+  **Verificado E2E**:
+  - Screenshot admin ES: 5 tarjetas KPI en "Resumen general", 4 tarjetas móvil-first en "Vista rápida". Legacy `/admin/quick` redirige a `?tab=quick` con `aria-selected=true`.
+  - Screenshot landing EN: título "Borderless P2P trading. Zero friction." + descripción y KPIs en inglés + switcher 🇪🇸 ES visible top-right para volver.
+  - 12/12 smoke tests pass · ESLint clean.
+
 
 
 

@@ -2,16 +2,16 @@ import { NavLink, Routes, Route, Navigate, useNavigate } from "react-router-dom"
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap, ChevronRight } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
 import AdminUsersHub from "@/pages/admin/AdminUsersHub";
+import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
-import AdminOverview from "@/pages/admin/AdminOverview";
 import AdminRevenue from "@/pages/admin/AdminRevenue";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import AdminTransactions from "@/pages/admin/AdminTransactions";
@@ -19,7 +19,6 @@ import AdminQueue from "@/pages/admin/AdminQueue";
 import AdminCompanyFunds from "@/pages/admin/AdminCompanyFunds";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
-import AdminQuickDashboard from "@/pages/admin/AdminQuickDashboard";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
@@ -39,9 +38,8 @@ export default function AdminPanel() {
   const hasPerm = (code) => isAdmin || userPerms.length === 0 || userPerms.includes(code);
 
   const items = [
-    { to: "/admin", icon: ListChecks, label: t("sidebar.admin.overview"), end: true, id: "admin-nav-overview" },
+    { to: "/admin", icon: ListChecks, label: t("sidebar.admin.overview"), end: true, id: "admin-nav-overview", hasSubsections: true },
     ...(hasPerm("quick_view") ? [
-      { to: "/admin/quick", icon: Zap, label: t("sidebar.admin.quick"), id: "admin-nav-quick", highlight: true },
       { to: "/admin/queue", icon: Inbox, label: t("sidebar.admin.queue"), id: "admin-nav-queue", highlight: true },
     ] : []),
     ...(hasPerm("orders") ? [
@@ -210,8 +208,8 @@ export default function AdminPanel() {
 
         <div className="p-6 lg:p-10">
           <Routes>
-            <Route index element={<AdminOverview />} />
-            <Route path="quick" element={<AdminQuickDashboard />} />
+            <Route index element={<AdminOverviewHub />} />
+            <Route path="quick" element={<Navigate to="/admin?tab=quick" replace />} />
             <Route path="queue" element={<AdminQueue />} />
             <Route path="company-funds" element={<AdminCompanyFunds />} />
             <Route path="orders" element={<AdminOrders />} />

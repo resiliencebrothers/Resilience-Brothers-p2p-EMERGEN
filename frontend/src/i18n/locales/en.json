@@ -68,6 +68,12 @@
       "changes": "Profile changes"
     }
   },
+  "overviewHub": {
+    "tabs": {
+      "general": "General",
+      "quick": "Quick view"
+    }
+  },
   "notifications": {
     "pushTitle": "Push notifications",
     "pushDescription": "Get instant alerts when your order is approved, your withdrawal delivered or additional info is requested.",

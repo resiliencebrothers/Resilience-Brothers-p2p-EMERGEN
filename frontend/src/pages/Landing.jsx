@@ -1,6 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { toast } from "sonner";
 import { ArrowUpRight, ShieldCheck, Globe2, Zap, Activity, Boxes, BadgeCheck, ChevronRight, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ export default function Landing() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const [emailAuthOpen, setEmailAuthOpen] = useState(false);
   const [prefillEmail, setPrefillEmail] = useState("");
   const scrollY = useScrollParallax();
@@ -53,10 +55,10 @@ export default function Landing() {
             </div>
           </div>
           <nav className="hidden md:flex items-center gap-8 micro-label text-neutral-400">
-            <a href="#about" className="hover:text-white transition-colors">Nosotros</a>
-            <a href="#services" className="hover:text-white transition-colors">Servicios</a>
-            <a href="#how" className="hover:text-white transition-colors">Cómo Funciona</a>
-            <a href="#vip" className="hover:text-white transition-colors">VIP</a>
+            <a href="#about" className="hover:text-white transition-colors">{t("landing.nav.about")}</a>
+            <a href="#services" className="hover:text-white transition-colors">{t("landing.nav.services")}</a>
+            <a href="#how" className="hover:text-white transition-colors">{t("landing.nav.how")}</a>
+            <a href="#vip" className="hover:text-white transition-colors">{t("landing.nav.vip")}</a>
           </nav>
           <div className="flex items-center gap-3">
             <CompactLanguageSwitcher testid="landing-lang-switcher" />
@@ -65,7 +67,7 @@ export default function Landing() {
               onClick={user ? handleEnter : handleEmailAuth}
               className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none px-5 h-10"
             >
-              {user ? "Entrar al Panel" : "Iniciar Sesión"} <ArrowUpRight className="w-4 h-4 ml-1" />
+              {user ? t("landing.header.enterPanel") : t("landing.header.loginButton")} <ArrowUpRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
         </div>
@@ -85,17 +87,17 @@ export default function Landing() {
           <div className="lg:col-span-8 fade-up">
             <div className="flex items-center gap-3 mb-6">
               <span className="w-2 h-2 bg-[#22C55E] rounded-full pulse-dot"></span>
-              <span className="micro-label text-neutral-400">Live Network · 24/7 Settlement</span>
+              <span className="micro-label text-neutral-400">{t("landing.hero.livePill")}</span>
             </div>
             <h1 className="font-display text-4xl sm:text-5xl lg:text-7xl leading-[0.95] mb-6">
-              Comercio P2P<br />
-              <span className="text-[#8B5CF6]">sin fronteras.</span><br />
-              Sin fricción.
+              {t("landing.hero.titleLine1")}<br />
+              <span className="text-[#8B5CF6]">{t("landing.hero.titleAccent")}</span><br />
+              {t("landing.hero.titleLine3")}
             </h1>
             <p className="text-neutral-300 text-base md:text-lg max-w-2xl leading-relaxed mb-8">
-              Resilience Brothers conecta empresas y clientes mediante una plataforma global de comercio P2P. Intercambia
-              activos digitales, bienes, productos y servicios con herramientas financieras integradas para operaciones
-              <span className="text-white"> más rápidas, seguras y eficientes </span> a escala internacional.
+              {t("landing.hero.descriptionA")}
+              <span className="text-white"> {t("landing.hero.descriptionHighlight")} </span>
+              {t("landing.hero.descriptionB")}
             </p>
             <div className="flex flex-wrap items-center gap-4">
               <Button
@@ -103,7 +105,7 @@ export default function Landing() {
                 onClick={handleEnter}
                 className="inline-flex items-center justify-center bg-violet-600 hover:bg-violet-500 text-white font-medium text-base py-3 px-8 h-14 rounded-full transition-all duration-300 shadow-[0_4px_14px_0_rgba(139,92,246,0.39)] hover:shadow-[0_6px_20px_rgba(139,92,246,0.5)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#14101F]"
               >
-                Comenzar con Google <ChevronRight className="w-5 h-5 ml-1" />
+                {t("landing.hero.startButton")} <ChevronRight className="w-5 h-5 ml-1" />
               </Button>
               <Button
                 data-testid="hero-email-btn"
@@ -111,19 +113,24 @@ export default function Landing() {
                 variant="ghost"
                 className="inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-8 h-14 rounded-full transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#14101F]"
               >
-                <Mail className="w-4 h-4 mr-2" /> Iniciar con email
+                <Mail className="w-4 h-4 mr-2" /> {t("landing.hero.emailButton")}
               </Button>
             </div>
             <p className="text-[0.7rem] text-neutral-500 mt-3 max-w-md">
-              ¿Tu región bloquea Google? Usa <button onClick={handleEmailAuth} className="text-[#8B5CF6] hover:underline" data-testid="hero-email-link">acceso por email</button> — registro instantáneo, sin terceros.
+              <Trans
+                i18nKey="landing.hero.emailFallback"
+                components={[
+                  <button key="email-fallback-link" onClick={handleEmailAuth} className="text-[#8B5CF6] hover:underline" data-testid="hero-email-link" />,
+                ]}
+              />
             </p>
           </div>
           <div className="lg:col-span-4 grid grid-cols-2 gap-4 mt-8 lg:mt-0">
             {[
-              { v: "+12", l: "Países" },
-              { v: "VIP", l: "Tasa preferencial" },
-              { v: "24h", l: "Settlement" },
-              { v: "100%", l: "P2P" },
+              { v: "+12", l: t("landing.hero.kpiCountries") },
+              { v: "VIP", l: t("landing.hero.kpiVipRate") },
+              { v: "24h", l: t("landing.hero.kpiSettlement") },
+              { v: "100%", l: t("landing.hero.kpiP2p") },
             ].map((s) => (
               <div key={s.l} className="tactile-card p-4">
                 <div className="font-display text-2xl text-[#8B5CF6]">{s.v}</div>

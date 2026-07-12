@@ -68,6 +68,12 @@
       "changes": "Cambios de datos"
     }
   },
+  "overviewHub": {
+    "tabs": {
+      "general": "Resumen general",
+      "quick": "Vista rápida"
+    }
+  },
   "notifications": {
     "pushTitle": "Notificaciones push",
     "pushDescription": "Recibe alertas al instante cuando el equipo apruebe tu orden, entregue tu retiro o solicite información adicional.",
