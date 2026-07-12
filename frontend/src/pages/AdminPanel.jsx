@@ -1,7 +1,8 @@
 import { NavLink, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Banknote, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, Zap, ChevronRight } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -26,6 +27,7 @@ import NotificationBell from "@/components/NotificationBell";
 export default function AdminPanel() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const isStaff = user?.role === "admin" || user?.role === "employee";
   const isAdmin = user?.role === "admin";
@@ -36,44 +38,44 @@ export default function AdminPanel() {
   const hasPerm = (code) => isAdmin || userPerms.length === 0 || userPerms.includes(code);
 
   const items = [
-    { to: "/admin", icon: ListChecks, label: "Resumen", end: true, id: "admin-nav-overview" },
+    { to: "/admin", icon: ListChecks, label: t("sidebar.admin.overview"), end: true, id: "admin-nav-overview" },
     ...(hasPerm("quick_view") ? [
-      { to: "/admin/quick", icon: Zap, label: "Vista Rápida", id: "admin-nav-quick", highlight: true },
-      { to: "/admin/queue", icon: Inbox, label: "Mi Cola", id: "admin-nav-queue", highlight: true },
+      { to: "/admin/quick", icon: Zap, label: t("sidebar.admin.quick"), id: "admin-nav-quick", highlight: true },
+      { to: "/admin/queue", icon: Inbox, label: t("sidebar.admin.queue"), id: "admin-nav-queue", highlight: true },
     ] : []),
     ...(hasPerm("orders") ? [
-      { to: "/admin/orders", icon: ListChecks, label: "Órdenes", id: "admin-nav-orders" },
+      { to: "/admin/orders", icon: ListChecks, label: t("sidebar.admin.orders"), id: "admin-nav-orders" },
     ] : []),
     ...(hasPerm("withdrawals") ? [
-      { to: "/admin/withdrawals", icon: ArrowDownToLine, label: "Retiros", id: "admin-nav-withdrawals" },
+      { to: "/admin/withdrawals", icon: ArrowDownToLine, label: t("sidebar.admin.withdrawals"), id: "admin-nav-withdrawals" },
     ] : []),
     ...(hasPerm("currencies") ? [
-      { to: "/admin/currencies", icon: Coins, label: "Monedas", id: "admin-nav-currencies" },
+      { to: "/admin/currencies", icon: Coins, label: t("sidebar.admin.currencies"), id: "admin-nav-currencies" },
     ] : []),
     ...(hasPerm("rates") ? [
-      { to: "/admin/rates", icon: TrendingUp, label: "Tasas", id: "admin-nav-rates" },
+      { to: "/admin/rates", icon: TrendingUp, label: t("sidebar.admin.rates"), id: "admin-nav-rates" },
     ] : []),
     ...(hasPerm("products") ? [
-      { to: "/admin/products", icon: Package, label: "Productos", id: "admin-nav-products" },
+      { to: "/admin/products", icon: Package, label: t("sidebar.admin.products"), id: "admin-nav-products" },
     ] : []),
     ...(hasPerm("users") || hasPerm("appeals") || hasPerm("kyc") || hasPerm("profile_changes") ? [
-      { to: "/admin/users", icon: Users, label: "Usuarios", id: "admin-nav-users",
-        highlight: hasPerm("kyc") },
+      { to: "/admin/users", icon: Users, label: t("sidebar.admin.users"), id: "admin-nav-users",
+        highlight: hasPerm("kyc"), hasSubsections: true },
     ] : []),
     ...(hasPerm("blocked_contacts") ? [
-      { to: "/admin/blocked-contacts", icon: Ban, label: "Bloqueos", id: "admin-nav-blocked-contacts" },
+      { to: "/admin/blocked-contacts", icon: Ban, label: t("sidebar.admin.blockedContacts"), id: "admin-nav-blocked-contacts" },
     ] : []),
     ...(hasPerm("company_funds") ? [
-      { to: "/admin/company-funds", icon: Wallet, label: "Fondo Empresa", id: "admin-nav-company-funds" },
+      { to: "/admin/company-funds", icon: Wallet, label: t("sidebar.admin.companyFunds"), id: "admin-nav-company-funds" },
     ] : []),
     ...(hasPerm("transactions") ? [
-      { to: "/admin/transactions", icon: Receipt, label: "Transacciones", id: "admin-nav-transactions", highlight: true },
+      { to: "/admin/transactions", icon: Receipt, label: t("sidebar.admin.transactions"), id: "admin-nav-transactions", highlight: true },
     ] : []),
     ...(user?.role === "admin" ? [
-      { to: "/admin/revenue", icon: Banknote, label: "Ingresos", id: "admin-nav-revenue", highlight: true },
-      { to: "/admin/health", icon: Activity, label: "Salud", id: "admin-nav-health", highlight: true },
-      { to: "/admin/security", icon: ShieldAlert, label: "Seguridad", id: "admin-nav-security", highlight: true },
-      { to: "/admin/audit", icon: Shield, label: "Auditoría", id: "admin-nav-audit" },
+      { to: "/admin/revenue", icon: Banknote, label: t("sidebar.admin.revenue"), id: "admin-nav-revenue", highlight: true },
+      { to: "/admin/health", icon: Activity, label: t("sidebar.admin.health"), id: "admin-nav-health", highlight: true },
+      { to: "/admin/security", icon: ShieldAlert, label: t("sidebar.admin.security"), id: "admin-nav-security", highlight: true },
+      { to: "/admin/audit", icon: Shield, label: t("sidebar.admin.audit"), id: "admin-nav-audit" },
     ] : []),
   ];
 
@@ -96,9 +98,15 @@ export default function AdminPanel() {
           className={navLinkClass}
         >
           <it.icon className="w-4 h-4" />
-          {it.label}
+          <span className="flex-1">{it.label}</span>
           {it.highlight && (
-            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.8)]" title="Función destacada" />
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.8)]" title="Función destacada" />
+          )}
+          {it.hasSubsections && (
+            <ChevronRight
+              className="w-3.5 h-3.5 text-white/30 group-hover:text-violet-300 transition-colors"
+              aria-label="Contiene subsecciones"
+            />
           )}
         </NavLink>
       ))}
@@ -107,7 +115,7 @@ export default function AdminPanel() {
         onClick={() => { onItemClick?.(); navigate("/dashboard"); }}
         className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-neutral-500 hover:text-white mt-4"
       >
-        <ArrowLeft className="w-4 h-4" /> Volver al cliente
+        <ArrowLeft className="w-4 h-4" /> {t("sidebar.admin.backToClient")}
       </button>
     </>
   );

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Sentry from "@sentry/react";
 import "@/index.css";
+import "@/i18n";
 import App from "@/App";
 import { registerSW } from "@/sw-register";
 import { initSentry } from "@/sentry";

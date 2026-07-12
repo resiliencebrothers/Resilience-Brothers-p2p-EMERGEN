@@ -509,6 +509,29 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Verificado E2E**: 4 tabs detectados por testid, tab Notificaciones activa muestra el widget completo. Screenshot muestra sidebar limpio, tabs con underline morado, card premium.
   - **Ganancia UX**: notificaciones push ahora descubribles (era invisible al 80% de usuarios en el footer). Sidebar del cliente aún más limpio. Ratio de activación push debería subir.
 
+- Chevrons de "sección agrupada" + i18n Español/Inglés (iter55.33, 12 Feb 2026) — dos entregas en el mismo ciclo:
+
+  **A) Chevrons `>` en items con sub-secciones**:
+  - Nuevo flag `hasSubsections: true` en el data de sidebar navigation. Los items con este flag muestran una `<ChevronRight>` sutil (`text-white/30`, hover → `violet-300`, aria-label accessible) que indica visualmente que hay tabs internas.
+  - Aplicado a: **Usuarios** en admin (4 tabs) + **Mi Perfil** en cliente (4 tabs).
+  - Mismo patrón de UX que las apps mobile modernas (screenshot referenciado por operator).
+
+  **B) i18n Español/Inglés — infraestructura completa + parcial en surfaces visibles**:
+  - **Dependencias nuevas**: `i18next@26.3.6`, `react-i18next@17.0.9`, `i18next-browser-languagedetector@8.2.1`.
+  - **`src/i18n/index.js`**: init con `LanguageDetector` (localStorage → `resilience_lang` → browser), `fallbackLng: es`, supported `["es", "en"]`.
+  - **Archivos de traducción**: `src/i18n/locales/es.json` y `en.json` — namespaces: `common`, `sidebar.client`, `sidebar.admin`, `profile.tabs`, `usersHub.tabs`, `notifications`, `language`.
+  - **Nuevo `<LanguageSwitcher>`** en `components/LanguageSwitcher.jsx` (pill radiogroup con banderas 🇪🇸/🇺🇸, active state morado con checkmark, aria-checked, focus rings) — montado dentro de `NotificationsView` como card independiente titulada "Language / Idioma".
+  - **Superficies traducidas** (parcial-first, alta visibilidad primero):
+    - Sidebar cliente completo (`Mi Perfil`, `Resumen`, `Intercambio`, `Mis Órdenes`, `Mi Historial`, `Saldo y Retiros`, `Marketplace`, `Panel Admin/Equipo`, `Cerrar Sesión`).
+    - Sidebar admin completo (Resumen, Vista Rápida, Mi Cola, Órdenes, Retiros, Monedas, Tasas, Productos, Usuarios, Bloqueos, Fondo Empresa, Transacciones, Ingresos, Salud, Seguridad, Auditoría, Volver al cliente).
+    - Tabs de "Mi Perfil" (`ProfileSectionTabs`): Personal data / Verification / Security / Notifications.
+    - Tabs del hub `AdminUsersHub`: List / Appeals / KYC / Profile changes.
+    - Notifications view completa (título + descripción + hint iOS).
+  - **Import point**: `src/index.js` importa `@/i18n` antes de `App` para inicialización temprana.
+  - **Persistencia verificada**: al hacer switch a English y recargar, sidebar sigue en English (localStorage read at boot).
+  - **Progresivo**: el resto de la app (Landing, Orders, Withdrawals, etc.) sigue en español por default. Cada PR futuro puede añadir keys sin cambios infraestructurales.
+  - **Regresión**: 12/12 smoke tests pass. Cero problemas de lint nuevos (los 127 issues existentes son pre-existentes en `command.jsx`, `calendar.jsx` y test files sin jest globals).
+
 
 
 

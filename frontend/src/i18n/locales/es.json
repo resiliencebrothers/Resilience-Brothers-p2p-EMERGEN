@@ -1,0 +1,83 @@
+{
+  "common": {
+    "loading": "Cargando...",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "close": "Cerrar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "confirm": "Confirmar",
+    "back": "Volver",
+    "next": "Siguiente",
+    "search": "Buscar",
+    "logout": "Cerrar Sesión",
+    "actions": "Acciones",
+    "status": "Estado",
+    "amount": "Monto",
+    "currency": "Moneda",
+    "date": "Fecha",
+    "yes": "Sí",
+    "no": "No"
+  },
+  "sidebar": {
+    "client": {
+      "profile": "Mi Perfil",
+      "overview": "Resumen",
+      "exchange": "Intercambio",
+      "orders": "Mis Órdenes",
+      "history": "Mi Historial",
+      "vip": "Saldo y Retiros",
+      "marketplace": "Marketplace",
+      "adminPanel": "Panel Admin",
+      "teamPanel": "Panel Equipo"
+    },
+    "admin": {
+      "overview": "Resumen",
+      "quick": "Vista Rápida",
+      "queue": "Mi Cola",
+      "orders": "Órdenes",
+      "withdrawals": "Retiros",
+      "currencies": "Monedas",
+      "rates": "Tasas",
+      "products": "Productos",
+      "users": "Usuarios",
+      "blockedContacts": "Bloqueos",
+      "companyFunds": "Fondo Empresa",
+      "transactions": "Transacciones",
+      "revenue": "Ingresos",
+      "health": "Salud",
+      "security": "Seguridad",
+      "audit": "Auditoría",
+      "backToClient": "Volver al cliente"
+    }
+  },
+  "profile": {
+    "tabs": {
+      "personal": "Datos personales",
+      "kyc": "Verificación",
+      "security": "Seguridad",
+      "notifications": "Notificaciones"
+    },
+    "breadcrumb": "/ Mi Perfil"
+  },
+  "usersHub": {
+    "tabs": {
+      "list": "Lista",
+      "appeals": "Apelaciones",
+      "kyc": "KYC",
+      "changes": "Cambios de datos"
+    }
+  },
+  "notifications": {
+    "pushTitle": "Notificaciones push",
+    "pushDescription": "Recibe alertas al instante cuando el equipo apruebe tu orden, entregue tu retiro o solicite información adicional.",
+    "iosHint": "Las notificaciones funcionan aunque cierres esta pestaña. En iOS, necesitas <strong>añadir la web a tu pantalla de inicio</strong> desde Safari (icono de compartir → &ldquo;Añadir a pantalla de inicio&rdquo;) y luego activarlas desde la app instalada."
+  },
+  "language": {
+    "label": "Idioma",
+    "description": "La interfaz cambia inmediatamente. Los reportes descargables mantienen el idioma con el que se generaron.",
+    "spanish": "Español",
+    "english": "English",
+    "current": "Idioma actual"
+  }
+}

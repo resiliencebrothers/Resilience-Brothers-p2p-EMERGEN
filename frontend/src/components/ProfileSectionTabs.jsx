@@ -12,20 +12,21 @@
  * still work exactly as before.
  */
 import { NavLink } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { UserCircle, IdCard, ShieldCheck, Bell } from "lucide-react";
 
-const TABS = [
-  { to: "/dashboard/profile",       icon: UserCircle,  label: "Datos personales", end: true, testid: "profile-tab-datos" },
-  { to: "/dashboard/kyc",           icon: IdCard,      label: "Verificación",     end: true, testid: "profile-tab-kyc" },
-  { to: "/dashboard/security",      icon: ShieldCheck, label: "Seguridad",        end: true, testid: "profile-tab-security" },
-  { to: "/dashboard/notifications", icon: Bell,        label: "Notificaciones",   end: true, testid: "profile-tab-notifications" },
-];
-
 export default function ProfileSectionTabs() {
+  const { t } = useTranslation();
+  const TABS = [
+    { to: "/dashboard/profile",       icon: UserCircle,  label: t("profile.tabs.personal"),      end: true, testid: "profile-tab-datos" },
+    { to: "/dashboard/kyc",           icon: IdCard,      label: t("profile.tabs.kyc"),           end: true, testid: "profile-tab-kyc" },
+    { to: "/dashboard/security",      icon: ShieldCheck, label: t("profile.tabs.security"),      end: true, testid: "profile-tab-security" },
+    { to: "/dashboard/notifications", icon: Bell,        label: t("profile.tabs.notifications"), end: true, testid: "profile-tab-notifications" },
+  ];
   return (
     <div className="mb-6" data-testid="profile-section-tabs">
       <div className="text-[11px] font-semibold tracking-[0.22em] text-violet-400 uppercase mb-2">
-        / Mi Perfil
+        {t("profile.breadcrumb")}
       </div>
       <nav
         className="flex items-center gap-1 border-b border-white/10 overflow-x-auto scrollbar-none"

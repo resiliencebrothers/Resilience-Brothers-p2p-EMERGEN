@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -27,6 +28,7 @@ const ROLE_LABELS = {
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const isStaff = user?.role === "admin" || user?.role === "employee";
   // iter14: any non-staff client (normal + vip) may see balance & withdraw panel.
@@ -39,14 +41,14 @@ export default function Dashboard() {
   // Verificación y Seguridad quedan AGRUPADAS dentro de Mi Perfil como
   // tabs internos (ver ProfileSectionTabs) — ya no aparecen en el sidebar.
   const navItems = [
-    { to: "/dashboard/profile", icon: UserCircle, label: "Mi Perfil", id: "nav-profile" },
-    { to: "/dashboard", icon: LayoutDashboard, label: "Resumen", end: true, id: "nav-overview" },
-    { to: "/dashboard/exchange", icon: ArrowLeftRight, label: "Intercambio", id: "nav-exchange" },
-    { to: "/dashboard/orders", icon: ListOrdered, label: "Mis Órdenes", id: "nav-orders" },
-    { to: "/dashboard/transactions", icon: Receipt, label: "Mi Historial", id: "nav-transactions" },
+    { to: "/dashboard/profile", icon: UserCircle, label: t("sidebar.client.profile"), id: "nav-profile", hasSubsections: true },
+    { to: "/dashboard", icon: LayoutDashboard, label: t("sidebar.client.overview"), end: true, id: "nav-overview" },
+    { to: "/dashboard/exchange", icon: ArrowLeftRight, label: t("sidebar.client.exchange"), id: "nav-exchange" },
+    { to: "/dashboard/orders", icon: ListOrdered, label: t("sidebar.client.orders"), id: "nav-orders" },
+    { to: "/dashboard/transactions", icon: Receipt, label: t("sidebar.client.history"), id: "nav-transactions" },
     ...(isClient ? [
-      { to: "/dashboard/vip", icon: Star, label: "Saldo y Retiros", id: "nav-vip" },
-      { to: "/dashboard/marketplace", icon: Boxes, label: "Marketplace", id: "nav-marketplace" },
+      { to: "/dashboard/vip", icon: Star, label: t("sidebar.client.vip"), id: "nav-vip" },
+      { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
     ] : []),
   ];
 
@@ -69,7 +71,13 @@ export default function Dashboard() {
           className={navLinkClass}
         >
           <item.icon className="w-4 h-4" />
-          {item.label}
+          <span className="flex-1">{item.label}</span>
+          {item.hasSubsections && (
+            <ChevronRight
+              className="w-3.5 h-3.5 text-white/30 group-hover:text-violet-300 transition-colors"
+              aria-label="Contiene subsecciones"
+            />
+          )}
         </NavLink>
       ))}
       {isStaff && (
@@ -79,7 +87,7 @@ export default function Dashboard() {
           className="w-full flex items-center gap-3 px-3 py-2.5 text-sm transition-colors mt-4 border border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10"
         >
           <Shield className="w-4 h-4" />
-          {user?.role === "admin" ? "Panel Admin" : "Panel Equipo"}
+          {user?.role === "admin" ? t("sidebar.client.adminPanel") : t("sidebar.client.teamPanel")}
         </button>
       )}
     </>
@@ -106,7 +114,7 @@ export default function Dashboard() {
         onClick={logout}
         className="w-full flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 hover:border-white/30 px-3 py-2 transition-colors"
       >
-        <LogOut className="w-4 h-4" /> Cerrar Sesión
+        <LogOut className="w-4 h-4" /> {t("common.logout")}
       </button>
     </div>
   );

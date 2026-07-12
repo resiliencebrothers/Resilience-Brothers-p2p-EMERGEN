@@ -1,13 +1,15 @@
+import { useTranslation, Trans } from "react-i18next";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import PushToggle from "@/components/PushToggle";
 import { Bell, Info } from "lucide-react";
 
 /**
- * iter55.32 — Notifications tab inside "Mi Perfil". Elevates the push toggle
- * from a tiny sidebar-footer widget to a proper account page. Discoverable,
- * with context text so users understand what they're enabling.
+ * iter55.32 — Notifications tab inside "Mi Perfil".
+ * iter55.33 — Also hosts the language switcher (Preferencias del cliente).
  */
 export default function NotificationsView() {
+  const { t } = useTranslation();
   return (
     <div className="space-y-6" data-testid="notifications-view">
       <ProfileSectionTabs />
@@ -18,9 +20,9 @@ export default function NotificationsView() {
             <Bell className="w-5 h-5 text-violet-400" />
           </div>
           <div>
-            <h2 className="font-display text-xl">Notificaciones push</h2>
+            <h2 className="font-display text-xl">{t("notifications.pushTitle")}</h2>
             <p className="text-sm text-neutral-500 mt-1">
-              Recibe alertas al instante cuando el equipo apruebe tu orden, entregue tu retiro o solicite información adicional.
+              {t("notifications.pushDescription")}
             </p>
           </div>
         </div>
@@ -31,13 +33,14 @@ export default function NotificationsView() {
           <div className="flex items-start gap-2 text-xs text-neutral-500 leading-relaxed">
             <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-violet-400/70" />
             <span>
-              Las notificaciones funcionan aunque cierres esta pestaña. En iOS,
-              necesitas <strong>añadir la web a tu pantalla de inicio</strong> desde
-              Safari (icono de compartir → &ldquo;Añadir a pantalla de inicio&rdquo;) y luego
-              activarlas desde la app instalada.
+              <Trans i18nKey="notifications.iosHint" />
             </span>
           </div>
         </div>
+      </div>
+
+      <div className="tactile-card p-6" data-testid="language-block">
+        <LanguageSwitcher />
       </div>
     </div>
   );

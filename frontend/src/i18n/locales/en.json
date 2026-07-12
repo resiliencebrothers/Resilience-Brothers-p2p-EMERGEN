@@ -1,0 +1,83 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "delete": "Delete",
+    "edit": "Edit",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "search": "Search",
+    "logout": "Sign out",
+    "actions": "Actions",
+    "status": "Status",
+    "amount": "Amount",
+    "currency": "Currency",
+    "date": "Date",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "sidebar": {
+    "client": {
+      "profile": "My Profile",
+      "overview": "Overview",
+      "exchange": "Exchange",
+      "orders": "My Orders",
+      "history": "History",
+      "vip": "Balance & Withdrawals",
+      "marketplace": "Marketplace",
+      "adminPanel": "Admin Panel",
+      "teamPanel": "Team Panel"
+    },
+    "admin": {
+      "overview": "Overview",
+      "quick": "Quick View",
+      "queue": "My Queue",
+      "orders": "Orders",
+      "withdrawals": "Withdrawals",
+      "currencies": "Currencies",
+      "rates": "Rates",
+      "products": "Products",
+      "users": "Users",
+      "blockedContacts": "Blocked",
+      "companyFunds": "Company Funds",
+      "transactions": "Transactions",
+      "revenue": "Revenue",
+      "health": "Health",
+      "security": "Security",
+      "audit": "Audit",
+      "backToClient": "Back to client"
+    }
+  },
+  "profile": {
+    "tabs": {
+      "personal": "Personal data",
+      "kyc": "Verification",
+      "security": "Security",
+      "notifications": "Notifications"
+    },
+    "breadcrumb": "/ My Profile"
+  },
+  "usersHub": {
+    "tabs": {
+      "list": "List",
+      "appeals": "Appeals",
+      "kyc": "KYC",
+      "changes": "Profile changes"
+    }
+  },
+  "notifications": {
+    "pushTitle": "Push notifications",
+    "pushDescription": "Get instant alerts when your order is approved, your withdrawal delivered or additional info is requested.",
+    "iosHint": "Notifications work even when you close this tab. On iOS you need to <strong>add the site to your home screen</strong> from Safari (share icon → &ldquo;Add to Home Screen&rdquo;) and then enable notifications from the installed app."
+  },
+  "language": {
+    "label": "Language",
+    "description": "The interface switches instantly. Downloaded reports keep the language they were generated in.",
+    "spanish": "Español",
+    "english": "English",
+    "current": "Current language"
+  }
+}

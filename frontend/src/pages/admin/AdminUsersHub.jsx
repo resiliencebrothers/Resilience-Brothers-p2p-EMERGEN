@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Users, MessageSquare, IdCard, UserCog } from "lucide-react";
 import AdminUsers from "./AdminUsers";
 import AdminAppeals from "./AdminAppeals";
@@ -8,9 +9,8 @@ import AdminProfileChangeRequests from "./AdminProfileChangeRequests";
 
 /**
  * iter55.31 — Consolidates 4 admin user-management sections under a single
- * "Usuarios" hub with sticky tabs. All 4 sections are people-centric ops
- * (list · appeals · KYC · profile-change requests) so grouping them cuts
- * sidebar clutter and reduces context-switching.
+ * "Usuarios" hub with sticky tabs (list · appeals · KYC · profile-change requests).
+ * iter55.33 — tab labels now translatable via i18next.
  *
  * URL contract:
  *   /admin/users               → tab=list (default)
@@ -21,18 +21,19 @@ import AdminProfileChangeRequests from "./AdminProfileChangeRequests";
  * Legacy paths `/admin/appeals`, `/admin/kyc`, `/admin/profile-change-requests`
  * still work via redirect routes registered in AdminPanel.jsx.
  */
-const TABS = [
-  { id: "list",     label: "Lista",             icon: Users,          Component: AdminUsers },
-  { id: "appeals",  label: "Apelaciones",       icon: MessageSquare,  Component: AdminAppeals },
-  { id: "kyc",      label: "KYC",               icon: IdCard,         Component: AdminKYC },
-  { id: "changes",  label: "Cambios de datos",  icon: UserCog,        Component: AdminProfileChangeRequests },
+const TAB_META = [
+  { id: "list",     labelKey: "usersHub.tabs.list",     icon: Users,          Component: AdminUsers },
+  { id: "appeals",  labelKey: "usersHub.tabs.appeals",  icon: MessageSquare,  Component: AdminAppeals },
+  { id: "kyc",      labelKey: "usersHub.tabs.kyc",      icon: IdCard,         Component: AdminKYC },
+  { id: "changes",  labelKey: "usersHub.tabs.changes",  icon: UserCog,        Component: AdminProfileChangeRequests },
 ];
 
 export default function AdminUsersHub() {
+  const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const activeId = params.get("tab") || "list";
-  const active = useMemo(() => TABS.find((t) => t.id === activeId) || TABS[0], [activeId]);
+  const active = useMemo(() => TAB_META.find((tt) => tt.id === activeId) || TAB_META[0], [activeId]);
   const ActiveComponent = active.Component;
 
   const setTab = (id) => {
@@ -51,17 +52,17 @@ export default function AdminUsersHub() {
         role="tablist"
         aria-label="Gestión de usuarios"
       >
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const isActive = t.id === activeId;
+        {TAB_META.map((tt) => {
+          const Icon = tt.icon;
+          const isActive = tt.id === activeId;
           return (
             <button
-              key={t.id}
+              key={tt.id}
               type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setTab(t.id)}
-              data-testid={`users-hub-tab-${t.id}`}
+              onClick={() => setTab(tt.id)}
+              data-testid={`users-hub-tab-${tt.id}`}
               className={
                 "relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap " +
                 "transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-violet-500 " +
@@ -71,7 +72,7 @@ export default function AdminUsersHub() {
               }
             >
               <Icon className="w-4 h-4" />
-              {t.label}
+              {t(tt.labelKey)}
             </button>
           );
         })}
