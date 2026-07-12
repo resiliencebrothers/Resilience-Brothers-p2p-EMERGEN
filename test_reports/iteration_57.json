@@ -1,0 +1,42 @@
+{
+  "summary": "iter55.29 — Admin-controlled `is_convertible_to` flag on Currency. Full backend + frontend testing. Backend guard in POST /api/vip/convert rejects non-convertible destinations with Spanish 400, does not touch P2P orders or source-side. Frontend hides non-convertible currencies from BalanceConverterCard destination dropdown and shows 'Sólo entrada' amber badge + toggle switch in Admin currencies UI. All checks pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_29_convertible_destination_flag.py",
+    "/app/test_reports/pytest/iter55_29_results.xml",
+    "/app/test_reports/pytest/iter55_29_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend Currency Pydantic model uses `is_convertible_to: bool = True`, but GET /api/currencies OMITS the field entirely for legacy rows (Mongo docs without the flag). Frontend filter `c.is_convertible_to !== false` treats missing as truthy so it works correctly, but this is inconsistent JSON surface. Recommend explicit Currency.model_validate + dict() so the default surfaces on the wire — improves discoverability for API consumers.",
+    "The guard in routes/orders.py (~L508-528) queries `db.currencies.find_one({code: to_code})` on every /vip/convert call. If Currency lookup is already done downstream for validation, consider merging both lookups to avoid a duplicate query (micro-opt, non-blocking).",
+    "test_vip_convert.py::test_usd_to_cup_via_inverse_rate fails (398 vs 395) — PRE-EXISTING seed drift unrelated to iter55.29. The USD→CUP rate stored in DB in preview is 398 not 395 (seed vs current). Not part of this iteration's scope but flagging for hygiene.",
+    "The seed in routes/admin.py L696 marks NEW USD (Zelle) rows with is_convertible_to=False, but the EXISTING preview USD row (created 2026-06-15) still lacks the flag → treated as convertible by default (backward compat). Operator will need to manually toggle USD via /admin/currencies UI on existing deployments — worth documenting in the release notes."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (6/6 iter55.29 targeted; 50/51 regression, 1 pre-existing unrelated failure)", "frontend": "100% (3/3 flows verified: admin table badge, admin editor toggle, VIP converter dropdown filter)"},
+  "test_credentials": "test_session_admin_X (admin), test_session_vip_X (vip) — from /app/memory/test_credentials.md.",
+  "seed_data_creation": "Seeded ephemeral currency ZELLE_TST (is_convertible_to=false, fiat, delivery_methods=[transfer]) for the frontend flow, then deleted. Backend pytest suite seeds+cleans USDT29/ZELLE29/CUP29 per test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter55.29 fully validated. Backend: 6/6 targeted tests pass (test_iter55_29_convertible_destination_flag.py — must run from /app/backend cwd because it imports `from tests.conftest import ...`). Regression on vip_convert + residue + lenient + subtyped + permissions = 50/51 (1 unrelated seed drift). Frontend: (a) /admin/currencies shows new CONVERTIBLE column with green ✓ for convertible and amber 'Sólo entrada' badge for non-convertible; (b) editor dialog exposes `currency-convertible-toggle` switch with descriptive helper text 'Si está desactivado, los clientes NO podrán convertir sus saldos hacia esta moneda...No afecta órdenes P2P ni retiros' — great UX copy; (c) VIP /dashboard BalanceConverterCard destination Select correctly filters out is_convertible_to=false entries via `.filter((c) => c.code !== fromCode && c.is_convertible_to !== false)`. Data-testids all match the review request exactly. No mocked APIs.",
+  "verified_matrix": {
+    "POST /api/vip/convert to non-convertible dest": "400 with Spanish 'no puede enviar' + code — PASS",
+    "POST /api/vip/convert to convertible dest": "200 OK, backward-compat — PASS",
+    "POST /api/vip/convert from non-convertible src": "200 OK (flag only gates destination) — PASS",
+    "Legacy row without flag treated as convertible": "PASS",
+    "POST /api/admin/currencies persists is_convertible_to=false + PUT toggles it": "PASS",
+    "POST /api/orders (P2P) accepts non-convertible source": "PASS (flag scoped to /vip/convert)",
+    "Frontend admin table shows 'Sólo entrada' badge for ZELLE_TST": "PASS",
+    "Frontend admin editor toggle exists and reflects false state": "PASS",
+    "Frontend VIP converter dropdown filters out ZELLE_TST": "PASS"
+  }
+}

@@ -96,9 +96,19 @@ export default function BalanceConverterCard({ onConverted }) {
 
   const openDialog = (currencyCode) => {
     setFromCode(currencyCode);
-    setToCode(currencyCode === "USDT"
-      ? (currencies.find((c) => c.code !== "USDT")?.code || "USD")
-      : "USDT");
+    // iter55.29 — first convertible target that isn't the source. Falls back
+    // to any active non-source currency if the catalog has no explicit
+    // convertible currencies (defensive).
+    const convertibleTargets = currencies.filter(
+      (c) => c.code !== currencyCode && c.is_convertible_to !== false,
+    );
+    const defaultTarget = currencyCode === "USDT"
+      ? (convertibleTargets.find((c) => c.code !== "USDT")?.code
+         || currencies.find((c) => c.code !== "USDT")?.code
+         || "USD")
+      : (convertibleTargets.find((c) => c.code === "USDT") ? "USDT"
+         : (convertibleTargets[0]?.code || "USDT"));
+    setToCode(defaultTarget);
     setAmount("");
     setOpen(true);
   };
@@ -229,7 +239,7 @@ export default function BalanceConverterCard({ onConverted }) {
                 </SelectTrigger>
                 <SelectContent className="bg-[#111] border-white/10 text-white">
                   {currencies
-                    .filter((c) => c.code !== fromCode)
+                    .filter((c) => c.code !== fromCode && c.is_convertible_to !== false)
                     .map((c) => (
                       <SelectItem
                         key={c.code}

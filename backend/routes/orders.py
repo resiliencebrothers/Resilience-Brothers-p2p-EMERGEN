@@ -510,6 +510,22 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             status_code=400,
             detail="Las monedas de origen y destino deben ser diferentes.",
         )
+    # iter55.29 — enforce admin-controlled "convertible destination" flag.
+    # If the destination currency has `is_convertible_to=False` the platform
+    # cannot SEND funds in that currency (e.g. USD/Zelle is receive-only), so
+    # we must not let clients accumulate a converted balance the platform
+    # cannot ever disburse. Missing flag → treat as True for backward compat.
+    to_currency_doc = await db.currencies.find_one(
+        {"code": to_code}, {"_id": 0, "is_convertible_to": 1, "name": 1}
+    )
+    if to_currency_doc is not None and to_currency_doc.get("is_convertible_to", True) is False:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"La plataforma no puede enviar {to_code} — no está disponible "
+                "como destino de conversión. Elige otra moneda de destino."
+            ),
+        )
     # Balance check
     have = get_user_balance(user, from_code)
     if have < payload.amount_from:

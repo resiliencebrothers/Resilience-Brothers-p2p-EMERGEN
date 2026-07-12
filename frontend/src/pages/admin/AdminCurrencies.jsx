@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { code: "", name: "", type: "fiat", symbol: "", country: "", is_active: true, payment_account: "", delivery_methods: null };
+const empty = { code: "", name: "", type: "fiat", symbol: "", country: "", is_active: true, payment_account: "", delivery_methods: null, is_convertible_to: true };
 
 const DELIVERY_OPTIONS = [
   { value: "transfer", label: "Transferencia bancaria" },
@@ -70,6 +70,7 @@ export default function AdminCurrencies() {
               <th className="px-4 py-3 micro-label text-neutral-500">Tipo</th>
               <th className="px-4 py-3 micro-label text-neutral-500">País</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Cuenta destino</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Convertible</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Activa</th>
               <th className="px-4 py-3"></th>
             </tr>
@@ -82,6 +83,11 @@ export default function AdminCurrencies() {
                 <td className="px-4 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${c.type === "crypto" ? "border-[#8B5CF6]/40 text-[#8B5CF6]" : "border-white/20 text-neutral-400"}`}>{c.type}</span></td>
                 <td className="px-4 py-3 text-neutral-400">{c.country || "—"}</td>
                 <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">{c.payment_account || "—"}</td>
+                <td className="px-4 py-3" data-testid={`currency-convertible-${c.code}`}>
+                  {c.is_convertible_to === false
+                    ? <span className="text-xs text-amber-400 border border-amber-400/40 bg-amber-400/5 px-1.5 py-0.5">Sólo entrada</span>
+                    : <span className="text-xs text-emerald-400">✓</span>}
+                </td>
                 <td className="px-4 py-3">{c.is_active ? "✓" : "✕"}</td>
                 <td className="px-4 py-3 text-right">
                   <button onClick={() => edit(c)} className="text-neutral-400 hover:text-[#8B5CF6] mr-3"><Edit2 className="w-4 h-4" /></button>
@@ -168,6 +174,20 @@ export default function AdminCurrencies() {
               </div>
             </div>
             <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">Activa</span></div>
+            <div className="border border-white/10 bg-[#0a0a0a] p-3">
+              <div className="flex items-center gap-3">
+                <Switch
+                  data-testid="currency-convertible-toggle"
+                  checked={form.is_convertible_to !== false}
+                  onCheckedChange={v => setForm({ ...form, is_convertible_to: v })}
+                />
+                <span className="text-sm">Disponible como destino de conversión</span>
+              </div>
+              <div className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
+                Si está desactivado, los clientes NO podrán convertir sus saldos hacia esta moneda
+                (útil para monedas que la plataforma solo recibe, como Zelle). No afecta órdenes P2P ni retiros.
+              </div>
+            </div>
             <Button data-testid="save-currency-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">Guardar</Button>
           </div>
         </DialogContent>

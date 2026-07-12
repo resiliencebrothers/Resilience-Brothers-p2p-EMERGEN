@@ -58,6 +58,13 @@ class Currency(BaseModel):
     # this list wins over the name-based detection. Empty/None falls back to
     # the heuristic so existing currencies keep their behaviour.
     delivery_methods: Optional[list[Literal["transfer", "cash", "crypto"]]] = None
+    # iter55.29 — admin-controlled flag: when False the currency is REJECTED
+    # as destination in `POST /vip/convert` (the platform cannot SEND funds
+    # in this currency — e.g. USD/Zelle is receive-only). Defaults to True
+    # for backward compat so existing currencies keep working with zero admin
+    # action. Does NOT affect P2P orders or withdrawals (those use their own
+    # delivery_methods pipeline).
+    is_convertible_to: bool = True
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
     @field_validator("code", mode="before")
@@ -77,6 +84,7 @@ class CurrencyCreate(BaseModel):
     is_active: bool = True
     payment_account: Optional[str] = ""
     delivery_methods: Optional[list[Literal["transfer", "cash", "crypto"]]] = None
+    is_convertible_to: bool = True
 
     @field_validator("code", mode="before")
     @classmethod
