@@ -1,5 +1,6 @@
 /**
  * iter55.33 — i18n infrastructure.
+ * iter55.36 — Auto-detect language on FIRST VISIT (`en-US`, `en-GB` → `en`).
  *
  * Approach: partial-first. We translate the highest-visibility surfaces
  * (sidebar nav, section headers, common actions, page hero labels) and
@@ -7,9 +8,16 @@
  * falls back to the app's original language. Progressive translation
  * from here: every future PR can add more keys without infra churn.
  *
- * Language persistence: `i18next-browser-languagedetector` reads
- * localStorage first, then browser `navigator.language`. Users flip the
- * switch → their choice is stored under `resilience_lang`.
+ * Language resolution (in order):
+ *   1. localStorage `resilience_lang` (user's explicit choice, persists forever)
+ *   2. `navigator.language` from the browser — normalized so `en-GB`, `en-US`,
+ *      `en-AU`, etc. all map to `en`, and `es-*` variants map to `es`.
+ *   3. Fallback `es` for languages we don't ship yet.
+ *
+ * `load: "languageOnly"` + `nonExplicitSupportedLngs: true` are what make the
+ * region-agnostic matching work (before this fix, a first-time visitor on
+ * `en-GB` would see the app in Spanish because "en-GB" didn't literally
+ * exist in `supportedLngs`).
  */
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -28,9 +36,11 @@ i18n
     },
     fallbackLng: "es",
     supportedLngs: ["es", "en"],
+    load: "languageOnly",              // "en-GB" → "en", "es-CU" → "es"
+    nonExplicitSupportedLngs: true,    // accept region variants as their base language
     interpolation: { escapeValue: false }, // React auto-escapes.
     detection: {
-      order: ["localStorage", "navigator"],
+      order: ["localStorage", "navigator", "htmlTag"],
       lookupLocalStorage: "resilience_lang",
       caches: ["localStorage"],
     },

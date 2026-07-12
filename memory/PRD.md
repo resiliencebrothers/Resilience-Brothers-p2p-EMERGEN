@@ -568,6 +568,17 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - Screenshot landing EN: título "Borderless P2P trading. Zero friction." + descripción y KPIs en inglés + switcher 🇪🇸 ES visible top-right para volver.
   - 12/12 smoke tests pass · ESLint clean.
 
+- Auto-detección de idioma en primera visita (iter55.36, 12 Feb 2026) — cierra el flow global.
+  - **Bug detectado**: la config previa (`load` default = `all`) NO matcheaba `en-US`/`en-GB`/`en-AU` con `supportedLngs: ["es", "en"]`. Un primer visitante con `navigator.language = "en-US"` caía al fallback español.
+  - **Fix**: añadido `load: "languageOnly"` + `nonExplicitSupportedLngs: true` en `i18n/index.js`. Ahora:
+    - `en-US`, `en-GB`, `en-AU`, `en-CA` → todos matchean como `en`.
+    - `es-CU`, `es-MX`, `es-ES`, `es-419` → todos matchean como `es`.
+    - `de-DE`, `pt-BR`, `fr-FR` (no soportados) → caen al fallback `es` (safe default para nuestro mercado principal).
+  - **Detección order**: `["localStorage", "navigator", "htmlTag"]` — la elección explícita del usuario siempre gana sobre lo detectado.
+  - **Verificado E2E con CDP**: navegador emulado a `en-US` carga el landing directamente en inglés (`Borderless P2P trading. Zero friction.`, `+12 Countries`, etc.). LocalStorage cachea `en-US@posix` para próximas visitas.
+  - **Ganancia UX**: usuarios internacionales en waitlist verán el landing en su idioma nativo desde la primera visita, sin fricción. Impacto directo en conversión.
+  - **Cero código nuevo**: solo 2 líneas añadidas a la config i18n.
+
 
 
 
