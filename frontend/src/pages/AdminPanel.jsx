@@ -8,6 +8,7 @@ import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
 import AdminUsersHub from "@/pages/admin/AdminUsersHub";
+import AdminUserStatsPage from "@/pages/admin/AdminUserStatsPage";
 import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
@@ -217,6 +218,7 @@ export default function AdminPanel() {
             <Route path="rates" element={<AdminRates />} />
             <Route path="products" element={<AdminProducts />} />
             <Route path="users" element={<AdminUsersHub />} />
+            <Route path="users/:userId/stats" element={<AdminUserStatsPage />} />
             <Route path="blocked-contacts" element={<AdminBlockedContacts />} />
             {/* iter55.31 — legacy routes redirect into the consolidated hub. */}
             <Route path="appeals" element={<Navigate to="/admin/users?tab=appeals" replace />} />

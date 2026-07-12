@@ -42,6 +42,7 @@ from routes.appeals import router as appeals_router  # noqa: E402
 from routes.admin_security import router as admin_security_router  # noqa: E402
 from routes.kyc import router as kyc_router  # noqa: E402
 from routes.profile import router as profile_router  # noqa: E402
+from routes.capital_requests import router as capital_requests_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -82,6 +83,7 @@ api_router.include_router(appeals_router)
 api_router.include_router(admin_security_router)
 api_router.include_router(kyc_router)
 api_router.include_router(profile_router)
+api_router.include_router(capital_requests_router)
 
 app.include_router(api_router)
 

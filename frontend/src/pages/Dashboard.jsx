@@ -2,12 +2,13 @@ import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight, HandCoins } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
 import OrdersView from "@/pages/dashboard/OrdersView";
 import VipView from "@/pages/dashboard/VipView";
+import VipCapitalRequestsView from "@/pages/dashboard/VipCapitalRequestsView";
 import MarketplaceView from "@/pages/dashboard/MarketplaceView";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
@@ -49,6 +50,9 @@ export default function Dashboard() {
     { to: "/dashboard/transactions", icon: Receipt, label: t("sidebar.client.history"), id: "nav-transactions" },
     ...(isClient ? [
       { to: "/dashboard/vip", icon: Star, label: t("sidebar.client.vip"), id: "nav-vip" },
+      ...(user?.role === "vip" ? [
+        { to: "/dashboard/capital-requests", icon: HandCoins, label: t("sidebar.client.capitalRequests"), id: "nav-capital-requests", highlight: true },
+      ] : []),
       { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
     ] : []),
   ];
@@ -226,6 +230,7 @@ export default function Dashboard() {
             <Route path="profile" element={<ProfileView />} />
             <Route path="notifications" element={<NotificationsView />} />
             <Route path="vip" element={<VipView />} />
+            <Route path="capital-requests" element={<VipCapitalRequestsView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
           </Routes>
         </div>

@@ -8,14 +8,13 @@ import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { Search, History } from "lucide-react";
+import { Search, BarChart3 } from "lucide-react";
 
 import { CurrencyMultiSelect } from "./users/CurrencyMultiSelect";
 import { PermissionMultiSelect } from "./users/PermissionMultiSelect";
 import { MarketPermsCell } from "./users/MarketPermsCell";
 import { UserPhoneCell } from "./users/UserPhoneCell";
 import { RejectPhoneDialog } from "./users/RejectPhoneDialog";
-import AdminUserLedgerDialog from "./users/AdminUserLedgerDialog";
 
 const PAGE_SIZE = 50;
 
@@ -34,29 +33,20 @@ const PERM_LABELS = {
 };
 
 function renderUserBalance(u) {
-  const legacy = Number(u.vip_balance_usd || 0);
-  const dict = u.vip_balances || {};
+  // iter55.32 — simplified to just the USDT-equivalent total. The full
+  // per-currency breakdown lives on the dedicated user stats page reachable
+  // from the "Ver estadísticas" button (keeps the row uncluttered).
   const totalUsdt = Number(u.vip_balance_usdt || 0);
-  const parts = [];
-  if (legacy > 0) {
-    parts.push(`${legacy.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD`);
-  }
-  Object.entries(dict)
-    .filter(([, v]) => Number(v) > 0)
-    .forEach(([k, v]) => {
-      parts.push(`${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${k}`);
-    });
-  if (parts.length === 0) {
+  if (totalUsdt <= 0) {
     return <span className="text-neutral-600">—</span>;
   }
   return (
-    <span className="inline-flex flex-col" data-testid={`user-balance-${u.user_id}`}>
-      <span className="text-xs text-neutral-300">{parts.join(" · ")}</span>
-      {totalUsdt > 0 && (
-        <span className="text-[0.65rem] text-[#8B5CF6] font-mono">
-          ≈ {totalUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
-        </span>
-      )}
+    <span
+      className="font-mono text-sm text-neutral-300 tabular-nums"
+      data-testid={`user-balance-${u.user_id}`}
+    >
+      {totalUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+      <span className="text-[0.65rem] text-[#8B5CF6]">USDT</span>
     </span>
   );
 }
@@ -80,8 +70,6 @@ export default function AdminUsers() {
   // Reject-phone flow: { user_id, phone, email } shown in a dialog to capture the reason
   const [rejectingPhone, setRejectingPhone] = useState(null);
   const [rejectReason, setRejectReason] = useState("");
-  // iter52 — opens the AdminUserLedgerDialog drill-down for one user
-  const [ledgerUser, setLedgerUser] = useState(null);
 
   useEffect(() => { setPage(0); }, [search, roleFilter]);
 
@@ -381,17 +369,17 @@ export default function AdminUsers() {
                   className="px-4 py-3 font-mono text-neutral-300"
                   data-testid={`balance-${u.user_id}`}
                 >
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-center gap-2">
                     <div className="flex-1">{renderUserBalance(u)}</div>
                     {(u.role === "vip" || u.role === "normal") && (
                       <button
                         type="button"
-                        onClick={() => setLedgerUser(u)}
-                        className="text-neutral-500 hover:text-[#8B5CF6] transition-colors p-0.5"
-                        title="Ver auditoría de saldo (qué órdenes contribuyeron)"
-                        data-testid={`open-ledger-${u.user_id}`}
+                        onClick={() => navigate(`/admin/users/${u.user_id}/stats`)}
+                        className="text-neutral-500 hover:text-[#8B5CF6] transition-colors p-1 border border-white/10 hover:border-[#8B5CF6]/40"
+                        title="Ver estadísticas completas del usuario"
+                        data-testid={`user-stats-btn-${u.user_id}`}
                       >
-                        <History className="w-3.5 h-3.5" />
+                        <BarChart3 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
@@ -512,12 +500,6 @@ export default function AdminUsers() {
         setReason={setRejectReason}
         onClose={closeRejectPhone}
         onConfirm={confirmRejectPhone}
-      />
-
-      <AdminUserLedgerDialog
-        user={ledgerUser}
-        open={!!ledgerUser}
-        onClose={() => setLedgerUser(null)}
       />
     </div>
   );

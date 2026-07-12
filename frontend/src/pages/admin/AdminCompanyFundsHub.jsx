@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Wallet, Banknote } from "lucide-react";
+import { Wallet, Banknote, HandCoins } from "lucide-react";
 import AdminCompanyFunds from "./AdminCompanyFunds";
 import AdminRevenue from "./AdminRevenue";
+import AdminCapitalRequests from "./AdminCapitalRequests";
 
 /**
  * iter55.31 — Consolidates "Fondos de la Empresa" (treasury view) and
@@ -19,8 +20,9 @@ import AdminRevenue from "./AdminRevenue";
  * Legacy `/admin/revenue` still works via redirect in AdminPanel.jsx.
  */
 const TAB_META = [
-  { id: "funds",   labelKey: "companyFundsHub.tabs.funds",   icon: Wallet,   Component: AdminCompanyFunds },
-  { id: "revenue", labelKey: "companyFundsHub.tabs.revenue", icon: Banknote, Component: AdminRevenue },
+  { id: "funds",    labelKey: "companyFundsHub.tabs.funds",    icon: Wallet,    Component: AdminCompanyFunds },
+  { id: "revenue",  labelKey: "companyFundsHub.tabs.revenue",  icon: Banknote,  Component: AdminRevenue },
+  { id: "requests", labelKey: "companyFundsHub.tabs.requests", icon: HandCoins, Component: AdminCapitalRequests },
 ];
 
 export default function AdminCompanyFundsHub() {

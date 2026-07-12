@@ -158,3 +158,100 @@ async def admin_user_balance_ledger(user_id: str, request: Request) -> Any:
     await require_staff(request)
     from routes.orders import _build_balance_ledger
     return await _build_balance_ledger(user_id)
+
+
+@router.get("/admin/users/{user_id}/stats")
+async def admin_user_stats(user_id: str, request: Request) -> Any:
+    """iter55.32 — aggregated per-user dashboard used by the new
+    `/admin/users/:id/stats` frontend page. Returns:
+      - user identity (name, email, role, status, created_at)
+      - vip_balances breakdown + total in USDT
+      - order stats (total lifetime, last 30d volume, count)
+      - active capital debts summary
+      - net platform ⇄ client position (positive = platform owes client)
+    """
+    await require_staff(request)
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    rates = await build_rate_lookup()
+    _enrich_user_with_usdt_total(user, rates)
+
+    # Order counts + volume (last 30d)
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    total_orders = await db.orders.count_documents({"user_id": user_id})
+    orders_30d_cursor = db.orders.find(
+        {"user_id": user_id, "created_at": {"$gte": cutoff},
+         "status": {"$in": ["approved", "completed"]}},
+        {"_id": 0, "amount_from": 1, "from_code": 1, "amount_to": 1, "to_code": 1},
+    )
+    orders_30d = await orders_30d_cursor.to_list(2000)
+    volume_30d_usdt = 0.0
+    for o in orders_30d:
+        u = convert_to_usdt(float(o.get("amount_from") or 0), o.get("from_code", ""), rates)
+        if u:
+            volume_30d_usdt += u
+
+    # Active capital requests + total debt
+    active_debts_cursor = db.capital_requests.find(
+        {"user_id": user_id, "status": "disbursed"}, {"_id": 0},
+    ).sort("disbursed_at", 1)
+    active_debts = await active_debts_cursor.to_list(500)
+    total_debt_by_currency: Dict[str, float] = {}
+    for d in active_debts:
+        code = d["currency_code"]
+        total_debt_by_currency[code] = total_debt_by_currency.get(code, 0.0) + float(d.get("debt_remaining") or 0.0)
+
+    # Net position: platform_owes_client = sum(vip_balances[c] * rate_to_usdt)
+    # client_owes_platform = sum(debt_remaining[c] * rate_to_usdt)
+    balances = dict(user.get("vip_balances") or {})
+    legacy = float(user.get("vip_balance_usd") or 0.0)
+    if legacy:
+        balances["USD"] = balances.get("USD", 0.0) + legacy
+    platform_owes_usdt = 0.0
+    for code, amount in balances.items():
+        u = convert_to_usdt(float(amount or 0), code, rates)
+        if u:
+            platform_owes_usdt += u
+    client_owes_usdt = 0.0
+    for code, amount in total_debt_by_currency.items():
+        u = convert_to_usdt(amount, code, rates)
+        if u:
+            client_owes_usdt += u
+    net_usdt = round(platform_owes_usdt - client_owes_usdt, 4)
+
+    return {
+        "user": {
+            "user_id": user["user_id"],
+            "name": user.get("name", ""),
+            "email": user.get("email", ""),
+            "role": user.get("role", ""),
+            "account_status": user.get("account_status", "active"),
+            "phone": user.get("phone", ""),
+            "created_at": user.get("created_at", ""),
+        },
+        "balances": {k: round(float(v), 4) for k, v in balances.items() if float(v) != 0},
+        "balance_total_usdt": user.get("vip_balance_usdt", 0.0),
+        "orders": {
+            "total_lifetime": total_orders,
+            "count_last_30d": len(orders_30d),
+            "volume_last_30d_usdt": round(volume_30d_usdt, 4),
+        },
+        "capital": {
+            "active_requests": active_debts,
+            "debt_by_currency": {k: round(v, 4) for k, v in total_debt_by_currency.items()},
+            "total_debt_usdt": round(client_owes_usdt, 4),
+        },
+        "net_position": {
+            "platform_owes_client_usdt": round(platform_owes_usdt, 4),
+            "client_owes_platform_usdt": round(client_owes_usdt, 4),
+            "net_usdt": net_usdt,
+            "direction": (
+                "platform_owes_client" if net_usdt > 0.01
+                else "client_owes_platform" if net_usdt < -0.01
+                else "even"
+            ),
+        },
+    }

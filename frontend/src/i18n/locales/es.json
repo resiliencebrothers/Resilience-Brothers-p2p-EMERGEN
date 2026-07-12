@@ -27,6 +27,7 @@
       "orders": "Mis Órdenes",
       "history": "Mi Historial",
       "vip": "Saldo y Retiros",
+      "capitalRequests": "Solicitud de Fondos",
       "marketplace": "Marketplace",
       "adminPanel": "Panel Admin",
       "teamPanel": "Panel Equipo"
@@ -77,7 +78,8 @@
   "companyFundsHub": {
     "tabs": {
       "funds": "Fondos",
-      "revenue": "Ingresos"
+      "revenue": "Ingresos",
+      "requests": "Solicitudes"
     }
   },
   "notifications": {

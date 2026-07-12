@@ -27,6 +27,7 @@
       "orders": "My Orders",
       "history": "History",
       "vip": "Balance & Withdrawals",
+      "capitalRequests": "Capital Request",
       "marketplace": "Marketplace",
       "adminPanel": "Admin Panel",
       "teamPanel": "Team Panel"
@@ -77,7 +78,8 @@
   "companyFundsHub": {
     "tabs": {
       "funds": "Funds",
-      "revenue": "Revenue"
+      "revenue": "Revenue",
+      "requests": "Requests"
     }
   },
   "notifications": {

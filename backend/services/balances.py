@@ -5,6 +5,7 @@ Pure business helpers, no HTTP layer; the only side effect is MongoDB I/O via
 the shared `db_client`.
 """
 from typing import Optional
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -124,7 +125,6 @@ async def accumulate_vip_balance(order: dict) -> bool:
     (`approved` OR `completed`, including a direct pending→completed jump
     from the admin's "Completar" button) credits exactly once.
     """
-    from datetime import datetime, timezone
     res = await db.orders.update_one(
         {"id": order["id"], "accumulated_at": {"$exists": False}},
         {"$set": {"accumulated_at": datetime.now(timezone.utc).isoformat()}},
@@ -133,11 +133,95 @@ async def accumulate_vip_balance(order: dict) -> bool:
         # Either the order already had `accumulated_at`, or the order id
         # doesn't exist — in both cases we MUST NOT double-credit.
         return False
+    # iter55.32 — capital-request auto-discount: if this user has any active
+    # (disbursed) capital debt in the SAME currency this order accumulates
+    # into, deduct a % from the credited amount and use it to pay down the
+    # oldest debt first (FIFO). We do this BEFORE crediting the balance so
+    # the operator never sees a "money-in / money-out" ping-pong.
+    net_amount = await _apply_capital_request_repayment(
+        order["user_id"], order["to_code"], float(order["amount_to"]), order["id"],
+    )
+    if net_amount <= 0:
+        # 100% of the credit went to repay debt — nothing to add to balance.
+        return True
     await db.users.update_one(
         {"user_id": order["user_id"]},
-        {"$inc": {f"vip_balances.{order['to_code']}": order["amount_to"]}},
+        {"$inc": {f"vip_balances.{order['to_code']}": net_amount}},
     )
     return True
+
+
+async def _apply_capital_request_repayment(user_id: str, currency: str,
+                                             amount: float, order_id: str) -> float:
+    """iter55.32 — pay down active capital debts before crediting an
+    accumulated order. Returns the NET amount that should be credited to
+    the VIP's balance (original minus deductions).
+
+    Rules:
+      - Only requests with `status='disbursed'` and matching `currency_code`
+        are considered.
+      - FIFO: oldest disbursed-first.
+      - Each order is discounted ONCE by the OLDEST active debt's
+        `discount_pct`. That total budget is then FIFO-distributed across
+        all active debts (older first) up to each debt's remaining amount.
+        Rationale: multiple debts should not compound the discount — the
+        VIP should never pay >`discount_pct` of any single order back.
+      - When `debt_remaining` hits 0 → status flips to `paid_off`.
+      - Repayment events are logged inside the request doc for audit.
+      - If no active debt or amount <= 0, no-op returning the input amount.
+    """
+    if amount <= 0:
+        return amount
+    active = await db.capital_requests.find(
+        {"user_id": user_id, "status": "disbursed", "currency_code": currency},
+        {"_id": 0},
+    ).sort("disbursed_at", 1).to_list(50)
+    if not active:
+        return amount
+
+    # Total per-order discount budget is set by the OLDEST active debt.
+    oldest_pct = float(active[0].get("discount_pct") or 0.0)
+    if oldest_pct <= 0:
+        return amount
+    budget = round(amount * oldest_pct / 100.0, 4)
+    if budget <= 0:
+        return amount
+
+    now_iso_ = datetime.now(timezone.utc).isoformat()
+    for cr in active:
+        if budget <= 0:
+            break
+        debt = float(cr.get("debt_remaining") or 0.0)
+        if debt <= 0:
+            continue
+        contribution = round(min(budget, debt), 4)
+        if contribution <= 0:
+            continue
+        new_debt = round(debt - contribution, 4)
+        set_ops: dict = {"updated_at": now_iso_}
+        inc_ops: dict = {}
+        if new_debt <= 0.0001:
+            # Force debt to zero + flip to paid_off. Cannot combine $inc and
+            # $set on the same field, so we use pure $set here.
+            set_ops.update({
+                "status": "paid_off",
+                "paid_off_at": now_iso_,
+                "debt_remaining": 0.0,
+            })
+        else:
+            inc_ops["debt_remaining"] = -contribution
+        update: dict = {
+            "$set": set_ops,
+            "$push": {"repayment_events": {
+                "order_id": order_id, "amount": contribution, "at": now_iso_,
+            }},
+        }
+        if inc_ops:
+            update["$inc"] = inc_ops
+        await db.capital_requests.update_one({"id": cr["id"]}, update)
+        budget = round(budget - contribution, 6)
+
+    return round(amount - round(amount * oldest_pct / 100.0, 4) + budget, 6)
 
 
 # ============================================================
