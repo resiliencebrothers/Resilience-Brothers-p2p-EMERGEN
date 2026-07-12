@@ -1,0 +1,37 @@
+# iter55.30j — Guard against test drift.
+# Runs the 6 stabilized smoke tests on every `git commit`. Takes ~15 seconds
+# and catches rate/seed/openapi regressions before they leave the machine.
+#
+# Setup (one-time per clone):
+#   pip install pre-commit
+#   pre-commit install       # wires up .git/hooks/pre-commit
+#
+# Bypass emergency: `git commit --no-verify` (use sparingly).
+# Manual run:       `pre-commit run --all-files`
+
+repos:
+  - repo: local
+    hooks:
+      - id: smoke-stabilized-tests
+        name: smoke-stabilized-tests (backend regression guard)
+        entry: python -m pytest backend/tests/test_admin_users_multicurrency_display.py backend/tests/test_iter27_auth_refactor.py::test_openapi_path_count_unchanged backend/tests/test_multicurrency_and_stats.py::TestVipBalancesEndpoint::test_vip_legacy_plus_dict_usdt_conversion backend/tests/test_p2p_backend.py::TestUsersAdmin::test_list_and_update_user backend/tests/test_p2p_backend.py::TestOrders::test_orders_mine_isolation backend/tests/test_iter55_19g_notification_explorer_link.py -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: ruff-fatal-checks
+        name: ruff-fatal-checks (undefined names + literal comparisons)
+        entry: python -m ruff check --select F821,F822,F632 backend/
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: eslint-frontend
+        name: eslint-frontend (react-hooks + syntax)
+        entry: bash -c "cd frontend && yarn lint"
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

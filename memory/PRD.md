@@ -473,6 +473,20 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
   - **Regresión final**: **80/80 tests pass** en `test_admin_users_multicurrency_display + test_iter27_auth_refactor + test_p2p_backend + test_multicurrency_and_stats + test_iter14_corrections + test_iter55_19g` (los 6 archivos que antes tenían drift o flakiness reportada en handoffs previos).
   - **Diseño**: los fix van al nivel del assert (leen fuente de verdad viva o self-plantan datos), no al nivel del "workaround por drift". Los tests seguirán pasando cuando el ops team ajuste tasas o renombre usuarios seed.
 
+- Pre-commit hook + Makefile para prevenir drift (iter55.30j, 11 Feb 2026) — protección permanente contra regresiones futuras.
+  - **`/app/.pre-commit-config.yaml`**: 3 hooks locales ejecutan en cada `git commit`:
+    - `smoke-stabilized-tests`: los 6 tests que estabilicé (~15s).
+    - `ruff-fatal-checks`: `F821` (undefined-name), `F822` (undefined-in-`__all__`), `F632` (`is` con literales) — errores que SÍ causan production bugs.
+    - `eslint-frontend`: `yarn lint` (react-hooks + syntax).
+  - **`/app/Makefile`**: acceso rápido sin depender de git hook:
+    - `make smoke` — corre los 6 smoke tests (3.14s en verificación).
+    - `make lint` — frontend ESLint.
+    - `make ruff` — checks Python fatales.
+    - `make install-hooks` — one-time setup: instala pre-commit y wire up `.git/hooks/pre-commit`.
+  - **Verificado**: `make smoke` → 12/12 tests pass en 3.14s. `pre-commit validate-config` limpio.
+  - **Uso**: en clones nuevos ejecutar `make install-hooks` una sola vez. Bypass emergencia con `git commit --no-verify`. Ejecución manual: `pre-commit run --all-files`.
+  - **Costo/beneficio**: 3-15s por commit contra futuras regresiones catastróficas (undefined vars, path count regressions, rate drift). ROI enorme.
+
 
 
 
