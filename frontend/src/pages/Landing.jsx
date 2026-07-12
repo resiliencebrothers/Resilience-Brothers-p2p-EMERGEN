@@ -146,44 +146,42 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto px-6 lg:px-12">
           <div className="flex items-start justify-between mb-12 flex-wrap gap-4">
             <div>
-              <div className="micro-label text-[#8B5CF6] mb-3">/ 01 — Quiénes Somos</div>
-              <h2 className="font-display text-3xl lg:text-5xl max-w-2xl">Un puente operativo entre mercados.</h2>
+              <div className="micro-label text-[#8B5CF6] mb-3">{t("landing.about.eyebrow")}</div>
+              <h2 className="font-display text-3xl lg:text-5xl max-w-2xl">{t("landing.about.title")}</h2>
             </div>
             <p className="text-neutral-400 max-w-md text-sm md:text-base leading-relaxed">
-              Operamos como infraestructura financiera para clientes que necesitan mover valor entre criptomonedas, divisas
-              y mercancías sin pasar por bancos lentos ni tarifas opacas.
+              {t("landing.about.description")}
             </p>
           </div>
           <div className="grid grid-cols-12 gap-4">
             <div className="col-span-12 lg:col-span-7 tactile-card p-8 relative overflow-hidden min-h-[280px] grain-overlay">
               <Globe2 className="w-10 h-10 text-[#8B5CF6] mb-6" />
-              <h3 className="font-display text-2xl mb-3">Alcance Global</h3>
+              <h3 className="font-display text-2xl mb-3">{t("landing.about.globalTitle")}</h3>
               <p className="text-neutral-400 max-w-md">
-                Cuba, Brasil, México y más. Entregamos en moneda local —CUP, BRL, MXN— vía transferencia o efectivo, con
-                titulares verificados en cada país.
+                {t("landing.about.globalDescription")}
               </p>
             </div>
             <div className="col-span-6 lg:col-span-5 tactile-card p-6 min-h-[280px] flex flex-col justify-between">
               <ShieldCheck className="w-10 h-10 text-[#8B5CF6]" />
               <div>
-                <h3 className="font-display text-xl mb-2">Comprobantes Verificados</h3>
-                <p className="text-neutral-400 text-sm">Cada transacción exige comprobante con titular. Equipo contable confirma antes de liberar fondos.</p>
+                <h3 className="font-display text-xl mb-2">{t("landing.about.proofsTitle")}</h3>
+                <p className="text-neutral-400 text-sm">{t("landing.about.proofsDescription")}</p>
               </div>
             </div>
             <div className="col-span-6 lg:col-span-4 tactile-card p-6 min-h-[220px]">
               <Zap className="w-9 h-9 text-[#8B5CF6] mb-4" />
-              <h3 className="font-display text-xl mb-2">Liquidación Rápida</h3>
-              <p className="text-neutral-400 text-sm">Operaciones aprobadas se procesan en cuestión de horas, no días.</p>
+              <h3 className="font-display text-xl mb-2">{t("landing.about.settlementTitle")}</h3>
+              <p className="text-neutral-400 text-sm">{t("landing.about.settlementDescription")}</p>
             </div>
             <div className="col-span-12 lg:col-span-4 tactile-card p-6 min-h-[220px]">
               <Activity className="w-9 h-9 text-[#8B5CF6] mb-4" />
-              <h3 className="font-display text-xl mb-2">Tasas Dinámicas</h3>
-              <p className="text-neutral-400 text-sm">Nuestros admins actualizan tasas cripto/fiat en tiempo real. VIPs reciben tasas preferenciales.</p>
+              <h3 className="font-display text-xl mb-2">{t("landing.about.dynamicRatesTitle")}</h3>
+              <p className="text-neutral-400 text-sm">{t("landing.about.dynamicRatesDescription")}</p>
             </div>
             <div className="col-span-12 lg:col-span-4 tactile-card p-6 min-h-[220px]">
               <Boxes className="w-9 h-9 text-[#8B5CF6] mb-4" />
-              <h3 className="font-display text-xl mb-2">Mercancías Físicas</h3>
-              <p className="text-neutral-400 text-sm">Canjea tu saldo VIP por contenedores de arroz, harina, refrescos y más.</p>
+              <h3 className="font-display text-xl mb-2">{t("landing.about.goodsTitle")}</h3>
+              <p className="text-neutral-400 text-sm">{t("landing.about.goodsDescription")}</p>
             </div>
           </div>
         </div>
@@ -192,21 +190,21 @@ export default function Landing() {
       {/* SERVICES */}
       <section id="services" className="py-20 border-t border-white/5 bg-[#0c0c0c]">
         <div className="max-w-7xl mx-auto px-6 lg:px-12">
-          <div className="micro-label text-[#8B5CF6] mb-3">/ 02 — Servicios</div>
-          <h2 className="font-display text-3xl lg:text-5xl mb-12 max-w-3xl">Dos plataformas. Un solo flujo.</h2>
+          <div className="micro-label text-[#8B5CF6] mb-3">{t("landing.services.eyebrow")}</div>
+          <h2 className="font-display text-3xl lg:text-5xl mb-12 max-w-3xl">{t("landing.services.title")}</h2>
           <div className="grid lg:grid-cols-2 gap-6">
             <div className="tactile-card p-8 hover:glow-yellow transition-shadow">
               <div className="flex items-center justify-between mb-6">
-                <span className="micro-label text-neutral-500">SECCIÓN 01</span>
-                <span className="text-xs font-mono text-[#22C55E]">● ACTIVA</span>
+                <span className="micro-label text-neutral-500">{t("landing.services.section01")}</span>
+                <span className="text-xs font-mono text-[#22C55E]">{t("landing.services.active")}</span>
               </div>
-              <h3 className="font-display text-3xl mb-4">Cripto ↔ Fiat</h3>
-              <p className="text-neutral-400 mb-6">Intercambia USDT, BTC y más por dólares (Zelle), pesos cubanos, reales brasileños o pesos mexicanos.</p>
+              <h3 className="font-display text-3xl mb-4">{t("landing.services.cryptoTitle")}</h3>
+              <p className="text-neutral-400 mb-6">{t("landing.services.cryptoDescription")}</p>
               <ul className="space-y-3 text-sm">
-                {["Tasas en vivo gestionadas por admin", "Sube comprobante de pago al instante", "Confirmación humana por equipo contable", "Entrega en transferencia, efectivo o cripto"].map((t) => (
-                  <li key={t} className="flex items-center gap-3 text-neutral-300">
+                {(t("landing.services.cryptoBullets", { returnObjects: true }) || []).map((b) => (
+                  <li key={b} className="flex items-center gap-3 text-neutral-300">
                     <BadgeCheck className="w-4 h-4 text-[#8B5CF6] shrink-0" />
-                    {t}
+                    {b}
                   </li>
                 ))}
               </ul>
@@ -221,16 +219,16 @@ export default function Landing() {
               ></div>
               <div className="relative">
                 <div className="flex items-center justify-between mb-6">
-                  <span className="micro-label text-neutral-500">SECCIÓN 02</span>
-                  <span className="text-xs font-mono text-[#8B5CF6]">VIP ONLY</span>
+                  <span className="micro-label text-neutral-500">{t("landing.services.section02")}</span>
+                  <span className="text-xs font-mono text-[#8B5CF6]">{t("landing.services.vipOnly")}</span>
                 </div>
-                <h3 className="font-display text-3xl mb-4">Marketplace Físico</h3>
-                <p className="text-neutral-400 mb-6">Canjea tu saldo VIP acumulado por mercancía: arroz, harina, refrescos, aceite y más.</p>
+                <h3 className="font-display text-3xl mb-4">{t("landing.services.marketplaceTitle")}</h3>
+                <p className="text-neutral-400 mb-6">{t("landing.services.marketplaceDescription")}</p>
                 <ul className="space-y-3 text-sm">
-                  {["Stock en tiempo real", "Sin comisión, sin mensajería para VIP", "Logística incluida", "Pedidos consolidados diarios"].map((t) => (
-                    <li key={t} className="flex items-center gap-3 text-neutral-300">
+                  {(t("landing.services.marketplaceBullets", { returnObjects: true }) || []).map((b) => (
+                    <li key={b} className="flex items-center gap-3 text-neutral-300">
                       <BadgeCheck className="w-4 h-4 text-[#8B5CF6] shrink-0" />
-                      {t}
+                      {b}
                     </li>
                   ))}
                 </ul>
@@ -243,15 +241,10 @@ export default function Landing() {
       {/* HOW IT WORKS */}
       <section id="how" className="py-20 border-t border-white/5">
         <div className="max-w-7xl mx-auto px-6 lg:px-12">
-          <div className="micro-label text-[#8B5CF6] mb-3">/ 03 — Cómo Funciona</div>
-          <h2 className="font-display text-3xl lg:text-5xl mb-12 max-w-3xl">Cuatro pasos. Cero confusión.</h2>
+          <div className="micro-label text-[#8B5CF6] mb-3">{t("landing.how.eyebrow")}</div>
+          <h2 className="font-display text-3xl lg:text-5xl mb-12 max-w-3xl">{t("landing.how.title")}</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { n: "01", t: "Crea tu orden", d: "Elige el par cripto/fiat, ingresa el monto y verifica tu tasa." },
-              { n: "02", t: "Sube comprobante", d: "Captura de la transferencia con el nombre del titular." },
-              { n: "03", t: "Verificación humana", d: "Nuestro equipo contable confirma la recepción del pago." },
-              { n: "04", t: "Recibe tus fondos", d: "Transferencia, efectivo, cripto o acumula en saldo VIP." },
-            ].map((s) => (
+            {(t("landing.how.steps", { returnObjects: true }) || []).map((s) => (
               <div key={s.n} className="tactile-card p-6">
                 <div className="font-display text-5xl text-[#8B5CF6]/30">{s.n}</div>
                 <h3 className="font-display text-lg mt-4 mb-2">{s.t}</h3>
@@ -266,19 +259,19 @@ export default function Landing() {
       <section id="vip" className="py-20 border-t border-white/5 bg-[#0c0c0c]">
         <div className="max-w-7xl mx-auto px-6 lg:px-12 grid lg:grid-cols-2 gap-12 items-center">
           <div>
-            <div className="micro-label text-[#8B5CF6] mb-3">/ 04 — Programa VIP</div>
-            <h2 className="font-display text-3xl lg:text-5xl mb-6">Para quien mueve volumen.</h2>
+            <div className="micro-label text-[#8B5CF6] mb-3">{t("landing.vipSection.eyebrow")}</div>
+            <h2 className="font-display text-3xl lg:text-5xl mb-6">{t("landing.vipSection.title")}</h2>
             <p className="text-neutral-400 mb-8 text-base leading-relaxed">
-              Si tienes tus propios clientes y operas múltiples transacciones diarias, el programa VIP de Resilience Brothers
-              elimina la fricción: <span className="text-white">sin comisión, tasas preferenciales, saldo acumulado</span> y
-              opción de canjear por mercancía de nuestro mercado.
+              {t("landing.vipSection.descriptionA")}{" "}
+              <span className="text-white">{t("landing.vipSection.descriptionHighlight")}</span>{" "}
+              {t("landing.vipSection.descriptionB")}
             </p>
             <div className="grid grid-cols-2 gap-3">
               {[
-                ["0%", "Comisión"],
-                ["+5", "Pts mejor tasa"],
-                ["Sin costo", "Mensajería"],
-                ["Acumula", "Tu saldo"],
+                ["0%", t("landing.vipSection.kpiCommission")],
+                ["+5", t("landing.vipSection.kpiRate")],
+                [t("landing.vipSection.kpiCourierValue"), t("landing.vipSection.kpiCourier")],
+                [t("landing.vipSection.kpiAccumulateValue"), t("landing.vipSection.kpiAccumulate")],
               ].map(([v, l]) => (
                 <div key={l} className="border border-white/10 p-4">
                   <div className="font-display text-2xl text-[#8B5CF6]">{v}</div>
@@ -296,8 +289,8 @@ export default function Landing() {
               />
             </div>
             <div className="absolute bottom-0 left-0 right-0 p-6 glass-panel">
-              <div className="micro-label text-[#8B5CF6] mb-2">Status: VIP Tier</div>
-              <p className="font-display text-xl">Confianza verificada. Operación priorizada.</p>
+              <div className="micro-label text-[#8B5CF6] mb-2">{t("landing.vipSection.statusLabel")}</div>
+              <p className="font-display text-xl">{t("landing.vipSection.statusTagline")}</p>
             </div>
           </div>
         </div>
@@ -307,15 +300,15 @@ export default function Landing() {
       <section className="py-24 border-t border-white/5">
         <div className="max-w-4xl mx-auto px-6 text-center">
           <h2 className="font-display text-4xl lg:text-6xl mb-6">
-            ¿Listo para escalar tu operación?
+            {t("landing.cta.title")}
           </h2>
-          <p className="text-neutral-400 mb-8 text-lg">Una cuenta. Acceso completo. Sin fricciones bancarias.</p>
+          <p className="text-neutral-400 mb-8 text-lg">{t("landing.cta.subtitle")}</p>
           <Button
             data-testid="cta-signup-btn"
             onClick={handleEnter}
             className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none px-10 h-14 text-base"
           >
-            Crear Cuenta con Google <ArrowUpRight className="w-5 h-5 ml-1" />
+            {t("landing.cta.googleButton")} <ArrowUpRight className="w-5 h-5 ml-1" />
           </Button>
           <div className="mt-4">
             <button
@@ -323,7 +316,7 @@ export default function Landing() {
               onClick={handleEmailAuth}
               className="text-sm text-neutral-400 hover:text-[#8B5CF6] underline underline-offset-4"
             >
-              o crear cuenta con email →
+              {t("landing.cta.emailLink")}
             </button>
           </div>
         </div>
@@ -333,9 +326,9 @@ export default function Landing() {
         <div className="max-w-7xl mx-auto px-6 lg:px-12 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-9 w-9 object-contain" />
-            <span className="micro-label text-neutral-500">© Resilience Brothers · P2P Network</span>
+            <span className="micro-label text-neutral-500">{t("landing.footer.copy")}</span>
           </div>
-          <span className="micro-label text-neutral-600">Global Trade Infrastructure</span>
+          <span className="micro-label text-neutral-600">{t("landing.footer.tagline")}</span>
         </div>
       </footer>
 

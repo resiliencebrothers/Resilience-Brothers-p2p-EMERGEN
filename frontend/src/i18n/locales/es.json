@@ -112,6 +112,80 @@
       "kpiVipRate": "Tasa preferencial",
       "kpiSettlement": "Settlement",
       "kpiP2p": "P2P"
+    },
+    "about": {
+      "eyebrow": "/ 01 — Quiénes Somos",
+      "title": "Un puente operativo entre mercados.",
+      "description": "Operamos como infraestructura financiera para clientes que necesitan mover valor entre criptomonedas, divisas y mercancías sin pasar por bancos lentos ni tarifas opacas.",
+      "globalTitle": "Alcance Global",
+      "globalDescription": "Cuba, Brasil, México y más. Entregamos en moneda local —CUP, BRL, MXN— vía transferencia o efectivo, con titulares verificados en cada país.",
+      "proofsTitle": "Comprobantes Verificados",
+      "proofsDescription": "Cada transacción exige comprobante con titular. Equipo contable confirma antes de liberar fondos.",
+      "settlementTitle": "Liquidación Rápida",
+      "settlementDescription": "Operaciones aprobadas se procesan en cuestión de horas, no días.",
+      "dynamicRatesTitle": "Tasas Dinámicas",
+      "dynamicRatesDescription": "Nuestros admins actualizan tasas cripto/fiat en tiempo real. VIPs reciben tasas preferenciales.",
+      "goodsTitle": "Mercancías Físicas",
+      "goodsDescription": "Canjea tu saldo VIP por contenedores de arroz, harina, refrescos y más."
+    },
+    "services": {
+      "eyebrow": "/ 02 — Servicios",
+      "title": "Dos plataformas. Un solo flujo.",
+      "section01": "SECCIÓN 01",
+      "section02": "SECCIÓN 02",
+      "active": "● ACTIVA",
+      "vipOnly": "VIP ONLY",
+      "cryptoTitle": "Cripto ↔ Fiat",
+      "cryptoDescription": "Intercambia USDT, BTC y más por dólares (Zelle), pesos cubanos, reales brasileños o pesos mexicanos.",
+      "cryptoBullets": [
+        "Tasas en vivo gestionadas por admin",
+        "Sube comprobante de pago al instante",
+        "Confirmación humana por equipo contable",
+        "Entrega en transferencia, efectivo o cripto"
+      ],
+      "marketplaceTitle": "Marketplace Físico",
+      "marketplaceDescription": "Canjea tu saldo VIP acumulado por mercancía: arroz, harina, refrescos, aceite y más.",
+      "marketplaceBullets": [
+        "Stock en tiempo real",
+        "Sin comisión, sin mensajería para VIP",
+        "Logística incluida",
+        "Pedidos consolidados diarios"
+      ]
+    },
+    "how": {
+      "eyebrow": "/ 03 — Cómo Funciona",
+      "title": "Cuatro pasos. Cero confusión.",
+      "steps": [
+        { "n": "01", "t": "Crea tu orden", "d": "Elige el par cripto/fiat, ingresa el monto y verifica tu tasa." },
+        { "n": "02", "t": "Sube comprobante", "d": "Captura de la transferencia con el nombre del titular." },
+        { "n": "03", "t": "Verificación humana", "d": "Nuestro equipo contable confirma la recepción del pago." },
+        { "n": "04", "t": "Recibe tus fondos", "d": "Transferencia, efectivo, cripto o acumula en saldo VIP." }
+      ]
+    },
+    "vipSection": {
+      "eyebrow": "/ 04 — Programa VIP",
+      "title": "Para quien mueve volumen.",
+      "descriptionA": "Si tienes tus propios clientes y operas múltiples transacciones diarias, el programa VIP de Resilience Brothers elimina la fricción:",
+      "descriptionHighlight": "sin comisión, tasas preferenciales, saldo acumulado",
+      "descriptionB": "y opción de canjear por mercancía de nuestro mercado.",
+      "kpiCommission": "Comisión",
+      "kpiRate": "Pts mejor tasa",
+      "kpiCourierValue": "Sin costo",
+      "kpiCourier": "Mensajería",
+      "kpiAccumulateValue": "Acumula",
+      "kpiAccumulate": "Tu saldo",
+      "statusLabel": "Status: VIP Tier",
+      "statusTagline": "Confianza verificada. Operación priorizada."
+    },
+    "cta": {
+      "title": "¿Listo para escalar tu operación?",
+      "subtitle": "Una cuenta. Acceso completo. Sin fricciones bancarias.",
+      "googleButton": "Crear Cuenta con Google",
+      "emailLink": "o crear cuenta con email →"
+    },
+    "footer": {
+      "copy": "© Resilience Brothers · P2P Network",
+      "tagline": "Global Trade Infrastructure"
     }
   }
 }

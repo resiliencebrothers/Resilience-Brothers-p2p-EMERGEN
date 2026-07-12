@@ -4,12 +4,14 @@ import { API } from "@/App";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Shield, CheckCircle2, ShieldAlert, Copy, RefreshCw, AlertTriangle } from "lucide-react";
+import { Shield, CheckCircle2, ShieldAlert, Copy, RefreshCw, AlertTriangle, KeyRound, Eye, EyeOff } from "lucide-react";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 
 export default function SecuritySettings() {
   const [status, setStatus] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [setupData, setSetupData] = useState(null); // { qr_data_url, secret, provisioning_uri }
   const [verifyCode, setVerifyCode] = useState("");
@@ -20,10 +22,22 @@ export default function SecuritySettings() {
   const [regenModal, setRegenModal] = useState(false);
   const [regenCode, setRegenCode] = useState("");
 
+  // iter55.30 — password change state
+  const [pwdCurrent, setPwdCurrent] = useState("");
+  const [pwdNew, setPwdNew] = useState("");
+  const [pwdConfirm, setPwdConfirm] = useState("");
+  const [pwdTotp, setPwdTotp] = useState("");
+  const [pwdShow, setPwdShow] = useState(false);
+  const [pwdBusy, setPwdBusy] = useState(false);
+
   const loadStatus = async () => {
     try {
-      const r = await axios.get(`${API}/me/2fa/status`, { withCredentials: true });
-      setStatus(r.data);
+      const [statusRes, profileRes] = await Promise.all([
+        axios.get(`${API}/me/2fa/status`, { withCredentials: true }),
+        axios.get(`${API}/profile/me`, { withCredentials: true }),
+      ]);
+      setStatus(statusRes.data);
+      setProfile(profileRes.data);
     } catch (e) {
       toast.error("Error al cargar estado 2FA");
     } finally {
@@ -95,6 +109,58 @@ export default function SecuritySettings() {
   const copyText = (text) => {
     navigator.clipboard.writeText(text);
     toast.success("Copiado");
+  };
+
+  const submitPasswordChange = async () => {
+    if (pwdNew.length < 8) {
+      return toast.error("La nueva contraseña debe tener al menos 8 caracteres.");
+    }
+    if (pwdNew !== pwdConfirm) {
+      return toast.error("La confirmación no coincide con la nueva contraseña.");
+    }
+    if (pwdCurrent === pwdNew) {
+      return toast.error("La nueva contraseña debe ser diferente de la actual.");
+    }
+    if (status?.enabled && pwdTotp.length !== 6) {
+      return toast.error("Ingresa tu código 2FA de 6 dígitos.");
+    }
+    setPwdBusy(true);
+    try {
+      const r = await axios.post(
+        `${API}/profile/password/change`,
+        {
+          current_password: pwdCurrent,
+          new_password: pwdNew,
+          totp_code: status?.enabled ? pwdTotp : undefined,
+        },
+        { withCredentials: true },
+      );
+      const revoked = r.data?.other_sessions_revoked || 0;
+      toast.success(
+        revoked > 0
+          ? `Contraseña actualizada. Se cerraron ${revoked} sesiones adicionales.`
+          : "Contraseña actualizada correctamente."
+      );
+      setPwdCurrent(""); setPwdNew(""); setPwdConfirm(""); setPwdTotp("");
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      if (detail && typeof detail === "object") {
+        if (detail.code === "TOTP_SETUP_REQUIRED") {
+          toast.error("Activa la verificación en dos pasos (2FA) antes de cambiar tu contraseña.");
+          return;
+        }
+        if (detail.code === "TOTP_INVALID" || detail.code === "TOTP_CODE_REQUIRED") {
+          toast.error(detail.message || "Código 2FA inválido.");
+          return;
+        }
+      }
+      const msg = typeof detail === "string"
+        ? detail
+        : (detail?.message || "Error al cambiar la contraseña.");
+      toast.error(msg);
+    } finally {
+      setPwdBusy(false);
+    }
   };
 
   if (loading) return <div className="text-neutral-500">Cargando...</div>;
@@ -263,6 +329,118 @@ export default function SecuritySettings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* iter55.30 — Password change (only for email/password accounts) */}
+      {profile?.auth_provider === "password" ? (
+        <div className="tactile-card p-5" data-testid="password-change-card">
+          <div className="flex items-start gap-3 mb-5">
+            <KeyRound className="w-6 h-6 text-[#8B5CF6] mt-0.5" />
+            <div>
+              <h2 className="font-display text-2xl">Cambiar contraseña</h2>
+              <p className="text-neutral-500 text-sm mt-1">
+                Al cambiarla se cerrarán todas tus otras sesiones activas. Recibirás una notificación por email.
+              </p>
+            </div>
+          </div>
+          {!status?.enabled && (
+            <div className="border border-[#F59E0B]/40 bg-[#F59E0B]/5 p-3 mb-4 flex items-start gap-3" data-testid="pwd-needs-2fa-hint">
+              <AlertTriangle className="w-4 h-4 text-[#F59E0B] mt-0.5 shrink-0" />
+              <div className="text-xs text-[#F59E0B] leading-relaxed">
+                Para cambiar tu contraseña primero debes activar la verificación en dos pasos (2FA) arriba.
+                Esto protege tu cuenta contra cambios no autorizados.
+              </div>
+            </div>
+          )}
+          <div className="space-y-3 max-w-md">
+            <div>
+              <Label className="micro-label text-neutral-500">Contraseña actual</Label>
+              <div className="relative">
+                <Input
+                  data-testid="pwd-current-input"
+                  type={pwdShow ? "text" : "password"}
+                  value={pwdCurrent}
+                  onChange={(e) => setPwdCurrent(e.target.value)}
+                  autoComplete="current-password"
+                  disabled={!status?.enabled}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 mt-1 font-mono pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setPwdShow((s) => !s)}
+                  data-testid="pwd-show-toggle"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-[#8B5CF6] mt-0.5"
+                  aria-label={pwdShow ? "Ocultar contraseñas" : "Mostrar contraseñas"}
+                >
+                  {pwdShow ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">Nueva contraseña (mín. 8 caracteres)</Label>
+              <Input
+                data-testid="pwd-new-input"
+                type={pwdShow ? "text" : "password"}
+                value={pwdNew}
+                onChange={(e) => setPwdNew(e.target.value)}
+                autoComplete="new-password"
+                disabled={!status?.enabled}
+                className="rounded-none bg-[#0a0a0a] border-white/10 h-11 mt-1 font-mono"
+              />
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">Confirma la nueva contraseña</Label>
+              <Input
+                data-testid="pwd-confirm-input"
+                type={pwdShow ? "text" : "password"}
+                value={pwdConfirm}
+                onChange={(e) => setPwdConfirm(e.target.value)}
+                autoComplete="new-password"
+                disabled={!status?.enabled}
+                className="rounded-none bg-[#0a0a0a] border-white/10 h-11 mt-1 font-mono"
+              />
+              {pwdConfirm && pwdNew !== pwdConfirm && (
+                <div className="text-xs text-[#EF4444] mt-1" data-testid="pwd-mismatch">
+                  La confirmación no coincide.
+                </div>
+              )}
+            </div>
+            {status?.enabled && (
+              <div>
+                <Label className="micro-label text-neutral-500">Código 2FA actual (6 dígitos)</Label>
+                <Input
+                  data-testid="pwd-totp-input"
+                  maxLength={6}
+                  value={pwdTotp}
+                  onChange={(e) => setPwdTotp(e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder="123456"
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 mt-1 font-mono w-32 tracking-widest text-center"
+                />
+              </div>
+            )}
+            <Button
+              data-testid="pwd-submit-btn"
+              onClick={submitPasswordChange}
+              disabled={pwdBusy || !status?.enabled || !pwdCurrent || pwdNew.length < 8 || pwdNew !== pwdConfirm}
+              className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold h-11 px-6 uppercase tracking-wider text-xs mt-2 disabled:bg-neutral-700"
+            >
+              {pwdBusy ? "Actualizando..." : "Cambiar contraseña"}
+            </Button>
+          </div>
+        </div>
+      ) : profile ? (
+        <div className="tactile-card p-5 opacity-70" data-testid="password-change-google">
+          <div className="flex items-start gap-3">
+            <KeyRound className="w-5 h-5 text-neutral-500 mt-0.5" />
+            <div>
+              <h2 className="font-display text-xl">Cambiar contraseña</h2>
+              <p className="text-neutral-500 text-sm mt-1">
+                Tu cuenta usa inicio de sesión con <strong className="text-white">Google</strong>.
+                Cambia tu contraseña desde tu cuenta de Google.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

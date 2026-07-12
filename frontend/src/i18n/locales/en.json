@@ -112,6 +112,80 @@
       "kpiVipRate": "Preferential rate",
       "kpiSettlement": "Settlement",
       "kpiP2p": "P2P"
+    },
+    "about": {
+      "eyebrow": "/ 01 — About us",
+      "title": "An operational bridge between markets.",
+      "description": "We run as financial infrastructure for clients who need to move value between crypto, fiat and physical goods — without slow banks or opaque fees.",
+      "globalTitle": "Global reach",
+      "globalDescription": "Cuba, Brazil, Mexico and more. We deliver in local currency —CUP, BRL, MXN— via transfer or cash, with verified counterparties in every country.",
+      "proofsTitle": "Verified proofs",
+      "proofsDescription": "Every transaction requires proof with the account holder name. Our accounting team confirms funds before release.",
+      "settlementTitle": "Fast settlement",
+      "settlementDescription": "Approved operations settle in hours, not days.",
+      "dynamicRatesTitle": "Dynamic rates",
+      "dynamicRatesDescription": "Our admins update crypto/fiat rates in real time. VIPs receive preferential pricing.",
+      "goodsTitle": "Physical goods",
+      "goodsDescription": "Redeem your VIP balance for containers of rice, flour, drinks and more."
+    },
+    "services": {
+      "eyebrow": "/ 02 — Services",
+      "title": "Two platforms. One flow.",
+      "section01": "SECTION 01",
+      "section02": "SECTION 02",
+      "active": "● ACTIVE",
+      "vipOnly": "VIP ONLY",
+      "cryptoTitle": "Crypto ↔ Fiat",
+      "cryptoDescription": "Trade USDT, BTC and more for US dollars (Zelle), Cuban pesos, Brazilian reals or Mexican pesos.",
+      "cryptoBullets": [
+        "Live rates managed by admin",
+        "Upload payment proof instantly",
+        "Human confirmation by our accounting team",
+        "Delivery via transfer, cash or crypto"
+      ],
+      "marketplaceTitle": "Physical marketplace",
+      "marketplaceDescription": "Redeem your accumulated VIP balance for goods: rice, flour, drinks, oil and more.",
+      "marketplaceBullets": [
+        "Real-time stock",
+        "No commission, no courier fees for VIPs",
+        "Logistics included",
+        "Consolidated daily fulfilment"
+      ]
+    },
+    "how": {
+      "eyebrow": "/ 03 — How it works",
+      "title": "Four steps. Zero confusion.",
+      "steps": [
+        { "n": "01", "t": "Create your order", "d": "Pick the crypto/fiat pair, enter the amount and verify your rate." },
+        { "n": "02", "t": "Upload proof", "d": "A screenshot of the transfer showing the account holder name." },
+        { "n": "03", "t": "Human verification", "d": "Our accounting team confirms the incoming payment." },
+        { "n": "04", "t": "Receive your funds", "d": "Transfer, cash, crypto — or accumulate into VIP balance." }
+      ]
+    },
+    "vipSection": {
+      "eyebrow": "/ 04 — VIP Program",
+      "title": "Built for high volume.",
+      "descriptionA": "If you have your own clients and process multiple daily trades, the Resilience Brothers VIP program removes the friction:",
+      "descriptionHighlight": "no commission, preferential rates, accumulated balance",
+      "descriptionB": "plus the option to redeem for physical goods.",
+      "kpiCommission": "Commission",
+      "kpiRate": "Rate points bonus",
+      "kpiCourierValue": "Free",
+      "kpiCourier": "Courier",
+      "kpiAccumulateValue": "Accumulate",
+      "kpiAccumulate": "Your balance",
+      "statusLabel": "Status: VIP Tier",
+      "statusTagline": "Verified trust. Prioritized operations."
+    },
+    "cta": {
+      "title": "Ready to scale your operation?",
+      "subtitle": "One account. Full access. No banking friction.",
+      "googleButton": "Create account with Google",
+      "emailLink": "or sign up with email →"
+    },
+    "footer": {
+      "copy": "© Resilience Brothers · P2P Network",
+      "tagline": "Global Trade Infrastructure"
     }
   }
 }

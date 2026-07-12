@@ -28,7 +28,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 from db_client import db
-from auth_utils import require_user, require_permission, _enforce_totp_step_up, now_utc, iso
+from auth_utils import (
+    require_user, require_permission, _enforce_totp_step_up,
+    _hash_password, _verify_password, now_utc, iso,
+)
 
 
 router = APIRouter(tags=["Profile"])
@@ -98,6 +101,7 @@ async def get_my_profile(request: Request) -> Any:
         "role": doc.get("role", ""),
         "created_at": doc.get("created_at", ""),
         "twofa_enabled": bool(doc.get("twofa_enabled", False)),
+        "auth_provider": doc.get("auth_provider", "google"),
         "kyc_status": (kyc or {}).get("status", "not_started"),
         "pending_email_change": {
             "new_email_masked": _redact_email(pending_email.get("new_email", "")),
@@ -443,3 +447,127 @@ async def reject_phone_change(target_user_id: str, payload: RejectPhoneChange,
                       details={"target_user_id": target_user_id,
                                "new_phone": new_phone, "reason": payload.reason})
     return {"ok": True}
+
+
+
+# ============================================================
+# iter55.30 — Self-service password change
+# ============================================================
+
+class PasswordChangePayload(BaseModel):
+    """Body of `POST /profile/password/change`.
+
+    - `current_password` is verified against the stored bcrypt hash.
+    - `new_password` is the desired replacement (8-200 chars, same policy
+      as `POST /auth/register`).
+    - `totp_code` is required when the user has 2FA enabled — mirrors the
+      pattern used by `email_change` and `phone_change` here in profile.py.
+    """
+    model_config = ConfigDict(extra="ignore")
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_password: str = Field(..., min_length=8, max_length=200)
+    totp_code: Optional[str] = Field(default=None, max_length=11)
+
+
+@router.post("/profile/password/change")
+async def change_password(payload: PasswordChangePayload, request: Request) -> Any:
+    """Self-service password change from `/dashboard/security`. Requires the
+    current password + (if 2FA is on) a fresh TOTP code. On success:
+      - Replaces `users.password_hash` with a fresh bcrypt hash.
+      - Deletes all OTHER sessions of this user (keeps the current one
+        so the client doesn't get bounced to login mid-action).
+      - Emails a security confirmation to the user.
+      - Writes an entry to `audit_log`.
+    """
+    user = await require_user(request)
+
+    # 1. Only email/password users can change their password here. Google
+    #    users don't have a `password_hash` — they manage credentials in
+    #    their Google account.
+    if user.get("auth_provider") != "password":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Tu cuenta usa inicio de sesión con Google. "
+                "Cambia tu contraseña desde tu cuenta de Google."
+            ),
+        )
+
+    stored_hash = user.get("password_hash")
+    if not stored_hash:
+        # Defensive: password-provider account without hash → data corruption.
+        raise HTTPException(
+            status_code=500,
+            detail="Estado de la cuenta inconsistente. Contacta a soporte.",
+        )
+
+    # 2. Verify current password
+    if not _verify_password(payload.current_password, stored_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="La contraseña actual es incorrecta.",
+        )
+
+    # 3. New must differ from current
+    if _verify_password(payload.new_password, stored_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="La nueva contraseña debe ser diferente de la actual.",
+        )
+
+    # 4. 2FA step-up if enabled
+    await _enforce_totp_step_up(user, payload.totp_code,
+                                action_label="cambiar contraseña")
+
+    # 5. Persist new hash + timestamps
+    new_hash = _hash_password(payload.new_password)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {
+            "password_hash": new_hash,
+            "password_changed_at": iso(now_utc()),
+        }},
+    )
+
+    # 6. Revoke all OTHER sessions of this user (keep the current one so
+    #    the operator's active tab stays alive after the change).
+    current_token = None
+    try:
+        # session_token is set as httpOnly cookie during login; the auth
+        # dependency doesn't always expose it back on `user`, so we look
+        # it up on the raw request cookies.
+        current_token = request.cookies.get("session_token")
+        if not current_token:
+            auth_hdr = request.headers.get("Authorization", "")
+            if auth_hdr.lower().startswith("bearer "):
+                current_token = auth_hdr[7:].strip()
+    except Exception:
+        current_token = None
+
+    revoke_filter: dict[str, Any] = {"user_id": user["user_id"]}
+    if current_token:
+        revoke_filter["session_token"] = {"$ne": current_token}
+    revoked = await db.user_sessions.delete_many(revoke_filter)
+
+    # 7. Best-effort security email to the account owner
+    try:
+        import email_service
+        email_service.notify_password_changed(user["email"], user.get("name", ""))
+    except Exception as e:  # noqa: BLE001
+        # Do NOT bubble email errors — the password change already succeeded.
+        import logging
+        logging.getLogger(__name__).warning(
+            "notify_password_changed failed for %s: %s", user["user_id"], e
+        )
+
+    # 8. Audit
+    from audit_log import log_action
+    await log_action(
+        db, user, "profile.password_changed", "user", user["user_id"],
+        summary="Cambió su contraseña desde el perfil",
+        details={"other_sessions_revoked": revoked.deleted_count},
+    )
+    return {
+        "ok": True,
+        "other_sessions_revoked": revoked.deleted_count,
+    }

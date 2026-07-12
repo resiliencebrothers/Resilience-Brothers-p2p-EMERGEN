@@ -2,6 +2,7 @@
 import os
 import base64
 import logging
+from datetime import datetime, timezone
 import resend
 
 logger = logging.getLogger(__name__)
@@ -301,6 +302,34 @@ def notify_password_reset(to: str, name: str, token: str) -> bool:
     """
     return _send(to, "Restablecer contraseña · Resilience Brothers",
                  _base_template("Recuperar contraseña", body))
+
+
+def notify_password_changed(to: str, name: str) -> bool:
+    """iter55.30 — post-hoc security confirmation sent to the account owner
+    right after `/api/profile/password/change` succeeds. Purpose: give the
+    user a paper trail so an unauthorized change (session hijack, stolen
+    device) surfaces immediately."""
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">
+        Hola {name or 'usuario'},<br><br>
+        La contraseña de tu cuenta en <strong style="color:#fff;">Resilience Brothers</strong>
+        fue actualizada correctamente. Todas tus otras sesiones fueron cerradas por seguridad.
+      </p>
+      <div style="border-left:3px solid #EF4444;background:#1a0a0a;padding:14px 18px;margin:12px 0 22px;">
+        <p style="color:#EF4444;font-size:13px;font-weight:bold;margin:0 0 6px;">
+          ¿No fuiste tú?
+        </p>
+        <p style="color:#A3A3A3;font-size:12px;margin:0;line-height:1.5;">
+          Cambia tu contraseña de inmediato desde la opción "¿Olvidaste tu contraseña?"
+          y contacta a soporte. Nunca compartimos códigos ni contraseñas por email.
+        </p>
+      </div>
+      <p style="color:#666;font-size:11px;margin:0;">
+        Fecha de cambio: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
+      </p>
+    """
+    return _send(to, "Tu contraseña fue actualizada · Resilience Brothers",
+                 _base_template("Contraseña cambiada", body))
 
 
 def notify_order_approved(order: dict, user: dict) -> bool:

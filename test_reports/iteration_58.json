@@ -1,0 +1,25 @@
+{
+  "summary": "iter55.30 — Full validation of (a) self-service password change endpoint at POST /api/profile/password/change + SecuritySettings UI wiring, and (b) Landing.jsx i18n coverage for the 6 previously-hardcoded Spanish sections (about, services, how, vipSection, cta, footer). Backend: 10/10 pytest cases green. Frontend: VIP (Google) shows password-change-google gate; provisioned email/password user shows password-change-card with working TOTP submit, mismatch badge disables submit, and no-2FA case shows disabled inputs + pwd-needs-2fa-hint. Landing switcher toggles ES↔EN across all sections and back with no leaking Spanish/English text.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_30_password_change.py",
+    "/app/backend/tests/_setup_pwd_user_ui.py",
+    "/app/test_reports/pytest/iter58_pwd_change.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SecuritySettings.jsx is now ~447 lines with 3 modal dialogs + 2FA management + password change block. Consider splitting the password-change section into its own <PasswordChangeCard/> subcomponent for maintainability if the file grows further.",
+    "email_service.notify_password_changed is fire-and-forget — good — but ensure any failure inside routes/profile.py password_change endpoint does not block the 200 (verified by the happy-path test)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/_setup_pwd_user_ui.py (new helper to provision email/password test user + toggle 2FA for UI tests)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Used seeded VIP Google-auth session (test_session_vip_X) and a purpose-built email/password user (user_test_pwdchg_ui, session test_session_pwdchg_ui, TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP, initial password OldPassword123!). All test data cleaned up after run.",
+  "seed_data_creation": "Provisioned + cleaned up user_test_pwdchg_ui in Mongo via /app/backend/tests/_setup_pwd_user_ui.py (setup/no2fa/cleanup subcommands).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "i18n localStorage key is `resilience_lang` (NOT the default `i18nextLng`). Reason: /app/frontend/src/i18n/index.js sets `lookupLocalStorage: \"resilience_lang\"`. Also note: some Spanish landing section titles use CSS text-transform:uppercase so page.innerText returns UPPERCASE — use substring match on rendered form (e.g. `QUIÉNES SOMOS`) OR use textContent from DOM to get raw JSON strings. For UI testing password change flow, use `_setup_pwd_user_ui.py` helper — sets 2FA-enabled by default, pass `no2fa` for the disabled case; session cookie `session_token=test_session_pwdchg_ui`.",
+  "rca of the issue": "N/A — this was a feature-addition iteration, no bugs found. All 10 backend endpoint tests passed and all 3 UI branches (Google user, password+2FA, password+no-2FA) render correctly with the expected data-testids."
+}
