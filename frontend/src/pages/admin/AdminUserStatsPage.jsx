@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft, User as UserIcon, Wallet, TrendingUp, AlertTriangle,
-  ShieldCheck, History, HandCoins,
+  ShieldCheck, History, HandCoins, Mail, Phone, IdCard, Percent, Star,
+  CheckCircle2, XCircle, Clock,
 } from "lucide-react";
 
 const fmtNum = (n, digits = 2) =>
@@ -18,6 +19,13 @@ const STATUS_META = {
   active: { label: "Activo", cls: "text-emerald-400" },
   under_review: { label: "En revisión", cls: "text-amber-400" },
   blocked: { label: "Bloqueado", cls: "text-red-400" },
+};
+
+const KYC_META = {
+  approved:    { label: "Aprobado",   cls: "text-emerald-400", icon: CheckCircle2 },
+  pending:     { label: "Pendiente",  cls: "text-amber-400",   icon: Clock },
+  rejected:    { label: "Rechazado",  cls: "text-red-400",     icon: XCircle },
+  not_started: { label: "Sin iniciar",cls: "text-neutral-500", icon: IdCard },
 };
 
 const ROLE_LABELS = {
@@ -48,8 +56,18 @@ export default function AdminUserStatsPage() {
         });
         if (!cancelled) setData(r.data);
       } catch (e) {
-        toast.error(e.response?.data?.detail || "No se pudieron cargar las estadísticas.");
-        if (e.response?.status === 404) navigate("/admin/users");
+        const status = e.response?.status;
+        const detail = e.response?.data?.detail;
+        if (status === 403) {
+          toast.error(typeof detail === "string"
+            ? detail
+            : "Acceso restringido — pídele a un admin el permiso 'Estadísticas de usuario'.");
+        } else if (status === 404) {
+          toast.error(typeof detail === "string" ? detail : "Usuario no encontrado.");
+        } else {
+          toast.error(typeof detail === "string" ? detail : "No se pudieron cargar las estadísticas.");
+        }
+        navigate("/admin/users");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -62,9 +80,11 @@ export default function AdminUserStatsPage() {
   }
   if (!data) return null;
 
-  const { user, balances, balance_total_usdt, orders, capital, net_position } = data;
+  const { user, kyc, balances, balance_total_usdt, orders, capital, net_position } = data;
   const status = STATUS_META[user.account_status] || STATUS_META.active;
   const netDirection = net_position.direction;
+  const kycMeta = KYC_META[kyc?.status || "not_started"] || KYC_META.not_started;
+  const KycIcon = kycMeta.icon;
 
   return (
     <div className="space-y-6" data-testid="admin-user-stats-page">
@@ -135,8 +155,87 @@ export default function AdminUserStatsPage() {
         )}
       </div>
 
+      {/* PERSONAL INFO + KYC (iter55.33) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" data-testid="user-stats-personal">
+        <div className="tactile-card p-5 lg:col-span-2">
+          <div className="micro-label text-neutral-500 mb-3">Datos personales</div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Mail className="w-4 h-4 text-neutral-500 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs text-neutral-500">Email</div>
+                <div className="truncate">{user.email}</div>
+                {user.email_verified ? (
+                  <div className="text-[0.65rem] text-emerald-400 mt-0.5">✓ Verificado</div>
+                ) : (
+                  <div className="text-[0.65rem] text-amber-400 mt-0.5">⧗ No verificado</div>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Phone className="w-4 h-4 text-neutral-500 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-xs text-neutral-500">Teléfono</div>
+                <div className="truncate font-mono">{user.phone || "— sin registrar —"}</div>
+                {user.phone && (
+                  user.phone_verified ? (
+                    <div className="text-[0.65rem] text-emerald-400 mt-0.5">✓ Verificado</div>
+                  ) : (
+                    <div className="text-[0.65rem] text-amber-400 mt-0.5">⧗ Pendiente</div>
+                  )
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-neutral-500 shrink-0" />
+              <div>
+                <div className="text-xs text-neutral-500">Autenticación 2FA</div>
+                <div>
+                  {user.twofa_enabled ? (
+                    <span className="text-emerald-400 text-xs">✓ Activada</span>
+                  ) : (
+                    <span className="text-amber-400 text-xs">⧗ Desactivada</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <UserIcon className="w-4 h-4 text-neutral-500 shrink-0" />
+              <div>
+                <div className="text-xs text-neutral-500">Rol</div>
+                <div>{ROLE_LABELS[user.role] || user.role}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="tactile-card p-5" data-testid="user-stats-kyc">
+          <div className="micro-label text-neutral-500 mb-3 flex items-center gap-2">
+            <IdCard className="w-3.5 h-3.5" /> Verificación KYC
+          </div>
+          <div className={`flex items-center gap-2 ${kycMeta.cls}`}>
+            <KycIcon className="w-5 h-5" />
+            <span className="font-display text-xl">{kycMeta.label}</span>
+          </div>
+          {kyc?.submitted_at && (
+            <div className="text-xs text-neutral-500 mt-3">
+              Enviado: {fmtDate(kyc.submitted_at)}
+            </div>
+          )}
+          {kyc?.reviewed_at && (
+            <div className="text-xs text-neutral-500 mt-1">
+              Revisado: {fmtDate(kyc.reviewed_at)}
+            </div>
+          )}
+          {kyc?.reviewer_notes && (
+            <div className="text-xs text-neutral-400 mt-2 border-l-2 border-white/10 pl-2 italic">
+              {kyc.reviewer_notes}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="tactile-card p-5" data-testid="user-stats-kpi-total-balance">
           <div className="flex items-center gap-2 mb-2">
             <Wallet className="w-4 h-4 text-[#8B5CF6]" />
@@ -163,7 +262,33 @@ export default function AdminUserStatsPage() {
             <div className="micro-label text-neutral-500">Órdenes totales</div>
           </div>
           <div className="font-display text-3xl tabular-nums">{orders.total_lifetime}</div>
-          <div className="text-xs text-neutral-500 mt-1">Desde el alta</div>
+          <div className="text-xs text-neutral-500 mt-1">
+            {orders.success_count || 0} exitosas
+          </div>
+        </div>
+        <div className="tactile-card p-5" data-testid="user-stats-kpi-success-rate">
+          <div className="flex items-center gap-2 mb-2">
+            <Percent className="w-4 h-4 text-[#8B5CF6]" />
+            <div className="micro-label text-neutral-500">Éxito operativo</div>
+          </div>
+          <div className="font-display text-3xl tabular-nums">
+            {orders.success_rate_pct ?? 0}<span className="text-lg text-neutral-500">%</span>
+          </div>
+          <div className="text-xs text-neutral-500 mt-1">Aprobadas + completadas</div>
+        </div>
+        <div className="tactile-card p-5" data-testid="user-stats-kpi-favorite-currency">
+          <div className="flex items-center gap-2 mb-2">
+            <Star className="w-4 h-4 text-[#8B5CF6]" />
+            <div className="micro-label text-neutral-500">Moneda favorita</div>
+          </div>
+          <div className="font-display text-3xl tabular-nums">
+            {orders.favorite_currency || "—"}
+          </div>
+          <div className="text-xs text-neutral-500 mt-1">
+            {orders.favorite_currency_count
+              ? `${orders.favorite_currency_count} apariciones`
+              : "sin datos"}
+          </div>
         </div>
       </div>
 

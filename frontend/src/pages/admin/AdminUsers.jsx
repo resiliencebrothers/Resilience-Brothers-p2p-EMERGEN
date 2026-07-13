@@ -8,13 +8,9 @@ import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { Search, BarChart3 } from "lucide-react";
+import { Search, BarChart3, Settings2 } from "lucide-react";
 
-import { CurrencyMultiSelect } from "./users/CurrencyMultiSelect";
-import { PermissionMultiSelect } from "./users/PermissionMultiSelect";
-import { MarketPermsCell } from "./users/MarketPermsCell";
-import { UserPhoneCell } from "./users/UserPhoneCell";
-import { RejectPhoneDialog } from "./users/RejectPhoneDialog";
+import UserFunctionsDialog from "./users/UserFunctionsDialog";
 
 const PAGE_SIZE = 50;
 
@@ -25,17 +21,23 @@ const ROLE_LABELS = {
   admin: "Admin",
 };
 
-const PERM_LABELS = {
-  can_edit_product_prices: "modificar precios de productos",
-  can_upload_product_images: "subir imágenes de productos",
-  can_delete_products: "eliminar productos",
-  can_manage_blocklist: "gestionar lista de bloqueos y verificar teléfonos",
-};
-
 function renderUserBalance(u) {
   // iter55.32 — simplified to just the USDT-equivalent total. The full
   // per-currency breakdown lives on the dedicated user stats page reachable
   // from the "Ver estadísticas" button (keeps the row uncluttered).
+  // iter55.33 — if the requester lacks `view_user_sensitive` permission, the
+  // backend strips vip_balance_usdt entirely. Show a "restringido" chip so
+  // the staff knows they need to ask an admin.
+  if (u.vip_balance_usdt === undefined) {
+    return (
+      <span
+        className="text-[0.65rem] uppercase tracking-widest text-neutral-500 border border-white/10 bg-white/5 px-2 py-0.5"
+        data-testid={`balance-restricted-${u.user_id}`}
+      >
+        Restringido
+      </span>
+    );
+  }
   const totalUsdt = Number(u.vip_balance_usdt || 0);
   if (totalUsdt <= 0) {
     return <span className="text-neutral-600">—</span>;
@@ -55,8 +57,6 @@ export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
-  const [editingCurrencies, setEditingCurrencies] = useState({});
-  const [editingPermissions, setEditingPermissions] = useState({});
   const [permCatalog, setPermCatalog] = useState([]);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -65,11 +65,11 @@ export default function AdminUsers() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [currencies, setCurrencies] = useState([]);
-  // Pending 2FA: { user_id, payload, label, kind? }
+  // Pending 2FA: { user_id, payload, label, kind? } — kept for email verify
+  // flow still triggered from the parent (`verifyEmailManually`).
   const [pendingTotp, setPendingTotp] = useState(null);
-  // Reject-phone flow: { user_id, phone, email } shown in a dialog to capture the reason
-  const [rejectingPhone, setRejectingPhone] = useState(null);
-  const [rejectReason, setRejectReason] = useState("");
+  // iter55.33 — the consolidated Functions dialog target
+  const [functionsUser, setFunctionsUser] = useState(null);
 
   useEffect(() => { setPage(0); }, [search, roleFilter]);
 
@@ -109,38 +109,6 @@ export default function AdminUsers() {
       .catch(() => {});
   }, []);
 
-  const saveRole = (user_id, role) =>
-    setPendingTotp({ user_id, payload: { role }, label: `cambiar rol a ${role}` });
-
-  const saveAllowedCurrencies = (user_id, list) => {
-    const clean = (list || []).map((c) => String(c).toUpperCase()).filter(Boolean);
-    setPendingTotp({
-      user_id,
-      payload: { allowed_currencies: clean },
-      label: clean.length
-        ? `asignar monedas (${clean.join(", ")})`
-        : "quitar restricción de monedas",
-    });
-  };
-
-  const saveAllowedPermissions = (user_id, list) => {
-    const clean = (list || []).filter(Boolean);
-    setPendingTotp({
-      user_id,
-      payload: { allowed_permissions: clean },
-      label: clean.length
-        ? `asignar ${clean.length} permiso(s) al staff`
-        : "quitar restricción de permisos (acceso completo staff)",
-    });
-  };
-
-  const saveMarketPerm = (user_id, perm, value) =>
-    setPendingTotp({
-      user_id,
-      payload: { [perm]: value },
-      label: `${value ? "otorgar" : "revocar"} permiso para ${PERM_LABELS[perm]}`,
-    });
-
   const verifyEmailManually = (user_id, email) =>
     setPendingTotp({
       kind: "verify-email",
@@ -149,41 +117,6 @@ export default function AdminUsers() {
       label: `verificar manualmente el email de ${email}`,
     });
 
-  const verifyPhoneManually = (user_id, phone, email) =>
-    setPendingTotp({
-      kind: "verify-phone",
-      user_id,
-      payload: {},
-      label: `verificar el teléfono ${phone} de ${email}`,
-    });
-
-  const openRejectPhone = (user_id, phone, email) => {
-    setRejectingPhone({ user_id, phone, email });
-    setRejectReason("");
-  };
-
-  const closeRejectPhone = () => {
-    setRejectingPhone(null);
-    setRejectReason("");
-  };
-
-  const confirmRejectPhone = () => {
-    if (!rejectingPhone) return;
-    const reason = rejectReason.trim();
-    if (reason.length < 3) {
-      toast.error("Escribe un motivo (mínimo 3 caracteres)");
-      return;
-    }
-    const { user_id, phone, email } = rejectingPhone;
-    setRejectingPhone(null);
-    setPendingTotp({
-      kind: "reject-phone",
-      user_id,
-      payload: { reason, notes: "" },
-      label: `RECHAZAR teléfono ${phone} de ${email} y bloquear su número`,
-    });
-  };
-
   const confirmWithTotp = async (code) => {
     const { user_id, payload, kind } = pendingTotp;
     try {
@@ -191,24 +124,10 @@ export default function AdminUsers() {
         await axios.post(`${API}/admin/users/${user_id}/verify-email`,
           { totp_code: code }, { withCredentials: true });
         toast.success("Email verificado manualmente");
-      } else if (kind === "verify-phone") {
-        await axios.post(`${API}/admin/users/${user_id}/verify-phone`,
-          { totp_code: code }, { withCredentials: true });
-        toast.success("Teléfono verificado manualmente. Cuenta activada.");
-      } else if (kind === "reject-phone") {
-        await axios.post(`${API}/admin/users/${user_id}/reject-phone`,
-          { ...payload, totp_code: code }, { withCredentials: true });
-        toast.success("Teléfono rechazado y bloqueado. Cuenta en revisión.");
       } else {
         await axios.put(`${API}/admin/users/${user_id}`,
           { ...payload, totp_code: code }, { withCredentials: true });
         toast.success("Usuario actualizado");
-        if ("allowed_currencies" in payload) {
-          setEditingCurrencies((prev) => ({ ...prev, [user_id]: undefined }));
-        }
-        if ("allowed_permissions" in payload) {
-          setEditingPermissions((prev) => ({ ...prev, [user_id]: undefined }));
-        }
       }
       setPendingTotp(null);
       load();
@@ -290,22 +209,19 @@ export default function AdminUsers() {
               <th className="px-4 py-3 micro-label text-neutral-500">Email</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Saldo (USDT eq.)</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Monedas autorizadas</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Funciones autorizadas</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Teléfono</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Permisos Mercado</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan="9" className="text-center text-neutral-500 py-8">Cargando...</td>
+                <td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan="9" className="text-center text-neutral-500 py-8">Sin resultados</td>
+                <td colSpan="6" className="text-center text-neutral-500 py-8">Sin resultados</td>
               </tr>
             )}
             {users.map(u => (
@@ -340,136 +256,56 @@ export default function AdminUsers() {
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  <Select
-                    value={u.role}
-                    onValueChange={(v) => saveRole(u.user_id, v)}
-                    disabled={!isAdmin && (u.role === "admin" || u.role === "employee")}
+                  <span
+                    data-testid={`role-badge-${u.user_id}`}
+                    className={
+                      "text-[0.65rem] uppercase tracking-widest px-2 py-1 border font-mono " +
+                      (u.role === "admin"
+                        ? "border-[#8B5CF6]/50 bg-[#8B5CF6]/10 text-[#8B5CF6]"
+                        : u.role === "employee"
+                        ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-400"
+                        : u.role === "vip"
+                        ? "border-amber-500/40 bg-amber-500/5 text-amber-400"
+                        : "border-white/10 bg-white/5 text-neutral-300")
+                    }
                   >
-                    <SelectTrigger
-                      data-testid={`role-${u.user_id}`}
-                      className="rounded-none w-32 h-9 bg-[#0a0a0a] border-white/10"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                      {allowedRoles.map(role => (
-                        <SelectItem key={role} value={role}>
-                          {ROLE_LABELS[role] || role}
-                        </SelectItem>
-                      ))}
-                      {!allowedRoles.includes(u.role) && (
-                        <SelectItem key={u.role} value={u.role} disabled>
-                          {ROLE_LABELS[u.role] || u.role}
-                        </SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
+                    {ROLE_LABELS[u.role] || u.role}
+                  </span>
                 </td>
                 <td
                   className="px-4 py-3 font-mono text-neutral-300"
                   data-testid={`balance-${u.user_id}`}
                 >
+                  {renderUserBalance(u)}
+                </td>
+                <td className="px-4 py-3 text-xs text-neutral-500">
+                  {new Date(u.created_at).toLocaleDateString()}
+                </td>
+                <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <div className="flex-1">{renderUserBalance(u)}</div>
                     {(u.role === "vip" || u.role === "normal") && (
                       <button
                         type="button"
                         onClick={() => navigate(`/admin/users/${u.user_id}/stats`)}
-                        className="text-neutral-500 hover:text-[#8B5CF6] transition-colors p-1 border border-white/10 hover:border-[#8B5CF6]/40"
+                        className="flex items-center gap-1.5 px-3 py-2 border border-[#8B5CF6]/40 hover:border-[#8B5CF6] hover:bg-[#8B5CF6]/10 text-[#8B5CF6] text-xs uppercase tracking-widest transition-all"
                         title="Ver estadísticas completas del usuario"
                         data-testid={`user-stats-btn-${u.user_id}`}
                       >
                         <BarChart3 className="w-3.5 h-3.5" />
+                        Estadísticas
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setFunctionsUser(u)}
+                      className="flex items-center gap-1.5 px-3 py-2 border border-emerald-500/40 hover:border-emerald-500 hover:bg-emerald-500/10 text-emerald-400 text-xs uppercase tracking-widest transition-all"
+                      title="Configurar rol, permisos, monedas y accesos"
+                      data-testid={`user-perms-btn-${u.user_id}`}
+                    >
+                      <Settings2 className="w-3.5 h-3.5" />
+                      Funciones
+                    </button>
                   </div>
-                </td>
-                <td className="px-4 py-3">
-                  {u.role === "employee" ? (
-                    <CurrencyMultiSelect
-                      userId={u.user_id}
-                      allCurrencies={currencies}
-                      selected={editingCurrencies[u.user_id] ?? (u.allowed_currencies || [])}
-                      onToggle={(code, isOn) => {
-                        const current = editingCurrencies[u.user_id] ?? (u.allowed_currencies || []);
-                        const next = isOn
-                          ? [...new Set([...current, code])]
-                          : current.filter((c) => c !== code);
-                        setEditingCurrencies({ ...editingCurrencies, [u.user_id]: next });
-                      }}
-                      onSave={() =>
-                        saveAllowedCurrencies(
-                          u.user_id,
-                          editingCurrencies[u.user_id] ?? (u.allowed_currencies || [])
-                        )
-                      }
-                      onClear={() =>
-                        setEditingCurrencies({ ...editingCurrencies, [u.user_id]: [] })
-                      }
-                    />
-                  ) : (
-                    <span className="text-neutral-600 text-xs">— sin restricción —</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {u.role === "employee" ? (
-                    isAdmin ? (
-                      <PermissionMultiSelect
-                        userId={u.user_id}
-                        catalog={permCatalog}
-                        selected={editingPermissions[u.user_id] ?? (u.allowed_permissions || [])}
-                        onToggle={(code, isOn) => {
-                          const current = editingPermissions[u.user_id] ?? (u.allowed_permissions || []);
-                          const next = isOn
-                            ? [...new Set([...current, code])]
-                            : current.filter((c) => c !== code);
-                          setEditingPermissions({ ...editingPermissions, [u.user_id]: next });
-                        }}
-                        onSave={() =>
-                          saveAllowedPermissions(
-                            u.user_id,
-                            editingPermissions[u.user_id] ?? (u.allowed_permissions || [])
-                          )
-                        }
-                        onClear={() =>
-                          setEditingPermissions({ ...editingPermissions, [u.user_id]: [] })
-                        }
-                      />
-                    ) : (
-                      <span className="text-neutral-600 text-xs" title="Solo un admin puede modificar permisos de staff">
-                        {(u.allowed_permissions?.length ?? 0) === 0
-                          ? "— sin restricción —"
-                          : `${u.allowed_permissions.length} permiso(s)`}
-                      </span>
-                    )
-                  ) : (
-                    <span className="text-neutral-600 text-xs">— n/a —</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <UserPhoneCell
-                    user={u}
-                    canManageBlocklist={canManageBlocklist}
-                    onVerify={() => verifyPhoneManually(u.user_id, u.phone, u.email)}
-                    onReject={() => openRejectPhone(u.user_id, u.phone, u.email)}
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  {u.role === "employee" ? (
-                    <MarketPermsCell
-                      user={u}
-                      onToggle={(perm, value) => saveMarketPerm(u.user_id, perm, value)}
-                    />
-                  ) : u.role === "admin" ? (
-                    <span className="text-[0.65rem] text-[#8B5CF6] uppercase tracking-widest">
-                      acceso total
-                    </span>
-                  ) : (
-                    <span className="text-neutral-600 text-xs">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-xs text-neutral-500">
-                  {new Date(u.created_at).toLocaleDateString()}
                 </td>
               </tr>
             ))}
@@ -494,12 +330,19 @@ export default function AdminUsers() {
         onCancel={() => setPendingTotp(null)}
       />
 
-      <RejectPhoneDialog
-        target={rejectingPhone}
-        reason={rejectReason}
-        setReason={setRejectReason}
-        onClose={closeRejectPhone}
-        onConfirm={confirmRejectPhone}
+      <UserFunctionsDialog
+        user={functionsUser}
+        open={!!functionsUser}
+        onClose={() => setFunctionsUser(null)}
+        currencies={currencies}
+        permCatalog={permCatalog}
+        allowedRoles={allowedRoles}
+        isAdmin={isAdmin}
+        canManageBlocklist={canManageBlocklist}
+        onUserUpdated={(fresh) => {
+          setFunctionsUser(fresh);
+          load();
+        }}
       />
     </div>
   );

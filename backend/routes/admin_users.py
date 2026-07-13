@@ -68,7 +68,7 @@ def _enrich_user_with_usdt_total(user_doc: dict, rates: dict) -> None:
 async def list_users(request: Request, q: Optional[str] = None,
                      role: Optional[str] = None,
                      limit: int = 1000, offset: int = 0) -> Any:
-    await require_permission(request, "users")
+    requester = await require_permission(request, "users")
     mongo_q = _build_users_query(q, role)
     limit = max(1, min(limit, 1000))
     offset = max(0, offset)
@@ -77,6 +77,19 @@ async def list_users(request: Request, q: Optional[str] = None,
     rates = await build_rate_lookup()
     for d in docs:
         _enrich_user_with_usdt_total(d, rates)
+    # iter55.33 — strip sensitive fields when the requester lacks the
+    # `view_user_sensitive` permission. Kept as an additive filter so
+    # existing admins and employees with allowed_permissions=[] keep the
+    # legacy full view.
+    from services.permissions import _has_permission
+    if not _has_permission(requester, "view_user_sensitive"):
+        for d in docs:
+            # Wipe every field the operator explicitly listed as sensitive.
+            for k in ("phone", "phone_verified_at", "vip_balances",
+                      "vip_balance_usd", "vip_balance_usdt",
+                      "allowed_currencies", "allowed_permissions",
+                      "market_perms"):
+                d.pop(k, None)
     return JSONResponse(
         content=docs,
         headers={
@@ -95,6 +108,21 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
     update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
+    # iter55.33 — modifying "functions" fields (role, allowed_currencies,
+    # allowed_permissions, market perms, account_status) requires the
+    # dedicated `user_functions` permission on top of the `users` gate. This
+    # lets an admin grant a staff member *view-only* access to the user list
+    # while keeping powerful edits (like promoting to VIP) admin-only.
+    FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
+                         "market_perms", "account_status"}
+    if any(k in update for k in FUNCTIONS_FIELDS):
+        from services.permissions import _has_permission
+        if not _has_permission(requester, "user_functions"):
+            raise HTTPException(
+                status_code=403,
+                detail=("Acceso restringido. Necesitas el permiso 'Funciones de usuario' "
+                        "para modificar rol, permisos, monedas o accesos del marketplace."),
+            )
     if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
     # iter55.16 — only admins can grant/revoke capabilities to other staff.
@@ -169,8 +197,15 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
       - order stats (total lifetime, last 30d volume, count)
       - active capital debts summary
       - net platform ⇄ client position (positive = platform owes client)
+      - most-used currency (iter55.33)
+      - success rate % (iter55.33)
+      - KYC status snapshot (iter55.33)
+
+    iter55.33 — gated behind the `user_stats` permission. Staff without it
+    receive a 403 Spanish message they can surface to the operator so the
+    admin can grant the permission.
     """
-    await require_staff(request)
+    await require_permission(request, "user_stats")
     user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
@@ -222,15 +257,50 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
             client_owes_usdt += u
     net_usdt = round(platform_owes_usdt - client_owes_usdt, 4)
 
+    # iter55.33 — additional context the operator asked for:
+    # (a) most-traded currency across the user's lifetime (by count),
+    # (b) success rate = (approved+completed) / total * 100,
+    # (c) KYC snapshot (status + submitted_at + reviewer notes if any),
+    # (d) phone status (verified vs pending).
+    completed_orders = await db.orders.count_documents(
+        {"user_id": user_id, "status": {"$in": ["approved", "completed"]}},
+    )
+    success_rate = round((completed_orders / total_orders) * 100, 1) if total_orders else 0.0
+
+    # Most-traded: aggregate order counts by from_code + to_code, pick highest.
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$project": {"codes": ["$from_code", "$to_code"]}},
+        {"$unwind": "$codes"},
+        {"$match": {"codes": {"$ne": None}}},
+        {"$group": {"_id": "$codes", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 5},
+    ]
+    top_codes = await db.orders.aggregate(pipeline).to_list(5)
+    favorite_currency = top_codes[0]["_id"] if top_codes else None
+    favorite_currency_count = top_codes[0]["count"] if top_codes else 0
+
+    kyc_doc = await db.kyc.find_one({"user_id": user_id}, {"_id": 0}) or {}
+
     return {
         "user": {
             "user_id": user["user_id"],
             "name": user.get("name", ""),
             "email": user.get("email", ""),
+            "email_verified": bool(user.get("email_verified", False)),
             "role": user.get("role", ""),
             "account_status": user.get("account_status", "active"),
             "phone": user.get("phone", ""),
+            "phone_verified": bool(user.get("phone_verified_at")),
             "created_at": user.get("created_at", ""),
+            "twofa_enabled": bool(user.get("twofa_enabled", False)),
+        },
+        "kyc": {
+            "status": kyc_doc.get("status", "not_started"),
+            "submitted_at": kyc_doc.get("submitted_at", ""),
+            "reviewed_at": kyc_doc.get("reviewed_at", ""),
+            "reviewer_notes": kyc_doc.get("reviewer_notes", ""),
         },
         "balances": {k: round(float(v), 4) for k, v in balances.items() if float(v) != 0},
         "balance_total_usdt": user.get("vip_balance_usdt", 0.0),
@@ -238,6 +308,11 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
             "total_lifetime": total_orders,
             "count_last_30d": len(orders_30d),
             "volume_last_30d_usdt": round(volume_30d_usdt, 4),
+            "success_count": completed_orders,
+            "success_rate_pct": success_rate,
+            "favorite_currency": favorite_currency,
+            "favorite_currency_count": favorite_currency_count,
+            "top_currencies": [{"code": c["_id"], "count": c["count"]} for c in top_codes],
         },
         "capital": {
             "active_requests": active_debts,
