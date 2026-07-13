@@ -1,4 +1,4 @@
-.PHONY: smoke lint ruff test-drift install-hooks help
+.PHONY: smoke test-critical test-all lint ruff test-drift install-hooks help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -13,6 +13,22 @@ smoke: ## Run the 6 drift-guarded smoke tests (~15s) — same as pre-commit
 		tests/test_iter55_19g_notification_explorer_link.py \
 		-q
 
+test-critical: ## Run critical regression subset (~1 min, 91 tests) — pre-commit safety net
+	cd backend && python -m pytest \
+		tests/test_iter55_16_permissions.py \
+		tests/test_iter55_16b_audit_perm_snapshot.py \
+		tests/test_company_fund_adjustments.py \
+		tests/test_iter55_18_delete_notifications.py \
+		tests/test_iter55_19c_crypto_network_validation.py \
+		tests/test_iter55_19h_tx_hash_network_validation.py \
+		tests/test_iter14_corrections.py \
+		tests/test_totp_2fa.py \
+		tests/test_iter55_37_session_regression.py \
+		-q --tb=line
+
+test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)
+	cd backend && python -m pytest tests/ -q --tb=line
+
 lint: ## Frontend eslint (react-hooks + syntax)
 	cd frontend && yarn lint
 
@@ -22,6 +38,5 @@ ruff: ## Backend ruff — undefined names + literal comparisons
 test-drift: smoke ## Alias for `smoke`
 
 install-hooks: ## Wire up .git/hooks/pre-commit (one-time per clone)
-	pip install pre-commit
-	pre-commit install
-	@echo "✓ pre-commit installed. Every commit now runs smoke + ruff + eslint."
+	git config core.hooksPath .githooks
+	@echo "✓ Git hooks pointing to .githooks/. Every commit now runs the secret-scan + critical tests."

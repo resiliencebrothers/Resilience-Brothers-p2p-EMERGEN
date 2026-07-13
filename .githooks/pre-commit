@@ -88,3 +88,45 @@ if [ -n "$staged" ]; then
 fi
 
 echo -e "${GREEN}✅ Pre-commit checks passed.${NC}"
+
+# 4. Run critical regression tests (~1 min, 91 tests) if backend code changed.
+#    Skip when only docs / config / frontend-css touched → keeps commit UX snappy.
+#
+# Bypass this section explicitly with:  git commit --no-verify
+# or set SKIP_CRITICAL_TESTS=1 in the environment.
+if [ "${SKIP_CRITICAL_TESTS:-}" = "1" ]; then
+  echo -e "${YELLOW}[pre-commit] SKIP_CRITICAL_TESTS=1 → skipping critical tests.${NC}"
+  exit 0
+fi
+
+backend_changed=$(echo "$staged" | grep -E '(^|/)backend/.*\.py$' || true)
+if [ -z "$backend_changed" ]; then
+  echo -e "${YELLOW}[pre-commit] No backend .py changes → skipping critical tests.${NC}"
+  exit 0
+fi
+
+if [ ! -f /app/Makefile ]; then
+  echo -e "${YELLOW}[pre-commit] /app/Makefile not found → skipping critical tests.${NC}"
+  exit 0
+fi
+
+echo -e "${YELLOW}[pre-commit] Backend .py changed — running critical regression suite (~1 min)…${NC}"
+
+# Capture full log so the user gets actionable output on failure.
+TMPLOG=$(mktemp -t pre-commit-critical.XXXXXX)
+if make -C /app test-critical > "$TMPLOG" 2>&1; then
+  # Show only the final summary line
+  tail -2 "$TMPLOG" | head -1
+  rm -f "$TMPLOG"
+  echo -e "${GREEN}✅ Critical tests passed.${NC}"
+else
+  echo -e "${RED}❌ Critical tests FAILED. Commit aborted.${NC}"
+  echo ""
+  echo -e "${YELLOW}--- pytest output (last 60 lines) ---${NC}"
+  tail -60 "$TMPLOG"
+  echo ""
+  echo -e "${YELLOW}Full log: $TMPLOG${NC}"
+  echo -e "${YELLOW}Bypass with:  git commit --no-verify${NC}"
+  echo -e "${YELLOW}Or:           SKIP_CRITICAL_TESTS=1 git commit${NC}"
+  exit 1
+fi

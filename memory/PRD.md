@@ -1324,3 +1324,25 @@ Operator asks (13 Feb 2026):
     * `conftest.py` — added an autouse `_reset_motor_client_loop_binding` fixture that clears `db_client.client._io_loop` before every test so motor re-binds cleanly to the current loop.
   - **Verified GREEN**: full suite `935 passed, 6 skipped, 0 failed in 513s`. Zero regressions. No source code (routes/services) touched — only test fixtures + assertions.
 
+
+- Pre-commit test gate + README badges (iter55.36c, Feb 12 2026): building on the iter55.36b "935 tests green" restoration, added an automated safety net so future backend changes can't silently regress the same categories again.
+  - **Extended `.githooks/pre-commit`**: after the existing secret-scan step, the hook now:
+    1. Skips test execution if only frontend / docs / config changed (fast path, keeps the developer's flow snappy).
+    2. When any `backend/**/*.py` file is staged, runs `make test-critical` (91-test regression subset, ~1 min via 9 focused files: `iter55_16 permissions`, `iter55_16b audit snapshot`, `company_fund_adjustments`, `iter55_18 delete notifications`, `iter55_19c/19h crypto network`, `iter14 corrections`, `totp_2fa`, `iter55_37 session regression`).
+    3. On failure, prints the last 60 lines of pytest output + the full log path + the two bypass options.
+  - **Bypass mechanisms** (both surfaced clearly on failure):
+    - `git commit --no-verify` — skip the entire hook (secret-scan included, use for emergencies only).
+    - `SKIP_CRITICAL_TESTS=1 git commit` — keep the secret-scan but skip the tests.
+  - **Expanded `Makefile`** with 3-tier test targets:
+    - `make smoke` (~15s, 6 tests) — ultra-fast drift check, unchanged from before.
+    - `make test-critical` (~1 min, 91 tests) — new; the pre-commit safety net.
+    - `make test-all` (~8-9 min, 935 tests) — new; full suite for CI or pre-push validation.
+    - `make install-hooks` — updated to just `git config core.hooksPath .githooks` (no more `pre-commit` package dependency).
+  - **New `README.md`**: replaced the 2-line placeholder with a proper project README including:
+    - 7 shields.io badges: "935 tests passing", FastAPI+Motor stack, React 19, MongoDB, deployment URL, 2FA/TOTP, Cloudflare R2.
+    - Quick-start block with the 4 canonical Make targets.
+    - Pre-commit hook explainer with bypass table.
+    - Architecture overview, role matrix (Normal / VIP / Staff / Admin), key endpoints, doc links, deployment note.
+  - **Verified**: `make help` renders all 8 targets · `/app/.githooks/pre-commit` executed directly with no staged backend .py → skips tests (fast path) · with `backend/tests/conftest.py` staged → runs 91 tests in **43.08s** all pass · with `SKIP_CRITICAL_TESTS=1` → tests skipped, secret-scan still runs.
+  - **Status**: fix in preview. The hook is now active on this workspace (`git config core.hooksPath .githooks` set). User needs to redeploy to push to production.
+
