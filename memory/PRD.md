@@ -1256,3 +1256,26 @@ Operator ask (12 Feb 2026): (a) replace the cluttered per-currency balance break
 - New frontend `VipCapitalRequestsView.jsx` (route `/dashboard/capital-requests`, sidebar item `nav-capital-requests` only visible for `role=vip`) with create-request form + list + progress bars for active debts.
 - Translations: `sidebar.client.capitalRequests` + `companyFundsHub.tabs.requests` in both ES/EN.
 - Tests: `backend/tests/test_iter55_32_capital_requests.py` (15/15 green — create/list role-gating, currency validation, approve credits balance, reject locks status, auto-discount partial paydown, paid_off cap, FIFO multi-debt, currency scope, user stats structure, net_position direction, 404 on unknown user, double-approve idempotency). Regression across iter55.29/30/32 + accumulate_idempotent + balance_ledger: 45/45 green. Full E2E validation in `/app/test_reports/iteration_59.json` (backend 100% + frontend 100%).
+
+### iter55.33 — Users admin UX overhaul + granular RBAC
+Operator ask (12 Feb 2026): (1) the "Ver estadísticas" icon-button was too discrete; needed a prominent labelled button + richer stats page (phone, email, KYC, "moneda favorita", % éxito operativo). (2) The 4 inline function columns in `/admin/users` (allowed currencies, permissions, marketplace, phone verify) forced horizontal scroll and exposed sensitive controls to every staff. Consolidate into a "Funciones" dialog. (3) Sensitive info (phone, balance, permissions) was leaking to any staff member with the `users` permission — needed to gate per staff.
+
+**Operator's key clarification**: buttons must stay VISIBLE for every staff. If they lack the granular permission, the backend returns 403 and the frontend surfaces "Acceso restringido — pídele a un admin el permiso X" (rather than hiding the button entirely).
+
+New permissions added to `services/permissions.py` catalog:
+- `user_stats` — grants read access to `GET /api/admin/users/{id}/stats`.
+- `user_functions` — required to `PUT /api/admin/users/{id}` when payload touches `role`, `allowed_currencies`, `allowed_permissions`, `market perms`, or `account_status`. Verify-email/reject-phone endpoints remain independent.
+- `view_user_sensitive` — required for `GET /api/admin/users` list response to include `phone`, `vip_balances`, `vip_balance_usdt`, `vip_balance_usd`, `allowed_currencies`, `allowed_permissions`, `market perms`. Staff without it receives a stripped list; the frontend replaces missing balances with a `Restringido` chip.
+
+Backward-compat CRITICAL: employees with `allowed_permissions=[]` (empty list / legacy) still bypass every gate (verified by `test_empty_permissions_grants_full_access_backward_compat`).
+
+**Frontend refactor**:
+- `AdminUsers.jsx`: reduced from 9 to 6 columns (Usuario · Email · Rol badge readonly · Saldo USDT eq · Registrado · Acciones). Removed 4 heavy columns and the inline role Select. Column widths fit 1440x900 with no horizontal scroll.
+- Actions column: prominent buttons per row — `user-stats-btn-{uid}` (violet "ESTADÍSTICAS") for clients + `user-perms-btn-{uid}` (emerald "FUNCIONES") for everyone. Backend 403 → toast with backend's Spanish detail verbatim.
+- New `pages/admin/users/UserFunctionsDialog.jsx`: tabbed dialog (Rol · Monedas · Permisos [employee only] · Marketplace · Teléfono) that consolidates all the previous inline controls. Contains own TOTP prompt, own reject-phone dialog, own 403 handling. Detail helper text under disabled role select for non-admin viewers.
+- `AdminUserStatsPage.jsx` enriched: new `user-stats-personal` section (email + verified badge, phone + verified badge, 2FA status, role) + `user-stats-kyc` card (status + submitted/reviewed dates + reviewer notes) + two new KPIs (`user-stats-kpi-success-rate` and `user-stats-kpi-favorite-currency`). 403 handler shows the backend detail + navigates back to `/admin/users`.
+
+**Backend enrichment**: `/admin/users/{id}/stats` now returns `orders.success_count`, `orders.success_rate_pct`, `orders.favorite_currency` (aggregation on both from_code + to_code), `orders.favorite_currency_count`, `orders.top_currencies` (top 5), `user.email_verified`, `user.phone_verified`, `user.twofa_enabled`, and a full `kyc` block from the `kyc` collection.
+
+**Testing**: `test_iter55_33_user_admin_gating.py` — 10/10 green (catalog exposes new codes, list strips sensitive fields for gated staff, admin bypass, backward-compat with empty perms, stats 403 gate + fields, PUT functions 403 gate + Spanish message, verify-email independent). Regression across iter55.16/29/30/32/33: **57/57 green**. Frontend E2E validation in `/app/test_reports/iteration_60.json` — 100% backend + 95% frontend (only defect was a UX polish of the 403 toast fallback wording, fixed inline this iteration).
+

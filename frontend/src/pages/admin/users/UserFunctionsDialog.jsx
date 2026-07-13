@@ -69,16 +69,23 @@ export default function UserFunctionsDialog({
       return true;
     } catch (e) {
       const detail = e.response?.data?.detail;
+      const status = e.response?.status;
+      // TOTP step-up required → open the prompt and stop.
       if (typeof detail === "object" && detail?.code === "TOTP_CODE_REQUIRED") {
         setPendingTotp({ field, value });
         return false;
       }
-      if (e.response?.status === 403) {
-        toast.error(typeof detail === "string"
-          ? detail
-          : "Acceso restringido — pídele a un admin el permiso 'Funciones de usuario'.");
+      // Close the TOTP prompt if it was open — the retry failed for a
+      // reason other than TOTP.
+      setPendingTotp(null);
+      // Prefer the backend's own detail string whenever present so the
+      // staff sees exactly WHICH permission is missing.
+      if (typeof detail === "string" && detail.trim()) {
+        toast.error(detail);
+      } else if (status === 403) {
+        toast.error("Acceso restringido — pídele a un admin el permiso 'Funciones de usuario'.");
       } else {
-        toast.error(typeof detail === "string" ? detail : "Error al guardar.");
+        toast.error("Error al guardar.");
       }
       return false;
     } finally {
@@ -193,6 +200,11 @@ export default function UserFunctionsDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                {!isAdmin && (user.role === "admin" || user.role === "employee") && (
+                  <p className="text-xs text-neutral-500 mt-2 italic">
+                    Solo un admin puede modificar el rol de otro staff / admin.
+                  </p>
+                )}
 
                 <div className="mt-6">
                   <div className="micro-label text-neutral-500 mb-2">Estado de la cuenta</div>
