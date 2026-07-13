@@ -1371,3 +1371,10 @@ Operator asks (13 Feb 2026):
   - **Effect once wired**: `git push origin main` from any clone → rejected; the merge button on a PR is greyed out until the 3 checks are green; local `--no-verify` bypasses are now redundant with a hard remote gate, exactly what a financial platform needs.
   - **Status**: docs shipped. User action required: (1) push the repo to GitHub, (2) replace `<ORG>/<REPO>` in the README badge with the real slug, (3) follow the README's branch protection section (~30 seconds in Settings → Branches).
 
+
+- CONTRIBUTING.md — collaborator onboarding guide (iter55.36f, Feb 12 2026): last piece of the DevX chain (pre-commit → CI 2-tier → branch protection → contributor guide). A single 146-line file that explains "how to open a PR here" in 8 numbered sections so new collaborators can operate autonomously without blocking the maintainer.
+  - **8 sections, in workflow order**: (1) TL;DR block for people who already know the drill · (2) Branching model (`feat/`, `fix/`, `chore/`, `refactor/`) with the "one PR = one concern" rule · (3) Conventional-Commits format with 3 good + 3 bad examples · (4) Local dev checklist (4-step table: ruff → lint → test-critical → test-all with durations and skip criteria) · (5) Testing discipline ("935 tests because of this") with a non-negotiable "reproduce-the-bug-in-a-test-first" rule for bug fixes · (6) Sensitive-data / secrets guardrails (never hard-code; use `.env`) · (7) Copy-paste PR checklist template (What / Why / How verified / Risk / Refs) · (8) Merge criteria (CI green + ≥1 approval, ≥2 for security-sensitive files enumerated by name).
+  - **Cross-referenced with the existing docs**: points to `PRD.md`, `test_credentials.md`, `incident-response.md`, plus the callout to the iter55.36b motor-event-loop caveat when mixing motor + pytest-asyncio.
+  - **README updated**: added CONTRIBUTING.md to the Documentation section so it's discoverable from the top-level entry point.
+  - **Effect**: any new contributor (Emergent-assigned agent, external hire, or future you 6 months from now) can go from `git clone` → merged PR without needing to ask a maintainer a single procedural question.
+

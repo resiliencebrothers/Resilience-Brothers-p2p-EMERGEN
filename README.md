@@ -157,6 +157,7 @@ re-check it immediately after. All bypasses show up in the audit log.
 
 ## Documentation
 
+- `/app/CONTRIBUTING.md` — How to open a PR (branches, commits, tests, review)
 - `/app/memory/PRD.md` — Full product requirements + changelog
 - `/app/memory/test_credentials.md` — Test user credentials
 - `/app/docs/incident-response.md` — Ops runbook (incident playbooks, secret rotation)
