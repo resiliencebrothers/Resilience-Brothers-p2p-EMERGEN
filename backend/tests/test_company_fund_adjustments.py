@@ -101,17 +101,30 @@ class TestCreateAdjustment:
 
     def test_employee_without_perm_rejected(self):
         db = MongoClient(MONGO_URL)[DB_NAME]
-        # Ensure the flag is NOT set
+        # iter55.16 semantics: to actually deny access we must
+        #  (a) clear the legacy `can_manage_company_funds` flag AND
+        #  (b) set `allowed_permissions` to a NON-EMPTY list that does NOT
+        #      include `company_funds` (an empty list = full staff access
+        #      for backward compat).
         db.users.update_one(
             {"user_id": "user_test_employee01"},
-            {"$unset": {"can_manage_company_funds": ""}},
+            {
+                "$unset": {"can_manage_company_funds": ""},
+                "$set": {"allowed_permissions": ["orders"]},
+            },
         )
-        r = requests.post(
-            f"{BASE_URL}/api/admin/company-funds/adjustments",
-            headers=_h(EMPLOYEE_TOKEN), json=_make_payload(),
-        )
-        assert r.status_code == 403
-        assert "permiso" in r.text.lower()
+        try:
+            r = requests.post(
+                f"{BASE_URL}/api/admin/company-funds/adjustments",
+                headers=_h(EMPLOYEE_TOKEN), json=_make_payload(),
+            )
+            assert r.status_code == 403
+            assert "permiso" in r.text.lower()
+        finally:
+            db.users.update_one(
+                {"user_id": "user_test_employee01"},
+                {"$unset": {"allowed_permissions": ""}},
+            )
 
     def test_employee_with_perm_allowed(self):
         db = MongoClient(MONGO_URL)[DB_NAME]
