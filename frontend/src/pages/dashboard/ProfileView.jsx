@@ -13,7 +13,7 @@ import CopyableText from "@/components/CopyableText";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 import {
   User, Mail, Phone, Globe, ShieldCheck, IdCard, Clock, CheckCircle2,
-  AlertTriangle, Pencil,
+  AlertTriangle, Pencil, Fingerprint,
 } from "lucide-react";
 
 
@@ -81,6 +81,7 @@ export default function ProfileView() {
           <span className="micro-label text-neutral-500">Datos personales</span>
         </div>
         <PersonalRow icon={User} label="Nombre" value={profile.name || "—"} readOnly />
+        <UserIdRow userId={profile.user_id} />
         <PersonalRow icon={Mail} label="Email" value={profile.email}
                      onEdit={() => setEmailDialog(true)}
                      pending={profile.pending_email_change ? "Pendiente confirmar código" : null}
@@ -182,6 +183,38 @@ const KYC_BADGE = {
   approved: { label: "Verificada", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
   rejected: { label: "Rechazada", className: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" },
 };
+
+
+function UserIdRow({ userId }) {
+  if (!userId) return null;
+  return (
+    <div
+      className="flex items-center justify-between gap-4 py-2 border-t border-white/5"
+      data-testid="profile-user-id-row"
+    >
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <Fingerprint className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[0.65rem] uppercase tracking-widest text-neutral-500">
+            User ID
+          </div>
+          <div className="text-sm text-white mt-0.5">
+            <CopyableText
+              value={userId}
+              testid="profile-user-id-copy"
+              toastMessage="User ID copiado"
+              label="Copiar User ID"
+            />
+          </div>
+          <div className="text-[0.65rem] text-neutral-500 mt-1 leading-relaxed max-w-md">
+            Comparte este identificador cuando envíes una apelación o solicites
+            soporte — permite localizar tu caso más rápido.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 
 function PersonalRow({ icon: Icon, label, value, onEdit, readOnly, verified, pending, testid }) {

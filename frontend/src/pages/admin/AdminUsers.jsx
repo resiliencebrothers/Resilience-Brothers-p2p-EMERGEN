@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import CopyableText from "@/components/CopyableText";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { Search, BarChart3, Settings2 } from "lucide-react";
@@ -174,6 +175,7 @@ export default function AdminUsers() {
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
               <th className="px-4 py-3 micro-label text-neutral-500">Usuario</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">User ID</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Email</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
@@ -183,12 +185,12 @@ export default function AdminUsers() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan="5" className="text-center text-neutral-500 py-8">Cargando...</td>
+                <td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan="5" className="text-center text-neutral-500 py-8">Sin resultados</td>
+                <td colSpan="6" className="text-center text-neutral-500 py-8">Sin resultados</td>
               </tr>
             )}
             {users.map(u => (
@@ -196,6 +198,18 @@ export default function AdminUsers() {
                 <td className="px-4 py-3 flex items-center gap-2">
                   {u.picture && <img src={u.picture} alt="" className="w-7 h-7 rounded-full" />}
                   <span>{u.name}</span>
+                </td>
+                <td
+                  className="px-4 py-3 text-xs text-neutral-400"
+                  data-testid={`user-id-cell-${u.user_id}`}
+                >
+                  <CopyableText
+                    value={u.user_id}
+                    testid={`user-id-copy-${u.user_id}`}
+                    toastMessage="User ID copiado"
+                    label="Copiar User ID (para filtro de auditoría)"
+                    className="text-xs"
+                  />
                 </td>
                 <td className="px-4 py-3 text-neutral-400">
                   <div className="flex items-center gap-2 flex-wrap">

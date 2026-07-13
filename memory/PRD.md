@@ -1299,3 +1299,11 @@ Operator asks (13 Feb 2026):
 
 **Testing**: `test_iter55_34_user_audit_trail.py` — 9/9 green (permission gate 403, admin+gated-staff 200, 404 unknown user, entity_id match, details.user_id match, window filter clamps old entries, newest-first ordering, params clamping, response shape). Regression across iter55.16/29/30/32/33/34: **66/66 green**.
 
+
+- Visible User ID for audit/support workflows (iter55.36, Feb 12 2026): operator flagged that `/admin/audit` has a "Filtrar por user_id" input, but nowhere in the UI can staff or clients actually see their user_id — making the filter useless without direct DB access. Fix is UI-only, no backend change (the `user_id` is already exposed by both `/api/profile/me` and `/api/admin/users`).
+  - **`ProfileView.jsx` (dashboard/profile)**: new `UserIdRow` component rendered between "Nombre" and "Email" — Fingerprint icon + label "User ID" + `<CopyableText>` with the value + one-line hint *"Comparte este identificador cuando envíes una apelación o solicites soporte — permite localizar tu caso más rápido."* Uses the existing `CopyableText` component so the UX matches other copyable fields (wallet, tx hash, etc). Toast message "User ID copiado" on click.
+  - **`AdminUsers.jsx` (/admin/users)**: new column "User ID" between "Usuario" and "Email" with `<CopyableText>` per row. Admins can now copy an ID directly from the users list and paste it into the audit filter in `/admin/audit → By-user tab` for one-click investigation. Table `colspan` updated from 5 → 6 to keep the empty/loading states aligned.
+  - **New testids**: `profile-user-id-row`, `profile-user-id-copy`, `user-id-cell-{user_id}`, `user-id-copy-{user_id}`.
+  - **Verified**: lint clean (both files), frontend E2E smoke — admin sees 44 rows with copy button rendered; VIP client sees `user_test_vip01` value in Mi Perfil with hint text. Zero backend changes → no pytest impact.
+  - **Status**: fix in preview. User needs to redeploy to push to production.
+
