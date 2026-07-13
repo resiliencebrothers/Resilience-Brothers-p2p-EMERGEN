@@ -21,38 +21,6 @@ const ROLE_LABELS = {
   admin: "Admin",
 };
 
-function renderUserBalance(u) {
-  // iter55.32 — simplified to just the USDT-equivalent total. The full
-  // per-currency breakdown lives on the dedicated user stats page reachable
-  // from the "Ver estadísticas" button (keeps the row uncluttered).
-  // iter55.33 — if the requester lacks `view_user_sensitive` permission, the
-  // backend strips vip_balance_usdt entirely. Show a "restringido" chip so
-  // the staff knows they need to ask an admin.
-  if (u.vip_balance_usdt === undefined) {
-    return (
-      <span
-        className="text-[0.65rem] uppercase tracking-widest text-neutral-500 border border-white/10 bg-white/5 px-2 py-0.5"
-        data-testid={`balance-restricted-${u.user_id}`}
-      >
-        Restringido
-      </span>
-    );
-  }
-  const totalUsdt = Number(u.vip_balance_usdt || 0);
-  if (totalUsdt <= 0) {
-    return <span className="text-neutral-600">—</span>;
-  }
-  return (
-    <span
-      className="font-mono text-sm text-neutral-300 tabular-nums"
-      data-testid={`user-balance-${u.user_id}`}
-    >
-      {totalUsdt.toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
-      <span className="text-[0.65rem] text-[#8B5CF6]">USDT</span>
-    </span>
-  );
-}
-
 export default function AdminUsers() {
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
@@ -208,7 +176,6 @@ export default function AdminUsers() {
               <th className="px-4 py-3 micro-label text-neutral-500">Usuario</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Email</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Saldo (USDT eq.)</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Acciones</th>
             </tr>
@@ -216,12 +183,12 @@ export default function AdminUsers() {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td>
+                <td colSpan="5" className="text-center text-neutral-500 py-8">Cargando...</td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">Sin resultados</td>
+                <td colSpan="5" className="text-center text-neutral-500 py-8">Sin resultados</td>
               </tr>
             )}
             {users.map(u => (
@@ -255,7 +222,10 @@ export default function AdminUsers() {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3">
+                <td
+                  className="px-4 py-3"
+                  data-testid={`role-cell-${u.user_id}`}
+                >
                   <span
                     data-testid={`role-badge-${u.user_id}`}
                     className={
@@ -271,12 +241,6 @@ export default function AdminUsers() {
                   >
                     {ROLE_LABELS[u.role] || u.role}
                   </span>
-                </td>
-                <td
-                  className="px-4 py-3 font-mono text-neutral-300"
-                  data-testid={`balance-${u.user_id}`}
-                >
-                  {renderUserBalance(u)}
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500">
                   {new Date(u.created_at).toLocaleDateString()}

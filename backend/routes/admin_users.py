@@ -188,6 +188,51 @@ async def admin_user_balance_ledger(user_id: str, request: Request) -> Any:
     return await _build_balance_ledger(user_id)
 
 
+@router.get("/admin/users/{user_id}/audit-trail")
+async def admin_user_audit_trail(user_id: str, request: Request,
+                                    days: int = 30, limit: int = 200) -> Any:
+    """iter55.34 — chronological trail of staff actions targeting this user.
+
+    Sources searched (in one query, deduped by id):
+      1. `entity_type='user' AND entity_id=user_id` (direct edits: role,
+         perms, currencies, verify-email, phone approve/reject, etc.)
+      2. `details.user_id=user_id` (capital-request approvals/rejections
+         and other actions where the user is the affected party but not
+         the primary entity).
+
+    Filtering:
+      - `days` clamps the window (max 365 to keep the query cheap).
+      - `limit` clamps the result set (max 500).
+
+    Access: gated by the `user_stats` permission (same as the enclosing
+    stats page) so operators don't need a separate grant.
+    """
+    await require_permission(request, "user_stats")
+    if not await db.users.find_one({"user_id": user_id}, {"user_id": 1, "_id": 0}):
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    days = max(1, min(int(days or 30), 365))
+    limit = max(1, min(int(limit or 200), 500))
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    query = {
+        "created_at": {"$gte": cutoff},
+        "$or": [
+            {"entity_type": "user", "entity_id": user_id},
+            {"details.user_id": user_id},
+        ],
+    }
+    cursor = db.audit_log.find(query, {"_id": 0}).sort("created_at", -1).limit(limit)
+    entries = await cursor.to_list(limit)
+    return {
+        "user_id": user_id,
+        "window_days": days,
+        "total": len(entries),
+        "entries": entries,
+    }
+
+
 @router.get("/admin/users/{user_id}/stats")
 async def admin_user_stats(user_id: str, request: Request) -> Any:
     """iter55.32 — aggregated per-user dashboard used by the new

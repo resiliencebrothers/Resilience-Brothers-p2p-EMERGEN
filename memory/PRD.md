@@ -1279,3 +1279,23 @@ Backward-compat CRITICAL: employees with `allowed_permissions=[]` (empty list / 
 
 **Testing**: `test_iter55_33_user_admin_gating.py` — 10/10 green (catalog exposes new codes, list strips sensitive fields for gated staff, admin bypass, backward-compat with empty perms, stats 403 gate + fields, PUT functions 403 gate + Spanish message, verify-email independent). Regression across iter55.16/29/30/32/33: **57/57 green**. Frontend E2E validation in `/app/test_reports/iteration_60.json` — 100% backend + 95% frontend (only defect was a UX polish of the 403 toast fallback wording, fixed inline this iteration).
 
+
+### iter55.34 — Balance column dropped + per-user audit trail
+Operator asks (13 Feb 2026):
+1. *"eliminar la columna saldo ya que el saldo de cualquier usuario debe reflejarse en sus estadisticas"* — the "Saldo (USDT eq.)" column was redundant after iter55.33 wired the stats page.
+2. *"podemos agregar un 'Audit trail' en la página /admin/users/:id/stats mostrando quién del staff modificó qué al usuario"* — accepted the enhancement suggested by the previous finish summary.
+
+**Feature 1 · Saldo column removed**:
+- `AdminUsers.jsx`: table now has 5 columns (Usuario · Email · Rol · Registrado · Acciones). Removed the `Saldo (USDT eq.)` header + row cell + the `renderUserBalance` helper.
+- Backend `/admin/users` still returns `vip_balance_usdt` for callers with the `view_user_sensitive` permission (used by the stats page) — no schema breakage.
+
+**Feature 2 · Per-user audit trail**:
+- New endpoint `GET /api/admin/users/{user_id}/audit-trail?days=<7|30|90>&limit=<n>`.
+- Gated by the `user_stats` permission (same as the stats page — no separate grant needed).
+- Query: `created_at >= cutoff AND (entity_type='user' & entity_id=user_id OR details.user_id=user_id)`. This catches BOTH direct user edits (`user.update`, `profile.phone_change_approved`) AND actions where the user is the affected party but not the primary entity (`capital_request.approved/rejected`, `vip.convert`, ...).
+- Params clamped defensively: `days ∈ [1,365]`, `limit ∈ [1,500]`.
+- 404 if the user doesn't exist.
+- Frontend section `user-stats-audit-trail` in `AdminUserStatsPage.jsx`: vertical timeline with role-colored dots (violet=admin, emerald=staff), event summary + actor + action code + relative timestamp. 3 window toggle buttons `audit-trail-window-7|30|90` (default 30d). Entries limited to 100 for viewport; overflow indicator shown when hit.
+
+**Testing**: `test_iter55_34_user_audit_trail.py` — 9/9 green (permission gate 403, admin+gated-staff 200, 404 unknown user, entity_id match, details.user_id match, window filter clamps old entries, newest-first ordering, params clamping, response shape). Regression across iter55.16/29/30/32/33/34: **66/66 green**.
+
