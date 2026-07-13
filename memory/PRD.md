@@ -1359,3 +1359,15 @@ Operator asks (13 Feb 2026):
   - **Note**: `README.md` CI badge URL uses a placeholder org/repo slug (`resilience-brothers/p2p-exchange-hub`) with a callout. When the repo lands on GitHub, replace it with the actual slug. Everything else works out-of-the-box.
   - **Status**: fix in preview. User needs to redeploy to push to production.
 
+
+- Branch protection rule docs + badge slug placeholder (iter55.36e, Feb 12 2026): closing the DevX/security loop from iter55.36d.
+  - **CI badge slug** — no real GitHub org/repo slug was discoverable in the codebase (no `git remote`, no ref in `.env`, no ref in source). Replaced my earlier `resilience-brothers/p2p-exchange-hub` placeholder with a very visible `<ORG>/<REPO>` marker plus an HTML comment TODO block at the top of `README.md`. Instructions right above the badge tell the maintainer to do a single find-and-replace when the repo lands on GitHub — the badge starts auto-updating from the first push.
+  - **New "Branch Protection Rule (one-time setup on GitHub)" section** in `README.md` — step-by-step guide (10-item table) to lock down `main` at the remote level so PRs cannot merge with a broken build even if someone `--no-verify`s locally. Covers:
+    - PR requirement + minimum approvals + stale-approval dismissal.
+    - Required status checks: `Backend · pytest`, `Backend · mypy`, `Frontend · ESLint` (matches the job names from `ci.yml`).
+    - "Do not allow bypassing" + "Restrict who can push to matching branches" — even admins forced through PRs.
+    - Optional signed commits.
+    - Explicit hotfix-bypass procedure with audit-log note.
+  - **Effect once wired**: `git push origin main` from any clone → rejected; the merge button on a PR is greyed out until the 3 checks are green; local `--no-verify` bypasses are now redundant with a hard remote gate, exactly what a financial platform needs.
+  - **Status**: docs shipped. User action required: (1) push the repo to GitHub, (2) replace `<ORG>/<REPO>` in the README badge with the real slug, (3) follow the README's branch protection section (~30 seconds in Settings → Branches).
+

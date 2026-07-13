@@ -1,6 +1,13 @@
 # Resilience Brothers — P2P Trading Platform
 
-[![CI](https://github.com/resilience-brothers/p2p-exchange-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/resilience-brothers/p2p-exchange-hub/actions/workflows/ci.yml)
+<!--
+  TODO · When you first push this repo to GitHub, replace `<ORG>/<REPO>` in
+  the CI badge below with your real slug (e.g. `resilience-brothers/p2p-exchange-hub`).
+  It's a single find-and-replace — the badge will start auto-updating with
+  each push.
+-->
+
+[![CI](https://github.com/<ORG>/<REPO>/actions/workflows/ci.yml/badge.svg)](https://github.com/<ORG>/<REPO>/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-935%20total%20%C2%B7%2091%20critical-22C55E?style=flat-square&logo=pytest&logoColor=white)](./backend/tests)
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20Motor-8B5CF6?style=flat-square&logo=fastapi&logoColor=white)](./backend)
 [![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20Tailwind-8B5CF6?style=flat-square&logo=react&logoColor=white)](./frontend)
@@ -8,8 +15,6 @@
 [![Deployed](https://img.shields.io/badge/deployed-p2p.resiliencebrothers.com-8B5CF6?style=flat-square)](https://p2p.resiliencebrothers.com)
 [![Security](https://img.shields.io/badge/2FA-TOTP%20required-EAB308?style=flat-square&logo=letsencrypt&logoColor=white)](./backend/routes/totp.py)
 [![Storage](https://img.shields.io/badge/storage-Cloudflare%20R2-EAB308?style=flat-square&logo=cloudflare&logoColor=white)](./backend/services/storage_service.py)
-
-> Replace `resilience-brothers/p2p-exchange-hub` in the CI badge URL with your actual GitHub org/repo slug once the repo lives on GitHub.
 
 Global P2P trading platform for digital assets, fiat currency and physical goods.
 Connects businesses and clients across LatAm with dynamic commissions, KYC/AML,
@@ -77,6 +82,43 @@ in isolation, only surfaces under the full suite load).
 Test users are seeded idempotently by `backend/scripts/seed_test_users.py`
 before the FastAPI backend starts, using placeholder secrets set in the
 workflow's `env:` block (no real credentials in CI).
+
+## Branch Protection Rule (one-time setup on GitHub)
+
+Once the CI workflow has run at least once (so GitHub knows about the checks),
+lock down `main` so PRs cannot merge with a broken build — even if someone
+tries `git commit --no-verify` locally:
+
+1. **Repo → Settings → Branches → Add branch ruleset** (or "Add classic branch
+   protection rule" if you prefer the older UI).
+2. **Branch name pattern**: `main` (add `master` and `develop` too if you use them).
+3. Enable these boxes:
+
+   | Setting | Value | Why |
+   | --- | --- | --- |
+   | Require a pull request before merging | ✅ | Blocks direct pushes to `main` |
+   | Require approvals | `1` (or more) | Second-pair-of-eyes on every change |
+   | Dismiss stale approvals when new commits are pushed | ✅ | Reviewers re-approve after fixes |
+   | Require status checks to pass before merging | ✅ | The core gate |
+   | Require branches to be up to date before merging | ✅ | No merge on stale main |
+   | Status checks that are required | `Backend · pytest`, `Backend · mypy`, `Frontend · ESLint` | The 3 job names from `ci.yml` |
+   | Require conversation resolution before merging | ✅ | No lingering review comments |
+   | Require signed commits | ✅ *(optional)* | Extra provenance guarantee |
+   | Do not allow bypassing the above settings | ✅ | Applies rules even to admins |
+   | Restrict who can push to matching branches | ✅ + `nobody` | Force everything through PRs |
+
+4. **Save changes**.
+
+From this point forward:
+- `git push origin main` from any clone → **rejected** ("protected branch").
+- Merge button on a PR → **greyed out** until the 3 status checks are green.
+- `git commit --no-verify` still works locally, but the CI on the remote will
+  still block the merge — the fast-path safety net is now redundant with a
+  hard remote gate, exactly what we want.
+
+If the CI ever needs a "hotfix bypass" (production down, hours of test flake),
+temporarily uncheck **"Do not allow bypassing"** so an admin can merge → then
+re-check it immediately after. All bypasses show up in the audit log.
 
 ## Architecture
 
