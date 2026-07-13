@@ -1346,3 +1346,16 @@ Operator asks (13 Feb 2026):
   - **Verified**: `make help` renders all 8 targets · `/app/.githooks/pre-commit` executed directly with no staged backend .py → skips tests (fast path) · with `backend/tests/conftest.py` staged → runs 91 tests in **43.08s** all pass · with `SKIP_CRITICAL_TESTS=1` → tests skipped, secret-scan still runs.
   - **Status**: fix in preview. The hook is now active on this workspace (`git config core.hooksPath .githooks` set). User needs to redeploy to push to production.
 
+
+- GitHub Actions CI workflow (iter55.36d, Feb 12 2026): remote-level safety net that mirrors the pre-commit hook so PRs from clones without the hook are still caught. Auto-updating CI badge on the README.
+  - **Two-tier strategy** in `.github/workflows/ci.yml`:
+    - **Every push / PR / manual dispatch** → `make test-critical` (91 tests, ~2-3 min total including setup). Fast feedback loop.
+    - **Nightly cron `0 3 * * *`** → `make test-all` (935 tests, ~10-12 min). Catches slow-drift regressions like iter55.36b's motor event-loop contamination that only surfaces under the full suite load.
+  - **Existing workflow updated** — the checked-in `ci.yml` was missing critical env vars (`REACT_APP_BACKEND_URL`, `CORS_ORIGINS`, `RATE_LIMIT_ENABLED`, `APP_AUTO_BLOCK_ENABLED`) that the tests need. Also `STORAGE_PROVIDER=disabled` renamed to `none` to match the actual config key. `TOTP_MASTER_KEY` set to a matching value with the seeded test users' TOTP secret.
+  - **New seed script `backend/scripts/seed_test_users.py`**: idempotent upsert of the 4 test users (admin/employee/vip/normal) with `phone_verified=True`, TOTP enabled with the deterministic test secret, and role-appropriate fields (VIP gets `vip_balance_usd=5000`). Runs before FastAPI boots so all subsequent requests find the fixture users. Local run verified: `4 test users ready in test_database`.
+  - **CI job matrix** (all 3 gates required to merge on main): `backend-mypy` (5 min budget) · `backend-tests` (20 min budget — 2 min for critical, ~12 min headroom for nightly) · `frontend-lint` (5 min budget).
+  - **README badge overhaul**: replaced the static "935 passing" badge with the GitHub Actions status badge (`workflows/ci.yml/badge.svg`) that auto-updates green/red per commit. Kept a secondary Shields badge showing "935 total · 91 critical" so contributors see both numbers at a glance. Added a new "Continuous Integration" section with the trigger→duration table (Push/PR: 2-3 min · Nightly: 10-12 min · Manual: 2-3 min).
+  - **Verified**: `make -C /app test-critical` from within `backend/` (mirrors CI's working-directory) → **91 passed in 25.74s**. YAML validates (`python -c "import yaml; yaml.safe_load(...)"` → 3 jobs OK).
+  - **Note**: `README.md` CI badge URL uses a placeholder org/repo slug (`resilience-brothers/p2p-exchange-hub`) with a callout. When the repo lands on GitHub, replace it with the actual slug. Everything else works out-of-the-box.
+  - **Status**: fix in preview. User needs to redeploy to push to production.
+

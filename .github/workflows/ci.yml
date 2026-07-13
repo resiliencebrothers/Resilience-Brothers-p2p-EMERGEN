@@ -7,6 +7,11 @@ on:
     branches: [main, master, develop]
   # Allow manual runs from the Actions tab
   workflow_dispatch:
+  # Nightly full-suite run (03:00 UTC) — catches slow-drift regressions that
+  # the critical subset can miss. Runs the same env as the PR job but
+  # invokes `make test-all` instead of `make test-critical`.
+  schedule:
+    - cron: "0 3 * * *"
 
 # Cancel in-flight runs for the same ref when a new commit lands.
 concurrency:
@@ -49,7 +54,9 @@ jobs:
   backend-tests:
     name: Backend · pytest
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # PR/push: ~2 min budget (test-critical is 1 min + setup).
+    # Nightly cron: ~15 min budget (test-all is 8-9 min + setup + margin).
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -68,13 +75,25 @@ jobs:
     env:
       MONGO_URL: mongodb://localhost:27017
       DB_NAME: resilience_ci
+      # Tests read BASE_URL from this env var (see backend/tests/conftest.py).
+      REACT_APP_BACKEND_URL: http://localhost:8001
       # Test-only secrets — never reuse outside CI.
       EMERGENT_LLM_KEY: ci-placeholder
-      TOTP_MASTER_KEY: ci_totp_master_key_change_me
+      TOTP_MASTER_KEY: DCsJczEUBaU7PrVwn3qe7HIM0yaOaQwxc2a2STel5Ps=
       JWT_SECRET: ci_jwt_secret_change_me
       APP_PUBLIC_URL: http://localhost:8001
+      # Auth / CORS — allow localhost so the security middleware doesn't reject
+      # the ingress traffic the tests generate.
+      CORS_ORIGINS: http://localhost:8001,http://localhost:3000
+      RATE_LIMIT_ENABLED: "false"
+      APP_AUTO_BLOCK_ENABLED: "false"
+      # Google OAuth — placeholders. `/api/auth/google/*` tests skip when the
+      # id/secret are missing; the flow-free tests still pass.
+      GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
+      GOOGLE_CLIENT_SECRET: ci-placeholder
+      # Email / storage / push — placeholders trigger graceful noop paths.
       RESEND_API_KEY: re_ci_placeholder
-      STORAGE_PROVIDER: disabled
+      STORAGE_PROVIDER: none
       VAPID_PUBLIC_KEY: BJD0_ci_placeholder
       VAPID_PRIVATE_KEY: ci_placeholder
       VAPID_SUBJECT: mailto:ci@example.com
@@ -105,6 +124,9 @@ jobs:
           done
           echo "Mongo never came up"; exit 1
 
+      - name: Seed test users
+        run: python scripts/seed_test_users.py
+
       - name: Start FastAPI (background)
         run: |
           nohup uvicorn server:app --host 0.0.0.0 --port 8001 > /tmp/uvicorn.log 2>&1 &
@@ -114,8 +136,15 @@ jobs:
           done
           echo "FastAPI never came up"; tail -n 50 /tmp/uvicorn.log; exit 1
 
-      - name: Run pytest
-        run: python -m pytest tests/ -q --tb=short -p no:cacheprovider
+      - name: Run pytest (critical on PR / push, full on nightly cron)
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "Nightly cron → make test-all (935 tests, ~8-9 min)"
+            make -C .. test-all
+          else
+            echo "PR/push → make test-critical (91 tests, ~1 min)"
+            make -C .. test-critical
+          fi
 
       - name: Upload backend log on failure
         if: failure()

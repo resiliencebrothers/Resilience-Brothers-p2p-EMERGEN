@@ -1,12 +1,15 @@
 # Resilience Brothers — P2P Trading Platform
 
-[![Tests](https://img.shields.io/badge/tests-935%20passing-22C55E?style=flat-square&logo=pytest&logoColor=white)](./backend/tests)
+[![CI](https://github.com/resilience-brothers/p2p-exchange-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/resilience-brothers/p2p-exchange-hub/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-935%20total%20%C2%B7%2091%20critical-22C55E?style=flat-square&logo=pytest&logoColor=white)](./backend/tests)
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20Motor-8B5CF6?style=flat-square&logo=fastapi&logoColor=white)](./backend)
 [![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20Tailwind-8B5CF6?style=flat-square&logo=react&logoColor=white)](./frontend)
 [![Database](https://img.shields.io/badge/database-MongoDB-22C55E?style=flat-square&logo=mongodb&logoColor=white)](./backend/db_client.py)
 [![Deployed](https://img.shields.io/badge/deployed-p2p.resiliencebrothers.com-8B5CF6?style=flat-square)](https://p2p.resiliencebrothers.com)
 [![Security](https://img.shields.io/badge/2FA-TOTP%20required-EAB308?style=flat-square&logo=letsencrypt&logoColor=white)](./backend/routes/totp.py)
 [![Storage](https://img.shields.io/badge/storage-Cloudflare%20R2-EAB308?style=flat-square&logo=cloudflare&logoColor=white)](./backend/services/storage_service.py)
+
+> Replace `resilience-brothers/p2p-exchange-hub` in the CI badge URL with your actual GitHub org/repo slug once the repo lives on GitHub.
 
 Global P2P trading platform for digital assets, fiat currency and physical goods.
 Connects businesses and clients across LatAm with dynamic commissions, KYC/AML,
@@ -55,6 +58,25 @@ The `.githooks/pre-commit` script runs automatically on every commit and:
 | Emergency hotfix, skip everything | `git commit --no-verify` |
 | Skip only the test suite (keep secret-scan) | `SKIP_CRITICAL_TESTS=1 git commit` |
 | Frontend-only or docs-only changes | Hook auto-skips tests |
+
+## Continuous Integration
+
+GitHub Actions workflow `.github/workflows/ci.yml` mirrors the pre-commit gate
+at the remote level so PRs from clones without the hook still get caught:
+
+| Trigger | What runs | Duration |
+| --- | --- | --- |
+| **Push / PR to main-master-develop** | `mypy` + `make test-critical` (91 tests) + ESLint | ~2-3 min |
+| **Nightly cron (03:00 UTC)** | Same jobs but `make test-all` (935 tests) | ~10-12 min |
+| **Manual dispatch** (Actions tab) | Same as push | ~2-3 min |
+
+The nightly full-suite catches slow-drift regressions that the fast critical
+subset can miss (e.g. iter55.36b's motor event-loop contamination — invisible
+in isolation, only surfaces under the full suite load).
+
+Test users are seeded idempotently by `backend/scripts/seed_test_users.py`
+before the FastAPI backend starts, using placeholder secrets set in the
+workflow's `env:` block (no real credentials in CI).
 
 ## Architecture
 
