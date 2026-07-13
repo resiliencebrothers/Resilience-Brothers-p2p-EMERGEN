@@ -13,7 +13,7 @@ import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
-import AdminAudit from "@/pages/admin/AdminAudit";
+import AdminAuditHub from "@/pages/admin/AdminAuditHub";
 import AdminTransactions from "@/pages/admin/AdminTransactions";
 import AdminQueue from "@/pages/admin/AdminQueue";
 import AdminCompanyFundsHub from "@/pages/admin/AdminCompanyFundsHub";
@@ -74,7 +74,8 @@ export default function AdminPanel() {
     ...(user?.role === "admin" ? [
       { to: "/admin/health", icon: Activity, label: t("sidebar.admin.health"), id: "admin-nav-health", highlight: true },
       { to: "/admin/security", icon: ShieldAlert, label: t("sidebar.admin.security"), id: "admin-nav-security", highlight: true },
-      { to: "/admin/audit", icon: Shield, label: t("sidebar.admin.audit"), id: "admin-nav-audit" },
+      { to: "/admin/audit", icon: Shield, label: t("sidebar.admin.audit"), id: "admin-nav-audit",
+        hasSubsections: true },
     ] : []),
   ];
 
@@ -228,7 +229,7 @@ export default function AdminPanel() {
             {user?.role === "admin" && <Route path="revenue" element={<Navigate to="/admin/company-funds?tab=revenue" replace />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
-            {user?.role === "admin" && <Route path="audit" element={<AdminAudit />} />}
+            {user?.role === "admin" && <Route path="audit" element={<AdminAuditHub />} />}
           </Routes>
         </div>
       </main>

@@ -411,22 +411,32 @@ export default function AdminUserStatsPage() {
           <h2 className="font-display text-xl flex items-center gap-2">
             <ScrollText className="w-5 h-5 text-[#8B5CF6]" /> Historial de cambios
           </h2>
-          <div className="flex gap-1" role="tablist" aria-label="Ventana temporal">
-            {[7, 30, 90].map((d) => (
-              <button
-                key={d}
-                onClick={() => setTrailDays(d)}
-                data-testid={`audit-trail-window-${d}`}
-                className={
-                  "text-[0.65rem] uppercase tracking-widest px-3 py-1 border transition-all " +
-                  (trailDays === d
-                    ? "border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]"
-                    : "border-white/10 text-neutral-500 hover:text-white hover:border-white/20")
-                }
-              >
-                {d}d
-              </button>
-            ))}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex gap-1" role="tablist" aria-label="Ventana temporal">
+              {[7, 30, 90].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setTrailDays(d)}
+                  data-testid={`audit-trail-window-${d}`}
+                  className={
+                    "text-[0.65rem] uppercase tracking-widest px-3 py-1 border transition-all " +
+                    (trailDays === d
+                      ? "border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#8B5CF6]"
+                      : "border-white/10 text-neutral-500 hover:text-white hover:border-white/20")
+                  }
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => navigate(`/admin/audit?tab=by-user&user_id=${userId}`)}
+              data-testid="audit-trail-open-in-audit"
+              className="text-[0.65rem] uppercase tracking-widest px-3 py-1 border border-emerald-500/40 hover:border-emerald-500 hover:bg-emerald-500/10 text-emerald-400 transition-all"
+              title="Abrir esta trazabilidad en el módulo global de Auditoría"
+            >
+              Abrir en Auditoría →
+            </button>
           </div>
         </div>
         {trailLoading && !trail ? (

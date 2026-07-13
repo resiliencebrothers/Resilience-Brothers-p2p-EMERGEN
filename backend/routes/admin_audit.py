@@ -28,6 +28,52 @@ from services.audit_report import (
 router = APIRouter(tags=["Admin"])
 
 
+@router.get("/admin/audit/actors")
+async def list_audit_actors(request: Request, q: Optional[str] = None,
+                              limit: int = 20) -> Any:
+    """iter55.35 — actor picker for the audit hub. Returns distinct actors
+    from the audit_log matching a search string against name/email/user_id.
+    Sorted by most-recent activity so operators see the busiest staff first.
+    Admin-only (same gate as `/admin/audit`)."""
+    await require_admin(request)
+    limit = max(1, min(int(limit or 20), 100))
+    # Build an aggregation that groups by actor_id and returns the last
+    # activity + count. Matching against name/email/user_id is applied AFTER
+    # the group so partial matches on any of the three fields work.
+    q_str = (q or "").strip().lower()
+    pipeline: list = [
+        {"$match": {"actor_id": {"$exists": True, "$ne": ""}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": "$actor_id",
+            "actor_name": {"$first": "$actor_name"},
+            "actor_email": {"$first": "$actor_email"},
+            "actor_role": {"$first": "$actor_role"},
+            "last_seen": {"$first": "$created_at"},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"last_seen": -1}},
+    ]
+    if q_str:
+        pipeline.append({"$match": {
+            "$or": [
+                {"_id": {"$regex": q_str, "$options": "i"}},
+                {"actor_name": {"$regex": q_str, "$options": "i"}},
+                {"actor_email": {"$regex": q_str, "$options": "i"}},
+            ],
+        }})
+    pipeline.append({"$limit": limit})
+    rows = await db.audit_log.aggregate(pipeline).to_list(limit)
+    return [{
+        "actor_id": r["_id"],
+        "actor_name": r.get("actor_name", ""),
+        "actor_email": r.get("actor_email", ""),
+        "actor_role": r.get("actor_role", ""),
+        "last_seen": r.get("last_seen", ""),
+        "count": r.get("count", 0),
+    } for r in rows]
+
+
 @router.get("/admin/audit")
 async def list_audit_log(request: Request, limit: int = 100, offset: int = 0,
                          action: Optional[str] = None, actor_id: Optional[str] = None,

@@ -82,6 +82,13 @@
       "requests": "Requests"
     }
   },
+  "auditHub": {
+    "tabs": {
+      "global": "Global log",
+      "byUser": "By user",
+      "monthly": "Monthly report"
+    }
+  },
   "notifications": {
     "pushTitle": "Push notifications",
     "pushDescription": "Get instant alerts when your order is approved, your withdrawal delivered or additional info is requested.",

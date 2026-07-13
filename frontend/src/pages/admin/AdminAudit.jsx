@@ -21,7 +21,7 @@ const ACTION_BADGE = {
 
 const PAGE_SIZE = 50;
 
-export default function AdminAudit() {
+export default function AdminAudit({ hideMonthly = false }) {
   const [entries, setEntries] = useState([]);
   const [actionFilter, setActionFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState("");
@@ -84,18 +84,20 @@ export default function AdminAudit() {
 
   return (
     <div className="space-y-6" data-testid="admin-audit">
-      <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Auditoría</div>
-        <h1 className="font-display text-3xl flex items-center gap-3">
-          <Shield className="w-8 h-8 text-[#8B5CF6]" /> Registro de Acciones
-        </h1>
-        <p className="text-neutral-400 mt-2 text-sm">
-          Trazabilidad completa: cada cambio de orden, tasa, usuario y configuración queda registrado con autor y momento exacto.
-        </p>
-      </div>
+      {!hideMonthly && (
+        <div>
+          <div className="micro-label text-[#8B5CF6] mb-2">/ Auditoría</div>
+          <h1 className="font-display text-3xl flex items-center gap-3">
+            <Shield className="w-8 h-8 text-[#8B5CF6]" /> Registro de Acciones
+          </h1>
+          <p className="text-neutral-400 mt-2 text-sm">
+            Trazabilidad completa: cada cambio de orden, tasa, usuario y configuración queda registrado con autor y momento exacto.
+          </p>
+        </div>
+      )}
 
       {/* iter55.17 — Monthly executive audit report */}
-      <MonthlyAuditReport />
+      {!hideMonthly && <MonthlyAuditReport />}
 
       <div className="flex flex-wrap gap-3 items-end justify-between">
         <div className="flex flex-wrap gap-3 items-end">

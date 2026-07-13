@@ -82,6 +82,13 @@
       "requests": "Solicitudes"
     }
   },
+  "auditHub": {
+    "tabs": {
+      "global": "Registro global",
+      "byUser": "Por usuario",
+      "monthly": "Reporte mensual"
+    }
+  },
   "notifications": {
     "pushTitle": "Notificaciones push",
     "pushDescription": "Recibe alertas al instante cuando el equipo apruebe tu orden, entregue tu retiro o solicite información adicional.",
