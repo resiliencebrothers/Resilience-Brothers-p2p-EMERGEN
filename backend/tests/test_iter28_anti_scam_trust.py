@@ -166,34 +166,47 @@ class TestBulkImport:
 class TestPermissionGating:
     def test_employee_without_perm_blocked_on_blocklist_endpoints(self):
         db = _db()
-        db.users.update_one({"user_id": "user_test_employee01"},
-                            {"$unset": {"can_manage_blocklist": ""}})
-
-        # GET list
-        r = requests.get(f"{API}/admin/blocked-contacts", headers=_hdr(EMPLOYEE))
-        assert r.status_code == 403, r.text
-        # POST single
-        r = requests.post(f"{API}/admin/blocked-contacts",
-                          json={"phone": "+5359000000", "reason": "test"},
-                          headers=_hdr(EMPLOYEE))
-        assert r.status_code == 403
-        # POST bulk
-        r = requests.post(f"{API}/admin/blocked-contacts/bulk-import",
-                          json={"text": "x\n+5359990000\n"}, headers=_hdr(EMPLOYEE))
-        assert r.status_code == 403
-        # DELETE
-        r = requests.delete(f"{API}/admin/blocked-contacts/nonexistent",
-                            headers=_hdr(EMPLOYEE))
-        assert r.status_code == 403
-        # verify-phone
-        r = requests.post(f"{API}/admin/users/user_test_normal01/verify-phone",
-                          json={"totp_code": make_employee_totp()}, headers=_hdr(EMPLOYEE))
-        assert r.status_code == 403
-        # reject-phone
-        r = requests.post(f"{API}/admin/users/user_test_normal01/reject-phone",
-                          json={"reason": "scam test", "totp_code": make_employee_totp()},
-                          headers=_hdr(EMPLOYEE))
-        assert r.status_code == 403
+        # iter55.16 — empty `allowed_permissions` = full staff access for
+        # backward-compat. Force a non-empty list *without* blocked_contacts
+        # (nor the legacy flag) so the 403 gate actually trips.
+        db.users.update_one(
+            {"user_id": "user_test_employee01"},
+            {
+                "$unset": {"can_manage_blocklist": ""},
+                "$set": {"allowed_permissions": ["orders"]},
+            },
+        )
+        try:
+            # GET list
+            r = requests.get(f"{API}/admin/blocked-contacts", headers=_hdr(EMPLOYEE))
+            assert r.status_code == 403, r.text
+            # POST single
+            r = requests.post(f"{API}/admin/blocked-contacts",
+                              json={"phone": "+5359000000", "reason": "test"},
+                              headers=_hdr(EMPLOYEE))
+            assert r.status_code == 403
+            # POST bulk
+            r = requests.post(f"{API}/admin/blocked-contacts/bulk-import",
+                              json={"text": "x\n+5359990000\n"}, headers=_hdr(EMPLOYEE))
+            assert r.status_code == 403
+            # DELETE
+            r = requests.delete(f"{API}/admin/blocked-contacts/nonexistent",
+                                headers=_hdr(EMPLOYEE))
+            assert r.status_code == 403
+            # verify-phone
+            r = requests.post(f"{API}/admin/users/user_test_normal01/verify-phone",
+                              json={"totp_code": make_employee_totp()}, headers=_hdr(EMPLOYEE))
+            assert r.status_code == 403
+            # reject-phone
+            r = requests.post(f"{API}/admin/users/user_test_normal01/reject-phone",
+                              json={"reason": "scam test", "totp_code": make_employee_totp()},
+                              headers=_hdr(EMPLOYEE))
+            assert r.status_code == 403
+        finally:
+            db.users.update_one(
+                {"user_id": "user_test_employee01"},
+                {"$unset": {"allowed_permissions": ""}},
+            )
 
     def test_employee_with_perm_can_list(self):
         db = _db()

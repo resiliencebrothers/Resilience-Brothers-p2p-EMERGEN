@@ -22,11 +22,20 @@ def _h(t):
 
 
 def _set_normal_balance(usd_amount: float):
-    """Directly seed the normal user's USD balance via Mongo."""
+    """Directly seed the normal user's USD balance via Mongo.
+
+    Also ensures `phone_verified=True` (iter23 requirement added later in the
+    project timeline — the test predates it).
+    """
     cli = MongoClient(os.environ["MONGO_URL"])
     cli[os.environ["DB_NAME"]].users.update_one(
         {"user_id": "user_test_normal01"},
-        {"$set": {"vip_balances.USD": float(usd_amount), "vip_balance_usd": 0}},
+        {"$set": {
+            "vip_balances.USD": float(usd_amount),
+            "vip_balance_usd": 0,
+            "phone": "+5350000000",
+            "phone_verified": True,
+        }},
     )
     cli.close()
 

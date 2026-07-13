@@ -165,6 +165,14 @@ class TestPhoneVerification:
         assert r.json()["detail"]["code"] == "TOTP_CODE_REQUIRED"
 
     def test_verify_phone_fails_without_phone_set(self):
+        # Defensive: some sibling tests seed a phone on this user. Unset it so
+        # the "phone not set" path is actually exercised.
+        cli, db = _db()
+        db.users.update_one(
+            {"user_id": "user_test_normal01"},
+            {"$unset": {"phone": "", "phone_verified": ""}},
+        )
+        cli.close()
         r = requests.post(
             f"{BASE_URL}/api/admin/users/user_test_normal01/verify-phone",
             headers={"Authorization": "Bearer test_session_admin_X"},

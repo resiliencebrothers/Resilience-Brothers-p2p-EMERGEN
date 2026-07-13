@@ -206,10 +206,19 @@ def test_expired_session_is_rejected():
 
 # ---------- Unit-level: _create_session applies 24h cap uniformly ----------
 
-def test_create_session_clamps_to_24h_regardless_of_caller():
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_create_session_clamps_to_24h_regardless_of_caller():
     """Simulates the legacy `POST /auth/session` bridge and Google callback:
     both call `_create_session` — the helper must clamp any request > 24h
-    to exactly 24h (86400 seconds max-age)."""
+    to exactly 24h (86400 seconds max-age).
+
+    Uses @pytest.mark.asyncio (instead of asyncio.run) so motor's global
+    client stays bound to a live loop for sibling tests that share the
+    module-level `client` singleton in `db_client.py`.
+    """
     import sys
     sys.path.insert(0, "/app/backend")
     from auth_utils import _create_session, SESSION_MAX_HOURS
@@ -217,20 +226,17 @@ def test_create_session_clamps_to_24h_regardless_of_caller():
 
     assert SESSION_MAX_HOURS == 24
 
-    async def _all():
-        results = []
-        uids = []
-        for hours in (168, 3, 0):
-            resp = Response()
-            uid = f"test_unit_{uuid4().hex[:8]}"
-            uids.append(uid)
-            await _create_session(uid, resp, ttl_hours=hours)
-            sc = resp.headers.get("set-cookie", "")
-            m = re.search(r"[Mm]ax-[Aa]ge=(\d+)", sc)
-            results.append((hours, int(m.group(1)) if m else -1, sc))
-        return results, uids
+    results = []
+    uids = []
+    for hours in (168, 3, 0):
+        resp = Response()
+        uid = f"test_unit_{uuid4().hex[:8]}"
+        uids.append(uid)
+        await _create_session(uid, resp, ttl_hours=hours)
+        sc = resp.headers.get("set-cookie", "")
+        m = re.search(r"[Mm]ax-[Aa]ge=(\d+)", sc)
+        results.append((hours, int(m.group(1)) if m else -1, sc))
 
-    results, uids = asyncio.run(_all())
     # Over-request → clamped to 24h
     assert results[0][1] == 24 * 3600, results[0]
     # Under-request → respected

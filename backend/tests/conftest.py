@@ -76,6 +76,35 @@ def _autoseed_sessions():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_motor_client_loop_binding():
+    """iter55.36 — Motor's `AsyncIOMotorClient` lazily binds to whatever event
+    loop first uses it; when a sibling test finishes and its loop closes (e.g.
+    tests using `asyncio.run()`), motor's cached `_io_loop` reference becomes
+    stale and subsequent async tests raise `RuntimeError('Event loop is
+    closed')`.
+
+    We clear the cached loop reference before every test so motor rebinds
+    cleanly to the loop of the CURRENT test — the only side effect is a
+    single extra `get_event_loop()` lookup per test.
+
+    Handles the case where `db_client` hasn't been imported yet (rare early-
+    collection tests that don't touch the DB).
+    """
+    try:
+        import db_client  # type: ignore
+        # Two known cache attributes across motor versions.
+        for attr in ("_io_loop", "_framework"):
+            if hasattr(db_client.client, attr) and attr == "_io_loop":
+                try:
+                    setattr(db_client.client, attr, None)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    yield
+
+
 # ---------- 2FA helpers (iter13) ----------
 # These ensure the VIP test user has TOTP enabled so existing withdrawal tests
 # can pass through the step-up gate. Returns a callable that produces fresh codes.
@@ -85,26 +114,30 @@ _sys.path.insert(0, str((_ROOT / "backend").resolve()))
 
 
 def _ensure_test_user_totp(user_id: str) -> str:
-    """Enable TOTP on a test user with a deterministic secret. Returns the secret."""
-    import asyncio
-    from motor.motor_asyncio import AsyncIOMotorClient as _M
+    """Enable TOTP on a test user with a deterministic secret. Returns the secret.
+
+    Uses pymongo (sync) instead of motor (async) — motor requires an event
+    loop and calling `asyncio.run()` here would contaminate other async tests
+    that share the module-level motor client in `db_client.py` (closed loop
+    → RuntimeError on next use). This helper is a pure setup step, so sync
+    IO is perfectly fine.
+    """
+    from pymongo import MongoClient
     import totp_service as _ts
     # Fixed secret per user_id so tests are reproducible
-    secret = _ts.generate_secret() if False else "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # 32-char base32
+    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # 32-char base32
     encrypted = _ts.encrypt_secret(secret)
-
-    async def _go():
-        cli = _M(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-        await cli.users.update_one(
-            {"user_id": user_id},
-            {"$set": {
-                "totp_enabled": True,
-                "totp_secret_encrypted": encrypted,
-                "totp_recovery_codes": [],
-                "totp_setup_at": "2026-01-01T00:00:00+00:00",
-            }},
-        )
-    asyncio.get_event_loop().run_until_complete(_go()) if False else asyncio.run(_go())
+    cli = MongoClient(os.environ["MONGO_URL"])
+    cli[os.environ["DB_NAME"]].users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "totp_enabled": True,
+            "totp_secret_encrypted": encrypted,
+            "totp_recovery_codes": [],
+            "totp_setup_at": "2026-01-01T00:00:00+00:00",
+        }},
+    )
+    cli.close()
     return secret
 
 

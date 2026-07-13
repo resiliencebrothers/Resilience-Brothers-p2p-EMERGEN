@@ -36,15 +36,16 @@ class TestTotpSetup:
 
     def test_setup_returns_qr_and_secret(self):
         # Need a clean user — use NORMAL temporarily
-        # Reset state first
-        from motor.motor_asyncio import AsyncIOMotorClient
-        async def _reset():
-            d = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-            await d.users.update_one({"user_id": "user_test_normal01"},
-                                     {"$set": {"totp_enabled": False},
-                                      "$unset": {"totp_secret_encrypted": "",
-                                                 "totp_pending_secret_encrypted": ""}})
-        asyncio.run(_reset())
+        # Reset state first — pymongo (sync) to avoid loop contamination
+        from pymongo import MongoClient
+        cli = MongoClient(os.environ["MONGO_URL"])
+        cli[os.environ["DB_NAME"]].users.update_one(
+            {"user_id": "user_test_normal01"},
+            {"$set": {"totp_enabled": False},
+             "$unset": {"totp_secret_encrypted": "",
+                        "totp_pending_secret_encrypted": ""}},
+        )
+        cli.close()
         r = requests.post(f"{BASE_URL}/api/me/2fa/setup", headers=_h(NORMAL_TOKEN))
         assert r.status_code == 200, r.text
         body = r.json()
@@ -62,12 +63,14 @@ class TestTotpSetup:
 class TestWithdrawalStepUp:
     def test_no_2fa_returns_412(self):
         # Reset VIP's 2FA, attempt withdraw, expect TOTP_SETUP_REQUIRED
-        from motor.motor_asyncio import AsyncIOMotorClient
-        async def _reset():
-            d = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
-            await d.users.update_one({"user_id": "user_test_vip01"},
-                                     {"$set": {"totp_enabled": False}})
-        asyncio.run(_reset())
+        # pymongo (sync) — see conftest._ensure_test_user_totp rationale.
+        from pymongo import MongoClient
+        cli = MongoClient(os.environ["MONGO_URL"])
+        cli[os.environ["DB_NAME"]].users.update_one(
+            {"user_id": "user_test_vip01"},
+            {"$set": {"totp_enabled": False}},
+        )
+        cli.close()
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
                           json={"amount_usd": 1, "method": "transfer",
                                 "details": "x", "beneficiary_name": "Test Holder"})

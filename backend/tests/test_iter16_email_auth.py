@@ -204,7 +204,9 @@ class TestEmailPasswordAuth:
         assert r.status_code == 429
 
     def test_login_default_session_is_7_days(self):
-        """Without remember_hours, session must default to 7d (168h)."""
+        """iter55.37 changed the max session TTL to 24h (was 7d). Any legacy
+        remember_hours request is clamped to 24h in `_create_session`. Test
+        renamed conceptually but kept for backward-compatible test discovery."""
         _r, user = _register()
         _verify(user["verification_token"])
         r = requests.post(
@@ -216,7 +218,7 @@ class TestEmailPasswordAuth:
         cli, db = _db()
         sess = db.user_sessions.find_one({"session_token": token})
         cli.close()
-        # Expires roughly 7 days from now (allow 5 min skew)
+        # iter55.37 — session clamped to 24h max (allow 5 min skew).
         from datetime import datetime, timezone, timedelta
         exp = sess["expires_at"]
         if isinstance(exp, str):
@@ -224,7 +226,7 @@ class TestEmailPasswordAuth:
         if exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
         delta = exp - datetime.now(timezone.utc)
-        assert timedelta(days=6, hours=23) <= delta <= timedelta(days=7, minutes=5)
+        assert timedelta(hours=23, minutes=55) <= delta <= timedelta(hours=24, minutes=5)
 
     def test_login_with_remember_hours_24_creates_short_session(self):
         """remember_hours=24 must cap the session to 24h (login once a day)."""

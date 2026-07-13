@@ -135,7 +135,9 @@ class TestOrders:
         expected = round(100 * rate["rate_normal"], 4)
         assert data["commission_percent"] == 0.0
         assert data["amount_to"] == expected
-        assert data["status"] == "pending"
+        # iter55.X — low-margin orders enter requires_double_approval instead
+        # of pending; both are valid "created ok" states.
+        assert data["status"] in ("pending", "requires_double_approval")
         assert data["sender_name"] == "John Doe"
 
     def test_order_vip_0pct(self):
@@ -163,7 +165,9 @@ class TestOrders:
         oid = order["id"]
         amt_to = order["amount_to"]
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                          headers=_h(ADMIN_TOKEN), json={"status": "approved", "admin_note": "ok"})
+                          headers=_h(ADMIN_TOKEN),
+                          json={"status": "approved", "admin_note": "ok",
+                                "totp_code": make_admin_totp()})
         assert r2.status_code == 200 and r2.json()["status"] == "approved"
         me_after = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         after_cup = float((me_after.get("vip_balances") or {}).get("CUP", 0.0))
@@ -196,7 +200,8 @@ class TestOrders:
             pytest.skip("no orders")
         oid = orders[0]["id"]
         r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
-                         headers=_h(ADMIN_TOKEN), json={"status": "bogus"})
+                         headers=_h(ADMIN_TOKEN),
+                         json={"status": "bogus", "totp_code": make_admin_totp()})
         assert r.status_code == 400
 
 

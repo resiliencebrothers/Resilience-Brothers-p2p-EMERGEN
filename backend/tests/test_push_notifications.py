@@ -4,7 +4,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
@@ -172,7 +172,8 @@ class TestOrderApprovalPush:
         # Approve via admin — must respond 200 even though push will fail
         r = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                          headers=_h(ADMIN_TOKEN),
-                         json={"status": "approved", "admin_note": "ok"})
+                         json={"status": "approved", "admin_note": "ok",
+                               "totp_code": make_admin_totp()})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "approved"
 

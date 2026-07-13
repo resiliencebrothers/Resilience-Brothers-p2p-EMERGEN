@@ -47,13 +47,24 @@ def _reset():
     db = _db()
     db.blocked_contacts.delete_many({"reason": {"$regex": "^iter30_"}})
     db.blocked_contacts.delete_many({"phone": {"$regex": "^\\+5359999"}})
-    db.users.update_one({"user_id": "user_test_employee01"},
-                        {"$unset": {"can_manage_blocklist": ""}})
+    # iter55.16 — clearing the legacy flag alone is not enough anymore:
+    # an employee with `allowed_permissions=[]` still gets full staff access
+    # for backward-compat. Force a non-empty list *without* blocked_contacts
+    # so the 403-on-missing-perm tests actually see 403.
+    db.users.update_one(
+        {"user_id": "user_test_employee01"},
+        {
+            "$unset": {"can_manage_blocklist": ""},
+            "$set": {"allowed_permissions": ["orders"]},
+        },
+    )
     yield
     db.blocked_contacts.delete_many({"reason": {"$regex": "^iter30_"}})
     db.blocked_contacts.delete_many({"phone": {"$regex": "^\\+5359999"}})
-    db.users.update_one({"user_id": "user_test_employee01"},
-                        {"$unset": {"can_manage_blocklist": ""}})
+    db.users.update_one(
+        {"user_id": "user_test_employee01"},
+        {"$unset": {"can_manage_blocklist": "", "allowed_permissions": ""}},
+    )
 
 
 # ============================================================
