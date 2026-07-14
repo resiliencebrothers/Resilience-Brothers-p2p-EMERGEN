@@ -355,3 +355,267 @@ def _revenue_chart(rows) -> Drawing:
     d.add(String(166, height - 14, "Acumulado",
                   fontSize=7, fillColor=TEXT_MUTED))
     return d
+
+
+
+# ---------------- Multi-month analytics report (iter55.36l) ----------------
+
+def revenue_analytics_csv(monthly_rows, summary: dict, period_label: str) -> bytes:
+    """CSV for the operator's "Estadísticas" analytics dialog. Includes:
+      • a header block with the 3 top-line highlights + category totals
+      • a monthly comparison table sorted DESC (freshest first)
+
+    The two sections are separated by a blank line so spreadsheets keep them
+    distinct. UTF-8 with BOM so Excel handles Spanish accents correctly.
+    """
+    buf = StringIO()
+    w = csv.writer(buf)
+
+    # --- Highlights block ---
+    top_month = max(monthly_rows, key=lambda r: r.get("total_profit_usdt", 0),
+                    default=None) if monthly_rows else None
+    top_pair = (summary.get("by_pair") or [None])[0]
+
+    cats = [
+        ("Intercambio P2P",  summary.get("p2p_profit_usdt", 0.0)),
+        ("Marketplace",      summary.get("marketplace_profit_usdt", 0.0)),
+        ("Conversiones",     summary.get("conversion_fees_usdt", 0.0)),
+    ]
+    abs_total = sum(abs(v) for _, v in cats) or 1.0
+    cats_sorted = sorted(cats, key=lambda x: abs(x[1]), reverse=True)
+
+    w.writerow(["Reporte de Ingresos — Analítica comparativa"])
+    w.writerow(["Período", period_label])
+    w.writerow(["Generado", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")])
+    w.writerow([])
+    w.writerow(["Mejor mes",
+                 top_month["bucket"] if top_month else "—",
+                 f"{top_month['total_profit_usdt']:.2f} USDT" if top_month else ""])
+    w.writerow(["Par con más ganancia",
+                 top_pair["pair"] if top_pair else "—",
+                 f"{top_pair['profit_usdt']:.2f} USDT" if top_pair else "",
+                 f"{top_pair['orders']} órdenes" if top_pair else ""])
+    w.writerow(["Categoría líder",
+                 cats_sorted[0][0],
+                 f"{cats_sorted[0][1]:.2f} USDT",
+                 f"{(abs(cats_sorted[0][1]) / abs_total * 100):.1f}%"])
+    w.writerow([])
+    w.writerow(["Aporte por categoría", "USDT", "% (magnitud)"])
+    for name, val in cats_sorted:
+        share = abs(val) / abs_total * 100
+        w.writerow([name, f"{val:.2f}", f"{share:.1f}%"])
+    w.writerow([])
+
+    # --- Monthly table ---
+    w.writerow(["Mes", "P2P (USDT)", "Marketplace (USDT)",
+                "Conversiones (USDT)", "Total (USDT)", "Órdenes"])
+    for r in sorted(monthly_rows, key=lambda x: x["bucket"], reverse=True):
+        w.writerow([
+            r["bucket"],
+            f"{r.get('p2p_profit_usdt', 0.0):.2f}",
+            f"{r.get('marketplace_profit_usdt', 0.0):.2f}",
+            f"{r.get('conversion_fees_usdt', 0.0):.2f}",
+            f"{r.get('total_profit_usdt', 0.0):.2f}",
+            r.get("orders", 0),
+        ])
+    return buf.getvalue().encode("utf-8-sig")
+
+
+def _analytics_bars(monthly_rows) -> Drawing:
+    """Stacked bar chart of the last-12 months revenue broken down by
+    category (P2P / Marketplace / Conversions). Mirrors the on-screen
+    recharts view in `RevenueAnalyticsDialog.jsx`."""
+    rows = sorted(monthly_rows, key=lambda x: x["bucket"])[-12:]
+    labels = [r["bucket"] for r in rows]
+    p2p  = [r.get("p2p_profit_usdt", 0.0) for r in rows]
+    mkt  = [r.get("marketplace_profit_usdt", 0.0) for r in rows]
+    conv = [r.get("conversion_fees_usdt", 0.0) for r in rows]
+
+    width = 7.0 * inch
+    height = 2.6 * inch
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, fillColor=PANEL,
+               strokeColor=BORDER, strokeWidth=0.5))
+
+    if not rows:
+        d.add(String(width / 2, height / 2, "Sin datos mensuales aún.",
+                     fontSize=10, fillColor=TEXT_MUTED, textAnchor="middle"))
+        return d
+
+    bar = VerticalBarChart()
+    bar.x = 44
+    bar.y = 32
+    bar.width = width - 80
+    bar.height = height - 60
+    bar.data = [p2p, mkt, conv]
+    bar.categoryAxis.categoryNames = labels
+    bar.categoryAxis.labels.fontSize = 6
+    bar.categoryAxis.labels.fillColor = TEXT_MUTED
+    bar.categoryAxis.labels.angle = 25
+    bar.categoryAxis.labels.dy = -6
+    bar.valueAxis.labels.fontSize = 6
+    bar.valueAxis.labels.fillColor = TEXT_MUTED
+    bar.valueAxis.gridStrokeColor = BORDER
+    bar.valueAxis.gridStrokeWidth = 0.25
+    bar.valueAxis.visibleGrid = True
+    bar.bars[0].fillColor = BRAND_PURPLE               # P2P
+    bar.bars[0].strokeColor = None
+    bar.bars[1].fillColor = GREEN                      # Marketplace
+    bar.bars[1].strokeColor = None
+    bar.bars[2].fillColor = colors.HexColor("#EAB308") # Conversiones
+    bar.bars[2].strokeColor = None
+    # Stacking MUST be set AFTER per-bar fillColor — reportlab's ChartMixin
+    # eagerly recomputes bar handles when `categoryAxis.style` flips, and
+    # accessing `bar.bars[i]` after that mutation locks up the interpreter.
+    # Do NOT iterate `for b in bar.bars` either — the special `bars` accessor
+    # entered a loop for us during testing.
+    bar.categoryAxis.style = "stacked"
+    d.add(bar)
+
+    # Legend
+    legend_y = height - 16
+    d.add(Rect(46, legend_y, 10, 6, fillColor=BRAND_PURPLE, strokeColor=None))
+    d.add(String(60, legend_y + 1, "P2P", fontSize=7, fillColor=TEXT_MUTED))
+    d.add(Rect(94, legend_y, 10, 6, fillColor=GREEN, strokeColor=None))
+    d.add(String(108, legend_y + 1, "Marketplace", fontSize=7, fillColor=TEXT_MUTED))
+    d.add(Rect(174, legend_y, 10, 6,
+                fillColor=colors.HexColor("#EAB308"), strokeColor=None))
+    d.add(String(188, legend_y + 1, "Conversiones", fontSize=7, fillColor=TEXT_MUTED))
+    return d
+
+
+def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> bytes:
+    """PDF for the operator's "Estadísticas" analytics dialog. Layout:
+      1. Highlights strip (mejor mes · categoría líder · par top)
+      2. Category breakdown table with magnitude-share %
+      3. Stacked bar chart per month
+      4. Monthly comparison table sorted DESC
+    Uses the same brand palette as the on-screen dialog for consistency.
+    """
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER,
+                            topMargin=84, bottomMargin=48,
+                            leftMargin=36, rightMargin=36)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("title", parent=styles["Title"],
+                            fontName="Helvetica-Bold", fontSize=16,
+                            textColor=TEXT, spaceAfter=4)
+    meta = ParagraphStyle("meta", parent=styles["Normal"],
+                          fontName="Helvetica", fontSize=9, textColor=TEXT_MUTED)
+    big = ParagraphStyle("big", parent=styles["Normal"],
+                         fontName="Helvetica-Bold", fontSize=14,
+                         textColor=BRAND_PURPLE)
+
+    story = [
+        Paragraph("Estadísticas comparativas de ingresos", title),
+        Paragraph(f"Período: <b>{period_label}</b>", meta),
+        Spacer(1, 12),
+    ]
+
+    top_month = max(monthly_rows, key=lambda r: r.get("total_profit_usdt", 0),
+                    default=None) if monthly_rows else None
+    top_pair = (summary.get("by_pair") or [None])[0]
+
+    cats = [
+        ("Intercambio P2P",  summary.get("p2p_profit_usdt", 0.0)),
+        ("Marketplace",      summary.get("marketplace_profit_usdt", 0.0)),
+        ("Conversiones",     summary.get("conversion_fees_usdt", 0.0)),
+    ]
+    abs_total = sum(abs(v) for _, v in cats) or 1.0
+    cats_sorted = sorted(cats, key=lambda x: abs(x[1]), reverse=True)
+
+    # --- Highlights strip ---
+    hl_rows = [[
+        Paragraph("Mejor mes", meta),
+        Paragraph("Categoría líder", meta),
+        Paragraph("Par con más ganancia", meta),
+    ], [
+        Paragraph(top_month["bucket"] if top_month else "—", big),
+        Paragraph(cats_sorted[0][0] if cats_sorted else "—", big),
+        Paragraph(top_pair["pair"] if top_pair else "—", big),
+    ], [
+        Paragraph(f"{top_month['total_profit_usdt']:.2f} USDT" if top_month else "sin datos", meta),
+        Paragraph(f"{cats_sorted[0][1]:.2f} USDT · {abs(cats_sorted[0][1]) / abs_total * 100:.1f}%"
+                  if cats_sorted else "", meta),
+        Paragraph(f"{top_pair['profit_usdt']:.2f} USDT · {top_pair['orders']} órdenes"
+                  if top_pair else "", meta),
+    ]]
+    hl = Table(hl_rows, colWidths=[2.4*inch, 2.4*inch, 2.4*inch])
+    hl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), PANEL),
+        ("BOX", (0,0), (-1,-1), 0.5, BORDER),
+        ("INNERGRID", (0,0), (-1,-1), 0.5, BORDER),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("LEFTPADDING", (0,0), (-1,-1), 10),
+        ("RIGHTPADDING", (0,0), (-1,-1), 10),
+        ("TOPPADDING", (0,0), (-1,-1), 6),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+    ]))
+    story.append(hl)
+    story.append(Spacer(1, 14))
+
+    # --- Category breakdown table ---
+    cat_data = [["Categoría", "USDT", "% magnitud"]]
+    for name, val in cats_sorted:
+        share = abs(val) / abs_total * 100
+        cat_data.append([name, f"{val:.2f}", f"{share:.1f}%"])
+    cat_tbl = Table(cat_data, colWidths=[3.0*inch, 2.0*inch, 2.2*inch])
+    cat_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), BRAND_PURPLE),
+        ("TEXTCOLOR", (0,0), (-1,0), TEXT),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("BACKGROUND", (0,1), (-1,-1), PANEL),
+        ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("ALIGN", (1,0), (-1,-1), "RIGHT"),
+        ("BOX", (0,0), (-1,-1), 0.5, BORDER),
+        ("INNERGRID", (0,0), (-1,-1), 0.25, BORDER),
+        ("LEFTPADDING", (0,0), (-1,-1), 8),
+        ("RIGHTPADDING", (0,0), (-1,-1), 8),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+    ]))
+    story.append(cat_tbl)
+    story.append(Spacer(1, 14))
+
+    # --- Monthly bar chart ---
+    story.append(Paragraph("Ganancias por mes · barras apiladas", meta))
+    story.append(Spacer(1, 6))
+    story.append(_analytics_bars(monthly_rows))
+    story.append(Spacer(1, 14))
+
+    # --- Monthly comparison table (DESC) ---
+    head = ["Mes", "P2P", "Marketplace", "Conversiones", "Total", "Órdenes"]
+    data = [head]
+    for r in sorted(monthly_rows, key=lambda x: x["bucket"], reverse=True):
+        data.append([
+            r["bucket"],
+            f"{r.get('p2p_profit_usdt', 0.0):.2f}",
+            f"{r.get('marketplace_profit_usdt', 0.0):.2f}",
+            f"{r.get('conversion_fees_usdt', 0.0):.2f}",
+            f"{r.get('total_profit_usdt', 0.0):.2f}",
+            str(r.get("orders", 0)),
+        ])
+    mtbl = Table(data, colWidths=[1.1*inch, 1.1*inch, 1.3*inch, 1.4*inch,
+                                    1.1*inch, 0.8*inch])
+    mtbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), BRAND_PURPLE),
+        ("TEXTCOLOR", (0,0), (-1,0), TEXT),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("BACKGROUND", (0,1), (-1,-1), PANEL),
+        ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
+        ("TEXTCOLOR", (4,1), (4,-1), GREEN),
+        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("ALIGN", (1,0), (-1,-1), "RIGHT"),
+        ("BOX", (0,0), (-1,-1), 0.5, BORDER),
+        ("INNERGRID", (0,0), (-1,-1), 0.25, BORDER),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ("TOPPADDING", (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+    ]))
+    story.append(mtbl)
+
+    doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
+    return buf.getvalue()

@@ -47,6 +47,13 @@ export default function AdminAuditByUser() {
   }, [query]);
 
   // -------- Load per-target trail whenever selectedUserId or window changes --------
+  const clearSelection = useCallback(() => {
+    setSelectedUserId("");
+    setSelectedActor(null);
+    setTrail(null);
+    setSearchParams({ tab: "by-user" }, { replace: true });
+  }, [setSearchParams]);
+
   const loadTrail = useCallback(async () => {
     if (!selectedUserId) {
       setTrail(null);
@@ -70,7 +77,7 @@ export default function AdminAuditByUser() {
     } finally {
       setTrailLoading(false);
     }
-  }, [selectedUserId, windowDays]);
+  }, [selectedUserId, windowDays, clearSelection]);
   useEffect(() => { loadTrail(); }, [loadTrail]);
 
   const pick = (row) => {
@@ -79,13 +86,6 @@ export default function AdminAuditByUser() {
     setQuery("");
     setSuggestions([]);
     setSearchParams({ tab: "by-user", user_id: row.actor_id }, { replace: true });
-  };
-
-  const clearSelection = () => {
-    setSelectedUserId("");
-    setSelectedActor(null);
-    setTrail(null);
-    setSearchParams({ tab: "by-user" }, { replace: true });
   };
 
   const grouped = useMemo(() => {

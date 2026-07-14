@@ -114,18 +114,43 @@ export default function BalanceConverterCard({ onConverted }) {
   };
 
   const previewRate = computeRate(fromCode, toCode);
-  // iter55.27 — mirror of backend: 0.01 USDT fee whenever destination is USDT,
-  // minimum net 1.00 USDT.
-  const USDT_CONVERT_FEE = 0.01;
-  const USDT_MIN_NET = 1.0;
+  // iter55.36i — universal 0.01 USDT fee on EVERY allowed conversion, and
+  // the source amount must be worth ≥ 1.00 USDT equivalent. Mirrors the
+  // backend rules in `routes/orders.py::vip_convert`.
+  const CONVERT_FEE_USDT = 0.01;
+  const CONVERT_MIN_SOURCE_USDT = 1.0;
+
+  // Helper: convert an amount in `code` to its USDT equivalent using the
+  // same rate table the backend uses. Prefers the operator's inverse
+  // valuation quote (USDT→code) then falls back to code→USDT direct.
+  const toUsdt = (amt, code) => {
+    if (amt == null || !code) return null;
+    if (code === "USDT") return amt;
+    const inverse = rates.find(r => r.from_code === "USDT" && r.to_code === code);
+    if (inverse && inverse.rate_normal > 0) return amt / inverse.rate_normal;
+    const direct = rates.find(r => r.from_code === code && r.to_code === "USDT");
+    if (direct && direct.rate_normal > 0) return amt * direct.rate_normal;
+    return null;
+  };
+  // Fee expressed in the destination currency (for preview UI only — backend
+  // is the source of truth in the response).
+  const feeInToCode = (() => {
+    if (!toCode) return null;
+    if (toCode === "USDT") return CONVERT_FEE_USDT;
+    const direct = rates.find(r => r.from_code === "USDT" && r.to_code === toCode);
+    if (direct && direct.rate_normal > 0) return CONVERT_FEE_USDT * direct.rate_normal;
+    const inverse = rates.find(r => r.from_code === toCode && r.to_code === "USDT");
+    if (inverse && inverse.rate_normal > 0) return CONVERT_FEE_USDT / inverse.rate_normal;
+    return null;
+  })();
   const previewGross = previewRate && amount
     ? Number(parseFloat(amount) * previewRate)
     : null;
-  const isToUsdt = toCode === "USDT";
-  const previewNet = previewGross == null
-    ? null
-    : (isToUsdt ? previewGross - USDT_CONVERT_FEE : previewGross);
-  const belowMinNet = isToUsdt && previewNet !== null && previewNet < USDT_MIN_NET;
+  const previewNet = (previewGross == null || feeInToCode == null)
+    ? previewGross
+    : Math.max(0, previewGross - feeInToCode);
+  const previewSourceUsdt = amount ? toUsdt(parseFloat(amount), fromCode) : null;
+  const belowMinSource = previewSourceUsdt !== null && previewSourceUsdt < CONVERT_MIN_SOURCE_USDT;
 
   const submit = async () => {
     const amt = parseFloat(amount);
@@ -137,10 +162,13 @@ export default function BalanceConverterCard({ onConverted }) {
     if (!have || Number(have.amount) < amt) {
       return toast.error(`No tienes ${amt} ${fromCode} disponible.`);
     }
-    // iter55.27 — client-side guard mirroring backend
-    if (belowMinNet) {
+    // iter55.36i — client-side minimum-source guard mirroring backend
+    if (belowMinSource) {
       return toast.error(
-        `Mínimo neto ${USDT_MIN_NET.toFixed(2)} USDT tras la comisión de ${USDT_CONVERT_FEE} USDT. Acumula más saldo antes de convertir.`
+        `Mínimo por conversión: equivalente a ${CONVERT_MIN_SOURCE_USDT.toFixed(2)} USDT.` +
+        (previewSourceUsdt !== null
+          ? ` Tu monto equivale a ${previewSourceUsdt.toFixed(4)} USDT.`
+          : "")
       );
     }
     setBusy(true);
@@ -150,7 +178,11 @@ export default function BalanceConverterCard({ onConverted }) {
         { from_code: fromCode, to_code: toCode, amount_from: amt },
         { withCredentials: true },
       );
-      const feeSuffix = r.data.usdt_fee > 0 ? ` (comisión ${r.data.usdt_fee} USDT)` : "";
+      const fee = r.data.usdt_fee;
+      const feeInDest = r.data.fee_in_to_code;
+      const feeSuffix = fee > 0
+        ? ` (comisión ${fee} USDT${feeInDest && toCode !== "USDT" ? ` ≈ ${feeInDest} ${toCode}` : ""})`
+        : "";
       toast.success(
         `Convertiste ${amt} ${fromCode} en ${r.data.amount_to} ${toCode}${feeSuffix}.`,
       );
@@ -224,7 +256,7 @@ export default function BalanceConverterCard({ onConverted }) {
             </DialogTitle>
             <DialogDescription className="text-neutral-400 text-xs">
               Mueve fondos entre tus propias monedas al tipo de cambio {isVip ? "VIP" : "estándar"}.
-              {isToUsdt && ` La conversión a USDT tiene una comisión fija de ${USDT_CONVERT_FEE} USDT (mínimo neto ${USDT_MIN_NET.toFixed(2)} USDT).`}
+              {" "}Cada conversión permitida tiene una comisión fija de {CONVERT_FEE_USDT.toFixed(2)} USDT y un mínimo por operación equivalente a {CONVERT_MIN_SOURCE_USDT.toFixed(2)} USDT.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-4">
@@ -288,15 +320,16 @@ export default function BalanceConverterCard({ onConverted }) {
               previewRate={previewRate}
               previewGross={previewGross}
               previewNet={previewNet}
-              isToUsdt={isToUsdt}
-              belowMinNet={belowMinNet}
-              usdtFee={USDT_CONVERT_FEE}
-              usdtMinNet={USDT_MIN_NET}
+              feeInToCode={feeInToCode}
+              feeUsdt={CONVERT_FEE_USDT}
+              belowMinSource={belowMinSource}
+              minSourceUsdt={CONVERT_MIN_SOURCE_USDT}
+              previewSourceUsdt={previewSourceUsdt}
             />
             <Button
               data-testid="confirm-converter"
               onClick={submit}
-              disabled={busy || !amount || previewRate === null || belowMinNet}
+              disabled={busy || !amount || previewRate === null || belowMinSource}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 flex items-center justify-center gap-2"
             >
               <ArrowRightLeft className="w-4 h-4" />

@@ -27,7 +27,14 @@ from pymongo import MongoClient  # noqa: E402
 import totp_service  # noqa: E402
 
 
-TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+# This is the well-known pyotp docs sample base32 secret — PUBLIC by design
+# (published in the pyotp README) and only used to seed TOTP for the 4 test
+# users on the local/CI test database. The production TOTP_MASTER_KEY is
+# entirely different, so this cannot access real 2FA anywhere.
+# Override via TEST_TOTP_SECRET env var if you want to rotate it in CI.
+TEST_TOTP_SECRET = os.environ.get(
+    "TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+)
 
 
 USERS = [

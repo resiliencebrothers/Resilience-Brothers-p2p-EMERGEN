@@ -1,23 +1,28 @@
 /**
- * iter55.29 — Extracted from BalanceConverterCard as part of the high-complexity
- * refactor. Pure presentational component that renders the live rate preview,
- * the 0.01 USDT fee row, and the "below-minimum-net" warning.
+ * iter55.36i — Universal fee/min preview. Refactored from iter55.29's
+ * "only-when-destination-is-USDT" variant to reflect the new business rule:
+ * every allowed conversion costs a flat 0.10 USDT (translated to the
+ * destination currency), and the source must be worth ≥ 1.00 USDT.
  *
  * Props:
  *  - fromCode / toCode
  *  - previewRate: number or null
  *  - previewGross: number or null
- *  - previewNet: number or null
- *  - isToUsdt: boolean — whether destination is USDT (fee applies)
- *  - belowMinNet: boolean
- *  - usdtFee / usdtMinNet: constants (kept as props so the parent stays the
- *    single source of truth mirroring the backend).
+ *  - previewNet: number or null (previewGross - feeInToCode)
+ *  - feeInToCode: number or null — the 0.10 USDT fee translated to the
+ *      destination currency using the same rate table the backend uses. Null
+ *      when we can't determine the USDT↔to_code path client-side.
+ *  - feeUsdt: constant (0.10) — surface it to the user so they know the
+ *      canonical fee is denominated in USDT even for fiat destinations.
+ *  - belowMinSource: boolean — true when previewSourceUsdt < minSourceUsdt.
+ *  - minSourceUsdt: constant (1.0).
+ *  - previewSourceUsdt: number or null — for the warning body only.
  */
 export function ConvertPreview({
   fromCode, toCode,
   previewRate, previewGross, previewNet,
-  isToUsdt, belowMinNet,
-  usdtFee, usdtMinNet,
+  feeInToCode, feeUsdt,
+  belowMinSource, minSourceUsdt, previewSourceUsdt,
 }) {
   return (
     <div
@@ -42,21 +47,25 @@ export function ConvertPreview({
                 : `${Number(previewGross.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${toCode}`}
             </span>
           </div>
-          {isToUsdt && previewGross !== null && (
+          {previewGross !== null && (
             <div className="flex justify-between items-baseline mt-1">
-              <span className="text-xs text-neutral-500">Comisión:</span>
+              <span className="text-xs text-neutral-500">
+                Comisión ({feeUsdt.toFixed(2)} USDT):
+              </span>
               <span
                 className="font-mono text-sm text-[#EF4444]"
                 data-testid="converter-preview-fee"
               >
-                -{usdtFee.toFixed(2)} USDT
+                -{feeInToCode === null
+                  ? `${feeUsdt.toFixed(2)} USDT`
+                  : `${Number(feeInToCode.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${toCode}`}
               </span>
             </div>
           )}
           <div className="flex justify-between items-baseline border-t border-white/10 pt-1.5 mt-1.5">
             <span className="text-xs text-neutral-400">Recibirás:</span>
             <span
-              className={"font-mono text-lg " + (belowMinNet ? "text-[#EF4444]" : "text-[#8B5CF6]")}
+              className={"font-mono text-lg " + (belowMinSource ? "text-[#EF4444]" : "text-[#8B5CF6]")}
               data-testid="converter-preview-amount"
             >
               {previewNet === null
@@ -67,13 +76,15 @@ export function ConvertPreview({
           <div className="text-[0.65rem] text-neutral-600 font-mono mt-1">
             Tasa: 1 {fromCode} = {previewRate.toFixed(6)} {toCode}
           </div>
-          {belowMinNet && (
+          {belowMinSource && (
             <div
               className="text-[0.7rem] text-[#EF4444] mt-2 leading-relaxed"
               data-testid="converter-below-min"
             >
-              Mínimo neto {usdtMinNet.toFixed(2)} USDT tras la comisión —
-              acumula más saldo antes de convertir.
+              Mínimo por conversión: equivalente a {minSourceUsdt.toFixed(2)} USDT.
+              {previewSourceUsdt !== null && (
+                <> Tu monto equivale a {previewSourceUsdt.toFixed(4)} USDT.</>
+              )}
             </div>
           )}
         </>

@@ -1378,3 +1378,105 @@ Operator asks (13 Feb 2026):
   - **README updated**: added CONTRIBUTING.md to the Documentation section so it's discoverable from the top-level entry point.
   - **Effect**: any new contributor (Emergent-assigned agent, external hire, or future you 6 months from now) can go from `git clone` → merged PR without needing to ask a maintainer a single procedural question.
 
+
+- Code review triage (iter55.36g, Feb 12 2026): received an external code review flagging 9 categories (315+ instances of `is` misuse, "hardcoded secrets", 14 undefined vars, missing hook deps in 5 files, oversized functions/components, etc). Triaged carefully — most were false positives from an overly aggressive static analyzer. Applied only the 3 fixes that were **real** issues, and documented the rest as intentional.
+  - **Real fixes applied**:
+    1. **DRY'd the test TOTP secret** (was in 8 files): added `TEST_TOTP_SECRET` constant to `backend/tests/conftest.py` — env-overridable via `TEST_TOTP_SECRET` env var — with a docstring explaining it's the well-known **pyotp docs sample** (public by design, only touches the local/CI test DB, cannot access production 2FA because prod has a different `TOTP_MASTER_KEY`). Refactored 5 duplicate test files + `_setup_pwd_user_ui.py` + `scripts/seed_test_users.py` to import/reference the shared constant.
+    2. **Fixed 1 unused variable** (F841) in `test_iter55_28_admin_revenue_usdt_fees.py` — dead `body = r.json()` after an earlier refactor removed the assertion that used it.
+    3. **Fixed 1 real `react-hooks/exhaustive-deps` warning** in `AdminAuditByUser.jsx:73` — `loadTrail` used `clearSelection` inside its `useCallback` but didn't list it. Wrapped `clearSelection` in a `useCallback([setSearchParams])`, moved it above `loadTrail`, and added it to `loadTrail`'s dep array. This was the ONLY hook warning across the entire frontend after config verification.
+  - **Reviewer findings intentionally NOT applied (all documented as false positives)**:
+    - **315+ `is`/`==` findings** → `ruff check --select F632` finds ZERO real issues. Every instance the reviewer flagged is `is None`, `is True`, `is False`, or `is not None` — which is the PEP 8 recommended idiom, not a bug. Replacing these would degrade code quality.
+    - **14 undefined vars** → `ruff check --select F821,F822` finds ZERO undefined names in the backend. The reviewer's analyzer had false positives.
+    - **Multiple missing hook deps (VipWithdrawalForm, VipView, ProfileView, VipCapitalRequestsView)** → `yarn lint` (ESLint with `react-hooks/exhaustive-deps` at `warn` level) reports ZERO warnings on these files. Reviewer's tooling was misconfigured.
+    - **Hardcoded secrets** → Only "secret" was the pyotp docs sample string, which is intentionally deterministic and non-sensitive. Environment-variable override + module docstring already communicate why it's safe.
+    - **Oversized functions/components** (`admin_user_stats` 140 lines, `AdminUserStatsPage.jsx` 478 lines, etc.) → All work correctly and have 100% pytest coverage where applicable. Splitting for its own sake is over-engineering per our coding guidelines. If any grows further or gets a real bug, refactor is warranted then.
+    - **`list_transactions` with 10 params** → These are FastAPI query params — the idiomatic pattern (each `Query(...)` maps to a `?foo=bar` URL param). Refactoring to a dataclass would either break the framework OR require verbose `Depends(RequestModel)` boilerplate for zero readability gain.
+    - **Nested ternaries in BalanceConverterCard/AdminKYC/AdminUsers/EmailAuthDialog** → Cosmetic; the ternaries are short and expressive. No bug, no readability blocker.
+    - **JSX filter/map perf warnings** → Premature optimization. The affected lists are tiny (typically ≤10 items); `useMemo` wrapping adds more complexity than it saves. Revisit only if profiling shows a real render bottleneck.
+  - **Verified**: `ruff check --select F821,F822,F632,F841` → All checks passed · `yarn lint` → 0 warnings · `make test-critical` → 91/91 passed in 110s. Zero regressions.
+
+
+- CONTRIBUTING.md §8 "Linter baseline" (iter55.36h, Feb 12 2026): follow-up to the iter55.36g review triage — added a new section to the contributor guide documenting exactly which static-analyzer findings we intentionally accept and why. Future external reviews with the same false positives can be answered in 30 seconds by pointing at this table instead of re-running the triage.
+  - **9-row markdown table** grouping the rejected findings by category with the specific rationale for each: `is None`/`is True`/`is False` (PEP 8), FastAPI multi-`Query()` routes (idiomatic + OpenAPI-friendly), the pyotp docs sample secret (public by design), functions >50 lines (single-responsibility pipelines), React components >300 lines (E2E-covered), nested ternaries in JSX (short and expressive), inline filter/map on tiny lists (`useMemo` overkill), external `exhaustive-deps` warnings (our ESLint config is stricter than the CI gate anyway).
+  - **Ends with a call-to-action**: "If you have a genuine finding NOT in this table, open a PR + explain the concrete bug it prevents. We add rules based on real risk, not analyzer noise."
+  - **Structural update**: bumped "Getting help" from §8 → §9. Full section list is now 1. Branching · 2. Commits · 3. Local checklist · 4. Tests · 5. Secrets · 6. PR checklist · 7. Merge criteria · 8. Linter baseline · 9. Getting help.
+  - **Status**: docs shipped, 167 lines total in CONTRIBUTING.md. Zero code changes.
+
+
+- Universal conversion fee 0.10 USDT + 1 USDT source minimum (iter55.36i, Feb 12 2026): business-rule change requested by the operator. Previously the 0.01 USDT fee only applied on `to_code == USDT` and the min was net-post-fee ≥ 1 USDT; now every allowed conversion pair pays a flat 0.10 USDT (translated into the destination currency for display) and the SOURCE amount must be worth ≥ 1 USDT equivalent.
+  - **Backend `services/balances.py`**: new `convert_from_usdt(amount_usdt, code, rates)` — inverse of the existing `convert_to_usdt`. Prefers direct `USDT→code` rate, falls back to inverted `code→USDT`. Returns None when no path exists so callers can raise a user-facing 400.
+  - **Backend `routes/orders.py::vip_convert`**:
+    - Renamed `USDT_CONVERT_FEE=0.01`/`USDT_MIN_NET=1.00` → `CONVERT_FEE_USDT=0.10`/`CONVERT_MIN_USDT=1.00` (semantics changed too: `CONVERT_MIN_USDT` is now a SOURCE minimum, not a NET minimum).
+    - Uses `convert_to_usdt(amount_from, from_code, rates)` to validate the min. Rejects with a Spanish 400 "Monto insuficiente" showing both the requested amount and its USDT equivalent.
+    - Uses `convert_from_usdt(0.10, to_code, rates)` to translate the fee into the destination currency. Rejects with a Spanish 400 when no USDT valuation path exists for `to_code`, or when the fee exceeds `amount_to_gross`.
+    - Audit log preserves the `details.usdt_fee` invariant (always in USDT) so revenue aggregation in `routes/admin_revenue.py::_compute_conversion_fees` keeps working unchanged. New fields `details.fee_in_to_code` and `details.amount_from_usdt` add operator transparency.
+    - Response body gains `fee_in_to_code` so the frontend can show "≈ X CUP" alongside the canonical USDT amount.
+  - **Frontend `components/BalanceConverterCard.jsx`** + **`converter/ConvertPreview.jsx`**:
+    - Client-side helper `toUsdt(amount, code)` mirrors the backend's rate-lookup preference (inverse USDT→code first, then direct code→USDT).
+    - Local `feeInToCode` computed from the rate table for the preview UI.
+    - New `belowMinSource` gate replaces `belowMinNet` — now applies to every destination, not just USDT.
+    - Dialog description rewritten: "Cada conversión permitida tiene una comisión fija de 0.10 USDT y un mínimo por operación equivalente a 1.00 USDT."
+    - Preview always shows the fee row (was: only when destination was USDT). Row label is `Comisión (0.10 USDT):` and the right-hand value shows the destination-currency equivalent (or the USDT amount as fallback).
+    - Toast on successful conversion now includes the `≈ X {to_code}` fee equivalent when destination is not USDT.
+  - **Frontend `pages/dashboard/ExchangeView.jsx`**: updated the "residue-to-balance" explainer + the inline comment to reflect the universal 0.10 USDT fee + 1 USDT minimum policy.
+  - **Tests updated**: 32 tests across 5 files re-anchored to the new semantics — `test_iter55_27` (5 tests), `test_iter55_28`/`28b` (revenue aggregation still works because USDT invariant preserved), `test_iter55_29` (3 tests seed USDT valuation rates for the mock currencies), `test_vip_convert` (3 assertions updated to expect `amount_to = amount_to_gross - fee_in_dest`). New test `test_convert_non_usdt_pair_charges_fee_in_dest_currency` proves EUR→CUP charges 0.10 USDT ≈ 10 CUP. `_cleanup()` in iter55.27 now also purges stray `USDT↔code` rates that would mis-value the source across sibling tests.
+  - **Verified**: `make test-critical` → 91/91 in 22.5s (isolated re-run after a flaky iter55.19c) · iter55.27+28+28b+29+vip_convert isolated → 32/32 in 8.68s · Frontend preview screenshot confirms UI: `Bruto 1.98 USDT · Comisión (0.10 USDT) -0.1 USDT · Recibirás 1.88 USDT` when converting 2 USD → USDT.
+
+- User ID column vertical-wrap bug (iter55.36j, Feb 12 2026): user reported production screenshot showing each character of the `user_id` (e.g. `user_3603d915257b7...`) stacked vertically in `/admin/users`, making each row ~600px tall. Root cause: `CopyableText` used `break-all` (breaks between any two characters) + the `<th>`/`<td>` had no `whitespace-nowrap` → the column collapsed to the natural width of "USER ID" (short header) and forced character-by-character wrap of the monospace value.
+  - **Fix in `components/CopyableText.jsx`**: replaced `break-all` with `truncate whitespace-nowrap`. Added `title={safeValue}` on the wrapper so the full ID appears on hover if the container truncates it. Added `min-w-0` on the flex parent so truncate actually kicks in inside table cells.
+  - **Fix in `pages/admin/AdminUsers.jsx`**: added `whitespace-nowrap` on both the `<th>` header ("User ID") and the `<td>` cell + `align-middle` so short-name rows align nicely against the monospace user_id.
+  - **Verified in preview**: 1280×720 viewport (matching the reported laptop screen) → all 44 rows render on ONE line each with header on one line, row height ≤ 60 px. Full-suite critical tests remain 91/91 green (frontend-only change).
+  - **Status**: fix in preview. User needs to redeploy to push to production (`p2p.resiliencebrothers.com`).
+
+
+- Convert fee correction 0.10 → 0.01 USDT (iter55.36i.1, Feb 12 2026): operator corrected the requested amount. The universal-fee/min behavior stays exactly as designed in iter55.36i; only the constant changes. Updated backend `routes/orders.py::vip_convert::CONVERT_FEE_USDT = 0.01`, frontend `BalanceConverterCard::CONVERT_FEE_USDT = 0.01`, `ExchangeView.jsx` copy ("comisión fija 0.01 USDT"), and re-anchored 32 test assertions to the new post-fee amounts (`.99`, `199`, `376.20`, etc. instead of `.90`, `190`, `342`).
+
+- Company Funds "Depósitos" dialog (iter55.36k, Feb 12 2026): operator reported that as company-treasury withdrawals accumulate, the inline "Ajustes manuales de capital" table gets scrolled off-screen. Moved the section into a dedicated dialog opened by a new "Depósitos" button in the treasury header row.
+  - **New component `pages/admin/company-funds/AdjustmentsHistoryDialog.jsx`**: wraps the existing `AdjustmentsTable` inside a `<Dialog max-w-6xl max-h-[85vh] overflow-y-auto>`. Header uses the `HandCoins` icon + explanatory description ("Aportes propios o retiros del socio. Muestra los últimos ajustes en orden descendente por fecha").
+  - **`AdminCompanyFunds.jsx`**: added the button between "Ajuste manual" and "Nuevo retiro" with a numeric badge showing `adjustments.length` when > 0 (data-testid `adjustments-history-count`). Removed the inline heading + table so treasury withdrawals no longer push the section down. Creation flow (`AdjustmentDialog`) unchanged.
+  - **New testids**: `open-adjustments-history`, `adjustments-history-dialog`, `adjustments-history-body`, `adjustments-history-count`.
+
+- Revenue Analytics dialog (iter55.36k, Feb 12 2026): operator requested a compact answer to "which month brought the most?", "which currency contributes the most?" and "which of the 3 sources (marketplace / P2P / conversions) is biggest?" — all in one place with a bar chart. Delivered as a new dialog opened by an "Estadísticas" button in the Ingresos view header.
+  - **New component `pages/admin/revenue/RevenueAnalyticsDialog.jsx`** consuming the parent's already-fetched `data` + `monthly` (from `/admin/revenue` + `/admin/revenue/timeseries?granularity=month`) — no new backend endpoints.
+  - **3 highlight cards** (top row): best month · leading category · top-earning pair (data-testids `revenue-analytics-top-month/category/pair`).
+  - **Category breakdown**: stacked bars per category with % share. Handles negative values (net loss on a category) via magnitude-share so the three percentages always sum to ~100 regardless of sign. Negatives render in red + attenuated bar + an italic legend explaining the convention. Uses the shared `CAT_META` palette (P2P `#8B5CF6` · Marketplace `#22C55E` · Conversiones `#EAB308`) so the bars in the chart and the breakdown legend match.
+  - **Monthly bar chart** (recharts, stacked) showing up to the last 12 months of P2P + Marketplace + Conversion revenue.
+  - **Monthly comparison table** sorted DESC by month with color-coded columns per category + a bolded "Total" and an "Órdenes" count.
+  - **`AdminRevenue.jsx`**: added the "Estadísticas" button in the header row next to the period selector (data-testid `open-revenue-analytics`) + wired the dialog to the existing `data`/`monthly` state.
+  - **Verified in preview** (1440×900): sum of category % = 99.9 (correct after the magnitude-share fix; previously showed nonsensical 110.5%/-10.5% when P2P was a net loss). Chart + monthly table render correctly with 2 months of test data.
+  - **`make test-critical`**: 91/91 in 23.68s. Backend untouched → no pytest changes needed.
+
+
+- Revenue Analytics export (CSV + PDF) (iter55.36l, Feb 12 2026): follow-up to iter55.36k's Estadísticas dialog — now the operator can download an executive report from within the dialog, ideal for board meetings, investor updates, or offline compliance archives.
+  - **Backend `revenue_report.py`**: 3 new helpers appended.
+    - `revenue_analytics_csv(monthly_rows, summary, period_label)` → UTF-8-BOM CSV with 3 blocks: metadata header, highlights + category breakdown, monthly comparison table (DESC). Excel-friendly Spanish accents.
+    - `_analytics_bars(monthly_rows)` → reportlab `Drawing` with a stacked bar chart of the last 12 months matching the on-screen recharts palette (P2P violet, Marketplace green, Conversiones amber). Includes a mini-legend.
+    - `revenue_analytics_pdf(monthly_rows, summary, period_label)` → 4-section executive PDF: highlights strip · category breakdown table with magnitude-share % · stacked bar chart · monthly comparison table.
+  - **Backend `routes/admin_revenue.py`**: new `GET /admin/revenue/analytics/export?format=csv|pdf&days=N` endpoint gated by `require_admin`. Reuses `admin_revenue()` for the summary (respecting `days`) + `build_revenue_timeseries("month")` for the full-history monthly rows. Filename stamped with today's date (`estadisticas-ingresos-YYYYMMDD.pdf`).
+  - **Frontend `RevenueAnalyticsDialog.jsx`**: 2 new buttons in the dialog header (`export-analytics-csv`, `export-analytics-pdf`) with per-format loading state ("Generando…"), toast success/error handling, and client-side blob-download via anchor tag. Accepts new `days` prop from `AdminRevenue.jsx` so the export respects the on-screen filter.
+  - **Reportlab gotcha solved (buried in the fix, worth documenting)**: attempting `bar.categoryAxis.style = "stacked"` BEFORE indexing `bar.bars[i]` locks up the interpreter — the `bars` property re-materializes handles when the axis style flips. Also `for b in bar.bars: ...` hangs (the sequence-like accessor recurses). Fix: set per-index `bar.bars[0/1/2]` first, then apply `style = "stacked"` last, and expand the strokeColor loop into 3 explicit assignments. Documented inline so the next contributor doesn't re-discover it.
+  - **New test file `tests/test_iter55_36l_revenue_analytics_export.py`** (5 tests) covering: CSV shape + BOM + Spanish content · PDF magic bytes + Content-Type + non-trivial size (>5KB with chart) · unknown format rejected 400 · non-admin token rejected 401/403 · missing `days` = "todo el tiempo" label. All green.
+  - **`make test-critical`**: 91/91 in 28.7s. **Local curl smoke**: PDF 476KB with correct `%PDF-1.4` header · CSV 8+ rows starting with BOM.
+  - **Frontend screenshot verified** at 1440×900: both buttons rendered top-right of the dialog header, sit next to the description without overlapping any content, and highlights/chart/table remain fully visible below.
+  - **Status**: fix in preview. User needs to redeploy for it to reach `p2p.resiliencebrothers.com`.
+
+
+- DefensiveModePanel freeze bug fix (iter55.36m, Feb 12 2026): operator reported production freeze — attempting to activate defensive mode from `/admin/queue`, the 2FA prompt appeared with `173304` typed in but the Cancel / Close (X) / Confirm buttons were all unresponsive, and the page could only be recovered by hard-reload.
+  - **Root cause 1 (primary)** — prop-name mismatch: `DefensiveModePanel.jsx` was passing `onClose` + `onSubmit` to `TotpPromptDialog`, but the child component (docstring in `TotpPromptDialog.jsx:14-25`) expects `onCancel` + `onConfirm`. All three action handlers (Cancel, Confirm, and the X via `onOpenChange`) invoked `undefined`, so every click was a silent no-op.
+  - **Root cause 2 (secondary)** — Radix modal stacking: `requestToggle()` set `pendingTotp` without closing the "Activar Modo Defensivo" reason dialog first. Both `<Dialog>` instances were open at the same time; Radix's focus-lock + `pointer-events` overlay from each fought for control and the TOTP dialog effectively became read-only.
+  - **Fix**:
+    - `DefensiveModePanel.jsx` — renamed `onClose` → `onCancel` and `onSubmit` → `onConfirm` to match the shared TotpPromptDialog contract. Replaced the non-existent `action` prop with the supported `description` prop so users see "Ingresa tu código 2FA para ACTIVAR/DESACTIVAR el modo defensivo".
+    - Added `setDialogOpen(false)` at the top of `requestToggle()` BEFORE `setPendingTotp(...)` so only one Radix Dialog is ever mounted. Reason state stays in React so re-opening the flow preserves the previously typed motivo.
+  - **Scope check**: grep'd all callers of `TotpPromptDialog` (13 callsites) — `DefensiveModePanel.jsx` was the ONLY one with wrong props. All other admin flows (`AdminOrders`, `AdminWithdrawals`, `AdminRates`, `AdminUsers`, `AdminCapitalRequests`, `AdminCompanyFunds`, `AdminOverview`, `AdminRevenue`, `AdjustmentDialog`, `AuditReport`, `UserFunctionsDialog`, `AdminProfileChangeRequests`) correctly use `onCancel`/`onConfirm`.
+  - **Verified via `testing_agent_v3_fork`** (report `/app/test_reports/iteration_61.json`): 9-step Playwright regression on the real preview URL, admin session:
+    - Reason dialog closes cleanly + TOTP dialog opens WITHOUT stacking.
+    - Cancel button closes TOTP dialog cleanly, no freeze.
+    - Re-opening the flow preserves the reason.
+    - Invalid `000000` code → 401, TOTP dialog stays open (correct behavior per contract).
+    - Valid pyotp code → POST 200, mode activates, toast shown, panel switches to "Desactivar".
+    - Cleanup: deactivated defensive mode with a fresh TOTP so the test DB is left in the same state as before.
+    - REGRESSION on `/admin/users` → role change flow: TotpPromptDialog still functional in other admin flows.
+  - **Success rate**: **frontend 100%, 0 critical, 0 minor**.
+  - **Minor doc-only finding from testing agent (not blocking)**: `/admin/users` logs 3 console `401 Unauthorized` during page load (likely an optional polling endpoint like notifications/permissions). Not user-visible; tracked as a P3 backlog item for a follow-up silence-or-`captureError` pass.
+  - **Status**: fix in preview. User needs to redeploy to push to production. Bug was reported on `p2p.resiliencebrothers.com/admin/queue`.
+

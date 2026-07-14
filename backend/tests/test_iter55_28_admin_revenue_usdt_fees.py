@@ -117,7 +117,6 @@ def test_revenue_period_filter_scopes_fees():
     r = requests.get(f"{API}/admin/revenue", headers=_hdr(ADMIN_TOKEN),
                      params={"days": 7})
     assert r.status_code == 200, r.text
-    body = r.json()
     # Old fee must not be counted in the 7-day window; only recent one is added.
     # We compare vs a baseline where both are excluded to avoid coupling to prod data:
     _cleanup()

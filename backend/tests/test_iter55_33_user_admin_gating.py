@@ -23,10 +23,9 @@ import requests
 from datetime import datetime, timezone
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT, ADMIN_TOKEN
+from tests.conftest import BASE_URL as API_ROOT, ADMIN_TOKEN, TEST_TOTP_SECRET
 
 API = f"{API_ROOT}/api"
-TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 STAFF_UID = "user_test_staff_gated"
 STAFF_EMAIL = "gated.staff@resilience.com"
@@ -42,7 +41,7 @@ def _hdr(tok):
 
 
 def _totp():
-    return pyotp.TOTP(TOTP_SECRET).now()
+    return pyotp.TOTP(TEST_TOTP_SECRET).now()
 
 
 def _iso():
@@ -66,7 +65,7 @@ def _setup_gated_staff(perms):
         "password_hash": _hash("StaffPass1!"),
         "email_verified": True,
         "totp_enabled": True,
-        "totp_secret_encrypted": _ts.encrypt_secret(TOTP_SECRET),
+        "totp_secret_encrypted": _ts.encrypt_secret(TEST_TOTP_SECRET),
         "totp_recovery_codes": [],
         "totp_setup_at": _iso(),
         "account_status": "active",

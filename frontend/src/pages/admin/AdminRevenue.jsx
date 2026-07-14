@@ -3,8 +3,9 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 
 import { BigStat, RoleCard } from "./revenue/RevenueCards";
@@ -12,6 +13,7 @@ import { RevenueByPairTable } from "./revenue/RevenueByPairTable";
 import { RevenueDailyTable } from "./revenue/RevenueDailyTable";
 import { RevenueMonthlyTable } from "./revenue/RevenueMonthlyTable";
 import { RevenueMarketplaceTable } from "./revenue/RevenueMarketplaceTable";
+import RevenueAnalyticsDialog from "./revenue/RevenueAnalyticsDialog";
 
 const fmt = (n) => (n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -26,6 +28,7 @@ export default function AdminRevenue() {
   const [exporting, setExporting] = useState(null); // `${YYYY-MM}-${csv|pdf}`
   const [sendingTotp, setSendingTotp] = useState(null); // { year, month, label }
   const [sendingBusy, setSendingBusy] = useState(false);
+  const [openAnalytics, setOpenAnalytics] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,20 +123,32 @@ export default function AdminRevenue() {
             entregada al cliente. Solo se contabilizan órdenes aprobadas/completadas con tasa real configurada.
           </p>
         </div>
-        <Select value={days} onValueChange={setDays}>
-          <SelectTrigger
-            data-testid="revenue-period"
-            className="rounded-none bg-[#0a0a0a] border-white/10 h-11 w-44"
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            data-testid="open-revenue-analytics"
+            variant="outline"
+            onClick={() => setOpenAnalytics(true)}
+            className="rounded-none border-white/20 hover:bg-white/5 h-11"
+            title="Comparativa mensual + gráfico de barras + categoría líder + moneda top"
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-            <SelectItem value="all">Todo el tiempo</SelectItem>
-            <SelectItem value="7">Últimos 7 días</SelectItem>
-            <SelectItem value="30">Últimos 30 días</SelectItem>
-            <SelectItem value="90">Últimos 90 días</SelectItem>
-          </SelectContent>
-        </Select>
+            <BarChart3 className="w-4 h-4 mr-1" />
+            Estadísticas
+          </Button>
+          <Select value={days} onValueChange={setDays}>
+            <SelectTrigger
+              data-testid="revenue-period"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-11 w-44"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+              <SelectItem value="all">Todo el tiempo</SelectItem>
+              <SelectItem value="7">Últimos 7 días</SelectItem>
+              <SelectItem value="30">Últimos 30 días</SelectItem>
+              <SelectItem value="90">Últimos 90 días</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
@@ -209,6 +224,14 @@ export default function AdminRevenue() {
       />
 
       <RevenueMarketplaceTable marketplace={data.marketplace} fmt={fmt} />
+
+      <RevenueAnalyticsDialog
+        open={openAnalytics}
+        onOpenChange={setOpenAnalytics}
+        data={data}
+        monthly={monthly}
+        days={days}
+      />
 
       <TotpPromptDialog
         open={!!sendingTotp}

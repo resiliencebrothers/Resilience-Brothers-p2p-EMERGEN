@@ -10,10 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import { Wallet, Plus, FileImage, SlidersHorizontal } from "lucide-react";
+import { Wallet, Plus, FileImage, SlidersHorizontal, HandCoins } from "lucide-react";
 import { toast } from "sonner";
 import AdjustmentDialog from "./company-funds/AdjustmentDialog";
-import AdjustmentsTable from "./company-funds/AdjustmentsTable";
+import AdjustmentsHistoryDialog from "./company-funds/AdjustmentsHistoryDialog";
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -33,6 +33,7 @@ export default function AdminCompanyFunds() {
   const [currencies, setCurrencies] = useState([]);
   const [openCreate, setOpenCreate] = useState(false);
   const [openAdjustment, setOpenAdjustment] = useState(false);
+  const [openAdjustmentsHistory, setOpenAdjustmentsHistory] = useState(false);
   const [form, setForm] = useState({ amount: "", currency: "", beneficiary: "", concept: "", note: "", invoice_image: "" });
   const [pendingSubmit, setPendingSubmit] = useState(false);
   const [pendingStatus, setPendingStatus] = useState(null); // {id, status}
@@ -153,7 +154,25 @@ export default function AdminCompanyFunds() {
 
       <div className="flex flex-wrap justify-between items-center gap-3">
         <h2 className="font-display text-xl">Retiros del fondo</h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            data-testid="open-adjustments-history"
+            variant="outline"
+            onClick={() => setOpenAdjustmentsHistory(true)}
+            className="rounded-none border-white/20 hover:bg-white/5"
+            title="Ver depósitos y ajustes manuales de capital"
+          >
+            <HandCoins className="w-4 h-4 mr-1" />
+            Depósitos
+            {adjustments.length > 0 && (
+              <span
+                className="ml-2 text-[0.65rem] font-mono text-[#8B5CF6] bg-[#8B5CF6]/10 px-1.5 py-0.5"
+                data-testid="adjustments-history-count"
+              >
+                {adjustments.length}
+              </span>
+            )}
+          </Button>
           <Button
             data-testid="open-adjustment-dialog"
             variant="outline"
@@ -282,16 +301,13 @@ export default function AdminCompanyFunds() {
         </DialogContent>
       </Dialog>
 
-      {/* Manual adjustments section */}
-      <div className="flex flex-wrap justify-between items-center gap-3 pt-4">
-        <div>
-          <h2 className="font-display text-xl">Ajustes manuales de capital</h2>
-          <p className="text-neutral-500 text-xs mt-1">
-            Aportes propios (inyección de capital) o retiros del socio. Se reflejan en el balance por moneda.
-          </p>
-        </div>
-      </div>
-      <AdjustmentsTable items={adjustments} />
+      {/* Manual adjustments — iter55.36k moved into the "Depósitos" dialog
+          so treasury withdrawals don't push them off-screen. */}
+      <AdjustmentsHistoryDialog
+        open={openAdjustmentsHistory}
+        onOpenChange={setOpenAdjustmentsHistory}
+        items={adjustments}
+      />
 
       <AdjustmentDialog
         open={openAdjustment}

@@ -174,11 +174,11 @@ export default function AdminUsers() {
         <table className="w-full text-sm">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500">Usuario</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">User ID</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">Usuario</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">User ID</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Email</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Registrado</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">Registrado</th>
               <th className="px-4 py-3 micro-label text-neutral-500">Acciones</th>
             </tr>
           </thead>
@@ -200,7 +200,7 @@ export default function AdminUsers() {
                   <span>{u.name}</span>
                 </td>
                 <td
-                  className="px-4 py-3 text-xs text-neutral-400"
+                  className="px-4 py-3 text-xs text-neutral-400 whitespace-nowrap align-middle"
                   data-testid={`user-id-cell-${u.user_id}`}
                 >
                   <CopyableText

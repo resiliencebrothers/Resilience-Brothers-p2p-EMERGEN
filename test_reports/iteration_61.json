@@ -1,0 +1,34 @@
+{
+  "summary": "Frontend-only regression test for iter55.36m DefensiveModePanel + TotpPromptDialog freeze bug. Verified all 3 dialog paths (Cancel, invalid code, valid code) work correctly. Verified reason dialog closes BEFORE opening TOTP prompt (no stacked Radix modals). Reason state is preserved after cancel + reopen. Also ran regression on /admin/users role-change TOTP flow — still working.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DefensiveModePanel.jsx correctly closes dialogOpen BEFORE setting pendingTotp (line 43-44) which resolves the Radix-modal-stacking freeze bug — verified visually and functionally.",
+    "TotpPromptDialog contract (onCancel/onConfirm) is now correctly used from DefensiveModePanel (lines 156-157), matching the props expected by the child component (TotpPromptDialog.jsx line 31-32).",
+    "Minor: on /admin/users, three CONSOLE 401 errors are logged during page load (likely optional endpoint like unread notifications or permissions polling). Not blocking but should be silenced or use captureError like DefensiveBanner does."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped)", "frontend": "100%" },
+  "test_credentials": "session_token cookie = test_session_admin_X (admin). TOTP secret = JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP (pyotp.TOTP().now()).",
+  "seed_data_creation": "Enabled and then disabled defensive mode as part of cleanup — final DB state is unchanged (defensive mode Inactive).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The bug was: DefensiveModePanel passed onClose/onSubmit props to TotpPromptDialog, but the component expected onCancel/onConfirm — so clicking Confirm/Cancel called undefined. Additionally, when the reason dialog stayed open while the TOTP dialog opened on top, both Radix Dialogs' focus-lock + pointer-events overlays fought for control, freezing the page. Both are now fixed: (a) prop rename onCancel/onConfirm, (b) setDialogOpen(false) called before setPendingTotp(...) in requestToggle(). Regression on /admin/users role change confirmed the TotpPromptDialog remains functional in other admin flows.",
+  "tests_executed": [
+    "GOTO /admin/queue as admin — DefensiveModePanel renders",
+    "Click 'Activar modo defensivo' → reason dialog opens",
+    "Type reason + click 'Activar' → reason dialog closes AND TotpPromptDialog opens (no stacking)",
+    "Click 'Cancelar' on TOTP dialog → dialog closes cleanly, no freeze",
+    "Re-open flow: 'Activar modo defensivo' → reason preserved 'TEST_iter60 regression - motivo prueba'",
+    "Submit invalid code '000000' → 401 returned, TOTP dialog REMAINS OPEN (correct behavior per docstring line 24)",
+    "Submit valid pyotp code → POST 200, TOTP dialog closes, defensive mode ACTIVE, success toast shown, panel now shows 'Desactivar' button",
+    "Cleanup: clicked 'Desactivar' + valid TOTP → defensive mode disabled (state restored)",
+    "REGRESSION: /admin/users → FUNCIONES → change role Normal→VIP → TotpPromptDialog opens with title 'Confirma esta acción', Cancelar closes it cleanly"
+  ]
+}

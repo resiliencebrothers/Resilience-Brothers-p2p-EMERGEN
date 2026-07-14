@@ -112,6 +112,9 @@ def test_convert_to_convertible_currency_still_works():
     _upsert_currency("CUP29", "fiat", is_convertible_to=True,
                      delivery_methods=["cash"])
     _upsert_rate("USDT29", "CUP29", 100.0)
+    # iter55.36i — universal fee/min needs USDT valuation for both codes.
+    _upsert_rate("USDT29", "USDT", 1.0)
+    _upsert_rate("USDT", "CUP29", 100.0)
     _db().users.update_one({"user_id": "user_test_vip01"},
                              {"$set": {"vip_balances.USDT29": 10.0}})
 
@@ -121,7 +124,8 @@ def test_convert_to_convertible_currency_still_works():
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["amount_to"] == 200.0
+    # gross=200 CUP29, fee=0.01 USDT · 100 CUP29/USDT = 1 CUP29, net=199
+    assert body["amount_to"] == 199.0
 
     _clear_balance("USDT29")
     _clear_balance("CUP29")
@@ -137,6 +141,9 @@ def test_convert_from_non_convertible_source_still_works():
                      delivery_methods=["transfer"])
     _upsert_currency("USDT29", "crypto", is_convertible_to=True)
     _upsert_rate("ZELLE29", "USDT29", 0.95)
+    # iter55.36i — universal fee/min needs USDT valuation for both codes.
+    _upsert_rate("ZELLE29", "USDT", 0.95)
+    _upsert_rate("USDT29", "USDT", 1.0)
     _db().users.update_one({"user_id": "user_test_vip01"},
                              {"$set": {"vip_balances.ZELLE29": 50.0}})
 
@@ -144,10 +151,10 @@ def test_convert_from_non_convertible_source_still_works():
         f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),
         json={"from_code": "ZELLE29", "to_code": "USDT29", "amount_from": 10.0},
     )
-    # 10 * 0.95 = 9.5 gross (destination is USDT29 not USDT literal → no fee).
+    # 10 * 0.95 = 9.5 gross. Fee 0.01 USDT · 1.0 = 0.01 USDT29. Net = 9.49.
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["amount_to"] == 9.5
+    assert body["amount_to"] == 9.49
 
     _clear_balance("USDT29")
     _clear_balance("ZELLE29")
@@ -163,6 +170,9 @@ def test_backward_compat_missing_flag_treated_as_convertible():
     # Simulate a pre-iter55.29 row: remove the flag entirely.
     _db().currencies.update_one({"code": "CUP29"}, {"$unset": {"is_convertible_to": ""}})
     _upsert_rate("USDT29", "CUP29", 100.0)
+    # iter55.36i — universal fee/min needs USDT valuation for both codes.
+    _upsert_rate("USDT29", "USDT", 1.0)
+    _upsert_rate("USDT", "CUP29", 100.0)
     _db().users.update_one({"user_id": "user_test_vip01"},
                              {"$set": {"vip_balances.USDT29": 5.0}})
 

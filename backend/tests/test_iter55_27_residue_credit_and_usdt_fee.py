@@ -69,7 +69,13 @@ def _cleanup():
     _db().orders.delete_many({"from_code": {"$regex": "^ZELLE27"}})
     _db().rates.delete_many({"from_code": {"$regex": "^ZELLE27"}})
     _db().currencies.delete_many({"code": {"$regex": "^ZELLE27|^EURCASH27"}})
-    for c in ["USDCASH27", "CUPCASH27", "EURCASH27"]:
+    # iter55.36i — also purge stray rates between the CUP/EUR/USD/USDT test
+    # aliases; `convert_to_usdt` prefers `USDT→code` inverse quotes so any
+    # leftover rate from a sibling test would mis-value the source.
+    _test_codes = ["CUPCASH27", "EURCASH27", "USDCASH27"]
+    _db().rates.delete_many({"from_code": {"$in": _test_codes}})
+    _db().rates.delete_many({"to_code": {"$in": _test_codes}})
+    for c in _test_codes:
         _clear_balance(c)
 
 
@@ -155,12 +161,13 @@ def test_transfer_order_does_not_credit_residue():
 
 
 # ============================================================
-# Part 2 — 0.01 USDT convert fee + 1.00 USDT minimum net
+# Part 2 — 0.01 USDT universal convert fee + 1.00 USDT minimum source
+# (iter55.36i — was 0.01 USDT + net-post-fee-≥-1-USDT under iter55.27)
 # ============================================================
 
 def test_convert_to_usdt_charges_flat_fee():
-    """Convert 5 CUP → USDT at rate 0.5 (CUP→USDT). Gross = 2.5 USDT, fee 0.01,
-    net = 2.49 USDT (>= 1.00 min → allowed)."""
+    """Convert 5 CUPCASH27 → USDT at rate 0.5. Gross = 2.5 USDT, fee 0.01 USDT
+    (universal). Net = 2.49 USDT. Source is worth 2.5 USDT ≥ 1 USDT min → OK."""
     _cleanup()
     _upsert_currency("CUPCASH27", "fiat", ["cash"])
     _upsert_rate("CUPCASH27", "USDT", 0.5)
@@ -176,6 +183,7 @@ def test_convert_to_usdt_charges_flat_fee():
     body = r.json()
     assert body["amount_to_gross"] == 2.5
     assert body["usdt_fee"] == 0.01
+    assert body["fee_in_to_code"] == 0.01  # dest = USDT → same as usdt_fee
     assert body["amount_to"] == 2.49
 
     usdt_after = _get_balance("USDT")
@@ -184,29 +192,30 @@ def test_convert_to_usdt_charges_flat_fee():
     _cleanup()
 
 
-def test_convert_to_usdt_blocks_below_min_net():
-    """A conversion whose NET (post-fee) result is < 1.00 USDT must fail 400
-    with a clear message. Dust guard."""
+def test_convert_blocks_below_1_usdt_source_equivalent():
+    """The source amount must be worth ≥ 1.00 USDT. Prevents dust conversions
+    regardless of destination currency."""
     _cleanup()
     _upsert_currency("CUPCASH27", "fiat", ["cash"])
     _upsert_rate("CUPCASH27", "USDT", 0.5)
     _db().users.update_one({"user_id": "user_test_vip01"},
-                             {"$set": {"vip_balances.CUPCASH27": 2.0}})
+                             {"$set": {"vip_balances.CUPCASH27": 5.0}})
 
-    # 2 CUP * 0.5 = 1.0 gross, minus 0.01 fee = 0.99 net → BLOCKED
+    # 1 CUPCASH27 * 0.5 USDT/CUPCASH27 = 0.50 USDT source-equivalent → BLOCKED
     r = requests.post(
         f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),
-        json={"from_code": "CUPCASH27", "to_code": "USDT", "amount_from": 2.0},
+        json={"from_code": "CUPCASH27", "to_code": "USDT", "amount_from": 1.0},
     )
     assert r.status_code == 400
-    assert "1.00 USDT" in r.text or "mínimo neto" in r.text.lower() or "mínimo" in r.text
+    assert "equivalente" in r.text.lower() or "USDT" in r.text
 
     _cleanup()
 
 
-def test_convert_from_usdt_to_other_charges_no_fee():
-    """The 0.01 USDT fee applies ONLY when destination is USDT. Converting
-    USDT → CUP (or any other pair) stays fee-free."""
+def test_convert_from_usdt_to_other_charges_fee():
+    """iter55.36i — the 0.01 USDT fee now applies to EVERY conversion,
+    including USDT → fiat. Fee is expressed in the destination currency
+    using the USDT→dest rate."""
     _cleanup()
     _upsert_currency("CUPCASH27", "fiat", ["cash"])
     _upsert_rate("USDT", "CUPCASH27", 100.0)
@@ -219,16 +228,52 @@ def test_convert_from_usdt_to_other_charges_no_fee():
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["usdt_fee"] == 0.0
-    assert body["amount_to"] == 200.0  # no fee applied
+    # Fee = 0.01 USDT · rate USDT→CUPCASH27 (100) = 1 CUPCASH27
+    assert body["usdt_fee"] == 0.01
+    assert body["fee_in_to_code"] == 1.0
+    assert body["amount_to_gross"] == 200.0
+    assert body["amount_to"] == 199.0
 
     _clear_balance("USDT")
     _cleanup()
 
 
+def test_convert_non_usdt_pair_charges_fee_in_dest_currency():
+    """iter55.36i — third case: neither side is USDT (e.g. EUR → CUP). Fee
+    is still 0.01 USDT, translated into the destination currency via the
+    USDT→dest rate."""
+    _cleanup()
+    _upsert_currency("EURCASH27", "fiat", ["cash"])
+    _upsert_currency("CUPCASH27", "fiat", ["cash"])
+    _upsert_rate("EURCASH27", "CUPCASH27", 400.0)  # 1 EUR = 400 CUP
+    _upsert_rate("USDT", "CUPCASH27", 100.0)       # 1 USDT = 100 CUP
+    _upsert_rate("EURCASH27", "USDT", 1.05)        # 1 EUR = 1.05 USDT (source valuation)
+    _db().users.update_one({"user_id": "user_test_vip01"},
+                             {"$set": {"vip_balances.EURCASH27": 5.0}})
+
+    # Convert 2 EUR → CUP at 400 CUP/EUR → 800 CUP gross.
+    # Source-equivalent USDT = 2 * 1.05 = 2.10 USDT (≥ 1 min → OK).
+    # Fee 0.01 USDT in CUP = 0.01 * 100 = 1 CUP.
+    # Net = 800 - 1 = 799 CUP.
+    r = requests.post(
+        f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),
+        json={"from_code": "EURCASH27", "to_code": "CUPCASH27", "amount_from": 2.0},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["usdt_fee"] == 0.01
+    assert body["fee_in_to_code"] == 1.0
+    assert body["amount_to_gross"] == 800.0
+    assert body["amount_to"] == 799.0
+
+    _cleanup()
+    _db().rates.delete_many({"from_code": {"$in": ["EURCASH27"]}})
+    _db().currencies.delete_many({"code": "EURCASH27"})
+
+
 def test_convert_fee_and_amount_appear_in_audit():
-    """The audit trail must record the fee so the accounting side can
-    reconcile Resilience income from convert-to-USDT fees."""
+    """The audit trail must record the fee (in USDT for revenue aggregation)
+    AND the destination-currency equivalent for operator transparency."""
     _cleanup()
     _upsert_currency("CUPCASH27", "fiat", ["cash"])
     _upsert_rate("CUPCASH27", "USDT", 1.0)
@@ -248,6 +293,8 @@ def test_convert_fee_and_amount_appear_in_audit():
     )
     assert e is not None
     assert e["details"]["usdt_fee"] == 0.01
+    assert e["details"]["fee_in_to_code"] == 0.01
+    assert e["details"]["amount_from_usdt"] == 3.0
     assert e["details"]["amount_to_gross"] == 3.0
     assert e["details"]["amount_to"] == 2.99
 

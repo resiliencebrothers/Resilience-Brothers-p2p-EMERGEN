@@ -52,8 +52,15 @@ export default function CopyableText({
   };
 
   return (
-    <span className={`inline-flex items-center gap-1.5 max-w-full ${className}`}>
-      <span className={`break-all ${monospace ? "font-mono" : ""}`}>{safeValue}</span>
+    <span
+      className={`inline-flex items-center gap-1.5 max-w-full min-w-0 ${className}`}
+      title={safeValue}
+    >
+      <span
+        className={`truncate whitespace-nowrap ${monospace ? "font-mono" : ""}`}
+      >
+        {safeValue}
+      </span>
       <button
         type="button"
         onClick={copy}

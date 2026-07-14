@@ -162,9 +162,12 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            # USDT→CUP rate_vip=395 → 1 USDT = 395 CUP
+            # USDT→CUP rate_vip=395 → 1 USDT = 395 CUP gross.
+            # iter55.36i — universal 0.01 USDT fee converted at rate_normal
+            # (USDT→CUP=380) = 3.80 CUP. Net = 395 - 3.80 = 391.20 CUP.
             assert body["rate"] == 395.0
-            assert body["amount_to"] == 395.0
+            assert body["usdt_fee"] == 0.01
+            assert body["amount_to"] == 391.20
         finally:
             db.users.update_one(
                 {"user_id": uid},
@@ -192,8 +195,10 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            assert body["rate"] == 395.0  # vip rate
-            assert body["amount_to"] == 3950.0
+            assert body["rate"] == 395.0  # vip rate for the conversion
+            # iter55.36i — fee 0.01 USDT · rate_normal(USDT→CUP)=380 = 3.80 CUP.
+            # Net = 3950 - 3.80 = 3946.20 CUP.
+            assert body["amount_to"] == 3946.20
         finally:
             db.users.update_one(
                 {"user_id": uid},
@@ -219,9 +224,11 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            # rate_normal=380 (vs rate_vip=395) — normals get the worse rate
+            # rate_normal=380 (vs rate_vip=395) — normals get the worse rate.
+            # iter55.36i — 0.01 USDT fee · rate_normal(USDT→CUP)=380 = 3.80 CUP.
+            # Net = 380 - 3.80 = 376.20 CUP.
             assert body["rate"] == 380.0
-            assert body["amount_to"] == 380.0
+            assert body["amount_to"] == 376.20
         finally:
             db.users.update_one(
                 {"user_id": uid},

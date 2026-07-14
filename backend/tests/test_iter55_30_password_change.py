@@ -22,12 +22,9 @@ import requests
 from datetime import datetime, timezone
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN, ADMIN_TOKEN
+from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN, ADMIN_TOKEN, TEST_TOTP_SECRET
 
 API = f"{API_ROOT}/api"
-
-# Deterministic TOTP secret (same one used by the conftest for other test users)
-TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
 def _db():
@@ -43,7 +40,7 @@ def _hash(pw: str) -> str:
 
 
 def _fresh_totp() -> str:
-    return pyotp.TOTP(TOTP_SECRET).now()
+    return pyotp.TOTP(TEST_TOTP_SECRET).now()
 
 
 TEST_EMAIL = "pwd.change.test@resilience.com"
@@ -75,7 +72,7 @@ def _setup_password_user(twofa_enabled: bool = True):
     if twofa_enabled:
         import totp_service as _ts
         doc["totp_enabled"] = True
-        doc["totp_secret_encrypted"] = _ts.encrypt_secret(TOTP_SECRET)
+        doc["totp_secret_encrypted"] = _ts.encrypt_secret(TEST_TOTP_SECRET)
         doc["totp_recovery_codes"] = []
         doc["totp_setup_at"] = "2026-01-01T00:00:00+00:00"
     else:

@@ -25,7 +25,8 @@ TEST_EMAIL = "pwd.change.ui@resilience.com"
 TEST_UID = "user_test_pwdchg_ui"
 TEST_SESSION = "test_session_pwdchg_ui"
 INITIAL_PW = "OldPassword123!"
-TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+# Reuse the shared docs-sample secret from conftest instead of hardcoding.
+from tests.conftest import TEST_TOTP_SECRET as TOTP_SECRET  # noqa: E402
 
 
 def _db():

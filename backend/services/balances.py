@@ -71,6 +71,30 @@ def convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
     return _convert_via_usd(amount, code, rates)
 
 
+def convert_from_usdt(amount_usdt: float, code: str, rates: dict) -> Optional[float]:
+    """Inverse of `convert_to_usdt`: given a USDT amount, return the equivalent
+    in `code` using the available rate lookup. Returns None if no rate path
+    exists between USDT and `code` in either direction.
+
+    Used by `POST /vip/convert` (iter55.36i) to translate the flat 0.10 USDT
+    service fee into whatever destination currency the client is converting
+    into. The lookup preference mirrors `_convert_direct`:
+      1. Direct `USDT→code` rate — the operator's sell-side quote for `code`.
+      2. Inverse `code→USDT` rate — inverted for symmetric behavior.
+    """
+    if amount_usdt == 0:
+        return 0.0
+    if code == "USDT":
+        return amount_usdt
+    direct = rates.get(("USDT", code))
+    if direct and direct > 0:
+        return amount_usdt * direct
+    inverse = rates.get((code, "USDT"))
+    if inverse and inverse > 0:
+        return amount_usdt / inverse
+    return None
+
+
 async def compute_total_usdt(user_doc: dict) -> float:
     rates = await build_rate_lookup()
     balances = dict(user_doc.get("vip_balances") or {})

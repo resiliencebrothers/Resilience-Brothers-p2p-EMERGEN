@@ -563,27 +563,60 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                     "Contacta a soporte para habilitarla."),
         )
     amount_to_gross = round(payload.amount_from * rate_used, 4)
-    # iter55.27 — flat 0.01 USDT service fee for ANY conversion to USDT.
-    # Enforced when to_code == "USDT" only; other pairs stay fee-free.
-    # Also enforce a 1.00 USDT minimum NET (post-fee) to prevent dust
-    # conversions that would leave the client with < 1 USDT after the fee.
-    USDT_CONVERT_FEE = 0.01
-    USDT_MIN_NET = 1.00
-    fee = 0.0
-    amount_to = amount_to_gross
-    if to_code == "USDT":
-        fee = USDT_CONVERT_FEE
-        amount_to = round(amount_to_gross - fee, 4)
-        if amount_to < USDT_MIN_NET:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Conversión insuficiente: recibirías {amount_to:.4f} USDT "
-                    f"después de la comisión de {USDT_CONVERT_FEE} USDT. "
-                    f"El mínimo neto para convertir es {USDT_MIN_NET:.2f} USDT — "
-                    f"acumula más saldo antes de convertir."
-                ),
-            )
+    # iter55.36i — universal conversion fee + universal minimum.
+    #   • FEE: flat 0.01 USDT charged on EVERY conversion regardless of the
+    #     source/destination pair. The fee is always denominated in USDT for
+    #     revenue accounting (audit_log.details.usdt_fee), but is deducted
+    #     from the *destination* amount using the same rate path — so the
+    #     client always sees "I sent X, I received Y minus a small fee".
+    #   • MIN: the source amount must be worth at least 1.00 USDT equivalent.
+    #     Prevents dust conversions that generate audit-log noise without
+    #     meaningful economic activity.
+    CONVERT_FEE_USDT = 0.01
+    CONVERT_MIN_USDT = 1.00
+    from services.balances import build_rate_lookup, convert_to_usdt, convert_from_usdt
+    rates_lookup = await build_rate_lookup()
+    # Minimum-source guard: reject if `amount_from` is worth < 1.00 USDT.
+    amount_from_usdt = convert_to_usdt(payload.amount_from, from_code, rates_lookup)
+    if amount_from_usdt is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"No hay ruta de valoración USDT para {from_code}. "
+                    "Contacta a soporte para habilitar la tasa."),
+        )
+    if amount_from_usdt < CONVERT_MIN_USDT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Monto insuficiente: {payload.amount_from:.4f} {from_code} "
+                f"equivale a {amount_from_usdt:.4f} USDT. El mínimo por "
+                f"conversión es el equivalente a {CONVERT_MIN_USDT:.2f} USDT."
+            ),
+        )
+    # Fee: 0.01 USDT translated into the destination currency.
+    fee_in_to_code = convert_from_usdt(CONVERT_FEE_USDT, to_code, rates_lookup)
+    if fee_in_to_code is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"No hay ruta de valoración USDT para {to_code}. "
+                    "Contacta a soporte para habilitar la tasa."),
+        )
+    amount_to = round(amount_to_gross - fee_in_to_code, 4)
+    if amount_to <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"La comisión ({CONVERT_FEE_USDT:.2f} USDT ≈ "
+                f"{fee_in_to_code:.4f} {to_code}) supera el monto convertido "
+                f"({amount_to_gross:.4f} {to_code}). "
+                "Convierte una cantidad mayor."
+            ),
+        )
+    # Fee for the audit log: always denominated in USDT so revenue
+    # aggregation (routes/admin_revenue.py::_compute_conversion_fees) can
+    # sum them cleanly across every pair. Callers who need the destination-
+    # currency amount can inspect `fee_in_to_code` in the same details blob.
+    fee = CONVERT_FEE_USDT
     # Atomic swap: decrement from + increment to (net of fee)
     await decrement_balance(user["user_id"], from_code, payload.amount_from)
     await db.users.update_one(
@@ -606,6 +639,8 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                 "amount_to_gross": amount_to_gross,
                 "amount_to": amount_to, "rate": rate_used,
                 "usdt_fee": fee,
+                "fee_in_to_code": round(fee_in_to_code, 4),
+                "amount_from_usdt": round(amount_from_usdt, 4),
             },
         )
     except Exception as e:
@@ -617,6 +652,7 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         "amount_to": amount_to,
         "amount_to_gross": amount_to_gross,
         "usdt_fee": fee,
+        "fee_in_to_code": round(fee_in_to_code, 4),
         "rate": rate_used,
     }
 

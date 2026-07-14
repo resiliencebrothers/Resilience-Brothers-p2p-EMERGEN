@@ -22,11 +22,9 @@ import requests
 from datetime import datetime, timezone
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN, ADMIN_TOKEN, NORMAL_TOKEN
+from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN, ADMIN_TOKEN, NORMAL_TOKEN, TEST_TOTP_SECRET
 
 API = f"{API_ROOT}/api"
-
-TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
 def _db():
@@ -38,7 +36,7 @@ def _hdr(tok):
 
 
 def _totp():
-    return pyotp.TOTP(TOTP_SECRET).now()
+    return pyotp.TOTP(TEST_TOTP_SECRET).now()
 
 
 def _iso():

@@ -25,6 +25,19 @@ VIP_TOKEN = os.environ.get("TEST_TOKEN_VIP", "test_session_vip_X")
 NORMAL_TOKEN = os.environ.get("TEST_TOKEN_NORMAL", "test_session_normal_X")
 EMPLOYEE_TOKEN = os.environ.get("TEST_TOKEN_EMPLOYEE", "test_session_employee_X")
 
+# ---------- Shared test TOTP secret (iter55.36g) ----------
+# This is the well-known pyotp docs sample base32 secret. It's PUBLIC by
+# design (published in the pyotp README) and only lives in the local test
+# database — the production `TOTP_MASTER_KEY` in the deployed env is entirely
+# different, so this secret cannot access any real user's 2FA anywhere.
+#
+# All test files that need a deterministic TOTP for the seeded test users
+# should import from here so the value has a single source of truth. Override
+# via `TEST_TOTP_SECRET` env var in CI-alt environments if desired.
+TEST_TOTP_SECRET = os.environ.get(
+    "TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+)
+
 
 @pytest.fixture(scope="session")
 def base_url():
@@ -124,9 +137,8 @@ def _ensure_test_user_totp(user_id: str) -> str:
     """
     from pymongo import MongoClient
     import totp_service as _ts
-    # Fixed secret per user_id so tests are reproducible
-    secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # 32-char base32
-    encrypted = _ts.encrypt_secret(secret)
+    # Uses TEST_TOTP_SECRET (pyotp docs sample) — see module-level docstring.
+    encrypted = _ts.encrypt_secret(TEST_TOTP_SECRET)
     cli = MongoClient(os.environ["MONGO_URL"])
     cli[os.environ["DB_NAME"]].users.update_one(
         {"user_id": user_id},
@@ -138,7 +150,7 @@ def _ensure_test_user_totp(user_id: str) -> str:
         }},
     )
     cli.close()
-    return secret
+    return TEST_TOTP_SECRET
 
 
 def totp_code_for(secret: str) -> str:

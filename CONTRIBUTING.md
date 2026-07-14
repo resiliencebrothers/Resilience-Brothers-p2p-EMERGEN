@@ -135,7 +135,28 @@ Your PR merges when **all 4** are true:
 The maintainer clicks **"Squash and merge"** so `main` history stays linear
 and readable. Your feature branch commits are preserved in the squash body.
 
-## 8. Getting help
+## 8. Linter baseline (what we intentionally accept)
+
+External static analyzers occasionally flag patterns we've reviewed and
+consciously kept. If your reviewer's tool raises any of the following, the
+answer is **"working as intended"** — no code change needed. Point them here.
+
+| Pattern | Why it's fine |
+| --- | --- |
+| `if x is None:` / `if x is not None:` (315+ instances) | PEP 8 recommended idiom. `is` is correct for singleton comparisons. Only `is <literal-int/str/list>` is a bug (ruff `F632` catches those — none in this codebase). |
+| `if x is True:` / `if x is False:` | Also PEP 8; distinguishes the singleton from truthy/falsy values, which matters for our audit trail (`True` ≠ `1`). |
+| FastAPI routes with 8+ `Query(...)` parameters (e.g. `list_transactions`, `export_transactions_csv/pdf` in `routes/admin.py`) | These are URL query params, one per key. Wrapping into a `Pydantic` model via `Depends()` adds boilerplate without changing behavior and breaks OpenAPI param docs. |
+| `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP` in test files | The **pyotp docs sample** base32 secret — public by design, only used to seed the 4 test users on the local/CI DB. Production `TOTP_MASTER_KEY` is unrelated. Consolidated to `conftest.TEST_TOTP_SECRET` (env-overridable). |
+| Functions >50 lines (`admin_user_stats` 140 lines, `generate_vip_closing_pdf` 112 lines, etc.) | Long doesn't mean wrong. Each is a single-responsibility "compose a payload/PDF" pipeline. Splitting for its own sake adds indirection with no readability gain. Refactor only when a real bug forces it. |
+| React components >300 lines (`AdminUserStatsPage`, `ExchangeView`, `AdminOrders`, `SecuritySettings`, `AdminWithdrawals`, `AdminSecurity`, `AdminHealth`) | Same rationale. All have `data-testid` coverage + passing E2E tests. When you touch them for a bug fix, extract only the sub-tree you're actually changing — don't rewrite the neighborhood. |
+| Nested ternaries in JSX (`BalanceConverterCard`, `AdminKYC`, `AdminUsers`, `EmailAuthDialog`) | Short (2-3 levels max) and used for badge color / label selection. Rewriting as if/else or lookup tables would triple the LOC. |
+| Filter/map in JSX render (`BalanceConverterCard:241`, `CashDetailsTable:158`, `UserFunctionsDialog:166`) | Affected lists are ≤10 items. `useMemo` wrapping costs more (dependency array bugs) than it saves. Revisit only if profiling shows a real render bottleneck. |
+| Missing `react-hooks/exhaustive-deps` warnings from external analyzers | Our `eslint.hooks.config.mjs` has the rule at `warn` — the CI job (`yarn lint`) blocks on 0 warnings. If external tools report warnings we don't, their config is stricter than ours by policy. |
+
+If you have a genuine finding NOT in this table, open a PR + explain the
+concrete bug it prevents. We add rules based on real risk, not analyzer noise.
+
+## 9. Getting help
 
 - **Product / roadmap questions**: read `/app/memory/PRD.md` first — it has
   the changelog + P0/P1/P2 backlog.

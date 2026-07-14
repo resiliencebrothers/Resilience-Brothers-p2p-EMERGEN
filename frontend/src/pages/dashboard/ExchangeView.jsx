@@ -71,8 +71,8 @@ export default function ExchangeView() {
   // denominations available (Cuba ops doesn't stock coins). We floor the
   // deliverable and CREDIT the residue to the client's on-platform balance
   // in the same currency — nothing is lost. The client can accumulate
-  // residues across trades or convert them to USDT (0.01 USDT service fee)
-  // via /vip/convert. Mirror of _cash_no_cents() in backend/services/orders_helpers.py.
+  // residues across trades or convert them to any allowed currency via
+  // /vip/convert (flat 0.01 USDT service fee, 1 USDT minimum, iter55.36i).
   const isCashFiatDelivery = deliveryMethod === "cash" && (toCurr?.type || "").toLowerCase() === "fiat";
   const finalAmountRaw = gross * (1 - commission / 100);
   const finalAmount = isCashFiatDelivery ? Math.floor(finalAmountRaw) : finalAmountRaw;
@@ -238,7 +238,7 @@ export default function ExchangeView() {
               el residuo se acredita a <strong className="text-white">tu saldo en {toCode}</strong>.
               Puedes acumularlo hasta llegar a un entero o convertirlo a{" "}
               <strong className="text-white">USDT</strong> desde <em>Saldo y Retiros</em>
-              {" "}(comisión fija <strong className="text-white">0.01 USDT</strong>, mínimo neto 1 USDT).
+              {" "}(comisión fija <strong className="text-white">0.01 USDT</strong> por conversión, mínimo equivalente a 1 USDT).
             </p>
           </div>
         )}

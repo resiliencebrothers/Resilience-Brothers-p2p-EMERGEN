@@ -13,10 +13,9 @@ import requests
 from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT, ADMIN_TOKEN
+from tests.conftest import BASE_URL as API_ROOT, ADMIN_TOKEN, TEST_TOTP_SECRET  # noqa: F401
 
 API = f"{API_ROOT}/api"
-TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
 def _db():

@@ -17,7 +17,10 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from db_client import db
 from auth_utils import require_admin, now_utc, _enforce_totp_step_up
 import email_service
-from revenue_report import build_buckets, revenue_monthly_csv, revenue_monthly_pdf
+from revenue_report import (
+    build_buckets, revenue_monthly_csv, revenue_monthly_pdf,
+    revenue_analytics_csv, revenue_analytics_pdf,
+)
 from services.balances import build_rate_lookup, convert_to_usdt
 from services.orders_helpers import compute_order_profit
 
@@ -337,6 +340,48 @@ def _build_totals(rows_asc: list) -> dict:
         "volume": sum(r["volume_usdt"] for r in rows_asc),
         "orders": sum(r["orders"] for r in rows_asc),
     }
+
+
+@router.get("/admin/revenue/analytics/export")
+async def admin_revenue_analytics_export(
+    request: Request,
+    format: str = "pdf",
+    days: Optional[int] = None,
+) -> Any:
+    """iter55.36l — Multi-month analytics export used by the "Estadísticas"
+    dialog in `/admin/revenue`. Format: `csv` or `pdf`. Optional `days`
+    filter restricts the summary/highlights to the same window used by
+    the on-screen filter; the monthly table always covers all history so
+    year-over-year comparison stays meaningful."""
+    await require_admin(request)
+    if format not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="format debe ser csv o pdf")
+
+    # Reuse the same summary that powers `/admin/revenue`, respecting `days`.
+    summary = await admin_revenue(request, days=days)
+    # Monthly rows always cover all time — the report is a *historical*
+    # comparison, unlike the current-period summary above.
+    monthly = await build_revenue_timeseries("month")
+    monthly_rows = sorted(monthly, key=lambda x: x["bucket"])
+
+    period_label = (
+        f"últimos {days} días" if days and days > 0 else "todo el tiempo"
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+
+    if format == "csv":
+        payload = revenue_analytics_csv(monthly_rows, summary, period_label)
+        headers = {
+            "Content-Disposition": f'attachment; filename="estadisticas-ingresos-{stamp}.csv"',
+        }
+        return Response(content=payload, media_type="text/csv; charset=utf-8",
+                        headers=headers)
+
+    payload = revenue_analytics_pdf(monthly_rows, summary, period_label)
+    headers = {
+        "Content-Disposition": f'attachment; filename="estadisticas-ingresos-{stamp}.pdf"',
+    }
+    return Response(content=payload, media_type="application/pdf", headers=headers)
 
 
 @router.post("/admin/revenue/monthly/send-now")

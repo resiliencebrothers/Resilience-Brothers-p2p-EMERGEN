@@ -37,6 +37,10 @@ export default function DefensiveModePanel() {
       toast.error("Indica el motivo antes de activar el modo defensivo");
       return;
     }
+    // iter55.36m — close the "reason" dialog BEFORE opening the TOTP prompt
+    // so we never stack two Radix modals. Two overlapping dialogs both grab
+    // focus-lock + pointer-events, freezing every button on-screen.
+    setDialogOpen(false);
     setPendingTotp({ enabled, reason: reason.trim() });
   };
 
@@ -144,9 +148,13 @@ export default function DefensiveModePanel() {
 
       <TotpPromptDialog
         open={!!pendingTotp}
-        action={pendingTotp?.enabled ? "activar modo defensivo" : "desactivar modo defensivo"}
-        onClose={() => setPendingTotp(null)}
-        onSubmit={confirmWithTotp}
+        description={
+          pendingTotp?.enabled
+            ? "Ingresa tu código 2FA para ACTIVAR el modo defensivo."
+            : "Ingresa tu código 2FA para DESACTIVAR el modo defensivo."
+        }
+        onCancel={() => setPendingTotp(null)}
+        onConfirm={confirmWithTotp}
       />
     </>
   );
