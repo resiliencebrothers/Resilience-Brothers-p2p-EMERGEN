@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
+import { useTranslation } from "react-i18next";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +16,7 @@ import { extractDetailMessage } from "@/utils/apiErrors";
 
 export default function ExchangeView() {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [currencies, setCurrencies] = useState([]);
   const [rates, setRates] = useState([]);
   const [fromCode, setFromCode] = useState("");
@@ -83,14 +85,14 @@ export default function ExchangeView() {
   const deliveryOptions = useMemo(() => {
     if (!toCurr) return [];
     const LABELS = {
-      transfer: { value: "transfer", label: "Transferencia bancaria" },
-      cash: { value: "cash", label: "Efectivo (a domicilio)" },
-      crypto: { value: "crypto", label: "Cripto (wallet)" },
+      transfer: { value: "transfer", label: t("exchange.deliveryTransfer") },
+      cash: { value: "cash", label: t("exchange.deliveryCash") },
+      crypto: { value: "crypto", label: t("exchange.deliveryCrypto") },
     };
     const base = allowedMethods.filter((m) => LABELS[m]).map((m) => LABELS[m]);
     // VIP/normal users (non-staff) can also accumulate balance.
-    return !isStaff ? [...base, { value: "accumulate", label: "Acumular en saldo" }] : base;
-  }, [toCurr, allowedMethods, isStaff]);
+    return !isStaff ? [...base, { value: "accumulate", label: t("exchange.deliveryAccumulate") }] : base;
+  }, [toCurr, allowedMethods, isStaff, t]);
 
   // Auto-correct delivery method when the available options change (e.g. user
   // switches destination from CUP to USDT — 'cash'/'transfer' no longer apply).
@@ -105,7 +107,7 @@ export default function ExchangeView() {
     const file = e.target.files[0];
     if (!file) return;
     if (file.size > 3 * 1024 * 1024) {
-      toast.error("Imagen demasiado grande (máx 3MB)");
+      toast.error(t("exchange.imageTooLarge"));
       return;
     }
     const reader = new FileReader();
@@ -123,11 +125,11 @@ export default function ExchangeView() {
 
   const submit = async () => {
     if (!fromCode || !toCode || !amt || !proofImage || !senderName) {
-      toast.error("Completa todos los campos requeridos");
+      toast.error(t("exchange.completeRequired"));
       return;
     }
     if (deliveryMethod !== "accumulate" && !deliveryDetails) {
-      toast.error("Detalles de entrega requeridos");
+      toast.error(t("exchange.deliveryDetailsRequired"));
       return;
     }
     setSubmitting(true);
@@ -142,7 +144,7 @@ export default function ExchangeView() {
         proof_image: proofImage,
       }, { withCredentials: true });
       setSuccess(res.data);
-      toast.success("Orden creada. Pendiente de verificación.");
+      toast.success(t("exchange.successPending"));
     } catch (err) {
       toast.error(extractDetailMessage(err, "Error al crear orden"));
     } finally {
@@ -154,18 +156,18 @@ export default function ExchangeView() {
     return (
       <div className="max-w-2xl mx-auto tactile-card p-8 text-center" data-testid="order-success">
         <CheckCircle2 className="w-16 h-16 text-[#22C55E] mx-auto mb-4" />
-        <h2 className="font-display text-2xl mb-2">Orden Recibida</h2>
-        <p className="text-neutral-400 mb-6">Tu orden #{success.id.slice(0,8)} está en revisión por nuestro equipo contable.</p>
+        <h2 className="font-display text-2xl mb-2">{t("exchange.orderReceived")}</h2>
+        <p className="text-neutral-400 mb-6">{t("exchange.orderInReview", { id: success.id.slice(0,8) })}</p>
         <div className="text-left space-y-2 border border-white/10 p-4 mb-6 font-mono text-sm">
-          <div className="flex justify-between"><span className="text-neutral-500">Envías:</span> <span>{success.amount_from} {success.from_code}</span></div>
-          <div className="flex justify-between"><span className="text-neutral-500">Recibes:</span> <span className="text-[#8B5CF6]">{success.amount_to} {success.to_code}</span></div>
-          <div className="flex justify-between"><span className="text-neutral-500">Tasa:</span> <span>{success.rate_applied}</span></div>
+          <div className="flex justify-between"><span className="text-neutral-500">{t("exchange.sendsLabel")}</span> <span>{success.amount_from} {success.from_code}</span></div>
+          <div className="flex justify-between"><span className="text-neutral-500">{t("exchange.receivesLabel")}</span> <span className="text-[#8B5CF6]">{success.amount_to} {success.to_code}</span></div>
+          <div className="flex justify-between"><span className="text-neutral-500">{t("exchange.rateLabel")}</span> <span>{success.rate_applied}</span></div>
           {success.commission_percent > 0 && (
-            <div className="flex justify-between"><span className="text-neutral-500">Comisión:</span> <span>{success.commission_percent}%</span></div>
+            <div className="flex justify-between"><span className="text-neutral-500">{t("exchange.commissionLabel")}</span> <span>{success.commission_percent}%</span></div>
           )}
         </div>
         <Button data-testid="new-order-btn" onClick={() => { setSuccess(null); setAmount(""); setProofImage(""); setSenderName(""); setDeliveryDetails(""); setCryptoNetwork(""); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
-          Nueva Orden
+          {t("exchange.newOrderBtn")}
         </Button>
       </div>
     );
@@ -174,21 +176,21 @@ export default function ExchangeView() {
   return (
     <div className="max-w-4xl space-y-6" data-testid="exchange-view">
       <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Intercambio</div>
-        <h1 className="font-display text-3xl">Cripto ↔ Fiat</h1>
+        <div className="micro-label text-[#8B5CF6] mb-2">{t("exchange.eyebrow")}</div>
+        <h1 className="font-display text-3xl">{t("exchange.title")}</h1>
         <p className="text-neutral-400 mt-2">
-          {isVip ? "Tasas VIP preferenciales" : "Tasa estándar según tu estatus"}
+          {isVip ? t("exchange.subtitleVip") : t("exchange.subtitleStandard")}
         </p>
       </div>
 
-      <VerificationGateBanner blocking action="crear órdenes de intercambio">
+      <VerificationGateBanner blocking action="createOrders">
       <div className="tactile-card p-6 lg:p-8 space-y-6">
         <div className="grid md:grid-cols-2 gap-4">
           <div>
-            <Label className="micro-label text-neutral-500">Envías</Label>
+            <Label className="micro-label text-neutral-500">{t("exchange.from")}</Label>
             <Select value={fromCode} onValueChange={setFromCode}>
               <SelectTrigger data-testid="from-currency-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-                <SelectValue placeholder="Selecciona moneda" />
+                <SelectValue placeholder={t("exchange.selectCurrency")} />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 {currencies.map(c => (
@@ -198,10 +200,10 @@ export default function ExchangeView() {
             </Select>
           </div>
           <div>
-            <Label className="micro-label text-neutral-500">Recibes</Label>
+            <Label className="micro-label text-neutral-500">{t("exchange.to")}</Label>
             <Select value={toCode} onValueChange={setToCode}>
               <SelectTrigger data-testid="to-currency-select" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-                <SelectValue placeholder="Selecciona moneda" />
+                <SelectValue placeholder={t("exchange.selectCurrency")} />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 {currencies.map(c => (
@@ -213,7 +215,7 @@ export default function ExchangeView() {
         </div>
 
         <div>
-          <Label className="micro-label text-neutral-500">Monto a enviar</Label>
+          <Label className="micro-label text-neutral-500">{t("exchange.amount")}</Label>
           <Input
             data-testid="amount-input"
             type="number"
@@ -233,37 +235,32 @@ export default function ExchangeView() {
             className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 p-4 text-xs font-mono text-neutral-200 leading-relaxed"
           >
             <div className="micro-label text-[#8B5CF6] text-[0.65rem] mb-2">
-              ⓘ Entrega en efectivo · {toCode}
+              {t("exchange.cashFiatEyebrow", { code: toCode })}
             </div>
             <p>
-              No manejamos <strong className="text-white">fracciones</strong> en efectivo físico.
-              Si el cálculo da decimales, entregamos el <strong className="text-white">entero</strong> y
-              el residuo se acredita a <strong className="text-white">tu saldo en {toCode}</strong>.
-              Puedes acumularlo hasta llegar a un entero o convertirlo a{" "}
-              <strong className="text-white">USDT</strong> desde <em>Saldo y Retiros</em>
-              {" "}(comisión fija <strong className="text-white">0.01 USDT</strong> por conversión, mínimo equivalente a 1 USDT).
+              {t("exchange.cashFiatExplainer", { code: toCode })}
             </p>
           </div>
         )}
 
         {selectedRate && amt > 0 && (
           <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-5 space-y-2 font-mono text-sm">
-            <div className="flex justify-between"><span className="text-neutral-400">Tasa aplicada:</span><span>{rate} {toCode}/{fromCode}</span></div>
-            <div className="flex justify-between"><span className="text-neutral-400">Bruto:</span><span>{gross.toFixed(4)} {toCode}</span></div>
+            <div className="flex justify-between"><span className="text-neutral-400">{t("exchange.rateApplied")}</span><span>{rate} {toCode}/{fromCode}</span></div>
+            <div className="flex justify-between"><span className="text-neutral-400">{t("exchange.gross")}</span><span>{gross.toFixed(4)} {toCode}</span></div>
             {commission > 0 && (
-              <div className="flex justify-between"><span className="text-neutral-400">Comisión ({commission}%):</span><span className="text-[#EF4444]">-{(gross - finalAmountRaw).toFixed(4)}</span></div>
+              <div className="flex justify-between"><span className="text-neutral-400">{t("exchange.commission", { pct: commission })}</span><span className="text-[#EF4444]">-{(gross - finalAmountRaw).toFixed(4)}</span></div>
             )}
             {isCashFiatDelivery && residueCredited > 0 && (
               <div
                 className="flex justify-between text-[#8B5CF6]"
                 data-testid="cash-fiat-residue-credit"
               >
-                <span>Residuo a tu saldo:</span>
+                <span>{t("exchange.residueCredit")}</span>
                 <span>+{residueCredited.toFixed(4)} {toCode}</span>
               </div>
             )}
             <div className="border-t border-white/10 pt-2 mt-2 flex justify-between text-base">
-              <span className="text-white">Recibirás en efectivo:</span>
+              <span className="text-white">{isCashFiatDelivery ? t("exchange.receiveInCash") : t("exchange.receiveIn", { code: toCode })}</span>
               <span
                 className="text-[#8B5CF6] font-bold"
                 data-testid="final-amount-display"
@@ -288,23 +285,23 @@ export default function ExchangeView() {
 
         <div>
           <Label className="micro-label text-neutral-500">
-            Nombre del titular que envía el pago <span className="text-[#8B5CF6]">*</span>
+            {t("exchange.senderNameLabel")} <span className="text-[#8B5CF6]">*</span>
           </Label>
           <Input
             data-testid="sender-name-input"
             value={senderName}
             onChange={(e) => setSenderName(e.target.value)}
-            placeholder="Nombre completo del titular de la cuenta de origen"
+            placeholder={t("exchange.senderNamePlaceholder")}
             className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
             required
           />
           <p className="text-[0.65rem] text-neutral-600 mt-1">
-            Obligatorio · queda registrado en el comprobante contable y auditoría
+            {t("exchange.senderNameHint")}
           </p>
         </div>
 
         <div>
-          <Label className="micro-label text-neutral-500">Comprobante de pago (captura)</Label>
+          <Label className="micro-label text-neutral-500">{t("exchange.proofLabel")}</Label>
           <label className="block mt-2 border-2 border-dashed border-white/15 hover:border-[#8B5CF6] p-6 cursor-pointer transition-colors">
             <input type="file" accept="image/*" onChange={handleFile} className="hidden" data-testid="proof-upload" />
             {proofImage ? (
@@ -312,15 +309,15 @@ export default function ExchangeView() {
             ) : (
               <div className="text-center">
                 <Upload className="w-8 h-8 text-neutral-500 mx-auto mb-2" />
-                <p className="text-sm text-neutral-400">Click para subir captura</p>
-                <p className="text-xs text-neutral-600 mt-1">PNG, JPG · max 3MB</p>
+                <p className="text-sm text-neutral-400">{t("exchange.uploadCta")}</p>
+                <p className="text-xs text-neutral-600 mt-1">{t("exchange.uploadHint2")}</p>
               </div>
             )}
           </label>
         </div>
 
         <div>
-          <Label className="micro-label text-neutral-500">Método de entrega</Label>
+          <Label className="micro-label text-neutral-500">{t("exchange.selectMethodLabel")}</Label>
           <Select
             value={deliveryMethod}
             onValueChange={(v) => {
@@ -335,7 +332,7 @@ export default function ExchangeView() {
               data-testid="delivery-method-select"
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
             >
-              <SelectValue placeholder={toCurr ? "Selecciona método" : "Elige primero la moneda destino"} />
+              <SelectValue placeholder={toCurr ? t("exchange.selectMethod") : t("exchange.selectCurrency")} />
             </SelectTrigger>
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {deliveryOptions.map((opt) => (
@@ -371,9 +368,9 @@ export default function ExchangeView() {
           return (
             <div>
               <Label className="micro-label text-neutral-500">
-                {deliveryMethod === "transfer" && "Datos bancarios del receptor"}
-                {deliveryMethod === "cash" && "Nombre, teléfono y dirección del receptor"}
-                {deliveryMethod === "crypto" && "Dirección de wallet (red)"}
+                {deliveryMethod === "transfer" && t("exchange.helperTransfer")}
+                {deliveryMethod === "cash" && t("exchange.helperCash")}
+                {deliveryMethod === "crypto" && t("exchange.helperCrypto")}
               </Label>
 
               {/* Structured hint from central validator */}
@@ -387,7 +384,7 @@ export default function ExchangeView() {
                 </p>
               ) : (
                 <p className="mt-2 text-[0.7rem] text-neutral-500">
-                  Incluye toda la información necesaria para procesar el pago.
+                  {t("exchange.detailsHelperGeneric")}
                 </p>
               )}
 
@@ -427,7 +424,7 @@ export default function ExchangeView() {
                       data-testid="crypto-network-select"
                       className="rounded-none mt-1.5 bg-[#0a0a0a] border-white/10 h-10"
                     >
-                      <SelectValue placeholder="Selecciona la red de destino" />
+                      <SelectValue placeholder={t("exchange.selectDestNetwork")} />
                     </SelectTrigger>
                     <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                       <SelectItem value="BEP20">
@@ -459,8 +456,7 @@ export default function ExchangeView() {
               )}
 
               <p className="mt-2 text-[0.7rem] text-neutral-500 leading-relaxed">
-                Por favor asegúrese de ingresar los datos de la cuenta de destino correctamente.
-                Un error en la numeración puede retrasar o desviar el pago.
+                {t("exchange.accuracyWarning")}
               </p>
             </div>
           );
@@ -476,7 +472,7 @@ export default function ExchangeView() {
           }
           className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-14 text-base disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {submitting ? "Enviando..." : (<>Confirmar Orden <ArrowRight className="w-4 h-4 ml-2" /></>)}
+          {submitting ? t("exchange.submitting") : (<>{t("exchange.submit")} <ArrowRight className="w-4 h-4 ml-2" /></>)}
         </Button>
       </div>
       </VerificationGateBanner>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,7 @@ import { ArrowDownToLine, ShieldCheck } from "lucide-react";
  */
 export function VipWithdrawalForm({ balances, onSubmitted }) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("USD");
@@ -53,15 +55,15 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
 
   const withdrawalMethodOptions = useMemo(() => {
     const LABELS = {
-      transfer: { value: "transfer", label: "Transferencia bancaria" },
-      cash: { value: "cash", label: "Efectivo (CUP/USD)" },
-      crypto: { value: "crypto", label: "Wallet Cripto" },
+      transfer: { value: "transfer", label: t("withdraw.methodTransfer2") },
+      cash: { value: "cash", label: t("withdraw.methodCashUsdCup") },
+      crypto: { value: "crypto", label: t("withdraw.methodCryptoWallet") },
     };
     if (!allowedMethods || allowedMethods.length === 0) {
       return [LABELS.transfer, LABELS.cash, LABELS.crypto];
     }
     return allowedMethods.filter((m) => LABELS[m]).map((m) => LABELS[m]);
-  }, [allowedMethods]);
+  }, [allowedMethods, t]);
 
   useEffect(() => {
     if (withdrawalMethodOptions.length === 0) return;
@@ -96,31 +98,31 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
   };
 
   const validate = (amt) => {
-    if (!amt || amt <= 0) return "Monto inválido";
+    if (!amt || amt <= 0) return t("withdraw.errInvalidAmount");
     if (method === "cash") {
       if (!cashReceiverName.trim() || cashReceiverName.trim().length < 3) {
-        return "Nombre y apellidos del receptor son obligatorios";
+        return t("withdraw.errReceiverName");
       }
       if (!cashReceiverPhone.trim() || cashReceiverPhone.trim().length < 6) {
-        return "Teléfono celular del receptor es obligatorio";
+        return t("withdraw.errReceiverPhone");
       }
       if (!cashReceiverAddress.trim() || cashReceiverAddress.trim().length < 5) {
-        return "Dirección de entrega es obligatoria";
+        return t("withdraw.errReceiverAddress");
       }
     } else if (!details) {
-      return "Detalles requeridos";
+      return t("withdraw.errDetailsRequired");
     }
     if (method === "crypto") {
-      if (!cryptoNetwork) return "Selecciona la red on-chain del retiro.";
+      if (!cryptoNetwork) return t("withdraw.errCryptoNetwork");
       if (cryptoAddressMatch !== true) {
-        return `La dirección no coincide con ${activeNetwork.label}. Revisa la red o pega otra dirección — enviar por la red incorrecta puede perder los fondos permanentemente.`;
+        return `${t("withdraw.networkMismatch")} ${activeNetwork.label}. ${t("withdraw.networkMismatchHint")}`;
       }
     }
     if (!beneficiaryName || beneficiaryName.trim().length < 2) {
-      return "Nombre del titular beneficiario requerido";
+      return t("withdraw.errBeneficiaryName");
     }
     if (!totpCode || totpCode.length < 6) {
-      return "Ingresa tu código 2FA (6 dígitos) o código de recuperación";
+      return t("withdraw.err2FA");
     }
     return null;
   };
@@ -140,21 +142,21 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
         crypto_network: method === "crypto" ? cryptoNetwork : null,
         totp_code: totpCode.trim(),
       }, { withCredentials: true });
-      toast.success("Solicitud de retiro enviada");
+      toast.success(t("withdraw.successToast"));
       resetForm();
       if (onSubmitted) await onSubmitted();
     } catch (e) {
       const detail = e.response?.data?.detail;
       if (e.response?.status === 412 && detail?.code === "TOTP_SETUP_REQUIRED") {
-        toast.error("Debes configurar 2FA antes de realizar retiros");
+        toast.error(t("withdraw.setupNeededToast"));
         setTimeout(() => navigate("/dashboard/security"), 1500);
         return;
       }
       if (detail?.code === "TOTP_INVALID" || detail?.code === "TOTP_CODE_REQUIRED") {
-        toast.error(detail.message || "Código 2FA inválido");
+        toast.error(detail.message || t("withdraw.invalidTotpToast"));
         return;
       }
-      toast.error(detail?.message || detail || "Error");
+      toast.error(detail?.message || detail || t("withdraw.genericErr"));
     } finally {
       setBusy(false);
     }
@@ -167,16 +169,16 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
   return (
     <div className="tactile-card p-6">
       <h2 className="font-display text-xl mb-4 flex items-center gap-2">
-        <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> Solicitar Retiro
+        <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> {t("withdraw.submitBtn")}
       </h2>
       <div className="space-y-4">
-        <FormField label="Monto">
+        <FormField label={t("withdraw.amountLabel")}>
           <Input data-testid="withdraw-amount" type="number" value={amount}
             onChange={e => setAmount(e.target.value)}
             className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
         </FormField>
 
-        <FormField label="Moneda">
+        <FormField label={t("withdraw.currencyLabel")}>
           <Select value={currency} onValueChange={setCurrency}>
             <SelectTrigger data-testid="withdraw-currency"
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
@@ -191,7 +193,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
         </FormField>
 
         <div>
-          <Label className="micro-label text-neutral-500">Método</Label>
+          <Label className="micro-label text-neutral-500">{t("withdraw.methodLabel")}</Label>
           <Select value={method} onValueChange={setMethod}>
             <SelectTrigger data-testid="withdraw-method"
               className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
@@ -205,7 +207,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
           </Select>
           {method === "cash" && (
             <p className="text-[0.65rem] text-[#8B5CF6] mt-1">
-              Recogida en efectivo: estará <strong>En progreso</strong> hasta que el equipo lo marque como <strong>Entregado</strong>.
+              {t("withdraw.cashProgressNote")}
             </p>
           )}
         </div>
@@ -213,12 +215,12 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
         {method === "crypto" && (
           <div data-testid="crypto-network-block">
             <Label className="micro-label text-neutral-500">
-              Red on-chain <span className="text-[#8B5CF6]">*</span>
+              {t("withdraw.networkLabel")} <span className="text-[#8B5CF6]">*</span>
             </Label>
             <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
               <SelectTrigger data-testid="withdraw-crypto-network"
                 className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-                <SelectValue />
+                <SelectValue placeholder={t("withdraw.selectNetwork")} />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
                 {CRYPTO_NETWORKS.map((n) => (
@@ -227,7 +229,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
               </SelectContent>
             </Select>
             <p className="text-[0.65rem] text-neutral-500 mt-1">
-              Elige la red correcta. Enviar por la red equivocada puede perder los fondos permanentemente.
+              {t("withdraw.chooseCorrectNetwork")}
             </p>
           </div>
         )}
@@ -249,18 +251,18 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
 
         <div>
           <Label className="micro-label text-neutral-500">
-            Titular de la cuenta beneficiaria <span className="text-[#8B5CF6]">*</span>
+            {t("withdraw.beneficiaryName2")} <span className="text-[#8B5CF6]">*</span>
           </Label>
           <Input
             data-testid="withdraw-beneficiary"
             value={beneficiaryName}
             onChange={(e) => setBeneficiaryName(e.target.value)}
-            placeholder="Nombre completo de quien recibe"
+            placeholder={t("withdraw.cashReceiverNamePh")}
             className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
             required
           />
           <p className="text-[0.65rem] text-neutral-600 mt-1">
-            Obligatorio · queda registrado en contabilidad
+            {t("withdraw.beneficiaryHint")}
           </p>
         </div>
 
@@ -268,7 +270,7 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
 
         <Button data-testid="submit-withdraw-btn" onClick={submit} disabled={busy}
           className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
-          {busy ? "Enviando..." : "Solicitar Retiro"}
+          {busy ? t("withdraw.submittingBtn") : t("withdraw.submitBtn")}
         </Button>
       </div>
     </div>

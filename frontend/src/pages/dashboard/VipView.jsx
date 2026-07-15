@@ -135,7 +135,7 @@ export default function VipView() {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        <VerificationGateBanner blocking action="retirar fondos">
+        <VerificationGateBanner blocking action="withdraw">
           <VipWithdrawalForm
             balances={balances}
             onSubmitted={handleWithdrawalSubmitted}

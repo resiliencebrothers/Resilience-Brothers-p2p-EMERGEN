@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,6 +16,7 @@ import { extractDetailMessage } from "@/utils/apiErrors";
 
 export default function MarketplaceView() {
   const { refresh } = useAuth();
+  const { t } = useTranslation();
   const [products, setProducts] = useState([]);
   const [open, setOpen] = useState(null);
   const [qty, setQty] = useState(1);
@@ -38,12 +40,12 @@ export default function MarketplaceView() {
 
   const redeem = async () => {
     if (!open) return;
-    if (qty < 1) return toast.error("Cantidad inválida");
-    if (!addr) return toast.error("Dirección requerida");
+    if (qty < 1) return toast.error(t("marketplace.invalidQty"));
+    if (!addr) return toast.error(t("marketplace.addressRequired"));
     setBusy(true);
     try {
       await axios.post(`${API}/vip/redeem`, { product_id: open.id, quantity: qty, delivery_address: addr }, { withCredentials: true });
-      toast.success("Canje solicitado. Pendiente de aprobación.");
+      toast.success(t("marketplace.successPending"));
       setOpen(null); setQty(1); setAddr("");
       await refresh();
       const p = await axios.get(`${API}/products`); setProducts(p.data);
@@ -58,11 +60,11 @@ export default function MarketplaceView() {
     <div className="space-y-8" data-testid="marketplace-view">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="micro-label text-[#8B5CF6] mb-2">/ Marketplace</div>
-          <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#8B5CF6]" /> Canjea por Mercancía</h1>
+          <div className="micro-label text-[#8B5CF6] mb-2">{t("marketplace.eyebrow")}</div>
+          <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#8B5CF6]" /> {t("marketplace.titleFull")}</h1>
         </div>
         <div className="tactile-card px-5 py-3 min-w-[180px]" data-testid="marketplace-balance-widget">
-          <div className="micro-label text-neutral-500">Saldo total</div>
+          <div className="micro-label text-neutral-500">{t("marketplace.balanceLabel")}</div>
           <div
             className="font-display text-2xl text-[#8B5CF6]"
             data-testid="marketplace-balance-usdt"
@@ -76,13 +78,13 @@ export default function MarketplaceView() {
       {/* iter55.36o — full-verification gate applies to both the converter
           widget above and the redeem grid below. Rendered inline so the
           balance summary at the top remains visible even when locked. */}
-      <VerificationGateBanner action="canjear productos y convertir saldos" />
+      <VerificationGateBanner action="redeemAndConvert" />
 
       {/* iter50 — shared converter widget (also rendered on the main Dashboard) */}
       <BalanceConverterCard onConverted={loadBalances} />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {products.length === 0 && <p className="text-neutral-500 col-span-full text-center py-12">No hay productos disponibles.</p>}
+        {products.length === 0 && <p className="text-neutral-500 col-span-full text-center py-12">{t("marketplace.empty")}</p>}
         {products.map(p => (
           <div key={p.id} className="tactile-card overflow-hidden flex flex-col">
             <div className="aspect-video bg-[#0a0a0a] overflow-hidden">
@@ -101,10 +103,10 @@ export default function MarketplaceView() {
               <div className="mt-auto flex items-center justify-between">
                 <div>
                   <div className="font-display text-xl text-[#8B5CF6]">${p.price_usd}</div>
-                  <div className="text-xs text-neutral-500">Stock: {p.stock}</div>
+                  <div className="text-xs text-neutral-500">{t("marketplace.stock")} {p.stock}</div>
                 </div>
                 <Button data-testid={`redeem-${p.id}`} onClick={() => setOpen(p)} disabled={p.stock === 0} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none">
-                  Canjear
+                  {t("marketplace.redeem")}
                 </Button>
               </div>
             </div>
@@ -113,16 +115,16 @@ export default function MarketplaceView() {
       </div>
 
       <div>
-        <h2 className="font-display text-xl mb-4">Mis Canjes</h2>
+        <h2 className="font-display text-xl mb-4">{t("marketplace.myRedemptions")}</h2>
         <div className="tactile-card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
-                <th className="px-4 py-3 micro-label text-neutral-500">Producto</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Cant.</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Total</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Estado</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Fecha</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnProduct")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnQty")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnTotal")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnStatus")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnDate")}</th>
               </tr>
             </thead>
             <tbody>
@@ -144,23 +146,23 @@ export default function MarketplaceView() {
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-display">Canjear: {open?.name}</DialogTitle>
+            <DialogTitle className="font-display">{t("marketplace.redeem")}: {open?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label className="micro-label text-neutral-500">Cantidad</Label>
+              <Label className="micro-label text-neutral-500">{t("marketplace.redeemQuantity")}</Label>
               <Input data-testid="redeem-qty" type="number" min="1" value={qty} onChange={e => setQty(parseInt(e.target.value) || 1)} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Dirección de entrega</Label>
+              <Label className="micro-label text-neutral-500">{t("marketplace.redeemAddressLabel")}</Label>
               <Textarea data-testid="redeem-addr" value={addr} onChange={e => setAddr(e.target.value)} rows={3} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10" />
             </div>
             <div className="border border-white/10 p-3 font-mono text-sm flex justify-between">
-              <span className="text-neutral-500">Total:</span>
+              <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
               <span className="text-[#8B5CF6]">${(open?.price_usd * qty || 0).toFixed(2)}</span>
             </div>
             <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
-              {busy ? "Procesando..." : "Confirmar Canje"}
+              {busy ? t("marketplace.processing") : t("marketplace.confirmRedeem")}
             </Button>
           </div>
         </DialogContent>

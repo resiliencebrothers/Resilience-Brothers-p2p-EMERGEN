@@ -1570,3 +1570,24 @@ Operator asks (13 Feb 2026):
   - **Status**: preview only. User must redeploy for production (`p2p.resiliencebrothers.com`) to pick up the fix.
 
 
+
+- **i18n audit — Fase 1 (iter55.36s, Feb 15 2026)** — user approved full i18n audit after seeing more Spanish leaks. Fase 1 covered the 5 highest-visibility client-facing components. All titles, subtitles, buttons, labels, placeholders and helper prose now consume `t()` keys.
+  - **New i18n namespaces** added to both `en.json` + `es.json` (140+ new keys total):
+    - `verificationGate.*` — eyebrow, title with `{{action}}` interpolation, subtitle, footer, actions (operate/createOrders/withdraw/redeemAndConvert), steps.{email|phone|kyc}.{label,hint}
+    - `exchange.*` — eyebrow, title, subtitleVip/Standard, from/to/amount/selectCurrency, deliveryTransfer/Cash/Crypto/Accumulate, senderName + hint, proof, delivery method labels, cash-fiat explainer with code interpolation, submit/submitting, orderReceived + orderInReview, sendsLabel/receivesLabel/rateLabel/commissionLabel, imageTooLarge, completeRequired, deliveryDetailsRequired, successPending, uploadCta, uploadHint2, detailsHelperGeneric, accuracyWarning, and more
+    - `withdraw.*` — method labels (transfer/cash/crypto), receiver cash fields (name/phone/address/id + placeholders), beneficiaryName2 + hint, submit/submitting, network compatibility labels, cash progress note, all validation errors, TOTP helper strings
+    - `marketplace.*` — titleFull, balanceLabel, empty, stock, myRedemptions, column headers (Product/Qty/Total/Status/Date), redeemDialog fields, confirmRedeem, invalidQty, addressRequired, successPending
+    - `kyc.*` — titleFull, subtitle, docStep.{id_front|id_back|selfie}.{label|hint}, statusLabel.{unverified|pending|needs_more_info|verified|rejected}, uploadHeading, responseTime, pending/verifiedMessage, refreshStatus, submittedAt, submitErrorFallback
+  - **Components refactored** (imports `useTranslation` + replaces every visible string with `t()`):
+    - `components/VerificationGateBanner.jsx` — full rewrite; `action` prop is now an i18n suffix key (`createOrders`/`withdraw`/`redeemAndConvert`) instead of a Spanish string. Callers (ExchangeView, VipView, MarketplaceView) updated.
+    - `pages/dashboard/ExchangeView.jsx` — eyebrow, title, subtitle, "You send/receive" labels, currency selects, amount, delivery-method options (moved to `useMemo` with `t()`), method helper text, network selector, cash-fiat explainer, all sender/proof fields, success view (Orden Recibida, sendsLabel, rateLabel, commissionLabel, newOrderBtn), validation toasts, submit buttons.
+    - `pages/dashboard/MarketplaceView.jsx` — eyebrow, titleFull, balance widget, empty state, stock label, redeem button, table headers, redemption dialog, invalidQty/addressRequired/successPending toasts.
+    - `pages/dashboard/KYCView.jsx` — extracted `DOC_STEPS` → `DOC_STEP_KEYS` (label + hint keys per step), `STATUS_LABELS` → `STATUS_LABEL_KEYS`, header + subtitle, rejection/needs_more_info panels, submit button, response time note, pending/verified message, status card + submittedAt.
+    - `pages/dashboard/vip/VipWithdrawalForm.jsx` — withdrawalMethodOptions memoized with `t()`, validation error map fully translated, amount/currency/method form labels, crypto network selector, beneficiary field + hint, cash progress note, submit button, success + TOTP invalid + setup-needed toasts.
+  - **Fix**: `toast.error(err.response.data.detail)` in several places now uses `extractDetailMessage(e, t("..."))` — prevents React crash when the backend returns a structured detail object.
+  - **Screenshot-validated** on Playwright (1200×900, `session_token=test_session_normal_X`, `localStorage.i18nextLng=en`): ExchangeView shows **zero Spanish leaks** — every label, placeholder, button and helper text is in English.
+  - `make test-critical`: **159/159 green** (no backend regression).
+  - **Fase 2 pendiente** (medium-priority views): VipView.jsx eyebrow/title, VipWithdrawalHistory, OrdersView.jsx, ProfileView.jsx, SecuritySettings.jsx, NotificationsView.jsx, AppealDialog.jsx, OnboardingDialog.jsx, plus the sub-components of VipWithdrawalForm (CashReceiverFields, NonCashDetailsField, TotpField). Estimated ~2 hours if user requests.
+  - **Status**: preview only — user must redeploy for the fix to reach `p2p.resiliencebrothers.com`.
+
+

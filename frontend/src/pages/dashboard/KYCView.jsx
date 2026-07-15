@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { API } from "@/App";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -9,30 +10,20 @@ import {
 } from "lucide-react";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 
-const DOC_STEPS = [
-  {
-    key: "id_front",
-    label: "Frente del documento",
-    hint: "Foto nítida del anverso de tu INE / DNI / pasaporte. Se debe leer nombre y número.",
-  },
-  {
-    key: "id_back",
-    label: "Reverso del documento",
-    hint: "Foto del reverso. Si es un pasaporte, sube nuevamente la página con la foto.",
-  },
-  {
-    key: "selfie",
-    label: "Selfie con documento",
-    hint: "Foto tuya sosteniendo el documento junto a tu rostro. Buena iluminación, sin filtros.",
-  },
+// iter55.36s — DOC_STEPS + STATUS_LABELS now consume i18n keys resolved at
+// render time (see build helpers inside the component).
+const DOC_STEP_KEYS = [
+  { key: "id_front", labelKey: "kyc.docStep.id_front.label", hintKey: "kyc.docStep.id_front.hint" },
+  { key: "id_back",  labelKey: "kyc.docStep.id_back.label",  hintKey: "kyc.docStep.id_back.hint" },
+  { key: "selfie",   labelKey: "kyc.docStep.selfie.label",   hintKey: "kyc.docStep.selfie.hint" },
 ];
 
-const STATUS_LABELS = {
-  unverified: { label: "Sin verificar", tone: "muted", icon: Info },
-  pending: { label: "En revisión", tone: "warn", icon: Loader2 },
-  needs_more_info: { label: "Necesita info adicional", tone: "warn", icon: AlertTriangle },
-  verified: { label: "Verificado", tone: "ok", icon: ShieldCheck },
-  rejected: { label: "Rechazado", tone: "danger", icon: X },
+const STATUS_LABEL_KEYS = {
+  unverified:      { key: "kyc.statusLabel.unverified",       tone: "muted",  icon: Info },
+  pending:         { key: "kyc.statusLabel.pending",          tone: "warn",   icon: Loader2 },
+  needs_more_info: { key: "kyc.statusLabel.needs_more_info",  tone: "warn",   icon: AlertTriangle },
+  verified:        { key: "kyc.statusLabel.verified",         tone: "ok",     icon: ShieldCheck },
+  rejected:        { key: "kyc.statusLabel.rejected",         tone: "danger", icon: X },
 };
 
 /**
@@ -40,6 +31,7 @@ const STATUS_LABELS = {
  * Route: /dashboard/kyc (iter52)
  */
 export default function KYCView() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [docs, setDocs] = useState({ id_front: null, id_back: null, selfie: null });
@@ -98,7 +90,7 @@ export default function KYCView() {
         { id_front: docs.id_front, id_back: docs.id_back, selfie: docs.selfie },
         { withCredentials: true },
       );
-      toast.success("Verificación enviada. Nuestro equipo la revisará en ≤48h.");
+      toast.success(t("kyc.successToast"));
       setDocs({ id_front: null, id_back: null, selfie: null });
       for (const k of Object.keys(fileRefs)) {
         if (fileRefs[k].current) fileRefs[k].current.value = "";
@@ -106,7 +98,7 @@ export default function KYCView() {
       await load();
     } catch (e) {
       const detail = e.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "No se pudo enviar la verificación");
+      toast.error(typeof detail === "string" ? detail : t("kyc.submitErrorFallback"));
     } finally {
       setSubmitting(false);
     }
@@ -121,14 +113,14 @@ export default function KYCView() {
       <ProfileSectionTabs />
       <header>
         <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-          <IdCard className="w-7 h-7 text-[#8B5CF6]" /> Verificación de identidad
+          <IdCard className="w-7 h-7 text-[#8B5CF6]" /> {t("kyc.titleFull")}
         </h1>
         <p className="text-neutral-500 text-sm mt-2">
-          Sube 3 fotos para verificar tu identidad. Tus documentos se almacenan cifrados y solo el equipo de revisión puede verlos.
+          {t("kyc.subtitle")}
         </p>
       </header>
 
-      {loading && <div className="text-neutral-500 text-sm">Cargando…</div>}
+      {loading && <div className="text-neutral-500 text-sm">{t("kyc.loading")}</div>}
 
       {!loading && status && (
         <>
@@ -137,16 +129,16 @@ export default function KYCView() {
           {s === "rejected" && v?.rejection_reasons?.length > 0 && (
             <div className="border border-[#EF4444]/30 bg-[#EF4444]/5 p-4">
               <div className="text-sm font-semibold text-[#FEE2E2] flex items-center gap-2 mb-2">
-                <X className="w-4 h-4" /> Motivos de rechazo
+                <X className="w-4 h-4" /> {t("kyc.rejectionReasonsTitle")}
               </div>
               <ul className="text-xs text-neutral-300 space-y-1 list-disc pl-5">
                 {v.rejection_reasons.map((r) => (<li key={r}>{r}</li>))}
               </ul>
               {v.review_notes && (
-                <div className="text-xs text-neutral-400 italic mt-2">Nota del equipo: {v.review_notes}</div>
+                <div className="text-xs text-neutral-400 italic mt-2">{t("kyc.teamNote")}: {v.review_notes}</div>
               )}
               <div className="text-xs text-neutral-300 mt-3">
-                Puedes volver a enviar la verificación con documentos nuevos abajo.
+                {t("kyc.canResubmit")}
               </div>
             </div>
           )}
@@ -154,24 +146,24 @@ export default function KYCView() {
           {s === "needs_more_info" && v?.review_notes && (
             <div className="border border-blue-500/30 bg-blue-500/5 p-4">
               <div className="text-sm font-semibold text-blue-200 flex items-center gap-2 mb-2">
-                <Info className="w-4 h-4" /> El equipo necesita más información
+                <Info className="w-4 h-4" /> {t("kyc.needsMoreInfoTitle")}
               </div>
               <div className="text-xs text-neutral-300">{v.review_notes}</div>
               <div className="text-xs text-neutral-400 mt-2">
-                Contacta al equipo desde el chat de soporte con la información solicitada.
+                {t("kyc.contactSupport")}
               </div>
             </div>
           )}
 
           {canSubmit && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-white">Sube tus documentos</h2>
-              {DOC_STEPS.map(({ key, label, hint }) => (
+              <h2 className="text-lg font-semibold text-white">{t("kyc.uploadHeading")}</h2>
+              {DOC_STEP_KEYS.map(({ key, labelKey, hintKey }) => (
                 <DocUploadRow
                   key={key}
                   docKey={key}
-                  label={label}
-                  hint={hint}
+                  label={t(labelKey)}
+                  hint={t(hintKey)}
                   preview={docs[key]}
                   fileRef={fileRefs[key]}
                   onSelect={handleFile}
@@ -187,11 +179,11 @@ export default function KYCView() {
                   className="bg-[#8B5CF6] text-white hover:bg-[#8B5CF6]/90 disabled:opacity-40"
                 >
                   {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Enviar para verificación
+                  {submitting ? t("kyc.submittingBtn") : t("kyc.submitBtn")}
                   {!submitting && <ArrowRight className="w-4 h-4 ml-2" />}
                 </Button>
                 <p className="text-xs text-neutral-500">
-                  Tiempo de respuesta habitual: 24-48h laborables.
+                  {t("kyc.responseTime")}
                 </p>
               </div>
             </div>
@@ -199,8 +191,8 @@ export default function KYCView() {
 
           {(s === "pending" || s === "verified") && (
             <div className="border border-white/10 bg-black/30 p-6 text-sm text-neutral-400">
-              {s === "pending" && <>Tu verificación está siendo revisada por el equipo. Recibirás una notificación cuando haya respuesta.</>}
-              {s === "verified" && <>Tu identidad está verificada ✓ — puedes operar sin límites reducidos.</>}
+              {s === "pending" && t("kyc.pendingMessage")}
+              {s === "verified" && t("kyc.verifiedMessage")}
               <div className="mt-3">
                 <Button
                   variant="outline"
@@ -209,7 +201,7 @@ export default function KYCView() {
                   className="border-white/10 text-neutral-300 hover:bg-white/5"
                   data-testid="kyc-refresh-btn"
                 >
-                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Actualizar estado
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> {t("kyc.refreshStatus")}
                 </Button>
               </div>
             </div>
@@ -221,7 +213,8 @@ export default function KYCView() {
 }
 
 function StatusCard({ status, verification }) {
-  const cfg = STATUS_LABELS[status] || STATUS_LABELS.unverified;
+  const { t } = useTranslation();
+  const cfg = STATUS_LABEL_KEYS[status] || STATUS_LABEL_KEYS.unverified;
   const Icon = cfg.icon;
   const toneClasses = {
     muted: "border-white/10 bg-black/30 text-neutral-300",
@@ -234,9 +227,9 @@ function StatusCard({ status, verification }) {
     <div className={`border ${toneClasses} p-4 flex items-center gap-3`} data-testid="kyc-status-card">
       <Icon className={`w-6 h-6 ${status === "pending" ? "animate-spin" : ""}`} />
       <div>
-        <div className="text-sm font-semibold">{cfg.label}</div>
+        <div className="text-sm font-semibold">{t(cfg.key)}</div>
         {verification?.created_at && (
-          <div className="text-xs opacity-70">Enviado: {verification.created_at.slice(0, 16).replace("T", " ")}</div>
+          <div className="text-xs opacity-70">{t("kyc.submittedAt")}: {verification.created_at.slice(0, 16).replace("T", " ")}</div>
         )}
       </div>
     </div>
