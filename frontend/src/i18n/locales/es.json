@@ -52,15 +52,6 @@
       "backToClient": "Volver al cliente"
     }
   },
-  "profile": {
-    "tabs": {
-      "personal": "Datos personales",
-      "kyc": "Verificación",
-      "security": "Seguridad",
-      "notifications": "Notificaciones"
-    },
-    "breadcrumb": "/ Mi Perfil"
-  },
   "usersHub": {
     "tabs": {
       "list": "Lista",
@@ -375,6 +366,15 @@
     "errSubmit": "No se pudo enviar la apelación."
   },
   "profile": {
+    "tabs": {
+      "personal": "Datos personales",
+      "kyc": "Verificación",
+      "security": "Seguridad",
+      "notifications": "Notificaciones"
+    },
+    "breadcrumb": "/ Mi Perfil",
+    "changeButton": "Cambiar",
+    "userIdShareHint": "Comparte este identificador cuando envíes una apelación o solicites soporte — permite localizar tu caso más rápido.",
     "eyebrow": "/ Perfil",
     "title": "Datos personales",
     "loading": "Cargando perfil…",
@@ -414,7 +414,13 @@
       "sendCode": "Enviar código",
       "confirmingCode": "Confirmando…",
       "confirm": "Confirmar",
-      "codeLabel": "Código de 6 dígitos"
+      "codeLabel": "Código de 6 dígitos",
+      "helperBody": "Enviaremos un código de 6 dígitos al email nuevo + un aviso al actual ({{email}}) para que puedas revertir si alguien intenta secuestrar tu cuenta.",
+      "newEmailPlaceholder": "tu.nuevo@email.com",
+      "totpPlaceholder": "123456",
+      "step2Body": "Enviamos un código a <1>{{target}}</1>. Ingrésalo abajo para confirmar el cambio.",
+      "codePlaceholder": "000000",
+      "back": "Volver"
     },
     "phone": {
       "dialogTitle": "Cambiar teléfono",
@@ -428,7 +434,13 @@
       "newPhoneLabel": "Teléfono nuevo (con código de país)",
       "totpLabel": "Código 2FA (o recuperación)",
       "sending": "Enviando…",
-      "requestChange": "Solicitar cambio"
+      "requestChange": "Solicitar cambio",
+      "pendingRequestBody": "Ya tienes una solicitud de cambio a <1>{{phone}}</1>. El equipo la revisará y aprobará manualmente.",
+      "cancelPending": "Cancelar solicitud",
+      "currentLabelBody": "Actual: <1>{{phone}}</1>. El equipo verificará el nuevo número antes de aplicarlo — igual que en tu registro inicial.",
+      "currentNotRegistered": "no registrado",
+      "newPhonePlaceholder": "+53 5555 9999",
+      "totpPlaceholder": "123456"
     },
     "country": {
       "dialogTitle": "Cambiar país",
@@ -439,7 +451,10 @@
       "newCountryLabel": "País nuevo",
       "placeholder": "Ej. Cuba, España, México…",
       "saving": "Guardando…",
-      "save": "Guardar"
+      "save": "Guardar",
+      "currentLabelBody": "Actual: <1>{{country}}</1>. Puedes actualizarlo cuando cambies de residencia.",
+      "willResetKycTitle": "Impacto en verificación",
+      "willResetKycBody": "Tu KYC está aprobado. Al cambiar de país volverá a <1>\"En revisión\"</1> para que el equipo confirme los documentos en la nueva jurisdicción."
     },
     "headerBody": "Todos los datos con los que te registraste. Puedes actualizarlos si cambias de país, celular o email — solo pedimos verificación adicional para proteger tu cuenta.",
     "kycHelperBody": "Sube tus documentos para desbloquear límites más altos y operar sin fricciones. La revisión suele tomar entre 30 min y 24 h.",
@@ -448,6 +463,85 @@
     "twofaOff": "2FA no configurado",
     "securityHelperBody": "Gestiona tu autenticación de dos factores, cambia tu contraseña y consulta las sesiones activas.",
     "openSecurity": "Abrir seguridad"
+  },
+  "security": {
+    "loading": "Cargando…",
+    "loadError": "Error al cargar estado 2FA",
+    "title": "Verificación en Dos Pasos",
+    "subtitle": "Protege tus retiros con un código generado por una app de autenticador (Google Authenticator, Authy, 1Password, etc.). Obligatorio para realizar retiros.",
+    "setupError": "Error al iniciar setup",
+    "enterSixDigits": "Ingresa 6 dígitos",
+    "activated": "2FA activado correctamente",
+    "invalidCode": "Código inválido",
+    "disabled": "2FA desactivado",
+    "enterCurrentTotp": "Ingresa tu código 2FA actual",
+    "codesRegenerated": "Códigos de recuperación renovados",
+    "copied": "Copiado",
+    "statusOn": "2FA activado",
+    "statusOff": "2FA no configurado",
+    "statusOnDetails": "Configurado el {{date}} · {{count}} códigos de recuperación restantes",
+    "statusOffHint": "No podrás realizar retiros hasta activarlo.",
+    "activate2fa": "Activar 2FA",
+    "buttonLoading": "Cargando…",
+    "regenerateCodes": "Regenerar códigos",
+    "deactivate": "Desactivar",
+    "setup": {
+      "step1": "Paso 1: Escanea el QR",
+      "qrAlt": "QR 2FA",
+      "recommendedApps": "Apps recomendadas",
+      "recommendedAppsValue": "Google Authenticator · Authy · 1Password · Bitwarden",
+      "cantScan": "¿No puedes escanear? Pega este código:",
+      "step2": "Paso 2: Confirma con el primer código",
+      "verifyPlaceholder": "123456",
+      "verifying": "Verificando…",
+      "activate": "Activar"
+    },
+    "recovery": {
+      "title": "Guarda estos códigos de recuperación",
+      "warning": "Solo se muestran <1>una vez</1>. Úsalos para entrar si pierdes tu autenticador. Cada código sirve una sola vez.",
+      "copyAll": "Copiar todos",
+      "acknowledged": "Ya los guardé"
+    },
+    "disableDialog": {
+      "title": "Desactivar 2FA",
+      "body": "Si desactivas 2FA, no podrás realizar retiros hasta volver a activarlo. Ingresa tu código actual para confirmar.",
+      "placeholder": "Código 2FA o de recuperación",
+      "cancel": "Cancelar",
+      "confirm": "Desactivar"
+    },
+    "regenDialog": {
+      "title": "Regenerar códigos de recuperación",
+      "body": "Los códigos viejos quedarán invalidados.",
+      "placeholder": "Código 2FA actual",
+      "cancel": "Cancelar",
+      "regenerate": "Regenerar"
+    },
+    "password": {
+      "title": "Cambiar contraseña",
+      "body": "Al cambiarla se cerrarán todas tus otras sesiones activas. Recibirás una notificación por email.",
+      "needsTwofaHint": "Para cambiar tu contraseña primero debes activar la verificación en dos pasos (2FA) arriba. Esto protege tu cuenta contra cambios no autorizados.",
+      "currentLabel": "Contraseña actual",
+      "newLabel": "Nueva contraseña (mín. 8 caracteres)",
+      "confirmLabel": "Confirma la nueva contraseña",
+      "mismatchInline": "La confirmación no coincide.",
+      "totpLabel": "Código 2FA actual (6 dígitos)",
+      "totpPlaceholder": "123456",
+      "updating": "Actualizando…",
+      "submit": "Cambiar contraseña",
+      "showPasswords": "Mostrar contraseñas",
+      "hidePasswords": "Ocultar contraseñas",
+      "googleTitle": "Cambiar contraseña",
+      "googleBody": "Tu cuenta usa inicio de sesión con <1>Google</1>. Cambia tu contraseña desde tu cuenta de Google.",
+      "tooShort": "La nueva contraseña debe tener al menos 8 caracteres.",
+      "mismatch": "La confirmación no coincide con la nueva contraseña.",
+      "mustDiffer": "La nueva contraseña debe ser diferente de la actual.",
+      "enterTotp": "Ingresa tu código 2FA de 6 dígitos.",
+      "setupRequired": "Activa la verificación en dos pasos (2FA) antes de cambiar tu contraseña.",
+      "totpInvalid": "Código 2FA inválido.",
+      "updateError": "Error al cambiar la contraseña.",
+      "updated": "Contraseña actualizada correctamente.",
+      "updatedWithSessions": "Contraseña actualizada. Se cerraron {{count}} sesiones adicionales."
+    }
   },
   "marketplace": {
     "eyebrow": "/ Marketplace",

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -150,11 +151,6 @@ export default function VipView() {
         onOpenChange={setLedgerOpen}
         currency={ledgerCurrency}
         bucket={ledger.by_currency?.[ledgerCurrency]}
-      />
-    </div>
-  );
-}
-erCurrency]}
       />
     </div>
   );

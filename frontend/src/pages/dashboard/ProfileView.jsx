@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,7 +50,7 @@ export default function ProfileView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -184,6 +184,7 @@ const KYC_BADGE = {
 
 
 function UserIdRow({ userId }) {
+  const { t } = useTranslation();
   if (!userId) return null;
   return (
     <div
@@ -205,8 +206,7 @@ function UserIdRow({ userId }) {
             />
           </div>
           <div className="text-[0.65rem] text-neutral-500 mt-1 leading-relaxed max-w-md">
-            Comparte este identificador cuando envíes una apelación o solicites
-            soporte — permite localizar tu caso más rápido.
+            {t("profile.userIdShareHint")}
           </div>
         </div>
       </div>
@@ -216,6 +216,7 @@ function UserIdRow({ userId }) {
 
 
 function PersonalRow({ icon: Icon, label, value, onEdit, readOnly, verified, pending, testid }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center justify-between gap-4 py-2" data-testid={testid}>
       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -240,7 +241,7 @@ function PersonalRow({ icon: Icon, label, value, onEdit, readOnly, verified, pen
           data-testid={`${testid}-edit`}
           className="flex-shrink-0 text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] border border-[#8B5CF6]/40 hover:border-[#8B5CF6] px-3 py-1.5 flex items-center gap-1"
         >
-          <Pencil className="w-3 h-3" /> Cambiar
+          <Pencil className="w-3 h-3" /> {t("profile.changeButton")}
         </button>
       )}
     </div>
@@ -306,53 +307,54 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
         {step === 1 ? (
           <div className="space-y-4">
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Enviaremos un código de 6 dígitos al email nuevo + un aviso al
-              actual ({currentEmail}) para que puedas revertir si alguien intenta
-              secuestrar tu cuenta.
+              {t("profile.email.helperBody", { email: currentEmail })}
             </p>
             <div>
-              <Label className="micro-label text-neutral-500">Email nuevo</Label>
+              <Label className="micro-label text-neutral-500">{t("profile.email.newEmailLabel")}</Label>
               <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
                      data-testid="email-change-new-input"
-                     placeholder="tu.nuevo@email.com"
+                     placeholder={t("profile.email.newEmailPlaceholder")}
                      className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Código 2FA (o recuperación)</Label>
+              <Label className="micro-label text-neutral-500">{t("profile.email.totpLabel")}</Label>
               <Input value={totpCode} onChange={(e) => setTotpCode(e.target.value)}
                      data-testid="email-change-totp-input"
-                     placeholder="123456"
+                     placeholder={t("profile.email.totpPlaceholder")}
                      className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11 font-mono" />
             </div>
             <Button onClick={requestCode} disabled={busy}
                     data-testid="email-change-send-btn"
                     className="w-full rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-11 font-mono uppercase tracking-wider">
-              {busy ? "Enviando..." : "Enviar código"}
+              {busy ? t("profile.email.sending") : t("profile.email.sendCode")}
             </Button>
           </div>
         ) : (
           <div className="space-y-4">
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Enviamos un código a <strong className="text-white font-mono">{maskedTarget}</strong>.
-              Ingrésalo abajo para confirmar el cambio.
+              <Trans
+                i18nKey="profile.email.step2Body"
+                values={{ target: maskedTarget }}
+                components={{ 1: <strong className="text-white font-mono" /> }}
+              />
             </p>
             <div>
-              <Label className="micro-label text-neutral-500">Código de 6 dígitos</Label>
+              <Label className="micro-label text-neutral-500">{t("profile.email.codeLabel")}</Label>
               <Input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                      maxLength={6} inputMode="numeric" pattern="[0-9]{6}"
                      data-testid="email-change-code-input"
-                     placeholder="000000"
+                     placeholder={t("profile.email.codePlaceholder")}
                      className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11 font-mono text-center text-xl tracking-widest" />
             </div>
             <div className="flex gap-2">
               <Button onClick={() => setStep(1)} disabled={busy}
                       className="flex-1 rounded-none bg-transparent border border-white/15 text-white h-11 font-mono uppercase tracking-wider">
-                Volver
+                {t("profile.email.back")}
               </Button>
               <Button onClick={confirmCode} disabled={busy}
                       data-testid="email-change-confirm-btn"
                       className="flex-1 rounded-none bg-[#22C55E] hover:bg-[#22C55E]/90 text-black h-11 font-mono uppercase tracking-wider">
-                {busy ? "Confirmando..." : "Confirmar"}
+                {busy ? t("profile.email.confirmingCode") : t("profile.email.confirm")}
               </Button>
             </div>
           </div>
@@ -367,6 +369,7 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
 // Phone change dialog — sends to admin review queue
 // ============================================================
 function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
+  const { t } = useTranslation();
   const [newPhone, setNewPhone] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -376,19 +379,19 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
   }, [open]);
 
   const submit = async () => {
-    if (!newPhone || newPhone.length < 6) return toast.error("Teléfono inválido");
-    if (!totpCode || totpCode.length < 6) return toast.error("Ingresa tu código 2FA");
+    if (!newPhone || newPhone.length < 6) return toast.error(t("profile.phone.invalidPhone"));
+    if (!totpCode || totpCode.length < 6) return toast.error(t("profile.phone.enterTotp"));
     setBusy(true);
     try {
       await axios.post(`${API}/profile/phone/request-change`, {
         new_phone: newPhone.trim(),
         totp_code: totpCode.trim(),
       }, { withCredentials: true });
-      toast.success("Solicitud enviada. Espera aprobación del equipo.");
+      toast.success(t("profile.phone.requestSent"));
       onClose();
     } catch (e) {
       if (!handleTotpError(e, navigate)) {
-        toast.error(e?.response?.data?.detail || "Error al solicitar cambio");
+        toast.error(e?.response?.data?.detail || t("profile.phone.requestError"));
       }
     } finally { setBusy(false); }
   };
@@ -397,10 +400,10 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
     setBusy(true);
     try {
       await axios.delete(`${API}/profile/phone/pending`, { withCredentials: true });
-      toast.success("Solicitud cancelada");
+      toast.success(t("profile.phone.requestCancelled"));
       onClose();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Error al cancelar");
+      toast.error(e?.response?.data?.detail || t("profile.phone.cancelError"));
     } finally { setBusy(false); }
   };
 
@@ -408,48 +411,53 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="bg-[#1A1730] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="phone-change-dialog">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl">Cambiar teléfono</DialogTitle>
+          <DialogTitle className="font-display text-xl">{t("profile.phone.dialogTitle")}</DialogTitle>
         </DialogHeader>
         {pending ? (
           <div className="space-y-3">
             <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-4">
-              <div className="micro-label text-[#8B5CF6] mb-2">Solicitud pendiente</div>
+              <div className="micro-label text-[#8B5CF6] mb-2">{t("profile.phone.pendingRequestLabel")}</div>
               <div className="text-xs text-neutral-400">
-                Ya tienes una solicitud de cambio a <strong className="text-white font-mono">{pending.new_phone_masked}</strong>.
-                El equipo la revisará y aprobará manualmente.
+                <Trans
+                  i18nKey="profile.phone.pendingRequestBody"
+                  values={{ phone: pending.new_phone_masked }}
+                  components={{ 1: <strong className="text-white font-mono" /> }}
+                />
               </div>
             </div>
             <Button onClick={cancelPending} disabled={busy}
                     data-testid="phone-cancel-pending-btn"
                     className="w-full rounded-none bg-transparent border border-[#EF4444]/40 hover:bg-[#EF4444]/10 text-[#EF4444] h-11 font-mono uppercase tracking-wider">
-              Cancelar solicitud
+              {t("profile.phone.cancelPending")}
             </Button>
           </div>
         ) : (
           <div className="space-y-4">
             <p className="text-xs text-neutral-400 leading-relaxed">
-              Actual: <strong className="text-white font-mono">{currentPhone || "no registrado"}</strong>.
-              El equipo verificará el nuevo número antes de aplicarlo — igual que
-              en tu registro inicial.
+              <Trans
+                i18nKey="profile.phone.currentLabelBody"
+                values={{ phone: currentPhone || t("profile.phone.currentNotRegistered") }}
+                components={{ 1: <strong className="text-white font-mono" /> }}
+              />
             </p>
             <div>
-              <Label className="micro-label text-neutral-500">Teléfono nuevo (con código de país)</Label>
+              <Label className="micro-label text-neutral-500">{t("profile.phone.newPhoneLabel")}</Label>
               <Input value={newPhone} onChange={(e) => setNewPhone(e.target.value)}
                      data-testid="phone-change-new-input"
-                     placeholder="+53 5555 9999"
+                     placeholder={t("profile.phone.newPhonePlaceholder")}
                      className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11 font-mono" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Código 2FA (o recuperación)</Label>
+              <Label className="micro-label text-neutral-500">{t("profile.phone.totpLabel")}</Label>
               <Input value={totpCode} onChange={(e) => setTotpCode(e.target.value)}
                      data-testid="phone-change-totp-input"
-                     placeholder="123456"
+                     placeholder={t("profile.phone.totpPlaceholder")}
                      className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11 font-mono" />
             </div>
             <Button onClick={submit} disabled={busy}
                     data-testid="phone-change-submit-btn"
                     className="w-full rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-11 font-mono uppercase tracking-wider">
-              {busy ? "Enviando..." : "Solicitar cambio"}
+              {busy ? t("profile.phone.sending") : t("profile.phone.requestChange")}
             </Button>
           </div>
         )}
@@ -463,26 +471,27 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
 // Country change dialog — frictionless + KYC awareness
 // ============================================================
 function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
+  const { t } = useTranslation();
   const [newCountry, setNewCountry] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { if (open) setNewCountry(""); }, [open]);
 
   const submit = async () => {
-    if (!newCountry || newCountry.trim().length < 2) return toast.error("País inválido");
+    if (!newCountry || newCountry.trim().length < 2) return toast.error(t("profile.country.invalidCountry"));
     setBusy(true);
     try {
       const r = await axios.post(`${API}/profile/country/change`, {
         new_country: newCountry.trim(),
       }, { withCredentials: true });
       if (r.data.kyc_reset) {
-        toast.warning("País actualizado. Tu KYC volvió a estado 'en revisión'.");
+        toast.warning(t("profile.country.resetsKyc"));
       } else {
-        toast.success("País actualizado ✓");
+        toast.success(t("profile.country.updated"));
       }
       onClose();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Error al cambiar país");
+      toast.error(e?.response?.data?.detail || t("profile.country.changeError"));
     } finally { setBusy(false); }
   };
 
@@ -492,36 +501,40 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="bg-[#1A1730] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="country-change-dialog">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl">Cambiar país</DialogTitle>
+          <DialogTitle className="font-display text-xl">{t("profile.country.dialogTitle")}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-xs text-neutral-400 leading-relaxed">
-            Actual: <strong className="text-white font-mono">{currentCountry || "—"}</strong>.
-            Puedes actualizarlo cuando cambies de residencia.
+            <Trans
+              i18nKey="profile.country.currentLabelBody"
+              values={{ country: currentCountry || "—" }}
+              components={{ 1: <strong className="text-white font-mono" /> }}
+            />
           </p>
           {willResetKyc && (
             <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-3">
               <div className="micro-label text-[#8B5CF6] mb-1 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> Impacto en verificación
+                <AlertTriangle className="w-3 h-3" /> {t("profile.country.willResetKycTitle")}
               </div>
               <p className="text-[0.7rem] text-neutral-400 leading-relaxed">
-                Tu KYC está aprobado. Al cambiar de país volverá a
-                <strong className="text-white"> &ldquo;En revisión&rdquo;</strong> para que el equipo
-                confirme los documentos en la nueva jurisdicción.
+                <Trans
+                  i18nKey="profile.country.willResetKycBody"
+                  components={{ 1: <strong className="text-white" /> }}
+                />
               </p>
             </div>
           )}
           <div>
-            <Label className="micro-label text-neutral-500">País nuevo</Label>
+            <Label className="micro-label text-neutral-500">{t("profile.country.newCountryLabel")}</Label>
             <Input value={newCountry} onChange={(e) => setNewCountry(e.target.value)}
                    data-testid="country-change-new-input"
-                   placeholder="Ej. Cuba, España, México..."
+                   placeholder={t("profile.country.placeholder")}
                    className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11" />
           </div>
           <Button onClick={submit} disabled={busy}
                   data-testid="country-change-submit-btn"
                   className="w-full rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-11 font-mono uppercase tracking-wider">
-            {busy ? "Guardando..." : "Guardar"}
+            {busy ? t("profile.country.saving") : t("profile.country.save")}
           </Button>
         </div>
       </DialogContent>

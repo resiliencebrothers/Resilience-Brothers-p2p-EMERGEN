@@ -1,0 +1,33 @@
+{
+  "summary": "i18n Phase-2 audit for /dashboard/profile (ProfileView.jsx) and /dashboard/security (SecuritySettings.jsx). Verified EN + ES rendering with VIP (google) and cuba.iter16 (email/password) seeded sessions. All required English keys render — no Spanish leaks in the two pages under audit. ES regression clean — no English leaks. Smoke check on /dashboard, /dashboard/kyc, /dashboard/orders passed with no runtime errors. VipView.jsx compiles (only a react-hooks/exhaustive-deps warning on SecuritySettings.jsx useEffect).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/dashboard/security (email/password user)", "issues": ["Above the security card, a global 'CUENTA BAJO REVISIÓN' banner still renders in Spanish even when UI language is English (outside the ProfileView/SecuritySettings scope of this iteration — flagging for a future i18n sweep of the phone-review banner)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL / OUT-OF-SCOPE: Translate the 'CUENTA BAJO REVISIÓN' phone-review banner shown on dashboard for users whose phone is not yet verified — currently Spanish-only.",
+    "OPTIONAL: Pre-existing mismatch between backend kyc statuses ('verified') and frontend country-dialog check (`kycStatus === 'approved'`). Not an i18n issue but the 'Verification impact' warning block will never trigger for users whose kyc_verifications.status is 'verified'.",
+    "OPTIONAL: SecuritySettings.jsx line 49 has a `useEffect(loadStatus, [])` react-hooks/exhaustive-deps warning — wrap loadStatus in useCallback or add it to deps."
+  ],
+  "critical_code_review_comments": [
+    "ProfileView.jsx and SecuritySettings.jsx are both getting long (544 and 449 lines respectively). Consider splitting the three Change*Dialog components into their own files under /pages/dashboard/profile/dialogs/ for maintainability.",
+    "In SecuritySettings.jsx useEffect(() => { loadStatus(); }, []) — missing dependency loadStatus (React-hooks lint warning). Low risk since state never changes the identity of loadStatus in this closure, but should be silenced via useCallback for cleanliness.",
+    "Backend /profile/me returns kyc_status from kyc_verifications; the frontend checks kycStatus === 'approved' to display the Verification-impact warning, but the DB is observed to store 'verified'. Values need to be aligned in a follow-up (not in scope of this iteration)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only test)", "frontend": "100% (all listed i18n cases pass)"},
+  "test_credentials": "VIP: cookie session_token=test_session_vip_X → user_test_vip01; Cuba email/password: cookie session_token=test_session_cuba_X → user_f4b249d3cfc4 (cuba.iter16@example.com / veryStrongPass123). Both sessions were re-seeded during this iteration into db.user_sessions (correct collection).",
+  "seed_data_creation": "Created/updated db.user_sessions rows for test_session_vip_X and test_session_cuba_X (expires_at as datetime, +24h). Registered cuba.iter16@example.com (phone +5350000198), force-verified email_verified=True in DB. Set VIP user_test_vip01: kyc_verifications row with status='approved', totp_enabled toggled between False/True during tests; final state: totp_enabled=True, totp_recovery_codes=8, phone=+5350000001, country=Cuba.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Test cookies for VIP (session_token=test_session_vip_X) and Cuba (session_token=test_session_cuba_X) live in db.user_sessions with 24h expiry — refresh if expired. Language selector is `resilience_lang` in localStorage ('en' or 'es'); the review request mentions `i18nextLng` but that key is NOT the effective one (see /app/frontend/src/i18n/index.js line 44: `lookupLocalStorage: 'resilience_lang'`). The default browser locale in Playwright is en-US which resolves to 'en' — so if resilience_lang is unset, EN is chosen. For explicit ES: `localStorage.setItem('resilience_lang','es')` then reload. Verified all required English keys render on both pages; the ProfileView.jsx UserIdRow bug (t() without useTranslation) is fixed."
+}
