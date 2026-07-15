@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { setSentryUser, captureError } from "@/sentry";
@@ -8,6 +8,11 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  // iter55.36p — guard against React.StrictMode's intentional double-invoke of
+  // useEffect (dev + preview builds). Without this, /api/auth/me is hit twice on
+  // every hard-refresh, which produces spurious 401 pairs in the browser
+  // console whenever the session cookie hasn't fully propagated yet.
+  const initialAuthChecked = useRef(false);
 
   const checkAuth = useCallback(async () => {
     try {
@@ -30,6 +35,8 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
+    if (initialAuthChecked.current) return;
+    initialAuthChecked.current = true;
     checkAuth();
   }, [checkAuth]);
 

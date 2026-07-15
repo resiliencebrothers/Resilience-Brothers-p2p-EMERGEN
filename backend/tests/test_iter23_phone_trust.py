@@ -10,7 +10,7 @@ import os
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, make_admin_totp
+from conftest import BASE_URL, make_admin_totp, NORMAL_TOKEN
 
 
 def _db():
@@ -204,11 +204,35 @@ class TestSelfServicePhone:
 
 
 def test_legacy_users_can_still_withdraw_without_phone():
-    """Legacy users (phone=None) bypass the phone_verified gate."""
-    # Just verify the model: a user with no phone is not blocked by the phone check.
-    # We don't actually run a withdrawal here (heavy setup); the unit-level check is
-    # already in server.py and the integration is exercised by existing withdrawal tests.
+    """iter55.36o — legacy "phone=None bypass" was removed. This test now
+    verifies the OPPOSITE: users without a phone are still blocked from
+    withdrawing (the strict verification gate requires phone verified).
+
+    Kept as a regression marker so we don't accidentally re-introduce the
+    legacy bypass — it was intentionally deprecated when we tightened the
+    exchange/withdraw gate to require email + phone + KYC.
+    """
     cli, db = _db()
-    u = db.users.find_one({"user_id": "user_test_normal01"}, {"_id": 0})
+    # Force legacy state (no phone) then re-seed sessions
+    db.users.update_one(
+        {"user_id": "user_test_normal01"},
+        {"$unset": {"phone": "", "phone_verified": ""}},
+    )
     cli.close()
-    assert not u.get("phone")  # confirms legacy state — server.py guard will skip
+
+    # Attempt a withdrawal — should be blocked by the new gate.
+    r = requests.post(
+        f"{BASE_URL}/api/vip/withdraw",
+        headers={"Authorization": f"Bearer {NORMAL_TOKEN}"},
+        json={"amount_usd": 5, "method": "transfer",
+              "beneficiary_name": "Legacy Test",
+              "details": "Bank / dummy details for cash flow",
+              "totp_code": "000000"},
+    )
+    assert r.status_code == 403, r.text
+    detail = r.json().get("detail", {})
+    # Any of the 3 verification codes is a valid failure here; the point is
+    # that the user is NO longer waved through simply because `phone` is None.
+    assert detail.get("code") in (
+        "PHONE_NOT_VERIFIED", "EMAIL_NOT_VERIFIED", "KYC_NOT_APPROVED",
+    )

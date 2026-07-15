@@ -58,6 +58,13 @@ class _KYCApprovePayload(BaseModel):
     notes: str = ""
 
 
+class _KYCBulkApprovePayload(BaseModel):
+    ids: List[str] = Field(..., min_length=1, max_length=100,
+                            description="Lista de IDs de verificaciones a aprobar (máx 100).")
+    notes: str = Field("", max_length=500,
+                        description="Nota interna común (opcional) que quedará en el registro de cada aprobación.")
+
+
 class _KYCMoreInfoPayload(BaseModel):
     notes: str = Field(..., min_length=5, description="Explica qué falta")
 
@@ -169,6 +176,40 @@ async def admin_kyc_detail(verification_id: str, request: Request) -> Any:
     if not v:
         raise HTTPException(404, detail="Verificación no encontrada.")
     return v
+
+
+@router.post("/admin/kyc/bulk-approve")
+async def admin_kyc_bulk_approve(
+    payload: _KYCBulkApprovePayload, request: Request,
+) -> Any:
+    """iter55.36q — bulk-approve N verifications in one round trip.
+
+    Used by the "Aprobar N seleccionados" button in `/admin/kyc` to drain
+    the queue quickly when staff has visually inspected a batch of clean
+    submissions. Any single approval failure is captured in the response
+    so the UI can highlight which rows still need attention — the rest are
+    committed regardless (best-effort).
+    """
+    staff = await require_permission(request, "kyc")
+    approved: List[str] = []
+    failed: List[dict] = []
+    for vid in payload.ids:
+        try:
+            v = await kyc_service.approve_verification(db, vid, staff, payload.notes)
+            if not v:
+                failed.append({"id": vid, "reason": "not_pending_or_missing"})
+                continue
+            approved.append(vid)
+            try:
+                from routes.notifications import notify_user_kyc_verified
+                await notify_user_kyc_verified(db, v["user_id"])
+            except Exception:  # noqa: BLE001
+                logger.exception(f"notify_user_kyc_verified failed for {v['user_id']}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"bulk approve failed for {vid}")
+            failed.append({"id": vid, "reason": str(exc)[:100]})
+    return {"approved": approved, "failed": failed,
+            "approved_count": len(approved), "failed_count": len(failed)}
 
 
 @router.post("/admin/kyc/{verification_id}/approve")

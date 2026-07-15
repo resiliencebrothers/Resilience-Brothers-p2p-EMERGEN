@@ -1,0 +1,59 @@
+{
+  "summary": "iter55.36o verification-gate — both backend (pytest 23/23) and frontend (5 flows) tested. Backend gate on POST /orders, /vip/convert, /vip/redeem, /vip/withdraw all correctly return 403 with structured detail (code + missing[] + cta_url). /api/auth/me returns the verification snapshot. Frontend: ExchangeView blocking works; VipView blocking works; Marketplace non-blocking works. HAPPY path works (verified user sees form, no banner). Admin regression on /admin/users role-change TotpPromptDialog still works. FOUND 1 critical UI bug on Marketplace: toast.error(detail) crashes React because backend 403 detail is an object.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MarketplaceView.jsx",
+        "issue": "toast.error(e.response?.data?.detail || 'Error') on line 52 renders an OBJECT ({code,message,missing,cta_url}) which crashes React with 'Objects are not valid as a React child'. The redeem 403 (from unverified VIP submitting Canjear) triggers the crash: no toast displays and the ErrorBoundary catches the render. Same broken pattern exists in ExchangeView.jsx line 146 (but hidden there because the form is fully blocked).",
+        "selector": "MarketplaceView.jsx line 52 (redeem catch block)",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Marketplace redeem toast for verification 403",
+        "issue": "Backend correctly returns 403 with {code:KYC_NOT_APPROVED, message:'Debes completar la verificación de identidad (KYC)...', missing:[...], cta_url:'/dashboard/kyc'} — but the frontend passes the raw detail object to toast.error, breaking rendering. User sees a blank toast area and a component-tree error in console (caught by ErrorBoundary).",
+        "affected_selectors": ["[data-testid=\"confirm-redeem\"]", "toast area"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_36o_verification_gate.py",
+    "/app/backend/tests/_ui_seed_helper.py",
+    "/app/test_reports/pytest/iter62_verification_gate.xml"
+  ],
+  "action_items": [
+    "Fix MarketplaceView.jsx line 52: replace `toast.error(e.response?.data?.detail || 'Error')` with `const d = e.response?.data?.detail; toast.error(typeof d === 'string' ? d : (d?.message || 'Error'));` so the KYC 403 renders as text, not as an object.",
+    "Apply the same fix defensively to ExchangeView.jsx line 146 (currently hidden because the submit button is blocked at UI level, but the code is still broken and would break on any future non-blocking scenario).",
+    "Optional: audit all `toast.error(...detail)` call sites in /app/frontend/src/pages/dashboard/*.jsx — any endpoint returning HTTPException with a dict detail will trigger the same bug (VipCapitalRequestsView.jsx lines 52/80, ProfileView.jsx multiple sites, MyTransactions.jsx, etc.). VipWithdrawalForm.jsx line 157 already handles it correctly via `detail?.message || detail || 'Error'`."
+  ],
+  "critical_code_review_comments": [
+    "Backend gate implementation in services/user_verification.py is clean, well-documented, and correctly wired at all 4 endpoints. Staff bypass short-circuits before DB lookups. KYC status match is strict ('verified' only) — pending/rejected/needs_more_info all block, matching the spec.",
+    "get_user_verification_state() correctly attaches to /api/auth/me and returns the exact contract the SPA expects (fully_verified, email_verified, phone_verified, kyc_verified, missing[]).",
+    "VerificationGateBanner.jsx correctly checks user?.verification and short-circuits to children when snapshot missing (safe fallback) or fully_verified (staff/verified user). The blocking prop correctly replaces children entirely.",
+    "MarketplaceView.jsx line 52 error handling is inconsistent with VipWithdrawalForm.jsx line 157 which already extracts .message from the detail object. This inconsistency should be resolved with a shared helper (e.g. utils/format_api_error.js) to prevent future regressions.",
+    "Sherpa bot detection was NOT observed to interfere with any of the tested flows in this run."
+  ],
+  "updated_files": [
+    "/app/backend/tests/_ui_seed_helper.py (NEW — DB state helper for UI verification tests, safe to delete after use)"
+  ],
+  "success_rate": { "backend": "100% (23/23 pytest)", "frontend": "83% (5/6 flows fully OK, 1 flow has toast-render bug that does not affect gate enforcement)" },
+  "test_credentials": "test_session_admin_X / test_session_vip_X / test_session_normal_X cookies; TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP (pyotp).",
+  "seed_data_creation": "Toggled user_test_normal01 and user_test_vip01 verification flags (email/phone) and kyc_verifications rows via _ui_seed_helper.py. Restored both users to fully verified (email + phone + KYC = verified) at the end. Re-ran pytest at end to confirm DB state clean — 23/23 pass.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend gate is solid (23/23 tests). The lingering frontend issue is a rendering bug where toast.error() receives a dict detail — reproduce by setting user_test_vip01 unverified via /app/backend/tests/_ui_seed_helper.py vip_unverified, logging in as VIP, and clicking Canjear+Confirmar in Marketplace. React error boundary catches an 'Objects are not valid as a React child' error. Fix is a one-liner in MarketplaceView.jsx line 52 (extract .message from object). After fix, retest by repeating the VIP unverified marketplace redeem flow — toast should show 'Debes completar la verificación de identidad (KYC)...'.",
+  "tests_executed": [
+    "pytest /app/backend/tests/test_iter55_36o_verification_gate.py — 23/23 passed in 4s",
+    "curl /api/auth/me for normal unverified user → verification={fully_verified:false, missing:['email','phone','kyc'], ...} OK",
+    "Frontend /dashboard/exchange as normal unverified: banner PRESENT, submit-order-btn ABSENT, all 3 CTAs present, gate-cta-kyc navigates to /dashboard/kyc — PASS",
+    "Frontend /dashboard/marketplace as normal unverified: banner PRESENT, balance widget PRESENT, product grid PRESENT — PASS. Canjear+Confirmar as normal user hits 'Solo clientes VIP' 403 first (expected: normal cannot redeem)",
+    "Frontend /dashboard/marketplace as VIP unverified: banner PRESENT, Canjear+Confirmar → BUG: React error 'Objects are not valid as a React child' because detail is a dict and toast.error(dict) fails — FAIL",
+    "Frontend /dashboard/vip as VIP unverified: banner PRESENT, withdrawal form ABSENT, VipWithdrawalHistory VISIBLE — PASS",
+    "Frontend /dashboard/exchange as fully-verified normal user: banner ABSENT, submit-order-btn PRESENT, form fields present — PASS",
+    "Frontend /admin/users as admin (fully-verified via role bypass): no banner, page loads, Funciones dialog opens with role change UI (TotpPromptDialog wiring intact via previous iter61 fix) — PASS",
+    "Restored DB test users to fully verified and re-ran pytest — 23/23 pass"
+  ]
+}

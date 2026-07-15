@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { getDeliveryValidator } from "@/services/delivery_validators";
 import { ArrowRight, Upload, Copy, CheckCircle2 } from "lucide-react";
+import VerificationGateBanner from "@/components/VerificationGateBanner";
+import { extractDetailMessage } from "@/utils/apiErrors";
 
 export default function ExchangeView() {
   const { user } = useAuth();
@@ -142,7 +144,7 @@ export default function ExchangeView() {
       setSuccess(res.data);
       toast.success("Orden creada. Pendiente de verificación.");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Error al crear orden");
+      toast.error(extractDetailMessage(err, "Error al crear orden"));
     } finally {
       setSubmitting(false);
     }
@@ -179,6 +181,7 @@ export default function ExchangeView() {
         </p>
       </div>
 
+      <VerificationGateBanner blocking action="crear órdenes de intercambio">
       <div className="tactile-card p-6 lg:p-8 space-y-6">
         <div className="grid md:grid-cols-2 gap-4">
           <div>
@@ -476,6 +479,7 @@ export default function ExchangeView() {
           {submitting ? "Enviando..." : (<>Confirmar Orden <ArrowRight className="w-4 h-4 ml-2" /></>)}
         </Button>
       </div>
+      </VerificationGateBanner>
     </div>
   );
 }

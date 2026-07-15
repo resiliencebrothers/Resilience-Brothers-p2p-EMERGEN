@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { toast } from "sonner";
 import { Boxes, Package } from "lucide-react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
+import VerificationGateBanner from "@/components/VerificationGateBanner";
+import { extractDetailMessage } from "@/utils/apiErrors";
 
 export default function MarketplaceView() {
   const { refresh } = useAuth();
@@ -48,7 +50,7 @@ export default function MarketplaceView() {
       const h = await axios.get(`${API}/vip/redemptions/mine`, { withCredentials: true }); setHistory(h.data);
       await loadBalances();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
+      toast.error(extractDetailMessage(e, "Error al canjear"));
     } finally { setBusy(false); }
   };
 
@@ -70,6 +72,11 @@ export default function MarketplaceView() {
           </div>
         </div>
       </div>
+
+      {/* iter55.36o — full-verification gate applies to both the converter
+          widget above and the redeem grid below. Rendered inline so the
+          balance summary at the top remains visible even when locked. */}
+      <VerificationGateBanner action="canjear productos y convertir saldos" />
 
       {/* iter50 — shared converter widget (also rendered on the main Dashboard) */}
       <BalanceConverterCard onConverted={loadBalances} />

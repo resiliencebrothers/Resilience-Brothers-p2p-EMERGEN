@@ -105,6 +105,29 @@ def main() -> int:
         )
         print(f"[seed_test_users] upserted {u['user_id']} ({u['role']})")
 
+    # iter55.36o — plant an approved KYC verification for VIP + Normal test
+    # users so the new full-verification gate (email + phone + KYC) does not
+    # break the pre-existing order/withdrawal/conversion pytest suite.
+    # Admin + employee bypass the gate by role, so no KYC row needed for them.
+    for uid in ("user_test_vip01", "user_test_normal01"):
+        db.kyc_verifications.update_one(
+            {"user_id": uid, "status": "verified"},
+            {"$setOnInsert": {
+                "id": f"kyc_{uid}",
+                "user_id": uid,
+                "status": "verified",
+                "created_at": now,
+                "reviewed_at": now,
+                "reviewed_by": "user_test_admin01",
+                "risk_score": 0,
+                "risk_flags": [],
+                "documents": [],
+                "review_notes": "seeded by scripts/seed_test_users.py for pytest",
+            }},
+            upsert=True,
+        )
+        print(f"[seed_test_users] KYC verified for {uid}")
+
     client.close()
     print(f"[seed_test_users] ✓ {len(USERS)} test users ready in {db_name}")
     return 0

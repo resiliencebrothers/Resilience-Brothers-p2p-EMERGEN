@@ -28,6 +28,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { extractDetailMessage } from "@/utils/apiErrors";
 import { toast } from "sonner";
 import { ArrowRightLeft, Wallet, ChevronDown } from "lucide-react";
 import { BalanceRow } from "@/components/converter/BalanceRow";
@@ -190,7 +191,7 @@ export default function BalanceConverterCard({ onConverted }) {
       await loadBalances();
       if (onConverted) await onConverted();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error en la conversión");
+      toast.error(extractDetailMessage(e, "Error en la conversión"));
     } finally { setBusy(false); }
   };
 

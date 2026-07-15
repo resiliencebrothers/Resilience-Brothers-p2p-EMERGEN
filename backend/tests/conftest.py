@@ -76,6 +76,40 @@ def _seed_test_sessions():
             {"$set": {"session_token": tok, "user_id": uid, "expires_at": exp}},
             upsert=True,
         )
+    # iter55.36o — re-plant `email_verified`, `phone_verified` and the
+    # approved-KYC row for VIP + Normal test users. The full-verification
+    # gate on /orders, /vip/convert, /vip/redeem and /vip/withdraw would
+    # otherwise leak un-verified state between tests: any test that unsets
+    # `phone_verified` (e.g. test_iter23_phone_trust) leaves the DB in a
+    # broken state for the next test that creates an order with the same
+    # session. Idempotent — no work if already correct.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for uid in ("user_test_vip01", "user_test_normal01"):
+        db.users.update_one(
+            {"user_id": uid},
+            {"$set": {
+                "email_verified": True,
+                "phone_verified": True,
+                "phone": db.users.find_one({"user_id": uid}, {"phone": 1}).get("phone") or "+5350000000",
+                "account_status": "active",
+            }},
+        )
+        db.kyc_verifications.update_one(
+            {"user_id": uid, "status": "verified"},
+            {"$setOnInsert": {
+                "id": f"kyc_{uid}",
+                "user_id": uid,
+                "status": "verified",
+                "created_at": now_iso,
+                "reviewed_at": now_iso,
+                "reviewed_by": "user_test_admin01",
+                "risk_score": 0,
+                "risk_flags": [],
+                "documents": [],
+                "review_notes": "conftest re-seed",
+            }},
+            upsert=True,
+        )
 
 
 @pytest.fixture(autouse=True)

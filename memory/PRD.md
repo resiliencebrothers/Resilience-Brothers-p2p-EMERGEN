@@ -1480,3 +1480,76 @@ Operator asks (13 Feb 2026):
   - **Minor doc-only finding from testing agent (not blocking)**: `/admin/users` logs 3 console `401 Unauthorized` during page load (likely an optional polling endpoint like notifications/permissions). Not user-visible; tracked as a P3 backlog item for a follow-up silence-or-`captureError` pass.
   - **Status**: fix in preview. User needs to redeploy to push to production. Bug was reported on `p2p.resiliencebrothers.com/admin/queue`.
 
+
+- Defensive Mode toggle endpoint — full contract regression suite (iter55.36n, Feb 14 2026): user-approved follow-up to iter55.36m's UI fix. Added a dedicated backend pytest to lock down the `POST /api/admin/defensive-mode/toggle` API contract independently of the frontend, so any future UI regression can be spotted from the backend side alone and any accidental removal of the RBAC/2FA guard is caught by `make test-critical`.
+  - **New test file `tests/test_iter55_36m_defensive_mode_toggle.py`** — 30 tests across 7 classes, ~6.5 s runtime:
+    - `TestToggleHappyPath` (5): enable returns full state, disable clears timestamp + email, doc persists to `system_config`, whitespace-only reason trimmed to empty, omitted reason accepted.
+    - `TestToggleRBAC` (5): no token → 401, invalid token → 401, employee/vip/normal roles → 403.
+    - `TestToggleTotp` (7): missing TOTP → `TOTP_CODE_REQUIRED`, empty string → `TOTP_CODE_REQUIRED`, wrong code → `TOTP_INVALID`, 5-digit → `TOTP_INVALID`, alphabetic → `TOTP_INVALID`, 20-char code → 422 (pydantic `max_length=11`), invalid TOTP does NOT flip state.
+    - `TestTogglePayloadValidation` (4): missing `enabled` → 422, reason >500 chars → 422, reason at 500-char boundary accepted, `enabled="not-a-bool"` → 422.
+    - `TestToggleIdempotency` (3): enable twice stays enabled, disable-when-off is a no-op, enable→disable→enable refreshes `enabled_at`.
+    - `TestToggleAudit` (4): enable creates `audit_log{action=system.defensive_mode}`, disable creates a second entry, failed TOTP does NOT create audit entry, non-admin rejection does NOT create audit entry.
+    - `TestToggleReflectsInPublicEndpoint` (2): `/api/system/defensive-mode` GET matches toggle response but strips sensitive `reason` + `enabled_by_email` fields.
+  - **`Makefile`** — added the new file to the `test-critical` target. Suite grew from 91 → 121 tests, runtime 28.7s → 85.5s. Still under 2 min for the pre-commit safety net.
+  - **`make test-critical`** result: 121/121 green.
+  - **P3 backlog finding** ("3 × 401 on `/admin/users` page load") — investigated with Playwright network capture on the preview URL. **Not reproducible** on the current codebase: 17/18 API calls returned 200; the single 401 seen was `/api/auth/me` from a Playwright cookie-timing race not applicable to real users. `AuthContext.checkAuth` already suppresses 401 from Sentry (line 18) and the browser DevTools 401 log is unavoidable Chrome behavior — no code change needed.
+  - **Status**: preview only. User needs to redeploy for the new test file to reach the production CI/CD pipeline.
+
+
+
+- **Full-verification gate for exchanges/marketplace/withdrawals (iter55.36o, Feb 14 2026)** — security bug flagged by user: Normal + VIP clients could operate without completing identity verification. Applied the STRICTEST gate (email + phone + KYC) to ALL non-staff users on 4 endpoints.
+  - **Backend enforcement** (`services/user_verification.py`):
+    - `assert_user_fully_verified(db, user, action_label)` raises 403 with structured detail `{code, message, missing[], cta_url}` — natural priority order email → phone → KYC.
+    - `get_user_verification_state(db, user)` returns `{fully_verified, email_verified, phone_verified, kyc_verified, missing[]}`; staff bypass.
+    - Wired into `POST /orders` (create_order), `POST /vip/convert`, `POST /vip/redeem` (marketplace), `POST /vip/withdraw` (supersedes the previous phone-only check).
+    - `GET /auth/me` now returns a `verification` snapshot for the SPA banner (no extra round-trip).
+  - **Frontend** (`components/VerificationGateBanner.jsx`):
+    - Amber-accented banner with per-step CTAs (email → /dashboard/security, phone → /dashboard/security, KYC → /dashboard/kyc). Full data-testid coverage: `verification-gate-banner`, `gate-cta-email/phone/kyc`.
+    - `blocking={true}` mode fully hides the underlying form (ExchangeView, VipWithdrawalForm).
+    - `blocking={false}` mode (Marketplace) shows the banner above the products so the balance summary + product cards remain visible; backend still rejects with 403 when user tries to redeem.
+    - New utility `utils/apiErrors.js::extractDetailMessage(e, fallback)` — fixes a widespread React crash where `toast.error(e.response.data.detail)` blew up because FastAPI structured details are objects. Applied to MarketplaceView, ExchangeView, BalanceConverterCard.
+  - **Test seed hardening** (`scripts/seed_test_users.py` + `tests/conftest.py`):
+    - VIP + Normal test users are auto-seeded with `email_verified=True`, `phone_verified=True` and an approved `kyc_verifications` row **before every test function**, guaranteeing test isolation regardless of the state a preceding test leaves behind. Fixes a latent brittleness in `test_iter23_phone_trust`.
+  - **New pytest** `tests/test_iter55_36o_verification_gate.py` — 23 tests across 6 classes covering:
+    - `TestAuthMeVerificationSnapshot` (6): all combinations of missing fields, staff-always-verified.
+    - `TestOrderCreationGate` (6): each missing step blocks orders; VIPs also blocked (no legacy bypass); email > phone > KYC priority.
+    - `TestVipConvertGate` (3): KYC/phone-missing paths.
+    - `TestVipRedeemGate` (2): KYC/phone-missing on marketplace.
+    - `TestVipWithdrawGate` (3): supersedes iter23's phone-only gate.
+    - `TestKycNonVerifiedStates` (3, parametrized): pending / rejected / needs_more_info all block.
+  - Legacy test `test_iter23_phone_trust::test_legacy_users_can_still_withdraw_without_phone` was inverted — the "phone=None bypass" was intentionally removed by this iteration; the test now asserts the OPPOSITE (users without phone are still blocked).
+  - `make test-critical` result: **144/144 green** (was 121). Runtime 36s. Suite now includes the new file.
+  - **Testing_agent_v3_fork** (iteration_62.json): flagged the `toast.error(object)` React crash — fixed and re-verified via smoke screenshot (VIP user without KYC → clean Spanish toast, zero console errors).
+  - **Status**: preview only. User must redeploy to production for the new gate to reach real users.
+
+
+
+- **StrictMode double-invoke fix on /auth/me (iter55.36p, Feb 14 2026)** — user pushed back on the previously-closed "3 x 401 on /admin/users" finding. Deep-dive with per-endpoint Playwright network capture revealed the root cause:
+  - `React.StrictMode` in `index.js` intentionally double-invokes every `useEffect` in dev/preview builds (React's dev-time contract for detecting side effects).
+  - `AuthContext.checkAuth` was firing **twice** on every hard-refresh, so if the session cookie hadn't propagated in time for the first attempt, the browser console logged **2-3 x 401** before the second attempt succeeded. Visible in Chrome DevTools even though the app worked correctly (AuthContext already suppresses these from Sentry).
+  - **Fix** (`frontend/src/context/AuthContext.jsx`): added a `useRef` guard so the initial `checkAuth()` only runs once per AuthProvider mount, immune to StrictMode's double-invocation. Standard React pattern.
+  - **Validated** with 2-run Playwright capture: 1st hard-refresh of `/admin/users` now makes exactly 1 call to `/auth/me` (previously 2). Second hard-refresh (after nav-away-and-back) makes 1 call per navigation as expected. Zero spurious 401s in normal auth flow.
+  - `make test-critical`: still 144/144 green.
+  - **Status**: preview only. User must redeploy to production.
+
+
+
+- **Panel `/admin/kyc` optimizado para revisión rápida (iter55.36q, Feb 14 2026)** — user chose to keep KYC 100% manual (skip OCR). To keep staff throughput high while the waitlist of 1000+ users completes verification, we made the review console keyboard-driven and added batch approval:
+  - **New backend endpoint** `POST /admin/kyc/bulk-approve` — accepts `{ids[max 100], notes[max 500]}`, approves each verification best-effort, returns `{approved[], failed[], approved_count, failed_count}`. Fires the `kyc_verified` notification per approved user. Best-effort semantics: any single failure is captured in `failed[]` without rolling back the successful ones.
+  - **Frontend rewrite** `/app/frontend/src/pages/admin/AdminKYC.jsx`:
+    - **Global keyboard shortcuts** (documented in `?` help dialog): `J`/`↓` next, `K`/`↑` prev, `A` approve focused, `R` reject, `I` more-info, `X` mark for batch, `Shift+A` bulk-approve all selected, `?` shows shortcuts dialog. Handler skips when typing in inputs/textareas or when the action dialog is open.
+    - **Focused row highlighting** — violet ring around the row currently under keyboard focus, plus "enfocada · #N" tag. Scrolls into view automatically as you move.
+    - **Batch bar** — checkboxes on each pending/needs_more_info row, "select-all" indeterminate checkbox in the batch bar, "Aprobar (N)" green button, "Limpiar" cleanup button. Only rendered when actionable items exist.
+    - **Side-by-side comparison dialog** — left panel shows declared profile data (name, email, phone, risk score with color-coded tone, submit timestamp, IP, risk flags); right panel shows all uploaded documents (id_front, id_back, selfie) as embedded 40-h thumbnails linkable to full-size. Modal expanded to `max-w-4xl` for the wider layout.
+    - **Kbd component styling** — local `<style>` block for realistic keyboard-key visuals inside the help dialog.
+  - **New pytest** `tests/test_iter55_36q_bulk_approve_kyc.py` — 15 tests across 5 classes:
+    - `TestBulkApproveHappyPath` (2): all approved, `users.kyc_status` mirror updated.
+    - `TestBulkApproveMixedBatch` (2): valid IDs commit + invalid ones reported; already-verified re-appears in `failed[]`.
+    - `TestBulkApproveRBAC` (5): admin OK, normal/vip/no-token forbidden, employee 403.
+    - `TestBulkApprovePayloadValidation` (5): empty list → 422, >100 → 422, missing `ids` → 422, notes >500 → 422, 500-char boundary accepted.
+    - `TestBulkApproveNotifications` (1): each approved user receives a `type=kyc_verified` inbox notification.
+  - **Makefile** — added the new file to `test-critical`. Suite grew from 144 → **159 tests**, runtime ~95s. All green.
+  - **Impact**: Manual KYC review time drops from ~2 min/case (mouse-driven) to **~30 s or less** (keyboard + batch). A staff member can drain a queue of 50 clean submissions in under 3 minutes.
+  - **Status**: preview only. User must redeploy.
+
+

@@ -39,6 +39,7 @@ from services.balances import (
     get_user_balance, decrement_balance,
     assert_account_active, assert_not_defensive,
 )
+from services.user_verification import assert_user_fully_verified
 from services.delivery_rules import is_delivery_method_allowed, allowed_delivery_methods
 from services.orders_helpers import (
     OrderCreate,
@@ -163,6 +164,7 @@ async def _assert_delivery_method_matches_currency(to_code: str, delivery_method
 async def create_order(payload: OrderCreate, request: Request) -> Any:
     user = await require_user(request)
     await assert_account_active(user)
+    await assert_user_fully_verified(db, user, action_label="crear una orden de intercambio")
     await _assert_delivery_method_matches_currency(payload.to_code, payload.delivery_method)
     rate, _rate_doc = await resolve_order_rate(payload.from_code, payload.to_code, user)
     # iter35 — if proof_image is a base64 data URL, persist it to object storage.
@@ -225,6 +227,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     await assert_account_active(user)
     if user["role"] not in ("vip", "admin"):
         raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    await assert_user_fully_verified(db, user, action_label="canjear productos del marketplace")
     product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -283,12 +286,9 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         raise HTTPException(status_code=403, detail="Empleados no pueden retirar")
     if user["role"] != "admin":
         await assert_not_defensive("retiros")
-    if user.get("phone") and not user.get("phone_verified"):
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "PHONE_NOT_VERIFIED",
-                    "message": "Tu número de teléfono debe ser verificado por un miembro del staff antes de poder retirar. Contacta a soporte."},
-        )
+    # iter55.36o — full verification (email + phone + KYC) required for withdrawals.
+    # Supersedes the previous phone-only check.
+    await assert_user_fully_verified(db, user, action_label="retirar fondos")
     await _enforce_totp_step_up(user, payload.totp_code, action_label="retiro")
     currency = payload.currency or "USD"
     # iter55.19 — reject method↔currency mismatches (e.g. requesting a bank
@@ -503,6 +503,7 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         raise HTTPException(status_code=403, detail="Empleados no tienen saldo a convertir.")
     if user["role"] != "admin":
         await assert_not_defensive("conversiones")
+    await assert_user_fully_verified(db, user, action_label="convertir saldos entre monedas")
     from_code = payload.from_code.upper().strip()
     to_code = payload.to_code.upper().strip()
     if from_code == to_code:

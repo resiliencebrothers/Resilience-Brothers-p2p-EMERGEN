@@ -145,6 +145,11 @@ async def auth_session(payload: dict, response: Response) -> Any:
 async def auth_me(request: Request) -> Any:
     user = await require_user(request)
     user.pop("_id", None)
+    # iter55.36o — surface the full verification snapshot so the SPA renders
+    # the pre-order gate banner without a second round trip. Staff always
+    # returns fully_verified=True (helper short-circuits).
+    from services.user_verification import get_user_verification_state
+    user["verification"] = await get_user_verification_state(db, user)
     return user
 
 

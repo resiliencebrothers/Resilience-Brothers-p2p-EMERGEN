@@ -11,6 +11,7 @@ import { VipBalancesGrid } from "./vip/VipBalancesGrid";
 import { VipWithdrawalForm } from "./vip/VipWithdrawalForm";
 import { VipWithdrawalHistory } from "./vip/VipWithdrawalHistory";
 import { VipLedgerDialog } from "./vip/VipLedgerDialog";
+import VerificationGateBanner from "@/components/VerificationGateBanner";
 
 export default function VipView() {
   const { refresh } = useAuth();
@@ -134,10 +135,12 @@ export default function VipView() {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        <VipWithdrawalForm
-          balances={balances}
-          onSubmitted={handleWithdrawalSubmitted}
-        />
+        <VerificationGateBanner blocking action="retirar fondos">
+          <VipWithdrawalForm
+            balances={balances}
+            onSubmitted={handleWithdrawalSubmitted}
+          />
+        </VerificationGateBanner>
         <VipWithdrawalHistory withdrawals={withdrawals} />
       </div>
 
