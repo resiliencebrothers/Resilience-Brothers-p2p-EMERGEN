@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
-import { Badge } from "@/components/ui/badge";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
@@ -15,20 +15,19 @@ const STATUS_STYLES = {
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
 };
 
-const STATUS_LABELS = {
-  pending: "Pendiente",
-  approved: "Confirmado",
-  completed: "Completado",
-  rejected: "Rechazado",
-  requires_double_approval: "Doble aprobación",
+// iter55.36s — status labels resolved via i18n at render time.
+const STATUS_LABEL_KEY = {
+  pending: "orders.statusLabel.pending",
+  approved: "orders.statusLabel.approved",
+  completed: "orders.statusLabel.completed",
+  rejected: "orders.statusLabel.rejected",
+  requires_double_approval: "orders.statusLabel.requires_double_approval",
 };
 
 export default function OrdersView() {
+  const { t } = useTranslation();
   const [orders, setOrders] = useState([]);
   const [selected, setSelected] = useState(null);
-  // iter55.25b — allow deep-linking from the dashboard StatCards so a click on
-  // "Pendientes" jumps here already scoped to `filter=pending` (mirrors the
-  // owner's mental model that the counter and the table should be in lock-step).
   const [searchParams, setSearchParams] = useSearchParams();
   const initialFilter = searchParams.get("filter") || "all";
   const [filter, setFilter] = useState(initialFilter);
@@ -54,17 +53,19 @@ export default function OrdersView() {
   };
 
   const FILTER_PILLS = [
-    { key: "all", label: "Todas" },
-    { key: "pending", label: "Pendientes" },
-    { key: "completed", label: "Completadas" },
-    { key: "rejected", label: "Rechazadas" },
+    { key: "all", label: t("orders.filterAll") },
+    { key: "pending", label: t("orders.filterPending") },
+    { key: "completed", label: t("orders.filterCompleted") },
+    { key: "rejected", label: t("orders.filterRejected") },
   ];
+
+  const statusLabel = (status) => t(STATUS_LABEL_KEY[status] || `orders.statusLabel.${status}`, { defaultValue: status });
 
   return (
     <div data-testid="orders-view">
       <div className="mb-6">
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Historial</div>
-        <h1 className="font-display text-3xl">Mis Órdenes</h1>
+        <div className="micro-label text-[#8B5CF6] mb-2">{t("orders.eyebrow")}</div>
+        <h1 className="font-display text-3xl">{t("orders.title")}</h1>
       </div>
 
       {/* Filter pills — deep-link aware */}
@@ -93,18 +94,18 @@ export default function OrdersView() {
           <table className="w-full">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
-                <th className="px-4 py-3 micro-label text-neutral-500">ID</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Par</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Envías</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Recibes</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Estado</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Fecha</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("orders.colId")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("orders.colPair")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("orders.colSends")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("orders.colReceives")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("orders.colStatus")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("orders.colDate")}</th>
               </tr>
             </thead>
             <tbody>
               {filteredOrders.length === 0 && (
                 <tr><td colSpan="6" className="text-center text-neutral-500 py-12">
-                  {filter === "all" ? "Sin órdenes aún." : "Ninguna orden en este filtro."}
+                  {filter === "all" ? t("orders.emptyAll") : t("orders.emptyFilter")}
                 </td></tr>
               )}
               {filteredOrders.map(o => (
@@ -114,7 +115,7 @@ export default function OrdersView() {
                   <td className="px-4 py-4 font-mono text-sm">{o.amount_from}</td>
                   <td className="px-4 py-4 font-mono text-sm text-[#8B5CF6]">{o.amount_to}</td>
                   <td className="px-4 py-4">
-                    <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span>
+                    <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${STATUS_STYLES[o.status]}`}>{statusLabel(o.status)}</span>
                   </td>
                   <td className="px-4 py-4 text-xs text-neutral-400">{new Date(o.created_at).toLocaleString()}</td>
                 </tr>
@@ -128,44 +129,42 @@ export default function OrdersView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur" onClick={() => setSelected(null)}>
           <div className="bg-[#1A1730] border border-white/10 max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display text-xl">Orden #{selected.id.slice(0,8)}</h3>
+              <h3 className="font-display text-xl">{t("orders.detailHeading", { id: selected.id.slice(0,8) })}</h3>
               <button onClick={() => setSelected(null)} className="text-neutral-500 hover:text-white">✕</button>
             </div>
             <div className="space-y-2 font-mono text-sm">
-              <Row label="Par" value={`${selected.from_code} → ${selected.to_code}`} />
-              <Row label="Envías" value={`${selected.amount_from} ${selected.from_code}`} />
-              <Row label="Recibes" value={`${selected.amount_to} ${selected.to_code}`} />
-              <Row label="Tasa" value={selected.rate_applied} />
+              <Row label={t("orders.colPair")} value={`${selected.from_code} → ${selected.to_code}`} />
+              <Row label={t("orders.colSends")} value={`${selected.amount_from} ${selected.from_code}`} />
+              <Row label={t("orders.colReceives")} value={`${selected.amount_to} ${selected.to_code}`} />
+              <Row label={t("orders.rate")} value={selected.rate_applied} />
               {selected.commission_percent > 0 && (
-                <Row label="Comisión" value={`${selected.commission_percent}%`} />
+                <Row label={t("orders.commission")} value={`${selected.commission_percent}%`} />
               )}
-              <Row label="Entrega" value={selected.delivery_method} />
-              <Row label="Detalles" value={selected.delivery_details || "—"} />
-              <Row label="Titular" value={selected.sender_name} />
-              <Row label="Estado" value={STATUS_LABELS[selected.status] || selected.status} />
-              {selected.admin_note && <Row label="Nota admin" value={selected.admin_note} />}
+              <Row label={t("orders.delivery")} value={selected.delivery_method} />
+              <Row label={t("orders.details")} value={selected.delivery_details || "—"} />
+              <Row label={t("orders.holder")} value={selected.sender_name} />
+              <Row label={t("orders.colStatus")} value={statusLabel(selected.status)} />
+              {selected.admin_note && <Row label={t("orders.adminNote")} value={selected.admin_note} />}
             </div>
             {selected.proof_image && (
               <div className="mt-4">
-                <div className="micro-label text-neutral-500 mb-2">Tu comprobante de pago</div>
+                <div className="micro-label text-neutral-500 mb-2">{t("orders.yourProof")}</div>
                 <img src={selected.proof_image} alt="proof" className="w-full border border-white/10" />
               </div>
             )}
-            {/* Payout evidence — uploaded by staff once they've paid the client.
-                Visible only when the order is completed for full transparency. */}
             {selected.status === "completed" && (selected.payout_proof_image || selected.payout_tx_hash) && (
               <div className="mt-4 border-t border-white/5 pt-4">
                 <div className="micro-label text-[#22C55E] mb-2">
-                  ✓ Comprobante del pago realizado a ti
+                  ✓ {t("orders.payoutProofTitle")}
                 </div>
                 {selected.payout_tx_hash && (
                   <div className="text-xs bg-[#0a0a0a] border border-white/10 p-2 mb-2 flex items-start gap-2 flex-wrap">
-                    <span className="text-neutral-500 flex-shrink-0">Hash:</span>
+                    <span className="text-neutral-500 flex-shrink-0">{t("withdraw.hashLabel")}</span>
                     <span className="text-[#22C55E]" data-testid="my-order-payout-hash">
                       <CopyableText
                         value={selected.payout_tx_hash}
-                        label="Copiar hash"
-                        toastMessage="Hash copiado"
+                        label={t("withdraw.copyHash")}
+                        toastMessage={t("withdraw.hashCopied")}
                         testid="my-order-payout-hash-copy"
                       />
                     </span>
@@ -186,13 +185,13 @@ export default function OrdersView() {
                   >
                     <img
                       src={selected.payout_proof_image}
-                      alt="Captura del pago al cliente"
+                      alt="payout"
                       className="w-full border border-[#22C55E]/40"
                     />
                   </a>
                 )}
                 <p className="text-[0.7rem] text-neutral-500 mt-2">
-                  Esta es la evidencia del pago realizado por Resilience Brothers a tu cuenta/wallet.
+                  {t("orders.payoutFooter")}
                 </p>
               </div>
             )}

@@ -1,16 +1,18 @@
 import { Coins, History, Eye } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 /**
  * iter55.29 — Extracted from VipView. Per-currency clickable grid that
  * opens the ledger dialog with the orders that credited each balance.
  */
 export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
+  const { t } = useTranslation();
   const hasBalances = balances.balances.length > 0;
   return (
     <div className="tactile-card p-6" data-testid="vip-balances-card">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <h2 className="font-display text-xl flex items-center gap-2">
-          <Coins className="w-5 h-5 text-[#8B5CF6]" /> Saldo por moneda
+          <Coins className="w-5 h-5 text-[#8B5CF6]" /> {t("vipView.balanceByCurrency")}
         </h2>
         {ledger.total_orders > 0 && (
           <span
@@ -18,16 +20,16 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
             data-testid="ledger-summary"
           >
             <History className="w-3.5 h-3.5" />
-            {ledger.total_orders} {ledger.total_orders === 1 ? "orden" : "órdenes"} acreditadas
+            {t("vipView.ordersCredited", { count: ledger.total_orders })}
           </span>
         )}
       </div>
       {!hasBalances ? (
-        <p className="text-neutral-500 text-sm">Aún no tienes saldo acumulado. Crea órdenes con entrega &laquo;Acumular en saldo&raquo;.</p>
+        <p className="text-neutral-500 text-sm">{t("vipView.emptyBalances")}</p>
       ) : (
         <>
           <p className="text-xs text-neutral-500 mb-3">
-            Click en una moneda para ver las órdenes que la acreditaron.
+            {t("vipView.clickToDrilldown")}
           </p>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {balances.balances.map((b) => {
@@ -60,7 +62,7 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
                   {hasDrillDown && (
                     <div className="text-[0.65rem] text-violet-400 mt-2 flex items-center gap-1">
                       <Eye className="w-3 h-3" />
-                      {orderCount} {orderCount === 1 ? "orden" : "órdenes"} · ver desglose
+                      {t("vipView.ordersDrilldown", { count: orderCount })}
                     </div>
                   )}
                 </button>

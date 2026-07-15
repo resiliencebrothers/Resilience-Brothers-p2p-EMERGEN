@@ -1,5 +1,6 @@
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
+import { useTranslation } from "react-i18next";
 
 const WITHDRAWAL_STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -8,17 +9,12 @@ const WITHDRAWAL_STATUS_STYLES = {
   pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
 };
 
-// Labels are method-specific: cash deliveries use "Entregado / En progreso"
-// while transfers/crypto use "Pagado / Confirmado".
-const WITHDRAWAL_LABELS_BY_METHOD = {
-  cash:     { paid: "Entregado", approved: "En progreso", pending: "Pendiente", rejected: "Rechazado" },
-  transfer: { paid: "Pagado",    approved: "Confirmado",  pending: "Pendiente", rejected: "Rechazado" },
-  crypto:   { paid: "Pagado",    approved: "Confirmado",  pending: "Pendiente", rejected: "Rechazado" },
-};
-
-function getWithdrawalLabel(method, status) {
-  const map = WITHDRAWAL_LABELS_BY_METHOD[method] ?? WITHDRAWAL_LABELS_BY_METHOD.transfer;
-  return map[status] ?? status;
+// iter55.36s — status labels resolved via i18n key at render time.
+// key format: `withdraw.historyLabel.{method}.{status}`
+function getWithdrawalKey(method, status) {
+  const knownMethods = new Set(["cash", "transfer", "crypto"]);
+  const m = knownMethods.has(method) ? method : "transfer";
+  return `withdraw.historyLabel.${m}.${status}`;
 }
 
 /**
@@ -26,12 +22,13 @@ function getWithdrawalLabel(method, status) {
  * history, including crypto-payout hash + explorer link when applicable.
  */
 export function VipWithdrawalHistory({ withdrawals }) {
+  const { t } = useTranslation();
   return (
     <div className="tactile-card p-6">
-      <h2 className="font-display text-xl mb-4">Historial de Retiros</h2>
+      <h2 className="font-display text-xl mb-4">{t("withdraw.historyTitleFull")}</h2>
       <div className="space-y-2 max-h-[400px] overflow-y-auto">
         {withdrawals.length === 0 && (
-          <p className="text-neutral-500 text-sm">Sin retiros aún.</p>
+          <p className="text-neutral-500 text-sm">{t("withdraw.historyEmpty")}</p>
         )}
         {withdrawals.map((w) => (
           <WithdrawalRow key={w.id} w={w} />
@@ -43,7 +40,8 @@ export function VipWithdrawalHistory({ withdrawals }) {
 
 
 function WithdrawalRow({ w }) {
-  const label = getWithdrawalLabel(w.method, w.status);
+  const { t } = useTranslation();
+  const label = t(getWithdrawalKey(w.method, w.status), { defaultValue: w.status });
   const statusStyle = WITHDRAWAL_STATUS_STYLES[w.status] || WITHDRAWAL_STATUS_STYLES.pending;
   return (
     <div className="border border-white/10 p-3 text-sm" data-testid={`withdrawal-row-${w.id}`}>
@@ -68,12 +66,12 @@ function WithdrawalRow({ w }) {
               className="text-[0.65rem] text-neutral-400 flex flex-wrap items-center gap-2"
               data-testid={`payout-hash-${w.id}`}
             >
-              <span className="text-neutral-600">Hash:</span>
+              <span className="text-neutral-600">{t("withdraw.hashLabel")}</span>
               <span className="text-[#22C55E]">
                 <CopyableText
                   value={w.payout_tx_hash}
-                  label="Copiar hash"
-                  toastMessage="Hash copiado"
+                  label={t("withdraw.copyHash")}
+                  toastMessage={t("withdraw.hashCopied")}
                   testid={`payout-hash-copy-${w.id}`}
                 />
               </span>
@@ -92,7 +90,7 @@ function WithdrawalRow({ w }) {
               className="text-xs text-[#8B5CF6] underline underline-offset-4"
               data-testid={`payout-proof-${w.id}`}
             >
-              Ver captura de la transferencia
+              {t("withdraw.viewTransferProof")}
             </a>
           )}
         </div>

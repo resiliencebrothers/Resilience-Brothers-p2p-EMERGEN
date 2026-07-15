@@ -1,24 +1,19 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { MessageSquare, Send, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { extractDetailMessage } from "@/utils/apiErrors";
 
 /**
  * AppealDialog — self-service appeal for `under_review` clients.
- *
- * Renders a "Enviar apelación" button that opens a modal with:
- *  - textarea for the appeal message (min 10 chars, max 2000)
- *  - list of previous appeals (pending / resolved / rejected) with staff response
- *
- * Endpoints consumed:
- *  - POST /api/appeals            (create)
- *  - GET  /api/appeals/me         (history)
  */
 export default function AppealDialog() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [items, setItems] = useState([]);
@@ -31,11 +26,11 @@ export default function AppealDialog() {
       const r = await axios.get(`${API}/appeals/me`, { withCredentials: true });
       setItems(r.data.items || []);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudo cargar el historial");
+      toast.error(extractDetailMessage(e, t("appeal.loadError")));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open) load();
@@ -46,7 +41,7 @@ export default function AppealDialog() {
   const submit = async () => {
     const trimmed = message.trim();
     if (trimmed.length < 10) {
-      toast.error("Cuéntanos con más detalle (mínimo 10 caracteres).");
+      toast.error(t("appeal.errTooShort"));
       return;
     }
     setSending(true);
@@ -56,18 +51,16 @@ export default function AppealDialog() {
         { message: trimmed },
         { withCredentials: true }
       );
-      toast.success("Apelación enviada. El staff la revisará pronto.");
+      toast.success(t("appeal.successToast"));
       setMessage("");
       await load();
     } catch (e) {
       const detail = e.response?.data?.detail;
       if (detail?.code === "APPEAL_ALREADY_PENDING") {
-        toast.error("Ya tienes una apelación pendiente. Espera la respuesta del staff.");
+        toast.error(t("appeal.errAlreadyPending"));
         await load();
-      } else if (typeof detail === "string") {
-        toast.error(detail);
       } else {
-        toast.error(detail?.message || "No se pudo enviar la apelación.");
+        toast.error(extractDetailMessage(e, t("appeal.errSubmit")));
       }
     } finally {
       setSending(false);
@@ -76,9 +69,9 @@ export default function AppealDialog() {
 
   const statusChip = (status) => {
     const config = {
-      pending: { icon: Clock, cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", label: "PENDIENTE" },
-      resolved: { icon: CheckCircle2, cls: "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/5", label: "APROBADA" },
-      rejected: { icon: XCircle, cls: "text-[#EF4444] border-[#EF4444]/40 bg-[#EF4444]/5", label: "RECHAZADA" },
+      pending: { icon: Clock, cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", label: t("appeal.statusPending") },
+      resolved: { icon: CheckCircle2, cls: "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/5", label: t("appeal.statusResolved") },
+      rejected: { icon: XCircle, cls: "text-[#EF4444] border-[#EF4444]/40 bg-[#EF4444]/5", label: t("appeal.statusRejected") },
     }[status] || { icon: Clock, cls: "text-neutral-400 border-white/10", label: status };
     const Icon = config.icon;
     return (
@@ -98,15 +91,15 @@ export default function AppealDialog() {
         className="border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 mt-3"
       >
         <MessageSquare className="w-3.5 h-3.5 mr-1.5" />
-        Enviar apelación al staff
+        {t("appeal.openBtn")}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent data-testid="appeal-dialog" className="max-w-lg bg-[#0c0c0c] border-white/10 text-white max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">Apelación al staff</DialogTitle>
+            <DialogTitle className="text-white">{t("appeal.dialogTitle")}</DialogTitle>
             <DialogDescription className="text-neutral-400 text-xs leading-relaxed">
-              Escribe por qué crees que tu cuenta debe ser reactivada. El staff verá tu mensaje y responderá cuanto antes. Sé claro y aporta contexto (por ejemplo, número correcto, motivo del bloqueo aparente).
+              {t("appeal.dialogDescription")}
             </DialogDescription>
           </DialogHeader>
 
@@ -116,30 +109,29 @@ export default function AppealDialog() {
                 data-testid="appeal-message-textarea"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="Ej: Mi teléfono es correcto y no coincide con la lista bloqueada; puedo verificar por WhatsApp."
+                placeholder={t("appeal.textareaPlaceholder")}
                 rows={5}
                 maxLength={2000}
                 className="bg-black/40 border-white/10 text-sm text-white"
               />
               <div className="flex items-center justify-between text-[0.65rem] text-neutral-500">
                 <span>{message.length}/2000</span>
-                <span>{message.trim().length < 10 ? `Faltan ${10 - message.trim().length} caracteres` : "Listo para enviar"}</span>
+                <span>{message.trim().length < 10 ? t("appeal.charsRemaining", { n: 10 - message.trim().length }) : t("appeal.readyToSend")}</span>
               </div>
             </div>
           )}
 
           {hasPending && (
             <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 px-3 py-2.5 text-xs text-[#FEF3C7]">
-              Ya tienes una apelación pendiente. El staff la está revisando. Espera la respuesta antes de enviar otra.
+              {t("appeal.alreadyPendingBanner")}
             </div>
           )}
 
-          {/* History */}
           <div className="border-t border-white/5 pt-3">
-            <div className="micro-label text-neutral-500 text-[0.65rem] mb-2">Historial de apelaciones</div>
-            {loading && <div className="text-xs text-neutral-500">Cargando...</div>}
+            <div className="micro-label text-neutral-500 text-[0.65rem] mb-2">{t("appeal.historyHeading")}</div>
+            {loading && <div className="text-xs text-neutral-500">{t("appeal.loadingHistory")}</div>}
             {!loading && items.length === 0 && (
-              <div className="text-xs text-neutral-500 italic">Aún no has enviado ninguna apelación.</div>
+              <div className="text-xs text-neutral-500 italic">{t("appeal.historyEmpty")}</div>
             )}
             {!loading && items.length > 0 && (
               <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
@@ -152,7 +144,7 @@ export default function AppealDialog() {
                     <div className="text-xs text-neutral-300 line-clamp-3">{a.message}</div>
                     {a.staff_response && (
                       <div className="text-[0.7rem] text-neutral-400 border-l-2 border-[#8B5CF6]/60 pl-2 mt-1">
-                        <span className="text-[#8B5CF6] font-semibold">Staff: </span>{a.staff_response}
+                        <span className="text-[#8B5CF6] font-semibold">{t("appeal.staffPrefix")}: </span>{a.staff_response}
                       </div>
                     )}
                   </li>
@@ -168,7 +160,7 @@ export default function AppealDialog() {
               data-testid="appeal-close-btn"
               className="text-neutral-400 hover:text-white"
             >
-              Cerrar
+              {t("appeal.close")}
             </Button>
             {!hasPending && (
               <Button
@@ -178,7 +170,7 @@ export default function AppealDialog() {
                 className="bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white font-semibold"
               >
                 {sending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
-                Enviar
+                {t("appeal.send")}
               </Button>
             )}
           </DialogFooter>

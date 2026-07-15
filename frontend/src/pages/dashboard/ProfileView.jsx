@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,7 @@ import {
 export default function ProfileView() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [emailDialog, setEmailDialog] = useState(false);
@@ -44,7 +46,7 @@ export default function ProfileView() {
       const r = await axios.get(`${API}/profile/me`, { withCredentials: true });
       setProfile(r.data);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Error al cargar perfil");
+      toast.error(e?.response?.data?.detail || t("profile.loadError"));
     } finally {
       setLoading(false);
     }
@@ -55,7 +57,7 @@ export default function ProfileView() {
   if (loading || !profile) {
     return (
       <div className="p-8 text-neutral-500 text-sm" data-testid="profile-loading">
-        Cargando perfil...
+        {t("profile.loading")}
       </div>
     );
   }
@@ -66,11 +68,9 @@ export default function ProfileView() {
     <div className="space-y-6" data-testid="profile-view">
       <ProfileSectionTabs />
       <div>
-        <h1 className="font-display text-3xl">Datos personales</h1>
+        <h1 className="font-display text-3xl">{t("profile.title")}</h1>
         <p className="text-neutral-400 mt-2 text-sm max-w-2xl">
-          Todos los datos con los que te registraste. Puedes actualizarlos si
-          cambias de país, celular o email — solo pedimos verificación adicional
-          para proteger tu cuenta.
+          {t("profile.headerBody")}
         </p>
       </div>
 
@@ -78,25 +78,25 @@ export default function ProfileView() {
       <section className="tactile-card p-6 space-y-4" data-testid="profile-personal">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <User className="w-4 h-4 text-[#8B5CF6]" />
-          <span className="micro-label text-neutral-500">Datos personales</span>
+          <span className="micro-label text-neutral-500">{t("profile.sectionPersonal")}</span>
         </div>
-        <PersonalRow icon={User} label="Nombre" value={profile.name || "—"} readOnly />
+        <PersonalRow icon={User} label={t("profile.fieldName")} value={profile.name || t("profile.fieldDash")} readOnly />
         <UserIdRow userId={profile.user_id} />
-        <PersonalRow icon={Mail} label="Email" value={profile.email}
+        <PersonalRow icon={Mail} label={t("profile.fieldEmail")} value={profile.email}
                      onEdit={() => setEmailDialog(true)}
-                     pending={profile.pending_email_change ? "Pendiente confirmar código" : null}
+                     pending={profile.pending_email_change ? t("profile.pendingEmailChange") : null}
                      testid="profile-email-row" />
-        <PersonalRow icon={Phone} label="Teléfono"
-                     value={profile.phone || "No registrado"}
+        <PersonalRow icon={Phone} label={t("profile.fieldPhone")}
+                     value={profile.phone || t("profile.fieldPhoneNone")}
                      verified={profile.phone_verified}
                      onEdit={() => setPhoneDialog(true)}
-                     pending={profile.pending_phone_change ? "Pendiente revisión admin" : null}
+                     pending={profile.pending_phone_change ? t("profile.pendingPhoneChange") : null}
                      testid="profile-phone-row" />
-        <PersonalRow icon={Globe} label="País" value={profile.country || "—"}
+        <PersonalRow icon={Globe} label={t("profile.fieldCountry")} value={profile.country || t("profile.fieldDash")}
                      onEdit={() => setCountryDialog(true)}
                      testid="profile-country-row" />
-        <PersonalRow icon={Clock} label="Cuenta creada"
-                     value={new Date(profile.created_at).toLocaleDateString("es")}
+        <PersonalRow icon={Clock} label={t("profile.fieldCreated")}
+                     value={new Date(profile.created_at).toLocaleDateString()}
                      readOnly />
       </section>
 
@@ -105,22 +105,21 @@ export default function ProfileView() {
         <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-3">
           <div className="flex items-center gap-2">
             <IdCard className="w-4 h-4 text-[#8B5CF6]" />
-            <span className="micro-label text-neutral-500">Verificación de identidad</span>
+            <span className="micro-label text-neutral-500">{t("profile.sectionVerification")}</span>
           </div>
           <span className={`text-[0.65rem] uppercase tracking-widest border px-2 py-0.5 ${kycBadge.className}`}>
-            {kycBadge.label}
+            {t(kycBadge.labelKey)}
           </span>
         </div>
         <p className="text-xs text-neutral-400 leading-relaxed">
-          Sube tus documentos para desbloquear límites más altos y operar sin
-          fricciones. La revisión suele tomar entre 30 min y 24 h.
+          {t("profile.kycHelperBody")}
         </p>
         <Button
           onClick={() => navigate("/dashboard/kyc")}
           data-testid="profile-open-kyc"
           className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-9 px-4 font-mono text-xs uppercase tracking-wider"
         >
-          Abrir verificación
+          {t("profile.openKyc")}
         </Button>
       </section>
 
@@ -129,26 +128,25 @@ export default function ProfileView() {
         <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-3">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-[#8B5CF6]" />
-            <span className="micro-label text-neutral-500">Seguridad</span>
+            <span className="micro-label text-neutral-500">{t("profile.sectionSecurity")}</span>
           </div>
           <span className={`text-[0.65rem] uppercase tracking-widest border px-2 py-0.5 ${
             profile.twofa_enabled
               ? "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30"
               : "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30"
           }`}>
-            {profile.twofa_enabled ? "2FA activo" : "2FA no configurado"}
+            {profile.twofa_enabled ? t("profile.twofaOn") : t("profile.twofaOff")}
           </span>
         </div>
         <p className="text-xs text-neutral-400 leading-relaxed">
-          Gestiona tu autenticación de dos factores, cambia tu contraseña y
-          revisa las sesiones abiertas.
+          {t("profile.securityHelperBody")}
         </p>
         <Button
           onClick={() => navigate("/dashboard/security")}
           data-testid="profile-open-security"
           className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-9 px-4 font-mono text-xs uppercase tracking-wider"
         >
-          Abrir seguridad
+          {t("profile.openSecurity")}
         </Button>
       </section>
 
@@ -178,10 +176,10 @@ export default function ProfileView() {
 
 
 const KYC_BADGE = {
-  not_started: { label: "No iniciada", className: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
-  pending_review: { label: "En revisión", className: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30" },
-  approved: { label: "Verificada", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
-  rejected: { label: "Rechazada", className: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" },
+  not_started: { labelKey: "profile.kycStatus.not_started", className: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
+  pending_review: { labelKey: "profile.kycStatus.pending_review", className: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30" },
+  approved: { labelKey: "profile.kycStatus.approved", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
+  rejected: { labelKey: "profile.kycStatus.rejected", className: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" },
 };
 
 
@@ -202,8 +200,8 @@ function UserIdRow({ userId }) {
             <CopyableText
               value={userId}
               testid="profile-user-id-copy"
-              toastMessage="User ID copiado"
-              label="Copiar User ID"
+              toastMessage={t("profile.userIdCopied")}
+              label={t("profile.copyUserId")}
             />
           </div>
           <div className="text-[0.65rem] text-neutral-500 mt-1 leading-relaxed max-w-md">
@@ -254,6 +252,7 @@ function PersonalRow({ icon: Icon, label, value, onEdit, readOnly, verified, pen
 // Email change dialog — 2-step: request code + confirm code
 // ============================================================
 function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [newEmail, setNewEmail] = useState("");
   const [code, setCode] = useState("");
@@ -266,8 +265,8 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
   }, [open]);
 
   const requestCode = async () => {
-    if (!newEmail || !newEmail.includes("@")) return toast.error("Email inválido");
-    if (!totpCode || totpCode.length < 6) return toast.error("Ingresa tu código 2FA");
+    if (!newEmail || !newEmail.includes("@")) return toast.error(t("profile.email.invalidEmail"));
+    if (!totpCode || totpCode.length < 6) return toast.error(t("profile.email.enterTotp"));
     setBusy(true);
     try {
       const r = await axios.post(`${API}/profile/email/request-change`, {
@@ -276,25 +275,25 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
       }, { withCredentials: true });
       setMaskedTarget(r.data.sent_to_masked || "");
       setStep(2);
-      toast.success("Código enviado. Revisa tu email nuevo.");
+      toast.success(t("profile.email.codeSent"));
     } catch (e) {
       if (!handleTotpError(e, navigate)) {
-        toast.error(e?.response?.data?.detail || "Error al solicitar cambio");
+        toast.error(e?.response?.data?.detail || t("profile.email.requestError"));
       }
     } finally { setBusy(false); }
   };
 
   const confirmCode = async () => {
-    if (!code || code.length !== 6) return toast.error("Ingresa el código de 6 dígitos");
+    if (!code || code.length !== 6) return toast.error(t("profile.email.enter6Digits"));
     setBusy(true);
     try {
       await axios.post(`${API}/profile/email/confirm-change`, {
         code: code.trim(),
       }, { withCredentials: true });
-      toast.success("Email actualizado ✓");
+      toast.success(t("profile.email.updated"));
       onClose();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Código incorrecto");
+      toast.error(e?.response?.data?.detail || t("profile.email.wrongCode"));
     } finally { setBusy(false); }
   };
 
@@ -302,7 +301,7 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="bg-[#1A1730] border border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto" data-testid="email-change-dialog">
         <DialogHeader>
-          <DialogTitle className="font-display text-xl">Cambiar email</DialogTitle>
+          <DialogTitle className="font-display text-xl">{t("profile.email.dialogTitle")}</DialogTitle>
         </DialogHeader>
         {step === 1 ? (
           <div className="space-y-4">

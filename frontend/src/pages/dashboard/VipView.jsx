@@ -15,6 +15,7 @@ import VerificationGateBanner from "@/components/VerificationGateBanner";
 
 export default function VipView() {
   const { refresh } = useAuth();
+  const { t } = useTranslation();
   const [withdrawals, setWithdrawals] = useState([]);
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
   // iter52 — per-currency ledger (which orders contributed to each balance)
@@ -40,9 +41,9 @@ export default function VipView() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-      toast.success("Cierre descargado");
+      toast.success(t("vipView.closingDownloaded"));
     } catch (_) {
-      toast.error("Error al generar el cierre");
+      toast.error(t("vipView.closingError"));
     } finally {
       setDownloading(false);
     }
@@ -78,22 +79,22 @@ export default function VipView() {
   return (
     <div className="space-y-8" data-testid="vip-view">
       <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Saldo y Retiros</div>
-        <h1 className="font-display text-3xl">Tu balance acumulado</h1>
+        <div className="micro-label text-[#8B5CF6] mb-2">{t("vipView.eyebrow")}</div>
+        <h1 className="font-display text-3xl">{t("vipView.title")}</h1>
       </div>
 
       <div className="relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#1A1730] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50 hover:border-violet-500/20 transition-colors duration-500">
         <div className="absolute -top-24 -right-24 w-64 h-64 bg-violet-500/20 blur-[100px] rounded-full pointer-events-none" />
         <Wallet className="w-8 h-8 text-violet-400 mb-3 relative" />
         <div className="text-xs font-semibold tracking-[0.22em] text-violet-300/70 uppercase mb-3 block relative">
-          Valor total (USDT)
+          {t("vipView.totalValue")}
         </div>
         <div className="text-5xl sm:text-6xl font-mono tabular-nums tracking-tight font-semibold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)] relative">
           {balances.total_usdt?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || "0.00"}{" "}
           <span className="text-2xl text-neutral-400">USDT</span>
         </div>
         <div className="text-sm text-neutral-500 mt-2 relative">
-          Equivalente consolidado de todas tus monedas · usa tasa normal
+          {t("vipView.consolidatedNote")}
         </div>
       </div>
 
@@ -107,10 +108,10 @@ export default function VipView() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h2 className="font-display text-xl flex items-center gap-2">
-              <FileDown className="w-5 h-5 text-[#8B5CF6]" /> Cierre Diario
+              <FileDown className="w-5 h-5 text-[#8B5CF6]" /> {t("vipView.dailyClosing")}
             </h2>
             <p className="text-sm text-neutral-400 mt-1">
-              Descarga el reporte PDF de tus órdenes aprobadas del día.
+              {t("vipView.dailyClosingSub")}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -128,7 +129,7 @@ export default function VipView() {
               className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-11"
             >
               <FileDown className="w-4 h-4 mr-2" />
-              {downloading ? "Generando..." : "Descargar PDF"}
+              {downloading ? t("vipView.generating") : t("vipView.downloadPdf")}
             </Button>
           </div>
         </div>
@@ -149,6 +150,11 @@ export default function VipView() {
         onOpenChange={setLedgerOpen}
         currency={ledgerCurrency}
         bucket={ledger.by_currency?.[ledgerCurrency]}
+      />
+    </div>
+  );
+}
+erCurrency]}
       />
     </div>
   );

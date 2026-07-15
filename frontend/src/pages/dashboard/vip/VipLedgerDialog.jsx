@@ -1,11 +1,13 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { History } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 /**
  * iter55.29 — Extracted from VipView. Modal that shows the drill-down of
  * orders that credited a specific currency to the client's balance.
  */
 export function VipLedgerDialog({ open, onOpenChange, currency, bucket }) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -15,18 +17,18 @@ export function VipLedgerDialog({ open, onOpenChange, currency, bucket }) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <History className="w-5 h-5 text-[#8B5CF6]" />
-            Órdenes que acreditaron {currency}
+            {t("vipView.ledgerTitle", { currency })}
           </DialogTitle>
         </DialogHeader>
         <div className="pt-2 space-y-3" data-testid={`ledger-orders-${currency}`}>
           {(!bucket || bucket.orders.length === 0) ? (
             <p className="text-sm text-neutral-500">
-              No hay órdenes registradas para esta moneda.
+              {t("vipView.ledgerEmpty")}
             </p>
           ) : (
             <>
               <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-3 flex justify-between items-baseline">
-                <span className="text-xs text-neutral-400">Total acreditado:</span>
+                <span className="text-xs text-neutral-400">{t("vipView.ledgerTotalCredited")}</span>
                 <span className="font-mono text-lg text-[#8B5CF6]">
                   {bucket.total.toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
                 </span>
@@ -44,6 +46,7 @@ export function VipLedgerDialog({ open, onOpenChange, currency, bucket }) {
 
 
 function LedgerOrderRow({ order: o }) {
+  const { t } = useTranslation();
   return (
     <div
       className="border border-white/10 p-3 text-sm"
@@ -55,7 +58,7 @@ function LedgerOrderRow({ order: o }) {
             +{Number(o.amount_to).toLocaleString(undefined, { maximumFractionDigits: 4 })} {o.to_code}
           </div>
           <div className="text-xs text-neutral-500 mt-0.5">
-            desde {Number(o.amount_from).toLocaleString(undefined, { maximumFractionDigits: 2 })} {o.from_code}
+            {t("vipView.ledgerFromPrefix")} {Number(o.amount_from).toLocaleString(undefined, { maximumFractionDigits: 2 })} {o.from_code}
             {o.sender_name && (
               <span className="text-neutral-600"> · {o.sender_name}</span>
             )}
