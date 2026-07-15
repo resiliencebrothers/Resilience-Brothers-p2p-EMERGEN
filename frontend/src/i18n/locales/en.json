@@ -464,6 +464,16 @@
     "securityHelperBody": "Manage your two-factor authentication, change your password and view active sessions.",
     "openSecurity": "Open security"
   },
+  "accountStatus": {
+    "underReview": {
+      "title": "Account under review",
+      "body": "Your account is not active yet. A staff member must verify your phone before you can operate (exchanges, withdrawals and redemptions are temporarily disabled). If you've been waiting more than 24h, contact support via WhatsApp."
+    },
+    "blocked": {
+      "title": "Account blocked",
+      "body": "Your account has been blocked by the team. If you believe this is a mistake, contact support."
+    }
+  },
   "security": {
     "loading": "Loading…",
     "loadError": "Error loading 2FA state",

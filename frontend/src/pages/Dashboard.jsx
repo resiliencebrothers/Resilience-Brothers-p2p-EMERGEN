@@ -199,10 +199,9 @@ export default function Dashboard() {
             >
               <span className="text-2xl leading-none">⚠️</span>
               <div>
-                <div className="font-semibold text-[#8B5CF6] uppercase tracking-wider text-xs mb-1">Cuenta bajo revisión</div>
+                <div className="font-semibold text-[#8B5CF6] uppercase tracking-wider text-xs mb-1">{t("accountStatus.underReview.title")}</div>
                 <p className="text-neutral-300 text-xs leading-relaxed">
-                  Tu cuenta aún no está activa. Un miembro del staff debe verificar tu teléfono antes de que puedas operar (intercambios, retiros y canjes están temporalmente deshabilitados).
-                  Si llevas más de 24h esperando, contacta a soporte por WhatsApp.
+                  {t("accountStatus.underReview.body")}
                 </p>
                 <AppealDialog />
               </div>
@@ -215,9 +214,9 @@ export default function Dashboard() {
             >
               <span className="text-2xl leading-none">🚫</span>
               <div>
-                <div className="font-semibold text-[#EF4444] uppercase tracking-wider text-xs mb-1">Cuenta bloqueada</div>
+                <div className="font-semibold text-[#EF4444] uppercase tracking-wider text-xs mb-1">{t("accountStatus.blocked.title")}</div>
                 <p className="text-neutral-300 text-xs leading-relaxed">
-                  Tu cuenta ha sido bloqueada por el equipo. Si crees que es un error, contacta a soporte.
+                  {t("accountStatus.blocked.body")}
                 </p>
               </div>
             </div>

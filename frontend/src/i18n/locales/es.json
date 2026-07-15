@@ -464,6 +464,16 @@
     "securityHelperBody": "Gestiona tu autenticación de dos factores, cambia tu contraseña y consulta las sesiones activas.",
     "openSecurity": "Abrir seguridad"
   },
+  "accountStatus": {
+    "underReview": {
+      "title": "Cuenta bajo revisión",
+      "body": "Tu cuenta aún no está activa. Un miembro del staff debe verificar tu teléfono antes de que puedas operar (intercambios, retiros y canjes están temporalmente deshabilitados). Si llevas más de 24h esperando, contacta a soporte por WhatsApp."
+    },
+    "blocked": {
+      "title": "Cuenta bloqueada",
+      "body": "Tu cuenta ha sido bloqueada por el equipo. Si crees que es un error, contacta a soporte."
+    }
+  },
   "security": {
     "loading": "Cargando…",
     "loadError": "Error al cargar estado 2FA",

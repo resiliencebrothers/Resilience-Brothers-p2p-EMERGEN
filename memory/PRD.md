@@ -1591,3 +1591,14 @@ Operator asks (13 Feb 2026):
   - **Status**: preview only — user must redeploy for the fix to reach `p2p.resiliencebrothers.com`.
 
 
+
+
+- **i18n Audit — Phase 2 COMPLETE** (iter63, Feb 15 2026): finished the client-side translation coverage for the Profile section — the last two views leaking Spanish under `localStorage.resilience_lang=en`.
+  - **ProfileView.jsx** — fully translated: added `useTranslation` in `UserIdRow` (was a runtime bug: `t()` was referenced without being destructured), translated the `PersonalRow` "Change" button, and rewired the three change-dialogs (`EmailChangeDialog`, `PhoneChangeDialog`, `CountryChangeDialog`) to use `t()` for every label, placeholder, toast and helper. Interpolated markup like `<strong>{{email}}</strong>` uses the `Trans` component with `components={{1: <strong .../>}}` object syntax to avoid React `key` warnings.
+  - **SecuritySettings.jsx** — fully translated: imports `useTranslation` + `Trans`. All 2FA status cards, setup panel (QR + step 1/2), recovery-codes reveal, disable/regenerate dialogs, and the entire password-change section now flow through `t()`. Fixed the `useEffect(loadStatus, [])` react-hooks/exhaustive-deps warning by wrapping `loadStatus` in `useCallback([t])`.
+  - **Dashboard.jsx** — translated the two remaining status banners (`account_status='under_review'` → "Cuenta bajo revisión / Account under review", `account_status='blocked'` → "Cuenta bloqueada / Account blocked") using new `accountStatus.*` i18n namespace.
+  - **VipView.jsx bug fix** — cleaned up residual `erCurrency]}` garbage at end-of-file that broke webpack compilation (leftover from a mid-edit in the previous fork); re-added missing `useTranslation` import.
+  - **JSON consolidation**: `en.json` and `es.json` had duplicate `profile` keys (top block with `tabs`+`breadcrumb`, bottom block with everything else) — the second silently overrode the first via `JSON.parse` dict-key semantics, meaning `profile.tabs.*` returned raw keys as UI labels. Consolidated into a single `profile` object. Also removed a duplicate `language` block from `en.json`. Added ~50 new keys total across `profile.{email|phone|country}.*`, `security.*` (new namespace with `setup`, `recovery`, `disableDialog`, `regenDialog`, `password` sub-namespaces), and `accountStatus.{underReview|blocked}.*`.
+  - **Testing agent verification (iter63 report)**: 100% frontend pass rate — no Spanish leaks in English mode on `/dashboard/profile` or `/dashboard/security`; no English leaks in Spanish mode; smoke checks on `/dashboard`, `/dashboard/kyc`, `/dashboard/orders` clean. Reported minor cosmetic issue: the frontend `kyc_status === 'approved'` check inside `CountryChangeDialog` may need to accept `'verified'` too — flagged for a future micro-fix.
+  - **Status**: preview only — user must redeploy for the fix to reach `p2p.resiliencebrothers.com`.
+

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
@@ -32,7 +32,7 @@ export default function SecuritySettings() {
   const [pwdShow, setPwdShow] = useState(false);
   const [pwdBusy, setPwdBusy] = useState(false);
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
       const [statusRes, profileRes] = await Promise.all([
         axios.get(`${API}/me/2fa/status`, { withCredentials: true }),
@@ -45,8 +45,8 @@ export default function SecuritySettings() {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { loadStatus(); }, []);
+  }, [t]);
+  useEffect(() => { loadStatus(); }, [loadStatus]);
 
   const startSetup = async () => {
     setBusy(true);
