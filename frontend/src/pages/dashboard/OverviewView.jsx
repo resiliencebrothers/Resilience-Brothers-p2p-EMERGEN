@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
+import { useTranslation } from "react-i18next";
 import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
@@ -14,6 +15,7 @@ import {
 
 export default function OverviewView() {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const [rates, setRates] = useState([]);
   const [orders, setOrders] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
@@ -49,32 +51,44 @@ export default function OverviewView() {
   return (
     <div className="space-y-8" data-testid="overview-view">
       <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Dashboard</div>
-        <h1 className="font-display text-3xl lg:text-4xl">Hola, {user?.name?.split(" ")[0]}.</h1>
+        <div className="micro-label text-[#8B5CF6] mb-2">{t("dashboard.breadcrumb")}</div>
+        <h1 className="font-display text-3xl lg:text-4xl">
+          {t("dashboard.greeting", { name: user?.name?.split(" ")[0] || "" })}
+        </h1>
         <p className="text-neutral-400 mt-2">
-          {isVip ? "Cuenta VIP · Tasas preferenciales activas" : "Cuenta Estándar · Tasa según estatus"}
+          {isVip ? t("dashboard.accountVip") : t("dashboard.accountStandard")}
         </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Wallet} label="Saldo Total" value={`${(balances?.total_usdt || 0).toFixed(2)}`} sub="USDT equivalente" />
+        <StatCard
+          icon={Wallet}
+          label={t("dashboard.stats.totalBalance")}
+          value={`${(balances?.total_usdt || 0).toFixed(2)}`}
+          sub={t("dashboard.stats.totalBalanceSub")}
+        />
         <StatCard
           icon={Clock}
-          label="Pendientes"
+          label={t("dashboard.stats.pending")}
           value={pending}
-          sub="órdenes · ver →"
+          sub={t("dashboard.stats.pendingSub")}
           to="/dashboard/orders?filter=pending"
           testid="stat-pendientes"
         />
         <StatCard
           icon={CheckCircle}
-          label="Completadas"
+          label={t("dashboard.stats.completed")}
           value={approved}
-          sub="órdenes · ver →"
+          sub={t("dashboard.stats.completedSub")}
           to="/dashboard/orders?filter=completed"
           testid="stat-completadas"
         />
-        <StatCard icon={Activity} label="Estatus" value={user?.role?.toUpperCase()} sub="nivel" />
+        <StatCard
+          icon={Activity}
+          label={t("dashboard.stats.statusLabel")}
+          value={user?.role?.toUpperCase()}
+          sub={t("dashboard.stats.statusSub")}
+        />
       </div>
 
       {/* iter50 — Converter widget visible to normal + vip clients */}
@@ -91,11 +105,11 @@ export default function OverviewView() {
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 tactile-card p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="font-display text-xl flex items-center gap-2"><TrendingUp className="w-5 h-5 text-[#8B5CF6]" /> Tasas Vigentes</h2>
-            <Link to="/dashboard/exchange" className="micro-label text-[#8B5CF6] hover:underline">Operar →</Link>
+            <h2 className="font-display text-xl flex items-center gap-2"><TrendingUp className="w-5 h-5 text-[#8B5CF6]" /> {t("dashboard.currentRates")}</h2>
+            <Link to="/dashboard/exchange" className="micro-label text-[#8B5CF6] hover:underline">{t("dashboard.operate")}</Link>
           </div>
           <div className="space-y-2">
-            {rates.length === 0 && <p className="text-neutral-500 text-sm">No hay tasas configuradas aún.</p>}
+            {rates.length === 0 && <p className="text-neutral-500 text-sm">{t("dashboard.noRatesYet")}</p>}
             {rates.map(r => (
               <div key={r.id} className="flex items-center justify-between border-b border-white/5 py-3 last:border-0">
                 <div>
@@ -110,7 +124,7 @@ export default function OverviewView() {
                     )}
                   </div>
                   <div className="micro-label text-neutral-500 text-[0.6rem]">
-                    {isVip ? "TASA VIP" : `VIP: ${r.rate_vip}`}
+                    {isVip ? t("dashboard.vipRateLabel") : `VIP: ${r.rate_vip}`}
                   </div>
                 </div>
               </div>
@@ -118,29 +132,29 @@ export default function OverviewView() {
           </div>
         </div>
         <div className="tactile-card p-6">
-          <h2 className="font-display text-xl mb-4">Acciones Rápidas</h2>
+          <h2 className="font-display text-xl mb-4">{t("dashboard.quickActions")}</h2>
           <div className="space-y-2">
             <Link to="/dashboard/exchange" data-testid="quick-exchange" className="block border border-white/10 hover:border-[#8B5CF6] p-4 transition-colors group">
               <div className="flex items-center justify-between">
-                <span className="font-medium">Nuevo Intercambio</span>
+                <span className="font-medium">{t("dashboard.newExchange")}</span>
                 <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#8B5CF6]" />
               </div>
-              <div className="micro-label text-neutral-500 mt-1">Cripto ↔ Fiat</div>
+              <div className="micro-label text-neutral-500 mt-1">{t("dashboard.newExchangeSub")}</div>
             </Link>
             <Link to="/dashboard/orders" data-testid="quick-orders" className="block border border-white/10 hover:border-[#8B5CF6] p-4 transition-colors group">
               <div className="flex items-center justify-between">
-                <span className="font-medium">Ver Órdenes</span>
+                <span className="font-medium">{t("dashboard.viewOrders")}</span>
                 <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#8B5CF6]" />
               </div>
-              <div className="micro-label text-neutral-500 mt-1">Historial completo</div>
+              <div className="micro-label text-neutral-500 mt-1">{t("dashboard.viewOrdersSub")}</div>
             </Link>
             {isClient && (
               <Link to="/dashboard/marketplace" data-testid="quick-marketplace" className="block border border-white/10 hover:border-[#8B5CF6] p-4 transition-colors group">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium">Marketplace</span>
+                  <span className="font-medium">{t("dashboard.marketplaceLink")}</span>
                   <ArrowUpRight className="w-4 h-4 text-neutral-500 group-hover:text-[#8B5CF6]" />
                 </div>
-                <div className="micro-label text-neutral-500 mt-1">Canjea tu saldo</div>
+                <div className="micro-label text-neutral-500 mt-1">{t("dashboard.marketplaceLinkSub")}</div>
               </Link>
             )}
           </div>

@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +37,7 @@ import { ConvertPreview } from "@/components/converter/ConvertPreview";
 
 export default function BalanceConverterCard({ onConverted }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const isVip = user?.role === "vip" || user?.role === "admin";
   const isStaff = user?.role === "admin" || user?.role === "employee";
 
@@ -217,13 +219,13 @@ export default function BalanceConverterCard({ onConverted }) {
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-display text-xl flex items-center gap-2">
           <ArrowRightLeft className="w-5 h-5 text-[#8B5CF6]" />
-          Convertir Saldos
+          {t("balanceConverter.title")}
         </h2>
         <div
           className="text-xs text-neutral-500"
           data-testid="balance-converter-total"
         >
-          Total ≈ <span className="text-[#8B5CF6] font-mono">
+          {t("balanceConverter.totalPrefix")} <span className="text-[#8B5CF6] font-mono">
             {(balances.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
           </span>
         </div>
@@ -239,7 +241,7 @@ export default function BalanceConverterCard({ onConverted }) {
           className="text-xs text-neutral-400 hover:text-[#8B5CF6] mt-3 flex items-center gap-1 transition-colors mx-auto"
           data-testid="balance-converter-show-all"
         >
-          {showAll ? "Mostrar menos" : `Ver todas (${positive.length})`}
+          {showAll ? t("balanceConverter.showLess") : t("balanceConverter.showAll", { count: positive.length })}
           <ChevronDown
             className={`w-3 h-3 transition-transform ${showAll ? "rotate-180" : ""}`}
           />
@@ -251,7 +253,7 @@ export default function BalanceConverterCard({ onConverted }) {
         <DialogContent className="bg-[#111] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2" data-testid="converter-dialog-title">
-              Convertir {fromCode}
+              {t("balanceConverter.dialogTitle")} {fromCode}
               <ArrowRightLeft className="w-4 h-4 text-[#8B5CF6]" />
               {toCode}
             </DialogTitle>

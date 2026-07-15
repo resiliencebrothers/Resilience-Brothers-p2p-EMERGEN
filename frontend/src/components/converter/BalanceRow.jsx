@@ -1,11 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRightLeft } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 /**
  * iter55.29 — Extracted balance row for the converter card. Renders one
  * currency balance with the "Convertir" trigger.
  */
 export function BalanceRow({ balance, onConvert }) {
+  const { t } = useTranslation();
   const { currency, amount, usdt_equivalent } = balance;
   return (
     <div
@@ -31,7 +33,7 @@ export function BalanceRow({ balance, onConvert }) {
         data-testid={`converter-trigger-${currency}`}
       >
         <ArrowRightLeft className="w-3.5 h-3.5" />
-        Convertir
+        {t("balanceConverter.dialogTitle")}
       </Button>
     </div>
   );

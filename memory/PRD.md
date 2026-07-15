@@ -1553,3 +1553,20 @@ Operator asks (13 Feb 2026):
   - **Status**: preview only. User must redeploy.
 
 
+
+- **Bug fix: i18n leak on dashboard + defensive banner (iter55.36r, Feb 15 2026)** — user reported that with defensive mode enabled + English language selected, the Normal user's dashboard still showed Spanish everywhere (defensive banner, greeting, subtitle, all 4 stat cards, converter widget, rates table, quick actions sidebar, hamburger menu, role label). Root cause: those strings were **hardcoded in Spanish** in the JSX instead of using `t()`.
+  - **i18n keys added** to `en.json` + `es.json` (in sync):
+    - `defensiveMode.userBanner` — full public-facing banner text
+    - `dashboard.*` — greeting with `{{name}}` interpolation, accountVip/accountStandard, all 4 stat cards + sub-labels (totalBalance/pending/completed/statusLabel + their subs), currentRates, operate, noRatesYet, vipRateLabel, quickActions, newExchange/viewOrders/marketplaceLink + their subs, menu, menuNav, roleLabel.{normal|vip|admin|employee}
+    - `balanceConverter.*` — title, totalPrefix, showAll/showLess (with `{{count}}`), dialogTitle, convertButton
+  - **Components refactored** to consume the keys:
+    - `pages/dashboard/OverviewView.jsx` (imported `useTranslation`, replaced 14 hardcoded Spanish strings)
+    - `components/DefensiveModePanel.jsx::DefensiveBanner` (line 191 — replaced hardcoded text with `t()`; renamed local var `t` → `t2` inside setInterval to avoid shadowing i18n's `t`)
+    - `components/BalanceConverterCard.jsx` (title, total prefix, show-all toggle, dialog title)
+    - `components/converter/BalanceRow.jsx` (per-row "Convertir" button)
+    - `pages/Dashboard.jsx` (`ROLE_LABELS` map replaced by `ROLE_LABEL_KEYS` resolved via `t()`; mobile hamburger label + sr-only sheet title)
+  - **Validated** with Playwright screenshot (mobile viewport 400×900, `session_token=test_session_normal_X`, `localStorage.i18nextLng=en`, defensive_mode=ON): every Spanish leak from the user's original screenshot is gone. Body-text scan for `["Cliente", "Convertir", "MENÚ"]` returned empty.
+  - `make test-critical`: 159/159 green (no backend regression).
+  - **Status**: preview only. User must redeploy for production (`p2p.resiliencebrothers.com`) to pick up the fix.
+
+

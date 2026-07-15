@@ -21,11 +21,13 @@ import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import AppealDialog from "@/components/AppealDialog";
 
-const ROLE_LABELS = {
-  normal: "Cliente",
-  vip: "VIP",
-  admin: "Admin",
-  employee: "Staff Member",
+// iter55.36r — role labels moved to i18n. Values are `t()` keys under
+// `dashboard.roleLabel.*`, resolved inline where used.
+const ROLE_LABEL_KEYS = {
+  normal: "dashboard.roleLabel.normal",
+  vip: "dashboard.roleLabel.vip",
+  admin: "dashboard.roleLabel.admin",
+  employee: "dashboard.roleLabel.employee",
 };
 
 export default function Dashboard() {
@@ -109,7 +111,7 @@ export default function Dashboard() {
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium truncate">{user?.name}</div>
           <div className="micro-label text-neutral-500">
-            {ROLE_LABELS[user?.role] || "Cliente"}
+            {t(ROLE_LABEL_KEYS[user?.role] || "dashboard.roleLabel.normal")}
           </div>
         </div>
         <NotificationBell />
@@ -161,7 +163,7 @@ export default function Dashboard() {
                 data-testid="dashboard-mobile-menu-trigger"
                 className="flex items-center gap-2 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6] px-3 py-1.5 text-xs uppercase tracking-wider font-mono"
               >
-                <Menu className="w-4 h-4" /> Menú
+                <Menu className="w-4 h-4" /> {t("dashboard.menu")}
               </button>
             </SheetTrigger>
             <SheetContent
@@ -169,7 +171,7 @@ export default function Dashboard() {
               data-testid="dashboard-mobile-menu"
               className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
             >
-              <VisuallyHidden><SheetTitle>Menú de navegación</SheetTitle></VisuallyHidden>
+              <VisuallyHidden><SheetTitle>{t("dashboard.menuNav")}</SheetTitle></VisuallyHidden>
               <div className="h-16 border-b border-white/5 flex items-center px-5 shrink-0">
                 <div className="flex items-center gap-3">
                   <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />

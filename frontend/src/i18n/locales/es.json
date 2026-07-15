@@ -101,6 +101,52 @@
     "english": "English",
     "current": "Idioma actual"
   },
+  "defensiveMode": {
+    "userBanner": "Plataforma en mantenimiento de seguridad. Los retiros y nuevos registros están temporalmente suspendidos. Disculpa las molestias."
+  },
+  "dashboard": {
+    "breadcrumb": "/ Dashboard",
+    "greeting": "Hola, {{name}}.",
+    "accountVip": "Cuenta VIP · Tasas preferenciales activas",
+    "accountStandard": "Cuenta Estándar · Tasa según estatus",
+    "stats": {
+      "totalBalance": "Saldo Total",
+      "totalBalanceSub": "USDT equivalente",
+      "pending": "Pendientes",
+      "pendingSub": "órdenes · ver →",
+      "completed": "Completadas",
+      "completedSub": "órdenes · ver →",
+      "statusLabel": "Estatus",
+      "statusSub": "nivel"
+    },
+    "currentRates": "Tasas Vigentes",
+    "operate": "Operar →",
+    "noRatesYet": "No hay tasas configuradas aún.",
+    "vipRateLabel": "TASA VIP",
+    "quickActions": "Acciones Rápidas",
+    "newExchange": "Nuevo Intercambio",
+    "newExchangeSub": "Cripto ↔ Fiat",
+    "viewOrders": "Ver Órdenes",
+    "viewOrdersSub": "Historial completo",
+    "marketplaceLink": "Marketplace",
+    "marketplaceLinkSub": "Canjea tu saldo",
+    "menu": "Menú",
+    "menuNav": "Menú de navegación",
+    "roleLabel": {
+      "normal": "Cliente",
+      "vip": "VIP",
+      "admin": "Admin",
+      "employee": "Staff Member"
+    }
+  },
+  "balanceConverter": {
+    "title": "Convertir Saldos",
+    "totalPrefix": "Total ≈",
+    "showAll": "Ver todas ({{count}})",
+    "showLess": "Mostrar menos",
+    "dialogTitle": "Convertir",
+    "convertButton": "Convertir {{code}}"
+  },
   "landing": {
     "nav": {
       "about": "Nosotros",

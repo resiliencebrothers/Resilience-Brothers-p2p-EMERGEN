@@ -101,6 +101,59 @@
     "english": "English",
     "current": "Current language"
   },
+  "language": {
+    "label": "Language",
+    "description": "The interface switches instantly. Downloaded reports keep the language they were generated in.",
+    "spanish": "Español",
+    "english": "English",
+    "current": "Current language"
+  },
+  "defensiveMode": {
+    "userBanner": "Platform under security maintenance. Withdrawals and new registrations are temporarily suspended. Sorry for the inconvenience."
+  },
+  "dashboard": {
+    "breadcrumb": "/ Dashboard",
+    "greeting": "Hello, {{name}}.",
+    "accountVip": "VIP Account · Preferential rates active",
+    "accountStandard": "Standard Account · Rate based on your tier",
+    "stats": {
+      "totalBalance": "Total Balance",
+      "totalBalanceSub": "USDT equivalent",
+      "pending": "Pending",
+      "pendingSub": "orders · view →",
+      "completed": "Completed",
+      "completedSub": "orders · view →",
+      "statusLabel": "Status",
+      "statusSub": "tier"
+    },
+    "currentRates": "Current Rates",
+    "operate": "Trade →",
+    "noRatesYet": "No rates configured yet.",
+    "vipRateLabel": "VIP RATE",
+    "quickActions": "Quick Actions",
+    "newExchange": "New Exchange",
+    "newExchangeSub": "Crypto ↔ Fiat",
+    "viewOrders": "View Orders",
+    "viewOrdersSub": "Full history",
+    "marketplaceLink": "Marketplace",
+    "marketplaceLinkSub": "Redeem your balance",
+    "menu": "Menu",
+    "menuNav": "Navigation menu",
+    "roleLabel": {
+      "normal": "Client",
+      "vip": "VIP",
+      "admin": "Admin",
+      "employee": "Staff Member"
+    }
+  },
+  "balanceConverter": {
+    "title": "Convert Balances",
+    "totalPrefix": "Total ≈",
+    "showAll": "View all ({{count}})",
+    "showLess": "Show less",
+    "dialogTitle": "Convert",
+    "convertButton": "Convert {{code}}"
+  },
   "landing": {
     "nav": {
       "about": "About",

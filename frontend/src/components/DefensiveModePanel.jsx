@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -163,6 +164,7 @@ export default function DefensiveModePanel() {
 
 /** Public banner — shown on every page if defensive mode is enabled. */
 export function DefensiveBanner() {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(false);
   useEffect(() => {
     let active = true;
@@ -176,8 +178,8 @@ export function DefensiveBanner() {
       }
     };
     fetchState();
-    const t = setInterval(fetchState, 60_000); // poll every 60s
-    return () => { active = false; clearInterval(t); };
+    const t2 = setInterval(fetchState, 60_000); // poll every 60s
+    return () => { active = false; clearInterval(t2); };
   }, []);
 
   if (!enabled) return null;
@@ -188,7 +190,7 @@ export function DefensiveBanner() {
       className="bg-[#8B5CF6] text-white text-center text-xs sm:text-sm font-semibold py-2 px-4 z-50"
     >
       <Loader2 className="w-3.5 h-3.5 inline-block mr-2 animate-spin" />
-      Plataforma en mantenimiento de seguridad. Los retiros y nuevos registros están temporalmente suspendidos. Disculpa las molestias.
+      {t("defensiveMode.userBanner")}
     </div>
   );
 }
