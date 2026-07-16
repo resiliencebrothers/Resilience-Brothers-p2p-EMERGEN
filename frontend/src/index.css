@@ -23,14 +23,20 @@ body {
     height: 10px;
 }
 ::-webkit-scrollbar-track {
-    background: #14101F;
+    background: #1a1730;
 }
 ::-webkit-scrollbar-thumb {
-    background: #2a2436;
-    border-radius: 0;
+    background: #5d4b8a;
+    border-radius: 5px;
+    border: 2px solid #1a1730;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: #3a3348;
+    background: #8B5CF6;
+}
+/* Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #5d4b8a #1a1730;
 }
 
 .font-display {

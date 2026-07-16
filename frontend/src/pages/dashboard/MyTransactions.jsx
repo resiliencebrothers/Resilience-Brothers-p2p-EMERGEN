@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { Receipt, ArrowDown, ArrowUp, Download, FileText, X } from "lucide-react
 const PAGE_SIZE = 50;
 
 export default function MyTransactions() {
+  const { t } = useTranslation();
   const [items, setItems] = useState([]);
   const [totals, setTotals] = useState({ by_currency: {} });
   const [total, setTotal] = useState(0);
@@ -48,14 +50,14 @@ export default function MyTransactions() {
       const r = await axios.get(`${API}/me/transactions`, { params, withCredentials: true });
       setItems(r.data.items);
       setTotals(r.data.totals);
-      const t = Number(r.headers["x-total-count"]);
-      setTotal(Number.isFinite(t) ? t : r.data.items.length);
+      const totalCount = Number(r.headers["x-total-count"]);
+      setTotal(Number.isFinite(totalCount) ? totalCount : r.data.items.length);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error al cargar transacciones");
+      toast.error(e.response?.data?.detail || t("myTransactions.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [direction, currency, since, until, minAmount, maxAmount, page]);
+  }, [direction, currency, since, until, minAmount, maxAmount, page, t]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
@@ -73,14 +75,14 @@ export default function MyTransactions() {
       const a = document.createElement("a");
       a.href = blobUrl;
       const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
-      a.download = `mis_transacciones_${ts}.${kind}`;
+      a.download = `${t("myTransactions.exportFilename")}_${ts}.${kind}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(blobUrl);
-      toast.success(`Exportado (${kind.toUpperCase()})`);
+      toast.success(t("myTransactions.exportedToast", { kind: kind.toUpperCase() }));
     } catch (e) {
-      toast.error(`Error al exportar ${kind.toUpperCase()}`);
+      toast.error(t("myTransactions.exportError", { kind: kind.toUpperCase() }));
     }
   };
 
@@ -102,11 +104,11 @@ export default function MyTransactions() {
     <div data-testid="my-transactions" className="space-y-5">
       <div className="mb-2">
         <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
-          <Receipt className="w-3.5 h-3.5" /> / Mi Historial
+          <Receipt className="w-3.5 h-3.5" /> {t("myTransactions.breadcrumb")}
         </div>
-        <h1 className="font-display text-3xl">Mis Transacciones</h1>
+        <h1 className="font-display text-3xl">{t("myTransactions.title")}</h1>
         <p className="text-neutral-500 text-sm mt-1">
-          Registro de tus entradas (transferencias recibidas) y salidas (retiros pagados) con titulares verificados.
+          {t("myTransactions.subtitle")}
         </p>
       </div>
 
@@ -118,18 +120,18 @@ export default function MyTransactions() {
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between">
                   <span className="text-neutral-400 flex items-center gap-1">
-                    <ArrowDown className="w-3 h-3 text-[#22C55E]" /> Entradas
+                    <ArrowDown className="w-3 h-3 text-[#22C55E]" /> {t("myTransactions.in")}
                   </span>
                   <span className="font-mono text-[#22C55E]">+{row.in.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-400 flex items-center gap-1">
-                    <ArrowUp className="w-3 h-3 text-[#EF4444]" /> Salidas
+                    <ArrowUp className="w-3 h-3 text-[#EF4444]" /> {t("myTransactions.out")}
                   </span>
                   <span className="font-mono text-[#EF4444]">-{row.out.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between border-t border-white/5 pt-1 mt-1">
-                  <span className="text-neutral-300 text-xs">Neto</span>
+                  <span className="text-neutral-300 text-xs">{t("myTransactions.net")}</span>
                   <span className={`font-mono font-bold ${row.net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
                     {row.net >= 0 ? "+" : ""}{row.net.toLocaleString()}
                   </span>
@@ -144,26 +146,26 @@ export default function MyTransactions() {
       <div className="flex flex-wrap gap-3 items-end justify-between">
         <div className="flex flex-wrap gap-3 items-end">
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Dirección</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.direction")}</div>
             <Select value={direction} onValueChange={setDirection}>
               <SelectTrigger data-testid="my-tx-direction" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                <SelectItem value="all">Todas</SelectItem>
-                <SelectItem value="in">Solo Entradas ↓</SelectItem>
-                <SelectItem value="out">Solo Salidas ↑</SelectItem>
+                <SelectItem value="all">{t("myTransactions.filters.all")}</SelectItem>
+                <SelectItem value="in">{t("myTransactions.filters.onlyIn")}</SelectItem>
+                <SelectItem value="out">{t("myTransactions.filters.onlyOut")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Moneda</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.currency")}</div>
             <Select value={currency || "all"} onValueChange={(v) => setCurrency(v === "all" ? "" : v)}>
               <SelectTrigger data-testid="my-tx-currency" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-36">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                <SelectItem value="all">Todas</SelectItem>
+                <SelectItem value="all">{t("myTransactions.filters.all")}</SelectItem>
                 {currencies.map((c) => (
                   <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
                 ))}
@@ -171,23 +173,23 @@ export default function MyTransactions() {
             </Select>
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Desde</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.since")}</div>
             <Input type="date" data-testid="my-tx-since" value={since} onChange={(e) => setSince(e.target.value)}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs" />
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Hasta</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.until")}</div>
             <Input type="date" data-testid="my-tx-until" value={until} onChange={(e) => setUntil(e.target.value)}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs" />
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Mín.</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.min")}</div>
             <Input type="number" min="0" step="0.01" data-testid="my-tx-min" value={minAmount}
               onChange={(e) => setMinAmount(e.target.value)} placeholder="0"
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-24 font-mono text-xs" />
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Máx.</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.max")}</div>
             <Input type="number" min="0" step="0.01" data-testid="my-tx-max" value={maxAmount}
               onChange={(e) => setMaxAmount(e.target.value)} placeholder="∞"
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-24 font-mono text-xs" />
@@ -195,7 +197,7 @@ export default function MyTransactions() {
           {hasFilters && (
             <button data-testid="my-tx-clear" onClick={clearFilters}
               className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10">
-              limpiar
+              {t("myTransactions.filters.clear")}
             </button>
           )}
         </div>
@@ -217,20 +219,20 @@ export default function MyTransactions() {
           <table className="w-full text-sm">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
-                <th className="px-3 py-3 micro-label text-neutral-500">Fecha</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Tipo</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Moneda</th>
-                <th className="px-3 py-3 micro-label text-neutral-500 text-right">Monto</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Titular</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Método</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Estado</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.date")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.type")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.currency")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500 text-right">{t("myTransactions.table.amount")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.holder")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.method")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.status")}</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
+              {loading && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">{t("myTransactions.table.loading")}</td></tr>}
               {!loading && items.length === 0 && (
                 <tr><td colSpan="7" className="text-center text-neutral-500 py-8">
-                  {hasFilters ? "Sin resultados para los filtros aplicados" : "Aún no tienes transacciones registradas"}
+                  {hasFilters ? t("myTransactions.table.emptyFiltered") : t("myTransactions.table.empty")}
                 </td></tr>
               )}
               {items.map((it) => (
@@ -243,11 +245,11 @@ export default function MyTransactions() {
                   <td className="px-3 py-2">
                     {it.direction === "in" ? (
                       <span className="inline-flex items-center gap-1 text-[#22C55E] text-xs font-bold uppercase">
-                        <ArrowDown className="w-3 h-3" /> Entrada
+                        <ArrowDown className="w-3 h-3" /> {t("myTransactions.table.in")}
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[#EF4444] text-xs font-bold uppercase">
-                        <ArrowUp className="w-3 h-3" /> Salida
+                        <ArrowUp className="w-3 h-3" /> {t("myTransactions.table.out")}
                       </span>
                     )}
                   </td>
@@ -278,14 +280,14 @@ export default function MyTransactions() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
               <Receipt className="w-5 h-5 text-[#8B5CF6]" />
-              Detalle
+              {t("myTransactions.detail.title")}
               {selected?.direction === "in" ? (
                 <span className="ml-2 text-[#22C55E] text-xs font-bold uppercase flex items-center gap-1">
-                  <ArrowDown className="w-3 h-3" /> Entrada
+                  <ArrowDown className="w-3 h-3" /> {t("myTransactions.table.in")}
                 </span>
               ) : (
                 <span className="ml-2 text-[#EF4444] text-xs font-bold uppercase flex items-center gap-1">
-                  <ArrowUp className="w-3 h-3" /> Salida
+                  <ArrowUp className="w-3 h-3" /> {t("myTransactions.table.out")}
                 </span>
               )}
             </DialogTitle>
@@ -294,32 +296,32 @@ export default function MyTransactions() {
             <div className="space-y-4 text-sm">
               <div className="grid grid-cols-2 gap-3 border border-white/5 p-4 bg-[#0a0a0a]">
                 <div>
-                  <div className="micro-label text-neutral-500 mb-1">Moneda</div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.currency")}</div>
                   <div className="font-mono text-[#8B5CF6] text-lg">{selected.currency}</div>
                 </div>
                 <div>
-                  <div className="micro-label text-neutral-500 mb-1">Monto</div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.amount")}</div>
                   <div className="font-mono text-xl">{selected.amount.toLocaleString()}</div>
                 </div>
                 <div>
-                  <div className="micro-label text-neutral-500 mb-1">Titular</div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.holder")}</div>
                   <div className="font-medium">{selected.holder_name || "—"}</div>
                 </div>
                 <div>
-                  <div className="micro-label text-neutral-500 mb-1">Método</div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.method")}</div>
                   <div className="uppercase text-xs">{selected.method}</div>
                 </div>
                 <div>
-                  <div className="micro-label text-neutral-500 mb-1">Estado</div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.status")}</div>
                   <div className="uppercase text-xs text-[#22C55E]">{selected.status}</div>
                 </div>
                 <div>
-                  <div className="micro-label text-neutral-500 mb-1">Fecha</div>
+                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.date")}</div>
                   <div className="font-mono text-xs">{new Date(selected.created_at).toLocaleString()}</div>
                 </div>
                 <div className="col-span-2">
                   <div className="micro-label text-neutral-500 mb-1">
-                    {selected.ref_type === "withdrawal" ? "ID Retiro" : "ID Orden"}
+                    {selected.ref_type === "withdrawal" ? t("myTransactions.detail.withdrawalId") : t("myTransactions.detail.orderId")}
                   </div>
                   <div className="font-mono text-xs text-neutral-400">{selected.ref_id}</div>
                 </div>
@@ -327,25 +329,25 @@ export default function MyTransactions() {
               {selected.delivery_details && (
                 <div className="border border-white/5 p-4 bg-[#0a0a0a]">
                   <div className="micro-label text-neutral-500 mb-2">
-                    {selected.direction === "in" ? "Datos del envío" : "Datos del beneficiario"}
+                    {selected.direction === "in" ? t("myTransactions.detail.senderData") : t("myTransactions.detail.recipientData")}
                   </div>
                   <div className="text-sm whitespace-pre-wrap font-mono text-neutral-300">{selected.delivery_details}</div>
                 </div>
               )}
-              {(selected.direction === "in" || selected.ref_type === "order_payout") && selected.proof_image && (
+              {(selected.direction === "in" || selected.ref_type === "order_payout") && selected.proof_image && selected.proof_image.trim() && (
                 <div>
                   <div className="micro-label text-neutral-500 mb-2">
-                    {selected.ref_type === "order_payout" ? "Comprobante del pago recibido" : "Comprobante"}
+                    {selected.ref_type === "order_payout" ? t("myTransactions.detail.payoutProof") : t("myTransactions.detail.proof")}
                   </div>
                   <a href={selected.proof_image} target="_blank" rel="noreferrer" className="block border border-white/10 bg-[#0a0a0a] p-2">
-                    <img src={selected.proof_image} alt="Comprobante" className="w-full max-h-96 object-contain bg-black"
+                    <img src={selected.proof_image} alt={t("myTransactions.detail.proof")} className="w-full max-h-96 object-contain bg-black"
                       onError={(e) => { e.currentTarget.style.display = "none"; }} />
                   </a>
                 </div>
               )}
               {selected.direction === "out" && selected.ref_type !== "order_payout" && (
                 <div className="border border-dashed border-white/10 p-4 text-center text-xs text-neutral-500">
-                  <X className="w-4 h-4 inline mr-1" /> Las salidas no incluyen comprobante de transferencia entrante.
+                  <X className="w-4 h-4 inline mr-1" /> {t("myTransactions.detail.outflowsHaveNoProof")}
                 </div>
               )}
             </div>

@@ -395,8 +395,9 @@
     "userIdCopied": "User ID copiado",
     "kycStatus": {
       "not_started": "No iniciada",
-      "pending_review": "En revisión",
-      "approved": "Verificada",
+      "pending": "En revisión",
+      "needs_more_info": "Requiere más info",
+      "verified": "Verificada",
       "rejected": "Rechazada"
     },
     "email": {
@@ -463,6 +464,60 @@
     "twofaOff": "2FA no configurado",
     "securityHelperBody": "Gestiona tu autenticación de dos factores, cambia tu contraseña y consulta las sesiones activas.",
     "openSecurity": "Abrir seguridad"
+  },
+  "myTransactions": {
+    "breadcrumb": "/ Mi Historial",
+    "title": "Mis Transacciones",
+    "subtitle": "Registro de tus entradas (transferencias recibidas) y salidas (retiros pagados) con titulares verificados.",
+    "in": "Entradas",
+    "out": "Salidas",
+    "net": "Neto",
+    "loadError": "Error al cargar transacciones",
+    "exportFilename": "mis_transacciones",
+    "exportedToast": "Exportado ({{kind}})",
+    "exportError": "Error al exportar {{kind}}",
+    "filters": {
+      "direction": "Dirección",
+      "all": "Todas",
+      "onlyIn": "Solo Entradas ↓",
+      "onlyOut": "Solo Salidas ↑",
+      "currency": "Moneda",
+      "since": "Desde",
+      "until": "Hasta",
+      "min": "Mín.",
+      "max": "Máx.",
+      "clear": "limpiar"
+    },
+    "table": {
+      "date": "Fecha",
+      "type": "Tipo",
+      "currency": "Moneda",
+      "amount": "Monto",
+      "holder": "Titular",
+      "method": "Método",
+      "status": "Estado",
+      "loading": "Cargando…",
+      "empty": "Aún no tienes transacciones registradas",
+      "emptyFiltered": "Sin resultados para los filtros aplicados",
+      "in": "Entrada",
+      "out": "Salida"
+    },
+    "detail": {
+      "title": "Detalle",
+      "currency": "Moneda",
+      "amount": "Monto",
+      "holder": "Titular",
+      "method": "Método",
+      "status": "Estado",
+      "date": "Fecha",
+      "withdrawalId": "ID Retiro",
+      "orderId": "ID Orden",
+      "senderData": "Datos del envío",
+      "recipientData": "Datos del beneficiario",
+      "payoutProof": "Comprobante del pago recibido",
+      "proof": "Comprobante",
+      "outflowsHaveNoProof": "Las salidas no incluyen comprobante de transferencia entrante."
+    }
   },
   "accountStatus": {
     "underReview": {

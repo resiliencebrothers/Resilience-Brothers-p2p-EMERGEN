@@ -1,4 +1,11 @@
-"""Email notifications via Resend."""
+"""Email notifications via Resend.
+
+iter68 — customer-facing emails and templates are localized based on the
+recipient's `preferred_language` (see routes/profile.py PATCH /profile/language).
+The `_L(es, en, lang)` helper collapses inline text swaps into a single line.
+Admin-recipient emails (monthly audit, monthly revenue) stay in Spanish since
+the ops team is Spanish-speaking.
+"""
 import os
 import base64
 import logging
@@ -13,7 +20,13 @@ REPLY_TO = os.environ.get("EMAIL_REPLY_TO", "")
 APP_URL = os.environ.get("APP_PUBLIC_URL", "")
 
 
-def _base_template(title: str, body_html: str) -> str:
+def _L(es: str, en: str, lang: str = "es") -> str:
+    """Pick the localized string. `en-GB`, `en-US`, `EN` all resolve to English;
+    anything else (including empty) falls back to Spanish."""
+    return en if (lang or "").lower().startswith("en") else es
+
+
+def _base_template(title: str, body_html: str, lang: str = "es") -> str:
     logo_url = f"{APP_URL}/branding/logo-300.png" if APP_URL else ""
     logo_html = f'<img src="{logo_url}" alt="Resilience Brothers" width="48" height="48" style="display:block;border:0;outline:none;">' if logo_url else '<span style="display:inline-block;background:#8B5CF6;color:#000;font-weight:900;padding:6px 10px;letter-spacing:0.5px;">RB</span>'
     return f"""<!DOCTYPE html>
@@ -26,7 +39,7 @@ def _base_template(title: str, body_html: str) -> str:
           <table width="100%"><tr>
             <td style="vertical-align:middle;">{logo_html}</td>
             <td style="vertical-align:middle;padding-left:12px;"><span style="font-weight:800;color:#fff;font-size:14px;letter-spacing:1px;">RESILIENCE BROTHERS</span></td>
-            <td align="right"><span style="font-size:10px;color:#A3A3A3;letter-spacing:2px;text-transform:uppercase;">P2P · Notification</span></td>
+            <td align="right"><span style="font-size:10px;color:#A3A3A3;letter-spacing:2px;text-transform:uppercase;">{_L("P2P · Notificación", "P2P · Notification", lang)}</span></td>
           </tr></table>
         </td></tr>
         <tr><td style="padding:32px;">
@@ -34,7 +47,11 @@ def _base_template(title: str, body_html: str) -> str:
           {body_html}
         </td></tr>
         <tr><td style="padding:20px 32px;border-top:1px solid rgba(255,255,255,0.08);background:#0c0c0c;">
-          <p style="margin:0;color:#A3A3A3;font-size:12px;line-height:1.5;">Este mensaje fue enviado por Resilience Brothers · Plataforma P2P de comercio global. Si tienes preguntas, responde directamente a este correo.</p>
+          <p style="margin:0;color:#A3A3A3;font-size:12px;line-height:1.5;">{_L(
+              "Este mensaje fue enviado por Resilience Brothers · Plataforma P2P de comercio global. Si tienes preguntas, responde directamente a este correo.",
+              "This message was sent by Resilience Brothers · Global P2P trading platform. If you have questions, reply directly to this email.",
+              lang,
+          )}</p>
         </td></tr>
       </table>
       <p style="color:#525252;font-size:11px;margin-top:16px;letter-spacing:1px;text-transform:uppercase;">© Resilience Brothers · Global Trade Infrastructure</p>
@@ -153,226 +170,234 @@ def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: 
 def _app_url() -> str:
     return APP_URL.rstrip("/") if APP_URL else "https://p2p.resiliencebrothers.com"
 
-def notify_email_change_code(to: str, name: str, code: str) -> bool:
+def notify_email_change_code(to: str, name: str, code: str, lang: str = "es") -> bool:
     """iter55.20 — send OTP to the NEW email during profile email change."""
-    subject = "Confirma tu nuevo email · Resilience Brothers"
+    subject = _L("Confirma tu nuevo email · Resilience Brothers",
+                 "Confirm your new email · Resilience Brothers", lang)
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">
-        Hola {name or 'usuario'} — recibimos una solicitud para actualizar tu email
-        a esta dirección. Ingresa el siguiente código en la plataforma para confirmar.
+        {_L(f"Hola {name or 'usuario'} — recibimos una solicitud para actualizar tu email a esta dirección. Ingresa el siguiente código en la plataforma para confirmar.",
+            f"Hi {name or 'user'} — we received a request to update your email to this address. Enter the following code on the platform to confirm.", lang)}
       </p>
       <div style="background:#0a0a0a;border:1px solid rgba(234,179,8,0.4);padding:24px;text-align:center;">
-        <div style="color:#8B5CF6;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Código de confirmación</div>
+        <div style="color:#8B5CF6;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">{_L("Código de confirmación", "Confirmation code", lang)}</div>
         <div style="color:#fff;font-family:monospace;font-size:32px;letter-spacing:8px;font-weight:bold;">{code}</div>
       </div>
       <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
-        El código expira en 15 minutos. Si no solicitaste este cambio, ignora
-        este mensaje — tu email actual seguirá activo.
+        {_L("El código expira en 15 minutos. Si no solicitaste este cambio, ignora este mensaje — tu email actual seguirá activo.",
+            "The code expires in 15 minutes. If you didn't request this change, ignore this message — your current email will stay active.", lang)}
       </p>
     """
-    return _send(to, subject, _base_template("Confirma tu nuevo email", body))
+    return _send(to, subject, _base_template(_L("Confirma tu nuevo email", "Confirm your new email", lang), body, lang))
 
 
-def notify_email_change_alert(to: str, name: str, new_email_masked: str) -> bool:
+def notify_email_change_alert(to: str, name: str, new_email_masked: str, lang: str = "es") -> bool:
     """iter55.20 — heads-up to the OLD email so silent takeovers get noticed."""
-    subject = "Alerta de seguridad · Cambio de email en curso"
+    subject = _L("Alerta de seguridad · Cambio de email en curso",
+                 "Security alert · Email change in progress", lang)
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
-        Hola {name or 'usuario'} — se solicitó cambiar el email de tu cuenta a
+        {_L(f"Hola {name or 'usuario'} — se solicitó cambiar el email de tu cuenta a",
+            f"Hi {name or 'user'} — a request was made to change your account email to", lang)}
         <strong style="color:#fff;font-family:monospace;">{new_email_masked}</strong>.
       </p>
       <div style="background:#0a0a0a;border:1px solid rgba(239,68,68,0.4);padding:18px;">
-        <p style="margin:0 0 10px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">¿No fuiste tú?</p>
+        <p style="margin:0 0 10px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("¿No fuiste tú?", "Wasn't you?", lang)}</p>
         <p style="margin:0;color:#A3A3A3;font-size:13px;line-height:1.6;">
-          Si <strong style="color:#fff;">no</strong> reconoces esta solicitud, cambia
-          tu contraseña de inmediato y contacta al equipo. El cambio no se aplicará
-          hasta que se confirme el código enviado al nuevo email.
+          {_L("Si <strong style='color:#fff;'>no</strong> reconoces esta solicitud, cambia tu contraseña de inmediato y contacta al equipo. El cambio no se aplicará hasta que se confirme el código enviado al nuevo email.",
+              "If you do <strong style='color:#fff;'>not</strong> recognize this request, change your password immediately and contact the team. The change will not apply until the code sent to the new email is confirmed.", lang)}
         </p>
       </div>
       <p style="color:#A3A3A3;font-size:12px;margin:22px 0 0;">
-        Si sí fuiste tú, ignora este correo — recibirás una notificación cuando el cambio se complete.
+        {_L("Si sí fuiste tú, ignora este correo — recibirás una notificación cuando el cambio se complete.",
+            "If it was you, ignore this email — you'll get a notification when the change completes.", lang)}
       </p>
     """
-    return _send(to, subject, _base_template("Alerta de seguridad", body))
+    return _send(to, subject, _base_template(_L("Alerta de seguridad", "Security alert", lang), body, lang))
 
 
-def notify_email_change_success(to: str, name: str, other_email_masked: str) -> bool:
+def notify_email_change_success(to: str, name: str, other_email_masked: str, lang: str = "es") -> bool:
     """iter55.20 — post-change confirmation, sent to both old and new inbox."""
-    subject = "Email actualizado · Resilience Brothers"
+    subject = _L("Email actualizado · Resilience Brothers",
+                 "Email updated · Resilience Brothers", lang)
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
-        Hola {name or 'usuario'} — el email de tu cuenta fue actualizado correctamente.
-        La otra dirección asociada es <strong style="color:#fff;font-family:monospace;">{other_email_masked}</strong>.
+        {_L(f"Hola {name or 'usuario'} — el email de tu cuenta fue actualizado correctamente. La otra dirección asociada es",
+            f"Hi {name or 'user'} — your account email was updated successfully. The other address on file is", lang)}
+        <strong style="color:#fff;font-family:monospace;">{other_email_masked}</strong>.
       </p>
       <div style="background:#0a0a0a;border:1px solid rgba(34,197,94,0.4);padding:18px;">
-        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">Cambio aplicado</p>
+        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Cambio aplicado", "Change applied", lang)}</p>
       </div>
       <p style="color:#A3A3A3;font-size:13px;margin:22px 0 0;line-height:1.6;">
-        A partir de ahora recibirás todos los avisos en tu email actualizado.
-        Si no reconoces este cambio, contacta al equipo de soporte de inmediato.
+        {_L("A partir de ahora recibirás todos los avisos en tu email actualizado. Si no reconoces este cambio, contacta al equipo de soporte de inmediato.",
+            "From now on you'll receive all notices at your updated email. If you don't recognize this change, contact support immediately.", lang)}
       </p>
     """
-    return _send(to, subject, _base_template("Email actualizado", body))
+    return _send(to, subject, _base_template(_L("Email actualizado", "Email updated", lang), body, lang))
 
 
-def notify_phone_change_approved(to: str, name: str, new_phone_masked: str) -> bool:
+def notify_phone_change_approved(to: str, name: str, new_phone_masked: str, lang: str = "es") -> bool:
     """iter55.20b — inform the client their phone-change request was approved."""
-    subject = "Tu nuevo teléfono fue verificado · Resilience Brothers"
+    subject = _L("Tu nuevo teléfono fue verificado · Resilience Brothers",
+                 "Your new phone was verified · Resilience Brothers", lang)
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
-        Hola {name or 'usuario'} — el equipo aprobó tu solicitud de cambio de
-        teléfono. A partir de ahora recibirás los avisos SMS en
+        {_L(f"Hola {name or 'usuario'} — el equipo aprobó tu solicitud de cambio de teléfono. A partir de ahora recibirás los avisos SMS en",
+            f"Hi {name or 'user'} — the team approved your phone-change request. From now on you'll receive SMS notices at", lang)}
         <strong style="color:#fff;font-family:monospace;">{new_phone_masked}</strong>.
       </p>
       <div style="background:#0a0a0a;border:1px solid rgba(34,197,94,0.4);padding:18px;">
-        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">Cambio aplicado</p>
+        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Cambio aplicado", "Change applied", lang)}</p>
       </div>
       <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
-        Si <strong style="color:#fff;">no</strong> reconoces este cambio, contacta al equipo de
-        soporte de inmediato — el número recién verificado podría permitir
-        recuperar la cuenta.
+        {_L("Si <strong style='color:#fff;'>no</strong> reconoces este cambio, contacta al equipo de soporte de inmediato — el número recién verificado podría permitir recuperar la cuenta.",
+            "If you do <strong style='color:#fff;'>not</strong> recognize this change, contact support immediately — the newly verified number could allow account recovery.", lang)}
       </p>
     """
-    return _send(to, subject, _base_template("Teléfono verificado", body))
+    return _send(to, subject, _base_template(_L("Teléfono verificado", "Phone verified", lang), body, lang))
 
 
 def notify_phone_change_rejected(to: str, name: str, new_phone_masked: str,
-                                  reason: str) -> bool:
+                                  reason: str, lang: str = "es") -> bool:
     """iter55.20b — inform the client their phone-change request was rejected."""
-    subject = "Solicitud de cambio de teléfono rechazada · Resilience Brothers"
-    safe_reason = (reason or "").strip()[:400] or "Sin motivo especificado"
+    subject = _L("Solicitud de cambio de teléfono rechazada · Resilience Brothers",
+                 "Phone-change request rejected · Resilience Brothers", lang)
+    safe_reason = (reason or "").strip()[:400] or _L("Sin motivo especificado", "No reason provided", lang)
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
-        Hola {name or 'usuario'} — el equipo revisó tu solicitud de cambio de
-        teléfono a <strong style="color:#fff;font-family:monospace;">{new_phone_masked}</strong>
-        y decidió no aplicarlo por ahora. Tu número actual sigue activo.
+        {_L(f"Hola {name or 'usuario'} — el equipo revisó tu solicitud de cambio de teléfono a",
+            f"Hi {name or 'user'} — the team reviewed your phone-change request to", lang)}
+        <strong style="color:#fff;font-family:monospace;">{new_phone_masked}</strong>
+        {_L("y decidió no aplicarlo por ahora. Tu número actual sigue activo.",
+            "and decided not to apply it for now. Your current number is still active.", lang)}
       </p>
       <div style="background:#0a0a0a;border:1px solid rgba(239,68,68,0.4);padding:18px;">
-        <p style="margin:0 0 8px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">Motivo</p>
+        <p style="margin:0 0 8px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Motivo", "Reason", lang)}</p>
         <p style="margin:0;color:#fff;font-size:13px;line-height:1.6;">{safe_reason}</p>
       </div>
       <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
-        Puedes volver a solicitar el cambio desde tu perfil aportando la
-        documentación de respaldo que el equipo indique, o contactar a soporte
-        para cualquier duda.
+        {_L("Puedes volver a solicitar el cambio desde tu perfil aportando la documentación de respaldo que el equipo indique, o contactar a soporte para cualquier duda.",
+            "You can request the change again from your profile with the supporting documentation the team requests, or contact support for any questions.", lang)}
       </p>
     """
-    return _send(to, subject, _base_template("Cambio de teléfono rechazado", body))
+    return _send(to, subject, _base_template(_L("Cambio de teléfono rechazado", "Phone change rejected", lang), body, lang))
 
 
-def notify_email_verification(to: str, name: str, token: str) -> bool:
+def notify_email_verification(to: str, name: str, token: str, lang: str = "es") -> bool:
     link = f"{_app_url()}/auth/verify-email/{token}"
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 24px;">
-        ¡Hola {name or 'usuario'}! 👋<br><br>
-        Gracias por crear tu cuenta en Resilience Brothers. Para empezar a operar
-        necesitamos confirmar que este correo te pertenece.
+        {_L(f"¡Hola {name or 'usuario'}! 👋<br><br>Gracias por crear tu cuenta en Resilience Brothers. Para empezar a operar necesitamos confirmar que este correo te pertenece.",
+            f"Hi {name or 'user'}! 👋<br><br>Thanks for creating your account at Resilience Brothers. To start trading we need to confirm that this email belongs to you.", lang)}
       </p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr><td align="center" style="padding:8px 0 24px;">
           <a href="{link}" style="background:#8B5CF6;color:#000;text-decoration:none;
              padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
-             display:inline-block;">VERIFICAR MI EMAIL</a>
+             display:inline-block;">{_L("VERIFICAR MI EMAIL", "VERIFY MY EMAIL", lang)}</a>
         </td></tr>
       </table>
-      <p style="color:#666;font-size:12px;margin:0 0 6px;">El enlace expira en 24 horas.</p>
-      <p style="color:#666;font-size:11px;word-break:break-all;">O copia: {link}</p>
+      <p style="color:#666;font-size:12px;margin:0 0 6px;">{_L("El enlace expira en 24 horas.", "The link expires in 24 hours.", lang)}</p>
+      <p style="color:#666;font-size:11px;word-break:break-all;">{_L("O copia:", "Or copy:", lang)} {link}</p>
     """
-    return _send(to, "Verifica tu correo · Resilience Brothers",
-                 _base_template("Verifica tu cuenta", body))
+    return _send(to, _L("Verifica tu correo · Resilience Brothers", "Verify your email · Resilience Brothers", lang),
+                 _base_template(_L("Verifica tu cuenta", "Verify your account", lang), body, lang))
 
 
-def notify_password_reset(to: str, name: str, token: str) -> bool:
+def notify_password_reset(to: str, name: str, token: str, lang: str = "es") -> bool:
     link = f"{_app_url()}/auth/reset-password/{token}"
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 24px;">
-        Hola {name or 'usuario'},<br><br>
-        Recibimos una solicitud para restablecer la contraseña de tu cuenta en
-        Resilience Brothers. Si fuiste tú, haz clic abajo. Si no, ignora este correo.
+        {_L(f"Hola {name or 'usuario'},<br><br>Recibimos una solicitud para restablecer la contraseña de tu cuenta en Resilience Brothers. Si fuiste tú, haz clic abajo. Si no, ignora este correo.",
+            f"Hi {name or 'user'},<br><br>We received a request to reset your Resilience Brothers account password. If it was you, click below. If not, ignore this email.", lang)}
       </p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr><td align="center" style="padding:8px 0 24px;">
           <a href="{link}" style="background:#8B5CF6;color:#000;text-decoration:none;
              padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
-             display:inline-block;">CREAR NUEVA CONTRASEÑA</a>
+             display:inline-block;">{_L("CREAR NUEVA CONTRASEÑA", "CREATE NEW PASSWORD", lang)}</a>
         </td></tr>
       </table>
-      <p style="color:#666;font-size:12px;margin:0 0 6px;">El enlace expira en 2 horas.</p>
-      <p style="color:#666;font-size:11px;word-break:break-all;">O copia: {link}</p>
+      <p style="color:#666;font-size:12px;margin:0 0 6px;">{_L("El enlace expira en 2 horas.", "The link expires in 2 hours.", lang)}</p>
+      <p style="color:#666;font-size:11px;word-break:break-all;">{_L("O copia:", "Or copy:", lang)} {link}</p>
     """
-    return _send(to, "Restablecer contraseña · Resilience Brothers",
-                 _base_template("Recuperar contraseña", body))
+    return _send(to, _L("Restablecer contraseña · Resilience Brothers", "Reset your password · Resilience Brothers", lang),
+                 _base_template(_L("Recuperar contraseña", "Recover password", lang), body, lang))
 
 
-def notify_password_changed(to: str, name: str) -> bool:
+def notify_password_changed(to: str, name: str, lang: str = "es") -> bool:
     """iter55.30 — post-hoc security confirmation sent to the account owner
-    right after `/api/profile/password/change` succeeds. Purpose: give the
-    user a paper trail so an unauthorized change (session hijack, stolen
-    device) surfaces immediately."""
+    right after `/api/profile/password/change` succeeds."""
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">
-        Hola {name or 'usuario'},<br><br>
-        La contraseña de tu cuenta en <strong style="color:#fff;">Resilience Brothers</strong>
-        fue actualizada correctamente. Todas tus otras sesiones fueron cerradas por seguridad.
+        {_L(f"Hola {name or 'usuario'},<br><br>La contraseña de tu cuenta en <strong style='color:#fff;'>Resilience Brothers</strong> fue actualizada correctamente. Todas tus otras sesiones fueron cerradas por seguridad.",
+            f"Hi {name or 'user'},<br><br>Your <strong style='color:#fff;'>Resilience Brothers</strong> account password was updated successfully. All your other sessions were closed for security.", lang)}
       </p>
       <div style="border-left:3px solid #EF4444;background:#1a0a0a;padding:14px 18px;margin:12px 0 22px;">
         <p style="color:#EF4444;font-size:13px;font-weight:bold;margin:0 0 6px;">
-          ¿No fuiste tú?
+          {_L("¿No fuiste tú?", "Wasn't you?", lang)}
         </p>
         <p style="color:#A3A3A3;font-size:12px;margin:0;line-height:1.5;">
-          Cambia tu contraseña de inmediato desde la opción "¿Olvidaste tu contraseña?"
-          y contacta a soporte. Nunca compartimos códigos ni contraseñas por email.
+          {_L('Cambia tu contraseña de inmediato desde la opción "¿Olvidaste tu contraseña?" y contacta a soporte. Nunca compartimos códigos ni contraseñas por email.',
+              'Change your password immediately via the "Forgot password?" option and contact support. We never share codes or passwords via email.', lang)}
         </p>
       </div>
       <p style="color:#666;font-size:11px;margin:0;">
-        Fecha de cambio: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
+        {_L("Fecha de cambio:", "Change date:", lang)} {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}
       </p>
     """
-    return _send(to, "Tu contraseña fue actualizada · Resilience Brothers",
-                 _base_template("Contraseña cambiada", body))
+    return _send(to, _L("Tu contraseña fue actualizada · Resilience Brothers", "Your password was updated · Resilience Brothers", lang),
+                 _base_template(_L("Contraseña cambiada", "Password changed", lang), body, lang))
 
 
 def notify_order_approved(order: dict, user: dict) -> bool:
-    name = user.get("name") or "Cliente"
-    subject = f"Tu orden #{order['id'][:8]} fue aprobada"
+    lang = user.get("preferred_language") or "es"
+    name = user.get("name") or _L("Cliente", "Customer", lang)
+    subject = _L(f"Tu orden #{order['id'][:8]} fue aprobada",
+                 f"Your order #{order['id'][:8]} was approved", lang)
     rows = f"""
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Par</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['from_code']} → {order['to_code']}</td></tr>
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Enviaste</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['amount_from']} {order['from_code']}</td></tr>
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Recibes</td><td style="padding:6px 0;color:#8B5CF6;font-family:monospace;text-align:right;font-weight:bold;">{order['amount_to']} {order['to_code']}</td></tr>
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Tasa aplicada</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['rate_applied']}</td></tr>
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Comisión</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['commission_percent']}%</td></tr>
-      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Método entrega</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['delivery_method']}</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Par", "Pair", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['from_code']} → {order['to_code']}</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Enviaste", "You sent", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['amount_from']} {order['from_code']}</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Recibes", "You receive", lang)}</td><td style="padding:6px 0;color:#8B5CF6;font-family:monospace;text-align:right;font-weight:bold;">{order['amount_to']} {order['to_code']}</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Tasa aplicada", "Applied rate", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['rate_applied']}</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Comisión", "Commission", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['commission_percent']}%</td></tr>
+      <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Método entrega", "Delivery method", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['delivery_method']}</td></tr>
     """
-    note = f'<div style="background:#0a0a0a;border-left:3px solid #8B5CF6;padding:12px 16px;margin-top:20px;"><p style="margin:0;color:#fff;font-size:13px;">Nota del equipo: {order.get("admin_note","")}</p></div>' if order.get("admin_note") else ""
+    note = f'<div style="background:#0a0a0a;border-left:3px solid #8B5CF6;padding:12px 16px;margin-top:20px;"><p style="margin:0;color:#fff;font-size:13px;">{_L("Nota del equipo:", "Team note:", lang)} {order.get("admin_note","")}</p></div>' if order.get("admin_note") else ""
+    approved_word = _L("APROBADA", "APPROVED", lang)
     body = f"""
-      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">Hola <strong style="color:#fff;">{name}</strong>, tu pago fue verificado por nuestro equipo contable. Tu orden ya está <span style="color:#22C55E;font-weight:bold;">APROBADA</span>.</p>
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">{_L(f"Hola <strong style='color:#fff;'>{name}</strong>, tu pago fue verificado por nuestro equipo contable. Tu orden ya está", f"Hi <strong style='color:#fff;'>{name}</strong>, your payment has been verified by our accounting team. Your order is now", lang)} <span style="color:#22C55E;font-weight:bold;">{approved_word}</span>.</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:20px;">
         {rows}
       </table>
       {note}
-      <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">Procesaremos la entrega según el método seleccionado. Recibirás otra notificación cuando se complete.</p>
-      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">VER ORDEN →</a>
+      <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">{_L("Procesaremos la entrega según el método seleccionado. Recibirás otra notificación cuando se complete.", "We'll process the delivery via the selected method. You'll receive another notification when it completes.", lang)}</p>
+      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">{_L("VER ORDEN →", "VIEW ORDER →", lang)}</a>
     """
-    return _send(user.get("email", ""), subject, _base_template("Orden aprobada", body))
+    return _send(user.get("email", ""), subject, _base_template(_L("Orden aprobada", "Order approved", lang), body, lang))
 
 
 def notify_order_rejected(order: dict, user: dict) -> bool:
-    name = user.get("name") or "Cliente"
-    subject = f"Tu orden #{order['id'][:8]} requiere atención"
-    reason = order.get("admin_note") or "Sin nota adicional"
+    lang = user.get("preferred_language") or "es"
+    name = user.get("name") or _L("Cliente", "Customer", lang)
+    subject = _L(f"Tu orden #{order['id'][:8]} requiere atención",
+                 f"Your order #{order['id'][:8]} needs attention", lang)
+    reason = order.get("admin_note") or _L("Sin nota adicional", "No additional note", lang)
+    rejected_word = _L("RECHAZADA", "REJECTED", lang)
     body = f"""
-      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">Hola <strong style="color:#fff;">{name}</strong>, tu orden no pudo ser procesada en este momento.</p>
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 24px;">{_L(f"Hola <strong style='color:#fff;'>{name}</strong>, tu orden no pudo ser procesada en este momento.", f"Hi <strong style='color:#fff;'>{name}</strong>, your order could not be processed at this time.", lang)}</p>
       <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:20px;">
-        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Orden</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">#{order['id'][:8]}</td></tr>
-        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Par</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['from_code']} → {order['to_code']}</td></tr>
-        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Monto</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['amount_from']} {order['from_code']}</td></tr>
-        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">Estado</td><td style="padding:6px 0;color:#EF4444;font-family:monospace;text-align:right;font-weight:bold;">RECHAZADA</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Orden", "Order", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">#{order['id'][:8]}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Par", "Pair", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['from_code']} → {order['to_code']}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Monto", "Amount", lang)}</td><td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{order['amount_from']} {order['from_code']}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{_L("Estado", "Status", lang)}</td><td style="padding:6px 0;color:#EF4444;font-family:monospace;text-align:right;font-weight:bold;">{rejected_word}</td></tr>
       </table>
       <div style="background:#0a0a0a;border-left:3px solid #EF4444;padding:12px 16px;margin-top:20px;">
-        <p style="margin:0 0 4px;color:#A3A3A3;font-size:12px;text-transform:uppercase;letter-spacing:1px;">Motivo</p>
+        <p style="margin:0 0 4px;color:#A3A3A3;font-size:12px;text-transform:uppercase;letter-spacing:1px;">{_L("Motivo", "Reason", lang)}</p>
         <p style="margin:0;color:#fff;font-size:13px;">{reason}</p>
       </div>
-      <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">Si crees que es un error, responde a este correo o crea una nueva orden con la información corregida.</p>
-      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">REVISAR ORDEN →</a>
+      <p style="margin:24px 0 8px;color:#A3A3A3;font-size:13px;">{_L("Si crees que es un error, responde a este correo o crea una nueva orden con la información corregida.", "If you think this is an error, reply to this email or create a new order with corrected information.", lang)}</p>
+      <a href="{APP_URL}/dashboard/orders" style="display:inline-block;margin-top:16px;background:#8B5CF6;color:#000;font-weight:bold;text-decoration:none;padding:12px 24px;letter-spacing:0.5px;">{_L("REVISAR ORDEN →", "REVIEW ORDER →", lang)}</a>
     """
-    return _send(user.get("email", ""), subject, _base_template("Orden rechazada", body))
+    return _send(user.get("email", ""), subject, _base_template(_L("Orden rechazada", "Order rejected", lang), body, lang))

@@ -1,14 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { Check, Globe2 } from "lucide-react";
+import { syncLanguagePreferenceToServer } from "@/lib/langSync";
 
 /**
  * iter55.33 — Language switcher. Renders 2 pill buttons (Español · English),
  * highlights the active language, and persists the choice via i18next's
  * localStorage detector (`resilience_lang` key).
  *
- * Kept minimal on purpose: the codebase's translations are still partial —
- * this control ships now so users can flip the switch, and each PR going
- * forward adds more keys.
+ * iter67 — Also PATCHes the authenticated user's preference to the backend
+ * so the language follows them across devices (mobile, desktop, incognito).
  */
 export function LanguageSwitcher({ testid = "language-switcher" }) {
   const { t, i18n } = useTranslation();
@@ -22,6 +22,7 @@ export function LanguageSwitcher({ testid = "language-switcher" }) {
   const change = (code) => {
     if (code === current) return;
     i18n.changeLanguage(code);
+    syncLanguagePreferenceToServer(code);
   };
 
   return (

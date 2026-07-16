@@ -395,8 +395,9 @@
     "userIdCopied": "User ID copied",
     "kycStatus": {
       "not_started": "Not started",
-      "pending_review": "Under review",
-      "approved": "Verified",
+      "pending": "Under review",
+      "needs_more_info": "Needs more info",
+      "verified": "Verified",
       "rejected": "Rejected"
     },
     "email": {
@@ -463,6 +464,60 @@
     "twofaOff": "2FA not configured",
     "securityHelperBody": "Manage your two-factor authentication, change your password and view active sessions.",
     "openSecurity": "Open security"
+  },
+  "myTransactions": {
+    "breadcrumb": "/ My History",
+    "title": "My Transactions",
+    "subtitle": "Record of your inflows (received transfers) and outflows (paid withdrawals) with verified holders.",
+    "in": "Inflows",
+    "out": "Outflows",
+    "net": "Net",
+    "loadError": "Error loading transactions",
+    "exportFilename": "my_transactions",
+    "exportedToast": "Exported ({{kind}})",
+    "exportError": "Error exporting {{kind}}",
+    "filters": {
+      "direction": "Direction",
+      "all": "All",
+      "onlyIn": "Only Inflows ↓",
+      "onlyOut": "Only Outflows ↑",
+      "currency": "Currency",
+      "since": "From",
+      "until": "To",
+      "min": "Min.",
+      "max": "Max.",
+      "clear": "clear"
+    },
+    "table": {
+      "date": "Date",
+      "type": "Type",
+      "currency": "Currency",
+      "amount": "Amount",
+      "holder": "Holder",
+      "method": "Method",
+      "status": "Status",
+      "loading": "Loading…",
+      "empty": "You don't have any registered transactions yet.",
+      "emptyFiltered": "No results for the applied filters",
+      "in": "Inflow",
+      "out": "Outflow"
+    },
+    "detail": {
+      "title": "Detail",
+      "currency": "Currency",
+      "amount": "Amount",
+      "holder": "Holder",
+      "method": "Method",
+      "status": "Status",
+      "date": "Date",
+      "withdrawalId": "Withdrawal ID",
+      "orderId": "Order ID",
+      "senderData": "Sender data",
+      "recipientData": "Recipient data",
+      "payoutProof": "Received payment proof",
+      "proof": "Proof",
+      "outflowsHaveNoProof": "Outflows don't include an incoming transfer proof."
+    }
   },
   "accountStatus": {
     "underReview": {

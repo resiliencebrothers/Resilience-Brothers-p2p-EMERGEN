@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import axios from "axios";
+import i18n from "@/i18n";
 import { API } from "@/App";
 import { setSentryUser, captureError } from "@/sentry";
 
@@ -19,6 +20,13 @@ export function AuthProvider({ children }) {
       const res = await axios.get(`${API}/auth/me`, { withCredentials: true });
       setUser(res.data);
       setSentryUser(res.data);
+      // iter67 — Sync UI language with the user's server-side preference so
+      // it follows them across devices. If they haven't picked one yet, we
+      // leave whatever the browser detected in place (won't nag them).
+      const preferred = res.data?.preferred_language;
+      if (preferred && preferred !== (i18n.resolvedLanguage || i18n.language)) {
+        i18n.changeLanguage(preferred);
+      }
     } catch (err) {
       if (err?.response?.status !== 401) {
         captureError(err, { stage: "auth_check" });

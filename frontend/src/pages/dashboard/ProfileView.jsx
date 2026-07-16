@@ -177,8 +177,9 @@ export default function ProfileView() {
 
 const KYC_BADGE = {
   not_started: { labelKey: "profile.kycStatus.not_started", className: "bg-neutral-500/10 text-neutral-400 border-neutral-500/30" },
-  pending_review: { labelKey: "profile.kycStatus.pending_review", className: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30" },
-  approved: { labelKey: "profile.kycStatus.approved", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
+  pending: { labelKey: "profile.kycStatus.pending", className: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30" },
+  needs_more_info: { labelKey: "profile.kycStatus.needs_more_info", className: "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30" },
+  verified: { labelKey: "profile.kycStatus.verified", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
   rejected: { labelKey: "profile.kycStatus.rejected", className: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" },
 };
 
@@ -495,7 +496,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
     } finally { setBusy(false); }
   };
 
-  const willResetKyc = kycStatus === "approved";
+  const willResetKyc = kycStatus === "verified";
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>

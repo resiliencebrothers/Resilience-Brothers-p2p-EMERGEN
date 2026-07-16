@@ -1,4 +1,9 @@
-"""PDF generation for Transactions Registry export (entradas + salidas)."""
+"""PDF generation for Transactions Registry export (entradas + salidas).
+
+iter68 — PDF titles, labels and headers are localized based on the caller's
+`lang` argument. This is critical for English-speaking users who download
+their transactions register from `/dashboard/transactions`.
+"""
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone
@@ -21,63 +26,118 @@ RED = colors.HexColor("#EF4444")
 LOGO_PATH = Path(__file__).parent / "assets" / "logo.png"
 
 
-def _header_footer(canvas, doc):
-    canvas.saveState()
-    w, h = landscape(LETTER)
-    canvas.setFillColor(BG_DARK)
-    canvas.rect(0, 0, w, h, fill=1, stroke=0)
-    canvas.setFillColor(PANEL)
-    canvas.rect(0, h - 64, w, 64, fill=1, stroke=0)
-    if LOGO_PATH.exists():
-        try:
-            canvas.drawImage(str(LOGO_PATH), 32, h - 58, width=46, height=46,
-                             preserveAspectRatio=True, mask='auto')
-        except Exception:
-            pass
-    canvas.setFillColor(TEXT)
-    canvas.setFont("Helvetica-Bold", 12)
-    canvas.drawString(88, h - 28, "RESILIENCE BROTHERS")
-    canvas.setFillColor(TEXT_MUTED)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawString(88, h - 42, "Registro de Transacciones — Contabilidad")
-    canvas.setFillColor(BRAND_PURPLE)
-    canvas.setFont("Helvetica-Bold", 10)
-    canvas.drawRightString(w - 36, h - 28, "TRANSACCIONES")
-    canvas.setFillColor(TEXT_MUTED)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawRightString(w - 36, h - 42, "ENTRADAS · SALIDAS")
-    canvas.drawString(36, 20, f"Generado: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    canvas.drawCentredString(w / 2, 20, "resiliencebrothers.com")
-    canvas.drawRightString(w - 36, 20, f"Página {doc.page}")
-    canvas.setStrokeColor(BORDER)
-    canvas.line(36, 32, w - 36, 32)
-    canvas.restoreState()
+def _is_en(lang: str) -> bool:
+    return (lang or "").lower().startswith("en")
 
 
-def _build_filters_paragraph(filters: dict, style: ParagraphStyle) -> Paragraph:
+def _t(key: str, lang: str) -> str:
+    """Tiny lookup — reportlab-friendly, no external i18n stack."""
+    is_en = _is_en(lang)
+    _STR = {
+        "subtitle": ("Registro de Transacciones — Contabilidad",
+                     "Transactions Registry — Accounting"),
+        "header_tag": ("TRANSACCIONES", "TRANSACTIONS"),
+        "header_sub": ("ENTRADAS · SALIDAS", "INFLOWS · OUTFLOWS"),
+        "generated": ("Generado:", "Generated:"),
+        "page": ("Página", "Page"),
+        "eyebrow": ("/ REGISTRO CONTABLE", "/ ACCOUNTING REGISTER"),
+        "h1": ("Transacciones — Resilience Brothers",
+               "Transactions — Resilience Brothers"),
+        "filters_label": ("Filtros →", "Filters →"),
+        "f_direction": ("Dirección", "Direction"),
+        "f_currency": ("Moneda", "Currency"),
+        "f_holder": ("Titular", "Holder"),
+        "f_since": ("Desde", "From"),
+        "f_until": ("Hasta", "To"),
+        "f_amount": ("Monto", "Amount"),
+        "all": ("todas", "all"),
+        "all_holders": ("todos", "all"),
+        "amount_range_to": ("a", "to"),
+        "totals_title": ("TOTALES POR MONEDA", "TOTALS PER CURRENCY"),
+        "inflows": ("Entradas", "Inflows"),
+        "outflows": ("Salidas", "Outflows"),
+        "net": ("Neto", "Net"),
+        "total_tx": ("Total de transacciones:", "Total transactions:"),
+        "col_date": ("Fecha (UTC)", "Date (UTC)"),
+        "col_type": ("Tipo", "Type"),
+        "col_currency": ("Moneda", "Currency"),
+        "col_amount": ("Monto", "Amount"),
+        "col_holder": ("Titular cuenta", "Account holder"),
+        "col_client": ("Cliente", "Client"),
+        "col_method": ("Método", "Method"),
+        "col_id": ("ID", "ID"),
+        "row_in": ("↓ ENTRADA", "↓ INFLOW"),
+        "row_out": ("↑ SALIDA", "↑ OUTFLOW"),
+    }
+    v = _STR.get(key, ("", ""))
+    return v[1] if is_en else v[0]
+
+
+def _header_footer_factory(lang: str):
+    """Returns a `(canvas, doc)` callback with `lang` baked in — reportlab's
+    callback signature can't accept extra args, so we close over `lang`."""
+    def _draw(canvas, doc):
+        canvas.saveState()
+        w, h = landscape(LETTER)
+        canvas.setFillColor(BG_DARK)
+        canvas.rect(0, 0, w, h, fill=1, stroke=0)
+        canvas.setFillColor(PANEL)
+        canvas.rect(0, h - 64, w, 64, fill=1, stroke=0)
+        if LOGO_PATH.exists():
+            try:
+                canvas.drawImage(str(LOGO_PATH), 32, h - 58, width=46, height=46,
+                                 preserveAspectRatio=True, mask='auto')
+            except Exception:
+                pass
+        canvas.setFillColor(TEXT)
+        canvas.setFont("Helvetica-Bold", 12)
+        canvas.drawString(88, h - 28, "RESILIENCE BROTHERS")
+        canvas.setFillColor(TEXT_MUTED)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawString(88, h - 42, _t("subtitle", lang))
+        canvas.setFillColor(BRAND_PURPLE)
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.drawRightString(w - 36, h - 28, _t("header_tag", lang))
+        canvas.setFillColor(TEXT_MUTED)
+        canvas.setFont("Helvetica", 7)
+        canvas.drawRightString(w - 36, h - 42, _t("header_sub", lang))
+        gen_ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+        canvas.drawString(36, 20, f"{_t('generated', lang)} {gen_ts}")
+        canvas.drawCentredString(w / 2, 20, "resiliencebrothers.com")
+        canvas.drawRightString(w - 36, 20, f"{_t('page', lang)} {doc.page}")
+        canvas.setStrokeColor(BORDER)
+        canvas.line(36, 32, w - 36, 32)
+        canvas.restoreState()
+    return _draw
+
+
+def _build_filters_paragraph(filters: dict, style: ParagraphStyle, lang: str) -> Paragraph:
     """Format the filter bar shown under the PDF title."""
-    f_dir = filters.get("direction") or "todas"
-    f_cur = filters.get("currency") or "todas"
-    f_holder = filters.get("holder") or "todos"
+    all_word = _t("all", lang)
+    all_holders_word = _t("all_holders", lang)
+    f_dir = filters.get("direction") or all_word
+    f_cur = filters.get("currency") or all_word
+    f_holder = filters.get("holder") or all_holders_word
     f_since = filters.get("since") or "—"
     f_until = filters.get("until") or "—"
     f_min = filters.get("min_amount")
     f_max = filters.get("max_amount")
     amount_range = "—"
     if f_min is not None or f_max is not None:
-        amount_range = f"{f_min if f_min is not None else '∞-'} a {f_max if f_max is not None else '+∞'}"
+        to_word = _t("amount_range_to", lang)
+        amount_range = f"{f_min if f_min is not None else '∞-'} {to_word} {f_max if f_max is not None else '+∞'}"
     return Paragraph(
-        f"Filtros → Dirección: <font color='#FFFFFF'><b>{f_dir}</b></font> · "
-        f"Moneda: <font color='#FFFFFF'><b>{f_cur}</b></font> · "
-        f"Titular: <font color='#FFFFFF'><b>{f_holder}</b></font> · "
-        f"Desde: <font color='#FFFFFF'><b>{f_since}</b></font> · "
-        f"Hasta: <font color='#FFFFFF'><b>{f_until}</b></font> · "
-        f"Monto: <font color='#FFFFFF'><b>{amount_range}</b></font>",
+        f"{_t('filters_label', lang)} {_t('f_direction', lang)}: <font color='#FFFFFF'><b>{f_dir}</b></font> · "
+        f"{_t('f_currency', lang)}: <font color='#FFFFFF'><b>{f_cur}</b></font> · "
+        f"{_t('f_holder', lang)}: <font color='#FFFFFF'><b>{f_holder}</b></font> · "
+        f"{_t('f_since', lang)}: <font color='#FFFFFF'><b>{f_since}</b></font> · "
+        f"{_t('f_until', lang)}: <font color='#FFFFFF'><b>{f_until}</b></font> · "
+        f"{_t('f_amount', lang)}: <font color='#FFFFFF'><b>{amount_range}</b></font>",
         style,
     )
 
 
-def _build_totals_paragraph(totals: dict, style: ParagraphStyle) -> Paragraph | None:
+def _build_totals_paragraph(totals: dict, style: ParagraphStyle, lang: str) -> Paragraph | None:
     """Render per-currency in/out/net summary lines, or None when totals are empty."""
     by_cur = totals.get("by_currency", {})
     lines = []
@@ -89,23 +149,23 @@ def _build_totals_paragraph(totals: dict, style: ParagraphStyle) -> Paragraph | 
         net_color = "#22C55E" if net >= 0 else "#EF4444"
         lines.append(
             f"<font color='#8B5CF6'><b>{code}</b></font>: "
-            f"Entradas <font color='#22C55E'>+{in_amt:,.2f}</font> · "
-            f"Salidas <font color='#EF4444'>-{out_amt:,.2f}</font> · "
-            f"Neto <font color='{net_color}'><b>{net:+,.2f}</b></font>"
+            f"{_t('inflows', lang)} <font color='#22C55E'>+{in_amt:,.2f}</font> · "
+            f"{_t('outflows', lang)} <font color='#EF4444'>-{out_amt:,.2f}</font> · "
+            f"{_t('net', lang)} <font color='{net_color}'><b>{net:+,.2f}</b></font>"
         )
     if not lines:
         return None
-    return Paragraph("<b>TOTALES POR MONEDA</b><br/>" + "<br/>".join(lines), style)
+    return Paragraph(f"<b>{_t('totals_title', lang)}</b><br/>" + "<br/>".join(lines), style)
 
 
-def _format_entry_row(e: dict) -> list[str]:
+def _format_entry_row(e: dict, lang: str) -> list[str]:
     """Convert one transaction entry into a table row (8 cols)."""
     try:
         ts = datetime.fromisoformat(e.get("created_at", "")).strftime("%Y-%m-%d %H:%M")
     except Exception:
         ts = e.get("created_at", "—")
     is_in = e.get("direction") == "in"
-    tipo = "↓ ENTRADA" if is_in else "↑ SALIDA"
+    tipo = _t("row_in", lang) if is_in else _t("row_out", lang)
     return [
         ts,
         tipo,
@@ -118,10 +178,14 @@ def _format_entry_row(e: dict) -> list[str]:
     ]
 
 
-def _build_transactions_table(entries: list) -> Table:
+def _build_transactions_table(entries: list, lang: str) -> Table:
     """Assemble the full transactions table with directional colouring on `Tipo`."""
-    headers = ["Fecha (UTC)", "Tipo", "Moneda", "Monto", "Titular cuenta", "Cliente", "Método", "ID"]
-    data = [headers] + [_format_entry_row(e) for e in entries]
+    headers = [
+        _t("col_date", lang), _t("col_type", lang), _t("col_currency", lang),
+        _t("col_amount", lang), _t("col_holder", lang), _t("col_client", lang),
+        _t("col_method", lang), _t("col_id", lang),
+    ]
+    data = [headers] + [_format_entry_row(e, lang) for e in entries]
     if len(data) == 1:
         data.append(["—"] * 8)
 
@@ -152,7 +216,8 @@ def _build_transactions_table(entries: list) -> Table:
     return tbl
 
 
-def generate_transactions_pdf(entries: list, filters: dict, totals: dict) -> bytes:
+def generate_transactions_pdf(entries: list, filters: dict, totals: dict,
+                               lang: str = "es") -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(LETTER),
@@ -165,21 +230,22 @@ def generate_transactions_pdf(entries: list, filters: dict, totals: dict) -> byt
     totals_style = ParagraphStyle('totals', parent=styles['Normal'], textColor=TEXT, fontSize=10, leading=14, spaceAfter=14)
 
     story: list = [
-        Paragraph("/ REGISTRO CONTABLE", label),
-        Paragraph("Transacciones — Resilience Brothers", h1),
-        _build_filters_paragraph(filters, sub),
+        Paragraph(_t("eyebrow", lang), label),
+        Paragraph(_t("h1", lang), h1),
+        _build_filters_paragraph(filters, sub, lang),
     ]
-    totals_para = _build_totals_paragraph(totals, totals_style)
+    totals_para = _build_totals_paragraph(totals, totals_style, lang)
     if totals_para is not None:
         story.append(totals_para)
     story.append(Paragraph(
-        f"Total de transacciones: <font color='#8B5CF6'><b>{len(entries)}</b></font>",
+        f"{_t('total_tx', lang)} <font color='#8B5CF6'><b>{len(entries)}</b></font>",
         sub,
     ))
-    story.append(_build_transactions_table(entries))
+    story.append(_build_transactions_table(entries, lang))
     story.append(Spacer(1, 14))
 
-    doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
+    hf = _header_footer_factory(lang)
+    doc.build(story, onFirstPage=hf, onLaterPages=hf)
     pdf_bytes = buf.getvalue()
     buf.close()
     return pdf_bytes

@@ -137,6 +137,45 @@ async def _aggregate_by_currency(
     return totals
 
 
+async def _aggregate_withdrawals_by_role(
+    default_currency: str = "USD",
+) -> tuple[Dict[str, float], Dict[str, float]]:
+    """iter69 — Split paid withdrawals into two buckets by requesting user's
+    role: `vip` (real VIP users) and `normal` (regular clients — who can also
+    withdraw once they've accumulated a balance via order payouts).
+
+    Returns (vip_totals, normal_totals) grouped by normalised currency code.
+    Withdrawals from unknown / missing users fall into the `normal` bucket
+    (safest for accounting — treat as regular client until proven VIP).
+    """
+    vip_totals: Dict[str, float] = {}
+    normal_totals: Dict[str, float] = {}
+    # Single $lookup pipeline is more efficient than N find_one calls.
+    pipeline = [
+        {"$match": {"status": "paid"}},
+        {"$lookup": {
+            "from": "users",
+            "localField": "user_id",
+            "foreignField": "user_id",
+            "as": "_user",
+        }},
+        {"$project": {
+            "_id": 0,
+            "currency": 1,
+            "amount_usd": 1,
+            "role": {"$arrayElemAt": ["$_user.role", 0]},
+        }},
+    ]
+    async for row in db.withdrawals.aggregate(pipeline):
+        code = _norm_code(row.get("currency")) or default_currency
+        amt = float(row.get("amount_usd") or 0.0)
+        if not code or amt <= 0:
+            continue
+        bucket = vip_totals if row.get("role") == "vip" else normal_totals
+        bucket[code] = bucket.get(code, 0.0) + amt
+    return vip_totals, normal_totals
+
+
 async def _aggregate_manual_adjustments() -> tuple[Dict[str, float], Dict[str, float]]:
     """Return (manual_inflows, manual_outflows) grouped by normalised currency."""
     manual_in: Dict[str, float] = {}
@@ -158,14 +197,17 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
 
     balance[c] = inflows_from_confirmed_orders[c]
                 - outflow_orders[c]  (iter55 — order payouts to clients)
-                - outflows_to_clients_paid[c]  (VIP balance withdrawals)
-                - outflows_company_paid[c]
+                - outflow_clients_vip[c] + outflow_clients_normal[c]  (paid client withdrawals)
+                - outflow_company_paid[c]
                 + manual_inflow[c] - manual_outflow[c]
     `scope` (currency codes) optionally restricts the returned list.
 
     iter55.7 — Every source code is `.strip().upper()`-normalised before
     aggregation so legacy rows with stray whitespace / mixed casing collapse
     into a single row instead of being split (operator report).
+
+    iter69 — Client withdrawals now split by user role. Legacy consumers can
+    still read the combined `outflow_clients` field (sum of vip + normal).
     """
     inflow = await _aggregate_by_currency(
         db.orders,
@@ -177,12 +219,7 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         {"status": "completed", "delivery_method": {"$ne": "accumulate"}},
         "to_code", "amount_to",
     )
-    out_clients = await _aggregate_by_currency(
-        db.withdrawals,
-        {"status": "paid"},
-        "currency", "amount_usd",
-        default_currency="USD",
-    )
+    out_clients_vip, out_clients_normal = await _aggregate_withdrawals_by_role()
     out_company = await _aggregate_by_currency(
         db.company_withdrawals,
         {"status": "paid"},
@@ -190,15 +227,17 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
     )
     manual_in, manual_out = await _aggregate_manual_adjustments()
 
-    codes = (set(inflow) | set(out_orders) | set(out_clients) | set(out_company)
-             | set(manual_in) | set(manual_out))
+    codes = (set(inflow) | set(out_orders) | set(out_clients_vip) | set(out_clients_normal)
+             | set(out_company) | set(manual_in) | set(manual_out))
     rows = []
     for c in sorted(codes):
         if scope and c not in scope:
             continue
         i = inflow.get(c, 0.0)
         oo = out_orders.get(c, 0.0)
-        oc = out_clients.get(c, 0.0)
+        ocv = out_clients_vip.get(c, 0.0)
+        ocn = out_clients_normal.get(c, 0.0)
+        oc = ocv + ocn  # legacy field: total client withdrawals
         ok = out_company.get(c, 0.0)
         mi = manual_in.get(c, 0.0)
         mo = manual_out.get(c, 0.0)
@@ -207,6 +246,8 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
             "inflow": round(i, 4),
             "outflow_orders": round(oo, 4),
             "outflow_clients": round(oc, 4),
+            "outflow_clients_vip": round(ocv, 4),
+            "outflow_clients_normal": round(ocn, 4),
             "outflow_company": round(ok, 4),
             "manual_inflow": round(mi, 4),
             "manual_outflow": round(mo, 4),

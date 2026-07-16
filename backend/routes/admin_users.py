@@ -326,7 +326,10 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
     favorite_currency = top_codes[0]["_id"] if top_codes else None
     favorite_currency_count = top_codes[0]["count"] if top_codes else 0
 
-    kyc_doc = await db.kyc.find_one({"user_id": user_id}, {"_id": 0}) or {}
+    kyc_doc = await db.kyc_verifications.find_one(
+        {"user_id": user_id}, {"_id": 0},
+        sort=[("created_at", -1)],
+    ) or {}
 
     return {
         "user": {
@@ -339,13 +342,13 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
             "phone": user.get("phone", ""),
             "phone_verified": bool(user.get("phone_verified_at")),
             "created_at": user.get("created_at", ""),
-            "twofa_enabled": bool(user.get("twofa_enabled", False)),
+            "twofa_enabled": bool(user.get("totp_enabled", False)),
         },
         "kyc": {
             "status": kyc_doc.get("status", "not_started"),
-            "submitted_at": kyc_doc.get("submitted_at", ""),
+            "submitted_at": kyc_doc.get("created_at", ""),
             "reviewed_at": kyc_doc.get("reviewed_at", ""),
-            "reviewer_notes": kyc_doc.get("reviewer_notes", ""),
+            "reviewer_notes": kyc_doc.get("review_notes", ""),
         },
         "balances": {k: round(float(v), 4) for k, v in balances.items() if float(v) != 0},
         "balance_total_usdt": user.get("vip_balance_usdt", 0.0),

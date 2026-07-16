@@ -285,7 +285,9 @@ async def export_my_transactions_csv(request: Request,
     buf.write(text_buf.getvalue().encode("utf-8-sig"))
     buf.seek(0)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    filename = f"mis_transacciones_{ts}.csv"
+    is_en = (user.get("preferred_language") or "es").startswith("en")
+    filename_base = "my_transactions" if is_en else "mis_transacciones"
+    filename = f"{filename_base}_{ts}.csv"
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8",
@@ -307,16 +309,21 @@ async def export_my_transactions_pdf(request: Request,
         user_id=user["user_id"],
     )
     totals = compute_transaction_totals(items)
+    lang = user.get("preferred_language") or "es"
+    is_en = lang.startswith("en")
+    holder_label = "Client:" if is_en else "Cliente:"
     pdf_bytes = generate_transactions_pdf(
         items,
         {"direction": direction, "currency": currency,
-         "holder": f"Cliente: {user.get('name', '')}",
+         "holder": f"{holder_label} {user.get('name', '')}",
          "since": since, "until": until,
          "min_amount": min_amount, "max_amount": max_amount},
         totals,
+        lang=lang,
     )
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    filename = f"mis_transacciones_{ts}.pdf"
+    filename_base = "my_transactions" if is_en else "mis_transacciones"
+    filename = f"{filename_base}_{ts}.pdf"
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",

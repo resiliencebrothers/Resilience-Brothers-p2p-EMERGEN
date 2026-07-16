@@ -109,7 +109,7 @@ export default function AdminCompanyFunds() {
         <div className="micro-label text-[#8B5CF6] mb-2">/ Fondo de la Empresa</div>
         <h1 className="font-display text-3xl">Capital operativo por moneda</h1>
         <p className="text-neutral-500 text-sm mt-2">
-          Saldo = entradas (órdenes confirmadas + aportes propios) − entregas a clientes (P2P + retiros VIP) − salidas de la empresa.
+          Saldo = entradas (órdenes confirmadas + aportes propios) − entregas a clientes (P2P + retiros de clientes VIP y normales) − salidas de la empresa.
         </p>
       </div>
 
@@ -140,7 +140,15 @@ export default function AdminCompanyFunds() {
                   − Entregado a clientes: {f.outflow_orders.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </div>
               )}
-              <div>− Retiros VIP: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              {(f.outflow_clients_vip ?? 0) > 0 && (
+                <div data-testid={`fund-vip-out-${f.currency}`}>− Retiros VIP: {f.outflow_clients_vip.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              )}
+              {(f.outflow_clients_normal ?? 0) > 0 && (
+                <div data-testid={`fund-normal-out-${f.currency}`}>− Retiros clientes: {f.outflow_clients_normal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              )}
+              {(f.outflow_clients_vip == null && f.outflow_clients_normal == null && (f.outflow_clients ?? 0) > 0) && (
+                <div>− Retiros clientes: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              )}
               <div>− Empresa: {f.outflow_company.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               {f.manual_outflow > 0 && (
                 <div className="text-[#EF4444]/80" data-testid={`fund-manual-out-${f.currency}`}>

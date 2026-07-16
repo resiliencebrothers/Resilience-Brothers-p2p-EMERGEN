@@ -329,6 +329,29 @@ async def auth_logout(request: Request, response: Response) -> Any:
 # Email/password auth (iter16+) — register, verify, resend, login, reset
 # ============================================================
 
+def _detect_request_language(request: Request) -> str:
+    """iter68 — Pick the recipient language for emails sent during signup /
+    forgot-password / resend-verification, when we can't rely on a stored
+    user preference yet.
+
+    Priority:
+      1. ?lang=en query string (frontend can pass its current i18n choice)
+      2. Accept-Language HTTP header (first tag)
+      3. Default to Spanish.
+    """
+    qs_lang = (request.query_params.get("lang") or "").lower()
+    if qs_lang.startswith("en"):
+        return "en"
+    if qs_lang.startswith("es"):
+        return "es"
+    accept = (request.headers.get("Accept-Language") or "").lower()
+    # `Accept-Language: en-GB,en;q=0.9,es;q=0.8` → first tag is `en-GB`
+    first_tag = accept.split(",")[0].split(";")[0].strip()
+    if first_tag.startswith("en"):
+        return "en"
+    return "es"
+
+
 @router.post("/auth/register")
 @limiter.limit("5/hour")
 async def auth_register(payload: AuthRegisterPayload, request: Request, response: Response) -> Any:
@@ -354,6 +377,7 @@ async def auth_register(payload: AuthRegisterPayload, request: Request, response
     if await db.users.count_documents({}) == 0:
         role = "admin"
     verification_token = uuid.uuid4().hex + uuid.uuid4().hex
+    lang = _detect_request_language(request)
     user_doc = {
         "user_id": user_id,
         "email": email,
@@ -373,6 +397,7 @@ async def auth_register(payload: AuthRegisterPayload, request: Request, response
         # Admin/employee role bypasses the check inside _assert_account_active.
         "account_status": "active" if role in ("admin", "employee") else "under_review",
         "under_review_since": None if role in ("admin", "employee") else iso(now_utc()),
+        "preferred_language": lang,
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
@@ -385,13 +410,22 @@ async def auth_register(payload: AuthRegisterPayload, request: Request, response
         except Exception as e:
             logger.error(f"Pending-user notify failed: {e}")
     try:
-        email_service.notify_email_verification(email, payload.name.strip(), verification_token)
+        email_service.notify_email_verification(email, payload.name.strip(),
+                                                 verification_token, lang=lang)
     except Exception as e:
         logger.error(f"Verification email failed: {e}")
+    if lang == "en":
+        message = ("Account created. Check your inbox to verify your email. "
+                   "Afterwards, a staff member must verify your phone manually "
+                   "(may take up to 24 hours) before you can trade on the platform.")
+    else:
+        message = ("Cuenta creada. Revisa tu correo para verificar tu email. "
+                   "Después, un miembro del staff debe verificar tu teléfono manualmente "
+                   "(puede tardar hasta 24 horas) antes de que puedas operar en la plataforma.")
     return {
         "ok": True,
         "email": email,
-        "message": "Cuenta creada. Revisa tu correo para verificar tu email. Después, un miembro del staff debe verificar tu teléfono manualmente (puede tardar hasta 24 horas) antes de que puedas operar en la plataforma.",
+        "message": message,
     }
 
 
@@ -456,7 +490,10 @@ async def auth_resend_verification(payload: AuthResendVerificationPayload, reque
         }},
     )
     try:
-        email_service.notify_email_verification(email, user.get("name", ""), new_token)
+        email_service.notify_email_verification(
+            email, user.get("name", ""), new_token,
+            lang=user.get("preferred_language") or _detect_request_language(request),
+        )
     except Exception as e:
         logger.error(f"Resend verification email failed for {email}: {e}")
     return generic_response
@@ -551,7 +588,10 @@ async def auth_forgot_password(payload: ForgotPasswordPayload, request: Request,
             }},
         )
         try:
-            email_service.notify_password_reset(email, user.get("name", ""), token)
+            email_service.notify_password_reset(
+                email, user.get("name", ""), token,
+                lang=user.get("preferred_language") or _detect_request_language(request),
+            )
         except Exception as e:
             logger.error(f"Password reset email failed: {e}")
     return {"ok": True, "message": "Si la cuenta existe, recibirás un correo con el enlace."}

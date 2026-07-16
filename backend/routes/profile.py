@@ -100,8 +100,9 @@ async def get_my_profile(request: Request) -> Any:
         "country": doc.get("country", ""),
         "role": doc.get("role", ""),
         "created_at": doc.get("created_at", ""),
-        "twofa_enabled": bool(doc.get("twofa_enabled", False)),
+        "twofa_enabled": bool(doc.get("totp_enabled", False)),
         "auth_provider": doc.get("auth_provider", "google"),
+        "preferred_language": doc.get("preferred_language", ""),
         "kyc_status": (kyc or {}).get("status", "not_started"),
         "pending_email_change": {
             "new_email_masked": _redact_email(pending_email.get("new_email", "")),
@@ -152,10 +153,11 @@ async def request_email_change(payload: EmailChangeRequest, request: Request) ->
 
     # Fan-out: code to new inbox + heads-up to old inbox (dual-notification)
     from email_service import notify_email_change_code, notify_email_change_alert
-    notify_email_change_code(new_email, user.get("name", ""), code)
+    lang = user.get("preferred_language") or "es"
+    notify_email_change_code(new_email, user.get("name", ""), code, lang=lang)
     if user.get("email"):
         notify_email_change_alert(user["email"], user.get("name", ""),
-                                   _redact_email(new_email))
+                                   _redact_email(new_email), lang=lang)
     return {
         "ok": True,
         "sent_to_masked": _redact_email(new_email),
@@ -196,11 +198,12 @@ async def confirm_email_change(payload: EmailConfirmRequest, request: Request) -
     )
     # Post-change confirmation to both inboxes (best effort)
     from email_service import notify_email_change_success
+    lang = doc.get("preferred_language") or "es"
     notify_email_change_success(new_email, doc.get("name", ""),
-                                 _redact_email(old_email))
+                                 _redact_email(old_email), lang=lang)
     if old_email:
         notify_email_change_success(old_email, doc.get("name", ""),
-                                     _redact_email(new_email))
+                                     _redact_email(new_email), lang=lang)
     # Audit log — every email change should be traceable
     from audit_log import log_action
     await log_action(db, user, "profile.email_change", "user", user["user_id"],
@@ -305,11 +308,11 @@ async def change_country(payload: CountryChangeRequest, request: Request) -> Any
         sort=[("created_at", -1)],
     )
     kyc_reset = False
-    if kyc and kyc.get("status") == "approved":
+    if kyc and kyc.get("status") == "verified":
         await db.kyc_verifications.update_one(
             {"id": kyc["id"]},
             {"$set": {
-                "status": "pending_review",
+                "status": "pending",
                 "reset_reason": f"country_change:{old_country}→{new_country}",
                 "reset_at": iso(now_utc()),
             }},
@@ -392,6 +395,7 @@ async def approve_phone_change(target_user_id: str, payload: ApprovePhoneChange,
         import email_service
         email_service.notify_phone_change_approved(
             target["email"], target.get("name", ""), _redact_phone(new_phone),
+            lang=target.get("preferred_language") or "es",
         )
     from audit_log import log_action
     await log_action(db, actor, "profile.phone_change_approved", "user", target_user_id,
@@ -440,6 +444,7 @@ async def reject_phone_change(target_user_id: str, payload: RejectPhoneChange,
         email_service.notify_phone_change_rejected(
             target["email"], target.get("name", ""),
             _redact_phone(new_phone), payload.reason,
+            lang=target.get("preferred_language") or "es",
         )
     from audit_log import log_action
     await log_action(db, actor, "profile.phone_change_rejected", "user", target_user_id,
@@ -552,7 +557,10 @@ async def change_password(payload: PasswordChangePayload, request: Request) -> A
     # 7. Best-effort security email to the account owner
     try:
         import email_service
-        email_service.notify_password_changed(user["email"], user.get("name", ""))
+        email_service.notify_password_changed(
+            user["email"], user.get("name", ""),
+            lang=user.get("preferred_language") or "es",
+        )
     except Exception as e:  # noqa: BLE001
         # Do NOT bubble email errors — the password change already succeeded.
         import logging
@@ -571,3 +579,37 @@ async def change_password(payload: PasswordChangePayload, request: Request) -> A
         "ok": True,
         "other_sessions_revoked": revoked.deleted_count,
     }
+
+
+
+# ============================================================
+# PATCH /profile/language — persist UI language preference server-side
+# so it syncs across devices (mobile, desktop, incognito).
+# ============================================================
+
+_SUPPORTED_LANGS = {"es", "en"}
+
+
+class LanguagePreferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    language: str = Field(..., min_length=2, max_length=5)
+
+
+@router.patch("/profile/language")
+async def set_language_preference(
+    payload: LanguagePreferenceRequest, request: Request
+) -> Any:
+    user = await require_user(request)
+    # Normalize `en-GB` → `en`, `es-CU` → `es` to match the frontend's
+    # `load: "languageOnly"` i18next config.
+    lang = payload.language.strip().lower().split("-")[0]
+    if lang not in _SUPPORTED_LANGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Idioma no soportado. Válidos: {sorted(_SUPPORTED_LANGS)}",
+        )
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"preferred_language": lang}},
+    )
+    return {"ok": True, "preferred_language": lang}

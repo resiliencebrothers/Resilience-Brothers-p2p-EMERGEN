@@ -7,7 +7,7 @@ Covers:
 4. Email change with expired code → 400 (mocked expiry)
 5. Email cannot be reused (already taken)
 6. Phone change requires TOTP + creates pending_admin_review
-7. Country change resets an approved KYC to pending_review
+7. Country change resets a verified KYC to pending
 8. Admin can approve/reject pending phone change requests
 9. Rejection reason is required + persisted in audit
 """
@@ -37,8 +37,14 @@ def _sync_db():
 def _cleanup_user_state(user_id: str):
     _sync_db().users.update_one(
         {"user_id": user_id},
-        {"$unset": {"pending_email_change": "", "pending_phone_change": ""}},
+        {
+            "$unset": {"pending_email_change": "", "pending_phone_change": ""},
+            "$set": {"country": "Cuba"},
+        },
     )
+    # Also purge any KYC verifications for this user so tests start from a
+    # deterministic no-KYC state. Individual tests can re-seed as needed.
+    _sync_db().kyc_verifications.delete_many({"user_id": user_id})
 
 
 # ============================================================
@@ -58,6 +64,25 @@ def test_get_profile_me_returns_expected_shape():
 def test_get_profile_me_requires_auth():
     r = requests.get(f"{API}/profile/me")
     assert r.status_code in (401, 403)
+
+
+def test_get_profile_me_twofa_enabled_reads_from_totp_enabled():
+    """Regression: /profile/me previously read from the non-existent `twofa_enabled`
+    field while the real DB field is `totp_enabled`. The API contract keeps the
+    response key `twofa_enabled` (used by ProfileView.jsx), but the source must
+    be the actual `totp_enabled` value.
+    """
+    db = _sync_db()
+    # VIP fixture has totp_enabled=True (see conftest _ensure_test_user_totp).
+    r = requests.get(f"{API}/profile/me", headers=_hdr(VIP_TOKEN))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    doc = db.users.find_one({"user_id": "user_test_vip01"}, {"_id": 0})
+    assert body["twofa_enabled"] == bool(doc.get("totp_enabled")), (
+        f"twofa_enabled response ({body['twofa_enabled']}) must reflect the real "
+        f"totp_enabled DB field ({doc.get('totp_enabled')!r}), not the phantom "
+        f"twofa_enabled field ({doc.get('twofa_enabled')!r})."
+    )
 
 
 # ============================================================
@@ -117,10 +142,10 @@ def test_email_confirm_change_rejects_wrong_code():
 
 def test_email_change_rejects_already_taken_email():
     _cleanup_user_state("user_test_vip01")
-    # regular@example.com belongs to user_test_normal01 (from fixtures)
+    # normal.test@resilience.com belongs to user_test_normal01 (from conftest seed)
     r = requests.post(
         f"{API}/profile/email/request-change", headers=_hdr(VIP_TOKEN),
-        json={"new_email": "regular@example.com", "totp_code": make_vip_totp()},
+        json={"new_email": "normal.test@resilience.com", "totp_code": make_vip_totp()},
     )
     assert r.status_code == 400
     assert "uso" in r.json()["detail"].lower()
@@ -164,16 +189,19 @@ def test_phone_change_requires_2fa():
 
 
 # ============================================================
-# 7. Country change resets APPROVED KYC → pending_review
+# 7. Country change resets VERIFIED KYC → pending
 # ============================================================
 
 def test_country_change_resets_approved_kyc_to_pending():
     _cleanup_user_state("user_test_vip01")
     db = _sync_db()
+    # Ensure no stale KYC rows exist for this user (previous iterations may
+    # have seeded rows with legacy statuses like "approved").
+    db.kyc_verifications.delete_many({"user_id": "user_test_vip01"})
     kid = uuid.uuid4().hex
     db.kyc_verifications.insert_one({
         "id": kid, "user_id": "user_test_vip01",
-        "status": "approved", "created_at": "2026-07-10T00:00:00+00:00",
+        "status": "verified", "created_at": "2026-07-10T00:00:00+00:00",
     })
     r = requests.post(
         f"{API}/profile/country/change", headers=_hdr(VIP_TOKEN),
@@ -185,7 +213,7 @@ def test_country_change_resets_approved_kyc_to_pending():
     assert body["kyc_reset"] is True
 
     updated_kyc = db.kyc_verifications.find_one({"id": kid})
-    assert updated_kyc["status"] == "pending_review"
+    assert updated_kyc["status"] == "pending"
     assert "country_change" in updated_kyc.get("reset_reason", "")
 
     # Cleanup

@@ -1,0 +1,35 @@
+{
+  "summary": "Fase 3 i18n audit for /dashboard/transactions (MyTransactions.jsx). Verified 100% English rendering when resilience_lang=en and 100% Spanish rendering when resilience_lang=es (with VIP session test_session_vip_X). All required strings present on page, filters row, filter Select options (Direction, Currency, From, To, Min., Max., All / Only Inflows / Only Outflows), table columns (Date, Type, Currency, Amount, Holder, Method, Status), and detail modal (title Detail, badge INFLOW/OUTFLOW, Currency/Amount/Holder/Method/Status/Date, Order ID, Sender data, Proof) — plus Spanish equivalents (Mis Transacciones / MI HISTORIAL / Entradas / Salidas / Neto / Dirección / Moneda / Desde / Hasta / Mín. / Máx. / Todas / Solo Entradas / Solo Salidas / Fecha / Tipo / Monto / Titular / Método / Estado / Detalle / ID Orden / Datos del envío / Comprobante). Zero cross-language leaks in either direction. The `totalCount` rename (fix for local var shadowing i18n `t`) is applied and working. Sanity smoke on 9 other dashboard routes (/dashboard, /profile, /orders, /exchange, /marketplace, /kyc, /notifications, /vip, /security) returned HTTP 200 with content in both EN and ES, no runtime error overlays.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/dashboard/transactions detail modal", "issues": ["Pre-existing a11y warning in console: 'Missing Description or aria-describedby for {DialogContent}' — Radix Dialog wants a DialogDescription (or aria-describedby prop). Not an i18n issue."]},
+      {"screen": "/dashboard/transactions detail modal", "issues": ["Pre-existing console error: 'Failed to load resource: net::ERR_INVALID_URL' — triggered when selected.proof_image is an empty string; the <img> src becomes invalid. Should be guarded with `selected.proof_image && selected.proof_image.trim()` before rendering the <img>. Not an i18n issue."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "None for i18n — Fase 3 audit is 100% green.",
+    "OPTIONAL (unrelated to this iteration): Guard <img src={selected.proof_image}> in MyTransactions.jsx line 343 against empty strings to silence the ERR_INVALID_URL console error.",
+    "OPTIONAL (unrelated): Add DialogDescription or aria-describedby to the Detail modal in MyTransactions.jsx (line 279) to silence the Radix a11y warning."
+  ],
+  "critical_code_review_comments": [
+    "MyTransactions.jsx correctly uses `const { t } = useTranslation();` at line 16 and the previous name-shadow (`const t = Number(...)`) has been renamed to `totalCount` at line 53 — verified. `t` is properly included in the useCallback deps array on line 60.",
+    "All 34 hardcoded Spanish strings replaced with t('myTransactions.*') calls. Both en.json and es.json contain a complete `myTransactions` namespace (lines 468-520 in both). File is 360 lines — well under the 700-line threshold; no split needed.",
+    "The download filename in downloadExport still hardcodes 'mis_transacciones_...' (line 78). Cosmetic — not user-visible in UI labels but leaks Spanish into the exported filename in EN mode. Consider `t('myTransactions.exportFilename', 'mis_transacciones')` or a language-aware prefix."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only test)", "frontend": "100% (all Fase 3 i18n cases pass — required English strings present, required Spanish strings present, zero cross-language leaks; 9/9 sanity smoke routes render in both languages)"},
+  "test_credentials": "VIP session cookie session_token=test_session_vip_X -> user_test_vip01 (valid, expires 2026-08-15). Normal session_token=test_session_normal_X -> user_test_normal01 (valid, expires 2026-08-15). Language key in localStorage is `resilience_lang` (values 'en' or 'es'); the review request mentioned `i18nextLng` but the effective key is `resilience_lang` per /app/frontend/src/i18n/index.js (setting both is safe).",
+  "seed_data_creation": "None. Reused pre-existing seeded VIP user (user_test_vip01) which had ~50 real transactions across CUP/USD/USDT/USDTT19H — perfect for verifying totals cards, table rows and detail modals.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Fase 3 MyTransactions.jsx i18n audit is 100% green. Both /dashboard/transactions in EN and ES render every required label correctly. Sessions used: test_session_vip_X (VIP with data) and test_session_normal_X — both live in db.user_sessions, 24h+ expiry. Non-i18n minor issues in MyTransactions.jsx to flag: (1) hardcoded Spanish filename in downloadExport (line 78), (2) empty-string proof_image not guarded (line 343 → ERR_INVALID_URL), (3) DialogContent missing DialogDescription. NEXT FASE: if user reports other client dashboard sections still leaking, candidate pages likely still to audit are /dashboard components consumed inside OverviewView/OrdersView/ExchangeView/MarketplaceView/KYCView/VipView/NotificationsView (Fase 2 confirmed Profile+Security clean; MyTransactions confirmed clean in this Fase 3). Do NOT audit /admin pages — explicitly out of scope per user.",
+  "rca of the issue": "Original bug: /dashboard/transactions rendered Spanish even in English mode because MyTransactions.jsx had 34 hardcoded Spanish literals and never called useTranslation(). Additionally, a local `const t = Number(r.headers['x-total-count'])` inside the load() callback would have shadowed the i18n `t` function had useTranslation been added naively. Fix applied by main agent: (1) imported useTranslation, (2) added `const { t } = useTranslation();` at line 16, (3) renamed local shadowing var to `totalCount` (line 53), (4) added `myTransactions` namespace to both en.json and es.json with sub-namespaces filters/table/detail, (5) replaced all 34 literals with t('myTransactions.*'). Verified via Playwright DOM inspection with EN and ES localStorage overrides — no residual leaks in either direction."
+}

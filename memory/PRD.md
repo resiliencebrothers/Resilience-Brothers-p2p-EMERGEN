@@ -1602,3 +1602,64 @@ Operator asks (13 Feb 2026):
   - **Testing agent verification (iter63 report)**: 100% frontend pass rate — no Spanish leaks in English mode on `/dashboard/profile` or `/dashboard/security`; no English leaks in Spanish mode; smoke checks on `/dashboard`, `/dashboard/kyc`, `/dashboard/orders` clean. Reported minor cosmetic issue: the frontend `kyc_status === 'approved'` check inside `CountryChangeDialog` may need to accept `'verified'` too — flagged for a future micro-fix.
   - **Status**: preview only — user must redeploy for the fix to reach `p2p.resiliencebrothers.com`.
 
+
+
+- **KYC status mismatch fix** (iter64, Feb 15 2026): fixed a **latent bug** where the frontend's `KYC_BADGE` map + `CountryChangeDialog.willResetKyc` check used the fictional status names `not_started | pending_review | approved | rejected` while the backend actually stores `not_started | pending | verified | needs_more_info | rejected` (per `services/kyc.py`). This meant three broken behaviors in production:
+  - The KYC badge in `/dashboard/profile` was rendering the raw i18n key (e.g. `profile.kycStatus.verified`) as label because the map key `approved` never matched the real status `verified`.
+  - The `CountryChangeDialog` "Verification impact" warning banner never appeared for VIP users with an approved KYC (the check `kycStatus === 'approved'` never fired against real value `'verified'`).
+  - The backend endpoint `POST /profile/country/change` at `routes/profile.py:308` also had the same mismatch — it checked `kyc.get("status") == "approved"` and set the new status to `"pending_review"`, so **VIP users with a real approved KYC could change their country WITHOUT their KYC being reset to pending** (a compliance leak: country affects AML risk assessment).
+  - Fix: aligned frontend `KYC_BADGE` (added `needs_more_info` with amber styling), `willResetKyc = kycStatus === "verified"`, i18n keys under `profile.kycStatus.*` renamed to match backend. Backend `POST /profile/country/change` now checks `status == "verified"` and resets to `"pending"`.
+  - Test updates: `test_iter55_20_profile_change.py` — `_cleanup_user_state` now also resets `country=Cuba` and purges any stale kyc_verifications rows (previous iterations had planted `status="approved"` rows that survived cleanup). The two country-change tests + the `already_taken_email` test (which had drifted to a non-existent seeded email `regular@example.com`) all updated.
+  - Verified: **`make test-critical` = 159/159 green** (target test suite = 20/20 green). Screenshot confirms `VERIFIED` badge now renders in EN mode instead of the raw i18n key.
+
+
+- **2FA status field mismatch fix** (iter65, Feb 15 2026): user reported that `/dashboard/profile` widgets showed "NO INICIADA" for KYC and "2FA NO CONFIGURADO" while `/dashboard/kyc` and `/dashboard/security` correctly showed "Verificado" and "2FA activo". Root cause: `/api/profile/me` (backend `routes/profile.py:103`) was reading from a **non-existent** MongoDB field `twofa_enabled`, but the real field set by `/api/me/2fa/verify-setup` is `totp_enabled`. Same bug in `routes/admin_users.py:342` (admin user detail).
+  - Response key `twofa_enabled` retained (API contract used by ProfileView.jsx line 138), but source is now `doc.get("totp_enabled", False)`.
+  - Added regression test `test_get_profile_me_twofa_enabled_reads_from_totp_enabled` that asserts the API's `twofa_enabled` value reflects the real DB `totp_enabled` field.
+  - Verified live: `curl /api/profile/me` for VIP (who has `totp_enabled=True, twofa_enabled=<unset>`) now correctly returns `twofa_enabled: true`.
+  - `make test-critical` = 159/159 green; `test_iter55_20_profile_change.py` = 21/21 green.
+  - Combined with iter64 (kyc_status alignment) fix, the profile widgets now stay in sync with the dedicated pages once the user redeploys to production.
+
+
+
+- **Orphan-field audit suite** (iter66, Feb 15 2026): user asked to add automated regression protection against the class of bug that just hit us twice (`twofa_enabled` vs `totp_enabled`, `db.kyc` vs `db.kyc_verifications`). Built a new test file `/app/backend/tests/test_orphan_field_audit.py` with 7 differential runtime tests that seed a KNOWN state where the real DB field and any phantom field have OPPOSITE values, then verify the API returns the real value:
+  - **Discovered 3 more bugs during test authoring** in `routes/admin_users.py` `/admin/users/{id}/stats`:
+    1. Read from `db.kyc` (empty collection) instead of `db.kyc_verifications` → KYC status always returned "not_started" in admin user detail view
+    2. Projected `submitted_at` instead of the real `created_at` field on kyc_verifications → always empty string
+    3. Projected `reviewer_notes` instead of the real `review_notes` field → always empty string
+    4. No sort — could return an old verification instead of the latest
+  - All 4 fixed in the same commit, protected by the new test suite.
+  - Wired `test_orphan_field_audit.py` into `make test-critical` — the suite now runs 166 tests (was 159) as the pre-commit safety net.
+  - Test methodology: each test explicitly sets `{real_field: True, phantom_field: False}` on the test user, then asserts the API returns `True`. A future rename that swaps the read to the phantom field would immediately turn the response to `False` and fail the test with a clear message pointing to the phantom-field pattern.
+
+
+
+- **i18n Fase 3 — MyTransactions.jsx** (iter67, Feb 15 2026): user reported that many client sections still leaked Spanish in English mode even in production. Investigation showed:
+  1. Preview was already 100% clean for `/dashboard`, `/dashboard/profile`, `/dashboard/orders`, `/dashboard/exchange`, `/dashboard/marketplace`, `/dashboard/kyc`, `/dashboard/notifications`, `/dashboard/vip`, `/dashboard/security` (Fase 1 + Fase 2 work).
+  2. Only `/dashboard/transactions` (`MyTransactions.jsx`) still had 34 hardcoded Spanish literals — never internationalized.
+  3. Production was running an older build without the Fase 2 fixes, hence the mismatch the user was seeing.
+  - `MyTransactions.jsx` fully refactored: `useTranslation` import + hook, `myTransactions.*` namespace added to both en.json and es.json with sub-namespaces `filters.*`, `table.*`, `detail.*` (~40 keys total). Rename of local `const t = Number(...)` → `totalCount` to avoid shadowing i18n `t` inside `useCallback`.
+  - Also fixed two cosmetic issues flagged by testing agent: hardcoded export filename `mis_transacciones_*.csv` now uses `t('myTransactions.exportFilename')` so English export produces `my_transactions_*.csv`; and `<img src={proof_image}>` in the detail modal now guards against empty strings to silence a `net::ERR_INVALID_URL` console error.
+  - **Testing agent iter64.json: 100% pass** — zero Spanish leaks in EN mode, zero English leaks in ES mode, all 9 sanity smoke routes still render correctly.
+  - Admin section (`/admin/*`) still has ~41 Spanish strings across 9 pages. Deferred to a future iteration as user's staff is Spanish-speaking and this is not customer-facing.
+
+
+
+- **Cross-device language preference sync** (iter68, Feb 15 2026): user asked to add auto-detection of browser language. Discovered `LanguageDetector` from i18next-browser-languagedetector was already wired in `/app/frontend/src/i18n/index.js` (with `en-GB`, `es-CU` → base language matching). Upgraded the story by adding server-side persistence so the language preference follows a user across devices:
+  - **Backend**: new endpoint `PATCH /api/profile/language` accepts `{language: "en" | "es" | "en-GB" | ...}`, normalizes region variants to base, stores on the user document as `preferred_language`. `GET /api/profile/me` and `GET /api/auth/me` both surface the field (auth/me was already returning the full user doc so no code change needed there).
+  - **Frontend**:
+    - New helper `/app/frontend/src/lib/langSync.js` — fire-and-forget PATCH used by both switchers (`LanguageSwitcher` and `CompactLanguageSwitcher`). Anonymous 401s and offline network errors are silently swallowed so the UI toggle always feels instant.
+    - `AuthContext.checkAuth` now reads `preferred_language` from `/auth/me` and calls `i18n.changeLanguage()` on mismatch — so mobile users who set English on their laptop see English on first open of the phone, without touching the switcher.
+    - Sync happens in both directions: switcher click → PATCH backend; login → pull server preference into i18n.
+  - **Tests**: new `test_language_preference.py` — 8 tests covering PATCH valid/invalid/region-variant/auth, GET surfaces on both endpoints. Wired into `make test-critical` (now 174 tests, was 166). All green.
+  - **Testing paradigm**: anonymous visitors still use `navigator.language` → localStorage (`resilience_lang`), no regression. Only when authenticated does the server preference override.
+
+
+
+- **Localized emails + PDF + Company funds role split + Scrollbar UI** (iter68-69, Feb 15 2026):
+  - **iter68 · Localized notifications**: All customer-facing emails (order approved/rejected, verification, password reset/changed, email change code/alert/success, phone change approved/rejected) and the client-downloaded transactions register PDF now render in the user's `preferred_language`. Backend uses a `_L(es, en, lang)` inline helper in `email_service.py` and a `_t(key, lang)` string table in `transactions_pdf.py`. Callers (`routes/auth.py`, `routes/profile.py`, `services/orders_helpers.py`, `routes/me.py` for PDF export) pass `user.get("preferred_language") or "es"`. New `_detect_request_language(request)` helper in `auth.py` reads `?lang=` and `Accept-Language` for signup/password-reset flows where the user isn't authenticated yet. PDF/CSV export filenames also localized (`my_transactions_*.pdf` vs `mis_transacciones_*.pdf`). 13 regression tests in `test_localized_notifications.py`.
+  - **iter69 · Company funds role split**: fixed operator report — a normal client's withdrawal (69,800 CUP) was mis-labeled as "Retiros VIP" in `/admin/company-funds`. Root cause: `_compute_company_funds` bucketed ALL `db.withdrawals` under `outflow_clients` while the frontend called that line "Retiros VIP". Added `_aggregate_withdrawals_by_role` using a `$lookup` pipeline to split into `outflow_clients_vip` and `outflow_clients_normal` (unknown users fall into `normal` for safest accounting). Frontend now shows the two lines separately, subtitle updated. Legacy `outflow_clients` field preserved as sum for backwards compat. 3 tests in `test_company_funds_role_split.py`.
+  - **iter69 · Scrollbar UI**: `/app/frontend/src/index.css` scrollbar was `#2a2436` (near-invisible on the dark `#14101F` bg — operator report from a photo of the screen). Bumped thumb to `#5d4b8a` violet with brighter `#8B5CF6` hover, added rounded `border-radius: 5px`, matched track to `#1a1730` panel color, and added Firefox `scrollbar-color`/`scrollbar-width` fallback.
+  - `make test-critical` now runs **190 tests** (was 174), all green. Includes both new suites.
+
+
