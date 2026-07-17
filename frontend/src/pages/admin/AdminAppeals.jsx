@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,13 +8,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { MessageSquare, Check, X, Loader2, Inbox, CheckCircle2, XCircle, Clock, Mail } from "lucide-react";
-
-const STATUS_TABS = [
-  { key: "pending", label: "Pendientes", icon: Clock },
-  { key: "resolved", label: "Aprobadas", icon: CheckCircle2 },
-  { key: "rejected", label: "Rechazadas", icon: XCircle },
-  { key: "all", label: "Todas", icon: Inbox },
-];
 
 /**
  * AdminAppeals — staff queue of self-service client appeals.
@@ -26,6 +20,7 @@ const STATUS_TABS = [
  * Requires: role=admin OR (employee + can_manage_blocklist).
  */
 export default function AdminAppeals() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState("pending");
   const [items, setItems] = useState([]);
   const [pendingCount, setPendingCount] = useState(0);
@@ -34,6 +29,13 @@ export default function AdminAppeals() {
   const [action, setAction] = useState(null);     // "resolve" | "reject"
   const [response, setResponse] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const STATUS_TABS = [
+    { key: "pending", label: t("adminAppeals.tabs.pending"), icon: Clock },
+    { key: "resolved", label: t("adminAppeals.tabs.resolved"), icon: CheckCircle2 },
+    { key: "rejected", label: t("adminAppeals.tabs.rejected"), icon: XCircle },
+    { key: "all", label: t("adminAppeals.tabs.all"), icon: Inbox },
+  ];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,11 +46,11 @@ export default function AdminAppeals() {
       setPendingCount(r.data.pending_count || 0);
     } catch (e) {
       const detail = e.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "No se pudo cargar la cola de apelaciones");
+      toast.error(typeof detail === "string" ? detail : t("adminAppeals.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [tab]);
+  }, [tab, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -61,7 +63,7 @@ export default function AdminAppeals() {
   const submitAction = async () => {
     const trimmed = response.trim();
     if (!trimmed) {
-      toast.error("Escribe una respuesta para el cliente.");
+      toast.error(t("adminAppeals.action.emptyResponseError"));
       return;
     }
     setSaving(true);
@@ -71,13 +73,15 @@ export default function AdminAppeals() {
         { response: trimmed },
         { withCredentials: true }
       );
-      toast.success(action === "resolve" ? "Apelación aprobada." : "Apelación rechazada.");
+      toast.success(action === "resolve"
+        ? t("adminAppeals.action.successResolved")
+        : t("adminAppeals.action.successRejected"));
       setSelected(null);
       setAction(null);
       await load();
     } catch (e) {
       const detail = e.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "No se pudo procesar la apelación");
+      toast.error(typeof detail === "string" ? detail : t("adminAppeals.action.processError"));
     } finally {
       setSaving(false);
     }
@@ -85,9 +89,9 @@ export default function AdminAppeals() {
 
   const statusChip = (status) => {
     const cfg = {
-      pending: { icon: Clock, cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", label: "PENDIENTE" },
-      resolved: { icon: CheckCircle2, cls: "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/5", label: "APROBADA" },
-      rejected: { icon: XCircle, cls: "text-[#EF4444] border-[#EF4444]/40 bg-[#EF4444]/5", label: "RECHAZADA" },
+      pending: { icon: Clock, cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", label: t("adminAppeals.chip.pending") },
+      resolved: { icon: CheckCircle2, cls: "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/5", label: t("adminAppeals.chip.resolved") },
+      rejected: { icon: XCircle, cls: "text-[#EF4444] border-[#EF4444]/40 bg-[#EF4444]/5", label: t("adminAppeals.chip.rejected") },
     }[status] || { icon: Clock, cls: "text-neutral-400 border-white/10", label: status };
     const Icon = cfg.icon;
     return (
@@ -101,14 +105,19 @@ export default function AdminAppeals() {
     <div data-testid="admin-appeals-page" className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl">Apelaciones</h1>
+          <h1 className="font-display text-3xl">{t("adminAppeals.title")}</h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Mensajes de clientes bajo revisión pidiendo reactivación. Resolver aquí
-            <span className="text-neutral-500"> no </span>activa la cuenta — usa <span className="text-white font-semibold">Verificar teléfono</span> en Usuarios cuando decidas activar.
+            <Trans
+              i18nKey="adminAppeals.subtitle"
+              components={{
+                1: <span className="text-neutral-500" />,
+                2: <span className="text-white font-semibold" />,
+              }}
+            />
           </p>
         </div>
         <div className="text-xs text-neutral-400">
-          Pendientes: <span className="text-[#8B5CF6] font-bold text-base">{pendingCount}</span>
+          {t("adminAppeals.pendingCount")} <span className="text-[#8B5CF6] font-bold text-base">{pendingCount}</span>
         </div>
       </div>
 
@@ -133,10 +142,10 @@ export default function AdminAppeals() {
         </TabsList>
 
         <TabsContent value={tab} className="mt-4">
-          {loading && <div className="text-sm text-neutral-500">Cargando...</div>}
+          {loading && <div className="text-sm text-neutral-500">{t("adminAppeals.loading")}</div>}
           {!loading && items.length === 0 && (
             <div className="text-sm text-neutral-500 italic border border-white/5 bg-black/20 px-4 py-6 text-center">
-              No hay apelaciones en esta cola.
+              {t("adminAppeals.emptyQueue")}
             </div>
           )}
           <ul className="space-y-3">
@@ -160,7 +169,7 @@ export default function AdminAppeals() {
                 <div className="text-sm text-neutral-200 whitespace-pre-wrap">{a.message}</div>
                 {a.staff_response && (
                   <div className="text-xs text-neutral-400 border-l-2 border-[#8B5CF6]/60 pl-3 py-1">
-                    <span className="text-[#8B5CF6] font-semibold">Respuesta staff ({a.resolved_by_email}): </span>
+                    <span className="text-[#8B5CF6] font-semibold">{t("adminAppeals.staffResponse", { email: a.resolved_by_email })} </span>
                     {a.staff_response}
                   </div>
                 )}
@@ -172,7 +181,7 @@ export default function AdminAppeals() {
                       onClick={() => openAction(a, "resolve")}
                       className="bg-[#22C55E]/10 border border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/20"
                     >
-                      <Check className="w-3.5 h-3.5 mr-1" /> Aprobar
+                      <Check className="w-3.5 h-3.5 mr-1" /> {t("adminAppeals.actions.approve")}
                     </Button>
                     <Button
                       size="sm"
@@ -181,7 +190,7 @@ export default function AdminAppeals() {
                       onClick={() => openAction(a, "reject")}
                       className="bg-[#EF4444]/10 border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/20"
                     >
-                      <X className="w-3.5 h-3.5 mr-1" /> Rechazar
+                      <X className="w-3.5 h-3.5 mr-1" /> {t("adminAppeals.actions.reject")}
                     </Button>
                   </div>
                 )}
@@ -195,20 +204,23 @@ export default function AdminAppeals() {
         <DialogContent data-testid="appeal-action-dialog" className="bg-[#0c0c0c] border-white/10 text-white max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-white">
-              {action === "resolve" ? "Aprobar apelación" : "Rechazar apelación"}
+              {action === "resolve" ? t("adminAppeals.action.approveTitle") : t("adminAppeals.action.rejectTitle")}
             </DialogTitle>
             <DialogDescription className="text-neutral-400 text-xs">
-              El cliente recibirá tu respuesta como notificación in-app + push.
+              {t("adminAppeals.action.clientHint")}
               {action === "resolve" && (
                 <span className="block mt-2 text-[#8B5CF6]">
-                  ⚠️ Aprobar la apelación NO activa la cuenta. Debes ir a <b>Usuarios → Verificar teléfono</b> por separado.
+                  <Trans
+                    i18nKey="adminAppeals.action.approveWarning"
+                    components={{ 1: <b /> }}
+                  />
                 </span>
               )}
             </DialogDescription>
           </DialogHeader>
           {selected && (
             <div className="border border-white/5 bg-black/40 px-3 py-2 text-xs text-neutral-300 space-y-1">
-              <div><span className="text-neutral-500">Cliente:</span> {selected.user_name || selected.user_email}</div>
+              <div><span className="text-neutral-500">{t("adminAppeals.action.clientLabel")}</span> {selected.user_name || selected.user_email}</div>
               <div className="text-neutral-200 pt-1 border-t border-white/5 mt-1">{selected.message}</div>
             </div>
           )}
@@ -217,15 +229,15 @@ export default function AdminAppeals() {
             value={response}
             onChange={(e) => setResponse(e.target.value)}
             placeholder={action === "resolve"
-              ? "Ej: Gracias por tu apelación, en las próximas horas activamos tu cuenta."
-              : "Ej: Sigues en la lista bloqueada por reportes previos. Contacta a WhatsApp."}
+              ? t("adminAppeals.action.placeholderApprove")
+              : t("adminAppeals.action.placeholderReject")}
             rows={4}
             maxLength={1000}
             className="bg-black/40 border-white/10 text-sm text-white"
           />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setSelected(null)} className="text-neutral-400 hover:text-white">
-              Cancelar
+              {t("adminAppeals.actions.cancel")}
             </Button>
             <Button
               data-testid="appeal-action-confirm-btn"
@@ -236,7 +248,7 @@ export default function AdminAppeals() {
                 : "bg-[#EF4444] hover:bg-[#EF4444]/90 text-white font-semibold"}
             >
               {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <MessageSquare className="w-4 h-4 mr-1.5" />}
-              Confirmar
+              {t("adminAppeals.actions.confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>

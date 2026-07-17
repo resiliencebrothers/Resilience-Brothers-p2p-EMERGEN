@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
-import { ListChecks, ArrowDownToLine, ChevronRight } from "lucide-react";
+import { ListChecks, ArrowDownToLine } from "lucide-react";
 import { toast } from "sonner";
 import DefensiveModePanel from "@/components/DefensiveModePanel";
 
-const ORDER_STATUS = {
-  pending: "Pendiente",
-  requires_double_approval: "Doble aprobación",
-};
-
 export default function AdminQueue() {
+  const { t } = useTranslation();
   const [data, setData] = useState({ orders: [], withdrawals: [], counts: { orders: 0, withdrawals: 0 } });
   const [loading, setLoading] = useState(true);
 
@@ -21,25 +18,30 @@ export default function AdminQueue() {
         const r = await axios.get(`${API}/admin/queue`, { withCredentials: true });
         setData(r.data);
       } catch (e) {
-        toast.error("Error al cargar cola");
+        toast.error(t("adminQueue.loadError"));
       } finally {
         setLoading(false);
       }
     };
     load();
-  }, []);
+  }, [t]);
 
-  if (loading) return <div className="text-neutral-500 micro-label">Cargando cola...</div>;
+  const ORDER_STATUS = {
+    pending: t("adminQueue.orders.statusPending"),
+    requires_double_approval: t("adminQueue.orders.statusDoubleApproval"),
+  };
+
+  if (loading) return <div className="text-neutral-500 micro-label">{t("adminQueue.loading")}</div>;
 
   const empty = data.counts.orders === 0 && data.counts.withdrawals === 0;
 
   return (
     <div data-testid="admin-queue" className="space-y-8">
       <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Mi Cola</div>
-        <h1 className="font-display text-3xl">Pendientes en tu scope</h1>
+        <div className="micro-label text-[#8B5CF6] mb-2">{t("adminQueue.eyebrow")}</div>
+        <h1 className="font-display text-3xl">{t("adminQueue.title")}</h1>
         <p className="text-neutral-500 text-sm mt-2">
-          Sólo los ítems pendientes dentro de tus monedas autorizadas. Los admins ven todo.
+          {t("adminQueue.subtitle")}
         </p>
       </div>
 
@@ -47,8 +49,8 @@ export default function AdminQueue() {
 
       {empty && (
         <div className="tactile-card p-12 text-center">
-          <div className="micro-label text-[#22C55E] mb-2">/ todo al día</div>
-          <p className="text-neutral-400">No hay órdenes ni retiros pendientes en tu scope.</p>
+          <div className="micro-label text-[#22C55E] mb-2">{t("adminQueue.allClear")}</div>
+          <p className="text-neutral-400">{t("adminQueue.emptyBody")}</p>
         </div>
       )}
 
@@ -56,23 +58,23 @@ export default function AdminQueue() {
         <section data-testid="queue-orders">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-xl flex items-center gap-2">
-              <ListChecks className="w-5 h-5 text-[#8B5CF6]" /> Órdenes pendientes
+              <ListChecks className="w-5 h-5 text-[#8B5CF6]" /> {t("adminQueue.orders.sectionTitle")}
               <span className="text-xs text-neutral-500 font-mono">({data.counts.orders})</span>
             </h2>
             <Link to="/admin/orders" className="micro-label text-[#8B5CF6] hover:underline">
-              Ir a Órdenes →
+              {t("adminQueue.orders.goto")}
             </Link>
           </div>
           <div className="tactile-card overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-[#0a0a0a] border-b border-white/10">
                 <tr className="text-left">
-                  <th className="px-4 py-3 micro-label text-neutral-500">Usuario</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Par</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Monto</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Método</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Estado</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Creada</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.orders.colUser")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.orders.colPair")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.orders.colAmount")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.orders.colMethod")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.orders.colStatus")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.orders.colCreated")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -90,7 +92,7 @@ export default function AdminQueue() {
             </table>
             {data.orders.length > 50 && (
               <div className="px-4 py-2 text-xs text-neutral-500 border-t border-white/10">
-                Mostrando 50 de {data.orders.length} — ver el resto en /admin/orders
+                {t("adminQueue.orders.showingOf", { count: data.orders.length })}
               </div>
             )}
           </div>
@@ -101,22 +103,22 @@ export default function AdminQueue() {
         <section data-testid="queue-withdrawals">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-xl flex items-center gap-2">
-              <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> Retiros pendientes
+              <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> {t("adminQueue.withdrawals.sectionTitle")}
               <span className="text-xs text-neutral-500 font-mono">({data.counts.withdrawals})</span>
             </h2>
             <Link to="/admin/withdrawals" className="micro-label text-[#8B5CF6] hover:underline">
-              Ir a Retiros →
+              {t("adminQueue.withdrawals.goto")}
             </Link>
           </div>
           <div className="tactile-card overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-[#0a0a0a] border-b border-white/10">
                 <tr className="text-left">
-                  <th className="px-4 py-3 micro-label text-neutral-500">Usuario</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Monto</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Moneda</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Método</th>
-                  <th className="px-4 py-3 micro-label text-neutral-500">Solicitado</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.withdrawals.colUser")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.withdrawals.colAmount")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.withdrawals.colCurrency")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.withdrawals.colMethod")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.withdrawals.colRequested")}</th>
                 </tr>
               </thead>
               <tbody>

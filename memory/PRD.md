@@ -1663,3 +1663,13 @@ Operator asks (13 Feb 2026):
   - `make test-critical` now runs **190 tests** (was 174), all green. Includes both new suites.
 
 
+
+- **Admin section i18n — Phase 1** (iter70, Feb 15 2026): started translating the admin section per user request. Given that admin covers 23 page files (~7,372 total lines) and each rewrite is substantial, this iteration tackled the **3 highest-traffic staff entry points**:
+  - **`AdminOverview`** (default admin landing) — full rewrite with `useTranslation` + `Trans`; new `adminOverview.*` namespace with sub-namespaces `counters`, `alerts`, `cards`. Covers title/subtitle/eyebrow, all 5 counter cards, VIP threshold + ops mailbox + auto-audit toggle section, all 3 stat cards, both TotpPromptDialog descriptions, and toast messages.
+  - **`AdminQueue`** (default staff work queue) — full rewrite with new `adminQueue.*` namespace. Covers eyebrow/title/subtitle, empty state, both order & withdrawal section headings + go-to links, all 6 order columns + 5 withdrawal columns, status labels.
+  - **`AdminAppeals`** (staff appeals inbox) — full rewrite with new `adminAppeals.*` namespace. Covers title/subtitle (with `Trans` markup for the `<strong>Verify phone</strong>` inline hint), 4 status tabs, PENDING/APPROVED/REJECTED chips, action buttons + confirmation dialog with warning for the KYC-doesn't-reactivate rule.
+  - Shared `admin.common.*` namespace introduced (loading/approve/reject/cancel/save/pay/back/search/filter/pending/completed/rejected/user/amount/currency/method/status/date/etc.) — will be reused as remaining admin pages get translated.
+  - **Verified with screenshot**: AdminOverview EN, AdminQueue EN, AdminAppeals EN all clean (0 Spanish leaks).
+  - **Remaining P2**: 16 admin pages still hardcoded Spanish (AdminUsers, AdminOrders, AdminWithdrawals, AdminKYC, AdminHealth, AdminSecurity, AdminBlockedContacts, AdminBackoffice, AdminAudit, AdminCapitalRequests, AdminUserStatsPage, AdminMonthlyRevenue, AdminCompanyFunds body, AdminBackoffice, AdminSuspicious, AdminProfileChanges). Not urgent — staff hispano-hablante is the primary audience.
+
+
