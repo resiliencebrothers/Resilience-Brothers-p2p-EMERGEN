@@ -1,29 +1,30 @@
+import { useTranslation } from "react-i18next";
 import { Boxes } from "lucide-react";
 
 export function RevenueMarketplaceTable({ marketplace, fmt }) {
+  const { t } = useTranslation();
   return (
     <div className="tactile-card overflow-hidden" data-testid="revenue-marketplace">
       <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="font-display text-lg flex items-center gap-2">
-            <Boxes className="w-5 h-5 text-[#8B5CF6]" /> Ganancia del Marketplace
+            <Boxes className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.revenue.mpTitle")}
           </h2>
           <p className="text-xs text-neutral-500 mt-1">
-            Solo redenciones entregadas (status=delivered).
-            Configura el campo «Costo» en cada producto.
+            {t("admin.revenue.mpSubtitle")}
           </p>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <div className="micro-label text-neutral-500">Ingreso</div>
+            <div className="micro-label text-neutral-500">{t("admin.revenue.mpRevenue")}</div>
             <div className="font-mono font-semibold">${fmt(marketplace.total_revenue_usd)}</div>
           </div>
           <div className="text-right">
-            <div className="micro-label text-neutral-500">Costo</div>
+            <div className="micro-label text-neutral-500">{t("admin.revenue.mpCost")}</div>
             <div className="font-mono">${fmt(marketplace.total_cost_usd)}</div>
           </div>
           <div className="text-right">
-            <div className="micro-label text-[#22C55E]">Ganancia neta</div>
+            <div className="micro-label text-[#22C55E]">{t("admin.revenue.mpNetProfit")}</div>
             <div className="font-mono text-[#22C55E] font-bold">
               ${fmt(marketplace.total_profit_usd)}
             </div>
@@ -34,20 +35,20 @@ export function RevenueMarketplaceTable({ marketplace, fmt }) {
         <table className="w-full text-sm">
           <thead className="bg-[#0a0a0a]">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500">Producto</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Unidades</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Canjes</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Ingreso</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Costo</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Ganancia</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Margen</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colProduct")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colUnits")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colRedemptions")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.mpRevenue")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.mpCost")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colProfit")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colMargin")}</th>
             </tr>
           </thead>
           <tbody>
             {marketplace.items.length === 0 && (
               <tr>
                 <td colSpan="7" className="text-center text-neutral-500 py-8">
-                  Sin canjes entregados aún en este período.
+                  {t("admin.revenue.mpEmpty")}
                 </td>
               </tr>
             )}

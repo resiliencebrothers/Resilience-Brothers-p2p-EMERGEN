@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
 import MonthlyAuditReport from "@/pages/admin/audit/MonthlyAuditReport";
-import AdminPageHeader from "@/components/AdminPageHeader";
-import { Shield, Download, FileText } from "lucide-react";
+import { Download, FileText } from "lucide-react";
 
 const ACTION_BADGE = {
   "order.approved": "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30",
@@ -86,15 +85,6 @@ export default function AdminAudit({ hideMonthly = false }) {
 
   return (
     <div className="space-y-6" data-testid="admin-audit">
-      {!hideMonthly && (
-        <AdminPageHeader
-          eyebrow={t("admin.audit.eyebrow")}
-          title={t("admin.audit.title")}
-          subtitle={t("admin.audit.subtitle")}
-          icon={Shield}
-        />
-      )}
-
       {!hideMonthly && <MonthlyAuditReport />}
 
       <div className="flex flex-wrap gap-3 items-end justify-between">

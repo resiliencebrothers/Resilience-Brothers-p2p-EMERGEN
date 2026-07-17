@@ -227,6 +227,7 @@ export default function AdminPanel() {
             <Route path="profile-change-requests" element={<Navigate to="/admin/users?tab=changes" replace />} />
             <Route path="security" element={<AdminSecurity />} />
             {user?.role === "admin" && <Route path="revenue" element={<Navigate to="/admin/company-funds?tab=revenue" replace />} />}
+            {user?.role === "admin" && <Route path="capital-requests" element={<Navigate to="/admin/company-funds?tab=requests" replace />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
             {user?.role === "admin" && <Route path="audit" element={<AdminAuditHub />} />}

@@ -5,6 +5,7 @@ import { Shield, User, FileText } from "lucide-react";
 import AdminAudit from "@/pages/admin/AdminAudit";
 import AdminAuditByUser from "@/pages/admin/audit/AdminAuditByUser";
 import MonthlyAuditReport from "@/pages/admin/audit/MonthlyAuditReport";
+import AdminPageHeader from "@/components/AdminPageHeader";
 
 /**
  * iter55.35 — Consolidates the platform's audit surfaces under a single
@@ -47,6 +48,12 @@ export default function AdminAuditHub() {
 
   return (
     <div className="space-y-4" data-testid="admin-audit-hub">
+      <AdminPageHeader
+        eyebrow={t("admin.audit.eyebrow")}
+        title={t("admin.audit.title")}
+        subtitle={t("admin.audit.subtitle")}
+        icon={Shield}
+      />
       <nav
         className="flex items-center gap-1 border-b border-white/10 pb-1 overflow-x-auto scrollbar-none"
         role="tablist"

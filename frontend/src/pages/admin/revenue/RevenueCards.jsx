@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 function Row({ label, value, accent }) {
   return (
     <div className="flex justify-between border-b border-white/5 py-2 last:border-0">
@@ -43,6 +45,7 @@ export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testi
 }
 
 export function RoleCard({ title, subtitle, data, accent }) {
+  const { t } = useTranslation();
   return (
     <div className={`tactile-card p-6 border ${accent}`}>
       <div className="flex items-start justify-between mb-3">
@@ -52,13 +55,13 @@ export function RoleCard({ title, subtitle, data, accent }) {
         </div>
       </div>
       <div className="space-y-2 font-mono text-sm">
-        <Row label="Órdenes" value={data.orders} />
+        <Row label={t("admin.revenue.roleOrders")} value={data.orders} />
         <Row
-          label="Volumen"
+          label={t("admin.revenue.roleVolume")}
           value={`${(data.volume_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT`}
         />
         <Row
-          label="Ganancia generada"
+          label={t("admin.revenue.roleProfitGenerated")}
           value={`${(data.profit_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT`}
           accent
         />

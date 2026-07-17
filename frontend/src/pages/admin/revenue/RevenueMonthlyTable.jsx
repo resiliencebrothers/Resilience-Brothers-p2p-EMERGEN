@@ -1,38 +1,38 @@
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Calendar, Download, FileText, Send } from "lucide-react";
 
 export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend, fmt }) {
+  const { t } = useTranslation();
   return (
     <div className="tactile-card overflow-hidden" data-testid="revenue-monthly-card">
       <div className="px-6 py-4 border-b border-white/10">
         <h2 className="font-display text-lg flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-[#8B5CF6]" /> Registro Mensual
+          <Calendar className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.revenue.monthlyTitle")}
         </h2>
         <p className="text-xs text-neutral-500 mt-1">
-          Descarga el detalle diario de cada mes en CSV o PDF.
-          El día 1 de cada mes a las 09:00 UTC el PDF del mes anterior se envía
-          automáticamente a todos los admins.
+          {t("admin.revenue.monthlySubtitle")}
         </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[#0a0a0a]">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500">Mes</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Órdenes</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Volumen</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">P2P</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Marketplace</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Comisiones USDT</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Total</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Exportar</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colMonth")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colOrders")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colVolume")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colP2P")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colMarketplace")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colUsdtFees")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colTotal")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colExport")}</th>
             </tr>
           </thead>
           <tbody data-testid="monthly-rows">
             {monthly.length === 0 && (
               <tr>
                 <td colSpan="8" className="text-center text-neutral-500 py-8">
-                  Aún no hay meses con datos.
+                  {t("admin.revenue.emptyMonthly")}
                 </td>
               </tr>
             )}
@@ -78,7 +78,7 @@ export function RevenueMonthlyTable({ monthly, exporting, onDownload, onAskSend,
                       onClick={() => onAskSend(m.bucket)}
                       className="rounded-none bg-transparent border border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10 h-8 text-xs"
                     >
-                      <Send className="w-3 h-3 mr-1" /> Enviar
+                      <Send className="w-3 h-3 mr-1" /> {t("admin.revenue.sendBtn")}
                     </Button>
                   </div>
                 </td>

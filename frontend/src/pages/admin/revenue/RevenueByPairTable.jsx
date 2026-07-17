@@ -1,30 +1,33 @@
+import { useTranslation } from "react-i18next";
+
 export function RevenueByPairTable({ byPair, profitMarginPct, ordersTotal, fmt }) {
+  const { t } = useTranslation();
   return (
     <div className="tactile-card overflow-hidden">
       <div className="px-6 py-4 border-b border-white/10">
-        <h2 className="font-display text-lg">Ganancia P2P por par</h2>
+        <h2 className="font-display text-lg">{t("admin.revenue.byPairTitle")}</h2>
         <p className="text-xs text-neutral-500 mt-1">
-          Ordenado por contribución a la ganancia. Margen promedio: {profitMarginPct}% · {ordersTotal} órdenes.
+          {t("admin.revenue.byPairSubtitle", { pct: profitMarginPct, n: ordersTotal })}
         </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[#0a0a0a]">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500">Par</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Órdenes</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Volumen IN</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Volumen OUT</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Tasa Normal / VIP / Real</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Ganancia</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Margen</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colPair")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colOrders")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colVolumeIn")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colVolumeOut")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colRatesNVR")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colProfit")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colMargin")}</th>
             </tr>
           </thead>
           <tbody>
             {byPair.length === 0 && (
               <tr>
                 <td colSpan="7" className="text-center text-neutral-500 py-8">
-                  Sin datos suficientes. Configura las tasas reales y aprueba órdenes.
+                  {t("admin.revenue.byPairEmpty")}
                 </td>
               </tr>
             )}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -11,32 +12,18 @@ import { API } from "@/App";
 import axios from "axios";
 import { toast } from "sonner";
 
-/**
- * iter55.36k — Analytics dialog surfacing the operator's most-asked
- * questions in a single view:
- *   1) Which month brought the most revenue? (monthly comparison table + bar chart)
- *   2) Which currency (pair) contributes the most? (top-pair card)
- *   3) Which of the three revenue sources dominates: marketplace, exchange
- *      (P2P), or conversions? (category breakdown with % share)
- *
- * Consumes the already-computed data returned by `admin_revenue` + the
- * monthly timeseries the parent already fetches — no new backend endpoints.
- */
 const fmt = (n) => (n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
-// iter55.36k — when a category is negative (net loss) the naive `value/total`
-// share yields nonsensical percentages (e.g. 110% / -10%). Use magnitude for
-// share so the three bars always sum to 100 while the sign is preserved in
-// the displayed value.
 const shareOfMagnitude = (v, absTotal) => (absTotal > 0 ? (Math.abs(v) / absTotal) * 100 : 0);
 
-const CAT_META = [
-  { key: "p2p_profit_usdt",         label: "Intercambio P2P",    color: "#8B5CF6" },
-  { key: "marketplace_profit_usdt", label: "Marketplace",        color: "#22C55E" },
-  { key: "conversion_fees_usdt",    label: "Conversiones",       color: "#EAB308" },
-];
-
 export default function RevenueAnalyticsDialog({ open, onOpenChange, data, monthly, days }) {
-  const [exporting, setExporting] = useState(null); // "csv" | "pdf" | null
+  const { t } = useTranslation();
+  const [exporting, setExporting] = useState(null);
+
+  const CAT_META = [
+    { key: "p2p_profit_usdt",         label: t("admin.revenue.catP2P"),          color: "#8B5CF6" },
+    { key: "marketplace_profit_usdt", label: t("admin.revenue.catMarketplace"),  color: "#22C55E" },
+    { key: "conversion_fees_usdt",    label: t("admin.revenue.catConversions"),  color: "#EAB308" },
+  ];
 
   const download = async (format) => {
     setExporting(format);
@@ -60,13 +47,14 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      toast.success(`${format.toUpperCase()} descargado.`);
+      toast.success(t("admin.revenue.downloadedShort", { fmt: format.toUpperCase() }));
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudo generar el archivo.");
+      toast.error(e.response?.data?.detail || t("admin.revenue.generateError"));
     } finally {
       setExporting(null);
     }
   };
+
   const catBreakdown = useMemo(() => {
     if (!data) return { rows: [], total: 0, absTotal: 0 };
     const values = CAT_META.map((c) => data[c.key] || 0);
@@ -95,12 +83,12 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
     if (!monthly?.length) return [];
     return [...monthly]
       .sort((a, b) => (a.bucket || "").localeCompare(b.bucket || ""))
-      .slice(-12) // last 12 months max
+      .slice(-12)
       .map((r) => ({
         bucket: r.bucket,
-        "Intercambio P2P":  Number((r.p2p_profit_usdt || 0).toFixed(2)),
-        "Marketplace":      Number((r.marketplace_profit_usdt || 0).toFixed(2)),
-        "Conversiones":     Number((r.conversion_fees_usdt || 0).toFixed(2)),
+        [t("admin.revenue.catP2P")]:         Number((r.p2p_profit_usdt || 0).toFixed(2)),
+        [t("admin.revenue.catMarketplace")]: Number((r.marketplace_profit_usdt || 0).toFixed(2)),
+        [t("admin.revenue.catConversions")]: Number((r.conversion_fees_usdt || 0).toFixed(2)),
         total:              Number((r.total_profit_usdt || 0).toFixed(2)),
         orders:             r.orders || 0,
       }));
@@ -117,12 +105,10 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
             <div className="flex-1 min-w-0">
               <DialogTitle className="font-display flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-[#22C55E]" />
-                Estadísticas comparativas de ingresos
+                {t("admin.revenue.analyticsDialogTitle")}
               </DialogTitle>
               <DialogDescription className="text-neutral-500 text-xs mt-1">
-                Comparativa mensual, categorías (marketplace / P2P / conversiones)
-                y la moneda que más aporta. Los datos coinciden con el filtro de
-                período activo en la vista principal.
+                {t("admin.revenue.analyticsDialogDesc")}
               </DialogDescription>
             </div>
             <div className="flex gap-2 flex-shrink-0" data-testid="revenue-analytics-export-actions">
@@ -133,10 +119,10 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                 disabled={!!exporting}
                 onClick={() => download("csv")}
                 className="rounded-none border-white/20 hover:bg-white/5"
-                title="Descargar comparativa como CSV"
+                title={t("admin.revenue.analyticsCsvTitle")}
               >
                 <FileSpreadsheet className="w-4 h-4 mr-1" />
-                {exporting === "csv" ? "Generando…" : "CSV"}
+                {exporting === "csv" ? t("admin.revenue.generating") : "CSV"}
               </Button>
               <Button
                 data-testid="export-analytics-pdf"
@@ -145,48 +131,47 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                 disabled={!!exporting}
                 onClick={() => download("pdf")}
                 className="rounded-none border-white/20 hover:bg-white/5"
-                title="Descargar reporte ejecutivo en PDF (con gráfico)"
+                title={t("admin.revenue.analyticsPdfTitle")}
               >
                 <FileText className="w-4 h-4 mr-1" />
-                {exporting === "pdf" ? "Generando…" : "PDF"}
+                {exporting === "pdf" ? t("admin.revenue.generating") : "PDF"}
               </Button>
             </div>
           </div>
         </DialogHeader>
 
         <div className="space-y-6 mt-2">
-          {/* Row of "top" highlights */}
           <div className="grid sm:grid-cols-3 gap-3" data-testid="revenue-analytics-highlights">
             <HighlightCard
               icon={Award}
-              label="Mejor mes"
+              label={t("admin.revenue.bestMonth")}
               value={topMonth ? topMonth.bucket : "—"}
-              hint={topMonth ? `${fmt(topMonth.total_profit_usdt)} USDT` : "sin datos"}
+              hint={topMonth ? `${fmt(topMonth.total_profit_usdt)} USDT` : t("admin.revenue.noData")}
               testid="revenue-analytics-top-month"
             />
             <HighlightCard
               icon={PieIcon}
-              label="Categoría líder"
+              label={t("admin.revenue.topCategory")}
               value={catBreakdown.rows[0]?.label || "—"}
               hint={catBreakdown.total > 0
                 ? `${fmt(catBreakdown.rows[0]?.value)} USDT · ${catBreakdown.rows[0]?.pct.toFixed(1)}%`
-                : "sin datos"}
+                : t("admin.revenue.noData")}
               testid="revenue-analytics-top-category"
             />
             <HighlightCard
               icon={Award}
-              label="Par con más ganancia"
+              label={t("admin.revenue.topPair")}
               value={topPair ? topPair.pair : "—"}
-              hint={topPair ? `${fmt(topPair.profit_usdt)} USDT · ${topPair.orders} órdenes` : "sin datos"}
+              hint={topPair
+                ? `${fmt(topPair.profit_usdt)} USDT · ${t("admin.revenue.ordersCount", { n: topPair.orders })}`
+                : t("admin.revenue.noData")}
               testid="revenue-analytics-top-pair"
             />
           </div>
 
-          {/* Category breakdown with % — uses magnitude-share so signs (net
-              loss on any category) don't produce nonsensical percentages. */}
           <div className="tactile-card p-4" data-testid="revenue-analytics-category-breakdown">
             <div className="micro-label text-neutral-500 mb-3">
-              Aporte por categoría · Total neto {fmt(catBreakdown.total)} USDT
+              {t("admin.revenue.categoryContribution", { value: fmt(catBreakdown.total) })}
             </div>
             <div className="space-y-2">
               {catBreakdown.rows.map((c) => (
@@ -222,19 +207,17 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
             </div>
             {catBreakdown.rows.some((r) => r.negative) && (
               <div className="text-[0.65rem] text-neutral-500 mt-3 italic leading-relaxed">
-                Los porcentajes representan la magnitud relativa de cada categoría
-                sobre el total absoluto. Las barras atenuadas indican pérdida neta.
+                {t("admin.revenue.catNote")}
               </div>
             )}
           </div>
 
-          {/* Bar chart per month */}
           <div className="tactile-card p-4" data-testid="revenue-analytics-chart">
             <div className="micro-label text-neutral-500 mb-3">
-              Ganancias por mes (últimos {chartData.length} meses)
+              {t("admin.revenue.analyticsTitle", { n: chartData.length })}
             </div>
             {chartData.length === 0 ? (
-              <div className="text-neutral-500 text-sm py-8 text-center">Sin datos mensuales aún.</div>
+              <div className="text-neutral-500 text-sm py-8 text-center">{t("admin.revenue.noMonthlyData")}</div>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
@@ -260,21 +243,20 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
             )}
           </div>
 
-          {/* Monthly comparison table */}
           <div className="tactile-card overflow-hidden" data-testid="revenue-analytics-monthly-table">
             <div className="px-4 py-3 border-b border-white/10 micro-label text-neutral-500">
-              Comparativa mensual
+              {t("admin.revenue.monthlyComparison")}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-[#0a0a0a] border-b border-white/10">
                   <tr className="text-left">
-                    <th className="px-4 py-2 micro-label text-neutral-500">Mes</th>
-                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">P2P</th>
-                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">Marketplace</th>
-                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">Conversiones</th>
-                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">Total</th>
-                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">Órdenes</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500">{t("admin.revenue.colMonth")}</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colP2P")}</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colMarketplace")}</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.catConversions")}</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colTotal")}</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colOrders")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -307,7 +289,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                   {(monthly || []).length === 0 && (
                     <tr>
                       <td colSpan={6} className="text-center text-neutral-500 py-8">
-                        Sin datos mensuales aún.
+                        {t("admin.revenue.noMonthlyData")}
                       </td>
                     </tr>
                   )}
