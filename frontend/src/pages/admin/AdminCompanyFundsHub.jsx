@@ -46,7 +46,7 @@ export default function AdminCompanyFundsHub() {
       <nav
         className="flex items-center gap-1 border-b border-white/10 pb-1 -mt-2 overflow-x-auto scrollbar-none"
         role="tablist"
-        aria-label="Fondos de la Empresa"
+        aria-label={t("admin.hubs.companyFundsAria")}
       >
         {TAB_META.map((tt) => {
           const Icon = tt.icon;

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { Eye, Search, Upload, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import { getDeliveryBadge, extractCryptoNetwork, NETWORK_META } from "@/services/delivery_validators";
@@ -25,16 +27,16 @@ const STATUS_STYLES = {
 // iter55.9 — small helper used inside the delivery-details panel. Copies the
 // given `value` to the clipboard and briefly shows a green check, so the
 // operator has visual feedback that the payload landed in the buffer.
-function CopyBtn({ label, value, testid }) {
+function CopyBtn({ label, value, testid, t }) {
   const [ok, setOk] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);
       setOk(true);
-      toast.success("Copiado al portapapeles");
+      toast.success(t("admin.orders.toastCopied"));
       setTimeout(() => setOk(false), 1500);
     } catch {
-      toast.error("No se pudo copiar (permiso denegado)");
+      toast.error(t("admin.orders.toastCopyError"));
     }
   };
   return (
@@ -51,17 +53,18 @@ function CopyBtn({ label, value, testid }) {
 }
 
 // Iter14 — labels for order status (user requested: "Aprobado" → "Confirmado")
-const STATUS_LABELS = {
-  pending: "pendiente",
-  requires_double_approval: "doble aprobación",
-  approved: "confirmado",
-  completed: "completado",
-  rejected: "rechazado",
+const STATUS_KEYS = {
+  pending: "admin.orders.statusPending",
+  requires_double_approval: "admin.orders.statusDoubleApproval",
+  approved: "admin.orders.statusApproved",
+  completed: "admin.orders.statusCompleted",
+  rejected: "admin.orders.statusRejected",
 };
 
 const PAGE_SIZE = 50;
 
 export default function AdminOrders() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const isAdmin = currentUser?.role === "admin";
@@ -105,11 +108,11 @@ export default function AdminOrders() {
       const t = Number(r.headers["x-total-count"]);
       setTotal(Number.isFinite(t) ? t : r.data.length);
     } catch (e) {
-      toast.error("Error al cargar órdenes");
+      toast.error(t("admin.orders.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [filter, page, userQuery, currencyFilter]);
+  }, [filter, page, userQuery, currencyFilter, t]);
   useEffect(() => { load(); }, [load]);
 
   const openOrder = (o) => {
@@ -122,7 +125,7 @@ export default function AdminOrders() {
   const handlePayoutUpload = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 4 * 1024 * 1024) { toast.error("Máx 4MB"); return; }
+    if (f.size > 4 * 1024 * 1024) { toast.error(t("admin.orders.toastMax4")); return; }
     const reader = new FileReader();
     reader.onload = () => setPayoutProof(reader.result);
     reader.readAsDataURL(f);
@@ -137,27 +140,28 @@ export default function AdminOrders() {
     if (payoutHash && payoutHash !== open.payout_tx_hash) body.payout_tx_hash = payoutHash;
     try {
       await axios.put(`${API}/admin/orders/${open.id}/status`, body, { withCredentials: true });
-      toast.success(`Orden ${status}`);
+      toast.success(t("admin.orders.toastUpdated", { status: t(STATUS_KEYS[status] || "admin.orders.statusApproved") }));
       setOpen(null); setNote(""); setPayoutProof(""); setPayoutHash(""); setPendingStatus(null); load();
     } catch (e) {
       const detail = e.response?.data?.detail;
       const code = typeof detail === "object" ? detail?.code : null;
       // Server requires step-up 2FA → open prompt
       if (code === "TOTP_CODE_REQUIRED" || code === "TOTP_INVALID") {
-        if (code === "TOTP_INVALID") toast.error(detail?.message || "Código 2FA inválido");
+        if (code === "TOTP_INVALID") toast.error(detail?.message || t("admin.orders.toastInvalidTotp"));
         setPendingStatus(status);
         return;
       }
-      if (!handleTotpError(e, navigate)) toast.error(detail?.message || detail || "Error");
+      if (!handleTotpError(e, navigate)) toast.error(detail?.message || detail || t("admin.common.genericError"));
     }
   };
 
   return (
     <div data-testid="admin-orders" className="space-y-4">
-      <div className="mb-6">
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Órdenes</div>
-        <h1 className="font-display text-3xl">Cola de Operaciones P2P</h1>
-      </div>
+      <AdminPageHeader
+        eyebrow={t("admin.orders.eyebrow")}
+        title={t("admin.orders.title")}
+        testid="admin-orders-header"
+      />
       <div className="flex gap-2 mb-3 flex-wrap items-end">
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
@@ -165,7 +169,7 @@ export default function AdminOrders() {
             data-testid="orders-user-search"
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
-            placeholder="Buscar usuario..."
+            placeholder={t("admin.orders.searchPlaceholder")}
             className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-60 pl-9 text-xs"
           />
         </div>
@@ -174,7 +178,7 @@ export default function AdminOrders() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-            <SelectItem value="all">Todas las monedas</SelectItem>
+            <SelectItem value="all">{t("admin.orders.allCurrencies")}</SelectItem>
             {currencies.map((c) => (
               <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
             ))}
@@ -186,17 +190,24 @@ export default function AdminOrders() {
             onClick={() => { setUserInput(""); setCurrencyFilter("all"); }}
             className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-9"
           >
-            limpiar
+            {t("admin.common.clear")}
           </button>
         )}
         <div className="ml-auto text-xs text-neutral-500" data-testid="orders-result-count">
-          {total} {total === 1 ? "orden" : "órdenes"}
+          {total} {total === 1 ? t("admin.orders.resultOne") : t("admin.orders.resultMany")}
         </div>
       </div>
       <div className="flex gap-2 mb-4 flex-wrap">
-        {["all", "pending", "requires_double_approval", "approved", "rejected", "completed"].map(f => (
+        {[
+          ["all", "admin.orders.filterAll"],
+          ["pending", "admin.orders.filterPending"],
+          ["requires_double_approval", "admin.orders.filterDouble"],
+          ["approved", "admin.orders.filterApproved"],
+          ["rejected", "admin.orders.filterRejected"],
+          ["completed", "admin.orders.filterCompleted"],
+        ].map(([f, key]) => (
           <button key={f} data-testid={`orders-filter-${f}`} onClick={() => setFilter(f)} className={`micro-label px-3 py-1.5 border transition-colors ${filter === f ? "bg-[#8B5CF6] text-white border-[#8B5CF6]" : "border-white/10 text-neutral-400 hover:text-white"}`}>
-            {f}
+            {t(key)}
           </button>
         ))}
       </div>
@@ -205,20 +216,20 @@ export default function AdminOrders() {
           <table className="w-full text-sm">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
-                <th className="px-3 py-3 micro-label text-neutral-500">ID</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Cliente</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Rol</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Par</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Monto</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Recibe</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Entrega</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Estado</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colId")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colClient")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colRole")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colPair")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colAmount")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colReceives")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colDelivery")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.orders.colStatus")}</th>
                 <th className="px-3 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">Cargando...</td></tr>}
-              {!loading && orders.length === 0 && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">Sin órdenes</td></tr>}
+              {loading && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">{t("admin.common.loadingEllipsis")}</td></tr>}
+              {!loading && orders.length === 0 && <tr><td colSpan="9" className="text-center text-neutral-500 py-8">{t("admin.orders.empty")}</td></tr>}
               {orders.map(o => (
                 <tr key={o.id} className="border-b border-white/5 hover:bg-white/5">
                   <td className="px-3 py-3 font-mono text-xs">{o.id.slice(0,6)}</td>
@@ -247,7 +258,7 @@ export default function AdminOrders() {
                       })()}
                     </div>
                   </td>
-                  <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{STATUS_LABELS[o.status] || o.status}</span></td>
+                  <td className="px-3 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${STATUS_STYLES[o.status]}`}>{t(STATUS_KEYS[o.status] || o.status)}</span></td>
                   <td className="px-3 py-3"><button onClick={() => openOrder(o)} data-testid={`view-order-${o.id}`} className="text-neutral-400 hover:text-[#8B5CF6]"><Eye className="w-4 h-4" /></button></td>
                 </tr>
               ))}
@@ -268,25 +279,25 @@ export default function AdminOrders() {
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-display">Orden #{open?.id?.slice(0,8)}</DialogTitle>
+            <DialogTitle className="font-display">{t("admin.orders.dialogTitle", { id: open?.id?.slice(0,8) })}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
-              Revisa la captura de pago y confirma o rechaza la operación.
+              {t("admin.orders.dialogDesc")}
             </DialogDescription>
           </DialogHeader>
           {open && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2 font-mono text-sm">
-                <div><span className="text-neutral-500">Cliente:</span> {open.user_name}</div>
-                <div><span className="text-neutral-500">Email:</span> {open.user_email}</div>
-                <div><span className="text-neutral-500">Rol:</span> {open.user_role}</div>
-                <div><span className="text-neutral-500">Par:</span> {open.from_code}→{open.to_code}</div>
-                <div><span className="text-neutral-500">Envía:</span> {open.amount_from} {open.from_code}</div>
-                <div><span className="text-neutral-500">Recibe:</span> {open.amount_to} {open.to_code}</div>
-                <div><span className="text-neutral-500">Tasa:</span> {open.rate_applied}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fClient")}</span> {open.user_name}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fEmail")}</span> {open.user_email}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fRole")}</span> {open.user_role}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fPair")}</span> {open.from_code}→{open.to_code}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fSends")}</span> {open.amount_from} {open.from_code}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fReceives")}</span> {open.amount_to} {open.to_code}</div>
+                <div><span className="text-neutral-500">{t("admin.orders.fRate")}</span> {open.rate_applied}</div>
                 {open.commission_percent > 0 && (
-                  <div><span className="text-neutral-500">Comisión:</span> {open.commission_percent}%</div>
+                  <div><span className="text-neutral-500">{t("admin.orders.fCommission")}</span> {open.commission_percent}%</div>
                 )}
-                <div className="col-span-2"><span className="text-neutral-500">Titular pago:</span> {open.sender_name}</div>
+                <div className="col-span-2"><span className="text-neutral-500">{t("admin.orders.fHolder")}</span> {open.sender_name}</div>
               </div>
 
               {open.delivery_details && (
@@ -312,15 +323,15 @@ export default function AdminOrders() {
                         </span>
                         <span className="text-[0.7rem] text-neutral-400 leading-tight">
                           {net === "AMBIGUOUS_0X"
-                            ? "El cliente NO declaró la red. Contacta antes de enviar."
-                            : `Enviar en la red ${net}. Verifica que el wallet destino la acepte.`}
+                            ? t("admin.orders.networkClientNotDeclared")
+                            : t("admin.orders.networkSendOn", { net })}
                         </span>
                       </div>
                     );
                   })()}
 
                   <div className="micro-label text-neutral-500 mb-2 flex items-center justify-between">
-                    <span>Entrega ({open.delivery_method})</span>
+                    <span>{t("admin.orders.deliveryBlock", { method: open.delivery_method })}</span>
                     {(() => {
                       const badge = getDeliveryBadge(open.to_code, open.delivery_method, open.delivery_details);
                       if (!badge) return null;
@@ -345,8 +356,9 @@ export default function AdminOrders() {
                   <div className="flex flex-wrap gap-2 mt-3">
                     <CopyBtn
                       testid="copy-delivery-full"
-                      label="Copiar todo"
+                      label={t("admin.orders.copyAll")}
                       value={open.delivery_details}
+                      t={t}
                     />
                     {(() => {
                       const digitsOnly = (open.delivery_details.match(/\d/g) || []).join("");
@@ -363,13 +375,15 @@ export default function AdminOrders() {
                           <>
                             <CopyBtn
                               testid="copy-delivery-account-digits"
-                              label={`Copiar cuenta (${digitsOnly.length} díg.)`}
+                              label={t("admin.orders.copyAccountDigits", { n: digitsOnly.length })}
                               value={digitsOnly}
+                              t={t}
                             />
                             <CopyBtn
                               testid="copy-delivery-account-formatted"
-                              label="Copiar formateada"
+                              label={t("admin.orders.copyFormatted")}
                               value={digitsOnly.match(/.{1,4}/g).join(" ")}
+                              t={t}
                             />
                           </>
                         );
@@ -383,8 +397,9 @@ export default function AdminOrders() {
                           return (
                             <CopyBtn
                               testid="copy-delivery-wallet"
-                              label={`Copiar wallet (${wallet[0].slice(0, 6)}…${wallet[0].slice(-4)})`}
+                              label={t("admin.orders.copyWallet", { short: `${wallet[0].slice(0, 6)}…${wallet[0].slice(-4)}` })}
                               value={wallet[0]}
+                              t={t}
                             />
                           );
                         }
@@ -396,7 +411,7 @@ export default function AdminOrders() {
               )}
               {open.proof_image && (
                 <div>
-                  <div className="micro-label text-neutral-500 mb-2">Comprobante del cliente (lo que envió)</div>
+                  <div className="micro-label text-neutral-500 mb-2">{t("admin.orders.clientProof")}</div>
                   <img src={open.proof_image} alt="proof" className="w-full max-h-96 object-contain border border-white/10" />
                 </div>
               )}
@@ -409,13 +424,13 @@ export default function AdminOrders() {
                 <div className="border-t border-white/5 pt-4">
                   <div className="micro-label text-[#8B5CF6] mb-2">
                     {open.delivery_method === "crypto"
-                      ? "Hash de transacción on-chain"
-                      : "Comprobante del pago AL cliente (transferencia)"}
+                      ? t("admin.orders.payoutTxHash")
+                      : t("admin.orders.payoutTransfer")}
                   </div>
                   <p className="text-[0.7rem] text-neutral-500 mb-3 leading-relaxed">
                     {open.delivery_method === "transfer"
-                      ? "Adjunta la captura del banco mostrando que enviaste los " + open.to_code + " al cliente. Es obligatorio antes de marcar como completada."
-                      : "Pega solo el hash de la transacción — con eso es suficiente, no hace falta subir captura. El cliente podrá verificarla en el explorer on-chain."}
+                      ? t("admin.orders.payoutHelperTransfer", { code: open.to_code })
+                      : t("admin.orders.payoutHelperCrypto")}
                   </p>
                   <div className="space-y-2">
                     {open.delivery_method === "crypto" && (
@@ -423,7 +438,7 @@ export default function AdminOrders() {
                         data-testid="order-payout-tx-hash"
                         value={payoutHash}
                         onChange={(e) => setPayoutHash(e.target.value)}
-                        placeholder="Hash de transacción (TXID)"
+                        placeholder={t("admin.orders.payoutTxHash")}
                         className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono text-xs"
                       />
                     )}
@@ -432,7 +447,7 @@ export default function AdminOrders() {
                         <div className="flex items-center gap-2">
                           <label className="flex-1 flex items-center gap-2 cursor-pointer bg-[#0a0a0a] border border-white/10 hover:border-[#8B5CF6]/40 px-3 py-2 text-xs text-neutral-300">
                             <Upload className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                            <span>{payoutProof ? "Cambiar captura" : "Subir captura (PNG/JPG, máx 4MB)"}</span>
+                            <span>{payoutProof ? t("admin.orders.changeScreenshot") : t("admin.orders.uploadScreenshot")}</span>
                             <input
                               type="file"
                               accept="image/*"
@@ -448,14 +463,14 @@ export default function AdminOrders() {
                               onClick={() => setPayoutProof("")}
                               className="text-[0.7rem] text-neutral-500 hover:text-[#EF4444] underline underline-offset-4"
                             >
-                              quitar
+                              {t("admin.orders.removeUpload")}
                             </button>
                           )}
                         </div>
                         {payoutProof && (
                           <img
                             src={payoutProof}
-                            alt="Captura del pago al cliente"
+                            alt={t("admin.orders.screenshotAlt")}
                             data-testid="order-payout-proof-preview"
                             className="w-full max-h-72 object-contain border border-[#8B5CF6]/30"
                           />
@@ -466,7 +481,7 @@ export default function AdminOrders() {
                 </div>
               )}
 
-              <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota administrativa..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
+              <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder={t("admin.orders.adminNotePlaceholder")} rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
               <div className="grid grid-cols-3 gap-2">
                 <Button
                   data-testid="approve-order"
@@ -474,7 +489,7 @@ export default function AdminOrders() {
                   disabled={!isAdmin && (open?.status === "approved" || open?.status === "completed" || open?.status === "rejected")}
                   className="bg-[#22C55E] hover:bg-[#16A34A] text-black rounded-none disabled:opacity-40"
                 >
-                  Confirmar
+                  {t("admin.orders.confirmBtn")}
                 </Button>
                 <Button
                   data-testid="complete-order"
@@ -482,7 +497,7 @@ export default function AdminOrders() {
                   disabled={!isAdmin && (open?.status === "completed" || open?.status === "rejected")}
                   className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none disabled:opacity-40"
                 >
-                  Completar
+                  {t("admin.orders.completeBtn")}
                 </Button>
                 <Button
                   data-testid="reject-order"
@@ -490,12 +505,12 @@ export default function AdminOrders() {
                   disabled={!isAdmin && (open?.status === "approved" || open?.status === "completed" || open?.status === "rejected")}
                   className="bg-[#EF4444] hover:bg-[#DC2626] text-white rounded-none disabled:opacity-40"
                 >
-                  Rechazar
+                  {t("admin.orders.rejectBtn")}
                 </Button>
               </div>
               {!isAdmin && (open?.status === "approved" || open?.status === "completed") && (
                 <p className="text-[0.65rem] text-neutral-500 italic">
-                  Esta orden ya fue {STATUS_LABELS[open.status]}. Sólo un admin puede revertir su estado.
+                  {t("admin.orders.alreadyDone", { status: t(STATUS_KEYS[open.status]) })}
                 </p>
               )}
             </div>
@@ -505,8 +520,8 @@ export default function AdminOrders() {
 
       <TotpPromptDialog
         open={!!pendingStatus}
-        title="Confirmar acción de alto riesgo"
-        description="Esta orden requiere doble aprobación. Ingresa tu código 2FA para confirmar."
+        title={t("admin.orders.totpTitle")}
+        description={t("admin.orders.totpDescription")}
         onConfirm={(code) => updateStatus(pendingStatus, code)}
         onCancel={() => setPendingStatus(null)}
       />

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { Wallet, Plus, FileImage, SlidersHorizontal, HandCoins } from "lucide-react";
 import { toast } from "sonner";
 import AdjustmentDialog from "./company-funds/AdjustmentDialog";
@@ -21,12 +23,18 @@ const STATUS_STYLES = {
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
   pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
 };
-const STATUS_LABELS = { pending: "Pendiente", approved: "Aprobado", paid: "Pagado", rejected: "Rechazado" };
 
 export default function AdminCompanyFunds() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const STATUS_LABELS = {
+    pending: t("admin.companyFunds.statusPending"),
+    approved: t("admin.companyFunds.statusApproved"),
+    paid: t("admin.companyFunds.statusPaid"),
+    rejected: t("admin.companyFunds.statusRejected"),
+  };
   const [funds, setFunds] = useState([]);
   const [items, setItems] = useState([]);
   const [adjustments, setAdjustments] = useState([]);
@@ -36,7 +44,7 @@ export default function AdminCompanyFunds() {
   const [openAdjustmentsHistory, setOpenAdjustmentsHistory] = useState(false);
   const [form, setForm] = useState({ amount: "", currency: "", beneficiary: "", concept: "", note: "", invoice_image: "" });
   const [pendingSubmit, setPendingSubmit] = useState(false);
-  const [pendingStatus, setPendingStatus] = useState(null); // {id, status}
+  const [pendingStatus, setPendingStatus] = useState(null);
 
   const load = async () => {
     try {
@@ -47,14 +55,14 @@ export default function AdminCompanyFunds() {
         axios.get(`${API}/currencies`, { withCredentials: true }),
       ]);
       setFunds(f.data); setItems(l.data); setAdjustments(a.data); setCurrencies(c.data);
-    } catch (e) { toast.error("Error al cargar fondos"); }
+    } catch (e) { toast.error(t("admin.companyFunds.toastLoadError")); }
   };
   useEffect(() => { load(); }, []);
 
   const handleInvoiceUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) return toast.error("Máx 4MB");
+    if (file.size > 4 * 1024 * 1024) return toast.error(t("admin.companyFunds.toastMax4"));
     const reader = new FileReader();
     reader.onload = () => setForm((f) => ({ ...f, invoice_image: reader.result }));
     reader.readAsDataURL(file);
@@ -73,12 +81,12 @@ export default function AdminCompanyFunds() {
         totp_code: totpCode,
       };
       await axios.post(`${API}/admin/company-withdrawals`, body, { withCredentials: true });
-      toast.success("Retiro de fondo registrado");
+      toast.success(t("admin.companyFunds.toastCreated"));
       setOpenCreate(false);
       setForm({ amount: "", currency: "", beneficiary: "", concept: "", note: "", invoice_image: "" });
       load();
     } catch (e) {
-      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || t("admin.common.genericError"));
     } finally { setPendingSubmit(false); }
   };
 
@@ -89,14 +97,13 @@ export default function AdminCompanyFunds() {
         { status: pendingStatus.status, totp_code: code },
         { withCredentials: true }
       );
-      toast.success("Estado actualizado");
+      toast.success(t("admin.companyFunds.toastStatus"));
       setPendingStatus(null); load();
     } catch (e) {
-      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || t("admin.common.genericError"));
     }
   };
 
-  // Available currencies for create form: scoped or all funds
   const scopeCurrencies = (user?.allowed_currencies || []);
   const fundCurrencies = funds.map(f => f.currency);
   const createCurrencies = !isAdmin && scopeCurrencies.length > 0
@@ -105,17 +112,14 @@ export default function AdminCompanyFunds() {
 
   return (
     <div data-testid="admin-company-funds" className="space-y-8">
-      <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Fondo de la Empresa</div>
-        <h1 className="font-display text-3xl">Capital operativo por moneda</h1>
-        <p className="text-neutral-500 text-sm mt-2">
-          Saldo = entradas (órdenes confirmadas + aportes propios) − entregas a clientes (P2P + retiros de clientes VIP y normales) − salidas de la empresa.
-        </p>
-      </div>
+      <AdminPageHeader
+        eyebrow={t("admin.companyFunds.eyebrow")}
+        title={t("admin.companyFunds.title")}
+        subtitle={t("admin.companyFunds.subtitle")}
+      />
 
-      {/* Funds cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="fund-cards">
-        {funds.length === 0 && <div className="col-span-full text-neutral-500 text-sm">Sin movimientos registrados aún.</div>}
+        {funds.length === 0 && <div className="col-span-full text-neutral-500 text-sm">{t("admin.companyFunds.empty")}</div>}
         {funds.map(f => (
           <div key={f.currency} className="tactile-card p-5" data-testid={`fund-${f.currency}`}>
             <Wallet className="w-4 h-4 text-[#8B5CF6] mb-2" />
@@ -129,30 +133,30 @@ export default function AdminCompanyFunds() {
               {f.balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
             </div>
             <div className="text-[0.65rem] text-neutral-500 mt-3 space-y-0.5 font-mono">
-              <div>+ Órdenes: {f.inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              <div>+ {t("admin.companyFunds.orders")}: {f.inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               {f.manual_inflow > 0 && (
                 <div className="text-[#22C55E]/80" data-testid={`fund-manual-in-${f.currency}`}>
-                  + Aporte propio: {f.manual_inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  + {t("admin.companyFunds.ownContribution")}: {f.manual_inflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </div>
               )}
               {(f.outflow_orders ?? 0) > 0 && (
                 <div className="text-[#EF4444]/80" data-testid={`fund-order-out-${f.currency}`}>
-                  − Entregado a clientes: {f.outflow_orders.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  − {t("admin.companyFunds.deliveredToClients")}: {f.outflow_orders.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </div>
               )}
               {(f.outflow_clients_vip ?? 0) > 0 && (
-                <div data-testid={`fund-vip-out-${f.currency}`}>− Retiros VIP: {f.outflow_clients_vip.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                <div data-testid={`fund-vip-out-${f.currency}`}>− {t("admin.companyFunds.vipWithdrawals")}: {f.outflow_clients_vip.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               )}
               {(f.outflow_clients_normal ?? 0) > 0 && (
-                <div data-testid={`fund-normal-out-${f.currency}`}>− Retiros clientes: {f.outflow_clients_normal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                <div data-testid={`fund-normal-out-${f.currency}`}>− {t("admin.companyFunds.normalWithdrawals")}: {f.outflow_clients_normal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               )}
               {(f.outflow_clients_vip == null && f.outflow_clients_normal == null && (f.outflow_clients ?? 0) > 0) && (
-                <div>− Retiros clientes: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                <div>− {t("admin.companyFunds.clientWithdrawals")}: {f.outflow_clients.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               )}
-              <div>− Empresa: {f.outflow_company.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+              <div>− {t("admin.companyFunds.companyOutflow")}: {f.outflow_company.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
               {f.manual_outflow > 0 && (
                 <div className="text-[#EF4444]/80" data-testid={`fund-manual-out-${f.currency}`}>
-                  − Salida propia: {f.manual_outflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  − {t("admin.companyFunds.ownOutflow")}: {f.manual_outflow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </div>
               )}
             </div>
@@ -161,17 +165,16 @@ export default function AdminCompanyFunds() {
       </div>
 
       <div className="flex flex-wrap justify-between items-center gap-3">
-        <h2 className="font-display text-xl">Retiros del fondo</h2>
+        <h2 className="font-display text-xl">{t("admin.companyFunds.sectionTitle")}</h2>
         <div className="flex gap-2 flex-wrap">
           <Button
             data-testid="open-adjustments-history"
             variant="outline"
             onClick={() => setOpenAdjustmentsHistory(true)}
             className="rounded-none border-white/20 hover:bg-white/5"
-            title="Ver depósitos y ajustes manuales de capital"
           >
             <HandCoins className="w-4 h-4 mr-1" />
-            Depósitos
+            {t("admin.companyFunds.deposits")}
             {adjustments.length > 0 && (
               <span
                 className="ml-2 text-[0.65rem] font-mono text-[#8B5CF6] bg-[#8B5CF6]/10 px-1.5 py-0.5"
@@ -188,7 +191,7 @@ export default function AdminCompanyFunds() {
             disabled={currencies.length === 0}
             className="rounded-none border-white/20 hover:bg-white/5"
           >
-            <SlidersHorizontal className="w-4 h-4 mr-1" /> Ajuste manual
+            <SlidersHorizontal className="w-4 h-4 mr-1" /> {t("admin.companyFunds.manualAdjustment")}
           </Button>
           <Button
             data-testid="create-company-withdrawal"
@@ -196,7 +199,7 @@ export default function AdminCompanyFunds() {
             disabled={createCurrencies.length === 0}
             className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
           >
-            <Plus className="w-4 h-4 mr-1" /> Nuevo retiro
+            <Plus className="w-4 h-4 mr-1" /> {t("admin.companyFunds.newWithdrawal")}
           </Button>
         </div>
       </div>
@@ -205,18 +208,18 @@ export default function AdminCompanyFunds() {
         <table className="w-full text-sm">
           <thead className="bg-[#0a0a0a] border-b border-white/10">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500">Monto</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Moneda</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Beneficiario</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Concepto</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Autorizado por</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Factura</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Estado</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colAmount")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colCurrency")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colBeneficiary")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colConcept")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colAuthorized")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colInvoice")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colStatus")}</th>
               {isAdmin && <th className="px-4 py-3"></th>}
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 && <tr><td colSpan="8" className="text-center text-neutral-500 py-8">Sin retiros aún</td></tr>}
+            {items.length === 0 && <tr><td colSpan="8" className="text-center text-neutral-500 py-8">{t("admin.companyFunds.emptyWithdrawals")}</td></tr>}
             {items.map(w => (
               <tr key={w.id} className="border-b border-white/5" data-testid={`company-withdrawal-row-${w.id}`}>
                 <td className="px-4 py-3 font-mono text-[#8B5CF6]">{w.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
@@ -227,7 +230,7 @@ export default function AdminCompanyFunds() {
                 <td className="px-4 py-3">
                   {w.invoice_image ? (
                     <a href={w.invoice_image} target="_blank" rel="noreferrer" className="text-[#8B5CF6] hover:underline text-xs inline-flex items-center gap-1">
-                      <FileImage className="w-3 h-3" /> Ver
+                      <FileImage className="w-3 h-3" /> {t("admin.companyFunds.seeInvoice")}
                     </a>
                   ) : <span className="text-neutral-600 text-xs">—</span>}
                 </td>
@@ -240,8 +243,8 @@ export default function AdminCompanyFunds() {
                   <td className="px-4 py-3">
                     {w.status !== "paid" && w.status !== "rejected" && (
                       <div className="flex gap-1">
-                        <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "approved" })} className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs">Aprobar</Button>
-                        <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "paid" })} className="bg-[#22C55E] text-black rounded-none h-7 text-xs">Pagado</Button>
+                        <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "approved" })} className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs">{t("admin.companyFunds.approve")}</Button>
+                        <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "paid" })} className="bg-[#22C55E] text-black rounded-none h-7 text-xs">{t("admin.companyFunds.paid")}</Button>
                         <Button size="sm" onClick={() => setPendingStatus({ id: w.id, status: "rejected" })} className="bg-[#EF4444] text-white rounded-none h-7 text-xs">×</Button>
                       </div>
                     )}
@@ -253,19 +256,22 @@ export default function AdminCompanyFunds() {
         </table>
       </div>
 
-      {/* Create dialog */}
       <Dialog open={openCreate} onOpenChange={setOpenCreate}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-display">Nuevo retiro del fondo</DialogTitle>
+            <DialogTitle className="font-display">{t("admin.companyFunds.dialogNewTitle")}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
-              Autorizado por: <span className="font-mono text-white">{user?.name}</span> · 2FA requerido.
+              <Trans
+                i18nKey="admin.companyFunds.dialogNewSub"
+                values={{ name: user?.name }}
+                components={{ 1: <span className="font-mono text-white" /> }}
+              />
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label className="micro-label text-neutral-500">Moneda</Label>
+                <Label className="micro-label text-neutral-500">{t("admin.companyFunds.currency")}</Label>
                 <Select value={form.currency} onValueChange={(v) => setForm({ ...form, currency: v })}>
                   <SelectTrigger data-testid="company-form-currency" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10"><SelectValue placeholder="Selecciona" /></SelectTrigger>
                   <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
@@ -274,24 +280,24 @@ export default function AdminCompanyFunds() {
                 </Select>
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Monto</Label>
+                <Label className="micro-label text-neutral-500">{t("admin.companyFunds.amount")}</Label>
                 <Input data-testid="company-form-amount" type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono" />
               </div>
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Beneficiario (cuenta / persona)</Label>
-              <Input data-testid="company-form-beneficiary" value={form.beneficiary} onChange={(e) => setForm({ ...form, beneficiary: e.target.value })} placeholder="ej. Banco X · cuenta 0012345" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10" />
+              <Label className="micro-label text-neutral-500">{t("admin.companyFunds.beneficiaryLabel")}</Label>
+              <Input data-testid="company-form-beneficiary" value={form.beneficiary} onChange={(e) => setForm({ ...form, beneficiary: e.target.value })} placeholder={t("admin.companyFunds.beneficiaryPh")} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Concepto</Label>
-              <Input data-testid="company-form-concept" value={form.concept} onChange={(e) => setForm({ ...form, concept: e.target.value })} placeholder="ej. Pago de servidor, nómina, comisión" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10" />
+              <Label className="micro-label text-neutral-500">{t("admin.companyFunds.conceptLabel")}</Label>
+              <Input data-testid="company-form-concept" value={form.concept} onChange={(e) => setForm({ ...form, concept: e.target.value })} placeholder={t("admin.companyFunds.conceptPh")} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Nota</Label>
+              <Label className="micro-label text-neutral-500">{t("admin.companyFunds.note")}</Label>
               <Textarea data-testid="company-form-note" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={2} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Factura / comprobante (opcional)</Label>
+              <Label className="micro-label text-neutral-500">{t("admin.companyFunds.invoiceLabel")}</Label>
               <input data-testid="company-form-invoice" type="file" accept="image/*" onChange={handleInvoiceUpload} className="block mt-1 text-xs text-neutral-400" />
               {form.invoice_image && (
                 <img src={form.invoice_image} alt="invoice" className="mt-2 max-h-32 border border-white/10" />
@@ -303,14 +309,12 @@ export default function AdminCompanyFunds() {
               onClick={() => setPendingStatus({ submit: true })}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
             >
-              Continuar (2FA)
+              {t("admin.companyFunds.continueTotp")}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Manual adjustments — iter55.36k moved into the "Depósitos" dialog
-          so treasury withdrawals don't push them off-screen. */}
       <AdjustmentsHistoryDialog
         open={openAdjustmentsHistory}
         onOpenChange={setOpenAdjustmentsHistory}
@@ -328,8 +332,8 @@ export default function AdminCompanyFunds() {
 
       <TotpPromptDialog
         open={!!pendingStatus}
-        title={pendingStatus?.submit ? "Confirmar retiro del fondo" : "Confirmar cambio de estado"}
-        description="Esta operación afecta el capital de la empresa. Ingresa tu código 2FA."
+        title={pendingStatus?.submit ? t("admin.companyFunds.totpNewTitle") : t("admin.companyFunds.totpStatusTitle")}
+        description={t("admin.companyFunds.totpDesc")}
         busy={pendingSubmit}
         onConfirm={(code) => {
           if (pendingStatus?.submit) submitCreate(code);

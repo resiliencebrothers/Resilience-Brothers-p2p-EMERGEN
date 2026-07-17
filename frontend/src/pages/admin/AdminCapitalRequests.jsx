@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,31 +10,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { CheckCircle2, XCircle, Clock, HandCoins, Filter } from "lucide-react";
-
-const STATUS_META = {
-  pending: { label: "Pendiente", cls: "text-amber-400 border-amber-500/40 bg-amber-500/5", icon: Clock },
-  disbursed: { label: "Desembolsado", cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", icon: HandCoins },
-  paid_off: { label: "Devuelto", cls: "text-emerald-400 border-emerald-500/40 bg-emerald-500/5", icon: CheckCircle2 },
-  rejected: { label: "Rechazado", cls: "text-red-400 border-red-500/40 bg-red-500/5", icon: XCircle },
-};
 
 const fmtNum = (n, d = 2) =>
   Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: d });
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
 
-/**
- * iter55.32 — Admin panel for VIP capital requests (aka "solicitudes de
- * fondos"). Lives inside AdminCompanyFundsHub as the 3rd tab.
- *
- * Flow:
- *   VIP client creates a `pending` request from their dashboard
- *   Admin reviews, approves (with discount%) OR rejects (with reason)
- *   Approved → status `disbursed`, VIP balance credited, debt tracked
- *   Every subsequent accumulated order auto-deducts % until debt is 0
- *   → status flips to `paid_off`
- */
 export default function AdminCapitalRequests() {
+  const { t } = useTranslation();
+
+  const STATUS_META = {
+    pending:   { label: t("admin.capitalRequests.statusPending"),   cls: "text-amber-400 border-amber-500/40 bg-amber-500/5", icon: Clock },
+    disbursed: { label: t("admin.capitalRequests.statusDisbursed"), cls: "text-[#8B5CF6] border-[#8B5CF6]/40 bg-[#8B5CF6]/5", icon: HandCoins },
+    paid_off:  { label: t("admin.capitalRequests.statusPaidOff"),   cls: "text-emerald-400 border-emerald-500/40 bg-emerald-500/5", icon: CheckCircle2 },
+    rejected:  { label: t("admin.capitalRequests.statusRejected"),  cls: "text-red-400 border-red-500/40 bg-red-500/5", icon: XCircle },
+  };
+
   const [items, setItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [loading, setLoading] = useState(false);
@@ -55,11 +48,11 @@ export default function AdminCapitalRequests() {
       });
       setItems(r.data || []);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error al cargar solicitudes.");
+      toast.error(e.response?.data?.detail || t("admin.capitalRequests.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -77,7 +70,7 @@ export default function AdminCapitalRequests() {
     if (!approving) return;
     const pct = Number(discountPct);
     if (isNaN(pct) || pct < 1 || pct > 100) {
-      return toast.error("El descuento debe estar entre 1% y 100%.");
+      return toast.error(t("admin.capitalRequests.discountInvalid"));
     }
     setBusy(true);
     try {
@@ -87,14 +80,19 @@ export default function AdminCapitalRequests() {
         { withCredentials: true },
       );
       toast.success(
-        `Desembolsados ${fmtNum(approving.amount, 2)} ${approving.currency_code} a ${approving.user_name || approving.user_email}. Descuento ${pct}% por orden.`
+        t("admin.capitalRequests.disbursedToast", {
+          amount: fmtNum(approving.amount, 2),
+          code: approving.currency_code,
+          who: approving.user_name || approving.user_email,
+          pct,
+        })
       );
       setApproving(null);
       setPendingTotp(null);
       load();
     } catch (e) {
       if (!handleTotpError(e, () => setPendingTotp({ kind: "approve" }))) {
-        toast.error(e.response?.data?.detail || "Error al aprobar.");
+        toast.error(e.response?.data?.detail || t("admin.capitalRequests.approveError"));
       }
     } finally {
       setBusy(false);
@@ -104,7 +102,7 @@ export default function AdminCapitalRequests() {
   const submitReject = async (totp) => {
     if (!rejecting) return;
     if (rejectReason.trim().length < 5) {
-      return toast.error("El motivo del rechazo debe tener al menos 5 caracteres.");
+      return toast.error(t("admin.capitalRequests.rejectReasonInvalid"));
     }
     setBusy(true);
     try {
@@ -113,13 +111,13 @@ export default function AdminCapitalRequests() {
         { reject_reason: rejectReason.trim(), totp_code: totp },
         { withCredentials: true },
       );
-      toast.success("Solicitud rechazada.");
+      toast.success(t("admin.capitalRequests.rejectedToast"));
       setRejecting(null);
       setPendingTotp(null);
       load();
     } catch (e) {
       if (!handleTotpError(e, () => setPendingTotp({ kind: "reject" }))) {
-        toast.error(e.response?.data?.detail || "Error al rechazar.");
+        toast.error(e.response?.data?.detail || t("admin.capitalRequests.rejectError"));
       }
     } finally {
       setBusy(false);
@@ -128,37 +126,34 @@ export default function AdminCapitalRequests() {
 
   return (
     <div className="space-y-4" data-testid="admin-capital-requests">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <div className="micro-label text-[#8B5CF6] mb-1">/ Solicitudes de fondos</div>
-          <h1 className="font-display text-2xl">Capital operativo — VIPs</h1>
-          <p className="text-sm text-neutral-500 mt-1 max-w-xl">
-            Al aprobar, el monto se acredita al saldo VIP del cliente y se debita del fondo empresa.
-            Cada orden acumulada del VIP descuenta automáticamente el % configurado hasta cerrar la deuda.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-neutral-500" />
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-44 rounded-none bg-[#0a0a0a] border-white/10 h-10" data-testid="cr-filter-status">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todas</SelectItem>
-              <SelectItem value="pending">Pendientes</SelectItem>
-              <SelectItem value="disbursed">Desembolsadas</SelectItem>
-              <SelectItem value="paid_off">Devueltas</SelectItem>
-              <SelectItem value="rejected">Rechazadas</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+      <AdminPageHeader
+        eyebrow={t("admin.capitalRequests.eyebrow")}
+        title={t("admin.capitalRequests.title")}
+        subtitle={t("admin.capitalRequests.subtitle")}
+        actions={
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-neutral-500" />
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-44 rounded-none bg-[#0a0a0a] border-white/10 h-10" data-testid="cr-filter-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+                <SelectItem value="all">{t("admin.capitalRequests.allFilter")}</SelectItem>
+                <SelectItem value="pending">{t("admin.capitalRequests.pendingFilter")}</SelectItem>
+                <SelectItem value="disbursed">{t("admin.capitalRequests.disbursedFilter")}</SelectItem>
+                <SelectItem value="paid_off">{t("admin.capitalRequests.paidOffFilter")}</SelectItem>
+                <SelectItem value="rejected">{t("admin.capitalRequests.rejectedFilter")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        }
+      />
 
       {loading ? (
-        <div className="text-neutral-500 p-6">Cargando…</div>
+        <div className="text-neutral-500 p-6">{t("admin.capitalRequests.loading")}</div>
       ) : items.length === 0 ? (
         <div className="tactile-card p-10 text-center text-neutral-500" data-testid="cr-empty">
-          Sin solicitudes que coincidan con el filtro.
+          {t("admin.capitalRequests.empty")}
         </div>
       ) : (
         <div className="space-y-3">
@@ -185,7 +180,7 @@ export default function AdminCapitalRequests() {
                       </span>
                     </div>
                     <div className="font-display text-xl">
-                      {cr.user_name || "(sin nombre)"}
+                      {cr.user_name || t("admin.capitalRequests.noName")}
                       <span className="text-sm text-neutral-500 ml-2 font-mono">
                         {cr.user_email}
                       </span>
@@ -195,27 +190,27 @@ export default function AdminCapitalRequests() {
                     </div>
                     {cr.status === "rejected" && cr.reject_reason && (
                       <div className="mt-2 text-xs text-red-400">
-                        Motivo del rechazo: {cr.reject_reason}
+                        {t("admin.capitalRequests.rejectReason", { reason: cr.reject_reason })}
                       </div>
                     )}
                     {cr.status === "disbursed" && cr.admin_notes && (
                       <div className="mt-2 text-xs text-neutral-500">
-                        Notas admin: {cr.admin_notes}
+                        {t("admin.capitalRequests.adminNotes", { notes: cr.admin_notes })}
                       </div>
                     )}
                   </div>
                   <div className="text-right">
-                    <div className="micro-label text-neutral-500">Monto solicitado</div>
+                    <div className="micro-label text-neutral-500">{t("admin.capitalRequests.amountRequested")}</div>
                     <div className="font-display text-2xl tabular-nums">
                       {fmtNum(cr.amount, 2)} <span className="text-sm text-neutral-500">{cr.currency_code}</span>
                     </div>
                     {cr.status === "disbursed" && (
                       <>
                         <div className="mt-2 text-xs text-neutral-500">
-                          Restante: <span className="text-red-400 tabular-nums">{fmtNum(cr.debt_remaining, 2)} {cr.currency_code}</span>
+                          {t("admin.capitalRequests.remaining")} <span className="text-red-400 tabular-nums">{fmtNum(cr.debt_remaining, 2)} {cr.currency_code}</span>
                         </div>
                         <div className="mt-1 text-[0.65rem] text-[#8B5CF6]">
-                          Descuento {cr.discount_pct}% / orden
+                          {t("admin.capitalRequests.discountPerOrder", { pct: cr.discount_pct })}
                         </div>
                       </>
                     )}
@@ -231,7 +226,7 @@ export default function AdminCapitalRequests() {
                       />
                     </div>
                     <div className="text-[0.65rem] text-neutral-500 mt-1 uppercase tracking-widest">
-                      {paidPct}% devuelto · {(cr.repayment_events || []).length} pagos automáticos
+                      {t("admin.capitalRequests.paidPct", { pct: paidPct, n: (cr.repayment_events || []).length })}
                     </div>
                   </div>
                 )}
@@ -243,14 +238,14 @@ export default function AdminCapitalRequests() {
                       onClick={() => openApprove(cr)}
                       className="rounded-none bg-emerald-600 hover:bg-emerald-500 text-white h-9 px-4 text-xs uppercase tracking-wider font-bold"
                     >
-                      <CheckCircle2 className="w-4 h-4 mr-1.5" /> Aprobar
+                      <CheckCircle2 className="w-4 h-4 mr-1.5" /> {t("admin.capitalRequests.approve")}
                     </Button>
                     <Button
                       data-testid={`cr-reject-${cr.id}`}
                       onClick={() => openReject(cr)}
                       className="rounded-none bg-red-600 hover:bg-red-500 text-white h-9 px-4 text-xs uppercase tracking-wider font-bold"
                     >
-                      <XCircle className="w-4 h-4 mr-1.5" /> Rechazar
+                      <XCircle className="w-4 h-4 mr-1.5" /> {t("admin.capitalRequests.reject")}
                     </Button>
                   </div>
                 )}
@@ -264,17 +259,17 @@ export default function AdminCapitalRequests() {
       <Dialog open={!!approving} onOpenChange={(o) => !o && setApproving(null)}>
         <DialogContent className="bg-[#0c0c0c] border border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Aprobar y desembolsar</DialogTitle>
+            <DialogTitle>{t("admin.capitalRequests.approveDialog")}</DialogTitle>
           </DialogHeader>
           {approving && (
             <div className="space-y-4">
               <div className="border border-white/10 bg-[#0a0a0a] p-3 text-sm">
-                <div>Cliente: <strong>{approving.user_name}</strong> ({approving.user_email})</div>
-                <div className="mt-1">Monto: <strong className="tabular-nums">{fmtNum(approving.amount, 2)} {approving.currency_code}</strong></div>
+                <div>{t("admin.capitalRequests.client")} <strong>{approving.user_name}</strong> ({approving.user_email})</div>
+                <div className="mt-1">{t("admin.capitalRequests.amountLabel")} <strong className="tabular-nums">{fmtNum(approving.amount, 2)} {approving.currency_code}</strong></div>
                 <div className="mt-1 text-xs text-neutral-500">{approving.reason}</div>
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Descuento por orden acumulada (%)</Label>
+                <Label className="micro-label text-neutral-500">{t("admin.capitalRequests.discountLabel")}</Label>
                 <Input
                   data-testid="cr-approve-discount"
                   type="number"
@@ -284,11 +279,11 @@ export default function AdminCapitalRequests() {
                   className="rounded-none bg-[#0a0a0a] border-white/10 h-11 mt-1 font-mono"
                 />
                 <div className="text-[0.65rem] text-neutral-500 mt-1">
-                  Cada vez que el VIP complete una orden acumulada en {approving.currency_code}, se descontará este porcentaje del monto acreditado y se aplicará a la deuda.
+                  {t("admin.capitalRequests.discountHelper", { code: approving.currency_code })}
                 </div>
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Notas internas (opcional)</Label>
+                <Label className="micro-label text-neutral-500">{t("admin.capitalRequests.adminNotesLabel")}</Label>
                 <Textarea
                   data-testid="cr-approve-notes"
                   value={adminNotes}
@@ -300,14 +295,14 @@ export default function AdminCapitalRequests() {
             </div>
           )}
           <DialogFooter>
-            <Button onClick={() => setApproving(null)} className="rounded-none bg-transparent border border-white/15 text-white">Cancelar</Button>
+            <Button onClick={() => setApproving(null)} className="rounded-none bg-transparent border border-white/15 text-white">{t("admin.capitalRequests.cancel")}</Button>
             <Button
               data-testid="cr-approve-confirm"
               onClick={() => submitApprove()}
               disabled={busy}
               className="rounded-none bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
             >
-              Desembolsar
+              {t("admin.capitalRequests.disburse")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -317,16 +312,16 @@ export default function AdminCapitalRequests() {
       <Dialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)}>
         <DialogContent className="bg-[#0c0c0c] border border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Rechazar solicitud</DialogTitle>
+            <DialogTitle>{t("admin.capitalRequests.rejectDialog")}</DialogTitle>
           </DialogHeader>
           {rejecting && (
             <div className="space-y-4">
               <div className="border border-white/10 bg-[#0a0a0a] p-3 text-sm">
-                <div>Cliente: <strong>{rejecting.user_name}</strong></div>
-                <div className="mt-1">Monto: <strong className="tabular-nums">{fmtNum(rejecting.amount, 2)} {rejecting.currency_code}</strong></div>
+                <div>{t("admin.capitalRequests.client")} <strong>{rejecting.user_name}</strong></div>
+                <div className="mt-1">{t("admin.capitalRequests.amountLabel")} <strong className="tabular-nums">{fmtNum(rejecting.amount, 2)} {rejecting.currency_code}</strong></div>
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Motivo del rechazo *</Label>
+                <Label className="micro-label text-neutral-500">{t("admin.capitalRequests.rejectReasonLabel")}</Label>
                 <Textarea
                   data-testid="cr-reject-reason"
                   value={rejectReason}
@@ -334,20 +329,20 @@ export default function AdminCapitalRequests() {
                   minLength={5}
                   maxLength={500}
                   className="rounded-none bg-[#0a0a0a] border-white/10 mt-1"
-                  placeholder="Explica al cliente por qué se rechaza (mínimo 5 caracteres)"
+                  placeholder={t("admin.capitalRequests.rejectReasonPh")}
                 />
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button onClick={() => setRejecting(null)} className="rounded-none bg-transparent border border-white/15 text-white">Cancelar</Button>
+            <Button onClick={() => setRejecting(null)} className="rounded-none bg-transparent border border-white/15 text-white">{t("admin.capitalRequests.cancel")}</Button>
             <Button
               data-testid="cr-reject-confirm"
               onClick={() => submitReject()}
               disabled={busy}
               className="rounded-none bg-red-600 hover:bg-red-500 text-white font-bold"
             >
-              Rechazar solicitud
+              {t("admin.capitalRequests.rejectBtn")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -355,8 +350,8 @@ export default function AdminCapitalRequests() {
 
       <TotpPromptDialog
         open={!!pendingTotp}
-        title="Confirmar acción"
-        description="Ingresa tu código 2FA para confirmar esta acción sobre el fondo empresa."
+        title={t("admin.capitalRequests.totpTitle")}
+        description={t("admin.capitalRequests.totpDescription")}
         onConfirm={(code) => {
           if (pendingTotp?.kind === "approve") submitApprove(code);
           else if (pendingTotp?.kind === "reject") submitReject(code);

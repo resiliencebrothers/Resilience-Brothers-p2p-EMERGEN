@@ -43,7 +43,7 @@ export default function AdminOverviewHub() {
       <nav
         className="flex items-center gap-1 border-b border-white/10 pb-1 -mt-2 overflow-x-auto scrollbar-none"
         role="tablist"
-        aria-label="Resumen"
+        aria-label={t("admin.hubs.overviewAria")}
       >
         {TAB_META.map((tt) => {
           const Icon = tt.icon;

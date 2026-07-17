@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,26 +11,13 @@ import {
 import { toast } from "sonner";
 import { Shield, RefreshCw, Users, MapPin, Ban, AlertOctagon, Wifi, LogOut, Cloud, Plus, Trash2 } from "lucide-react";
 
-// Static column headers — hoisted to module scope to avoid re-allocation
-// on every render (each Panel had inline arrays in its `headers` prop).
-const HEADERS_NEW_IP = ["Fecha", "Email", "Rol", "IP", "User-Agent"];
-const HEADERS_RATE_LIMITED = ["IP", "Hits", "Último", "Endpoints"];
-const HEADERS_ORIGIN_VIOLATIONS = ["Fecha", "Origin", "IP", "Método", "Path"];
-const HEADERS_LOGIN_BURSTS = ["Identifier", "Fallos", "Último intento"];
-
-/**
- * AdminSecurity — read-only operational security dashboard.
- *
- * Panels:
- *  1. Active sessions grouped by role + top-20 staff sessions (with revoke button)
- *  2. Admin/employee logins from new IPs (last 7 days)
- *  3. Top 10 IPs blocked by the rate limiter
- *  4. Latest 20 origin-allowlist violations
- *  5. Failed-login bursts by identifier
- *
- * Admin-only. Requires role=admin (employees get 403 from the API).
- */
 export default function AdminSecurity() {
+  const { t } = useTranslation();
+  const HEADERS_NEW_IP = [t("admin.common.date"), t("admin.common.user"), "Rol", "IP", "User-Agent"];
+  const HEADERS_RATE_LIMITED = ["IP", "Hits", "Último", "Endpoints"];
+  const HEADERS_ORIGIN_VIOLATIONS = [t("admin.common.date"), "Origin", "IP", "Método", "Path"];
+  const HEADERS_LOGIN_BURSTS = ["Identifier", "Fallos", "Último intento"];
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [revoking, setRevoking] = useState(null);
@@ -47,11 +35,11 @@ export default function AdminSecurity() {
       setData(r.data);
     } catch (e) {
       const detail = e.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "No se pudo cargar el panel de seguridad");
+      toast.error(typeof detail === "string" ? detail : t("admin.security.loadError"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadCloudflare = useCallback(async () => {
     setCfLoading(true);
@@ -60,16 +48,16 @@ export default function AdminSecurity() {
       setCfData(r.data);
     } catch (e) {
       const detail = e.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "No se pudo cargar la blocklist de Cloudflare");
+      toast.error(typeof detail === "string" ? detail : t("admin.security.cfLoadError"));
     } finally {
       setCfLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => { load(); loadCloudflare(); }, [load, loadCloudflare]);
 
   const revokeSessions = async (userId, email) => {
-    if (!window.confirm(`¿Revocar TODAS las sesiones de ${email}?\nEl usuario tendrá que iniciar sesión de nuevo.`)) return;
+    if (!window.confirm(t("admin.security.revokeConfirm", { email }))) return;
     setRevoking(userId);
     try {
       const r = await axios.post(
@@ -77,10 +65,10 @@ export default function AdminSecurity() {
         {},
         { withCredentials: true }
       );
-      toast.success(`Revocadas ${r.data.revoked} sesión(es) de ${email}`);
+      toast.success(t("admin.security.sessionsRevokedToast", { n: r.data.revoked, email }));
       await load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudieron revocar");
+      toast.error(e.response?.data?.detail || t("admin.common.genericError"));
     } finally {
       setRevoking(null);
     }
@@ -89,7 +77,7 @@ export default function AdminSecurity() {
   const submitCfBlock = async () => {
     const ip = cfForm.ip.trim();
     if (!ip) {
-      toast.error("Ingresa una dirección IP");
+      toast.error(t("admin.security.ipRequired"));
       return;
     }
     setCfSubmitting(true);
@@ -100,42 +88,42 @@ export default function AdminSecurity() {
         { withCredentials: true }
       );
       if (r.data?.already_blocked) {
-        toast.info(`La IP ${ip} ya estaba en la blocklist`);
+        toast.info(t("admin.security.cfAlready", { ip }));
       } else if (r.data?.cf_ok) {
-        toast.success(`IP ${ip} bloqueada en app + Cloudflare WAF`);
+        toast.success(t("admin.security.cfBoth", { ip }));
       } else if (r.data?.created) {
-        toast.success(`IP ${ip} bloqueada a nivel aplicación`);
+        toast.success(t("admin.security.cfAppOnly", { ip }));
       } else {
-        toast.warning(`No se pudo bloquear: ${r.data?.reason || "revisa logs"}`);
+        toast.warning(t("admin.security.cfFailed", { reason: r.data?.reason || "revisa logs" }));
       }
       setCfDialogOpen(false);
       setCfForm({ ip: "", notes: "" });
       await loadCloudflare();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudo crear el bloqueo");
+      toast.error(e.response?.data?.detail || t("admin.security.cfCreateError"));
     } finally {
       setCfSubmitting(false);
     }
   };
 
   const deleteCfBlock = async (blockId, ip) => {
-    if (!window.confirm(`¿Desbloquear ${ip}?\nSe eliminará la regla en Cloudflare (si aplica) y el registro pasará a 'deleted'.`)) return;
+    if (!window.confirm(t("admin.security.unblockConfirm", { ip }))) return;
     setCfDeleting(blockId);
     try {
       await axios.delete(
         `${API}/admin/security/cloudflare/blocks/${blockId}`,
         { withCredentials: true }
       );
-      toast.success(`IP ${ip} desbloqueada`);
+      toast.success(t("admin.security.cfDelSuccess", { ip }));
       await loadCloudflare();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudo desbloquear");
+      toast.error(e.response?.data?.detail || t("admin.security.cfDelError"));
     } finally {
       setCfDeleting(null);
     }
   };
 
-  if (loading) return <div className="text-sm text-neutral-500">Cargando panel de seguridad...</div>;
+  if (loading) return <div className="text-sm text-neutral-500">{t("admin.security.loading")}</div>;
   if (!data) return null;
 
   return (
@@ -143,10 +131,14 @@ export default function AdminSecurity() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="font-display text-3xl flex items-center gap-2">
-            <Shield className="w-7 h-7 text-[#8B5CF6]" /> Auditoría de Seguridad
+            <Shield className="w-7 h-7 text-[#8B5CF6]" /> {t("admin.security.title")}
           </h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Ventana: <span className="text-white">últimos {data.window_days} días</span> · Generado: {data.generated_at?.slice(0, 16).replace("T", " ")}
+            <Trans
+              i18nKey="admin.security.window"
+              values={{ days: data.window_days, ts: data.generated_at?.slice(0, 16).replace("T", " ") }}
+              components={{ 1: <span className="text-white" /> }}
+            />
           </p>
         </div>
         <Button
@@ -156,52 +148,50 @@ export default function AdminSecurity() {
           variant="outline"
           className="border-white/10 text-neutral-300 hover:bg-white/5"
         >
-          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Recargar
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> {t("admin.security.reload")}
         </Button>
       </div>
 
-      {/* SUMMARY CARDS */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <SummaryCard
           icon={Users}
-          label="Sesiones activas"
+          label={t("admin.security.activeSessions")}
           value={data.active_sessions.total}
           hint={Object.entries(data.active_sessions.by_role).map(([r, n]) => `${r}: ${n}`).join(" · ")}
           testId="security-sessions-total"
         />
         <SummaryCard
           icon={MapPin}
-          label="Admins desde IP nueva"
+          label={t("admin.security.adminsNewIp")}
           value={data.admin_new_ip_logins.length}
-          hint="últimos 7 días"
+          hint={t("admin.security.adminsNewIpHint")}
           tone={data.admin_new_ip_logins.length > 0 ? "warn" : "default"}
           testId="security-new-ip-count"
         />
         <SummaryCard
           icon={Ban}
-          label="IPs bloqueadas (rate limit)"
+          label={t("admin.security.ratelimitIps")}
           value={data.top_rate_limited_ips.reduce((s, r) => s + r.hits, 0)}
-          hint={`${data.top_rate_limited_ips.length} IPs distintas`}
+          hint={t("admin.security.ratelimitDistinct", { n: data.top_rate_limited_ips.length })}
           tone={data.top_rate_limited_ips.length > 0 ? "warn" : "default"}
           testId="security-rate-limit-count"
         />
         <SummaryCard
           icon={AlertOctagon}
-          label="Origen bloqueado (403)"
+          label={t("admin.security.originBlocked")}
           value={data.recent_origin_violations.length}
-          hint="últimos 7 días"
+          hint={t("admin.security.originHint")}
           tone={data.recent_origin_violations.length > 0 ? "danger" : "default"}
           testId="security-origin-block-count"
         />
       </div>
 
-      {/* STAFF ACTIVE SESSIONS */}
       <Panel
         icon={Wifi}
-        title="Sesiones de staff activas"
-        subtitle="Sesiones no expiradas de admins y empleados. Revoca cualquiera que no reconozcas."
+        title={t("admin.security.staffSessions")}
+        subtitle={t("admin.security.staffSessionsDesc")}
       >
-        {data.active_sessions.staff_active.length === 0 && <Empty text="Ninguna sesión de staff activa." />}
+        {data.active_sessions.staff_active.length === 0 && <Empty text={t("admin.security.noStaffSessions")} />}
         <ul className="space-y-2">
           {data.active_sessions.staff_active.map((s) => (
             <li key={s.user_id + s.created_at} className="flex flex-wrap items-center justify-between gap-2 border border-white/5 bg-black/30 px-3 py-2">
@@ -209,8 +199,8 @@ export default function AdminSecurity() {
                 <div className="text-sm text-white font-semibold truncate">{s.email || s.user_id}</div>
                 <div className="text-[0.65rem] text-neutral-500">
                   <span className="text-[#8B5CF6] uppercase font-bold">{s.role}</span>
-                  {" · "}Creada {s.created_at?.slice(0, 16).replace("T", " ")}
-                  {" · "}Expira {s.expires_at?.slice(0, 16).replace("T", " ")}
+                  {" · "}{t("admin.security.createdAt")} {s.created_at?.slice(0, 16).replace("T", " ")}
+                  {" · "}{t("admin.security.expiresAt")} {s.expires_at?.slice(0, 16).replace("T", " ")}
                 </div>
               </div>
               <Button
@@ -221,20 +211,19 @@ export default function AdminSecurity() {
                 disabled={revoking === s.user_id}
                 className="bg-[#EF4444]/10 border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/20"
               >
-                <LogOut className="w-3.5 h-3.5 mr-1" /> Revocar
+                <LogOut className="w-3.5 h-3.5 mr-1" /> {t("admin.security.revoke")}
               </Button>
             </li>
           ))}
         </ul>
       </Panel>
 
-      {/* NEW IP LOGINS */}
       <Panel
         icon={MapPin}
-        title="Logins de staff desde IP nueva"
-        subtitle="Un admin o empleado inició sesión desde una IP que no habíamos visto en los últimos 90 días. Verifica que sea legítimo."
+        title={t("admin.security.newIpLogins")}
+        subtitle={t("admin.security.newIpDesc")}
       >
-        {data.admin_new_ip_logins.length === 0 && <Empty text="Ningún login desde IP nueva. ✅" />}
+        {data.admin_new_ip_logins.length === 0 && <Empty text={t("admin.security.noNewIpLogins")} />}
         <TableSimple
           headers={HEADERS_NEW_IP}
           rows={data.admin_new_ip_logins.map((e) => [
@@ -247,13 +236,12 @@ export default function AdminSecurity() {
         />
       </Panel>
 
-      {/* TOP RATE-LIMITED IPS */}
       <Panel
         icon={Ban}
-        title="Top IPs bloqueadas por rate limit"
-        subtitle="Las 10 IPs con más golpes 429 en los últimos 7 días. Considera bloquearlas en Cloudflare si abusan."
+        title={t("admin.security.topRateLimited")}
+        subtitle={t("admin.security.topRateLimitedDesc")}
       >
-        {data.top_rate_limited_ips.length === 0 && <Empty text="Ninguna IP alcanzó el límite. ✅" />}
+        {data.top_rate_limited_ips.length === 0 && <Empty text={t("admin.security.noRateLimited")} />}
         <TableSimple
           headers={HEADERS_RATE_LIMITED}
           rows={data.top_rate_limited_ips.map((r) => [
@@ -265,13 +253,12 @@ export default function AdminSecurity() {
         />
       </Panel>
 
-      {/* ORIGIN VIOLATIONS */}
       <Panel
         icon={AlertOctagon}
-        title="Violaciones de allowlist Origin"
-        subtitle="POST/PUT/DELETE bloqueados por venir de un Origin no permitido. Cada línea es un intento potencial de CSRF."
+        title={t("admin.security.originViolations")}
+        subtitle={t("admin.security.originViolationsDesc")}
       >
-        {data.recent_origin_violations.length === 0 && <Empty text="Ninguna violación. ✅" />}
+        {data.recent_origin_violations.length === 0 && <Empty text={t("admin.security.noOriginViolations")} />}
         <TableSimple
           headers={HEADERS_ORIGIN_VIOLATIONS}
           rows={data.recent_origin_violations.map((e) => [
@@ -284,13 +271,12 @@ export default function AdminSecurity() {
         />
       </Panel>
 
-      {/* LOGIN BURSTS */}
       <Panel
         icon={AlertOctagon}
-        title="Ráfagas de logins fallidos"
-        subtitle="Identifiers con más intentos fallidos en los últimos 7 días. Alto conteo puede indicar credential-stuffing."
+        title={t("admin.security.loginBursts")}
+        subtitle={t("admin.security.loginBurstsDesc")}
       >
-        {data.recent_login_bursts.length === 0 && <Empty text="Sin ráfagas anormales. ✅" />}
+        {data.recent_login_bursts.length === 0 && <Empty text={t("admin.security.noLoginBursts")} />}
         <TableSimple
           headers={HEADERS_LOGIN_BURSTS}
           rows={data.recent_login_bursts.map((r) => [
@@ -301,21 +287,20 @@ export default function AdminSecurity() {
         />
       </Panel>
 
-      {/* IP BLOCKLIST (APP-LEVEL) */}
       <Panel
         icon={Cloud}
-        title="Blocklist de IPs (aplicación)"
-        subtitle="IPs bloqueadas a nivel aplicación: cualquier request de estas IPs recibe 403 antes de tocar la lógica de negocio. El scanner automático puede añadirlas cuando detecta floods. Si además configuras Cloudflare (CF_API_TOKEN + CF_ZONE_ID), el bloqueo también se aplica al borde."
+        title={t("admin.security.blocklistTitle")}
+        subtitle={t("admin.security.blocklistDesc")}
       >
         <div className="mb-3 flex flex-wrap items-center gap-3 text-[0.7rem]">
           <span className="px-2 py-1 border border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
-            Enforcement app-level: activo ✓
+            {t("admin.security.enforceAppOk")}
           </span>
           <span className={`px-2 py-1 border ${cfData?.configured ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
-            Cloudflare edge: {cfData?.configured ? "configurado ✓" : "sin credenciales"}
+            {cfData?.configured ? t("admin.security.cfConfigured") : t("admin.security.cfNotConfigured")}
           </span>
           <span className={`px-2 py-1 border ${cfData?.auto_block_enabled ? "border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#FEF3C7]" : "border-neutral-500/40 bg-neutral-500/10 text-neutral-400"}`}>
-            Auto-block: {cfData?.auto_block_enabled ? "activo" : "solo app-level"}
+            {cfData?.auto_block_enabled ? t("admin.security.autoBlockOn") : t("admin.security.autoBlockOff")}
           </span>
           <div className="ml-auto flex gap-2">
             <Button
@@ -325,7 +310,7 @@ export default function AdminSecurity() {
               variant="outline"
               className="border-white/10 text-neutral-300 hover:bg-white/5"
             >
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Recargar
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> {t("admin.security.reload")}
             </Button>
             <Button
               data-testid="cf-add-block-btn"
@@ -333,24 +318,24 @@ export default function AdminSecurity() {
               size="sm"
               className="bg-[#8B5CF6] text-white hover:bg-[#8B5CF6]/90"
             >
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> Bloquear IP
+              <Plus className="w-3.5 h-3.5 mr-1.5" /> {t("admin.security.blockIp")}
             </Button>
           </div>
         </div>
 
-        {cfLoading && <div className="text-xs text-neutral-500">Cargando blocklist…</div>}
-        {!cfLoading && cfData?.items?.length === 0 && <Empty text="Ningún bloqueo registrado." />}
+        {cfLoading && <div className="text-xs text-neutral-500">{t("admin.security.loadingBlocklist")}</div>}
+        {!cfLoading && cfData?.items?.length === 0 && <Empty text={t("admin.security.noBlocks")} />}
         {!cfLoading && cfData?.items?.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs" data-testid="cf-blocks-table">
               <thead>
                 <tr className="text-[0.6rem] uppercase tracking-wider text-neutral-500 border-b border-white/5">
-                  <th className="text-left py-2 pr-3 font-semibold">IP</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Estado</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Origen</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Notas</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Creado</th>
-                  <th className="text-left py-2 pr-3 font-semibold">Acción</th>
+                  <th className="text-left py-2 pr-3 font-semibold">{t("admin.security.colIp")}</th>
+                  <th className="text-left py-2 pr-3 font-semibold">{t("admin.security.colStatus")}</th>
+                  <th className="text-left py-2 pr-3 font-semibold">{t("admin.security.colSource")}</th>
+                  <th className="text-left py-2 pr-3 font-semibold">{t("admin.security.colNotes")}</th>
+                  <th className="text-left py-2 pr-3 font-semibold">{t("admin.security.colCreated")}</th>
+                  <th className="text-left py-2 pr-3 font-semibold">{t("admin.security.colAction")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -375,7 +360,7 @@ export default function AdminSecurity() {
                           disabled={cfDeleting === b.id}
                           className="bg-[#EF4444]/10 border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/20 h-6 px-2 text-[0.65rem]"
                         >
-                          <Trash2 className="w-3 h-3 mr-1" /> Desbloquear
+                          <Trash2 className="w-3 h-3 mr-1" /> {t("admin.security.unblock")}
                         </Button>
                       ) : (
                         <span className="text-neutral-600 text-[0.65rem] italic">—</span>
@@ -393,7 +378,7 @@ export default function AdminSecurity() {
         <DialogContent data-testid="cf-block-dialog" className="bg-neutral-950 border-white/10 max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
-              <Cloud className="w-5 h-5 text-[#8B5CF6]" /> Bloquear IP en Cloudflare WAF
+              <Cloud className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.security.cfDialogTitle")}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
@@ -401,17 +386,17 @@ export default function AdminSecurity() {
               <label className="text-[0.7rem] uppercase tracking-wider text-neutral-500">IP</label>
               <Input
                 data-testid="cf-block-ip-input"
-                placeholder="203.0.113.42"
+                placeholder={t("admin.security.ipPlaceholder")}
                 value={cfForm.ip}
                 onChange={(e) => setCfForm({ ...cfForm, ip: e.target.value })}
                 className="bg-black/40 border-white/10 text-white font-mono"
               />
             </div>
             <div>
-              <label className="text-[0.7rem] uppercase tracking-wider text-neutral-500">Notas (opcional)</label>
+              <label className="text-[0.7rem] uppercase tracking-wider text-neutral-500">{t("admin.security.notesOptional")}</label>
               <Textarea
                 data-testid="cf-block-notes-input"
-                placeholder="Motivo del bloqueo…"
+                placeholder={t("admin.security.notesPlaceholder")}
                 value={cfForm.notes}
                 onChange={(e) => setCfForm({ ...cfForm, notes: e.target.value })}
                 className="bg-black/40 border-white/10 text-white text-sm"
@@ -420,7 +405,10 @@ export default function AdminSecurity() {
             </div>
             {!cfData?.configured && (
               <div className="text-[0.7rem] text-blue-300 border border-blue-500/30 bg-blue-500/5 px-3 py-2">
-                ℹ️ El bloqueo se aplicará a <strong>nivel aplicación</strong> (403 antes de la lógica de negocio). Si además configuras <code>CF_API_TOKEN</code> y <code>CF_ZONE_ID</code>, el bloqueo se replica al borde de Cloudflare para defense-in-depth.
+                <Trans
+                  i18nKey="admin.security.cfDialogInfo"
+                  components={{ 1: <strong />, 2: <code />, 3: <code /> }}
+                />
               </div>
             )}
           </div>
@@ -430,7 +418,7 @@ export default function AdminSecurity() {
               onClick={() => setCfDialogOpen(false)}
               className="border-white/10 text-neutral-300 hover:bg-white/5"
             >
-              Cancelar
+              {t("admin.common.cancel")}
             </Button>
             <Button
               data-testid="cf-block-submit-btn"
@@ -438,7 +426,7 @@ export default function AdminSecurity() {
               disabled={cfSubmitting || !cfForm.ip.trim()}
               className="bg-[#EF4444] text-white hover:bg-[#EF4444]/90"
             >
-              {cfSubmitting ? "Bloqueando…" : "Confirmar bloqueo"}
+              {cfSubmitting ? t("admin.security.cfSubmitting") : t("admin.security.cfSubmit")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -446,7 +434,6 @@ export default function AdminSecurity() {
     </div>
   );
 }
-
 function statusStyle(status) {
   const map = {
     active: "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300",

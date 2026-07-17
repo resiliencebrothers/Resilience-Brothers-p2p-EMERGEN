@@ -1,0 +1,58 @@
+{
+  "summary": "Phase 2 i18n audit for 16 admin pages + shared <AdminPageHeader /> component. Tested EN and ES rendering via admin session cookie (test_session_admin_X). 12/16 pages fully pass in both languages with zero cross-language leaks. 3 real defects found (1 HIGH – Spanish leaks on /admin/revenue subcomponents, 1 MEDIUM – /admin/capital-requests route not registered, 1 LOW – /admin/audit header hidden by hub wrapper). Language persistence and cross-page propagation confirmed OK.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AdminRevenue subcomponents (/app/frontend/src/pages/admin/revenue/*.jsx)",
+        "issue": "5 of 6 subcomponents are 100% hardcoded Spanish (no useTranslation / no t() calls). In EN mode users see: 'Ganancia P2P por par', 'PAR', 'ÓRDENES', 'VOLUMEN IN', 'VOLUMEN OUT', 'TASA NORMAL / VIP / REAL', 'GANANCIA', 'MARGEN' (RevenueByPairTable.jsx); 'Registro Diario', 'Ganancia consolidada por día', 'FECHA', 'COMISIONES USDT' (RevenueDailyTable.jsx); 'Registro Mensual', 'MES' (RevenueMonthlyTable.jsx); 'Ganancia del Marketplace', 'Ganancia neta', 'Ganancia' (RevenueMarketplaceTable.jsx); 'Órdenes', 'Volumen', 'Ganancia generada' (RevenueCards.jsx RoleCard); 'Ganancias por mes (últimos N meses)' (RevenueAnalyticsDialog.jsx). Main AdminRevenue.jsx header + top KPI cards + period select ARE translated; only these leaf components remain.",
+        "selector": "route: /admin/revenue (also /admin/company-funds?tab=revenue)",
+        "priority": "HIGH"
+      },
+      {
+        "component": "AdminPanel.jsx routing",
+        "issue": "/admin/capital-requests route is not registered in AdminPanel.jsx <Routes>. The page (AdminCapitalRequests.jsx) exists and is fully i18n-ready but is only reachable via /admin/company-funds?tab=requests. Direct navigation to /admin/capital-requests renders a blank content pane. Review request explicitly asked for /admin/capital-requests.",
+        "selector": "route: /admin/capital-requests → blank",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "AdminAuditHub.jsx",
+        "issue": "On /admin/audit the hub wraps AdminAudit with hideMonthly which also strips its AdminPageHeader. Result: the 'Action Log' (EN) / 'Registro de Acciones' (ES) H1 never renders on /admin/audit — only the three localized tab labels (Global log / By user / Monthly report). Review request expected the H1 to be present. Either (a) render AdminPageHeader inside AdminAuditHub itself, or (b) drop hideMonthly and let each tab own its header.",
+        "selector": "route: /admin/audit — missing h1 'Action Log'",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/admin/revenue tables (all tables + role cards)",
+        "issues": [
+          "Column headers rely on css text-transform:uppercase; keep in mind when adding i18n keys — source string must be normal case (e.g. 'Pair', not 'PAR'), CSS will uppercase.",
+          "In ES mode English strings do NOT leak (because the subcomponents are Spanish-only and Spanish is the source). But this means the current behaviour is 'ES-locked' regardless of user preference — bad for EN clients."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "HIGH: Add useTranslation to /app/frontend/src/pages/admin/revenue/{RevenueByPairTable, RevenueDailyTable, RevenueMonthlyTable, RevenueMarketplaceTable, RevenueCards, RevenueAnalyticsDialog}.jsx and replace ~30 hardcoded Spanish literals with t('admin.revenue.*') keys (add corresponding keys in both en.json and es.json).",
+    "MEDIUM: Register the /admin/capital-requests route in AdminPanel.jsx (e.g. `<Route path=\"capital-requests\" element={<Navigate to=\"/admin/company-funds?tab=requests\" replace />} />` or mount AdminCapitalRequests directly) so the URL in the review request is reachable.",
+    "LOW: In AdminAuditHub.jsx render an AdminPageHeader with title=t('admin.audit.title') above the tab bar, OR pass hideMonthly=false and let the wrapped page own its header. Currently the /admin/audit H1 is silently dropped."
+  ],
+  "critical_code_review_comments": [
+    "AdminPageHeader.jsx (40 lines) is clean, presentational, and consistently used by 14 of 16 admin pages via `<AdminPageHeader title=... eyebrow=... subtitle=... />`. Good separation of i18n from presentation — keep this pattern.",
+    "Route parity gap: the sidebar/menu uses hubs (AdminUsersHub, AdminOverviewHub, AdminCompanyFundsHub, AdminAuditHub) but the review request tested legacy sub-routes (/admin/kyc, /admin/revenue, /admin/profile-change-requests, /admin/quick, /admin/capital-requests). All EXCEPT /admin/capital-requests already have redirect stubs in AdminPanel.jsx. Consider adding the missing redirect to keep external links stable.",
+    "The AdminAudit component behaves as both a full page and a hub-tab child (hideMonthly prop). Since hideMonthly hides *both* MonthlyAuditReport AND the page header, the header suppression is a hidden side-effect not obvious from the prop name. Rename to hidePageHeader/hideMonthly or split into two separate concerns.",
+    "AdminRevenue.jsx correctly delegates to sub-tables in /pages/admin/revenue/*. During Phase-2 refactor these leaf files were NOT touched for i18n. Bring them into scope; en.json admin.revenue.* already has ~30 keys ready — just needs pairing.",
+    "RevenueCards.jsx exports two components. BigStat correctly renders a caller-supplied `label` prop (AdminRevenue passes t(...)), so it's fine. RoleCard has hardcoded 'Órdenes/Volumen/Ganancia generada' rows internally — needs t() pull-in."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only)", "frontend": "12/16 admin pages fully pass EN+ES i18n (75%). 3 routes have real defects (revenue Spanish-leaks HIGH, capital-requests missing route MEDIUM, audit hub H1 hidden LOW). Persistence + cross-page propagation OK."},
+  "test_credentials": "Admin: session_token=test_session_admin_X → user_test_admin01 (admin.test@resilience.com). Session in db.user_sessions valid until 2026-08-16. Backend /api/profile/me returns 200 with role=admin.",
+  "seed_data_creation": "None (reused existing seeded admin user with pre-existing orders/withdrawals/audit rows).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Language selector storage key is `resilience_lang` in localStorage (values 'en' / 'es'); this is the effective key per /app/frontend/src/i18n/index.js (lookupLocalStorage). Setting only i18nextLng does NOT switch language. Uppercase CSS on column headers means innerText comparison must be case-insensitive when validating keys like 'Client', 'Pair', 'Amount'. The 16 admin routes tested: /admin/orders, /admin/users, /admin/withdrawals, /admin/currencies, /admin/rates, /admin/kyc, /admin/company-funds, /admin/revenue, /admin/security, /admin/audit, /admin/health, /admin/blocked-contacts, /admin/profile-change-requests, /admin/capital-requests, /admin/products, /admin/quick. The three defects to retest after main agent's fixes: (1) EN mode /admin/revenue must not contain 'Ganancia P2P por par', 'Registro Diario', 'Registro Mensual', 'Órdenes', 'Volumen', 'COMISIONES USDT'; (2) /admin/capital-requests must not be blank; (3) /admin/audit must render 'Action Log' H1 in EN and 'Registro de Acciones' in ES.",
+  "rca of the issue": "Phase-2 i18n refactor added AdminPageHeader + translated all 16 top-level page files. However three follow-ups slipped: (a) The 6 leaf files under /pages/admin/revenue/ were extracted before Phase-1 and were never touched during Phase-2 — they remained hardcoded Spanish because Phase-2 only edited files that already contained `t(` markers. Fix: run useTranslation() import in each and swap strings. (b) When AdminCapitalRequests was moved into AdminCompanyFundsHub, the original standalone route /admin/capital-requests was removed but no redirect was added — direct URL now 404s (visually blank because AdminPanel's Routes catches /admin/* and renders nothing for the missing subpath). Fix: add redirect route. (c) AdminAuditHub was introduced with a hideMonthly prop; author intended only to hide MonthlyAuditReport but AdminPageHeader was also wrapped in the same `{!hideMonthly && (...)}` block, so the H1 disappears too. Fix: split into two flags or move AdminPageHeader outside the guard."
+}

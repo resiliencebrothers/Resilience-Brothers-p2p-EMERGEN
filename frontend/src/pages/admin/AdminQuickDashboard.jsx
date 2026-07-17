@@ -14,6 +14,7 @@
  */
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import axios from "axios";
 import * as Sentry from "@sentry/react";
 import { API } from "@/App";
@@ -25,6 +26,7 @@ import {
 const MAIN_CURRENCIES = ["USDT", "USD", "CUP"];
 
 export default function AdminQuickDashboard() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ export default function AdminQuickDashboard() {
   if (loading) {
     return (
       <div className="text-neutral-400 micro-label" data-testid="quick-loading">
-        Cargando vista rápida...
+        {t("admin.quickDashboard.loading")}
       </div>
     );
   }
@@ -68,12 +70,11 @@ export default function AdminQuickDashboard() {
       <div className="flex items-center gap-3 mb-2">
         <Zap className="w-5 h-5 text-[#8B5CF6]" />
         <div>
-          <div className="micro-label text-[#8B5CF6]">/ Vista Rápida</div>
-          <h1 className="font-display text-2xl">Resumen de un vistazo</h1>
+          <div className="micro-label text-[#8B5CF6]">{t("admin.quickDashboard.eyebrow")}</div>
+          <h1 className="font-display text-2xl">{t("admin.quickDashboard.title")}</h1>
         </div>
       </div>
 
-      {/* 1. Pendientes — top priority */}
       <section
         className="tactile-card p-5 border-l-2 border-l-[#8B5CF6]"
         data-testid="quick-pending-card"
@@ -81,23 +82,23 @@ export default function AdminQuickDashboard() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <ListChecks className="w-5 h-5 text-[#8B5CF6]" />
-            <h2 className="font-display text-lg">Pendientes</h2>
+            <h2 className="font-display text-lg">{t("admin.quickDashboard.pending")}</h2>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 mb-4">
           <PendingStat
-            label="Órdenes" value={ordersPending}
+            label={t("admin.quickDashboard.orders")} value={ordersPending}
             testId="quick-orders-pending"
           />
           <PendingStat
-            icon={ArrowDownToLine} label="Retiros" value={withdrawalsPending}
+            icon={ArrowDownToLine} label={t("admin.quickDashboard.withdrawalsShort")} value={withdrawalsPending}
             testId="quick-withdrawals-pending"
           />
         </div>
         {recentOrders.length > 0 && (
           <div className="border-t border-white/5 pt-3 space-y-2">
             <div className="micro-label text-neutral-500 text-[0.6rem] mb-1">
-              ÚLTIMAS 5
+              {t("admin.quickDashboard.lastFive")}
             </div>
             {recentOrders.map((o) => (
               <button
@@ -118,13 +119,12 @@ export default function AdminQuickDashboard() {
         )}
       </section>
 
-      {/* 2. Fondos Totales */}
       <section className="tactile-card p-5" data-testid="quick-funds-card">
         <div className="flex items-center gap-2 mb-3">
           <Wallet className="w-5 h-5 text-[#8B5CF6]" />
-          <h2 className="font-display text-lg">Fondos de la empresa</h2>
+          <h2 className="font-display text-lg">{t("admin.quickDashboard.companyFunds")}</h2>
         </div>
-        <BigUsdtValue value={fundsTotalUsdt} testId="quick-funds-total" />
+        <BigUsdtValue value={fundsTotalUsdt} testId="quick-funds-total" t={t} />
         <div className="grid grid-cols-3 gap-2 mt-4">
           {MAIN_CURRENCIES.map((code) => (
             <CurrencyChip
@@ -137,21 +137,20 @@ export default function AdminQuickDashboard() {
         </div>
       </section>
 
-      {/* 3. Saldos VIP */}
       <section className="tactile-card p-5" data-testid="quick-vip-card">
         <div className="flex items-center gap-2 mb-3">
           <Coins className="w-5 h-5 text-[#8B5CF6]" />
-          <h2 className="font-display text-lg">Acumulado VIP</h2>
+          <h2 className="font-display text-lg">{t("admin.quickDashboard.vipHoldings")}</h2>
           <span className="text-xs text-neutral-500 ml-auto">
-            (lo que debemos)
+            {t("admin.quickDashboard.vipWeOwe")}
           </span>
         </div>
-        <BigUsdtValue value={vipTotalUsdt} testId="quick-vip-total" />
+        <BigUsdtValue value={vipTotalUsdt} testId="quick-vip-total" t={t} />
         <div
           className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between"
           data-testid="quick-liquidity-net"
         >
-          <span className="text-xs text-neutral-500">Liquidez neta</span>
+          <span className="text-xs text-neutral-500">{t("admin.quickDashboard.netLiquidity")}</span>
           <span
             className={`font-mono text-sm font-semibold ${
               liquidityNet >= 0 ? "text-emerald-400" : "text-red-400"
@@ -163,7 +162,6 @@ export default function AdminQuickDashboard() {
         </div>
       </section>
 
-      {/* 4. Acción rápida */}
       <Link
         to="/admin/orders"
         className="block"
@@ -172,7 +170,7 @@ export default function AdminQuickDashboard() {
         <Button
           className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none font-semibold py-6 text-base"
         >
-          Ver todas las órdenes pendientes
+          {t("admin.quickDashboard.viewAllPending")}
           <ChevronRight className="w-5 h-5 ml-1" />
         </Button>
       </Link>
@@ -196,10 +194,10 @@ function PendingStat({ icon: Icon, label, value, testId }) {
   );
 }
 
-function BigUsdtValue({ value, testId }) {
+function BigUsdtValue({ value, testId, t }) {
   return (
     <div data-testid={testId}>
-      <div className="micro-label text-neutral-500 text-[0.6rem]">TOTAL ≈</div>
+      <div className="micro-label text-neutral-500 text-[0.6rem]">{t("admin.quickDashboard.totalPrefix")}</div>
       <div className="font-display text-3xl text-[#8B5CF6] mt-1">
         {(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
         <span className="text-sm text-neutral-400 ml-1">USDT</span>

@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import CopyableText from "@/components/CopyableText";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import { Search, BarChart3, Settings2 } from "lucide-react";
@@ -15,16 +17,16 @@ import UserFunctionsDialog from "./users/UserFunctionsDialog";
 
 const PAGE_SIZE = 50;
 
-const ROLE_LABELS = {
-  normal: "Normal",
-  vip: "VIP",
-  employee: "Staff Member",
-  admin: "Admin",
-};
-
 export default function AdminUsers() {
+  const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
+  const ROLE_LABELS = {
+    normal: t("admin.users.roleNormal"),
+    vip: t("admin.users.roleVip"),
+    employee: t("admin.users.roleEmployee"),
+    admin: t("admin.users.roleAdmin"),
+  };
   const [users, setUsers] = useState([]);
   const [permCatalog, setPermCatalog] = useState([]);
   const [search, setSearch] = useState("");
@@ -59,11 +61,11 @@ export default function AdminUsers() {
       const t = Number(r.headers["x-total-count"]);
       setTotal(Number.isFinite(t) ? t : r.data.length);
     } catch (e) {
-      toast.error("Error al cargar usuarios");
+      toast.error(t("admin.users.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [page, search, roleFilter]);
+  }, [page, search, roleFilter, t]);
   useEffect(() => { load(); }, [load]);
 
   // Load active currencies once
@@ -83,7 +85,7 @@ export default function AdminUsers() {
       kind: "verify-email",
       user_id,
       payload: {},
-      label: `verificar manualmente el email de ${email}`,
+      label: t("admin.users.totpDescriptionVerify", { email }),
     });
 
   const confirmWithTotp = async (code) => {
@@ -92,18 +94,18 @@ export default function AdminUsers() {
       if (kind === "verify-email") {
         await axios.post(`${API}/admin/users/${user_id}/verify-email`,
           { totp_code: code }, { withCredentials: true });
-        toast.success("Email verificado manualmente");
+        toast.success(t("admin.users.emailVerified"));
       } else {
         await axios.put(`${API}/admin/users/${user_id}`,
           { ...payload, totp_code: code }, { withCredentials: true });
-        toast.success("Usuario actualizado");
+        toast.success(t("admin.users.userUpdated"));
       }
       setPendingTotp(null);
       load();
     } catch (e) {
       if (!handleTotpError(e, navigate)) {
         toast.error(
-          e.response?.data?.detail?.message || e.response?.data?.detail || "Error"
+          e.response?.data?.detail?.message || e.response?.data?.detail || t("admin.common.genericError")
         );
       }
     }
@@ -119,27 +121,28 @@ export default function AdminUsers() {
 
   return (
     <div data-testid="admin-users" className="space-y-4">
-      <div className="mb-6">
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Usuarios</div>
-        <h1 className="font-display text-3xl">Gestión de Clientes</h1>
-      </div>
+      <AdminPageHeader
+        eyebrow={t("admin.users.eyebrow")}
+        title={t("admin.users.title")}
+        testid="admin-users-header"
+      />
 
       <div className="flex items-end gap-3 mb-4 flex-wrap">
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Buscar (nombre o email)</div>
+          <div className="micro-label text-neutral-500 mb-1">{t("admin.users.searchLabel")}</div>
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
             <Input
               data-testid="users-search"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="ej. ana@..."
+              placeholder={t("admin.users.searchPlaceholder")}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-80 pl-9 font-mono text-xs"
             />
           </div>
         </div>
         <div>
-          <div className="micro-label text-neutral-500 mb-1">Rol</div>
+          <div className="micro-label text-neutral-500 mb-1">{t("admin.users.roleLabel")}</div>
           <Select value={roleFilter} onValueChange={setRoleFilter}>
             <SelectTrigger
               data-testid="users-role-filter"
@@ -148,11 +151,11 @@ export default function AdminUsers() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todos los roles</SelectItem>
-              <SelectItem value="normal">Cliente Normal</SelectItem>
-              <SelectItem value="vip">VIP</SelectItem>
-              <SelectItem value="employee">Staff Member</SelectItem>
-              <SelectItem value="admin">Admin</SelectItem>
+              <SelectItem value="all">{t("admin.users.allRoles")}</SelectItem>
+              <SelectItem value="normal">{t("admin.users.roleNormal")}</SelectItem>
+              <SelectItem value="vip">{t("admin.users.roleVip")}</SelectItem>
+              <SelectItem value="employee">{t("admin.users.roleEmployee")}</SelectItem>
+              <SelectItem value="admin">{t("admin.users.roleAdmin")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -162,11 +165,11 @@ export default function AdminUsers() {
             onClick={() => { setSearchInput(""); setRoleFilter("all"); }}
             className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
           >
-            limpiar filtros
+            {t("admin.common.clearFilters")}
           </button>
         )}
         <div className="ml-auto text-xs text-neutral-500" data-testid="users-result-count">
-          {total} {total === 1 ? "resultado" : "resultados"}
+          {total} {total === 1 ? t("admin.users.resultOne") : t("admin.users.resultMany")}
         </div>
       </div>
 
@@ -174,23 +177,23 @@ export default function AdminUsers() {
         <table className="w-full text-sm">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">Usuario</th>
-              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">User ID</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Email</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
-              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">Registrado</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Acciones</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("admin.users.colUser")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("admin.users.colUserId")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colEmail")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colRole")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("admin.users.colRegistered")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colActions")}</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">Cargando...</td>
+                <td colSpan="6" className="text-center text-neutral-500 py-8">{t("admin.common.loadingEllipsis")}</td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">Sin resultados</td>
+                <td colSpan="6" className="text-center text-neutral-500 py-8">{t("admin.users.empty")}</td>
               </tr>
             )}
             {users.map(u => (
@@ -206,8 +209,8 @@ export default function AdminUsers() {
                   <CopyableText
                     value={u.user_id}
                     testid={`user-id-copy-${u.user_id}`}
-                    toastMessage="User ID copiado"
-                    label="Copiar User ID (para filtro de auditoría)"
+                    toastMessage={t("admin.users.userIdCopied")}
+                    label={t("admin.users.copyUserId")}
                     className="text-xs"
                   />
                 </td>
@@ -219,18 +222,18 @@ export default function AdminUsers() {
                         <span
                           data-testid={`email-unverified-${u.user_id}`}
                           className="text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 border border-[#EF4444]/40 text-[#EF4444] bg-[#EF4444]/10"
-                          title="El usuario aún no verificó su email"
+                          title={t("admin.users.notVerifiedTitle")}
                         >
-                          No verificado
+                          {t("admin.users.notVerified")}
                         </span>
                         <button
                           type="button"
                           data-testid={`verify-email-btn-${u.user_id}`}
                           onClick={() => verifyEmailManually(u.user_id, u.email)}
                           className="text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-4"
-                          title="Marcar este email como verificado manualmente (requiere 2FA)"
+                          title={t("admin.users.verifyTitle")}
                         >
-                          Verificar
+                          {t("admin.users.verify")}
                         </button>
                       </>
                     )}
@@ -266,22 +269,22 @@ export default function AdminUsers() {
                         type="button"
                         onClick={() => navigate(`/admin/users/${u.user_id}/stats`)}
                         className="flex items-center gap-1.5 px-3 py-2 border border-[#8B5CF6]/40 hover:border-[#8B5CF6] hover:bg-[#8B5CF6]/10 text-[#8B5CF6] text-xs uppercase tracking-widest transition-all"
-                        title="Ver estadísticas completas del usuario"
+                        title={t("admin.users.statsTitle")}
                         data-testid={`user-stats-btn-${u.user_id}`}
                       >
                         <BarChart3 className="w-3.5 h-3.5" />
-                        Estadísticas
+                        {t("admin.users.stats")}
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => setFunctionsUser(u)}
                       className="flex items-center gap-1.5 px-3 py-2 border border-emerald-500/40 hover:border-emerald-500 hover:bg-emerald-500/10 text-emerald-400 text-xs uppercase tracking-widest transition-all"
-                      title="Configurar rol, permisos, monedas y accesos"
+                      title={t("admin.users.functionsTitle")}
                       data-testid={`user-perms-btn-${u.user_id}`}
                     >
                       <Settings2 className="w-3.5 h-3.5" />
-                      Funciones
+                      {t("admin.users.functions")}
                     </button>
                   </div>
                 </td>
@@ -302,8 +305,8 @@ export default function AdminUsers() {
 
       <TotpPromptDialog
         open={!!pendingTotp}
-        title="Confirmar cambio en usuario"
-        description={`Vas a ${pendingTotp?.label || "actualizar este usuario"}. Ingresa tu código 2FA.`}
+        title={t("admin.users.totpTitle")}
+        description={pendingTotp?.label || t("admin.users.totpDescriptionUpdate")}
         onConfirm={confirmWithTotp}
         onCancel={() => setPendingTotp(null)}
       />

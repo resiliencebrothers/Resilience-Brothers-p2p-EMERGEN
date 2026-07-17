@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,16 +12,10 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import CopyableText from "@/components/CopyableText";
 import CashDetailsTable, { parseCashDetails } from "@/components/CashDetailsTable";
 import ExplorerLink from "@/components/ExplorerLink";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { validateCryptoHash, findNetwork } from "@/services/cryptoValidators";
 import { toast } from "sonner";
 import { Search } from "lucide-react";
-
-const STATUS_LABEL = (status, method) => {
-  if (method === "cash") {
-    return ({ paid: "Entregado", approved: "En progreso", pending: "Pendiente", rejected: "Rechazado" })[status] || status;
-  }
-  return ({ paid: "Pagado", approved: "Confirmado", pending: "Pendiente", rejected: "Rechazado" })[status] || status;
-};
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -30,7 +25,25 @@ const STATUS_STYLES = {
 };
 
 export default function AdminWithdrawals() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
+
+  const STATUS_LABEL = (status, method) => {
+    if (method === "cash") {
+      return ({
+        paid: t("admin.common.delivered"),
+        approved: t("admin.common.inProgress"),
+        pending: t("admin.common.pending"),
+        rejected: t("admin.common.rejected"),
+      })[status] || status;
+    }
+    return ({
+      paid: t("admin.common.paid"),
+      approved: t("admin.common.confirmed"),
+      pending: t("admin.common.pending"),
+      rejected: t("admin.common.rejected"),
+    })[status] || status;
+  };
   const [items, setItems] = useState([]);
   const [redemptions, setRedemptions] = useState([]);
   const [open, setOpen] = useState(null);
@@ -79,7 +92,7 @@ export default function AdminWithdrawals() {
   const handleProofUpload = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 4 * 1024 * 1024) { toast.error("Máx 4MB"); return; }
+    if (f.size > 4 * 1024 * 1024) { toast.error(t("admin.withdrawals.toastMax4")); return; }
     const reader = new FileReader();
     reader.onload = () => setPayoutProof(reader.result);
     reader.readAsDataURL(f);
@@ -95,23 +108,23 @@ export default function AdminWithdrawals() {
         body,
         { withCredentials: true }
       );
-      toast.success(`Retiro actualizado`);
+      toast.success(t("admin.withdrawals.toastUpdated"));
       setPendingStatus(null); setOpen(null); setNote("");
       setPayoutProof(""); setPayoutHash("");
       load();
     } catch (e) {
-      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || "Error");
+      if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || t("admin.withdrawals.toastGenericError"));
     }
   };
 
   const askChange = (status) => {
     // For "paid" require proof up front (UX hint — backend also enforces)
     if (status === "paid" && open?.method === "transfer" && !payoutProof) {
-      toast.error("Adjunta la captura de la transferencia antes de marcar como pagado");
+      toast.error(t("admin.withdrawals.askProofTransfer"));
       return;
     }
     if (status === "paid" && open?.method === "crypto" && !payoutProof && !payoutHash) {
-      toast.error("Adjunta hash de transacción o captura antes de marcar como entregado");
+      toast.error(t("admin.withdrawals.askProofCrypto"));
       return;
     }
     setPendingStatus(status);
@@ -119,18 +132,19 @@ export default function AdminWithdrawals() {
 
   const updateR = async (id, status) => {
     await axios.put(`${API}/admin/redemptions/${id}/status`, { status }, { withCredentials: true });
-    toast.success("Actualizado"); load();
+    toast.success(t("admin.withdrawals.toastRedemption")); load();
   };
 
   return (
     <div data-testid="admin-withdrawals" className="space-y-8">
-      <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">/ Retiros</div>
-        <h1 className="font-display text-3xl">Retiros & Canjes</h1>
-      </div>
+      <AdminPageHeader
+        eyebrow={t("admin.withdrawals.eyebrow")}
+        title={t("admin.withdrawals.title")}
+        testid="admin-withdrawals-header"
+      />
 
       <div>
-        <h2 className="font-display text-xl mb-3">Retiros</h2>
+        <h2 className="font-display text-xl mb-3">{t("admin.withdrawals.sectionWithdrawals")}</h2>
         <div className="flex flex-wrap gap-2 mb-3 items-end">
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
@@ -138,7 +152,7 @@ export default function AdminWithdrawals() {
               data-testid="withdrawals-user-search"
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
-              placeholder="Buscar usuario..."
+              placeholder={t("admin.withdrawals.searchPlaceholder")}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-60 pl-9 text-xs"
             />
           </div>
@@ -147,11 +161,11 @@ export default function AdminWithdrawals() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todos los estados</SelectItem>
-              <SelectItem value="pending">Pendiente</SelectItem>
-              <SelectItem value="approved">Confirmado / En progreso</SelectItem>
-              <SelectItem value="paid">Pagado / Entregado</SelectItem>
-              <SelectItem value="rejected">Rechazado</SelectItem>
+              <SelectItem value="all">{t("admin.withdrawals.allStatuses")}</SelectItem>
+              <SelectItem value="pending">{t("admin.common.pending")}</SelectItem>
+              <SelectItem value="approved">{t("admin.withdrawals.statusConfirmedInProgress")}</SelectItem>
+              <SelectItem value="paid">{t("admin.withdrawals.statusPaidDelivered")}</SelectItem>
+              <SelectItem value="rejected">{t("admin.common.rejected")}</SelectItem>
             </SelectContent>
           </Select>
           <Select value={currencyFilter} onValueChange={setCurrencyFilter}>
@@ -159,7 +173,7 @@ export default function AdminWithdrawals() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">Todas las monedas</SelectItem>
+              <SelectItem value="all">{t("admin.withdrawals.allCurrencies")}</SelectItem>
               {currencies.map((c) => (
                 <SelectItem key={c.id || c.code} value={c.code}>{c.code}</SelectItem>
               ))}
@@ -171,28 +185,28 @@ export default function AdminWithdrawals() {
               onClick={() => { setUserInput(""); setStatusFilter("all"); setCurrencyFilter("all"); }}
               className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-9"
             >
-              limpiar
+              {t("admin.common.clear")}
             </button>
           )}
           <div className="ml-auto text-xs text-neutral-500" data-testid="withdrawals-result-count">
-            {items.length} {items.length === 1 ? "retiro" : "retiros"}
+            {items.length} {items.length === 1 ? t("admin.withdrawals.resultOne") : t("admin.withdrawals.resultMany")}
           </div>
         </div>
         <div className="tactile-card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
-                <th className="px-3 py-3 micro-label text-neutral-500">Usuario</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Monto</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Moneda</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Método</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Detalles</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Estado</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colUser")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colAmount")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colCurrency")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colMethod")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colDetails")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colStatus")}</th>
                 <th className="px-3 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-6">Sin retiros</td></tr>}
+              {items.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-6">{t("admin.withdrawals.empty")}</td></tr>}
               {items.map(w => (
                 <tr key={w.id} className="border-b border-white/5">
                   <td className="px-3 py-3">{w.user_name}</td>
@@ -216,7 +230,7 @@ export default function AdminWithdrawals() {
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    <Button size="sm" onClick={() => openDialog(w)} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-8" data-testid={`manage-withdrawal-${w.id}`}>Gestionar</Button>
+                    <Button size="sm" onClick={() => openDialog(w)} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-8" data-testid={`manage-withdrawal-${w.id}`}>{t("admin.withdrawals.manage")}</Button>
                   </td>
                 </tr>
               ))}
@@ -226,22 +240,22 @@ export default function AdminWithdrawals() {
       </div>
 
       <div>
-        <h2 className="font-display text-xl mb-3">Canjes de Mercancía</h2>
+        <h2 className="font-display text-xl mb-3">{t("admin.withdrawals.sectionRedemptions")}</h2>
         <div className="tactile-card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
-                <th className="px-3 py-3 micro-label text-neutral-500">Usuario</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Producto</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Cant.</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Total</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Dirección</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">Estado</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colUser")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colProduct")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colQty")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colTotal")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colAddress")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colStatus")}</th>
                 <th className="px-3 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              {redemptions.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-6">Sin canjes</td></tr>}
+              {redemptions.length === 0 && <tr><td colSpan="7" className="text-center text-neutral-500 py-6">{t("admin.withdrawals.emptyRedemptions")}</td></tr>}
               {redemptions.map(r => (
                 <tr key={r.id} className="border-b border-white/5">
                   <td className="px-3 py-3">{r.user_name}</td>
@@ -267,20 +281,20 @@ export default function AdminWithdrawals() {
       <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-display">Retiro #{open?.id?.slice(0,8)}</DialogTitle>
+            <DialogTitle className="font-display">{t("admin.withdrawals.dialogTitle", { id: open?.id?.slice(0,8) })}</DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
-              Gestiona el retiro y adjunta la evidencia de pago al cliente.
+              {t("admin.withdrawals.dialogDesc")}
             </DialogDescription>
           </DialogHeader>
           {open && (
             <div className="space-y-4">
               <div className="font-mono text-sm space-y-1">
-                <div><span className="text-neutral-500">Cliente:</span> {open.user_name}</div>
-                <div><span className="text-neutral-500">Monto:</span> {open.amount_usd} {open.currency || "USD"}</div>
-                <div><span className="text-neutral-500">Método:</span> {open.method}</div>
+                <div><span className="text-neutral-500">{t("admin.withdrawals.fClient")}</span> {open.user_name}</div>
+                <div><span className="text-neutral-500">{t("admin.withdrawals.fAmount")}</span> {open.amount_usd} {open.currency || "USD"}</div>
+                <div><span className="text-neutral-500">{t("admin.withdrawals.fMethod")}</span> {open.method}</div>
                 {open.method === "crypto" && open.crypto_network && (
                   <div data-testid="withdrawal-modal-network">
-                    <span className="text-neutral-500">Red on-chain:</span>{" "}
+                    <span className="text-neutral-500">{t("admin.withdrawals.fNetwork")}</span>{" "}
                     <span className="inline-flex items-center px-1.5 py-0.5 text-[0.7rem] uppercase tracking-wider bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/30 font-mono ml-1">
                       {open.crypto_network}
                     </span>
@@ -288,40 +302,34 @@ export default function AdminWithdrawals() {
                 )}
                 <div className="flex items-start gap-2 flex-wrap">
                   <span className="text-neutral-500 flex-shrink-0">
-                    {open.method === "crypto" ? "Wallet:" : "Detalles:"}
+                    {open.method === "crypto" ? t("admin.withdrawals.fWallet") : t("admin.withdrawals.fDetails")}
                   </span>
-                  {/* iter55.22 — cash withdrawals ship a structured details
-                      block from the client (Nombre / Celular / Dirección / ID).
-                      Render it as a mini-table with per-row copy so the operator
-                      can grab the phone in 1 click while coordinating delivery.
-                      Legacy free-form details fall back to the plain
-                      CopyableText renderer. */}
                   {open.method === "cash" && parseCashDetails(open.details) ? (
                     <div className="flex-1 min-w-0 space-y-2">
                       <CashDetailsTable details={open.details} />
                       <CopyableText
                         value={open.details}
-                        label="Copiar bloque completo"
-                        toastMessage="Detalles copiados"
+                        label={t("admin.withdrawals.copyFullBlock")}
+                        toastMessage={t("admin.withdrawals.copyDetailsToast")}
                         testid="withdrawal-copy-details"
                       />
                     </div>
                   ) : (
                     <CopyableText
                       value={open.details}
-                      label={open.method === "crypto" ? "Copiar wallet" : "Copiar detalles"}
-                      toastMessage={open.method === "crypto" ? "Wallet copiada" : "Detalles copiados"}
+                      label={open.method === "crypto" ? t("admin.withdrawals.copyWallet") : t("admin.withdrawals.copyDetails")}
+                      toastMessage={open.method === "crypto" ? t("admin.withdrawals.copyWalletToast") : t("admin.withdrawals.copyDetailsToast")}
                       testid="withdrawal-copy-details"
                     />
                   )}
                 </div>
                 <div className="flex items-start gap-2 flex-wrap">
-                  <span className="text-neutral-500 flex-shrink-0">Beneficiario:</span>
+                  <span className="text-neutral-500 flex-shrink-0">{t("admin.withdrawals.fBeneficiary")}</span>
                   {open.beneficiary_name ? (
                     <CopyableText
                       value={open.beneficiary_name}
-                      label="Copiar beneficiario"
-                      toastMessage="Beneficiario copiado"
+                      label={t("admin.withdrawals.copyBeneficiary")}
+                      toastMessage={t("admin.withdrawals.copyBeneficiaryToast")}
                       testid="withdrawal-copy-beneficiary"
                       monospace={false}
                     />
@@ -329,20 +337,15 @@ export default function AdminWithdrawals() {
                     <span>—</span>
                   )}
                 </div>
-                <div><span className="text-neutral-500">Estado:</span> <span className="uppercase tracking-wider">{STATUS_LABEL(open.status, open.method)}</span></div>
+                <div><span className="text-neutral-500">{t("admin.withdrawals.fStatus")}</span> <span className="uppercase tracking-wider">{STATUS_LABEL(open.status, open.method)}</span></div>
               </div>
-              <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Nota..." rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
+              <Textarea value={note} onChange={e => setNote(e.target.value)} placeholder={t("admin.withdrawals.notePlaceholder")} rows={2} className="rounded-none bg-[#0a0a0a] border-white/10" />
 
-              {/* Iter14 + iter55.19e — payout proof / tx_hash.
-                  For crypto withdrawals the operator opted to require ONLY the
-                  tx hash (no screenshot upload) — the hash is enough evidence
-                  and the block-explorer link on the ledger is the source of
-                  truth. For transfer/cash we still require the receipt image. */}
               <div className="border border-white/10 p-3 space-y-3 bg-[#0a0a0a]/50">
                 <div className="micro-label text-[#8B5CF6]">
                   {open.method === "crypto"
-                    ? "Hash de transacción on-chain"
-                    : "Evidencia de pago al cliente"}
+                    ? t("admin.withdrawals.payoutTxHash")
+                    : t("admin.withdrawals.payoutEvidence")}
                 </div>
                 {open.method === "crypto" ? (
                   <div>
@@ -353,11 +356,10 @@ export default function AdminWithdrawals() {
                       placeholder={
                         open.crypto_network
                           ? findNetwork(open.crypto_network).hashPlaceholder
-                          : "hash de la transacción on-chain"
+                          : t("admin.withdrawals.hashPlaceholder")
                       }
                       className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono text-xs"
                     />
-                    {/* iter55.19h — live tx_hash validation vs declared network */}
                     {payoutHash && open.crypto_network && (
                       validateCryptoHash(payoutHash, open.crypto_network) ? (
                         <p
@@ -365,7 +367,7 @@ export default function AdminWithdrawals() {
                           className="text-[0.7rem] text-[#22C55E] mt-1.5 flex items-center gap-1.5"
                         >
                           <span aria-hidden>✓</span>
-                          <span>Hash compatible con <strong>{findNetwork(open.crypto_network).label}</strong></span>
+                          <span>{t("withdraw.networkMatchOk")} <strong>{findNetwork(open.crypto_network).label}</strong></span>
                         </p>
                       ) : (
                         <p
@@ -374,7 +376,7 @@ export default function AdminWithdrawals() {
                         >
                           <span aria-hidden className="mt-0.5">⚠</span>
                           <span>
-                            <strong>No coincide con {findNetwork(open.crypto_network).label}</strong>. Revisa el hash pegado — probablemente lo copiaste del explorer equivocado.
+                            <strong>{t("withdraw.networkMismatch")} {findNetwork(open.crypto_network).label}</strong>. {t("withdraw.networkMismatchHint")}
                           </span>
                         </p>
                       )
@@ -387,19 +389,18 @@ export default function AdminWithdrawals() {
                           testid="admin-withdrawal-explorer-link"
                         />
                         <span className="text-[0.65rem] text-neutral-500">
-                          verifica que la tx llegó a la wallet del cliente
+                          {t("admin.withdrawals.explorerHint")}
                         </span>
                       </div>
                     )}
                     <p className="text-[0.65rem] text-neutral-500 mt-2 leading-relaxed">
-                      Con el hash es suficiente — no hace falta subir captura.
-                      El cliente podrá verificar la transacción en el explorer.
+                      {t("admin.withdrawals.hashHelper")}
                     </p>
                   </div>
                 ) : (
                   <div>
                     <label className="micro-label text-neutral-500">
-                      Captura de la transferencia bancaria realizada
+                      {t("admin.withdrawals.captureLabel")}
                     </label>
                     <input
                       ref={fileRef}
@@ -420,12 +421,12 @@ export default function AdminWithdrawals() {
 
               <div className="grid grid-cols-3 gap-2">
                 <Button data-testid="withdrawal-approve" onClick={() => askChange("approved")} className="bg-[#22C55E] text-black rounded-none">
-                  {open.method === "cash" ? "En progreso" : "Confirmar"}
+                  {open.method === "cash" ? t("admin.withdrawals.approveInProgress") : t("admin.withdrawals.approveConfirm")}
                 </Button>
                 <Button data-testid="withdrawal-pay" onClick={() => askChange("paid")} className="bg-[#8B5CF6] text-white rounded-none">
-                  {open.method === "cash" ? "Entregado" : "Pagado"}
+                  {open.method === "cash" ? t("admin.withdrawals.payDelivered") : t("admin.withdrawals.payPaid")}
                 </Button>
-                <Button data-testid="withdrawal-reject" onClick={() => askChange("rejected")} className="bg-[#EF4444] text-white rounded-none">Rechazar</Button>
+                <Button data-testid="withdrawal-reject" onClick={() => askChange("rejected")} className="bg-[#EF4444] text-white rounded-none">{t("admin.withdrawals.reject")}</Button>
               </div>
             </div>
           )}
@@ -434,8 +435,8 @@ export default function AdminWithdrawals() {
 
       <TotpPromptDialog
         open={!!pendingStatus}
-        title={`Confirmar retiro: ${pendingStatus ?? ""}`}
-        description="Modificar un retiro mueve dinero real. Ingresa tu código 2FA para continuar."
+        title={t("admin.withdrawals.totpTitle", { status: pendingStatus ?? "" })}
+        description={t("admin.withdrawals.totpDescription")}
         onConfirm={confirmWithTotp}
         onCancel={() => setPendingStatus(null)}
       />

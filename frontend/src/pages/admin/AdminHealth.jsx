@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
 import {
@@ -8,8 +9,6 @@ import {
   CloudOff, CloudCheck, Clock, ShieldX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-/* -------------------- micro-components -------------------- */
 
 const StatCard = ({ icon: Icon, label, value, sub, tone = "default", testid, action }) => {
   const toneClass = {
@@ -41,9 +40,8 @@ const Section = ({ title, children, action }) => (
   </section>
 );
 
-/* -------------------- main page -------------------- */
-
 export default function AdminHealth() {
+  const { t } = useTranslation();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState(null);
@@ -55,21 +53,21 @@ export default function AdminHealth() {
       setData(r.data);
       setRefreshedAt(new Date());
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "No se pudo cargar el dashboard");
+      toast.error(e?.response?.data?.detail || t("admin.common.genericError"));
     } finally {
       setLoading(false);
     }
   };
   useEffect(() => {
     load();
-    const id = setInterval(load, 60_000); // auto-refresh cada minuto
+    const id = setInterval(load, 60_000);
     return () => clearInterval(id);
   }, []);
 
   if (loading && !data) {
     return (
       <div data-testid="admin-health-loading" className="text-neutral-400">
-        Cargando dashboard de salud...
+        {t("admin.health.loading")}
       </div>
     );
   }
@@ -83,18 +81,17 @@ export default function AdminHealth() {
 
   return (
     <div data-testid="admin-health-page" className="space-y-10 max-w-7xl">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl text-white">Dashboard de Salud</h1>
+          <h1 className="font-display text-3xl text-white">{t("admin.health.title")}</h1>
           <p className="text-sm text-neutral-400 mt-1">
-            Una sola vista del estado operativo. Actualiza cada 60 s.
+            {t("admin.health.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-3">
           {refreshedAt && (
             <span className="text-xs text-neutral-500">
-              Actualizado: {refreshedAt.toLocaleTimeString()}
+              {t("admin.health.updated", { ts: refreshedAt.toLocaleTimeString() })}
             </span>
           )}
           <Button
@@ -104,24 +101,24 @@ export default function AdminHealth() {
             variant="outline"
             className="border-white/10 hover:bg-white/5"
           >
-            {loading ? "..." : "Recargar"}
+            {loading ? "..." : t("admin.health.reload")}
           </Button>
         </div>
       </div>
 
-      {/* Alertas críticas */}
       {(s.defensive_mode.enabled || s.negative_margin.count > 0) && (
-        <Section title="Alertas activas">
+        <Section title={t("admin.health.activeAlerts")}>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {s.defensive_mode.enabled && (
               <StatCard
                 testid="health-defensive-on"
                 icon={ShieldAlert}
-                label="Modo defensivo ACTIVO"
-                value="Plataforma cerrada"
-                sub={`Activado por ${s.defensive_mode.enabled_by_email || "—"}. Razón: ${
-                  s.defensive_mode.reason || "(sin razón)"
-                }`}
+                label={t("admin.health.defensiveOn")}
+                value={t("admin.health.defensiveOnValue")}
+                sub={t("admin.health.defensiveOnSub", {
+                  email: s.defensive_mode.enabled_by_email || "—",
+                  reason: s.defensive_mode.reason || t("admin.health.noReason"),
+                })}
                 tone="danger"
               />
             )}
@@ -129,11 +126,13 @@ export default function AdminHealth() {
               <StatCard
                 testid="health-negative-margin"
                 icon={AlertTriangle}
-                label="Órdenes con margen negativo"
+                label={t("admin.health.negativeMargin")}
                 value={s.negative_margin.count}
-                sub={`Top: ${s.negative_margin.items[0]?.pair || "—"} → pérdida ${
-                  s.negative_margin.items[0]?.loss_amount?.toLocaleString() || "0"
-                } ${s.negative_margin.items[0]?.loss_currency || ""}`}
+                sub={t("admin.health.negativeMarginSub", {
+                  pair: s.negative_margin.items[0]?.pair || "—",
+                  amount: s.negative_margin.items[0]?.loss_amount?.toLocaleString() || "0",
+                  code: s.negative_margin.items[0]?.loss_currency || "",
+                })}
                 tone="warn"
                 action={
                   <a
@@ -141,7 +140,7 @@ export default function AdminHealth() {
                     className="text-xs text-[#8B5CF6] hover:underline inline-flex items-center gap-1"
                     data-testid="health-go-to-orders"
                   >
-                    Revisar órdenes <ExternalLink className="w-3 h-3" />
+                    {t("admin.health.reviewOrders")} <ExternalLink className="w-3 h-3" />
                   </a>
                 }
               />
@@ -150,18 +149,17 @@ export default function AdminHealth() {
         </Section>
       )}
 
-      {/* Estado de servicios */}
-      <Section title="Servicios externos">
+      <Section title={t("admin.health.externalServices")}>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <StatCard
             testid="health-sentry"
             icon={Bug}
-            label="Sentry (monitoring)"
-            value={s.sentry.enabled ? "ACTIVO" : "OFF"}
+            label={t("admin.health.sentryLabel")}
+            value={s.sentry.enabled ? t("admin.health.sentryOn") : t("admin.health.sentryOff")}
             sub={
               s.sentry.enabled
-                ? `${s.sentry.local_errors_recent} errores locales (últ. 2k líneas) · env=${s.sentry.environment}`
-                : "Configura SENTRY_DSN para activar"
+                ? t("admin.health.sentrySubOn", { n: s.sentry.local_errors_recent, env: s.sentry.environment })
+                : t("admin.health.sentrySubOff")
             }
             tone={s.sentry.enabled ? "ok" : "default"}
             action={
@@ -173,7 +171,7 @@ export default function AdminHealth() {
                   className="text-xs text-[#8B5CF6] hover:underline inline-flex items-center gap-1"
                   data-testid="health-open-sentry"
                 >
-                  Abrir Sentry <ExternalLink className="w-3 h-3" />
+                  {t("admin.health.openSentry")} <ExternalLink className="w-3 h-3" />
                 </a>
               )
             }
@@ -181,24 +179,28 @@ export default function AdminHealth() {
           <StatCard
             testid="health-storage"
             icon={s.storage.enabled ? CloudCheck : CloudOff}
-            label="Object Storage"
-            value={s.storage.enabled ? s.storage.provider.toUpperCase() : "OFF"}
+            label={t("admin.health.storageLabel")}
+            value={s.storage.enabled ? s.storage.provider.toUpperCase() : t("admin.health.storageOff")}
             sub={
               s.storage.enabled
-                ? `${s.storage.object_count} archivos · ${s.storage.size_gb} GB · ~$${s.storage.monthly_cost_usd}/mes`
-                : "Configura STORAGE_PROVIDER + creds para activar"
+                ? t("admin.health.storageSubOn", {
+                    n: s.storage.object_count,
+                    gb: s.storage.size_gb,
+                    cost: s.storage.monthly_cost_usd,
+                  })
+                : t("admin.health.storageSubOff")
             }
             tone={s.storage.enabled ? "ok" : "default"}
           />
           <StatCard
             testid="health-defensive-card"
             icon={s.defensive_mode.enabled ? ShieldAlert : ShieldCheck}
-            label="Modo defensivo"
-            value={s.defensive_mode.enabled ? "ACTIVO" : "OFF"}
+            label={t("admin.health.defensiveLabel")}
+            value={s.defensive_mode.enabled ? t("admin.health.sentryOn") : t("admin.health.sentryOff")}
             sub={
               s.defensive_mode.enabled
-                ? `Activado: ${s.defensive_mode.enabled_at?.slice(0, 19) || "—"}`
-                : "Plataforma operando normalmente"
+                ? t("admin.health.defensiveSubOn", { ts: s.defensive_mode.enabled_at?.slice(0, 19) || "—" })
+                : t("admin.health.defensiveSubOff")
             }
             tone={s.defensive_mode.enabled ? "danger" : "ok"}
           />
@@ -206,14 +208,14 @@ export default function AdminHealth() {
         {s.storage.enabled && s.storage.by_folder?.length > 0 && (
           <div className="border border-white/5 p-4 mt-4" data-testid="health-storage-folders">
             <div className="text-xs uppercase tracking-wider text-neutral-400 mb-3">
-              Desglose por carpeta
+              {t("admin.health.byFolder")}
             </div>
             <div className="space-y-2">
               {s.storage.by_folder.map((f) => (
                 <div key={f.folder} className="flex items-center justify-between text-sm">
                   <span className="text-neutral-300 font-mono">{f.folder}/</span>
                   <span className="text-neutral-500">
-                    {f.count} archivos · {f.size_mb} MB
+                    {f.count} {t("admin.health.filesUnit")} · {f.size_mb} MB
                   </span>
                 </div>
               ))}
@@ -222,130 +224,126 @@ export default function AdminHealth() {
         )}
       </Section>
 
-      {/* Throughput */}
-      <Section title="Volumen P2P">
+      <Section title={t("admin.health.throughput")}>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard
             testid="health-orders-1h"
             icon={Activity}
-            label="Última hora"
+            label={t("admin.health.lastHour")}
             value={s.throughput.orders_last_1h}
-            sub="órdenes nuevas"
+            sub={t("admin.health.newOrders")}
           />
           <StatCard
             testid="health-orders-24h"
             icon={TrendingUp}
-            label="Últ. 24 h"
+            label={t("admin.health.last24h")}
             value={s.throughput.orders_last_24h}
-            sub={`pico: ${peakHour.hour} (${peakHour.count})`}
+            sub={t("admin.health.peak", { hour: peakHour.hour, n: peakHour.count })}
           />
           <StatCard
             testid="health-orders-7d"
             icon={Activity}
-            label="Últ. 7 días"
+            label={t("admin.health.last7d")}
             value={s.throughput.orders_last_7d}
-            sub="órdenes nuevas"
+            sub={t("admin.health.newOrders")}
           />
           <StatCard
             testid="health-orders-total"
             icon={Database}
-            label="Total histórico"
+            label={t("admin.health.totalHistoric")}
             value={s.platform.orders_total.toLocaleString()}
-            sub={`${s.platform.orders_approved} aprob. · ${s.platform.orders_rejected} rech.`}
+            sub={t("admin.health.approvedRejected", { a: s.platform.orders_approved, r: s.platform.orders_rejected })}
           />
         </div>
       </Section>
 
-      {/* Colas de trabajo */}
-      <Section title="Colas pendientes">
+      <Section title={t("admin.health.queues")}>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           <StatCard
             testid="health-queue-orders"
             icon={Inbox}
-            label="Órdenes pendientes"
+            label={t("admin.health.pendingOrders")}
             value={s.queues.pending_orders}
             tone={s.queues.pending_orders > 10 ? "warn" : "default"}
           />
           <StatCard
             testid="health-queue-double"
             icon={ShieldAlert}
-            label="Doble aprobación"
+            label={t("admin.health.doubleApproval")}
             value={s.queues.pending_double_approval}
             tone={s.queues.pending_double_approval > 0 ? "warn" : "default"}
           />
           <StatCard
             testid="health-queue-withdrawals"
             icon={Inbox}
-            label="Retiros pendientes"
+            label={t("admin.health.pendingWithdrawals")}
             value={s.queues.pending_withdrawals}
             tone={s.queues.pending_withdrawals > 5 ? "warn" : "default"}
           />
           <StatCard
             testid="health-queue-phone"
             icon={Users}
-            label="Verificar teléfono"
+            label={t("admin.health.verifyPhone")}
             value={s.queues.pending_phone_verifications}
             tone={s.queues.pending_phone_verifications > 0 ? "warn" : "default"}
           />
           <StatCard
             testid="health-blocklist"
             icon={ShieldCheck}
-            label="Bloqueados"
+            label={t("admin.health.blocked")}
             value={s.queues.blocked_contacts}
-            sub="anti-scam list"
+            sub={t("admin.health.antiScamList")}
           />
         </div>
       </Section>
 
-      {/* Plataforma */}
-      <Section title="Usuarios">
+      <Section title={t("admin.health.usersTitle")}>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard
             testid="health-users-total"
             icon={Users}
-            label="Total"
+            label={t("admin.health.total")}
             value={s.platform.users_total}
           />
           <StatCard
             testid="health-users-active"
             icon={Users}
-            label="Activos"
+            label={t("admin.health.active")}
             value={s.platform.users_active}
             tone="ok"
           />
           <StatCard
             testid="health-users-review"
             icon={Users}
-            label="En revisión"
+            label={t("admin.health.underReview")}
             value={s.platform.users_under_review}
             tone={s.platform.users_under_review > 0 ? "warn" : "default"}
           />
           <StatCard
             testid="health-users-blocked"
             icon={ShieldAlert}
-            label="Bloqueados"
+            label={t("admin.health.blocked")}
             value={s.platform.users_blocked}
             tone={s.platform.users_blocked > 0 ? "danger" : "default"}
           />
         </div>
       </Section>
 
-      {/* Anti-scam analytics (iter46) */}
       {s.anti_scam && !s.anti_scam.error && (
-        <Section title="Anti-fraude · revisión de cuentas">
+        <Section title={t("admin.health.antiScamTitle")}>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <StatCard
               testid="health-antiscam-queue"
               icon={ShieldX}
-              label="Bajo revisión ahora"
+              label={t("admin.health.underReviewNow")}
               value={s.anti_scam.users_under_review}
-              sub="cola de phone-verify"
+              sub={t("admin.health.phoneVerifyQueue")}
               tone={s.anti_scam.users_under_review > 5 ? "warn" : "default"}
             />
             <StatCard
               testid="health-antiscam-avg-hours"
               icon={Clock}
-              label="Tiempo medio resolución"
+              label={t("admin.health.avgResolution")}
               value={
                 s.anti_scam.avg_resolution_hours == null
                   ? "—"
@@ -353,8 +351,8 @@ export default function AdminHealth() {
               }
               sub={
                 s.anti_scam.avg_resolution_hours == null
-                  ? "sin casos resueltos aún"
-                  : `${s.anti_scam.resolved_count} casos resueltos`
+                  ? t("admin.health.noResolvedYet")
+                  : t("admin.health.resolvedCases", { n: s.anti_scam.resolved_count })
               }
               tone={
                 s.anti_scam.avg_resolution_hours != null
@@ -366,13 +364,13 @@ export default function AdminHealth() {
             <StatCard
               testid="health-antiscam-oldest"
               icon={AlertTriangle}
-              label="Ticket más antiguo"
+              label={t("admin.health.oldestTicket")}
               value={
                 s.anti_scam.oldest_pending_hours == null
                   ? "—"
                   : `${s.anti_scam.oldest_pending_hours} h`
               }
-              sub="lleva esperando"
+              sub={t("admin.health.waiting")}
               tone={
                 s.anti_scam.oldest_pending_hours != null
                 && s.anti_scam.oldest_pending_hours > 48
@@ -386,28 +384,27 @@ export default function AdminHealth() {
             <StatCard
               testid="health-antiscam-resolved"
               icon={ShieldCheck}
-              label="Resueltos histórico"
+              label={t("admin.health.resolvedHistoric")}
               value={s.anti_scam.resolved_count}
-              sub="contribuyen al promedio"
+              sub={t("admin.health.contributesAvg")}
               tone="ok"
             />
           </div>
         </Section>
       )}
 
-      {/* Tabla margen negativo */}
       {s.negative_margin.count > 0 && (
-        <Section title={`Órdenes con margen negativo (${s.negative_margin.count})`}>
+        <Section title={t("admin.health.negativeMarginTable", { n: s.negative_margin.count })}>
           <div className="border border-white/10 overflow-x-auto">
             <table className="w-full text-sm" data-testid="health-margin-table">
               <thead className="bg-white/5 text-xs uppercase tracking-wider text-neutral-400">
                 <tr>
-                  <th className="text-left p-3">ID</th>
-                  <th className="text-left p-3">Cliente</th>
-                  <th className="text-left p-3">Par</th>
-                  <th className="text-right p-3">Pérdida</th>
-                  <th className="text-right p-3">% pérdida</th>
-                  <th className="text-left p-3">Estado</th>
+                  <th className="text-left p-3">{t("admin.health.colId")}</th>
+                  <th className="text-left p-3">{t("admin.health.colClient")}</th>
+                  <th className="text-left p-3">{t("admin.health.colPair")}</th>
+                  <th className="text-right p-3">{t("admin.health.colLoss")}</th>
+                  <th className="text-right p-3">{t("admin.health.colLossPct")}</th>
+                  <th className="text-left p-3">{t("admin.health.colStatus")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -428,14 +425,14 @@ export default function AdminHealth() {
           </div>
           {s.negative_margin.count > 20 && (
             <p className="text-xs text-neutral-500">
-              Mostrando los primeros 20. Total: {s.negative_margin.count}.
+              {t("admin.health.showingFirst", { n: s.negative_margin.count })}
             </p>
           )}
         </Section>
       )}
 
       <p className="text-xs text-neutral-600 text-right">
-        Snapshot generado: {new Date(s.generated_at).toLocaleString()}
+        {t("admin.health.snapshotGenerated", { ts: new Date(s.generated_at).toLocaleString() })}
       </p>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,22 +9,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const empty = { code: "", name: "", type: "fiat", symbol: "", country: "", is_active: true, payment_account: "", delivery_methods: null, is_convertible_to: true };
 
-const DELIVERY_OPTIONS = [
-  { value: "transfer", label: "Transferencia bancaria" },
-  { value: "cash", label: "Efectivo (a domicilio)" },
-  { value: "crypto", label: "Cripto (wallet)" },
-];
-
 export default function AdminCurrencies() {
+  const { t } = useTranslation();
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
+
+  const DELIVERY_OPTIONS = [
+    { value: "transfer", label: t("admin.currencies.deliveryTransfer") },
+    { value: "cash", label: t("admin.currencies.deliveryCash") },
+    { value: "crypto", label: t("admin.currencies.deliveryCrypto") },
+  ];
 
   const load = async () => {
     const r = await axios.get(`${API}/currencies`);
@@ -35,43 +38,43 @@ export default function AdminCurrencies() {
     try {
       if (editing) await axios.put(`${API}/admin/currencies/${editing.id}`, form, { withCredentials: true });
       else await axios.post(`${API}/admin/currencies`, form, { withCredentials: true });
-      toast.success("Guardado");
+      toast.success(t("admin.currencies.toastSaved"));
       setOpen(false); setEditing(null); setForm(empty);
       load();
-    } catch (e) { toast.error("Error"); }
+    } catch (e) { toast.error(t("admin.currencies.toastError")); }
   };
 
   const remove = async (id) => {
-    if (!window.confirm("¿Eliminar moneda?")) return;
+    if (!window.confirm(t("admin.currencies.confirmDelete"))) return;
     await axios.delete(`${API}/admin/currencies/${id}`, { withCredentials: true });
-    toast.success("Eliminada"); load();
+    toast.success(t("admin.currencies.toastDeleted")); load();
   };
 
   const edit = (it) => { setEditing(it); setForm({ ...it }); setOpen(true); };
 
   return (
     <div data-testid="admin-currencies">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <div className="micro-label text-[#8B5CF6] mb-2">/ Monedas</div>
-          <h1 className="font-display text-3xl">Cripto & Fiat</h1>
-        </div>
-        <Button data-testid="add-currency-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
-          <Plus className="w-4 h-4 mr-1" /> Nueva moneda
-        </Button>
-      </div>
+      <AdminPageHeader
+        eyebrow={t("admin.currencies.eyebrow")}
+        title={t("admin.currencies.title")}
+        actions={
+          <Button data-testid="add-currency-btn" onClick={() => { setEditing(null); setForm(empty); setOpen(true); }} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
+            <Plus className="w-4 h-4 mr-1" /> {t("admin.currencies.newBtn")}
+          </Button>
+        }
+      />
 
       <div className="tactile-card overflow-hidden">
         <table className="w-full text-sm">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
-              <th className="px-4 py-3 micro-label text-neutral-500">Código</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Nombre</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Tipo</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">País</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Cuenta destino</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Convertible</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">Activa</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colCode")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colName")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colType")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colCountry")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colAccount")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colConvertible")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colActive")}</th>
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
@@ -85,7 +88,7 @@ export default function AdminCurrencies() {
                 <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">{c.payment_account || "—"}</td>
                 <td className="px-4 py-3" data-testid={`currency-convertible-${c.code}`}>
                   {c.is_convertible_to === false
-                    ? <span className="text-xs text-amber-400 border border-amber-400/40 bg-amber-400/5 px-1.5 py-0.5">Sólo entrada</span>
+                    ? <span className="text-xs text-amber-400 border border-amber-400/40 bg-amber-400/5 px-1.5 py-0.5">{t("admin.currencies.inputOnly")}</span>
                     : <span className="text-xs text-emerald-400">✓</span>}
                 </td>
                 <td className="px-4 py-3">{c.is_active ? "✓" : "✕"}</td>
@@ -101,10 +104,10 @@ export default function AdminCurrencies() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display">{editing ? "Editar" : "Nueva"} Moneda</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display">{editing ? t("admin.currencies.editTitle") : t("admin.currencies.newTitle")}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="micro-label text-neutral-500">Código (USDT, USD, CUP...)</Label>
+              <Label className="micro-label text-neutral-500">{t("admin.currencies.code")}</Label>
               <Input
                 data-testid="cur-code"
                 value={form.code}
@@ -116,7 +119,7 @@ export default function AdminCurrencies() {
                   data-testid="cur-code-preview"
                   className="mt-1.5 text-[0.7rem] text-[#8B5CF6] font-mono flex items-center gap-1"
                 >
-                  <span className="opacity-60">Se guardará como:</span>
+                  <span className="opacity-60">{t("admin.currencies.willBeSaved")}</span>
                   <span className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 px-1.5 py-0.5">
                     {form.code.trim()}
                   </span>
@@ -124,13 +127,13 @@ export default function AdminCurrencies() {
               )}
               {form.code && form.code === form.code.trim() && (
                 <div className="mt-1 text-[0.65rem] text-neutral-600 font-mono">
-                  ↳ se guardará como <span className="text-neutral-400">{form.code.trim()}</span>
+                  {t("admin.currencies.willBeSavedShort")} <span className="text-neutral-400">{form.code.trim()}</span>
                 </div>
               )}
             </div>
-            <div><Label className="micro-label text-neutral-500">Nombre</Label><Input data-testid="cur-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
+            <div><Label className="micro-label text-neutral-500">{t("admin.currencies.name")}</Label><Input data-testid="cur-name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
             <div>
-              <Label className="micro-label text-neutral-500">Tipo</Label>
+              <Label className="micro-label text-neutral-500">{t("admin.currencies.type")}</Label>
               <Select value={form.type} onValueChange={v => setForm({ ...form, type: v })}>
                 <SelectTrigger className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
                 <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
@@ -139,12 +142,12 @@ export default function AdminCurrencies() {
                 </SelectContent>
               </Select>
             </div>
-            <div><Label className="micro-label text-neutral-500">País</Label><Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
-            <div><Label className="micro-label text-neutral-500">Cuenta destino (Zelle, wallet, banco)</Label><Input value={form.payment_account} onChange={e => setForm({ ...form, payment_account: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
+            <div><Label className="micro-label text-neutral-500">{t("admin.currencies.country")}</Label><Input value={form.country} onChange={e => setForm({ ...form, country: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
+            <div><Label className="micro-label text-neutral-500">{t("admin.currencies.paymentAccount")}</Label><Input value={form.payment_account} onChange={e => setForm({ ...form, payment_account: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
             <div data-testid="cur-delivery-methods">
-              <Label className="micro-label text-neutral-500">Métodos de entrega permitidos</Label>
+              <Label className="micro-label text-neutral-500">{t("admin.currencies.deliveryMethods")}</Label>
               <div className="text-xs text-neutral-500 mt-1 mb-2">
-                Si dejas todos en blanco, el sistema detecta automáticamente por el nombre (transferencia/efectivo/wallet).
+                {t("admin.currencies.deliveryHelper")}
               </div>
               <div className="space-y-2 mt-2 bg-[#0a0a0a] border border-white/10 p-3">
                 {DELIVERY_OPTIONS.map((opt) => {
@@ -173,7 +176,7 @@ export default function AdminCurrencies() {
                 })}
               </div>
             </div>
-            <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">Activa</span></div>
+            <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">{t("admin.currencies.active")}</span></div>
             <div className="border border-white/10 bg-[#0a0a0a] p-3">
               <div className="flex items-center gap-3">
                 <Switch
@@ -181,14 +184,13 @@ export default function AdminCurrencies() {
                   checked={form.is_convertible_to !== false}
                   onCheckedChange={v => setForm({ ...form, is_convertible_to: v })}
                 />
-                <span className="text-sm">Disponible como destino de conversión</span>
+                <span className="text-sm">{t("admin.currencies.convertibleLabel")}</span>
               </div>
               <div className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
-                Si está desactivado, los clientes NO podrán convertir sus saldos hacia esta moneda
-                (útil para monedas que la plataforma solo recibe, como Zelle). No afecta órdenes P2P ni retiros.
+                {t("admin.currencies.convertibleHelper")}
               </div>
             </div>
-            <Button data-testid="save-currency-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">Guardar</Button>
+            <Button data-testid="save-currency-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">{t("admin.currencies.save")}</Button>
           </div>
         </DialogContent>
       </Dialog>

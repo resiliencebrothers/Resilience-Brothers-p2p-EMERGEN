@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -7,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
 import MonthlyAuditReport from "@/pages/admin/audit/MonthlyAuditReport";
+import AdminPageHeader from "@/components/AdminPageHeader";
 import { Shield, Download, FileText } from "lucide-react";
 
 const ACTION_BADGE = {
@@ -22,6 +24,7 @@ const ACTION_BADGE = {
 const PAGE_SIZE = 50;
 
 export default function AdminAudit({ hideMonthly = false }) {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState([]);
   const [actionFilter, setActionFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState("");
@@ -31,7 +34,6 @@ export default function AdminAudit({ hideMonthly = false }) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  // Reset to first page whenever filters change
   useEffect(() => {
     setPage(0);
   }, [actionFilter, actorFilter, sinceFilter, untilFilter]);
@@ -49,11 +51,11 @@ export default function AdminAudit({ hideMonthly = false }) {
       const headerTotal = Number(r.headers["x-total-count"]);
       setTotal(Number.isFinite(headerTotal) ? headerTotal : r.data.length);
     } catch (e) {
-      toast.error("Error al cargar audit log");
+      toast.error(t("admin.audit.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [actionFilter, actorFilter, sinceFilter, untilFilter, page]);
+  }, [actionFilter, actorFilter, sinceFilter, untilFilter, page, t]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
@@ -74,9 +76,9 @@ export default function AdminAudit({ hideMonthly = false }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(blobUrl);
-      toast.success(`Audit log exportado (${kind.toUpperCase()})`);
+      toast.success(t("admin.audit.exportedToast", { kind: kind.toUpperCase() }));
     } catch (e) {
-      toast.error(`Error al exportar ${kind.toUpperCase()}`);
+      toast.error(t("admin.audit.exportError", { kind: kind.toUpperCase() }));
     }
   };
 
@@ -85,51 +87,47 @@ export default function AdminAudit({ hideMonthly = false }) {
   return (
     <div className="space-y-6" data-testid="admin-audit">
       {!hideMonthly && (
-        <div>
-          <div className="micro-label text-[#8B5CF6] mb-2">/ Auditoría</div>
-          <h1 className="font-display text-3xl flex items-center gap-3">
-            <Shield className="w-8 h-8 text-[#8B5CF6]" /> Registro de Acciones
-          </h1>
-          <p className="text-neutral-400 mt-2 text-sm">
-            Trazabilidad completa: cada cambio de orden, tasa, usuario y configuración queda registrado con autor y momento exacto.
-          </p>
-        </div>
+        <AdminPageHeader
+          eyebrow={t("admin.audit.eyebrow")}
+          title={t("admin.audit.title")}
+          subtitle={t("admin.audit.subtitle")}
+          icon={Shield}
+        />
       )}
 
-      {/* iter55.17 — Monthly executive audit report */}
       {!hideMonthly && <MonthlyAuditReport />}
 
       <div className="flex flex-wrap gap-3 items-end justify-between">
         <div className="flex flex-wrap gap-3 items-end">
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Filtrar acción</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("admin.audit.filterAction")}</div>
             <Select value={actionFilter} onValueChange={setActionFilter}>
               <SelectTrigger data-testid="audit-action-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-52">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                <SelectItem value="all">Todas las acciones</SelectItem>
-                <SelectItem value="order.approved">Órdenes aprobadas</SelectItem>
-                <SelectItem value="order.rejected">Órdenes rechazadas</SelectItem>
-                <SelectItem value="order.completed">Órdenes completadas</SelectItem>
-                <SelectItem value="rate.update">Tasas actualizadas</SelectItem>
-                <SelectItem value="user.update">Cambios de usuario</SelectItem>
-                <SelectItem value="settings.update">Settings</SelectItem>
+                <SelectItem value="all">{t("admin.audit.allActions")}</SelectItem>
+                <SelectItem value="order.approved">{t("admin.audit.actionOrderApproved")}</SelectItem>
+                <SelectItem value="order.rejected">{t("admin.audit.actionOrderRejected")}</SelectItem>
+                <SelectItem value="order.completed">{t("admin.audit.actionOrderCompleted")}</SelectItem>
+                <SelectItem value="rate.update">{t("admin.audit.actionRateUpdate")}</SelectItem>
+                <SelectItem value="user.update">{t("admin.audit.actionUserUpdate")}</SelectItem>
+                <SelectItem value="settings.update">{t("admin.audit.actionSettings")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Actor (user_id)</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("admin.audit.actor")}</div>
             <Input
               data-testid="audit-actor-filter"
               value={actorFilter}
               onChange={(e) => setActorFilter(e.target.value)}
-              placeholder="user_xxxxxx"
+              placeholder={t("admin.audit.actorPh")}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-64 font-mono text-xs"
             />
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Desde</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("admin.audit.since")}</div>
             <Input
               type="date"
               data-testid="audit-since-filter"
@@ -139,7 +137,7 @@ export default function AdminAudit({ hideMonthly = false }) {
             />
           </div>
           <div>
-            <div className="micro-label text-neutral-500 mb-1">Hasta</div>
+            <div className="micro-label text-neutral-500 mb-1">{t("admin.audit.until")}</div>
             <Input
               type="date"
               data-testid="audit-until-filter"
@@ -154,7 +152,7 @@ export default function AdminAudit({ hideMonthly = false }) {
               onClick={clearDates}
               className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
             >
-              limpiar fechas
+              {t("admin.audit.clearDates")}
             </button>
           )}
         </div>
@@ -181,21 +179,21 @@ export default function AdminAudit({ hideMonthly = false }) {
           <table className="w-full text-sm">
             <thead className="bg-[#0a0a0a] border-b border-white/10">
               <tr className="text-left">
-                <th className="px-4 py-3 micro-label text-neutral-500">Cuándo</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Quién</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Rol</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Permisos al momento</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Acción</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Resumen</th>
-                <th className="px-4 py-3 micro-label text-neutral-500">Entidad</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colWhen")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colWho")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colRole")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colPerms")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colAction")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colSummary")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.audit.colEntity")}</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Cargando...</td></tr>
+                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">{t("admin.audit.loading")}</td></tr>
               )}
               {!loading && entries.length === 0 && (
-                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">Sin registros aún.</td></tr>
+                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">{t("admin.audit.empty")}</td></tr>
               )}
               {entries.map((e) => (
                 <tr key={e.id} className="border-b border-white/5 hover:bg-white/5">
@@ -203,7 +201,7 @@ export default function AdminAudit({ hideMonthly = false }) {
                   <td className="px-4 py-3 text-xs">{e.actor_name || e.actor_email}</td>
                   <td className="px-4 py-3"><span className="text-[0.65rem] uppercase tracking-wider text-neutral-500">{e.actor_role}</span></td>
                   <td className="px-4 py-3">
-                    <PermissionsCell effective={e.actor_permissions_effective} raw={e.actor_permissions} />
+                    <PermissionsCell effective={e.actor_permissions_effective} raw={e.actor_permissions} t={t} />
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs uppercase tracking-wider border px-2 py-0.5 font-mono ${ACTION_BADGE[e.action] || "bg-neutral-700/40 text-neutral-300 border-neutral-700"}`}>
@@ -234,20 +232,12 @@ export default function AdminAudit({ hideMonthly = false }) {
 }
 
 
-/**
- * iter55.16b — Compact "permissions at time of action" cell for the audit log.
- * Renders a color-coded badge and expands the raw list on hover.
- *
- *  - "all"                 → 'ADMIN' badge (green)
- *  - "all_staff_default"   → 'STAFF · sin restricción' badge (neutral)
- *  - array of codes        → 'N permisos' badge with tooltip listing codes
- */
-function PermissionsCell({ effective, raw }) {
+function PermissionsCell({ effective, raw, t }) {
   if (effective === "all") {
     return (
       <span className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-emerald-500/10 text-emerald-300 border border-emerald-500/30"
             data-testid="audit-perms-admin">
-        Admin · sin límite
+        {t("admin.audit.permsAdmin")}
       </span>
     );
   }
@@ -255,7 +245,7 @@ function PermissionsCell({ effective, raw }) {
     return (
       <span className="inline-flex items-center px-2 py-0.5 text-[0.65rem] uppercase tracking-wider bg-neutral-500/10 text-neutral-400 border border-neutral-500/30"
             data-testid="audit-perms-open">
-        Staff · sin restricción
+        {t("admin.audit.permsOpen")}
       </span>
     );
   }
@@ -266,7 +256,7 @@ function PermissionsCell({ effective, raw }) {
       title={codes.join(" · ")}
       data-testid="audit-perms-scoped"
     >
-      {codes.length} permiso{codes.length === 1 ? "" : "s"}
+      {codes.length} {codes.length === 1 ? t("admin.audit.permsOne") : t("admin.audit.permsMany")}
     </span>
   );
 }

@@ -50,7 +50,7 @@ export default function AdminUsersHub() {
       <nav
         className="flex items-center gap-1 border-b border-white/10 pb-1 -mt-2 overflow-x-auto scrollbar-none"
         role="tablist"
-        aria-label="Gestión de usuarios"
+        aria-label={t("admin.hubs.usersAria")}
       >
         {TAB_META.map((tt) => {
           const Icon = tt.icon;

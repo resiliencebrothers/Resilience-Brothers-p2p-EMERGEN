@@ -50,7 +50,7 @@ export default function AdminAuditHub() {
       <nav
         className="flex items-center gap-1 border-b border-white/10 pb-1 overflow-x-auto scrollbar-none"
         role="tablist"
-        aria-label="Auditoría"
+        aria-label={t("admin.hubs.auditAria")}
       >
         {TAB_META.map((tt) => {
           const Icon = tt.icon;

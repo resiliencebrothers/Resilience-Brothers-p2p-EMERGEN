@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import axios from "axios";
+import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,38 +17,14 @@ import {
 } from "lucide-react";
 import { extractDetailMessage } from "@/utils/apiErrors";
 
-const STATUS_TABS = [
-  { key: "pending", label: "Pendientes", icon: Clock },
-  { key: "needs_more_info", label: "Info adicional", icon: Info },
-  { key: "verified", label: "Verificados", icon: CheckCircle2 },
-  { key: "rejected", label: "Rechazados", icon: XCircle },
-];
-
-const REJECT_REASONS = [
-  "Foto borrosa",
-  "Documento vencido",
-  "Selfie no coincide con documento",
-  "Documento manipulado / fraude",
-  "Nombre no coincide con la cuenta",
-  "Documento no válido para este país",
-  "Datos incompletos o ilegibles",
-];
-
-// iter55.36q — Keyboard shortcuts for high-throughput manual KYC review.
-// Documented in the Ayuda dialog (press "?"). Skip handlers when the user
-// is typing in an input/textarea/dialog to avoid interfering with normal
-// form usage.
-const KBD_HINT = [
-  { keys: ["J", "↓"], label: "Siguiente verificación" },
-  { keys: ["K", "↑"], label: "Verificación anterior" },
-  { keys: ["A"], label: "Aprobar la seleccionada" },
-  { keys: ["R"], label: "Rechazar la seleccionada" },
-  { keys: ["I"], label: "Pedir más información" },
-  { keys: ["X"], label: "Marcar/desmarcar para lote" },
-  { keys: ["Shift", "A"], label: "Aprobar todas las seleccionadas" },
-  { keys: ["Enter"], label: "Confirmar diálogo abierto" },
-  { keys: ["Esc"], label: "Cerrar diálogo" },
-  { keys: ["?"], label: "Mostrar esta ayuda" },
+const REJECT_REASON_KEYS = [
+  "blurry",
+  "expired",
+  "selfie_mismatch",
+  "manipulated",
+  "name_mismatch",
+  "invalid_country",
+  "incomplete",
 ];
 
 /**
@@ -56,6 +33,33 @@ const KBD_HINT = [
  * Route: /admin/kyc (staff-only)
  */
 export default function AdminKYC() {
+  const { t } = useTranslation();
+
+  const STATUS_TABS = [
+    { key: "pending", labelKey: "admin.kycAdmin.tabPending", icon: Clock },
+    { key: "needs_more_info", labelKey: "admin.kycAdmin.tabMoreInfo", icon: Info },
+    { key: "verified", labelKey: "admin.kycAdmin.tabVerified", icon: CheckCircle2 },
+    { key: "rejected", labelKey: "admin.kycAdmin.tabRejected", icon: XCircle },
+  ];
+
+  const REJECT_REASONS = REJECT_REASON_KEYS.map((k) => ({
+    key: k,
+    label: t(`admin.kycAdmin.reject_reasons.${k}`),
+  }));
+
+  const KBD_HINT = [
+    { keys: ["J", "↓"], label: t("admin.kycAdmin.kbdNext") },
+    { keys: ["K", "↑"], label: t("admin.kycAdmin.kbdPrev") },
+    { keys: ["A"], label: t("admin.kycAdmin.kbdApprove") },
+    { keys: ["R"], label: t("admin.kycAdmin.kbdReject") },
+    { keys: ["I"], label: t("admin.kycAdmin.kbdMoreInfo") },
+    { keys: ["X"], label: t("admin.kycAdmin.kbdToggle") },
+    { keys: ["Shift", "A"], label: t("admin.kycAdmin.kbdBulkApprove") },
+    { keys: ["Enter"], label: t("admin.kycAdmin.kbdConfirmDialog") },
+    { keys: ["Esc"], label: t("admin.kycAdmin.kbdCloseDialog") },
+    { keys: ["?"], label: t("admin.kycAdmin.kbdShowHelp") },
+  ];
+
   const [tab, setTab] = useState("pending");
   const [items, setItems] = useState([]);
   const [funnel, setFunnel] = useState(null);
@@ -90,11 +94,11 @@ export default function AdminKYC() {
       setFocusedIdx(0);
       setBatchIds(new Set());
     } catch (e) {
-      toast.error(extractDetailMessage(e, "No se pudo cargar la cola KYC"));
+      toast.error(extractDetailMessage(e, t("admin.kycAdmin.loadError")));
     } finally {
       setLoading(false);
     }
-  }, [tab, search, minRisk]);
+  }, [tab, search, minRisk, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -107,11 +111,11 @@ export default function AdminKYC() {
 
   const submitAction = async () => {
     if (action === "reject" && reasons.length === 0) {
-      toast.error("Selecciona al menos un motivo de rechazo.");
+      toast.error(t("admin.kycAdmin.reasonRequired"));
       return;
     }
     if (action === "more_info" && notes.trim().length < 5) {
-      toast.error("Explica qué información falta (mínimo 5 caracteres).");
+      toast.error(t("admin.kycAdmin.moreInfoMin"));
       return;
     }
     setSaving(true);
@@ -122,15 +126,15 @@ export default function AdminKYC() {
         : { notes: notes.trim() };
       await axios.post(`${API}/admin/kyc/${selected.id}/${endpoint}`, payload, { withCredentials: true });
       toast.success(
-        action === "approve" ? "Cliente verificado ✓" :
-        action === "reject"  ? "Verificación rechazada" :
-                               "Se pidió más información al cliente"
+        action === "approve" ? t("admin.kycAdmin.toastApproved") :
+        action === "reject"  ? t("admin.kycAdmin.toastRejected") :
+                               t("admin.kycAdmin.toastMoreInfo")
       );
       setSelected(null);
       setAction(null);
       await load();
     } catch (e) {
-      toast.error(extractDetailMessage(e, "No se pudo procesar"));
+      toast.error(extractDetailMessage(e, t("admin.kycAdmin.toastError")));
     } finally {
       setSaving(false);
     }
@@ -139,10 +143,10 @@ export default function AdminKYC() {
   const bulkApprove = useCallback(async () => {
     const ids = Array.from(batchIds);
     if (ids.length === 0) {
-      toast.error("Selecciona verificaciones marcando con X o el checkbox.");
+      toast.error(t("admin.kycAdmin.bulkNoSelection"));
       return;
     }
-    if (!window.confirm(`¿Aprobar ${ids.length} verificacion(es) en lote?`)) return;
+    if (!window.confirm(t("admin.kycAdmin.bulkConfirm", { n: ids.length }))) return;
     setBulkRunning(true);
     try {
       const r = await axios.post(
@@ -152,21 +156,21 @@ export default function AdminKYC() {
       );
       const { approved_count, failed_count, failed } = r.data;
       if (approved_count > 0) {
-        toast.success(`✓ ${approved_count} verificacion(es) aprobadas en lote`);
+        toast.success(t("admin.kycAdmin.bulkSuccess", { n: approved_count }));
       }
       if (failed_count > 0) {
-        toast.error(`${failed_count} no se aprobaron (posiblemente ya no estaban pendientes).`, {
+        toast.error(t("admin.kycAdmin.bulkPartialFail", { n: failed_count }), {
           description: failed.map((f) => f.id.slice(0, 8)).join(", "),
         });
       }
       setBatchIds(new Set());
       await load();
     } catch (e) {
-      toast.error(extractDetailMessage(e, "Error en aprobación por lote"));
+      toast.error(extractDetailMessage(e, t("admin.kycAdmin.bulkError")));
     } finally {
       setBulkRunning(false);
     }
-  }, [batchIds, load]);
+  }, [batchIds, load, t]);
 
   const toggleBatch = useCallback((id) => {
     setBatchIds((prev) => {
@@ -261,12 +265,16 @@ export default function AdminKYC() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <IdCard className="w-8 h-8 text-[#8B5CF6]" />
-            Verificación de identidad (KYC)
+            {t("admin.kycAdmin.title")}
           </h1>
           <p className="text-sm text-neutral-500 mt-1">
-            Cola de verificaciones. Usa <kbd className="kbd">J</kbd>/<kbd className="kbd">K</kbd> para navegar,
-            {" "}<kbd className="kbd">A</kbd> aprobar, <kbd className="kbd">R</kbd> rechazar,
-            {" "}<kbd className="kbd">X</kbd> marcar para lote, <kbd className="kbd">?</kbd> ver todos los atajos.
+            <Trans
+              i18nKey="admin.kycAdmin.subtitle"
+              components={{
+                1: <kbd className="kbd" />, 2: <kbd className="kbd" />, 3: <kbd className="kbd" />,
+                4: <kbd className="kbd" />, 5: <kbd className="kbd" />, 6: <kbd className="kbd" />,
+              }}
+            />
           </p>
         </div>
         <Button
@@ -276,19 +284,19 @@ export default function AdminKYC() {
           size="sm"
           className="border-white/10 text-neutral-300 hover:bg-white/5"
         >
-          <Keyboard className="w-3.5 h-3.5 mr-1.5" /> Atajos
+          <Keyboard className="w-3.5 h-3.5 mr-1.5" /> {t("admin.kycAdmin.shortcuts")}
         </Button>
       </header>
 
       {/* FUNNEL CARDS */}
       {funnel && (
         <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <FunnelCard label="Total usuarios" value={funnel.total_users} icon={User} tone="neutral" testid="funnel-total" />
-          <FunnelCard label="Pendientes" value={funnel.pending} icon={Clock} tone="warn" testid="funnel-pending" />
-          <FunnelCard label="Alto riesgo" value={funnel.high_risk_pending} icon={ShieldAlert} tone="danger" testid="funnel-high-risk" />
-          <FunnelCard label="Info adicional" value={funnel.needs_more_info} icon={Info} tone="neutral" testid="funnel-more-info" />
-          <FunnelCard label="Verificados" value={funnel.verified} icon={CheckCircle2} tone="ok" testid="funnel-verified" />
-          <FunnelCard label="Rechazados" value={funnel.rejected} icon={XCircle} tone="muted" testid="funnel-rejected" />
+          <FunnelCard label={t("admin.kycAdmin.funnelTotal")} value={funnel.total_users} icon={User} tone="neutral" testid="funnel-total" />
+          <FunnelCard label={t("admin.kycAdmin.funnelPending")} value={funnel.pending} icon={Clock} tone="warn" testid="funnel-pending" />
+          <FunnelCard label={t("admin.kycAdmin.funnelHighRisk")} value={funnel.high_risk_pending} icon={ShieldAlert} tone="danger" testid="funnel-high-risk" />
+          <FunnelCard label={t("admin.kycAdmin.funnelMoreInfo")} value={funnel.needs_more_info} icon={Info} tone="neutral" testid="funnel-more-info" />
+          <FunnelCard label={t("admin.kycAdmin.funnelVerified")} value={funnel.verified} icon={CheckCircle2} tone="ok" testid="funnel-verified" />
+          <FunnelCard label={t("admin.kycAdmin.funnelRejected")} value={funnel.rejected} icon={XCircle} tone="muted" testid="funnel-rejected" />
         </div>
       )}
 
@@ -296,9 +304,9 @@ export default function AdminKYC() {
       <div className="flex flex-col md:flex-row gap-3 md:items-center">
         <Tabs value={tab} onValueChange={setTab} className="w-full md:w-auto">
           <TabsList className="bg-black/40 border border-white/10">
-            {STATUS_TABS.map(({ key, label, icon: Icon }) => (
+            {STATUS_TABS.map(({ key, labelKey, icon: Icon }) => (
               <TabsTrigger key={key} value={key} data-testid={`kyc-tab-${key}`} className="data-[state=active]:bg-[#8B5CF6] data-[state=active]:text-white text-xs">
-                <Icon className="w-3.5 h-3.5 mr-1.5" /> {label}
+                <Icon className="w-3.5 h-3.5 mr-1.5" /> {t(labelKey)}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -308,7 +316,7 @@ export default function AdminKYC() {
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
           <Input
             data-testid="kyc-search-input"
-            placeholder="Buscar por nombre / email / phone…"
+            placeholder={t("admin.kycAdmin.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 bg-black/40 border-white/10 text-white text-sm"
@@ -316,7 +324,7 @@ export default function AdminKYC() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="text-xs text-neutral-500 whitespace-nowrap">Riesgo min:</label>
+          <label className="text-xs text-neutral-500 whitespace-nowrap">{t("admin.kycAdmin.minRisk")}</label>
           <Input
             type="number"
             min={0}
@@ -335,7 +343,7 @@ export default function AdminKYC() {
           variant="outline"
           className="border-white/10 text-neutral-300 hover:bg-white/5"
         >
-          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Recargar
+          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> {t("admin.common.reload")}
         </Button>
       </div>
 
@@ -359,8 +367,8 @@ export default function AdminKYC() {
           />
           <span className="text-neutral-400">
             {batchIds.size > 0
-              ? <>Seleccionadas: <span className="text-white font-mono">{batchIds.size}</span></>
-              : "Selecciona verificaciones para aprobar en lote"}
+              ? <Trans i18nKey="admin.kycAdmin.batchSelected" values={{ count: batchIds.size }} components={{ 1: <span className="text-white font-mono" /> }} />
+              : t("admin.kycAdmin.batchSelectHint")}
           </span>
           <div className="ml-auto flex items-center gap-2">
             {batchIds.size > 0 && (
@@ -371,7 +379,7 @@ export default function AdminKYC() {
                 onClick={() => setBatchIds(new Set())}
                 className="border-white/10 text-neutral-400 hover:bg-white/5 h-8"
               >
-                Limpiar
+                {t("admin.kycAdmin.batchClear")}
               </Button>
             )}
             <Button
@@ -382,17 +390,17 @@ export default function AdminKYC() {
               className="bg-emerald-500 text-black hover:bg-emerald-500/90 h-8 disabled:opacity-40"
             >
               {bulkRunning ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
-              Aprobar {batchIds.size > 0 ? `(${batchIds.size})` : "seleccionadas"}
+              {t("admin.kycAdmin.batchApprove", { label: batchIds.size > 0 ? t("admin.kycAdmin.batchApproveMany", { count: batchIds.size }) : t("admin.kycAdmin.batchApproveOne") })}
             </Button>
           </div>
         </div>
       )}
 
       {/* LIST */}
-      {loading && <div className="text-neutral-500 text-sm">Cargando…</div>}
+      {loading && <div className="text-neutral-500 text-sm">{t("admin.common.loading")}</div>}
       {!loading && items.length === 0 && (
         <div className="text-center py-12 text-neutral-500 border border-white/5 bg-black/30">
-          No hay verificaciones {tab === "pending" ? "pendientes" : `en estado "${tab}"`}. ✅
+          {t("admin.kycAdmin.empty", { context: tab === "pending" ? t("admin.kycAdmin.emptyContextPending") : t("admin.kycAdmin.emptyContextOther", { status: tab }) })}
         </div>
       )}
       {!loading && items.length > 0 && (
@@ -407,6 +415,7 @@ export default function AdminKYC() {
               onSelect={() => setFocusedIdx(idx)}
               onToggleBatch={() => toggleBatch(v.id)}
               onAction={openAction}
+              t={t}
             />
           ))}
         </div>
@@ -419,44 +428,42 @@ export default function AdminKYC() {
             <>
               <DialogHeader>
                 <DialogTitle className="text-white flex items-center gap-2">
-                  {action === "approve" && <><CheckCircle2 className="w-5 h-5 text-emerald-400" /> Aprobar verificación</>}
-                  {action === "reject" && <><XCircle className="w-5 h-5 text-[#EF4444]" /> Rechazar verificación</>}
-                  {action === "more_info" && <><Info className="w-5 h-5 text-[#8B5CF6]" /> Pedir más información</>}
+                  {action === "approve" && <><CheckCircle2 className="w-5 h-5 text-emerald-400" /> {t("admin.kycAdmin.actionApprove")}</>}
+                  {action === "reject" && <><XCircle className="w-5 h-5 text-[#EF4444]" /> {t("admin.kycAdmin.actionReject")}</>}
+                  {action === "more_info" && <><Info className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.kycAdmin.actionMoreInfo")}</>}
                 </DialogTitle>
                 <DialogDescription className="text-neutral-500">
-                  Compara los datos declarados por el usuario (izquierda) contra el documento subido (derecha).
+                  {t("admin.kycAdmin.actionDesc")}
                 </DialogDescription>
               </DialogHeader>
 
-              {/* iter55.36q — Side-by-side comparison: declared profile vs uploaded docs */}
               <div className="grid md:grid-cols-2 gap-4">
-                {/* LEFT: declared profile data */}
                 <div
                   className="border border-white/10 bg-black/40 p-4 space-y-2.5"
                   data-testid="kyc-declared-panel"
                 >
                   <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500 mb-2">
-                    Datos declarados por el usuario
+                    {t("admin.kycAdmin.declaredPanel")}
                   </div>
-                  <ProfileField label="Nombre completo" value={selected.user_name} icon={User} />
-                  <ProfileField label="Email" value={selected.user_email} icon={Mail} />
-                  <ProfileField label="Teléfono" value={selected.user_phone || "—"} icon={Phone} />
+                  <ProfileField label={t("admin.kycAdmin.fFullName")} value={selected.user_name} icon={User} />
+                  <ProfileField label={t("admin.kycAdmin.fEmail")} value={selected.user_email} icon={Mail} />
+                  <ProfileField label={t("admin.kycAdmin.fPhone")} value={selected.user_phone || "—"} icon={Phone} />
                   <ProfileField
-                    label="Riesgo automático"
+                    label={t("admin.kycAdmin.fRiskAuto")}
                     value={`${selected.risk_score}/100`}
                     tone={selected.risk_score >= 60 ? "danger" : selected.risk_score >= 30 ? "warn" : "ok"}
                   />
                   <ProfileField
-                    label="Enviado el"
+                    label={t("admin.kycAdmin.fSubmittedAt")}
                     value={selected.created_at?.slice(0, 16).replace("T", " ")}
                   />
                   {selected.submit_ip && (
-                    <ProfileField label="IP de envío" value={selected.submit_ip} mono />
+                    <ProfileField label={t("admin.kycAdmin.fSubmitIp")} value={selected.submit_ip} mono />
                   )}
                   {selected.risk_flags?.length > 0 && (
                     <div className="border border-amber-500/30 bg-amber-500/5 p-2 mt-3 space-y-1">
                       <div className="text-[0.65rem] font-semibold text-amber-300 flex items-center gap-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5" /> Señales de riesgo
+                        <AlertTriangle className="w-3.5 h-3.5" /> {t("admin.kycAdmin.riskSignals")}
                       </div>
                       {selected.risk_flags.map((f) => (
                         <div key={f.code} className="text-[0.7rem] text-amber-200">
@@ -467,13 +474,12 @@ export default function AdminKYC() {
                   )}
                 </div>
 
-                {/* RIGHT: uploaded documents */}
                 <div
                   className="border border-white/10 bg-black/40 p-4 space-y-2"
                   data-testid="kyc-documents-panel"
                 >
                   <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500 mb-1">
-                    Documentos subidos ({selected.documents?.length || 0})
+                    {t("admin.kycAdmin.documentsPanel", { n: selected.documents?.length || 0 })}
                   </div>
                   {selected.documents?.map((d) => (
                     <div key={d.doc_type} className="space-y-1">
@@ -493,18 +499,17 @@ export default function AdminKYC() {
                 </div>
               </div>
 
-              {/* Reject reasons checklist */}
               {action === "reject" && (
                 <div className="space-y-1.5">
-                  <label className="text-xs uppercase tracking-wider text-neutral-500">Motivos (selecciona ≥ 1)</label>
+                  <label className="text-xs uppercase tracking-wider text-neutral-500">{t("admin.kycAdmin.reasonsLabel")}</label>
                   {REJECT_REASONS.map((r) => (
-                    <label key={r} className="flex items-center gap-2 text-sm text-neutral-200 cursor-pointer">
+                    <label key={r.key} className="flex items-center gap-2 text-sm text-neutral-200 cursor-pointer">
                       <Checkbox
-                        data-testid={`kyc-reject-reason-${r.replace(/\s/g, '-').toLowerCase()}`}
-                        checked={reasons.includes(r)}
-                        onCheckedChange={() => toggleReason(r)}
+                        data-testid={`kyc-reject-reason-${r.key}`}
+                        checked={reasons.includes(r.label)}
+                        onCheckedChange={() => toggleReason(r.label)}
                       />
-                      {r}
+                      {r.label}
                     </label>
                   ))}
                 </div>
@@ -512,7 +517,7 @@ export default function AdminKYC() {
 
               <div>
                 <label className="text-xs uppercase tracking-wider text-neutral-500">
-                  {action === "more_info" ? "Explica qué necesitas del cliente" : "Notas internas (opcional)"}
+                  {action === "more_info" ? t("admin.kycAdmin.notesMoreInfo") : t("admin.kycAdmin.notesInternal")}
                 </label>
                 <Textarea
                   data-testid="kyc-action-notes"
@@ -521,7 +526,7 @@ export default function AdminKYC() {
                   rows={3}
                   placeholder={
                     action === "more_info"
-                      ? "Ej: La foto del reverso salió cortada, vuelve a subirla con mejor luz."
+                      ? t("admin.kycAdmin.notesMoreInfoPh")
                       : ""
                   }
                   className="bg-black/40 border-white/10 text-white text-sm mt-1"
@@ -530,7 +535,7 @@ export default function AdminKYC() {
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setSelected(null)} className="border-white/10 text-neutral-300 hover:bg-white/5">
-                  Cancelar
+                  {t("admin.common.cancel")}
                 </Button>
                 <Button
                   data-testid="kyc-action-submit"
@@ -543,7 +548,7 @@ export default function AdminKYC() {
                   }
                 >
                   {saving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Confirmar
+                  {t("admin.kycAdmin.confirm")}
                 </Button>
               </DialogFooter>
             </>
@@ -559,10 +564,10 @@ export default function AdminKYC() {
         >
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2">
-              <Keyboard className="w-5 h-5 text-[#8B5CF6]" /> Atajos de teclado
+              <Keyboard className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.kycAdmin.shortcutsTitle")}
             </DialogTitle>
             <DialogDescription className="text-neutral-500">
-              Diseñados para revisar la cola sin quitar las manos del teclado.
+              {t("admin.kycAdmin.shortcutsDesc")}
             </DialogDescription>
           </DialogHeader>
           <ul className="space-y-2">
@@ -641,7 +646,7 @@ function FunnelCard({ label, value, icon: Icon, tone, testid }) {
   );
 }
 
-function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, onAction }) {
+function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, onAction, t }) {
   const statusStyle = {
     pending: "border-[#8B5CF6]/40 bg-[#8B5CF6]/5",
     needs_more_info: "border-blue-500/40 bg-blue-500/5",
@@ -674,22 +679,22 @@ function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, on
             <div className="font-semibold text-white flex items-center gap-1.5">
               <User className="w-4 h-4 text-neutral-500" /> {v.user_name}
             </div>
-            <span className={`text-xs font-mono ${riskColor}`}>Riesgo {v.risk_score}/100</span>
+            <span className={`text-xs font-mono ${riskColor}`}>{t("admin.kycAdmin.rowRisk", { score: v.risk_score })}</span>
             {v.risk_flags?.length > 0 && (
               <span className="text-[0.65rem] text-amber-300 uppercase">
-                <AlertTriangle className="inline w-3 h-3 mr-0.5" /> {v.risk_flags.length} señal(es)
+                <AlertTriangle className="inline w-3 h-3 mr-0.5" /> {t("admin.kycAdmin.rowSignals", { n: v.risk_flags.length })}
               </span>
             )}
             {focused && (
               <span className="ml-auto text-[0.65rem] text-[#8B5CF6] uppercase tracking-wider">
-                enfocada · #{idx + 1}
+                {t("admin.kycAdmin.rowFocused", { n: idx + 1 })}
               </span>
             )}
           </div>
           <div className="flex flex-wrap gap-3 text-xs text-neutral-400">
             <span className="flex items-center gap-1"><Mail className="w-3 h-3" /> {v.user_email}</span>
             <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> {v.user_phone || "—"}</span>
-            <span className="text-neutral-500">Enviado: {v.created_at?.slice(0, 16).replace("T", " ")}</span>
+            <span className="text-neutral-500">{t("admin.kycAdmin.rowSent", { ts: v.created_at?.slice(0, 16).replace("T", " ") })}</span>
           </div>
           {v.risk_flags?.length > 0 && (
             <ul className="text-[0.7rem] text-amber-200/80 mt-1 space-y-0.5">
@@ -700,12 +705,12 @@ function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, on
           )}
           {v.status === "rejected" && v.rejection_reasons?.length > 0 && (
             <div className="text-[0.7rem] text-neutral-400">
-              Rechazado: {v.rejection_reasons.join(" · ")}
+              {t("admin.kycAdmin.rowRejectedReasons", { list: v.rejection_reasons.join(" · ") })}
             </div>
           )}
           {v.review_notes && (
             <div className="text-[0.7rem] text-neutral-400 italic">
-              Nota: {v.review_notes}
+              {t("admin.kycAdmin.rowNote", { text: v.review_notes })}
             </div>
           )}
         </div>
@@ -718,7 +723,7 @@ function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, on
               onClick={() => onAction(v, "approve")}
               className="bg-emerald-500 text-black hover:bg-emerald-500/90 h-8"
             >
-              <Check className="w-3.5 h-3.5 mr-1" /> Aprobar
+              <Check className="w-3.5 h-3.5 mr-1" /> {t("admin.kycAdmin.rowApprove")}
             </Button>
             <Button
               data-testid={`kyc-more-info-btn-${v.id}`}
@@ -727,7 +732,7 @@ function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, on
               onClick={() => onAction(v, "more_info")}
               className="border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 h-8"
             >
-              <Info className="w-3.5 h-3.5 mr-1" /> Más info
+              <Info className="w-3.5 h-3.5 mr-1" /> {t("admin.kycAdmin.rowMoreInfo")}
             </Button>
             <Button
               data-testid={`kyc-reject-btn-${v.id}`}
@@ -736,18 +741,18 @@ function VerificationRow({ v, idx, focused, inBatch, onSelect, onToggleBatch, on
               onClick={() => onAction(v, "reject")}
               className="border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10 h-8"
             >
-              <X className="w-3.5 h-3.5 mr-1" /> Rechazar
+              <X className="w-3.5 h-3.5 mr-1" /> {t("admin.kycAdmin.rowReject")}
             </Button>
           </div>
         )}
         {v.status === "verified" && (
           <div className="text-emerald-400 text-xs font-semibold flex items-center gap-1">
-            <CheckCircle2 className="w-4 h-4" /> Verificado
+            <CheckCircle2 className="w-4 h-4" /> {t("admin.kycAdmin.rowVerified")}
           </div>
         )}
         {v.status === "rejected" && (
           <div className="text-[#EF4444] text-xs font-semibold flex items-center gap-1">
-            <XCircle className="w-4 h-4" /> Rechazado
+            <XCircle className="w-4 h-4" /> {t("admin.kycAdmin.rowRejected")}
           </div>
         )}
       </div>
