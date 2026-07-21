@@ -116,7 +116,8 @@ def test_convert_to_convertible_currency_still_works():
     _upsert_rate("USDT29", "USDT", 1.0)
     _upsert_rate("USDT", "CUP29", 100.0)
     _db().users.update_one({"user_id": "user_test_vip01"},
-                             {"$set": {"vip_balances.USDT29": 10.0}})
+                             {"$set": {"vip_balances.USDT29": 10.0,
+                                       "vip_balances.USDT": 0.01}})
 
     r = requests.post(
         f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),
@@ -124,8 +125,8 @@ def test_convert_to_convertible_currency_still_works():
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    # gross=200 CUP29, fee=0.01 USDT · 100 CUP29/USDT = 1 CUP29, net=199
-    assert body["amount_to"] == 199.0
+    # iter77 — Destination receives FULL equivalent; fee is separate USDT debit.
+    assert body["amount_to"] == 200.0
 
     _clear_balance("USDT29")
     _clear_balance("CUP29")
@@ -145,16 +146,17 @@ def test_convert_from_non_convertible_source_still_works():
     _upsert_rate("ZELLE29", "USDT", 0.95)
     _upsert_rate("USDT29", "USDT", 1.0)
     _db().users.update_one({"user_id": "user_test_vip01"},
-                             {"$set": {"vip_balances.ZELLE29": 50.0}})
+                             {"$set": {"vip_balances.ZELLE29": 50.0,
+                                       "vip_balances.USDT": 0.01}})
 
     r = requests.post(
         f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),
         json={"from_code": "ZELLE29", "to_code": "USDT29", "amount_from": 10.0},
     )
-    # 10 * 0.95 = 9.5 gross. Fee 0.01 USDT · 1.0 = 0.01 USDT29. Net = 9.49.
+    # iter77 — Full 10 × 0.95 = 9.5 credited; fee 0.01 USDT debited separately.
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["amount_to"] == 9.49
+    assert body["amount_to"] == 9.5
 
     _clear_balance("USDT29")
     _clear_balance("ZELLE29")
@@ -174,7 +176,8 @@ def test_backward_compat_missing_flag_treated_as_convertible():
     _upsert_rate("USDT29", "USDT", 1.0)
     _upsert_rate("USDT", "CUP29", 100.0)
     _db().users.update_one({"user_id": "user_test_vip01"},
-                             {"$set": {"vip_balances.USDT29": 5.0}})
+                             {"$set": {"vip_balances.USDT29": 5.0,
+                                       "vip_balances.USDT": 0.01}})
 
     r = requests.post(
         f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),

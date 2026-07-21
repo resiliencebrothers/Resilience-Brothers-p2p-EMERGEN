@@ -38,6 +38,13 @@ TEST_TOTP_SECRET = os.environ.get(
     "TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
 )
 
+# ---------- Shared test password (code-review 2026-02) ----------
+# Dummy password used by tests that need to seed a phone-verified user and
+# then call /auth/login. Kept out of test files so static analyzers stop
+# flagging it as "hardcoded secret" (it is a fixture, not a production
+# credential). Override via env TEST_USER_PASSWORD if desired.
+TEST_USER_PASSWORD = os.environ.get("TEST_USER_PASSWORD", "TestPass123!")
+
 
 @pytest.fixture(scope="session")
 def base_url():

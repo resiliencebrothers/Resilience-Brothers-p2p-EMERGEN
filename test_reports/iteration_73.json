@@ -1,0 +1,103 @@
+{
+  "summary": "Frontend-only verification of iter73 pure structural refactor: 5 large components split into sub-folders (AdminHealth→health/, AdminWithdrawals→withdrawals/, AdminUserStatsPage→user-stats/, SecuritySettings→security/, ExchangeView→exchange/). All existing data-testids still work identically. Zero regressions found on preview URL with live seed data (admin/vip/normal test users). All 5 views render + all conditional sections + gating logic (crypto-network-select→submit-order-btn disabled) verified.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "admin_health": {
+      "route": "/admin/health",
+      "status": "PASS",
+      "checks": [
+        "admin-health-page container renders (loading state passes to loaded)",
+        "admin-health-refresh header button visible and clickable (reload triggers without errors)",
+        "External services section: health-sentry (ACTIVE), health-storage (R2, 1277 files), health-defensive-card (OFF) — all render",
+        "health-storage-folders subsection renders because storage.breakdown is populated (orders/kyc/order_payouts/withdrawals/company_invoices)",
+        "Throughput: health-orders-1h=0, health-orders-24h=77, health-orders-7d=785, health-orders-total=3,812 — all 4 KPI cards render",
+        "Queues: health-queue-orders=1288, health-queue-double=645, health-queue-withdrawals=371, health-queue-phone=37, health-blocklist=0 — all 5 render",
+        "Users section: health-users-total, health-users-active, health-users-review, health-users-blocked — all 4 render",
+        "Anti-scam section: health-antiscam-queue/avg-hours/oldest/resolved all render (data present, no error)",
+        "Conditional alerts (health-defensive-on, health-negative-margin) correctly absent (defensive_mode=OFF, negative_count=0)",
+        "Conditional health-margin-table correctly absent (no negative margin rows)"
+      ]
+    },
+    "admin_withdrawals": {
+      "route": "/admin/withdrawals",
+      "status": "PASS",
+      "checks": [
+        "admin-withdrawals container present",
+        "Filters: withdrawals-user-search + withdrawals-status-filter + withdrawals-currency-filter + withdrawals-result-count all render",
+        "withdrawals-clear-filters appears only after typing a filter value, and correctly clears state on click",
+        "manage-withdrawal-{id} buttons render for every row (1000+ rows visible from live seed)",
+        "WithdrawalDialog opens: shows client/amount/method/details/beneficiary/status info block, admin note textarea, 'Evidence of payment to the client' section, and 3 action buttons: withdrawal-approve, withdrawal-pay, withdrawal-reject",
+        "For a transfer withdrawal (first VIP row, method=transfer): payout-proof-input file input renders (no crypto-only elements)",
+        "Redemptions section renders below withdrawals (header 'Withdrawals & Redemptions' present + 'Redemptions'/'Canjes' text)"
+      ]
+    },
+    "admin_user_stats": {
+      "route": "/admin/users/user_test_vip01/stats",
+      "status": "PASS",
+      "checks": [
+        "user-stats-loading transitions to admin-user-stats-page cleanly",
+        "UserStatsHero: user-stats-back-btn + name/email/phone/badges (VIP, ACTIVO) all present",
+        "NetPositionCard: user-stats-net-position shows '+1,052.63 USDT' with correct Spanish copy 'La empresa le debe este monto al cliente' (platform_owes_client direction) — net_usdt > 0 → no amber warning banner",
+        "UserStatsPersonal: user-stats-personal grid + user-stats-kyc card render (Email verified, 2FA activated, Rol=VIP)",
+        "5 KPIs render: user-stats-kpi-total-balance=1052.63, orders-30d=12072.05, total-orders=1938, success-rate=70.4%, favorite-currency=CUP",
+        "BalanceBreakdown: user-stats-balances-grid renders 1 balance row (user-stats-balance-USD=1000)",
+        "CapitalDebtsSection: user-stats-capital-section header always renders; body shows 'no active loans' message when empty (correct)",
+        "AuditTrailSection: user-stats-audit-trail + audit-trail-window-{7,30,90} + audit-trail-open-in-audit all render, own fetch effect works (audit-trail-entry-* renders when history exists)",
+        "Bottom quick actions: user-stats-goto-users-btn + user-stats-goto-requests-btn both render"
+      ]
+    },
+    "security_settings": {
+      "route": "/dashboard/security",
+      "status": "PASS",
+      "checks": [
+        "security-settings container renders (client dashboard sidebar → My Profile → Security tab, direct link /dashboard/security works)",
+        "security-status shows '2FA active' (ON state) for seeded normal user with TOTP secret",
+        "Both security-regen-btn and security-disable-btn visible (ON-state controls)",
+        "Clicking security-disable-btn opens DisableTwoFAModal with security-disable-input + security-disable-confirm (both testids present in dialog)",
+        "Clicking security-regen-btn opens RegenerateCodesModal (dialog role present) — internal testids exist though not enumerated by e2e",
+        "Password change: user is Google-provider → password-change-google notice renders (correct branching, password-change-card correctly hidden)"
+      ]
+    },
+    "exchange_view": {
+      "route": "/dashboard/exchange",
+      "status": "PASS",
+      "checks": [
+        "exchange-view container present, from-currency-select + to-currency-select + amount-input + delivery-method-select + submit-order-btn all render",
+        "Currency selectors show 13 options (all seeded currencies)",
+        "USD→USDT selection: delivery-method-select shows ['External crypto wallet', 'Accumulate in my balance'] — correct options for crypto TO currency",
+        "Picking 'External crypto wallet' reveals crypto-network-select with 6 options (BEP20 recommended + TRC20/ERC20/POLYGON/Solana/Bitcoin) — Spanish label 'recomendada' preserved",
+        "submit-order-btn.disabled === true BEFORE picking a network (gating logic works)",
+        "Picking BEP20 → delivery-details-input textarea auto-populates with 'Red: BEP20' (injection works)",
+        "USDT→CUP cash-fiat flow: delivery-method-select shows ['Cash','Bank transfer','Accumulate in my balance']. Picking Cash renders cash-fiat-guidance banner with Spanish copy (fractional/whole/USDT credit explanation)",
+        "QuotePreview renders when currencies+amount set: applied rate, gross, 'You'll receive in cash' figures visible (100 USDT × 380 CUP/USDT = 38000 CUP)",
+        "cash-fiat-residue-credit correctly absent when gross has no fractional residue (38000.0000 is whole) — testid appears only when residue exists (design-intentional)",
+        "sender-name-input + proof-upload always visible below quote"
+      ]
+    }
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Refactor is clean and correct. All 5 container files shrunk to 86–234 lines with all business logic pushed into cohesive sub-folders. Every data-testid in the review request is present in the refactored code and renders identically live.",
+    "AdminHealth.jsx (86 lines) is now a thin orchestrator that composes 7 section components + HealthPrimitives. Clean separation.",
+    "AdminUserStatsPage.jsx (103 lines) delegates a self-contained fetch effect for audit trail to AuditTrailSection — a nice locality-of-concern move.",
+    "WithdrawalDialog embeds internal InfoBlock/PayoutEvidenceBlock/CryptoHashInput/TransferProofInput — file is still on the larger side but self-contained per feature. Consider extracting to files if it grows further, non-blocking.",
+    "ExchangeView.jsx (234 lines) + exchange/ sub-components — the crypto-network-picker → submit-gating logic still works (submit-order-btn correctly disabled until network chosen). Excellent preserved behavior.",
+    "SecuritySettings.jsx correctly branches password-change-card vs password-change-google based on auth_provider. All modal testids intact.",
+    "Zero regressions detected. Full backwards-compat with all pre-refactor data-testids."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A (frontend-only)", "frontend": "100% — 5 refactored views verified, 0 defects" },
+  "test_credentials": "admin: session_token=test_session_admin_X (user_test_admin01). vip: session_token=test_session_vip_X (user_test_vip01, USD=1000, USDT=1.97 from iter67). normal: session_token=test_session_normal_X (user_test_normal01, USD=50).",
+  "seed_data_creation": "None. No new orders, users, withdrawals or conversions created during this run — all tests were read-only structural verifications. Modals were opened and closed with Escape; no destructive actions (approve/pay/reject/submit-order) were executed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter73 refactor is fully GREEN. All 5 sub-folders (health/, withdrawals/, user-stats/, security/, exchange/) properly wired. If future work touches any of these 5 areas, this iteration_73.json is the reference for pre-existing testid coverage. Note: normal test user is Google-provider (shows password-change-google notice). To test password-change-card form testids (pwd-current-input etc.) a password-provider user is required (e.g. cuba.iter16@example.com). VIP balances unchanged from iter67: USD=1000, USDT=1.97.",
+  "rca of the issue": "N/A — pure structural refactor, no defects."
+}

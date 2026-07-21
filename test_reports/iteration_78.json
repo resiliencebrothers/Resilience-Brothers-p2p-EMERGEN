@@ -1,0 +1,97 @@
+{
+  "summary": "iter78 frontend fully verified on preview URL as VIP (session_token=test_session_vip_X). Tabs (Todas/Entradas/Salidas/Conversiones), self-conversion rows with small_balance vs normal subtype badges, conversion detail modal, currency icons across balance summary + totals grid + rows + modal + converter dialog title, and Spanish↔English i18n switch all render correctly with no raw i18n keys visible.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "tabs": {
+      "status": "PASS",
+      "checks": [
+        "Container data-testid=my-tx-tabs renders 4 pills (all/in/out/conversion) in the correct order Todas|Entradas|Salidas|Conversiones (ES) and All|Inflows|Outflows|Conversions (EN).",
+        "'All' tab selected by default on section load.",
+        "Clicking each tab dispatches GET /api/me/transactions with the correct `direction` query param (verified via network hook: direction=in, direction=out, direction=conversion) and updates the rendered <tr data-direction=..> rows accordingly.",
+        "direction=in returned 50 rows all data-direction=in (conversions excluded); direction=out returned 50 rows all data-direction=out (conversions excluded); direction=conversion returned 4 rows all data-direction=conversion; direction=all returned 50 rows with mixed in/out (audit conversions present in totals but paginated).",
+        "Conversion tab renders numeric badge (data-testid=my-tx-tab-conversion-count) showing conversion_count from totals payload (observed value: 4)."
+      ]
+    },
+    "small_balance_subtype": {
+      "status": "PASS",
+      "checks": [
+        "After POST /api/vip/convert USD→CUP with amount_from=1 (source ≈ 1.05 USDT < 5 USDT dust threshold), the resulting conversion row rendered a yellow/amber 'Saldo pequeño' pill with data-testid=my-tx-subtype-small-{ref_id} next to the 'CONVERSIÓN' type label.",
+        "In EN the same pill reads 'Small balance'.",
+        "For amount_from=100 (source ≈ 105 USDT ≥ 5) no small-balance pill was rendered — the row shows only 'CONVERSIÓN' label and the modal shows 'Conversión normal' subtype badge."
+      ]
+    },
+    "conversion_detail_modal": {
+      "status": "PASS",
+      "checks": [
+        "Clicking a conversion row opens dialog data-testid=my-tx-modal.",
+        "Header shows 'Detalle' icon + 'CONVERSIÓN' direction chip.",
+        "ConversionDetailBlock renders: 'DETALLES DE LA CONVERSIÓN' header, subtype badge at data-testid=my-tx-conversion-subtype (values: 'Conversión normal' / 'Saldo pequeño' in ES, 'Normal conversion' / 'Small balance' in EN).",
+        "Fields ENVIASTE (with USD icon + amount), RECIBISTE (with CUP icon + amount), TASA APLICADA (rate line 1 USD ≈ 395.000000 CUP), COMISIÓN (USDT) (-0.01 USDT in red), FECHA, EQUIVALENTE ORIGEN (~ USDT equivalent) all render with resolved i18n strings (no raw keys)."
+      ]
+    },
+    "currency_icons": {
+      "status": "PASS",
+      "checks": [
+        "CurrencyIcon component renders inline as coloured circle: USDT green ₮, USD red $, CUP violet fallback with letter, BTC orange ₿, etc. Sizes xs/sm/md/lg all in use.",
+        "Balance summary widget (my-tx-balance-summary) shows per-currency tiles with data-testid=my-tx-balance-{code} each embedding data-testid=currency-icon-{code}.",
+        "Per-currency totals grid (my-tx-totals) shows CurrencyIcon next to each code.",
+        "Table rows: conversion rows show icon FROM → icon TO; non-conversion rows show single currency icon + code.",
+        "Modal conversion block shows both source and destination icons at size=md.",
+        "Converter dialog title (data-testid=converter-dialog-title) embeds 2 currency-icon spans (verified for USD→USDT: currency-icon-USD + currency-icon-USDT rendered inside the title with the arrows between)."
+      ]
+    },
+    "i18n_switch": {
+      "status": "PASS",
+      "checks": [
+        "Language toggle at data-testid=lang-toggle switches between ES and EN instantly (no reload).",
+        "ES tab labels: 'Todas' | 'Entradas' | 'Salidas' | 'Conversiones{count}'.",
+        "EN tab labels: 'All' | 'Inflows' | 'Outflows' | 'Conversions{count}'.",
+        "Small badge ES = 'Saldo pequeño'; EN = 'Small balance'.",
+        "Modal header ES = 'Detalles de la conversión'; EN = 'Conversion details'.",
+        "Subtype badge ES = 'Conversión normal' / 'Saldo pequeño'; EN = 'Normal conversion' / 'Small balance'.",
+        "No raw 'myTransactions.*' i18n key visible anywhere in the rendered DOM."
+      ]
+    },
+    "csv_export_respects_tab": {
+      "status": "PASS",
+      "checks": [
+        "With CONVERSIONES tab active, clicking data-testid=my-tx-export-csv triggered a download of mis_transacciones_YYYYMMDDHHMM.csv (verified via page.expect_download()).",
+        "The downloadExport() function passes the active tab into params.direction (audit-log-inspected in MyTransactions.jsx L96-104), so the CSV/PDF export URL is /api/me/transactions/export.csv?direction=conversion when Conversions tab is active."
+      ]
+    },
+    "converter_dialog_icons": {
+      "status": "PASS",
+      "checks": [
+        "On /dashboard/marketplace, ConvertBalancesCard renders converter rows with data-testid=converter-row-{CODE} and buttons data-testid=converter-trigger-{CODE}.",
+        "Clicking a trigger opens the dialog whose title (data-testid=converter-dialog-title) shows 'Convert <fromIcon> USD ⇄ <toIcon> USDT' (icons inline).",
+        "Existing self-convert flow still works end-to-end: POST /api/vip/convert with body {from_code, to_code, amount_from} returns 200 with {ok, from_code, to_code, amount_from, amount_to, usdt_fee=0.01, rate} and the resulting conversion appears in the History section immediately."
+      ]
+    }
+  },
+  "critical_code_review_comments": [
+    "iter78 clean: MyTransactions.jsx L138-144 correctly derives conversionCount from totals.conversion_count and only shows the badge on the 'conversion' tab when > 0 — matches spec.",
+    "MyTransactions.jsx L354-418 keeps a single table that adapts columns for conversion vs. in/out rows: currency column renders `from → to` with dual icons for conversions and single icon+code otherwise; amount column shows `from_amount → to_amount` with an arrow. Method column shows 'Auto-conversión' for conversion rows via t('myTransactions.table.methodSelfConvert').",
+    "ConversionDetailBlock (MyTransactions.jsx L590-673) is well-scoped: only renders when direction==='conversion', shows the subtype pill (amber for small_balance, green for normal), source/destination icons at md size, applied-rate line with 6 decimals, fixed 0.01 USDT fee in red, date and source USDT equivalent — all i18n-driven.",
+    "CurrencyIcon.jsx has a stable hash-based tone for unknown fiats and a violet-with-first-letter fallback for truly unknown codes, so exotic seed-data codes (e.g. USDW23, ZELLE29) still render a legible orb rather than a blank space.",
+    "No raw i18n keys leaked in the DOM in either language — es.json and en.json both carry the full myTransactions.tabs.*, myTransactions.detail.conversion*, myTransactions.table.conversion/subtypeSmall/methodSelfConvert set (verified in es.json L1548-1611).",
+    "The `data-direction` attribute on each <tr> makes automated verification of tab filtering trivial (used by this suite) — a good testability decision.",
+    "Minor: ConvertRequest schema is `{ from_code, to_code, amount_from }` — not `{ amount }`. Frontend BalanceConverterCard already uses `amount_from`. My initial ad-hoc curl used `amount` and got a 422; no code change needed, this is just a testing-agent note.",
+    "Minor a11y: the modal DialogContent still triggers 'Missing Description or aria-describedby' console warning (already present in previous iters, not introduced by iter78). Consider adding a DialogDescription with subtle helper copy for screen-reader users."
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100% — 7/7 iter78 requirement groups verified live on preview URL as VIP" },
+  "test_credentials": "cookies={session_token: test_session_vip_X, path=/, domain=p2p-exchange-hub-2.preview.emergentagent.com, httpOnly, secure}. VIP user_id=user_test_vip01 (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "POST /api/vip/convert twice as VIP: USD→CUP amount_from=1 (produced small_balance subtype conversion) and USD→CUP amount_from=100 (produced normal subtype conversion). Also observed 4 legacy audit-log conversions from prior test runs (currencies USDT29/CUP29/ZELLE29/USDTT19H etc.) that surfaced in the CONVERSIONES tab. VIP USDT balance ended at 0.00 after the seed conversions (0.01 fee × N), USD ended at ~187, CUP grew by ~4348.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter78 History redesign is production-ready. Tab layout is Todas|Entradas|Salidas|Conversiones (ES) / All|Inflows|Outflows|Conversions (EN) with the conversion-count numeric badge. CurrencyIcon usage is consistent across balance summary tiles, totals grid, table rows (both conversion and in/out), conversion detail modal (source+destination), and Convert dialog title. The `data-testid` coverage is excellent: my-tx-tabs, my-tx-tab-{key}, my-tx-tab-conversion-count, my-tx-subtype-small-{ref_id}, my-tx-conversion-subtype, my-tx-balance-{code}, currency-icon-{CODE}, converter-dialog-title, converter-trigger-{CODE}. POST /api/vip/convert schema is `{from_code, to_code, amount_from}` — do NOT use `amount` (returns 422). VIP session cookie test_session_vip_X remains valid across page loads when set with path=/ and sameSite=None.",
+  "rca of the issue": "N/A — iter78 delivered cleanly. All 9 requested feature/bug scenarios in the review request are verified passing on the live preview URL."
+}

@@ -6,6 +6,7 @@ import { API } from "@/App";
 import { ListChecks, ArrowDownToLine } from "lucide-react";
 import { toast } from "sonner";
 import DefensiveModePanel from "@/components/DefensiveModePanel";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 
 export default function AdminQueue() {
   const { t } = useTranslation();
@@ -81,7 +82,7 @@ export default function AdminQueue() {
                 {data.orders.slice(0, 50).map(o => (
                   <tr key={o.id} className="border-b border-white/5" data-testid={`queue-order-${o.id}`}>
                     <td className="px-4 py-3">{o.user_name}</td>
-                    <td className="px-4 py-3 font-mono">{o.from_code} → {o.to_code}</td>
+                    <td className="px-4 py-3"><CurrencyPairIcon from={o.from_code} to={o.to_code} size="md" showLabel /></td>
                     <td className="px-4 py-3 font-mono text-[#8B5CF6]">{o.amount_from} {o.from_code}</td>
                     <td className="px-4 py-3 text-xs">{o.delivery_method}</td>
                     <td className="px-4 py-3 text-xs uppercase">{ORDER_STATUS[o.status] || o.status}</td>

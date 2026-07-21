@@ -20,7 +20,7 @@ from urllib.parse import unquote
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT
+from tests.conftest import BASE_URL as API_ROOT, TEST_USER_PASSWORD
 
 API = f"{API_ROOT}/api"
 MONGO_URL = os.environ["MONGO_URL"]
@@ -77,7 +77,7 @@ def _cookie_max_age(headers) -> int:
 def test_email_login_default_ttl_is_24h():
     """Without remember_hours, the session must last 24h (not the legacy 7d)."""
     email = "iter5537_default@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = _login_email(email, password)
@@ -104,7 +104,7 @@ def test_email_login_default_ttl_is_24h():
 def test_email_login_over_request_is_clamped_to_24h():
     """A client requesting remember_hours=168 must still get 24h, not 168h."""
     email = "iter5537_clamp@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = requests.post(
@@ -124,7 +124,7 @@ def test_email_login_over_request_is_clamped_to_24h():
 def test_email_login_under_request_is_respected():
     """Requesting a SHORTER TTL (e.g. 6h) must be honored, not padded up."""
     email = "iter5537_short@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = requests.post(

@@ -29,7 +29,9 @@ API = f"{API_ROOT}/api"
 
 STAFF_UID = "user_test_staff_gated"
 STAFF_EMAIL = "gated.staff@resilience.com"
-STAFF_TOKEN = "test_session_staff_gated_X"
+# Deterministic per-test fixture token — mirrors the naming convention used
+# by conftest.ADMIN_TOKEN/EMPLOYEE_TOKEN. Overridable via env.
+STAFF_TOKEN = os.environ.get("TEST_TOKEN_STAFF_GATED", "test_session_staff_gated_X")
 
 
 def _db():

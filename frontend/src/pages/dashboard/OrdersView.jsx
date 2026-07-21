@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
 import { ORDER_FILTER_STATUSES } from "@/constants/orderStatus";
 
@@ -111,7 +112,7 @@ export default function OrdersView() {
               {filteredOrders.map(o => (
                 <tr key={o.id} onClick={() => setSelected(o)} className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors">
                   <td className="px-4 py-4 font-mono text-xs">{o.id.slice(0, 8)}</td>
-                  <td className="px-4 py-4 font-mono text-sm">{o.from_code} → {o.to_code}</td>
+                  <td className="px-4 py-4"><CurrencyPairIcon from={o.from_code} to={o.to_code} size="md" showLabel /></td>
                   <td className="px-4 py-4 font-mono text-sm">{o.amount_from}</td>
                   <td className="px-4 py-4 font-mono text-sm text-[#8B5CF6]">{o.amount_to}</td>
                   <td className="px-4 py-4">
@@ -133,7 +134,10 @@ export default function OrdersView() {
               <button onClick={() => setSelected(null)} className="text-neutral-500 hover:text-white">✕</button>
             </div>
             <div className="space-y-2 font-mono text-sm">
-              <Row label={t("orders.colPair")} value={`${selected.from_code} → ${selected.to_code}`} />
+              <Row
+                label={t("orders.colPair")}
+                value={<CurrencyPairIcon from={selected.from_code} to={selected.to_code} size="md" showLabel />}
+              />
               <Row label={t("orders.colSends")} value={`${selected.amount_from} ${selected.from_code}`} />
               <Row label={t("orders.colReceives")} value={`${selected.amount_to} ${selected.to_code}`} />
               <Row label={t("orders.rate")} value={selected.rate_applied} />

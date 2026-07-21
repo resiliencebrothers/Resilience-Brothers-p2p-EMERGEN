@@ -13,6 +13,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
+from pdf_signature import build_signature_block
+
 
 BRAND_PURPLE = colors.HexColor("#8B5CF6")
 BG_DARK = colors.HexColor("#14101F")
@@ -242,7 +244,19 @@ def generate_transactions_pdf(entries: list, filters: dict, totals: dict,
         sub,
     ))
     story.append(_build_transactions_table(entries, lang))
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 20))
+    # iter90 — legal signature + stamp block at the end of the client's
+    # transactions registry. Extracts the holder from filters for the
+    # counter-party column when present.
+    client_name = ""
+    holder_raw = filters.get("holder") or ""
+    if isinstance(holder_raw, str) and ":" in holder_raw:
+        # `Cliente: Foo Bar` / `Client: Foo Bar` — keep just the name.
+        client_name = holder_raw.split(":", 1)[1].strip()
+    story.append(build_signature_block(
+        lang=lang, client_name=client_name,
+        include_client_side=True, total_width_inches=10.0,
+    ))
 
     hf = _header_footer_factory(lang)
     doc.build(story, onFirstPage=hf, onLaterPages=hf)

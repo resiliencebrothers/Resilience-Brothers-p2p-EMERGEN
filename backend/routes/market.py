@@ -3,6 +3,7 @@
 Endpoints:
 - GET    /currencies                       (public)
 - GET    /currencies/{code}/delivery-methods (public, iter43)
+- GET    /currencies/{code}/receivable      (public, iter75)
 - POST   /admin/currencies
 - PUT    /admin/currencies/{currency_id}
 - DELETE /admin/currencies/{currency_id}
@@ -180,6 +181,46 @@ async def get_currency_delivery_methods(code: str) -> Any:
     }
 
 
+@router.get("/currencies/{code}/receivable")
+async def get_currency_receivable(code: str) -> Any:
+    """iter75 — Whitelist of destination currencies the client can select
+    when the source currency is `code`. Strictly directional: only pairs
+    with an *explicit* `from_code == code` rate entry are returned. The
+    inverse (`to_code → from_code`) is deliberately NOT considered — this
+    matches the operator's decision to keep exchanges one-way for pairs
+    that lack a configured inverse (e.g. USDT ⇄ ZELLE is only USDT → ZELLE).
+
+    Returns 404 if the currency does not exist, otherwise:
+        {
+          "code": "USDT",
+          "receivable": ["USD","CUPT","CUP",...],     # canonical destinations
+          "count": 3
+        }
+
+    Notes:
+      - Includes every `to_code` even if the currency doc is inactive at
+        display time. The frontend still filters against `currencies` (which
+        already excludes inactive ones), so an inactive destination will not
+        surface in the UI — this way the endpoint stays a *pure* mirror of
+        the rate table and can be reused by future admin tooling.
+      - Ordering is stable: the client-side dropdown picks the first item as
+        the default when the previously-selected destination is filtered
+        out, so we sort alphabetically for a predictable UX.
+    """
+    norm = code.strip().upper()
+    currency = await _find_currency_lenient(norm)
+    if not currency:
+        raise HTTPException(status_code=404, detail=f"Currency '{code}' not found")
+    codes = await db.rates.distinct("to_code", {"from_code": norm})
+    receivable = sorted({c.strip().upper() for c in codes if c})
+    return {
+        "code": norm,
+        "receivable": receivable,
+        "count": len(receivable),
+    }
+
+
+
 async def _find_currency_lenient(code: str) -> Optional[dict]:
     """iter55.3 — resilient currency lookup that survives trailing-whitespace
     data corruption in the `code` column. Falls back to a case-insensitive
@@ -298,18 +339,20 @@ async def _rate_fanout_inapp(
     """Insert an in-app `rate_change` notification for every active client.
     Returns the number of notifications successfully inserted."""
     from routes.notifications import _insert_notification
+    from services.notification_i18n import t as _t, get_field
     inapp_created = 0
     for u in clients:
         rate = new_vip if u["role"] == "vip" else new_normal
+        lang = u.get("preferred_language")
+        vip_suffix = get_field("rate_change", lang, "vip_suffix") if u["role"] == "vip" else ""
         try:
             await _insert_notification(
                 recipient_user_id=u["user_id"],
                 type="rate_change",
-                title=f"Nueva tasa {from_code} → {to_code}",
-                message=(
-                    f"1 {from_code} = {rate:g} {to_code}"
-                    + (" (tarifa VIP)" if u["role"] == "vip" else "")
-                    + "."
+                title=_t("rate_change", lang, "title", from_code=from_code, to_code=to_code),
+                message=_t(
+                    "rate_change", lang, "message",
+                    from_code=from_code, to_code=to_code, rate=rate, vip_suffix=vip_suffix,
                 ),
                 data={
                     "from_code": from_code, "to_code": to_code,
@@ -326,20 +369,25 @@ async def _rate_fanout_inapp(
 async def _rate_fanout_push(
     role_by_id: dict, from_code: str, to_code: str,
     new_normal: float, new_vip: float,
+    lang_by_id: Optional[dict] = None,
 ) -> tuple[int, int, int]:
     """Push the new rate to every subscribed device belonging to an active
-    vip/normal client. Prunes dead subscriptions. Returns (sent, skipped, dead)."""
+    vip/normal client. Prunes dead subscriptions. Returns (sent, skipped, dead).
+    `lang_by_id` maps user_id → preferred_language so each device gets the
+    payload rendered in the recipient's chosen language."""
     from push_service import build_rate_changed_payload, send_push
     subs = await db.push_subscriptions.find({}, {"_id": 0}).to_list(5000)
     dead_ids: list[str] = []
     sent, skipped, dead = 0, 0, 0
     for sub in subs:
-        role = role_by_id.get(sub.get("user_id"))
+        uid = sub.get("user_id")
+        role = role_by_id.get(uid)
         if role not in ("vip", "normal"):
             skipped += 1
             continue
+        lang = (lang_by_id or {}).get(uid)
         payload = build_rate_changed_payload(
-            from_code, to_code, new_normal, new_vip, for_role=role,
+            from_code, to_code, new_normal, new_vip, for_role=role, lang=lang,
         )
         result = send_push(sub.get("subscription"), payload)
         if result == "dead":
@@ -375,15 +423,16 @@ async def _fanout_rate_change_push(old: Optional[dict], fresh: Optional[dict]) -
     from_code, to_code = fresh["from_code"], fresh["to_code"]
     clients = await db.users.find(
         {"role": {"$in": ["vip", "normal"]}, "account_status": {"$ne": "suspended"}},
-        {"_id": 0, "user_id": 1, "role": 1},
+        {"_id": 0, "user_id": 1, "role": 1, "preferred_language": 1},
     ).to_list(20000)
 
     inapp_created = await _rate_fanout_inapp(
         clients, from_code, to_code, old_normal, old_vip, new_normal, new_vip,
     )
     role_by_id = {u["user_id"]: u["role"] for u in clients}
+    lang_by_id = {u["user_id"]: u.get("preferred_language") for u in clients}
     sent, skipped, dead = await _rate_fanout_push(
-        role_by_id, from_code, to_code, new_normal, new_vip,
+        role_by_id, from_code, to_code, new_normal, new_vip, lang_by_id=lang_by_id,
     )
     logger.info(
         f"[rate-fanout] {pair}: clients={len(clients)} inapp={inapp_created} "

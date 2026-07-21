@@ -76,11 +76,12 @@ def _create_order(token: str = NORMAL_TOKEN, amount: float = 1) -> requests.Resp
 
 
 def _vip_convert(token: str = VIP_TOKEN) -> requests.Response:
-    # First plant some USD balance so we don't get a spurious "saldo insuficiente"
+    # First plant some USD balance so we don't get a spurious "saldo insuficiente".
+    # iter77 — Also seed 0.01 USDT so the fee (separate USDT debit) can be paid.
     cli, db = _db()
     db.users.update_one(
         {"user_id": "user_test_vip01"},
-        {"$set": {"vip_balances": {"USD": 500.0}}},
+        {"$set": {"vip_balances": {"USD": 500.0, "USDT": 0.01}}},
     )
     cli.close()
     return requests.post(

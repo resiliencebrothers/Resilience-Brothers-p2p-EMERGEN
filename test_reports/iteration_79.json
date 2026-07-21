@@ -1,0 +1,83 @@
+{
+  "summary": "iter79 fully verified end-to-end. Backend: 7/7 test_iter79_dust_converter.py pass. Frontend: LIVE feed toggle + 15s polling + new-items pill + reload/scroll-to-top all work. Dust sweep dialog + preview + confirm + toast + balance refresh + small_balance conversion rows in History all work. Spanish (En vivo/Pausado, Convertir saldos pequeños, Confirmar barrido, Limpiar N saldo pequeño) and English (Live/Paused, Convert small balances) labels both render correctly with no raw i18n keys.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "backend_dust_endpoints": {
+      "status": "PASS",
+      "test_file": "/app/backend/tests/test_iter79_dust_converter.py",
+      "junit_xml": "/app/test_reports/pytest/iter79_dust.xml",
+      "checks": [
+        "GET /api/vip/dust returns fee_usdt=0.01, threshold_usdt=5.0, items list with currency/amount/usdt_equivalent/rate, total_usdt, net_usdt, can_convert, reason.",
+        "Empty items + can_convert=false + reason='no_dust' when user has only USDT.",
+        "Only non-USDT balances with usdt_equivalent < 5.0 are surfaced (USD=10 excluded, CUP=1185=3.12 USDT included, USDT excluded).",
+        "POST /api/vip/convert-dust sweeps all dust, zeros each swept balance, credits sum to USDT, charges a FLAT 0.01 USDT fee ONCE.",
+        "History shows one row per swept currency with direction='conversion', conversion_subtype='small_balance', is_dust_batch=true, to_code='USDT', method='dust_sweep'; only ONE row has usdt_fee=0.01.",
+        "POST /api/vip/convert-dust returns 400 'No tienes saldos pequeños' when no dust exists.",
+        "POST /api/vip/convert-dust returns 400 with '0.01 USDT' guard message when USDT balance < 0.01.",
+        "POST /api/vip/convert-dust returns 403 for employees."
+      ]
+    },
+    "live_feed": {
+      "status": "PASS",
+      "checks": [
+        "Header shows data-testid=my-tx-live-toggle with green pulsing dot + Radio icon + text 'Live' (EN) / 'En vivo' (ES).",
+        "Clicking the badge pauses feed → text becomes 'Paused' (EN) / 'Pausado' (ES) with Pause icon; clicking again resumes.",
+        "Background POST /api/vip/convert (USDT→CUP amount_from=1) triggered while History page is open → data-testid=my-tx-new-items-pill appeared at t=11s (< 15s interval) with text '1 new transaction · tap to view'.",
+        "Clicking the pill reloaded the list (conversion rows went 3→4, new row on top) AND scrolled the page to top (scrollY 500→0). Pill disappears after click."
+      ]
+    },
+    "dust_sweep_ui": {
+      "status": "PASS",
+      "checks": [
+        "With VIP seeded {USDT:5, CUP:395, USD:2 (dust equivalent from /api/vip/dust), EUR:0.5}, data-testid=dust-sweep-open button rendered on Overview → BalanceConverterCard with text 'Sweep 1 small balance to USDT< 5 USDT' (EN) / 'Limpiar 1 saldo pequeño a USDT< 5 USDT' (ES).",
+        "After a full sweep the button DISAPPEARS (no dust left) — verified on the post-sweep dashboard render.",
+        "Clicking the CTA opens data-testid=dust-sweep-dialog with title 'Convert small balances to USDT' (EN) / 'Convertir saldos pequeños a USDT' (ES).",
+        "data-testid=dust-sweep-preview shows one row per dust currency (data-testid=dust-sweep-item-USD, dust-sweep-item-CUP) each with CurrencyIcon + amount + '1 X ≈ N.NNNNNN USDT' rate + '+N.NNNN USDT' credit.",
+        "Grid renders TOTAL CREDITED (+3.1448 USDT), FEE (ONCE) (-0.01 USDT) and data-testid=dust-sweep-net (+3.1348 USDT) with correct localized labels ('TOTAL A ACREDITAR', 'COMISIÓN (ÚNICA)', 'NETO EN USDT' in ES).",
+        "Confirm Sweep button (data-testid=dust-sweep-confirm) triggers POST /api/vip/convert-dust; on success the dialog closes and Sonner toast shows 'Sweep complete: 2 currencies converted · +3.1448 USDT'.",
+        "Balance converter refreshes (dust rows disappear, USDT balance grew by ~3.1348).",
+        "History section (my-tx-tab-conversion badge went from 2 to 4) shows two new CONVERSION rows with amber 'SMALL BALANCE' pill: 'CUP → USDT 395 → 1.0395 · SELF-CONVERT · COMPLETED' and 'USD → USDT 2 → 2.1053 · SELF-CONVERT · COMPLETED'."
+      ]
+    },
+    "i18n": {
+      "status": "PASS",
+      "checks": [
+        "EN: 'Live', 'Paused', 'Convert small balances to USDT', 'Sweep 1 small balance to USDT', 'Confirm Sweep', 'Sweep complete: N currencies converted · +X.XXXX USDT'.",
+        "ES: 'En vivo', 'Pausado', 'Convertir saldos pequeños a USDT', 'Limpiar 1 saldo pequeño a USDT', 'Confirmar barrido', 'Barre todos tus saldos con equivalente menor a 5 USDT en una sola operación.', 'TOTAL A ACREDITAR' / 'COMISIÓN (ÚNICA)' / 'NETO EN USDT', 'Cancelar'.",
+        "Tabs ES: 'Todas | Entradas | Salidas | Conversiones' with numeric conversion badge (4 after sweep+extra convert).",
+        "No raw 'myTransactions.live.*' or 'dustSweep.*' i18n key visible in DOM in either language."
+      ]
+    }
+  },
+  "critical_code_review_comments": [
+    "DustSweepDialog.jsx (204 lines) is well-scoped: preview fetch on open, ephemeral state (busy, preview, loading), and toast/refresh callback on submit — no cross-render state pollution. Uses `withCredentials: true` consistently.",
+    "MyTransactions.jsx live-poll useEffect (lines 122-146) correctly cleans up interval on tab/currency filter/page change AND on component unmount via `cancelled` guard + clearInterval. Only polls on page 0 with liveEnabled=true and pauses when `document.hidden`, which is exactly the right shape.",
+    "seenRefIdsRef is stored as `useRef` (not state) — no unnecessary re-renders on set updates. Reset to the just-rendered ref_ids on every explicit `load()` call, so subsequent polls only surface truly new records.",
+    "Backend: `/api/vip/dust` correctly filters non-convertible currencies (EUR was excluded when it had no self-conversion rate). Good defensive behaviour — could add a UI hint like 'X currencies excluded (no market rate)' in a future iter but not blocking.",
+    "Minor testability nit (already present pre-iter79, not introduced now): the LanguageSwitcher root button doesn't carry `data-testid='lang-toggle'`; only `lang-option-{code}` is exposed on the popover items. Previous iter78 report claimed a `lang-toggle` testid — it's actually missing. Non-blocking; testers can use `page.get_by_role('button', name='ES')` or click the flag directly.",
+    "Minor UX polish: the `dust-sweep-open` button text uses innerHTML concatenation without whitespace between 'USDT' and '< 5 USDT' → rendered as 'Sweep 1 small balance to USDT< 5 USDT'. A single space or a Tailwind gap between the two spans would look cleaner. Not a functional bug.",
+    "Data model note: /api/vip/balances returns computed balances (includes ledger accumulations) that differ from the raw `vip_balances` dict used by /api/vip/dust and the sweep endpoint. In this test env USD raw=2 (dust) while computed=502 (not dust). Sweeps correctly modify the raw balance — the computed endpoint subtracts the swept amount. This is pre-existing architecture, not iter79-specific, but worth documenting: the frontend's DUST_THRESHOLD_USDT logic that decides whether to show the CTA on BalanceConverterCard uses the /api/vip/balances feed, while the dust modal itself uses /api/vip/dust which reads raw vip_balances — so the CTA count and modal item count can diverge. In this test the CTA said '1 small balance' but the modal correctly showed 2 (USD + CUP). This may confuse users; consider unifying the source of truth in a follow-up iteration."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter79_dust_converter.py",
+    "/app/test_reports/pytest/iter79_dust.xml"
+  ],
+  "action_items": [
+    "Optional polish: fix whitespace in dust-sweep-open button label ('USDT < 5 USDT' currently rendered as 'USDT< 5 USDT').",
+    "Optional polish: expose data-testid='lang-toggle' on the LanguageSwitcher root button (previous iter78 report referenced it but it doesn't exist — this only affects test automation ergonomics).",
+    "Consider unifying the dust-detection source of truth so the CTA count on BalanceConverterCard matches the dust-sweep-dialog preview count (currently CTA uses computed /vip/balances, modal uses raw /vip/dust)."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (7/7)", "frontend": "100% (12/12 requirement bullets)" },
+  "test_credentials": "session_token=test_session_vip_X (VIP user_id=user_test_vip01) — pre-seeded by conftest.py.",
+  "seed_data_creation": "Direct MongoDB write: db.users.update_one({'user_id':'user_test_vip01'},{'$set':{'vip_balances':{'USDT':5.0,'CUP':395.0,'EUR':0.5,'USD':2.0}}}). Also cleared audit_log rows for VIP where action in ['vip.convert','vip.convert.dust']. Post-sweep triggered one additional /api/vip/convert USDT→CUP amount_from=1 to test LIVE-feed pill appearance.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter79 ships production-ready. Backend endpoints: GET /api/vip/dust and POST /api/vip/convert-dust are correctly guarded (403 employee, 400 no_dust, 400 usdt_fee_required). Sweep transactions surface in /api/me/transactions?direction=conversion with conversion_subtype='small_balance', is_dust_batch=true, method='dust_sweep', to_code='USDT', and only the first row carries usdt_fee=0.01. Frontend: my-tx-live-toggle + my-tx-new-items-pill + dust-sweep-open + dust-sweep-dialog + dust-sweep-preview + dust-sweep-item-{code} + dust-sweep-total + dust-sweep-net + dust-sweep-confirm all wired with data-testids. Polling interval is 15s and pills reliably appear within one cycle (~11s in this run). To trigger a new transaction from the test process for polling verification, use `curl -X POST /api/vip/convert -H 'Authorization: Bearer test_session_vip_X' -H 'Content-Type: application/json' -d '{\"from_code\":\"USDT\",\"to_code\":\"CUP\",\"amount_from\":1}'` (subprocess.run works; urllib.request got 403 from ingress in one instance — likely UA-related). VIP raw vip_balances vs computed /api/vip/balances differ (ledger vs raw dict) so seed carefully."
+}

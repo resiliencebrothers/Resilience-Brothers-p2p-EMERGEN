@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import {
   ArrowDownToLine, Coins, ListChecks, Zap, Wallet, ChevronRight,
 } from "lucide-react";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 
 const MAIN_CURRENCIES = ["USDT", "USD", "CUP"];
 
@@ -107,9 +108,7 @@ export default function AdminQuickDashboard() {
                 className="w-full flex items-center justify-between text-left py-1.5 px-1 hover:bg-white/5 transition-colors"
                 data-testid={`quick-recent-order-${o.id}`}
               >
-                <span className="font-mono text-xs text-neutral-300">
-                  {o.from_code} → {o.to_code}
-                </span>
+                <CurrencyPairIcon from={o.from_code} to={o.to_code} size="sm" showLabel />
                 <span className="font-mono text-xs text-neutral-500">
                   {(o.amount_from || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </span>

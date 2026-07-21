@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight, Calculator, TrendingUp } from "lucide-react";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 
 const fmt = (n, decimals = 4) => {
   if (!Number.isFinite(n)) return "—";
@@ -46,7 +47,7 @@ export default function SpreadCalculator({ rates }) {
             <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
               {rates.map((r) => (
                 <SelectItem key={r.id} value={r.id} className="rounded-none">
-                  {r.from_code} → {r.to_code}
+                  <CurrencyPairIcon from={r.from_code} to={r.to_code} size="sm" showLabel />
                 </SelectItem>
               ))}
             </SelectContent>

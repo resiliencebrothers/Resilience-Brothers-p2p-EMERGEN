@@ -1,0 +1,75 @@
+{
+  "summary": "iter77 fee model rework fully verified. 6 new backend scenario tests pass, 39 iter74+75+76 targeted tests pass, and all 29 `-k convert` regression tests pass. Frontend live-verified on preview: MAX leaves 0.01 USDT, fee always shown as USDT (never CUP), preview shows full amount × rate, insufficient-USDT guard renders and disables Confirm button.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "iter77_backend_new_scenarios": {
+      "status": "PASS",
+      "checks": [
+        "test_usdt_source_full_amount_to_and_debits_amount_plus_fee: USDT=100.01 → convert 100 USDT→CUP. Response has {ok,from_code,to_code,amount_from,amount_to,usdt_fee=0.01,rate}. NO amount_to_gross, NO fee_in_to_code. amount_to = 100 × rate (full, no fee subtraction). USDT balance goes to 0, CUP credited with full amount.",
+        "test_usdt_source_exactly_amount_no_room_for_fee_rejected: seed USDT=100, try to convert 100 → CUP. Returns 400 with Spanish detail containing 'insuficiente', '100.01', and 'comisi' (comisión). Balance untouched.",
+        "test_non_usdt_source_full_amount_to_and_usdt_fee_debit: seed CUP=50000 + USDT=0.01. Convert 10000 CUP → USDT. amount_to = 10000×rate (full). USDT balance ends up = amount_to (0.01 seed - 0.01 fee + amount_to credit).",
+        "test_non_usdt_source_zero_usdt_rejected_with_spanish_msg: seed CUP=50000 + USDT=0. Convert 10000 CUP → USDT rejected with 400 + Spanish detail mentioning '0.01 usdt' and 'comisi'.",
+        "test_eur_to_cup_full_amount_and_usdt_fee_only: seeded EUR→CUP rate 430/415 and EUR→USDT 1.08/1.05, then convert EUR→CUP with EUR=100 + USDT=0.01. amount_to = 50 × VIP rate. USDT ends at 0 (debited exactly 0.01).",
+        "test_response_shape_removes_legacy_fields: exact response key set = {ok, from_code, to_code, amount_from, amount_to, usdt_fee, rate}. No legacy fields."
+      ]
+    },
+    "iter77_backend_regression": {
+      "status": "PASS",
+      "checks": [
+        "pytest tests/test_iter74_notification_i18n.py tests/test_iter75_receivable_endpoint.py tests/test_iter76_client_fixes.py → 39 passed in 3.58s.",
+        "pytest -k convert → 29 passed in 5.45s (iter55_27 residue credit/fee, iter55_29 convertible destination, iter55_36o verification gate, iter76 client fixes, test_vip_convert.py TestVipConvert)."
+      ]
+    },
+    "iter77_frontend": {
+      "status": "PASS",
+      "checks": [
+        "As VIP with USDT=5, CUP=39500. Dashboard /dashboard/marketplace renders BalanceConverterCard with 3 rows.",
+        "USDT→CUP dialog: MAX button fills 4.99 (=5.00 - 0.01 fee).",
+        "Preview: converter-preview-fee shows '−0.01 USDT' (never '−X CUP').",
+        "Preview: converter-preview-amount shows '1,971.05 CUP' = 4.99 × 395 (FULL amount × rate, no fee deducted from destination).",
+        "Set amount to 5 (full balance, no room for fee): converter-insufficient-usdt-fee red warning renders: 'Insufficient USDT balance. You have 5.0000 USDT — need at least the amount you want to convert plus 0.01 USDT for the fixed commission.'",
+        "Confirm button disabled=true when insufficient USDT for fee guard active.",
+        "CUP→USDT dialog with USDT=5: fee still shown as '−0.01 USDT', amount = 25.3165 USDT (= 10000 × 0.002532), no insufficient-USDT warning (0.01 covered)."
+      ]
+    }
+  },
+  "critical_code_review_comments": [
+    "iter77 clean: backend `routes/orders.py::vip_convert` correctly (a) removes fee_in_to_code subtraction from amount_to, (b) adds usdt-balance-for-fee guard with two distinct Spanish messages (self vs other) matching spec, (c) issues two decrement_balance calls (source + USDT fee), (d) response only exposes {ok, from_code, to_code, amount_from, amount_to, usdt_fee, rate}. Verified via new scenario tests.",
+    "iter77 frontend BalanceConverterCard.jsx `onMax` correctly leaves 0.01 USDT for the fee only when fromCode==='USDT' (no over-reserve on non-USDT sources). Preview math (`previewNet = amount × rate`) now exactly matches backend `amount_to = amount_from × rate_used` — the iter76 preview-vs-actual drift note is resolved.",
+    "iter77 ConvertDialog.jsx renders `converter-insufficient-usdt-fee` red warning correctly and disables Confirm on `insufficientUsdtForFee`. i18n uses `balanceConverter.insufficientUsdtSelf` / `insufficientUsdtOther` in both en/es locales (verified in i18n/locales/{en,es}.json:1837-1838).",
+    "Minor UX: Language switcher still shows the *other* language on click (pre-existing iter76 note). Not a regression.",
+    "Minor UX: When VIP opens the USDT converter dialog, the default destination picks the first non-USDT convertible currency, which in this env is BTC (no rate) → preview shows 'No configured rate for USDT → BTC.' momentarily. Client must swap to CUP/USD. Consider making the default 'first destination that HAS a rate to source', but this is cosmetic. iter77 spec did not touch this heuristic.",
+    "The user-facing Spanish message for USDT-source insufficient starts with 'Saldo insuficiente en USDT: necesitas al menos {req:.2f} USDT ({amount:.2f} para convertir + {fee:.2f} de comisión). Tienes {have:.4f} USDT.' — matches the spec exactly.",
+    "The non-USDT source insufficient message: 'Necesitas al menos {fee:.2f} USDT en tu saldo para pagar la comisión de la conversión. Tienes {have:.4f} USDT — recárgalos antes de continuar.' — matches spec exactly."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter77_fee_model.py",
+    "/app/backend/tests/test_iter76_client_fixes.py",
+    "/app/test_reports/pytest/iter77_fee_model.xml",
+    "/app/test_reports/pytest/iter77_targeted.xml",
+    "/app/test_reports/pytest/iter77_convert.xml",
+    "/app/test_reports/pytest/iter77_all_convert.xml"
+  ],
+  "action_items": [
+    "Nothing blocking. OPTIONAL: prefer picking a destination-currency default in `openDialog` that has a configured rate (BalanceConverterCard.jsx:60-77) so the preview isn't empty on first open when the alphabetically-first destination lacks a rate (currently BTC in the seed env)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter77_fee_model.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 new iter77 scenarios + 29/29 -k convert regression + 39/39 iter74+75+76 targeted)",
+    "frontend": "100% (all 4 iter77 UX requirements verified live on preview URL as VIP)"
+  },
+  "test_credentials": "cookies={session_token: test_session_vip_X} for all frontend iter77 checks. Backend test file uses conftest VIP_TOKEN.",
+  "seed_data_creation": "test_iter77_fee_model.py:_reset_balances sets vip_balances directly for each test and restores original via clean_vip fixture. eur_cup_rate fixture inserts EUR→CUP + EUR→USDT rates if missing and cleans them up after. After testing, VIP restored to USDT=5, CUP=39500.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter77 fee-model rework is complete and verified. Backend response shape is stable at {ok, from_code, to_code, amount_from, amount_to, usdt_fee, rate}. `amount_to_gross` and `fee_in_to_code` are permanently removed. Frontend uses balanceConverter.insufficientUsdtSelf / insufficientUsdtOther i18n keys (rendered via `converter-insufficient-usdt-fee` red block). MAX button behaviour differs by source: USDT→X reserves 0.01 for fee, else fills full balance. New test file: /app/backend/tests/test_iter77_fee_model.py (6 scenarios). All 29 legacy -k convert tests still pass.",
+  "rca of the issue": "N/A — iter77 delivers the fee-model rework cleanly. Backend + frontend + i18n + tests all consistent. Only cosmetic pre-existing issues noted (default destination picks first alphabetical non-USDT currency BTC which lacks a seeded rate; language switcher click-to-switch UX carried over from iter76)."
+}

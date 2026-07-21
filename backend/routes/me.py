@@ -212,8 +212,8 @@ async def totp_regenerate_recovery(request: Request, payload: dict) -> Any:
 
 def _validate_txn_filters(direction: Optional[str], min_amount: Optional[float],
                           max_amount: Optional[float]) -> None:
-    if direction and direction not in ("in", "out", "all"):
-        raise HTTPException(status_code=400, detail="direction debe ser 'in', 'out' o 'all'")
+    if direction and direction not in ("in", "out", "all", "conversion"):
+        raise HTTPException(status_code=400, detail="direction debe ser 'in', 'out', 'conversion' o 'all'")
     if min_amount is not None and min_amount < 0:
         raise HTTPException(status_code=400, detail="min_amount debe ser >= 0")
     if max_amount is not None and max_amount < 0:

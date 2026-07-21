@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import SpreadCalculator from "@/components/SpreadCalculator";
 import AdminPageHeader from "@/components/AdminPageHeader";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 import { Plus, Edit2, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -115,7 +116,7 @@ export default function AdminRates() {
               const editable = canEditRate(r);
               return (
                 <tr key={r.id} className={`border-b border-white/5 ${editable ? "" : "opacity-60"}`} data-testid={`rate-row-${r.id}`}>
-                  <td className="px-4 py-3 font-mono font-semibold">{r.from_code} → {r.to_code}</td>
+                  <td className="px-4 py-3"><CurrencyPairIcon from={r.from_code} to={r.to_code} size="md" showLabel /></td>
                   <td className="px-4 py-3 font-mono">{r.rate_normal}</td>
                   <td className="px-4 py-3 font-mono text-[#8B5CF6]">{r.rate_vip}</td>
                   <td className="px-4 py-3 font-mono text-[#22C55E]">{r.real_rate ?? "—"}</td>

@@ -295,12 +295,15 @@ async def send_client_order_email(order: dict, new_status: str, target_user: dic
 
 async def send_client_order_push(order: dict, new_status: str) -> None:
     try:
+        # iter74 — resolve recipient's language once and pass it to the builder
+        from services.notification_i18n import resolve_lang
+        lang = await resolve_lang(db, order["user_id"])
         if new_status == "approved":
-            push_payload = build_order_approved_payload(order)
+            push_payload = build_order_approved_payload(order, lang=lang)
         elif new_status == "completed":
-            push_payload = build_order_completed_payload(order)
+            push_payload = build_order_completed_payload(order, lang=lang)
         else:
-            push_payload = build_order_rejected_payload(order)
+            push_payload = build_order_rejected_payload(order, lang=lang)
         subs = await db.push_subscriptions.find(
             {"user_id": order["user_id"]}, {"_id": 0}
         ).to_list(50)
@@ -313,29 +316,17 @@ async def send_client_order_push(order: dict, new_status: str) -> None:
 
 async def create_inapp_order_notification(order: dict, new_status: str) -> None:
     """iter55.6 — Mirror push into the in-app inbox so users still see the event
-    even if they never subscribed to Web Push (or the push endpoint was pruned)."""
+    even if they never subscribed to Web Push (or the push endpoint was pruned).
+    iter74 — Renders title/message in the recipient's `preferred_language`."""
     try:
         from routes.notifications import _insert_notification
+        from services.notification_i18n import t as _t, resolve_lang
+        lang = await resolve_lang(db, order["user_id"])
+        short_id = order["id"][:8]
         amt = order.get("amount_to", 0)
         code = order.get("to_code", "")
         method = order.get("delivery_method")
-        if new_status == "approved":
-            title = f"Orden #{order['id'][:8]} confirmada"
-            msg = f"Recibimos tu pago. Estamos preparando la entrega de {amt} {code}."
-        elif new_status == "completed":
-            title = f"Orden #{order['id'][:8]} completada"
-            if method == "accumulate":
-                msg = f"Se acreditaron {amt} {code} a tu saldo VIP."
-            elif method == "crypto":
-                msg = f"Enviamos {amt} {code} a tu wallet. Revisa el TX hash en la orden."
-            elif method == "cash":
-                msg = f"Efectivo de {amt} {code} entregado. Confirma la recepción."
-            else:  # transfer
-                msg = f"Transferimos {amt} {code} a tu cuenta. Revisa el comprobante."
-        else:  # rejected
-            title = f"Orden #{order['id'][:8]} rechazada"
-            note = (order.get("admin_note") or "").strip()[:120]
-            msg = note or "Por favor revisa los detalles en tu dashboard."
+
         # iter55.19g — enrich the payload with the on-chain artefacts so the
         # frontend renders "Ver en explorer" directly from the notification.
         data_payload: dict = {
@@ -346,6 +337,8 @@ async def create_inapp_order_notification(order: dict, new_status: str) -> None:
             "amount_to": amt,
             "delivery_method": method,
         }
+
+        network = ""
         if new_status == "completed" and method == "crypto":
             tx_hash = (order.get("payout_tx_hash") or "").strip()
             if tx_hash:
@@ -353,8 +346,6 @@ async def create_inapp_order_notification(order: dict, new_status: str) -> None:
                 # the UI). Only build the URL if network is unambiguous.
                 from services.crypto_networks import detect_family
                 delivery = order.get("delivery_details") or ""
-                network = ""
-                # Simple detection matching the frontend logic
                 if "TRC20" in delivery.upper() or detect_family(delivery) == "tron":
                     network = "TRC20"
                 elif "BEP20" in delivery.upper():
@@ -374,10 +365,36 @@ async def create_inapp_order_notification(order: dict, new_status: str) -> None:
                     data_payload["crypto_network"] = network
                     if network in explorer_urls:
                         data_payload["explorer_url"] = explorer_urls[network]
-                        # Enrich the message with a clickable-style hint. The
-                        # frontend still uses the structured `data` to render
-                        # the actual link — this is just human-readable prose.
-                        msg = f"Enviamos {amt} {code} a tu wallet. Verifica la transacción en {network}."
+
+        # -----------------------------------------------------
+        # Localised title/message
+        # -----------------------------------------------------
+        if new_status == "approved":
+            title = _t("order_approved", lang, "title", short_id=short_id)
+            msg = _t("order_approved", lang, "message", amt=amt, code=code)
+        elif new_status == "completed":
+            title = _t("order_completed", lang, "title", short_id=short_id)
+            if method == "accumulate":
+                msg = _t("order_completed", lang, "msg_accumulate", amt=amt, code=code)
+            elif method == "crypto":
+                if network:
+                    msg = _t("order_completed", lang, "msg_crypto_with_net",
+                             amt=amt, code=code, network=network)
+                else:
+                    msg = _t("order_completed", lang, "msg_crypto", amt=amt, code=code)
+            elif method == "cash":
+                msg = _t("order_completed", lang, "msg_cash", amt=amt, code=code)
+            else:  # transfer
+                msg = _t("order_completed", lang, "msg_transfer", amt=amt, code=code)
+        else:  # rejected
+            title = _t("order_rejected", lang, "title", short_id=short_id)
+            note = (order.get("admin_note") or "").strip()[:120]
+            msg = (
+                _t("order_rejected", lang, "message_note", note=note)
+                if note
+                else _t("order_rejected", lang, "message_default")
+            )
+
         await _insert_notification(
             recipient_user_id=order["user_id"],
             type=f"order_{new_status}",

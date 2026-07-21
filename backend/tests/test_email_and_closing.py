@@ -107,9 +107,14 @@ class TestVipDailyClosing:
         r = requests.get(f"{BASE_URL}/api/vip/daily-closing")
         assert r.status_code == 401
 
-    def test_normal_403(self):
+    def test_normal_returns_pdf(self):
+        """iter76 — Normal clients can now download their own daily closing.
+        Only `employee` accounts are blocked (they have no operating balance)."""
         r = requests.get(f"{BASE_URL}/api/vip/daily-closing", headers=_h(NORMAL_TOKEN))
-        assert r.status_code == 403
+        assert r.status_code == 200, r.text
+        assert r.headers.get("content-type", "").startswith("application/pdf")
+        assert r.content[:4] == b"%PDF"
+        assert len(r.content) > 1000
 
     def test_vip_returns_pdf(self):
         r = requests.get(f"{BASE_URL}/api/vip/daily-closing", headers=_h(VIP_TOKEN))

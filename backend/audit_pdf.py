@@ -8,6 +8,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
+from pdf_signature import build_signature_block
+
 
 BRAND_PURPLE = colors.HexColor("#8B5CF6")
 BG_DARK = colors.HexColor("#14101F")
@@ -129,7 +131,12 @@ def generate_audit_pdf(entries: list, filters: dict) -> bytes:
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(tbl)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 20))
+    # iter90 — legal signature + stamp block. Admin audit only shows
+    # the Resilience side (no counter-party conformity line).
+    story.append(build_signature_block(
+        lang="es", include_client_side=False, total_width_inches=10.0,
+    ))
 
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     pdf_bytes = buf.getvalue()

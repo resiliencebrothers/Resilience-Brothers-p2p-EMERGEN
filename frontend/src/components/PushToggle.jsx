@@ -3,6 +3,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { Bell, BellOff, BellRing } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { captureError } from "@/sentry";
 
 function urlBase64ToUint8Array(base64String) {
@@ -15,6 +16,7 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export default function PushToggle() {
+  const { t } = useTranslation();
   const [status, setStatus] = useState("loading"); // loading | unsupported | denied | subscribed | unsubscribed
   const [busy, setBusy] = useState(false);
 
@@ -39,7 +41,7 @@ export default function PushToggle() {
     setBusy(true);
     try {
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        toast.error("Tu navegador no soporta notificaciones push");
+        toast.error(t("notifications.push.unsupportedBrowser"));
         setStatus("unsupported");
         return;
       }
@@ -51,8 +53,8 @@ export default function PushToggle() {
         setStatus(perm === "denied" ? "denied" : "unsubscribed");
         toast.error(
           perm === "denied"
-            ? "Bloqueaste las notificaciones. Habilítalas en ajustes del navegador."
-            : "Permiso de notificaciones no otorgado"
+            ? t("notifications.push.permissionBlocked")
+            : t("notifications.push.permissionDenied")
         );
         return;
       }
@@ -64,11 +66,11 @@ export default function PushToggle() {
         );
         vapidKey = data?.key;
       } catch {
-        toast.error("No se pudo obtener la clave VAPID del servidor");
+        toast.error(t("notifications.push.vapidError"));
         return;
       }
       if (!vapidKey) {
-        toast.error("Servidor sin VAPID configurada. Contacta al administrador.");
+        toast.error(t("notifications.push.vapidMissing"));
         return;
       }
       const reg = await navigator.serviceWorker.ready;
@@ -82,18 +84,18 @@ export default function PushToggle() {
         // Common Android error surface — expose the *actual* browser error so
         // the operator can distinguish permission vs. network vs. invalid key.
         const name = err?.name || "Error";
-        const msg = err?.message || "desconocido";
+        const msg = err?.message || t("notifications.push.retry");
         captureError(err, { where: "PushToggle.subscribe.pushManager" });
         if (name === "NotAllowedError") {
-          toast.error("Permiso rechazado por el navegador. Revisa ajustes del sitio.");
+          toast.error(t("notifications.push.browserRejected"));
         } else if (name === "NotSupportedError") {
-          toast.error("Push no soportado. Prueba en Chrome/Firefox actualizado.");
+          toast.error(t("notifications.push.browserUnsupported"));
         } else if (name === "AbortError") {
-          toast.error("Suscripción cancelada. Intenta de nuevo.");
+          toast.error(t("notifications.push.aborted"));
         } else if (name === "InvalidAccessError" || name === "InvalidStateError") {
-          toast.error("Clave VAPID inválida. Contacta al administrador.");
+          toast.error(t("notifications.push.vapidInvalid"));
         } else {
-          toast.error(`Error de push (${name}): ${msg.slice(0, 80)}`);
+          toast.error(t("notifications.push.pushError", { name, msg: msg.slice(0, 80) }));
         }
         return;
       }
@@ -103,7 +105,7 @@ export default function PushToggle() {
           user_agent: navigator.userAgent,
         }, { withCredentials: true });
       } catch (err) {
-        toast.error("El servidor rechazó la suscripción. Contacta al administrador.");
+        toast.error(t("notifications.push.serverRejected"));
         // best-effort cleanup: undo the browser subscription so the user can retry
         try {
           await sub.unsubscribe();
@@ -119,7 +121,7 @@ export default function PushToggle() {
         return;
       }
       setStatus("subscribed");
-      toast.success("Notificaciones activadas");
+      toast.success(t("notifications.push.activated"));
       // Send test notification — non-fatal
       try {
         await axios.post(`${API}/push/test`, {}, { withCredentials: true });
@@ -133,7 +135,7 @@ export default function PushToggle() {
     } catch (e) {
       // Catch-all for anything unexpected (e.g. serviceWorker.ready timeout)
       captureError(e, { where: "PushToggle.subscribe.outer" });
-      toast.error(`Error inesperado: ${e?.message?.slice(0, 80) || "reintentar"}`);
+      toast.error(t("notifications.push.unexpectedError", { msg: e?.message?.slice(0, 80) || t("notifications.push.retry") }));
     } finally {
       setBusy(false);
     }
@@ -149,9 +151,9 @@ export default function PushToggle() {
         await sub.unsubscribe();
       }
       setStatus("unsubscribed");
-      toast.success("Notificaciones desactivadas");
+      toast.success(t("notifications.push.deactivated"));
     } catch (e) {
-      toast.error("Error");
+      toast.error(t("notifications.push.genericError"));
     } finally {
       setBusy(false);
     }
@@ -169,7 +171,7 @@ export default function PushToggle() {
       data-testid="push-toggle"
       onClick={() => {
         if (status === "denied") {
-          toast.error("Las notificaciones están bloqueadas. Habilítalas desde la configuración del navegador.");
+          toast.error(t("notifications.push.blockedFromSettings"));
           return;
         }
         if (isOn) {
@@ -179,7 +181,7 @@ export default function PushToggle() {
         }
       }}
       disabled={busy}
-      title={isOn ? "Desactivar notificaciones" : "Activar notificaciones"}
+      title={isOn ? t("notifications.push.disableTitle") : t("notifications.push.enableTitle")}
       className={`flex items-center gap-2 px-3 py-2 text-sm border transition-colors ${
         isOn
           ? "border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10"
@@ -187,7 +189,7 @@ export default function PushToggle() {
       }`}
     >
       <Icon className="w-4 h-4" />
-      <span className="hidden sm:inline">{isOn ? "Notificaciones" : "Activar avisos"}</span>
+      <span className="hidden sm:inline">{isOn ? t("notifications.push.labelOn") : t("notifications.push.labelOff")}</span>
     </button>
   );
 }

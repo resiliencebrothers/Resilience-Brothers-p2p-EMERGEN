@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock } from "lucide-react";
 import { Link } from "react-router-dom";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 import {
   ORDER_IN_FLIGHT,
   ORDER_COMPLETED,
@@ -113,7 +114,7 @@ export default function OverviewView() {
             {rates.map(r => (
               <div key={r.id} className="flex items-center justify-between border-b border-white/5 py-3 last:border-0">
                 <div>
-                  <span className="font-mono text-sm">{r.from_code} → {r.to_code}</span>
+                  <CurrencyPairIcon from={r.from_code} to={r.to_code} size="md" showLabel />
                 </div>
                 <div className="text-right">
                   <div className="font-mono text-sm">

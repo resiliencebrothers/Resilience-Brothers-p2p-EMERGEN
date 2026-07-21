@@ -1,0 +1,38 @@
+{
+  "summary": "iter91 Company Closing PDF — both backend and frontend fully verified end-to-end. Backend endpoint GET /api/admin/company-funds/closing.pdf returns 200 with a 738KB signed PDF for admins, 403 for VIP/normal, 401 unauthenticated and 400 on bad dates. Full-history mode (empty range) produces the 'Reporte histórico completo' title while explicit ranges yield 'Reporte del <since> al <until>'. Frontend button, dialog, quick-range chips (7d/month/year/clear) and download flow all work; the CSV export dialog (iter88) still functions with no regression from the new closingOpen state.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter91_company_closing_pdf.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "The `closing-pdf-quick-clear` chip is only rendered by QuickDateRange when at least one date is set (!isEmpty). This matches the CSV export dialog pattern and is expected UX — tests that look for it in the initial empty state will miss it; check it only after selecting a preset.",
+    "PDF file naming uses only the date range without hour/minute in the Content-Disposition (backend adds a UTC timestamp `_YYYYMMDD_HHMM`, but the frontend axios blob path derives its own name 'cierre_empresa_historico.pdf' — server filename is not preserved). Non-blocking; both are readable.",
+    "The route relies on `require_permission(request, 'company_funds')` which also gates the CSV export; verified employees without that permission get a Spanish 403 message. VIP/Normal roles bypass check at role level (403). Consistent with iter88."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "session_token cookie test_session_admin_X (admin), test_session_vip_X (VIP), test_session_normal_X (normal) — from /app/memory/test_credentials.md. Cookie name confirmed as `session_token` and works against /api/auth/me.",
+  "seed_data_creation": "None. Used the already-seeded test users from conftest.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "For admin-only frontend routes, set a Playwright cookie {name:'session_token', value:'test_session_admin_X', domain:'p2p-exchange-hub-2.preview.emergentagent.com', path:'/', secure:true, sameSite:'None'} BEFORE page.goto. This works reliably in this environment for AuthContext to hydrate. Backend Bearer testing uses the same token via `Authorization: Bearer test_session_admin_X`.",
+  "verified_flows": [
+    "GET /api/admin/company-funds/closing.pdf (admin) → 200, application/pdf, 738928 bytes, all sections + KPIs + signature block present",
+    "GET /api/admin/company-funds/closing.pdf (VIP) → 403",
+    "GET /api/admin/company-funds/closing.pdf (normal) → 403",
+    "GET /api/admin/company-funds/closing.pdf (no auth) → 401",
+    "GET /api/admin/company-funds/closing.pdf?since=not-a-date → 400",
+    "Empty range → 'Reporte histórico completo' in body; explicit range → 'Reporte del 2026-01-01 al 2026-07-19'",
+    "UI: company-closing-pdf-btn renders with purple accent (border-#8B5CF6/60 text-#A78BFA) and label 'Company Closing PDF' / 'Cierre Empresa PDF'",
+    "UI: company-closing-dialog opens with since/until inputs, quick-range chips row, download button",
+    "UI: closing-pdf-quick-year fills 2026-01-01..today; closing-pdf-quick-month fills 2026-07-01..today; closing-pdf-quick-clear empties both",
+    "UI: closing-pdf-download triggers browser download of 738KB PDF (empty range) with embedded signature+stamp images",
+    "Regression: cw-export-csv-btn still opens cw-export-dialog with cw-export-download button (iter88 not broken by iter91's new closingOpen state)"
+  ]
+}

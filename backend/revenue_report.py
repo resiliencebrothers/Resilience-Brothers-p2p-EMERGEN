@@ -13,6 +13,8 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.lineplots import LinePlot
 from reportlab.graphics.widgets.markers import makeMarker
 
+from pdf_signature import build_signature_block
+
 
 BRAND_PURPLE = colors.HexColor("#8B5CF6")
 BG_DARK = colors.HexColor("#14101F")
@@ -270,6 +272,10 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
     story.append(tbl2)
+    story.append(Spacer(1, 22))
+    story.append(build_signature_block(
+        lang="es", include_client_side=False, total_width_inches=7.0,
+    ))
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     return buf.getvalue()
 
@@ -616,6 +622,10 @@ def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> byt
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
     story.append(mtbl)
+    story.append(Spacer(1, 22))
+    story.append(build_signature_block(
+        lang="es", include_client_side=False, total_width_inches=7.0,
+    ))
 
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     return buf.getvalue()

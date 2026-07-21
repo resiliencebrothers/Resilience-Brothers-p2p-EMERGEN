@@ -1,0 +1,36 @@
+{
+  "summary": "iter93 CurrencyPairIcon (TradingView-style overlapping coin logos) — all 8 replacement points verified end-to-end via Playwright with the correct session cookies. Every location where the app used to render inline 'FROM → TO' text now renders <CurrencyPairIcon> with data-testid='pair-icon-{FROM}-{TO}', two CurrencyIcon orbs overlapping ~50% (via -ml-* class), a hairline ring-2 ring-neutral-950 on the second orb, and the monospace label preserved. Regression on /admin/currencies confirms single CurrencyIcon rendering still intact (13 icons, 0 pair-icons on that page).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/components/CurrencyPairIcon.jsx"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CurrencyPairIcon is a clean, small (66 LOC) reusable component — good factoring. Callers pass size='md' for detail dialogs / large rows and size='sm' for compact tables, matching the OVERLAP_BY_SIZE map correctly.",
+    "The ring-2 ring-neutral-950 hairline separator works well against the app's #1A1730 dark background and stays invisible when the underlying orb is also dark (e.g. USDT/USDT pairs would collide, but no such pair exists in the seed data).",
+    "The label span uses font-mono text-sm regardless of the `size` prop — for size='lg' the label may look small vs. the orbs; not a bug but a future polish item.",
+    "showLabel is off by default; every call site explicitly passes `showLabel` so the FROM→TO text remains visible. That is the intended contract — worth documenting the default in JSDoc if the component grows beyond this repo."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (not requested)", "frontend": "100%" },
+  "test_credentials": "session_token cookie 'test_session_admin_X' and 'test_session_vip_X' (from /app/memory/test_credentials.md). Cookie set via page.context.add_cookies with domain=p2p-exchange-hub-2.preview.emergentagent.com, path=/, secure=true, sameSite=None — works reliably for AuthContext hydration on both client and admin routes.",
+  "seed_data_creation": "None. Used the existing seeded rates (6 pairs: USD→BRL, USD→MXN, USDT→CUP, USDT→USD, USD→USDT, USD→CUP) and 4558 seeded orders.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Playwright cookie propagation for admin routes: use `page.context.add_cookies([{name:'session_token', value:'test_session_admin_X', domain:'p2p-exchange-hub-2.preview.emergentagent.com', path:'/', secure:true, sameSite:'None'}])` BEFORE `page.goto`. Works reliably. Admin orders row uses eye button `[data-testid^=\"view-order-\"]` (not row click) to open OrderDetailDialog. Spread calculator trigger is `[data-testid=\"spread-pair-select\"]`; after clicking it, options render as role=option elements in a portal — 6 pair-icons appear in the dropdown.",
+  "verified_flows": [
+    "VIP /dashboard: 6 pair-icons (USD-BRL, USD-MXN, USDT-CUP, USDT-USD, USD-USDT, USD-CUP) in 'Current Rates', each with size='md' + showLabel — overlap and ring classes confirmed in DOM.",
+    "VIP /dashboard/orders: pair-icons in Pair column of every row; clicking a row opens detail dialog with pair-icon size='md'.",
+    "/admin/queue Orders section: 50 pair-icons rendered, all with overlap + ring classes.",
+    "/admin/rates table: 6 pair-icons (one per rate row). SpreadCalculator [data-testid='spread-pair-select'] dropdown opens with 6 options, each containing a pair-icon — 12 total on page after opening (6 in table + 6 in portal).",
+    "/admin/orders OrdersTable: 50 pair-icons (one per row). Clicking [data-testid^='view-order-'] opens OrderDetailDialog with exactly 1 pair-icon in the 'Par:' grid cell (pair-icon-USD-CUP verified).",
+    "/admin/quick 'Últimas 5' section: exactly 5 pair-icons rendered as expected.",
+    "Regression /admin/currencies: 13 single currency-icons still render, 0 pair-icons — CurrencyIcon.jsx untouched by iter93.",
+    "Visual/CSS regression: `-ml-*` (overlap) and `ring-2 ring-neutral-950 rounded-full` (hairline separator) both present in the rendered outerHTML of pair-icon elements — verified programmatically."
+  ]
+}

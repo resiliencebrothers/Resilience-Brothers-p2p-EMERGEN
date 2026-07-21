@@ -34,6 +34,7 @@ from push_service import (
     build_phone_verified_payload,
     build_phone_rejected_payload,
 )
+from services.notification_i18n import t as _t, resolve_lang
 
 
 logger = logging.getLogger(__name__)
@@ -70,54 +71,60 @@ async def notify_staff_new_pending_user(target_user: dict) -> Any:
             {"role": "admin"},
             {"role": "employee", "can_manage_blocklist": True},
         ]},
-        {"_id": 0, "user_id": 1},
+        {"_id": 0, "user_id": 1, "preferred_language": 1},
     )
-    recipients = [r["user_id"] async for r in recipients_cursor]
-    title = "Nuevo usuario pendiente de verificación"
+    recipients = [r async for r in recipients_cursor]
     name = target_user.get("name") or target_user.get("email") or "Usuario"
     phone = target_user.get("phone") or "-"
     email = target_user.get("email") or "-"
-    message = f"{name} ({email}) acaba de registrarse con el teléfono {phone}. Verifica o rechaza desde Admin → Usuarios."
     data = {
         "target_user_id": target_user["user_id"],
         "email": target_user.get("email"),
         "phone": target_user.get("phone"),
         "name": target_user.get("name"),
     }
-    push_payload = build_new_pending_user_payload(target_user)
-    for uid in recipients:
+    for r in recipients:
+        uid = r["user_id"]
+        lang = r.get("preferred_language")
         try:
             await _insert_notification(
                 recipient_user_id=uid, type="new_user_pending",
-                title=title, message=message, data=data,
+                title=_t("new_user_pending", lang, "title"),
+                message=_t("new_user_pending", lang, "message", name=name, email=email, phone=phone),
+                data=data,
             )
-            await send_push_to_user(db, uid, push_payload)
+            await send_push_to_user(db, uid, build_new_pending_user_payload(target_user, lang=lang))
         except Exception as e:
             logger.error(f"Failed to deliver pending-user notification to {uid}: {e}")
 
 
 async def notify_user_phone_verified(target_user: dict) -> Any:
     """Tell the user their phone has been verified and the account is now active."""
+    lang = target_user.get("preferred_language") or await resolve_lang(db, target_user["user_id"])
     await _insert_notification(
         recipient_user_id=target_user["user_id"],
         type="phone_verified",
-        title="¡Tu cuenta está activa!",
-        message="Hemos verificado tu teléfono. Ya puedes operar en la plataforma: hacer intercambios, retiros y canjes.",
+        title=_t("phone_verified", lang, "title"),
+        message=_t("phone_verified", lang, "message"),
         data={"phone": target_user.get("phone")},
     )
-    await send_push_to_user(db, target_user["user_id"], build_phone_verified_payload(target_user))
+    await send_push_to_user(db, target_user["user_id"], build_phone_verified_payload(target_user, lang=lang))
 
 
 async def notify_user_phone_rejected(target_user: dict, reason: str) -> Any:
     """Tell the user their phone was rejected and the account remains under review."""
+    lang = target_user.get("preferred_language") or await resolve_lang(db, target_user["user_id"])
     await _insert_notification(
         recipient_user_id=target_user["user_id"],
         type="phone_rejected",
-        title="Verificación rechazada",
-        message=f"No pudimos verificar tu teléfono. Motivo: {reason}. Si crees que es un error, contacta a soporte por WhatsApp para apelar.",
+        title=_t("phone_rejected", lang, "title"),
+        message=_t("phone_rejected", lang, "message", reason=reason),
         data={"phone": target_user.get("phone"), "reason": reason},
     )
-    await send_push_to_user(db, target_user["user_id"], build_phone_rejected_payload(target_user, reason))
+    await send_push_to_user(
+        db, target_user["user_id"],
+        build_phone_rejected_payload(target_user, reason, lang=lang),
+    )
 
 
 async def notify_staff_new_appeal(appeal: dict) -> Any:
@@ -129,13 +136,11 @@ async def notify_staff_new_appeal(appeal: dict) -> Any:
             {"role": "admin"},
             {"role": "employee", "can_manage_blocklist": True},
         ]},
-        {"_id": 0, "user_id": 1},
+        {"_id": 0, "user_id": 1, "preferred_language": 1},
     )
-    recipients = [r["user_id"] async for r in recipients_cursor]
+    recipients = [r async for r in recipients_cursor]
     name = appeal.get("user_name") or appeal.get("user_email") or "Usuario"
     email = appeal.get("user_email") or "-"
-    title = "Nueva apelación de cliente"
-    message = f"{name} ({email}) envió una apelación para reactivar su cuenta bajo revisión. Ábrela en Admin → Apelaciones."
     preview = (appeal.get("message") or "")[:120]
     data = {
         "appeal_id": appeal["id"],
@@ -143,15 +148,19 @@ async def notify_staff_new_appeal(appeal: dict) -> Any:
         "user_email": appeal.get("user_email"),
         "preview": preview,
     }
-    push_payload = {
-        "title": title,
-        "body": f"{name}: {preview}",
-        "icon": "/icons/icon-192.png",
-        "badge": "/icons/icon-192.png",
-        "tag": f"appeal-{appeal['id']}",
-        "url": "/admin/appeals",
-    }
-    for uid in recipients:
+    for r in recipients:
+        uid = r["user_id"]
+        lang = r.get("preferred_language")
+        title = _t("new_appeal", lang, "title")
+        message = _t("new_appeal", lang, "message", name=name, email=email)
+        push_payload = {
+            "title": title,
+            "body": f"{name}: {preview}",
+            "icon": "/icons/icon-192.png",
+            "badge": "/icons/icon-192.png",
+            "tag": f"appeal-{appeal['id']}",
+            "url": "/admin/appeals",
+        }
         try:
             await _insert_notification(
                 recipient_user_id=uid, type="new_appeal",
@@ -167,20 +176,10 @@ async def notify_user_appeal_reviewed(appeal: dict) -> Any:
     rejected) and surface the staff response verbatim."""
     status = appeal.get("status", "resolved")
     response = appeal.get("staff_response") or ""
-    if status == "resolved":
-        title = "Apelación aprobada"
-        message = (
-            f"El staff revisó tu apelación y la aprobó. Mensaje del equipo: "
-            f"{response}. Si la cuenta sigue bajo revisión, un admin la "
-            f"activará en las próximas horas."
-        )
-    else:
-        title = "Apelación rechazada"
-        message = (
-            f"El staff revisó tu apelación pero no procedió. Mensaje del "
-            f"equipo: {response}. Puedes contactar a soporte por WhatsApp si "
-            f"necesitas otra vía."
-        )
+    lang = await resolve_lang(db, appeal["user_id"])
+    key = "appeal_resolved" if status == "resolved" else "appeal_rejected"
+    title = _t(key, lang, "title")
+    message = _t(key, lang, "message", response=response)
     await _insert_notification(
         recipient_user_id=appeal["user_id"],
         type=f"appeal_{status}",
@@ -285,43 +284,43 @@ async def delete_notification(notification_id: str, request: Request) -> Any:
 
 async def notify_user_kyc_verified(_db: Any, user_id: str) -> Any:
     """Client identity was approved — they can operate at full capacity."""
+    resolver_db = _db if _db is not None else db
+    lang = await resolve_lang(resolver_db, user_id)
     await _insert_notification(
         recipient_user_id=user_id,
         type="kyc_verified",
-        title="Identidad verificada ✓",
-        message=(
-            "Tu documento y selfie fueron aprobados. Ya operas con identidad "
-            "verificada; los límites transaccionales se ajustaron a tu nivel."
-        ),
+        title=_t("kyc_verified", lang, "title"),
+        message=_t("kyc_verified", lang, "message"),
         data={},
     )
 
 
 async def notify_user_kyc_rejected(_db: Any, user_id: str, reasons: list, notes: str) -> Any:
     """KYC was rejected — user can resubmit new documents."""
-    reason_txt = " · ".join(reasons) if reasons else "Documentación insuficiente"
-    tail = f" Nota del equipo: {notes}" if notes else ""
+    resolver_db = _db if _db is not None else db
+    lang = await resolve_lang(resolver_db, user_id)
+    # Pull the locale-appropriate default reason + tail prefix from the
+    # catalogue so we render a fully localised sentence.
+    from services.notification_i18n import get_field
+    reason_txt = " · ".join(reasons) if reasons else get_field("kyc_rejected", lang, "reason_default")
+    tail = f"{get_field('kyc_rejected', lang, 'tail_prefix')}{notes}" if notes else ""
     await _insert_notification(
         recipient_user_id=user_id,
         type="kyc_rejected",
-        title="Verificación rechazada",
-        message=(
-            f"No pudimos aprobar tu verificación de identidad. Motivo: {reason_txt}.{tail} "
-            f"Puedes subir nuevos documentos desde el menú de tu cuenta."
-        ),
+        title=_t("kyc_rejected", lang, "title"),
+        message=_t("kyc_rejected", lang, "message", reason_txt=reason_txt, tail=tail),
         data={"reasons": reasons, "notes": notes},
     )
 
 
 async def notify_user_kyc_needs_more_info(_db: Any, user_id: str, notes: str) -> Any:
     """Reviewer needs a clearer photo / different document — user can resubmit."""
+    resolver_db = _db if _db is not None else db
+    lang = await resolve_lang(resolver_db, user_id)
     await _insert_notification(
         recipient_user_id=user_id,
         type="kyc_needs_more_info",
-        title="Necesitamos más información",
-        message=(
-            f"Tu verificación está pausada. {notes} "
-            f"Actualiza tus documentos y vuelve a enviar desde tu perfil."
-        ),
+        title=_t("kyc_needs_more_info", lang, "title"),
+        message=_t("kyc_needs_more_info", lang, "message", notes=notes),
         data={"notes": notes},
     )

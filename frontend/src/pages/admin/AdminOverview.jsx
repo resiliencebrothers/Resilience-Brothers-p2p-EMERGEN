@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { useTranslation, Trans } from "react-i18next";
@@ -23,7 +23,7 @@ export default function AdminOverview() {
   const [pendingSettings, setPendingSettings] = useState(null);
   const [pendingAudit, setPendingAudit] = useState(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [s, set] = await Promise.all([
@@ -40,8 +40,8 @@ export default function AdminOverview() {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { load(); }, []);
+  }, [t]);
+  useEffect(() => { load(); }, [load]);
 
   const saveThreshold = () => {
     const v = parseFloat(threshold);

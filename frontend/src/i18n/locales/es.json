@@ -17,7 +17,14 @@
     "currency": "Moneda",
     "date": "Fecha",
     "yes": "Sí",
-    "no": "No"
+    "no": "No",
+    "copied": "Copiado al portapapeles"
+  },
+  "quickRange": {
+    "last7Days": "Últimos 7 días",
+    "thisMonth": "Este mes",
+    "thisYear": "Este año",
+    "clear": "Limpiar rango"
   },
   "sidebar": {
     "client": {
@@ -83,7 +90,48 @@
   "notifications": {
     "pushTitle": "Notificaciones push",
     "pushDescription": "Recibe alertas al instante cuando el equipo apruebe tu orden, entregue tu retiro o solicite información adicional.",
-    "iosHint": "Las notificaciones funcionan aunque cierres esta pestaña. En iOS, necesitas <strong>añadir la web a tu pantalla de inicio</strong> desde Safari (icono de compartir → &ldquo;Añadir a pantalla de inicio&rdquo;) y luego activarlas desde la app instalada."
+    "iosHint": "Las notificaciones funcionan aunque cierres esta pestaña. En iOS, necesitas <strong>añadir la web a tu pantalla de inicio</strong> desde Safari (icono de compartir → &ldquo;Añadir a pantalla de inicio&rdquo;) y luego activarlas desde la app instalada.",
+    "bell": {
+      "ariaLabel": "Notificaciones",
+      "title": "Notificaciones",
+      "unread": "{{n}} sin leer",
+      "allCaughtUp": "Todo al día",
+      "loading": "Cargando...",
+      "empty": "No tienes notificaciones todavía.",
+      "markAll": "Marcar todo",
+      "deleteRead": "Borrar leídas",
+      "deleteAllTitle": "Eliminar todas las notificaciones leídas",
+      "deleteTitle": "Eliminar notificación",
+      "verifyOn": "Verificar en {{network}}",
+      "verifyOnExplorer": "Verificar en explorer",
+      "timeNow": "ahora",
+      "timeMin": "hace {{n}}m",
+      "timeHour": "hace {{n}}h",
+      "timeDay": "hace {{n}}d"
+    },
+    "push": {
+      "unsupportedBrowser": "Tu navegador no soporta notificaciones push",
+      "permissionBlocked": "Bloqueaste las notificaciones. Habilítalas en ajustes del navegador.",
+      "permissionDenied": "Permiso de notificaciones no otorgado",
+      "vapidError": "No se pudo obtener la clave VAPID del servidor",
+      "vapidMissing": "Servidor sin VAPID configurada. Contacta al administrador.",
+      "browserRejected": "Permiso rechazado por el navegador. Revisa ajustes del sitio.",
+      "browserUnsupported": "Push no soportado. Prueba en Chrome/Firefox actualizado.",
+      "aborted": "Suscripción cancelada. Intenta de nuevo.",
+      "vapidInvalid": "Clave VAPID inválida. Contacta al administrador.",
+      "pushError": "Error de push ({{name}}): {{msg}}",
+      "serverRejected": "El servidor rechazó la suscripción. Contacta al administrador.",
+      "unexpectedError": "Error inesperado: {{msg}}",
+      "activated": "Notificaciones activadas",
+      "deactivated": "Notificaciones desactivadas",
+      "genericError": "Error",
+      "blockedFromSettings": "Las notificaciones están bloqueadas. Habilítalas desde la configuración del navegador.",
+      "disableTitle": "Desactivar notificaciones",
+      "enableTitle": "Activar notificaciones",
+      "labelOn": "Notificaciones",
+      "labelOff": "Activar avisos",
+      "retry": "reintentar"
+    }
   },
   "language": {
     "label": "Idioma",
@@ -182,7 +230,9 @@
     "newOrderBtn": "Nueva Orden",
     "uploadHint2": "PNG, JPG · máx 3MB",
     "detailsHelperGeneric": "Incluye toda la información necesaria para procesar el pago.",
-    "accuracyWarning": "Por favor asegúrese de ingresar los datos de la cuenta de destino correctamente. Un error en la numeración puede retrasar o desviar el pago."
+    "accuracyWarning": "Por favor asegúrese de ingresar los datos de la cuenta de destino correctamente. Un error en la numeración puede retrasar o desviar el pago.",
+    "noReceivable": "Sin destinos configurados",
+    "noReceivableHint": "No hay tasas configuradas para {{code}}. Contacta a soporte para abrir un nuevo par."
   },
   "withdraw": {
     "eyebrow": "/ Retiro",
@@ -221,9 +271,9 @@
     "selectNetwork": "Selecciona red",
     "walletAddress": "Dirección de wallet",
     "cashReceiverName": "Nombre completo del receptor",
-    "cashReceiverNamePh": "Nombre completo de quien recibe",
+    "cashReceiverNamePh": "ej. Juan Pérez Rodríguez",
     "cashReceiverPhone": "Celular del receptor",
-    "cashReceiverPhonePh": "Ej. +53 5555 1234",
+    "cashReceiverPhonePh": "+5355555555",
     "cashReceiverAddress": "Dirección de entrega",
     "cashReceiverAddressPh": "Calle, número, entre calles, municipio, provincia",
     "cashReceiverIdOpt": "Documento del receptor (opcional)",
@@ -259,10 +309,38 @@
     "hashCopied": "Hash copiado",
     "viewTransferProof": "Ver captura de la transferencia",
     "historyLabel": {
-      "cash":     { "paid": "Entregado", "approved": "En progreso", "pending": "Pendiente", "rejected": "Rechazado" },
-      "transfer": { "paid": "Pagado",    "approved": "Confirmado",  "pending": "Pendiente", "rejected": "Rechazado" },
-      "crypto":   { "paid": "Pagado",    "approved": "Confirmado",  "pending": "Pendiente", "rejected": "Rechazado" }
-    }
+      "cash": {
+        "paid": "Entregado",
+        "approved": "En progreso",
+        "pending": "Pendiente",
+        "rejected": "Rechazado"
+      },
+      "transfer": {
+        "paid": "Pagado",
+        "approved": "Confirmado",
+        "pending": "Pendiente",
+        "rejected": "Rechazado"
+      },
+      "crypto": {
+        "paid": "Pagado",
+        "approved": "Confirmado",
+        "pending": "Pendiente",
+        "rejected": "Rechazado"
+      }
+    },
+    "cashReceiverNameLabel": "Nombre y apellidos del receptor",
+    "cashReceiverPhoneLabel": "Teléfono celular",
+    "cashReceiverAddressLabel": "Dirección de entrega",
+    "cashReceiverIdLabel": "Número de ID / Carné",
+    "cashReceiverIdOptional": "(opcional)",
+    "cashHint": "El equipo usa estos datos para coordinar la entrega en efectivo. Verifica que el <1>celular</1> esté activo y la <2>dirección</2> sea clara.",
+    "detailsLabel": "Detalles",
+    "detailsPhTransfer": "Banco, número de cuenta y titular",
+    "totpPh": "123456 o XXXXX-XXXXX",
+    "totpHelper": "Código de 6 dígitos de tu app autenticadora o un código de recuperación.",
+    "totpSetupLink": "¿Aún no configuras 2FA?",
+    "cryptoMatchOk": "Dirección compatible con <1>{{network}}</1>",
+    "cryptoMismatch": "<1>No coincide con {{network}}</1>. Revisa la red seleccionada o pega otra dirección — enviar por la red incorrecta puede perder los fondos permanentemente."
   },
   "vipView": {
     "eyebrow": "/ Saldo y Retiros",
@@ -450,7 +528,7 @@
       "updated": "País actualizado ✓",
       "changeError": "Error al cambiar país",
       "newCountryLabel": "País nuevo",
-      "placeholder": "Ej. Cuba, España, México…",
+      "placeholder": "Ej. España, México, Brasil…",
       "saving": "Guardando…",
       "save": "Guardar",
       "currentLabelBody": "Actual: <1>{{country}}</1>. Puedes actualizarlo cuando cambies de residencia.",
@@ -730,6 +808,9 @@
       "rejectedFilter": "Rechazadas",
       "loadError": "Error al cargar solicitudes.",
       "empty": "Sin solicitudes que coincidan con el filtro.",
+      "emptyFiltered": "Ninguna solicitud coincide con los filtros aplicados.",
+      "searchClientPh": "Buscar por nombre o email…",
+      "searchClear": "Limpiar búsqueda",
       "loading": "Cargando…",
       "statusPending": "Pendiente",
       "statusDisbursed": "Desembolsado",
@@ -1181,6 +1262,31 @@
       "statusRejected": "Rechazado",
       "approve": "Aprobar",
       "paid": "Pagado",
+      "filterStatus": "Estado",
+      "filterAll": "Todos",
+      "filterBeneficiary": "Beneficiario",
+      "filterBeneficiaryPh": "Buscar por beneficiario…",
+      "filterClear": "limpiar",
+      "showing": "Mostrando {{n}} de {{total}}",
+      "exportBtn": "Exportar",
+      "exportTitle": "Exportar movimientos a CSV",
+      "exportSub": "Descarga todos los ajustes y retiros del fondo empresa en el rango de fechas seleccionado.",
+      "exportSince": "Desde",
+      "exportUntil": "Hasta",
+      "exportHint": "Sin fechas = descarga todo el historial. Formato UTF-8 con BOM (Excel).",
+      "exportDo": "Descargar CSV",
+      "exportWorking": "Generando…",
+      "exportedToast": "CSV exportado",
+      "exportError": "Error al exportar",
+      "closingBtn": "Cierre Empresa PDF",
+      "closingTitle": "Cierre contable de la empresa",
+      "closingSub": "Documento confidencial para socios y auditores. Incluye tesorería, retiros e ingresos por moneda.",
+      "closingHint": "Sin fechas = histórico completo. El PDF viene firmado y sellado por Resilience Brothers.",
+      "closingDo": "Descargar PDF",
+      "closingWorking": "Generando…",
+      "closingExportedToast": "Cierre empresa exportado",
+      "closingExportError": "Error al generar el cierre",
+      "cancel": "Cancelar",
       "dialogNewTitle": "Nuevo retiro del fondo",
       "dialogNewSub": "Autorizado por: <1>{{name}}</1> · 2FA requerido.",
       "currency": "Moneda",
@@ -1465,7 +1571,7 @@
   "myTransactions": {
     "breadcrumb": "/ Mi Historial",
     "title": "Mis Transacciones",
-    "subtitle": "Registro de tus entradas (transferencias recibidas) y salidas (retiros pagados) con titulares verificados.",
+    "subtitle": "Registro de tus entradas, salidas y conversiones de saldo, todo en un solo lugar.",
     "in": "Entradas",
     "out": "Salidas",
     "net": "Neto",
@@ -1473,6 +1579,12 @@
     "exportFilename": "mis_transacciones",
     "exportedToast": "Exportado ({{kind}})",
     "exportError": "Error al exportar {{kind}}",
+    "tabs": {
+      "all": "Todas",
+      "in": "Entradas",
+      "out": "Salidas",
+      "conversion": "Conversiones"
+    },
     "filters": {
       "direction": "Dirección",
       "all": "Todas",
@@ -1497,7 +1609,10 @@
       "empty": "Aún no tienes transacciones registradas",
       "emptyFiltered": "Sin resultados para los filtros aplicados",
       "in": "Entrada",
-      "out": "Salida"
+      "out": "Salida",
+      "conversion": "Conversión",
+      "methodSelfConvert": "Auto-conversión",
+      "subtypeSmall": "Saldo pequeño"
     },
     "detail": {
       "title": "Detalle",
@@ -1513,7 +1628,38 @@
       "recipientData": "Datos del beneficiario",
       "payoutProof": "Comprobante del pago recibido",
       "proof": "Comprobante",
-      "outflowsHaveNoProof": "Las salidas no incluyen comprobante de transferencia entrante."
+      "outflowsHaveNoProof": "Las salidas no incluyen comprobante de transferencia entrante.",
+      "cryptoNetwork": "Red blockchain",
+      "txHashLabel": "Hash de transacción (TX)",
+      "viewOnExplorer": "Ver en explorer",
+      "conversionTitle": "Detalles de la conversión",
+      "from": "Enviaste",
+      "to": "Recibiste",
+      "rate": "Tasa aplicada",
+      "fee": "Comisión (USDT)",
+      "sourceUsdtValue": "Equivalente origen",
+      "subtypeNormal": "Conversión normal",
+      "subtypeSmall": "Saldo pequeño"
+    },
+    "balanceSummaryLabel": "Saldo actual",
+    "balanceSummarySub": "Equivalente en USDT · en vivo",
+    "allBalances": {
+      "title": "Todos mis saldos",
+      "subtitle": "Vista completa de tu cartera, ordenada por equivalente en USDT.",
+      "totalLabel": "Total en USDT",
+      "empty": "Aún no tienes saldos positivos en la cartera.",
+      "seeAll_one": "Ver mis {{count}} saldos",
+      "seeAll_other": "Ver mis {{count}} saldos",
+      "seeAllExtra_one": "Ver {{count}} moneda más",
+      "seeAllExtra_other": "Ver {{count}} monedas más"
+    },
+    "live": {
+      "on": "En vivo",
+      "off": "Pausado",
+      "pauseHint": "Pausar el feed en vivo",
+      "resumeHint": "Reanudar el feed en vivo",
+      "newItems_one": "{{count}} nueva transacción · toca para ver",
+      "newItems_other": "{{count}} nuevas transacciones · toca para ver"
     }
   },
   "accountStatus": {
@@ -1641,7 +1787,7 @@
   "kyc": {
     "eyebrow": "/ Verificación de identidad",
     "title": "Verifica tu identidad (KYC)",
-    "subtitle": "Sube tu documento y una selfie. La aprobación toma minutos.",
+    "subtitle": "Sube 3 fotos para verificar tu identidad. Tus documentos se almacenan cifrados y solo el equipo de revisión puede verlos.",
     "statusUnverified": "No iniciada",
     "statusPending": "Pendiente de revisión",
     "statusVerified": "Verificado ✓",
@@ -1662,7 +1808,6 @@
     "reviewNotes": "Notas del revisor",
     "resubmit": "Reenviar",
     "titleFull": "Verificación de identidad",
-    "subtitle": "Sube 3 fotos para verificar tu identidad. Tus documentos se almacenan cifrados y solo el equipo de revisión puede verlos.",
     "loading": "Cargando…",
     "rejectionReasonsTitle": "Motivos de rechazo",
     "teamNote": "Nota del equipo",
@@ -1742,7 +1887,43 @@
     "showAll": "Ver todas ({{count}})",
     "showLess": "Mostrar menos",
     "dialogTitle": "Convertir",
-    "convertButton": "Convertir {{code}}"
+    "convertButton": "Convertir {{code}}",
+    "commissionLabel": "Comisión (0.01 USDT, fija):",
+    "youReceive": "Recibirás:",
+    "rateSummary": "Tasa: 1 {{from}} = {{rate}} {{to}}",
+    "minSource": "Mínimo por conversión: equivalente a {{min}} USDT.",
+    "yourAmountEquiv": "Tu monto equivale a {{value}} USDT.",
+    "noRateForPair": "No hay tasa cotizada para {{from}} → {{to}}.",
+    "dialogDescription": "Mueve fondos entre tus propias monedas al tipo de cambio {{tier}}. Cada conversión tiene una comisión fija de {{fee}} USDT y un mínimo por operación equivalente a {{min}} USDT.",
+    "tierStandard": "estándar",
+    "toCurrencyLabel": "Moneda destino",
+    "selectDestination": "Selecciona destino",
+    "amountOfLabel": "Cantidad de {{code}}",
+    "maxBtn": "MÁX",
+    "availableBalance": "Saldo: {{amount}} {{code}}",
+    "convertingBtn": "Convirtiendo...",
+    "confirmBtn": "Confirmar conversión",
+    "insufficientUsdtSelf": "Saldo USDT insuficiente. Tienes {{balance}} USDT — necesitas al menos la cantidad que quieres convertir más {{fee}} USDT de comisión fija.",
+    "insufficientUsdtOther": "Necesitas al menos {{fee}} USDT en tu saldo para pagar la comisión. Tienes {{balance}} USDT — recarga USDT primero.",
+    "dustCta_one": "Limpiar {{count}} saldo pequeño a USDT",
+    "dustCta_other": "Limpiar {{count}} saldos pequeños a USDT"
+  },
+  "dustSweep": {
+    "title": "Convertir saldos pequeños a USDT",
+    "subtitle": "Barre todos tus saldos con equivalente menor a {{threshold}} USDT en una sola operación.",
+    "loading": "Buscando saldos pequeños…",
+    "emptyTitle": "Sin saldos pequeños para limpiar",
+    "emptySubtitle": "No tienes saldos con equivalente menor a {{threshold}} USDT.",
+    "totalLabel": "Total a acreditar",
+    "feeLabel": "Comisión (única)",
+    "netLabel": "Neto en USDT",
+    "feeGuard": "Necesitas al menos {{fee}} USDT para pagar la comisión. Tienes {{balance}} USDT.",
+    "confirm": "Confirmar barrido",
+    "working": "Convirtiendo…",
+    "doneToast_one": "Barrido completo: {{count}} moneda convertida · +{{usdt}} USDT",
+    "doneToast_other": "Barrido completo: {{count}} monedas convertidas · +{{usdt}} USDT",
+    "previewError": "Error al cargar el resumen del barrido",
+    "error": "Error al ejecutar el barrido"
   },
   "landing": {
     "nav": {
@@ -1757,34 +1938,34 @@
     },
     "hero": {
       "livePill": "Live Network · 24/7 Settlement",
-      "titleLine1": "Comercio P2P",
+      "titleLine1": "Comercio global",
       "titleAccent": "sin fronteras.",
       "titleLine3": "Sin fricción.",
-      "descriptionA": "Resilience Brothers conecta empresas y clientes mediante una plataforma global de comercio P2P. Intercambia activos digitales, bienes, productos y servicios con herramientas financieras integradas para operaciones",
+      "descriptionA": "Impulsamos el ecommerce a escala internacional conectando empresas y personas con oportunidades de negocio en mercados globales, con soluciones integrales de pago, liquidación y logística",
       "descriptionHighlight": "más rápidas, seguras y eficientes",
-      "descriptionB": "a escala internacional.",
+      "descriptionB": "a través de nuestra red de socios estratégicos.",
       "startButton": "Comenzar con Google",
       "emailButton": "Iniciar con email",
       "emailFallback": "¿Tu región bloquea Google? Usa <1>acceso por email</1> — registro instantáneo, sin terceros.",
       "kpiCountries": "Países",
       "kpiVipRate": "Tasa preferencial",
       "kpiSettlement": "Settlement",
-      "kpiP2p": "P2P"
+      "kpiP2p": "Red B2B"
     },
     "about": {
       "eyebrow": "/ 01 — Quiénes Somos",
       "title": "Un puente operativo entre mercados.",
-      "description": "Operamos como infraestructura financiera para clientes que necesitan mover valor entre criptomonedas, divisas y mercancías sin pasar por bancos lentos ni tarifas opacas.",
+      "description": "Conectamos empresas y personas con soluciones integrales de pago, liquidación y comercio internacional. Habilitamos operaciones de ecommerce transfronterizo a través de una red curada de socios estratégicos en múltiples jurisdicciones.",
       "globalTitle": "Alcance Global",
-      "globalDescription": "Cuba, Brasil, México y más. Entregamos en moneda local —CUP, BRL, MXN— vía transferencia o efectivo, con titulares verificados en cada país.",
+      "globalDescription": "Impulsamos el ecommerce a escala internacional conectando empresas con oportunidades de negocio en mercados globales a través de una red de socios estratégicos verificados en cada jurisdicción.",
       "proofsTitle": "Comprobantes Verificados",
-      "proofsDescription": "Cada transacción exige comprobante con titular. Equipo contable confirma antes de liberar fondos.",
+      "proofsDescription": "Cada operación exige comprobante con titular. El equipo de compliance confirma antes de liberar fondos.",
       "settlementTitle": "Liquidación Rápida",
       "settlementDescription": "Operaciones aprobadas se procesan en cuestión de horas, no días.",
       "dynamicRatesTitle": "Tasas Dinámicas",
-      "dynamicRatesDescription": "Nuestros admins actualizan tasas cripto/fiat en tiempo real. VIPs reciben tasas preferenciales.",
-      "goodsTitle": "Mercancías Físicas",
-      "goodsDescription": "Canjea tu saldo VIP por contenedores de arroz, harina, refrescos y más."
+      "dynamicRatesDescription": "Tasas actualizadas en tiempo real por nuestro equipo. Clientes VIP acceden a tasas preferenciales.",
+      "goodsTitle": "Ecommerce & Logística",
+      "goodsDescription": "Canjea tu saldo VIP por mercancía y logística de nuestra red de socios: consumo masivo, materia prima y más."
     },
     "services": {
       "eyebrow": "/ 02 — Servicios",
@@ -1793,16 +1974,16 @@
       "section02": "SECCIÓN 02",
       "active": "● ACTIVA",
       "vipOnly": "VIP ONLY",
-      "cryptoTitle": "Cripto ↔ Fiat",
-      "cryptoDescription": "Intercambia USDT, BTC y más por dólares (Zelle), pesos cubanos, reales brasileños o pesos mexicanos.",
+      "cryptoTitle": "Pagos & Liquidación",
+      "cryptoDescription": "Soluciones integrales de pago para empresas y personas: transferencias internacionales, liquidación multi-moneda y settlement B2B a través de nuestra red global.",
       "cryptoBullets": [
-        "Tasas en vivo gestionadas por admin",
-        "Sube comprobante de pago al instante",
-        "Confirmación humana por equipo contable",
-        "Entrega en transferencia, efectivo o cripto"
+        "Tasas en vivo gestionadas por nuestro equipo",
+        "Comprobante de pago verificado al instante",
+        "Confirmación humana por equipo de compliance",
+        "Liquidación en transferencia, efectivo o activos digitales"
       ],
-      "marketplaceTitle": "Marketplace Físico",
-      "marketplaceDescription": "Canjea tu saldo VIP acumulado por mercancía: arroz, harina, refrescos, aceite y más.",
+      "marketplaceTitle": "Marketplace & Ecommerce",
+      "marketplaceDescription": "Accede a nuestra red de socios estratégicos para operaciones de ecommerce internacional: canjea tu saldo VIP por mercancía y logística global.",
       "marketplaceBullets": [
         "Stock en tiempo real",
         "Sin comisión, sin mensajería para VIP",
@@ -1814,10 +1995,26 @@
       "eyebrow": "/ 03 — Cómo Funciona",
       "title": "Cuatro pasos. Cero confusión.",
       "steps": [
-        { "n": "01", "t": "Crea tu orden", "d": "Elige el par cripto/fiat, ingresa el monto y verifica tu tasa." },
-        { "n": "02", "t": "Sube comprobante", "d": "Captura de la transferencia con el nombre del titular." },
-        { "n": "03", "t": "Verificación humana", "d": "Nuestro equipo contable confirma la recepción del pago." },
-        { "n": "04", "t": "Recibe tus fondos", "d": "Transferencia, efectivo, cripto o acumula en saldo VIP." }
+        {
+          "n": "01",
+          "t": "Crea tu orden",
+          "d": "Elige la operación, ingresa el monto y verifica tu tasa en tiempo real."
+        },
+        {
+          "n": "02",
+          "t": "Sube comprobante",
+          "d": "Captura de la transferencia con el nombre del titular."
+        },
+        {
+          "n": "03",
+          "t": "Verificación humana",
+          "d": "Nuestro equipo de compliance confirma la recepción del pago."
+        },
+        {
+          "n": "04",
+          "t": "Recibe tus fondos",
+          "d": "Transferencia, efectivo, activos digitales o acumula en saldo VIP."
+        }
       ]
     },
     "vipSection": {

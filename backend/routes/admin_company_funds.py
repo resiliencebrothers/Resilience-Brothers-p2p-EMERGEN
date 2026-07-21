@@ -448,3 +448,374 @@ async def list_company_fund_adjustments(
     return await db.company_fund_adjustments.find(q, {"_id": 0}).sort(
         "created_at", -1
     ).to_list(limit)
+
+
+# ============================================================
+# iter88 — Company funds export
+# ============================================================
+
+def _date_range_query(since: Optional[str], until: Optional[str]) -> Dict[str, Any]:
+    """Build a Mongo `$gte/$lte` `created_at` filter from ISO date/datetime
+    strings. Dates without a time are expanded to include the whole day
+    (00:00:00 → 23:59:59). Invalid input → 400."""
+    from datetime import datetime as _dt
+    q: Dict[str, Any] = {}
+    def _parse(s: str, is_end: bool) -> str:
+        s = (s or "").strip()
+        if not s:
+            return ""
+        try:
+            if "T" in s:
+                _dt.fromisoformat(s.replace("Z", "+00:00"))
+                return s
+            # Bare date → widen to full-day boundary.
+            _dt.fromisoformat(s)
+            return f"{s}T23:59:59.999999+00:00" if is_end else f"{s}T00:00:00.000000+00:00"
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Formato de fecha inválido: {s}")
+    since_iso = _parse(since or "", is_end=False)
+    until_iso = _parse(until or "", is_end=True)
+    if since_iso and until_iso:
+        q["created_at"] = {"$gte": since_iso, "$lte": until_iso}
+    elif since_iso:
+        q["created_at"] = {"$gte": since_iso}
+    elif until_iso:
+        q["created_at"] = {"$lte": until_iso}
+    return q
+
+
+@router.get("/admin/company-funds/export.csv")
+async def export_company_funds_csv(
+    request: Request,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    currency: Optional[str] = None,
+) -> Any:
+    """iter88 — Export a unified CSV of every company-fund movement in the
+    requested date range. Includes both manual adjustments (inflows and
+    outflows) and company withdrawals (all statuses so admins can audit
+    pending/approved/paid/rejected). Employee scope is respected."""
+    import csv
+    import io
+    from io import BytesIO
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+
+    actor = await require_permission(request, "company_funds")
+    date_q = _date_range_query(since, until)
+
+    # Employee currency scope — if `allowed_currencies` is set, only rows in
+    # those currencies come through.
+    scope_codes: Optional[List[str]] = None
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            scope_codes = [c.upper() for c in allowed]
+
+    def _currency_ok(code: Any) -> bool:
+        c = _norm_code(code)
+        if not c:
+            return False
+        if currency and c != currency.upper():
+            return False
+        if scope_codes is not None and c not in scope_codes:
+            return False
+        return True
+
+    rows: List[List[str]] = []
+
+    # 1) Manual adjustments (inflow = +, outflow = -).
+    async for a in db.company_fund_adjustments.find(date_q, {"_id": 0}):
+        if not _currency_ok(a.get("currency")):
+            continue
+        amt = float(a.get("amount") or 0.0)
+        direction = a.get("adjustment_type") or ""
+        signed = amt if direction == "inflow" else -amt
+        rows.append([
+            a.get("created_at", ""),
+            "adjustment",
+            direction,
+            _norm_code(a.get("currency")) or "",
+            f"{signed:.4f}",
+            a.get("source_name", ""),
+            a.get("method", ""),
+            (a.get("note") or ""),
+            "completed",
+            a.get("actor_name", ""),
+            a.get("id", ""),
+        ])
+
+    # 2) Company withdrawals (status paid → applied, others → informational).
+    async for w in db.company_withdrawals.find(date_q, {"_id": 0}):
+        if not _currency_ok(w.get("currency")):
+            continue
+        amt = float(w.get("amount") or 0.0)
+        status = w.get("status") or "pending"
+        # Signed amount for accounting: paid outflows are negative; the
+        # non-paid rows carry the raw absolute amount because they haven't
+        # moved money yet.
+        signed = -amt if status == "paid" else amt
+        rows.append([
+            w.get("created_at", ""),
+            "company_withdrawal",
+            "outflow",
+            _norm_code(w.get("currency")) or "",
+            f"{signed:.4f}",
+            w.get("beneficiary", ""),
+            "",  # method N/A for company_withdrawal
+            (w.get("concept") or w.get("note") or ""),
+            status,
+            w.get("authorized_by_name", ""),
+            w.get("id", ""),
+        ])
+
+    # Sort by date ascending so the CSV reads as a chronological ledger.
+    rows.sort(key=lambda r: r[0])
+
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow([
+        "created_at", "movement_kind", "direction", "currency",
+        "amount", "party", "method", "concept_or_note", "status",
+        "authorized_by", "id",
+    ])
+    for row in rows:
+        writer.writerow(row)
+
+    buf = BytesIO()
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))
+    buf.seek(0)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"company_funds_{ts}.csv"
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ── iter91 · Company accounting closing PDF ────────────────────────────
+async def _aggregate_by_currency_ranged(
+    collection: Any,
+    query: Dict[str, Any],
+    currency_field: str,
+    amount_field: str,
+    since_iso: str = "",
+    until_iso: str = "",
+    ts_field: str = "updated_at",
+) -> Dict[str, float]:
+    """Same shape as `_aggregate_by_currency` but constrains the docs by
+    a timestamp range on `ts_field`. Empty bounds mean unbounded on that
+    side, so passing since='' until='' matches the all-time aggregate."""
+    scoped_query = {**query}
+    ts_q: Dict[str, Any] = {}
+    if since_iso:
+        ts_q["$gte"] = since_iso
+    if until_iso:
+        ts_q["$lte"] = until_iso
+    if ts_q:
+        scoped_query[ts_field] = ts_q
+    return await _aggregate_by_currency(
+        collection, scoped_query, currency_field, amount_field,
+    )
+
+
+async def _compute_company_funds_range(
+    since_iso: str, until_iso: str,
+) -> List[dict]:
+    """Range-aware version of `_compute_company_funds` used by the
+    company closing PDF. Each source aggregate is filtered by its own
+    natural timestamp so movements outside the range don't leak in.
+
+    * Order inflows / order-payout outflows → `orders.updated_at`
+    * Client withdrawals (VIP + Normal)      → `withdrawals.updated_at`
+    * Company withdrawals                    → `company_withdrawals.updated_at`
+    * Manual adjustments                     → `company_fund_adjustments.created_at`
+    """
+    inflow = await _aggregate_by_currency_ranged(
+        db.orders,
+        {"status": {"$in": ["approved", "completed"]}},
+        "from_code", "amount_from", since_iso, until_iso, "updated_at",
+    )
+    out_orders = await _aggregate_by_currency_ranged(
+        db.orders,
+        {"status": "completed", "delivery_method": {"$ne": "accumulate"}},
+        "to_code", "amount_to", since_iso, until_iso, "updated_at",
+    )
+    out_clients = await _aggregate_by_currency_ranged(
+        db.withdrawals,
+        {"status": "paid"},
+        "currency", "amount_usd", since_iso, until_iso, "updated_at",
+    )
+    out_company = await _aggregate_by_currency_ranged(
+        db.company_withdrawals,
+        {"status": "paid"},
+        "currency", "amount", since_iso, until_iso, "updated_at",
+    )
+    # Manual adjustments have no `updated_at`, so scope via `created_at`.
+    adj_in: Dict[str, float] = {}
+    adj_out: Dict[str, float] = {}
+    adj_query: Dict[str, Any] = {}
+    ts_q: Dict[str, Any] = {}
+    if since_iso:
+        ts_q["$gte"] = since_iso
+    if until_iso:
+        ts_q["$lte"] = until_iso
+    if ts_q:
+        adj_query["created_at"] = ts_q
+    async for a in db.company_fund_adjustments.find(
+        adj_query, {"_id": 0, "currency": 1, "amount": 1, "adjustment_type": 1}
+    ):
+        code = _norm_code(a.get("currency"))
+        amt = float(a.get("amount") or 0.0)
+        if not code or amt <= 0:
+            continue
+        (adj_in if a.get("adjustment_type") == "inflow" else adj_out)[code] = (
+            (adj_in if a.get("adjustment_type") == "inflow" else adj_out).get(code, 0.0) + amt
+        )
+
+    codes = (set(inflow) | set(out_orders) | set(out_clients)
+             | set(out_company) | set(adj_in) | set(adj_out))
+    rows: List[dict] = []
+    for c in sorted(codes):
+        i = inflow.get(c, 0.0)
+        oo = out_orders.get(c, 0.0)
+        oc = out_clients.get(c, 0.0)
+        ok = out_company.get(c, 0.0)
+        mi = adj_in.get(c, 0.0)
+        mo = adj_out.get(c, 0.0)
+        rows.append({
+            "currency": c,
+            "inflow": round(i, 4),
+            "outflow_orders": round(oo, 4),
+            "outflow_clients": round(oc, 4),
+            "outflow_company": round(ok, 4),
+            "manual_inflow": round(mi, 4),
+            "manual_outflow": round(mo, 4),
+            "balance": round(i + mi - oo - oc - ok - mo, 4),
+        })
+    return rows
+
+
+@router.get("/admin/company-funds/closing.pdf")
+async def export_company_closing_pdf(
+    request: Request,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Any:
+    """iter91 — Investor-grade accounting closing PDF for the company.
+
+    Aggregates every treasury movement in the requested range across
+    orders, client withdrawals, company withdrawals and manual
+    adjustments, adds a per-currency fees / revenue section, and signs
+    the last page with the shared signature+stamp block.
+
+    Requires the `company_funds` permission (same guard used by the
+    existing CSV export) so employees with a currency scope can only
+    download a scoped snapshot.
+    """
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from datetime import datetime, timezone
+
+    from company_closing_pdf import generate_company_closing_pdf
+    from services.orders_helpers import compute_order_profit
+
+    actor = await require_permission(request, "company_funds")
+
+    # Parse bounds using the same date-range helper the CSV export uses.
+    date_query = _date_range_query(since, until)
+    since_iso = ""
+    until_iso = ""
+    if "created_at" in date_query:
+        since_iso = date_query["created_at"].get("$gte", "") or ""
+        until_iso = date_query["created_at"].get("$lte", "") or ""
+
+    # Treasury movements per currency in-range.
+    funds_rows = await _compute_company_funds_range(since_iso, until_iso)
+
+    # Per-currency fees (profits) from confirmed/completed orders in-range.
+    order_q: Dict[str, Any] = {"status": {"$in": ["approved", "completed"]}}
+    if since_iso and until_iso:
+        order_q["updated_at"] = {"$gte": since_iso, "$lte": until_iso}
+    elif since_iso:
+        order_q["updated_at"] = {"$gte": since_iso}
+    elif until_iso:
+        order_q["updated_at"] = {"$lte": until_iso}
+    orders = await db.orders.find(order_q, {"_id": 0}).to_list(20000)
+    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
+    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
+
+    revenue_by_currency: Dict[str, float] = {}
+    total_orders = 0
+    for o in orders:
+        fc, tc = o.get("from_code"), o.get("to_code")
+        if not fc or not tc:
+            continue
+        total_orders += 1
+        p = await compute_order_profit(o, rate_by_pair.get((fc, tc)))
+        if p:
+            code = _norm_code(p.get("currency")) or tc
+            revenue_by_currency[code] = revenue_by_currency.get(code, 0.0) + float(p.get("amount", 0) or 0)
+
+    # Convert fees to USD equivalent for the executive summary.
+    from services.balances import build_rate_lookup, convert_to_usdt
+    fx = await build_rate_lookup()
+    revenue_rows: List[dict] = []
+    total_revenue_usd = 0.0
+    for code in sorted(revenue_by_currency):
+        fees_native = revenue_by_currency[code]
+        fees_usd = convert_to_usdt(fees_native, code, fx) or 0.0
+        revenue_rows.append({
+            "currency": code,
+            "fees": round(fees_native, 4),
+            "fees_usd": round(fees_usd, 2),
+        })
+        total_revenue_usd += fees_usd
+
+    # KPIs — total volume USD + treasury USD (sum of balance in-range).
+    total_volume_usd = 0.0
+    for o in orders:
+        v = convert_to_usdt(o.get("amount_from", 0), o.get("from_code"), fx) or 0.0
+        total_volume_usd += v
+    treasury_usd = 0.0
+    for r in funds_rows:
+        b_usd = convert_to_usdt(r["balance"], r["currency"], fx) or 0.0
+        treasury_usd += b_usd
+
+    kpis = {
+        "total_orders": total_orders,
+        "gross_volume_usd": round(total_volume_usd, 2),
+        "revenue_usd": round(total_revenue_usd, 2),
+        "treasury_usd": round(treasury_usd, 2),
+    }
+
+    pdf_bytes = generate_company_closing_pdf(
+        since=since or "", until=until or "",
+        funds_rows=funds_rows, revenue_rows=revenue_rows,
+        kpis=kpis, actor=actor,
+    )
+    await log_action(
+        db, actor, "company_funds.closing_pdf_exported", "company_funds", "closing",
+        summary=f"Exported company closing PDF ({since or '—'} → {until or '—'})",
+        details={
+            "since": since or "", "until": until or "",
+            "currencies": [r["currency"] for r in funds_rows],
+            "total_orders": total_orders,
+            "revenue_usd": kpis["revenue_usd"],
+        },
+    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    range_slug = ""
+    if since and until:
+        range_slug = f"_{since}_{until}"
+    elif since:
+        range_slug = f"_desde_{since}"
+    elif until:
+        range_slug = f"_hasta_{until}"
+    filename = f"cierre_empresa{range_slug}_{ts}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

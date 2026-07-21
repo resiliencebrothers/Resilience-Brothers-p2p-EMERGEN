@@ -15,145 +15,112 @@
  *     - onConverted: optional callback fired after a successful conversion
  *       (parent components can refresh their own state, e.g. order list).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { extractDetailMessage } from "@/utils/apiErrors";
 import { toast } from "sonner";
-import { ArrowRightLeft, Wallet, ChevronDown } from "lucide-react";
+import { ArrowRightLeft, Wallet, ChevronDown, Sparkles } from "lucide-react";
 import { BalanceRow } from "@/components/converter/BalanceRow";
-import { ConvertPreview } from "@/components/converter/ConvertPreview";
+import ConvertDialog from "@/components/converter/ConvertDialog";
+import DustSweepDialog from "@/components/converter/DustSweepDialog";
+import { useConverterData } from "@/components/converter/useConverterData";
+
+// iter55.36i — universal 0.01 USDT fee on EVERY allowed conversion, and
+// the source amount must be worth ≥ 1.00 USDT equivalent. Mirrors the
+// backend rules in `routes/orders.py::vip_convert`.
+const CONVERT_FEE_USDT = 0.01;
+const CONVERT_MIN_SOURCE_USDT = 1.0;
+// iter79 — matches SMALL_BALANCE_THRESHOLD_USDT in services/transactions.py.
+const DUST_THRESHOLD_USDT = 5.0;
 
 export default function BalanceConverterCard({ onConverted }) {
   const { user } = useAuth();
   const { t } = useTranslation();
   const isVip = user?.role === "vip" || user?.role === "admin";
-  const isStaff = user?.role === "admin" || user?.role === "employee";
+  const isEmployee = user?.role === "employee";
 
-  const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
-  const [rates, setRates] = useState([]);
-  const [currencies, setCurrencies] = useState([]);
+  const { balances, currencies, positive, computeRate, toUsdt, refresh } =
+    useConverterData({ isVip, enabled: !isEmployee });
+
   const [open, setOpen] = useState(false);
   const [fromCode, setFromCode] = useState("");
   const [toCode, setToCode] = useState("USDT");
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(false);
-
-  const loadBalances = () =>
-    axios.get(`${API}/vip/balances`, { withCredentials: true })
-      .then((r) => setBalances(r.data))
-      .catch(() => {});
-
-  useEffect(() => {
-    // Employees never have VIP balances → render nothing
-    if (isStaff && user?.role === "employee") return;
-    loadBalances();
-    axios.get(`${API}/rates`).then((r) => setRates(r.data)).catch(() => {});
-    axios.get(`${API}/currencies`)
-      .then((r) => setCurrencies(r.data.filter((c) => c.is_active)))
-      .catch(() => {});
-  }, [isStaff, user?.role]);
-
-  // iter53 — memoize the positive-balance filter (was recomputed on every
-  // render of every interactive state change incl. dialog open/close).
-  const positive = useMemo(
-    () => (balances.balances || []).filter((b) => Number(b.amount) > 0),
-    [balances.balances],
+  // iter79 — Dust sweep button visible only when the user actually has
+  // something to sweep (any positive non-USDT balance whose USDT eq < 5).
+  const [dustOpen, setDustOpen] = useState(false);
+  const dustBalances = useMemo(
+    () => positive.filter(
+      (b) => b.currency !== "USDT"
+        && Number(b.usdt_equivalent || 0) > 0
+        && Number(b.usdt_equivalent || 0) < DUST_THRESHOLD_USDT,
+    ),
+    [positive],
   );
+
   const visible = useMemo(
     () => (showAll ? positive : positive.slice(0, 3)),
     [positive, showAll],
   );
 
-  // Employees don't see this widget. (hooks above must run first per rules-of-hooks)
-  if (user?.role === "employee") return null;
-
-  // Mirrors `services/balances.py::_convert_direct` (inverse-first).
-  const computeRate = (f, t) => {
-    if (!f || !t || f === t) return null;
-    const pick = (r) => Number(isVip ? (r.rate_vip || r.rate_normal) : r.rate_normal);
-    const direct = rates.find((r) => r.from_code === f && r.to_code === t);
-    if (direct) {
-      const v = pick(direct);
-      if (v > 0) return v;
-    }
-    const inverse = rates.find((r) => r.from_code === t && r.to_code === f);
-    if (inverse) {
-      const inv = pick(inverse);
-      if (inv > 0) return 1 / inv;
-    }
-    return null;
-  };
+  // Employees don't see this widget. Hooks must run before any early return.
+  if (isEmployee) return null;
 
   const openDialog = (currencyCode) => {
     setFromCode(currencyCode);
-    // iter55.29 — first convertible target that isn't the source. Falls back
-    // to any active non-source currency if the catalog has no explicit
-    // convertible currencies (defensive).
+    // iter77 — Pick the FIRST convertible destination that ALSO has a rate
+    // configured FROM the source currency. Avoids showing "No configured
+    // rate" on dialog open just because the alphabetical first destination
+    // happens to lack a rate.
+    const hasRate = (dst) => computeRate(currencyCode, dst) !== null;
     const convertibleTargets = currencies.filter(
       (c) => c.code !== currencyCode && c.is_convertible_to !== false,
     );
-    const defaultTarget = currencyCode === "USDT"
-      ? (convertibleTargets.find((c) => c.code !== "USDT")?.code
-         || currencies.find((c) => c.code !== "USDT")?.code
-         || "USD")
-      : (convertibleTargets.find((c) => c.code === "USDT") ? "USDT"
-         : (convertibleTargets[0]?.code || "USDT"));
+    const withRate = convertibleTargets.filter((c) => hasRate(c.code));
+    const preferred = currencyCode === "USDT"
+      ? withRate.find((c) => c.code !== "USDT")
+      : withRate.find((c) => c.code === "USDT") || withRate[0];
+    const defaultTarget = preferred?.code
+      || convertibleTargets[0]?.code
+      || (currencyCode === "USDT" ? "USD" : "USDT");
     setToCode(defaultTarget);
     setAmount("");
     setOpen(true);
   };
 
   const previewRate = computeRate(fromCode, toCode);
-  // iter55.36i — universal 0.01 USDT fee on EVERY allowed conversion, and
-  // the source amount must be worth ≥ 1.00 USDT equivalent. Mirrors the
-  // backend rules in `routes/orders.py::vip_convert`.
-  const CONVERT_FEE_USDT = 0.01;
-  const CONVERT_MIN_SOURCE_USDT = 1.0;
-
-  // Helper: convert an amount in `code` to its USDT equivalent using the
-  // same rate table the backend uses. Prefers the operator's inverse
-  // valuation quote (USDT→code) then falls back to code→USDT direct.
-  const toUsdt = (amt, code) => {
-    if (amt == null || !code) return null;
-    if (code === "USDT") return amt;
-    const inverse = rates.find(r => r.from_code === "USDT" && r.to_code === code);
-    if (inverse && inverse.rate_normal > 0) return amt / inverse.rate_normal;
-    const direct = rates.find(r => r.from_code === code && r.to_code === "USDT");
-    if (direct && direct.rate_normal > 0) return amt * direct.rate_normal;
-    return null;
-  };
-  // Fee expressed in the destination currency (for preview UI only — backend
-  // is the source of truth in the response).
-  const feeInToCode = (() => {
-    if (!toCode) return null;
-    if (toCode === "USDT") return CONVERT_FEE_USDT;
-    const direct = rates.find(r => r.from_code === "USDT" && r.to_code === toCode);
-    if (direct && direct.rate_normal > 0) return CONVERT_FEE_USDT * direct.rate_normal;
-    const inverse = rates.find(r => r.from_code === toCode && r.to_code === "USDT");
-    if (inverse && inverse.rate_normal > 0) return CONVERT_FEE_USDT / inverse.rate_normal;
-    return null;
-  })();
-  const previewGross = previewRate && amount
-    ? Number(parseFloat(amount) * previewRate)
-    : null;
-  const previewNet = (previewGross == null || feeInToCode == null)
-    ? previewGross
-    : Math.max(0, previewGross - feeInToCode);
+  // iter77 — Fee model:
+  //   • Destination receives the FULL equivalent (`amount × rate`).
+  //   • 0.01 USDT is charged SEPARATELY from the client's USDT balance.
+  //   • If source is USDT, total USDT needed = amount + 0.01.
+  //   • If source is NOT USDT, USDT balance must have ≥ 0.01 available.
+  //   Preview matches backend exactly (`routes/orders.py::vip_convert`).
   const previewSourceUsdt = amount ? toUsdt(parseFloat(amount), fromCode) : null;
   const belowMinSource = previewSourceUsdt !== null && previewSourceUsdt < CONVERT_MIN_SOURCE_USDT;
+  const previewNet = previewRate && amount ? parseFloat(amount) * previewRate : null;
+  // Check the USDT balance can cover the fee (and the source amount when
+  // source itself is USDT). Used to preemptively disable the confirm button.
+  const usdtBalance = Number(positive.find((b) => b.currency === "USDT")?.amount || 0);
+  const requiredUsdt = CONVERT_FEE_USDT + (fromCode === "USDT" ? (parseFloat(amount) || 0) : 0);
+  const insufficientUsdtForFee = amount && usdtBalance < requiredUsdt;
+
+  const onMax = () => {
+    const b = positive.find((x) => x.currency === fromCode);
+    if (!b) return;
+    // iter77 — When converting USDT→X, MAX must leave 0.01 USDT for the fee
+    // so the confirmation doesn't bounce back with "insufficient USDT".
+    if (fromCode === "USDT") {
+      const maxAvailable = Math.max(0, Number(b.amount) - CONVERT_FEE_USDT);
+      setAmount(String(maxAvailable));
+    } else {
+      setAmount(String(b.amount));
+    }
+  };
 
   const submit = async () => {
     const amt = parseFloat(amount);
@@ -165,13 +132,27 @@ export default function BalanceConverterCard({ onConverted }) {
     if (!have || Number(have.amount) < amt) {
       return toast.error(`No tienes ${amt} ${fromCode} disponible.`);
     }
-    // iter55.36i — client-side minimum-source guard mirroring backend
     if (belowMinSource) {
       return toast.error(
         `Mínimo por conversión: equivalente a ${CONVERT_MIN_SOURCE_USDT.toFixed(2)} USDT.` +
         (previewSourceUsdt !== null
           ? ` Tu monto equivale a ${previewSourceUsdt.toFixed(4)} USDT.`
-          : "")
+          : ""),
+      );
+    }
+    // iter77 — Guard: USDT balance must cover the fee.
+    const totalUsdtNeeded = CONVERT_FEE_USDT + (fromCode === "USDT" ? amt : 0);
+    if (usdtBalance < totalUsdtNeeded) {
+      if (fromCode === "USDT") {
+        return toast.error(
+          `Saldo insuficiente en USDT: necesitas al menos ${totalUsdtNeeded.toFixed(2)} USDT ` +
+          `(${amt.toFixed(2)} para convertir + ${CONVERT_FEE_USDT.toFixed(2)} de comisión). ` +
+          `Tienes ${usdtBalance.toFixed(4)} USDT.`,
+        );
+      }
+      return toast.error(
+        `Necesitas al menos ${CONVERT_FEE_USDT.toFixed(2)} USDT en tu saldo para pagar la comisión. ` +
+        `Tienes ${usdtBalance.toFixed(4)} USDT.`,
       );
     }
     setBusy(true);
@@ -182,15 +163,14 @@ export default function BalanceConverterCard({ onConverted }) {
         { withCredentials: true },
       );
       const fee = r.data.usdt_fee;
-      const feeInDest = r.data.fee_in_to_code;
-      const feeSuffix = fee > 0
-        ? ` (comisión ${fee} USDT${feeInDest && toCode !== "USDT" ? ` ≈ ${feeInDest} ${toCode}` : ""})`
-        : "";
+      // iter77 — Fee is now debited separately; the toast still reports it
+      // to close the loop with the client.
+      const feeSuffix = fee > 0 ? ` (comisión ${fee} USDT descontada aparte)` : "";
       toast.success(
         `Convertiste ${amt} ${fromCode} en ${r.data.amount_to} ${toCode}${feeSuffix}.`,
       );
       setOpen(false);
-      await loadBalances();
+      await refresh();
       if (onConverted) await onConverted();
     } catch (e) {
       toast.error(extractDetailMessage(e, "Error en la conversión"));
@@ -248,99 +228,58 @@ export default function BalanceConverterCard({ onConverted }) {
         </button>
       )}
 
-      {/* Conversion dialog */}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="bg-[#111] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2" data-testid="converter-dialog-title">
-              {t("balanceConverter.dialogTitle")} {fromCode}
-              <ArrowRightLeft className="w-4 h-4 text-[#8B5CF6]" />
-              {toCode}
-            </DialogTitle>
-            <DialogDescription className="text-neutral-400 text-xs">
-              Mueve fondos entre tus propias monedas al tipo de cambio {isVip ? "VIP" : "estándar"}.
-              {" "}Cada conversión permitida tiene una comisión fija de {CONVERT_FEE_USDT.toFixed(2)} USDT y un mínimo por operación equivalente a {CONVERT_MIN_SOURCE_USDT.toFixed(2)} USDT.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 pt-4">
-            <div>
-              <Label className="micro-label text-neutral-500">Moneda destino</Label>
-              <Select value={toCode} onValueChange={setToCode}>
-                <SelectTrigger
-                  data-testid="converter-to-code"
-                  className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
-                >
-                  <SelectValue placeholder="Selecciona destino" />
-                </SelectTrigger>
-                <SelectContent className="bg-[#111] border-white/10 text-white">
-                  {currencies
-                    .filter((c) => c.code !== fromCode && c.is_convertible_to !== false)
-                    .map((c) => (
-                      <SelectItem
-                        key={c.code}
-                        value={c.code}
-                        data-testid={`converter-to-option-${c.code}`}
-                      >
-                        {c.code} · {c.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="micro-label text-neutral-500">
-                Cantidad de {fromCode}
-              </Label>
-              <div className="flex items-center gap-2 mt-2">
-                <Input
-                  data-testid="converter-amount"
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="rounded-none bg-[#0a0a0a] border-white/10 h-12 font-mono"
-                />
-                <Button
-                  variant="ghost"
-                  className="text-xs text-[#8B5CF6] h-12 rounded-none px-3 hover:bg-[#8B5CF6]/10"
-                  onClick={() => {
-                    const b = positive.find((x) => x.currency === fromCode);
-                    if (b) setAmount(String(b.amount));
-                  }}
-                  data-testid="converter-max"
-                >MÁX</Button>
-              </div>
-              {fromCode && (
-                <div className="text-[0.65rem] text-neutral-500 mt-1 font-mono">
-                  Saldo: {(positive.find((x) => x.currency === fromCode)?.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {fromCode}
-                </div>
-              )}
-            </div>
-            <ConvertPreview
-              fromCode={fromCode}
-              toCode={toCode}
-              previewRate={previewRate}
-              previewGross={previewGross}
-              previewNet={previewNet}
-              feeInToCode={feeInToCode}
-              feeUsdt={CONVERT_FEE_USDT}
-              belowMinSource={belowMinSource}
-              minSourceUsdt={CONVERT_MIN_SOURCE_USDT}
-              previewSourceUsdt={previewSourceUsdt}
-            />
-            <Button
-              data-testid="confirm-converter"
-              onClick={submit}
-              disabled={busy || !amount || previewRate === null || belowMinSource}
-              className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 flex items-center justify-center gap-2"
-            >
-              <ArrowRightLeft className="w-4 h-4" />
-              {busy ? "Convirtiendo..." : "Confirmar conversión"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* iter79 — Dust sweep CTA. Only shown when there is dust to sweep. */}
+      {dustBalances.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setDustOpen(true)}
+          data-testid="dust-sweep-open"
+          className="mt-4 w-full flex items-center justify-between gap-2 px-3 py-2 border border-[#8B5CF6]/25 bg-[#8B5CF6]/5 hover:bg-[#8B5CF6]/10 hover:border-[#8B5CF6]/50 transition-colors text-left group"
+        >
+          <span className="flex items-center gap-2 text-xs text-neutral-300 group-hover:text-white">
+            <Sparkles className="w-3.5 h-3.5 text-[#8B5CF6]" />
+            <span>
+              {t("balanceConverter.dustCta", { count: dustBalances.length })}
+            </span>
+          </span>
+          <span className="text-[0.6rem] font-mono text-[#8B5CF6] uppercase tracking-wider">
+            &lt; {DUST_THRESHOLD_USDT} USDT
+          </span>
+        </button>
+      )}
+
+      <ConvertDialog
+        open={open}
+        onOpenChange={setOpen}
+        isVip={isVip}
+        fromCode={fromCode}
+        toCode={toCode}
+        amount={amount}
+        onToCodeChange={setToCode}
+        onAmountChange={setAmount}
+        onMax={onMax}
+        currencies={currencies}
+        positive={positive}
+        previewRate={previewRate}
+        previewNet={previewNet}
+        feeUsdt={CONVERT_FEE_USDT}
+        minSourceUsdt={CONVERT_MIN_SOURCE_USDT}
+        belowMinSource={belowMinSource}
+        previewSourceUsdt={previewSourceUsdt}
+        insufficientUsdtForFee={insufficientUsdtForFee}
+        usdtBalance={usdtBalance}
+        busy={busy}
+        onSubmit={submit}
+      />
+
+      <DustSweepDialog
+        open={dustOpen}
+        onOpenChange={setDustOpen}
+        onConverted={async () => {
+          await refresh();
+          if (onConverted) await onConverted();
+        }}
+      />
     </div>
   );
 }

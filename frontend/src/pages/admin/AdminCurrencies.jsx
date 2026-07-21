@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import AdminPageHeader from "@/components/AdminPageHeader";
+import CurrencyIcon from "@/components/CurrencyIcon";
 import { Plus, Edit2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -81,7 +82,12 @@ export default function AdminCurrencies() {
           <tbody>
             {items.map(c => (
               <tr key={c.id} className="border-b border-white/5">
-                <td className="px-4 py-3 font-mono font-semibold">{c.code}</td>
+                <td className="px-4 py-3 font-mono font-semibold">
+                  <div className="flex items-center gap-2">
+                    <CurrencyIcon code={c.code} size="md" />
+                    <span data-testid={`currency-code-${c.code}`}>{c.code}</span>
+                  </div>
+                </td>
                 <td className="px-4 py-3">{c.name}</td>
                 <td className="px-4 py-3"><span className={`text-xs uppercase border px-2 py-0.5 ${c.type === "crypto" ? "border-[#8B5CF6]/40 text-[#8B5CF6]" : "border-white/20 text-neutral-400"}`}>{c.type}</span></td>
                 <td className="px-4 py-3 text-neutral-400">{c.country || "—"}</td>

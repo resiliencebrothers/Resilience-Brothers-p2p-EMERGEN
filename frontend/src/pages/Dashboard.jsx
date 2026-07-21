@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
 import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight, HandCoins } from "lucide-react";
@@ -226,6 +226,7 @@ export default function Dashboard() {
             <Route path="exchange" element={<ExchangeView />} />
             <Route path="orders" element={<OrdersView />} />
             <Route path="transactions" element={<MyTransactions />} />
+            <Route path="history" element={<Navigate to="/dashboard/transactions" replace />} />
             <Route path="kyc" element={<KYCView />} />
             <Route path="security" element={<SecuritySettings />} />
             <Route path="profile" element={<ProfileView />} />

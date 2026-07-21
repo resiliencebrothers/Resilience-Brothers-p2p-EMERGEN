@@ -1,9 +1,19 @@
-"""Web Push notifications via VAPID."""
+"""Web Push notifications via VAPID.
+
+Localised: every `build_*_payload()` helper now accepts an optional `lang`
+argument and pulls its title/body from `services.notification_i18n.CATALOG`.
+Callers pass the recipient's `preferred_language` (typically resolved via
+`resolve_lang(db, user_id)` at the callsite). When not provided the service
+falls back to the platform default (Spanish) for backwards compatibility.
+"""
 import os
 import json
 import logging
 from pathlib import Path
+from typing import Optional
 from pywebpush import webpush, WebPushException
+
+from services.notification_i18n import t as _t, get_field
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +58,18 @@ def send_push(subscription: dict, payload: dict) -> str:
         return "transient"
 
 
-def build_order_approved_payload(order: dict) -> dict:
+def _order_short(order: dict) -> str:
+    return order["id"][:8]
+
+
+def build_order_approved_payload(order: dict, lang: Optional[str] = None) -> dict:
+    short_id = _order_short(order)
     return {
-        "title": f"Orden #{order['id'][:8]} aprobada ✓",
-        "body": f"{order['amount_to']} {order['to_code']} listos para entregar.",
+        "title": _t("order_approved", lang, "push_title", short_id=short_id),
+        "body": _t(
+            "order_approved", lang, "push_body",
+            amt=order["amount_to"], code=order["to_code"],
+        ),
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
         "tag": f"order-{order['id']}",
@@ -59,11 +77,13 @@ def build_order_approved_payload(order: dict) -> dict:
     }
 
 
-def build_order_rejected_payload(order: dict) -> dict:
+def build_order_rejected_payload(order: dict, lang: Optional[str] = None) -> dict:
+    short_id = _order_short(order)
     note = (order.get("admin_note") or "")[:80]
+    body = note or _t("order_rejected", lang, "push_body_default")
     return {
-        "title": f"Orden #{order['id'][:8]} rechazada",
-        "body": note or "Por favor revisa los detalles desde tu dashboard.",
+        "title": _t("order_rejected", lang, "push_title", short_id=short_id),
+        "body": body,
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
         "tag": f"order-{order['id']}",
@@ -71,22 +91,21 @@ def build_order_rejected_payload(order: dict) -> dict:
     }
 
 
-def build_order_completed_payload(order: dict) -> dict:
+def build_order_completed_payload(order: dict, lang: Optional[str] = None) -> dict:
     """iter55 — Sent when the admin/staff marks an order as `completed` (payout
     delivered). For `accumulate`, the tone is different (balance credited)."""
+    short_id = _order_short(order)
     method = order.get("delivery_method")
     amount_to = order.get("amount_to", 0)
     to_code = order.get("to_code", "")
-    if method == "accumulate":
-        body = f"Se acreditó {amount_to} {to_code} a tu saldo VIP."
-    elif method == "crypto":
-        body = f"Enviamos {amount_to} {to_code} a tu wallet. Revisa el TX hash."
-    elif method == "cash":
-        body = f"Efectivo de {amount_to} {to_code} entregado. Confirma la recepción."
-    else:  # transfer
-        body = f"Transferimos {amount_to} {to_code} a tu cuenta. Revisa el comprobante."
+    field = {
+        "accumulate": "push_accumulate",
+        "crypto": "push_crypto",
+        "cash": "push_cash",
+    }.get(method, "push_transfer")
+    body = _t("order_completed", lang, field, amt=amount_to, code=to_code)
     return {
-        "title": f"Orden #{order['id'][:8]} completada ✓",
+        "title": _t("order_completed", lang, "push_title", short_id=short_id),
         "body": body,
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
@@ -97,17 +116,17 @@ def build_order_completed_payload(order: dict) -> dict:
 
 def build_rate_changed_payload(from_code: str, to_code: str,
                                 rate_normal: float, rate_vip: float,
-                                for_role: str = "normal") -> dict:
+                                for_role: str = "normal",
+                                lang: Optional[str] = None) -> dict:
     """iter55 — Fanout to all clients when an exchange rate is updated.
     `for_role='vip'` shows the VIP rate; 'normal' shows the standard rate."""
     rate = rate_vip if for_role == "vip" else rate_normal
-    label = "VIP" if for_role == "vip" else ""
+    vip_suffix = get_field("rate_change", lang, "push_vip_suffix") if for_role == "vip" else ""
     return {
-        "title": f"Nueva tasa {from_code} → {to_code}",
-        "body": (
-            f"1 {from_code} = {rate:g} {to_code}"
-            + (f" ({label})" if label else "")
-            + ". Revisa el dashboard antes de intercambiar."
+        "title": _t("rate_change", lang, "title", from_code=from_code, to_code=to_code),
+        "body": _t(
+            "rate_change", lang, "push_body",
+            from_code=from_code, to_code=to_code, rate=rate, vip_suffix=vip_suffix,
         ),
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
@@ -141,12 +160,12 @@ async def send_push_to_user(db, user_id: str, payload: dict) -> None:
         logger.error(f"send_push_to_user({user_id}) failed: {e}")
 
 
-def build_new_pending_user_payload(target_user: dict) -> dict:
+def build_new_pending_user_payload(target_user: dict, lang: Optional[str] = None) -> dict:
     name = target_user.get("name") or target_user.get("email") or "Usuario"
     phone = target_user.get("phone") or "-"
     return {
-        "title": "Nuevo usuario pendiente de verificación",
-        "body": f"{name} ({phone}). Verifica o rechaza desde Admin → Usuarios.",
+        "title": _t("new_user_pending", lang, "title"),
+        "body": _t("new_user_pending", lang, "push_body", name=name, phone=phone),
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
         "tag": f"pending-{target_user.get('user_id', 'x')}",
@@ -154,10 +173,10 @@ def build_new_pending_user_payload(target_user: dict) -> dict:
     }
 
 
-def build_phone_verified_payload(target_user: dict) -> dict:
+def build_phone_verified_payload(target_user: dict, lang: Optional[str] = None) -> dict:
     return {
-        "title": "¡Tu cuenta está activa! ✓",
-        "body": "Hemos verificado tu teléfono. Ya puedes operar en la plataforma.",
+        "title": _t("phone_verified", lang, "push_title"),
+        "body": _t("phone_verified", lang, "push_body"),
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
         "tag": f"verified-{target_user.get('user_id', 'x')}",
@@ -165,13 +184,14 @@ def build_phone_verified_payload(target_user: dict) -> dict:
     }
 
 
-def build_phone_rejected_payload(target_user: dict, reason: str) -> dict:
+def build_phone_rejected_payload(target_user: dict, reason: str,
+                                    lang: Optional[str] = None) -> dict:
+    body = (reason or _t("phone_rejected", lang, "push_body_fallback"))[:140]
     return {
-        "title": "Verificación rechazada",
-        "body": (reason or "Tu teléfono no pudo ser verificado. Contacta a soporte.")[:140],
+        "title": _t("phone_rejected", lang, "title"),
+        "body": body,
         "icon": "/icons/icon-192.png",
         "badge": "/icons/icon-192.png",
         "tag": f"rejected-{target_user.get('user_id', 'x')}",
         "url": f"{APP_URL}/dashboard" if APP_URL else "/dashboard",
     }
-

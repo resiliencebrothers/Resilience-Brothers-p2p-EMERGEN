@@ -28,7 +28,7 @@ def vip_with_cup_balance():
     uid = "user_test_vip01"
     db.users.update_one(
         {"user_id": uid},
-        {"$set": {"vip_balances.CUP": 50000.0, "vip_balances.USDT": 0.0}},
+        {"$set": {"vip_balances.CUP": 50000.0, "vip_balances.USDT": 0.01}},
     )
     yield uid
     # restore to a clean slate
@@ -53,13 +53,16 @@ class TestVipConvert:
         assert body["from_code"] == "CUP"
         assert body["to_code"] == "USDT"
         assert body["amount_from"] == 10000.0
-        # 10000 * vip_rate — verify it's a sensible USDT amount
-        assert body["amount_to"] > 0
+        # iter77 — Destination receives the FULL equivalent (no fee subtraction).
+        assert body["amount_to"] == round(10000.0 * body["rate"], 4)
         assert body["rate"] > 0
-        # Verify balance was actually swapped in mongo
+        assert body["usdt_fee"] == 0.01
+        # Verify balance was actually swapped in mongo:
+        #   CUP: 50000 - 10000 = 40000
+        #   USDT: 0.01 (fixture seed) + amount_to - 0.01 (fee) = amount_to
         db = MongoClient(MONGO_URL)[DB_NAME]
         u = db.users.find_one({"user_id": vip_with_cup_balance}, {"_id": 0})
-        assert u["vip_balances"]["CUP"] == 40000.0  # 50000 - 10000
+        assert u["vip_balances"]["CUP"] == 40000.0
         assert abs(u["vip_balances"]["USDT"] - body["amount_to"]) < 0.001
 
     def test_insufficient_balance_returns_400(self, vip_with_cup_balance):
@@ -162,12 +165,10 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            # USDT→CUP rate_vip=395 → 1 USDT = 395 CUP gross.
-            # iter55.36i — universal 0.01 USDT fee converted at rate_normal
-            # (USDT→CUP=380) = 3.80 CUP. Net = 395 - 3.80 = 391.20 CUP.
+            # iter77 — Destination gets full equivalent; fee is separate USDT debit.
             assert body["rate"] == 395.0
             assert body["usdt_fee"] == 0.01
-            assert body["amount_to"] == 391.20
+            assert body["amount_to"] == 395.0
         finally:
             db.users.update_one(
                 {"user_id": uid},
@@ -176,15 +177,13 @@ class TestVipConvert:
             )
 
     def test_usd_to_cup_via_inverse_rate(self):
-        """iter49 — USD→CUP has no direct rate; uses inverse USDT path?
-        Actually USDT→USD and USD→CUP both exist; we test the path where
-        the user converts between two non-USDT currencies that have direct
-        rates. USD→CUP IS direct (rate_normal=380, rate_vip=395)."""
+        """USD→CUP is direct (rate_vip=395). Requires 0.01 USDT balance for the fee."""
         db = MongoClient(MONGO_URL)[DB_NAME]
         uid = "user_test_vip01"
         db.users.update_one(
             {"user_id": uid},
-            {"$set": {"vip_balances.USD": 10.0, "vip_balances.CUP": 0.0}},
+            {"$set": {"vip_balances.USD": 10.0, "vip_balances.CUP": 0.0,
+                      "vip_balances.USDT": 0.01}},
         )
         try:
             r = requests.post(
@@ -195,15 +194,15 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            assert body["rate"] == 395.0  # vip rate for the conversion
-            # iter55.36i — fee 0.01 USDT · rate_normal(USDT→CUP)=380 = 3.80 CUP.
-            # Net = 3950 - 3.80 = 3946.20 CUP.
-            assert body["amount_to"] == 3946.20
+            assert body["rate"] == 395.0
+            # iter77 — Full equivalent, no fee subtracted from destination.
+            assert body["amount_to"] == 3950.0
         finally:
             db.users.update_one(
                 {"user_id": uid},
                 {"$unset": {"vip_balances.USD": "",
-                            "vip_balances.CUP": ""}},
+                            "vip_balances.CUP": "",
+                            "vip_balances.USDT": ""}},
             )
 
     def test_normal_role_can_convert_uses_rate_normal(self):
@@ -225,10 +224,9 @@ class TestVipConvert:
             assert r.status_code == 200, r.text
             body = r.json()
             # rate_normal=380 (vs rate_vip=395) — normals get the worse rate.
-            # iter55.36i — 0.01 USDT fee · rate_normal(USDT→CUP)=380 = 3.80 CUP.
-            # Net = 380 - 3.80 = 376.20 CUP.
+            # iter77 — Full equivalent delivered; fee 0.01 USDT charged separately.
             assert body["rate"] == 380.0
-            assert body["amount_to"] == 376.20
+            assert body["amount_to"] == 380.0
         finally:
             db.users.update_one(
                 {"user_id": uid},

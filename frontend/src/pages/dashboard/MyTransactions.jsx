@@ -1,359 +1,284 @@
-import { useEffect, useState, useCallback } from "react";
-import axios from "axios";
+/**
+ * iter83 — MyTransactions
+ *
+ * Composition-only container. Owns:
+ *   • Page chrome (title, subtitle, breadcrumb).
+ *   • Live-feed toggle button + "N new items" pill (both derive their
+ *     state from useTransactionsQuery).
+ *   • Live balance summary widget at the top.
+ *   • Direction TAB pills (Todas / Entradas / Salidas / Conversiones).
+ *   • Per-currency totals grid.
+ *
+ * All data-plane concerns (fetching, polling, filter state) live in
+ * `useTransactionsQuery`. Filter row and table live in their own files.
+ * Behaviour is identical to iter79 — this is a maintenance-only refactor.
+ */
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { API } from "@/App";
-import { toast } from "sonner";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pagination } from "@/components/Pagination";
-import { Receipt, ArrowDown, ArrowUp, Download, FileText, X } from "lucide-react";
-
-const PAGE_SIZE = 50;
+import CurrencyIcon from "@/components/CurrencyIcon";
+import { Receipt, ArrowDown, ArrowUp, ArrowRightLeft, Radio, Pause, ChevronRight } from "lucide-react";
+import { useTransactionsQuery, PAGE_SIZE } from "@/pages/dashboard/history/useTransactionsQuery";
+import TransactionFilters from "@/pages/dashboard/history/TransactionFilters";
+import TransactionTable from "@/pages/dashboard/history/TransactionTable";
+import AllBalancesDialog from "@/pages/dashboard/history/AllBalancesDialog";
 
 export default function MyTransactions() {
   const { t } = useTranslation();
-  const [items, setItems] = useState([]);
-  const [totals, setTotals] = useState({ by_currency: {} });
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const q = useTransactionsQuery();
 
-  const [direction, setDirection] = useState("all");
-  const [currency, setCurrency] = useState("");
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
-  const [minAmount, setMinAmount] = useState("");
-  const [maxAmount, setMaxAmount] = useState("");
-  const [selected, setSelected] = useState(null);
+  const { filters, page, setPage } = q;
+  const { tab, setTab } = filters;
 
-  const [currencies, setCurrencies] = useState([]);
-  useEffect(() => {
-    axios.get(`${API}/currencies`, { withCredentials: true })
-      .then((r) => setCurrencies(r.data.filter((c) => c.is_active)))
-      .catch(() => {});
-  }, []);
+  const totalsRows = useMemo(
+    () => Object.entries(q.totals?.by_currency || {})
+      .map(([code, v]) => ({ code, ...v, net: (v.in || 0) - (v.out || 0) }))
+      .sort((a, b) => Math.abs(b.net) - Math.abs(a.net)),
+    [q.totals],
+  );
 
-  useEffect(() => { setPage(0); }, [direction, currency, since, until, minAmount, maxAmount]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
-      if (direction !== "all") params.direction = direction;
-      if (currency) params.currency = currency;
-      if (since) params.since = since;
-      if (until) params.until = until;
-      if (minAmount !== "") params.min_amount = minAmount;
-      if (maxAmount !== "") params.max_amount = maxAmount;
-      const r = await axios.get(`${API}/me/transactions`, { params, withCredentials: true });
-      setItems(r.data.items);
-      setTotals(r.data.totals);
-      const totalCount = Number(r.headers["x-total-count"]);
-      setTotal(Number.isFinite(totalCount) ? totalCount : r.data.items.length);
-    } catch (e) {
-      toast.error(e.response?.data?.detail || t("myTransactions.loadError"));
-    } finally {
-      setLoading(false);
-    }
-  }, [direction, currency, since, until, minAmount, maxAmount, page, t]);
-  useEffect(() => { load(); }, [load]);
-
-  const downloadExport = async (kind) => {
-    try {
-      const params = new URLSearchParams();
-      if (direction !== "all") params.set("direction", direction);
-      if (currency) params.set("currency", currency);
-      if (since) params.set("since", since);
-      if (until) params.set("until", until);
-      if (minAmount !== "") params.set("min_amount", minAmount);
-      if (maxAmount !== "") params.set("max_amount", maxAmount);
-      const url = `${API}/me/transactions/export.${kind}?${params.toString()}`;
-      const r = await axios.get(url, { responseType: "blob", withCredentials: true });
-      const blobUrl = URL.createObjectURL(new Blob([r.data], { type: r.headers["content-type"] }));
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
-      a.download = `${t("myTransactions.exportFilename")}_${ts}.${kind}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(blobUrl);
-      toast.success(t("myTransactions.exportedToast", { kind: kind.toUpperCase() }));
-    } catch (e) {
-      toast.error(t("myTransactions.exportError", { kind: kind.toUpperCase() }));
-    }
-  };
-
-  const clearFilters = () => {
-    setDirection("all");
-    setCurrency("");
-    setSince("");
-    setUntil("");
-    setMinAmount("");
-    setMaxAmount("");
-  };
-
-  const hasFilters = direction !== "all" || currency || since || until || minAmount !== "" || maxAmount !== "";
-  const totalsRows = Object.entries(totals?.by_currency || {})
-    .map(([code, v]) => ({ code, ...v, net: (v.in || 0) - (v.out || 0) }))
-    .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
+  const conversionCount = Number(q.totals?.conversion_count || 0);
+  const tabPills = useMemo(() => [
+    { key: "all", label: t("myTransactions.tabs.all") },
+    { key: "in",  label: t("myTransactions.tabs.in") },
+    { key: "out", label: t("myTransactions.tabs.out") },
+    { key: "conversion", label: t("myTransactions.tabs.conversion"), badge: conversionCount },
+  ], [t, conversionCount]);
 
   return (
     <div data-testid="my-transactions" className="space-y-5">
-      <div className="mb-2">
-        <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
-          <Receipt className="w-3.5 h-3.5" /> {t("myTransactions.breadcrumb")}
+      <div className="mb-2 flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
+            <Receipt className="w-3.5 h-3.5" /> {t("myTransactions.breadcrumb")}
+          </div>
+          <h1 className="font-display text-3xl">{t("myTransactions.title")}</h1>
+          <p className="text-neutral-500 text-sm mt-1">
+            {t("myTransactions.subtitle")}
+          </p>
         </div>
-        <h1 className="font-display text-3xl">{t("myTransactions.title")}</h1>
-        <p className="text-neutral-500 text-sm mt-1">
-          {t("myTransactions.subtitle")}
-        </p>
+        <LiveToggle
+          liveEnabled={q.liveEnabled}
+          onToggle={() => q.setLiveEnabled((v) => !v)}
+          t={t}
+        />
+      </div>
+
+      {q.newItemsCount > 0 && (
+        <button
+          type="button"
+          onClick={q.applyNewItems}
+          data-testid="my-tx-new-items-pill"
+          className="mx-auto flex items-center gap-2 px-4 py-2 bg-[#8B5CF6] text-white text-xs uppercase tracking-widest font-mono hover:bg-[#8B5CF6]/90 transition-colors animate-in fade-in slide-in-from-top-2 duration-300"
+        >
+          <ArrowDown className="w-3.5 h-3.5" />
+          {t("myTransactions.live.newItems", { count: q.newItemsCount })}
+        </button>
+      )}
+
+      <BalanceSummary balanceSummary={q.balanceSummary} t={t} />
+
+      <div className="flex gap-2 flex-wrap" data-testid="my-tx-tabs" role="tablist">
+        {tabPills.map((p) => (
+          <TabPill key={p.key} pill={p} active={tab === p.key} onClick={() => setTab(p.key)} />
+        ))}
       </div>
 
       {totalsRows.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="my-tx-totals">
           {totalsRows.slice(0, 6).map((row) => (
-            <div key={row.code} className="tactile-card p-4">
-              <div className="micro-label text-neutral-500 mb-1">{row.code}</div>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-neutral-400 flex items-center gap-1">
-                    <ArrowDown className="w-3 h-3 text-[#22C55E]" /> {t("myTransactions.in")}
-                  </span>
-                  <span className="font-mono text-[#22C55E]">+{row.in.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-400 flex items-center gap-1">
-                    <ArrowUp className="w-3 h-3 text-[#EF4444]" /> {t("myTransactions.out")}
-                  </span>
-                  <span className="font-mono text-[#EF4444]">-{row.out.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between border-t border-white/5 pt-1 mt-1">
-                  <span className="text-neutral-300 text-xs">{t("myTransactions.net")}</span>
-                  <span className={`font-mono font-bold ${row.net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
-                    {row.net >= 0 ? "+" : ""}{row.net.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
+            <TotalCard key={row.code} row={row} t={t} />
           ))}
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-end justify-between">
-        <div className="flex flex-wrap gap-3 items-end">
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.direction")}</div>
-            <Select value={direction} onValueChange={setDirection}>
-              <SelectTrigger data-testid="my-tx-direction" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                <SelectItem value="all">{t("myTransactions.filters.all")}</SelectItem>
-                <SelectItem value="in">{t("myTransactions.filters.onlyIn")}</SelectItem>
-                <SelectItem value="out">{t("myTransactions.filters.onlyOut")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.currency")}</div>
-            <Select value={currency || "all"} onValueChange={(v) => setCurrency(v === "all" ? "" : v)}>
-              <SelectTrigger data-testid="my-tx-currency" className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                <SelectItem value="all">{t("myTransactions.filters.all")}</SelectItem>
-                {currencies.map((c) => (
-                  <SelectItem key={c.code} value={c.code}>{c.code}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.since")}</div>
-            <Input type="date" data-testid="my-tx-since" value={since} onChange={(e) => setSince(e.target.value)}
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs" />
-          </div>
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.until")}</div>
-            <Input type="date" data-testid="my-tx-until" value={until} onChange={(e) => setUntil(e.target.value)}
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40 font-mono text-xs" />
-          </div>
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.min")}</div>
-            <Input type="number" min="0" step="0.01" data-testid="my-tx-min" value={minAmount}
-              onChange={(e) => setMinAmount(e.target.value)} placeholder="0"
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-24 font-mono text-xs" />
-          </div>
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.max")}</div>
-            <Input type="number" min="0" step="0.01" data-testid="my-tx-max" value={maxAmount}
-              onChange={(e) => setMaxAmount(e.target.value)} placeholder="∞"
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-24 font-mono text-xs" />
-          </div>
-          {hasFilters && (
-            <button data-testid="my-tx-clear" onClick={clearFilters}
-              className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10">
-              {t("myTransactions.filters.clear")}
-            </button>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <Button data-testid="my-tx-export-csv" onClick={() => downloadExport("csv")}
-            className="rounded-none bg-transparent border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-[#8B5CF6]/5 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider">
-            <Download className="w-3.5 h-3.5 mr-2" /> CSV
-          </Button>
-          <Button data-testid="my-tx-export-pdf" onClick={() => downloadExport("pdf")}
-            className="rounded-none bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white h-10 px-4 font-mono text-xs uppercase tracking-wider font-bold">
-            <FileText className="w-3.5 h-3.5 mr-2" /> PDF
-          </Button>
-        </div>
-      </div>
+      <TransactionFilters filters={filters} />
 
-      {/* Table */}
-      <div className="tactile-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-white/10 bg-[#0a0a0a]">
-              <tr className="text-left">
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.date")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.type")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.currency")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500 text-right">{t("myTransactions.table.amount")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.holder")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.method")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan="7" className="text-center text-neutral-500 py-8">{t("myTransactions.table.loading")}</td></tr>}
-              {!loading && items.length === 0 && (
-                <tr><td colSpan="7" className="text-center text-neutral-500 py-8">
-                  {hasFilters ? t("myTransactions.table.emptyFiltered") : t("myTransactions.table.empty")}
-                </td></tr>
-              )}
-              {items.map((it) => (
-                <tr key={`${it.ref_type}-${it.ref_id}`}
-                  data-testid={`my-tx-row-${it.ref_id}`}
-                  onClick={() => setSelected(it)}
-                  className="border-b border-white/5 hover:bg-[#8B5CF6]/5 cursor-pointer transition-colors"
-                >
-                  <td className="px-3 py-2 font-mono text-xs text-neutral-400">{new Date(it.created_at).toLocaleString()}</td>
-                  <td className="px-3 py-2">
-                    {it.direction === "in" ? (
-                      <span className="inline-flex items-center gap-1 text-[#22C55E] text-xs font-bold uppercase">
-                        <ArrowDown className="w-3 h-3" /> {t("myTransactions.table.in")}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[#EF4444] text-xs font-bold uppercase">
-                        <ArrowUp className="w-3 h-3" /> {t("myTransactions.table.out")}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-[#8B5CF6]">{it.currency}</td>
-                  <td className="px-3 py-2 font-mono text-right">{it.amount.toLocaleString()}</td>
-                  <td className="px-3 py-2">{it.holder_name || "—"}</td>
-                  <td className="px-3 py-2 text-xs uppercase text-neutral-500">{it.method}</td>
-                  <td className="px-3 py-2 text-xs uppercase text-neutral-500">{it.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <TransactionTable items={q.items} loading={q.loading} hasFilters={filters.hasFilters} />
 
       <Pagination
         page={page}
-        total={total}
+        total={q.total}
         pageSize={PAGE_SIZE}
-        loading={loading}
+        loading={q.loading}
         onPageChange={setPage}
         testidPrefix="my-tx-pagination"
       />
+    </div>
+  );
+}
 
-      {/* Detail modal */}
-      <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent data-testid="my-tx-modal" className="bg-[#0c0c0c] border border-white/10 text-white max-w-2xl rounded-none max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-white">
-              <Receipt className="w-5 h-5 text-[#8B5CF6]" />
-              {t("myTransactions.detail.title")}
-              {selected?.direction === "in" ? (
-                <span className="ml-2 text-[#22C55E] text-xs font-bold uppercase flex items-center gap-1">
-                  <ArrowDown className="w-3 h-3" /> {t("myTransactions.table.in")}
-                </span>
-              ) : (
-                <span className="ml-2 text-[#EF4444] text-xs font-bold uppercase flex items-center gap-1">
-                  <ArrowUp className="w-3 h-3" /> {t("myTransactions.table.out")}
-                </span>
-              )}
-            </DialogTitle>
-          </DialogHeader>
-          {selected && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3 border border-white/5 p-4 bg-[#0a0a0a]">
-                <div>
-                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.currency")}</div>
-                  <div className="font-mono text-[#8B5CF6] text-lg">{selected.currency}</div>
-                </div>
-                <div>
-                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.amount")}</div>
-                  <div className="font-mono text-xl">{selected.amount.toLocaleString()}</div>
-                </div>
-                <div>
-                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.holder")}</div>
-                  <div className="font-medium">{selected.holder_name || "—"}</div>
-                </div>
-                <div>
-                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.method")}</div>
-                  <div className="uppercase text-xs">{selected.method}</div>
-                </div>
-                <div>
-                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.status")}</div>
-                  <div className="uppercase text-xs text-[#22C55E]">{selected.status}</div>
-                </div>
-                <div>
-                  <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.date")}</div>
-                  <div className="font-mono text-xs">{new Date(selected.created_at).toLocaleString()}</div>
-                </div>
-                <div className="col-span-2">
-                  <div className="micro-label text-neutral-500 mb-1">
-                    {selected.ref_type === "withdrawal" ? t("myTransactions.detail.withdrawalId") : t("myTransactions.detail.orderId")}
-                  </div>
-                  <div className="font-mono text-xs text-neutral-400">{selected.ref_id}</div>
-                </div>
+function LiveToggle({ liveEnabled, onToggle, t }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      data-testid="my-tx-live-toggle"
+      className={
+        "flex items-center gap-2 border px-3 py-1.5 text-[0.65rem] uppercase tracking-widest font-mono transition-colors "
+        + (liveEnabled
+          ? "border-[#22C55E]/40 bg-[#22C55E]/5 text-[#22C55E]"
+          : "border-white/15 bg-transparent text-neutral-500 hover:border-white/30")
+      }
+      title={liveEnabled ? t("myTransactions.live.pauseHint") : t("myTransactions.live.resumeHint")}
+    >
+      {liveEnabled ? (
+        <>
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22C55E] opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#22C55E]" />
+          </span>
+          <Radio className="w-3 h-3" />
+          {t("myTransactions.live.on")}
+        </>
+      ) : (
+        <>
+          <Pause className="w-3 h-3" />
+          {t("myTransactions.live.off")}
+        </>
+      )}
+    </button>
+  );
+}
+
+function BalanceSummary({ balanceSummary, t }) {
+  const [seeAllOpen, setSeeAllOpen] = useState(false);
+  // iter85 — Sort the balance widget by USDT equivalent DESCENDING so the
+  // asset with the largest USD value in the account shows up first. This
+  // matches the sort order used by AllBalancesDialog for consistency.
+  const positiveBalances = useMemo(
+    () => (balanceSummary.balances || [])
+      .filter((b) => Number(b.amount) > 0)
+      .slice()
+      .sort((a, b) => Number(b.usdt_equivalent || 0) - Number(a.usdt_equivalent || 0)),
+    [balanceSummary],
+  );
+  if (!positiveBalances.length) return null;
+  // iter84 — Show up to 12 tiles inline (was 8) so users with medium
+  // portfolios don't need to open the modal at all. Anything beyond 12
+  // is behind a "see all" button that opens AllBalancesDialog.
+  const INLINE_LIMIT = 12;
+  const inlineBalances = positiveBalances.slice(0, INLINE_LIMIT);
+  const extraCount = Math.max(0, positiveBalances.length - INLINE_LIMIT);
+  return (
+    <div className="tactile-card p-5" data-testid="my-tx-balance-summary">
+      <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+        <div className="micro-label text-neutral-500">
+          {t("myTransactions.balanceSummaryLabel")}
+        </div>
+        <div className="text-right">
+          <div className="font-mono text-2xl text-[#8B5CF6]">
+            {Number(balanceSummary.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            <span className="text-sm text-neutral-500 ml-2">USDT</span>
+          </div>
+          <div className="text-[0.65rem] text-neutral-600">
+            {t("myTransactions.balanceSummarySub")}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+        {inlineBalances.map((b) => (
+          <div
+            key={b.currency}
+            className="border border-white/5 bg-[#0a0a0a] px-3 py-2 flex items-center gap-2"
+            data-testid={`my-tx-balance-${b.currency}`}
+          >
+            <CurrencyIcon code={b.currency} size="md" />
+            <div>
+              <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500">{b.currency}</div>
+              <div className="font-mono text-sm mt-0.5">
+                {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
               </div>
-              {selected.delivery_details && (
-                <div className="border border-white/5 p-4 bg-[#0a0a0a]">
-                  <div className="micro-label text-neutral-500 mb-2">
-                    {selected.direction === "in" ? t("myTransactions.detail.senderData") : t("myTransactions.detail.recipientData")}
-                  </div>
-                  <div className="text-sm whitespace-pre-wrap font-mono text-neutral-300">{selected.delivery_details}</div>
-                </div>
-              )}
-              {(selected.direction === "in" || selected.ref_type === "order_payout") && selected.proof_image && selected.proof_image.trim() && (
-                <div>
-                  <div className="micro-label text-neutral-500 mb-2">
-                    {selected.ref_type === "order_payout" ? t("myTransactions.detail.payoutProof") : t("myTransactions.detail.proof")}
-                  </div>
-                  <a href={selected.proof_image} target="_blank" rel="noreferrer" className="block border border-white/10 bg-[#0a0a0a] p-2">
-                    <img src={selected.proof_image} alt={t("myTransactions.detail.proof")} className="w-full max-h-96 object-contain bg-black"
-                      onError={(e) => { e.currentTarget.style.display = "none"; }} />
-                  </a>
-                </div>
-              )}
-              {selected.direction === "out" && selected.ref_type !== "order_payout" && (
-                <div className="border border-dashed border-white/10 p-4 text-center text-xs text-neutral-500">
-                  <X className="w-4 h-4 inline mr-1" /> {t("myTransactions.detail.outflowsHaveNoProof")}
-                </div>
-              )}
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
+          </div>
+        ))}
+      </div>
+      {/* iter84 — "See all N balances" CTA. Always shown when the wallet
+         has ≥ 4 currencies so the user can jump to the full modal even
+         when all fit inline; the label changes to reflect the extra count. */}
+      {positiveBalances.length >= 4 && (
+        <button
+          type="button"
+          onClick={() => setSeeAllOpen(true)}
+          data-testid="my-tx-balance-see-all"
+          className="mt-3 flex items-center gap-1 text-xs text-[#8B5CF6] hover:text-[#A78BFA] hover:underline underline-offset-4"
+        >
+          {extraCount > 0
+            ? t("myTransactions.allBalances.seeAllExtra", { count: extraCount })
+            : t("myTransactions.allBalances.seeAll", { count: positiveBalances.length })}
+          <ChevronRight className="w-3 h-3" />
+        </button>
+      )}
+      <AllBalancesDialog
+        open={seeAllOpen}
+        onOpenChange={setSeeAllOpen}
+        balanceSummary={balanceSummary}
+      />
+    </div>
+  );
+}
+
+function TabPill({ pill, active, onClick }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      data-testid={`my-tx-tab-${pill.key}`}
+      className={
+        "text-xs uppercase tracking-wider border px-4 py-2 rounded-none transition-colors flex items-center gap-2 "
+        + (active
+          ? "bg-[#8B5CF6] text-white border-[#8B5CF6]"
+          : "border-white/15 text-neutral-400 hover:border-[#8B5CF6]/60 hover:text-white")
+      }
+    >
+      {pill.key === "in" && <ArrowDown className="w-3 h-3" />}
+      {pill.key === "out" && <ArrowUp className="w-3 h-3" />}
+      {pill.key === "conversion" && <ArrowRightLeft className="w-3 h-3" />}
+      <span>{pill.label}</span>
+      {pill.key === "conversion" && pill.badge > 0 && (
+        <span
+          className={
+            "font-mono text-[0.65rem] px-1.5 py-0.5 rounded-full "
+            + (active ? "bg-white/20 text-white" : "bg-[#8B5CF6]/15 text-[#8B5CF6]")
+          }
+          data-testid="my-tx-tab-conversion-count"
+        >
+          {pill.badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function TotalCard({ row, t }) {
+  return (
+    <div className="tactile-card p-4">
+      <div className="micro-label text-neutral-500 mb-1 flex items-center gap-2">
+        <CurrencyIcon code={row.code} size="sm" />
+        <span>{row.code}</span>
+      </div>
+      <div className="space-y-1 text-sm">
+        <div className="flex justify-between">
+          <span className="text-neutral-400 flex items-center gap-1">
+            <ArrowDown className="w-3 h-3 text-[#22C55E]" /> {t("myTransactions.in")}
+          </span>
+          <span className="font-mono text-[#22C55E]">+{row.in.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-neutral-400 flex items-center gap-1">
+            <ArrowUp className="w-3 h-3 text-[#EF4444]" /> {t("myTransactions.out")}
+          </span>
+          <span className="font-mono text-[#EF4444]">-{row.out.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between border-t border-white/5 pt-1 mt-1">
+          <span className="text-neutral-300 text-xs">{t("myTransactions.net")}</span>
+          <span className={`font-mono font-bold ${row.net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
+            {row.net >= 0 ? "+" : ""}{row.net.toLocaleString()}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

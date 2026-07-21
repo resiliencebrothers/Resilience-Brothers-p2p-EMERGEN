@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { useTranslation } from "react-i18next";
+import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -289,30 +289,31 @@ function FormField({ label, children }) {
 
 
 function CashReceiverFields({ name, setName, phone, setPhone, address, setAddress, id, setId }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-3" data-testid="cash-receiver-block">
       <div>
         <Label className="micro-label text-neutral-500">
-          Nombre y apellidos del receptor <span className="text-[#8B5CF6]">*</span>
+          {t("withdraw.cashReceiverNameLabel")} <span className="text-[#8B5CF6]">*</span>
         </Label>
         <Input
           data-testid="cash-receiver-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="ej. Juan Pérez Rodríguez"
+          placeholder={t("withdraw.cashReceiverNamePh")}
           className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
           required
         />
       </div>
       <div>
         <Label className="micro-label text-neutral-500">
-          Teléfono celular <span className="text-[#8B5CF6]">*</span>
+          {t("withdraw.cashReceiverPhoneLabel")} <span className="text-[#8B5CF6]">*</span>
         </Label>
         <Input
           data-testid="cash-receiver-phone"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          placeholder="+5355555555"
+          placeholder={t("withdraw.cashReceiverPhonePh")}
           inputMode="tel"
           className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono"
           required
@@ -320,33 +321,37 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
       </div>
       <div>
         <Label className="micro-label text-neutral-500">
-          Dirección de entrega <span className="text-[#8B5CF6]">*</span>
+          {t("withdraw.cashReceiverAddressLabel")} <span className="text-[#8B5CF6]">*</span>
         </Label>
         <Textarea
           data-testid="cash-receiver-address"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           rows={2}
-          placeholder="Calle, número, entre calles, municipio, provincia"
+          placeholder={t("withdraw.cashReceiverAddressPh")}
           className="rounded-none mt-2 bg-[#0a0a0a] border-white/10"
           required
         />
       </div>
       <div>
         <Label className="micro-label text-neutral-500">
-          Número de ID / Carné <span className="text-neutral-600 normal-case">(opcional)</span>
+          {t("withdraw.cashReceiverIdLabel")}{" "}
+          <span className="text-neutral-600 normal-case">{t("withdraw.cashReceiverIdOptional")}</span>
         </Label>
         <Input
           data-testid="cash-receiver-id"
           value={id}
           onChange={(e) => setId(e.target.value)}
-          placeholder="Solo si el equipo lo pide para coordinar"
+          placeholder={t("withdraw.cashReceiverIdPh")}
           inputMode="numeric"
           className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono"
         />
       </div>
-      <p className="text-[0.7rem] text-[#8B5CF6] mt-1 leading-relaxed" data-testid="withdraw-cash-hint">
-        El equipo usa estos datos para coordinar la entrega en efectivo. Verifica que el <strong>celular</strong> esté activo y la <strong>dirección</strong> sea clara.
+      <p
+        className="text-[0.7rem] text-[#8B5CF6] mt-1 leading-relaxed"
+        data-testid="withdraw-cash-hint"
+      >
+        <Trans i18nKey="withdraw.cashHint" components={{ 1: <strong />, 2: <strong /> }} />
       </p>
     </div>
   );
@@ -354,10 +359,11 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
 
 
 function NonCashDetailsField({ method, details, setDetails, activeNetwork, cryptoAddressMatch }) {
+  const { t } = useTranslation();
   return (
     <div>
       <Label className="micro-label text-neutral-500">
-        Detalles {method === "crypto" && <span className="text-[#8B5CF6]">*</span>}
+        {t("withdraw.detailsLabel")} {method === "crypto" && <span className="text-[#8B5CF6]">*</span>}
       </Label>
       <Textarea
         data-testid="withdraw-details"
@@ -367,7 +373,7 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
         placeholder={
           method === "crypto"
             ? activeNetwork.addressPlaceholder
-            : "Banco, número de cuenta y titular"
+            : t("withdraw.detailsPhTransfer")
         }
         className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"
       />
@@ -377,7 +383,13 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
           className="text-[0.75rem] text-[#22C55E] mt-1 leading-relaxed flex items-center gap-1.5"
         >
           <span aria-hidden>✓</span>
-          <span>Dirección compatible con <strong>{activeNetwork.label}</strong></span>
+          <span>
+            <Trans
+              i18nKey="withdraw.cryptoMatchOk"
+              values={{ network: activeNetwork.label }}
+              components={{ 1: <strong /> }}
+            />
+          </span>
         </p>
       )}
       {method === "crypto" && cryptoAddressMatch === false && (
@@ -387,8 +399,11 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
         >
           <span aria-hidden className="mt-0.5">⚠</span>
           <span>
-            <strong>No coincide con {activeNetwork.label}</strong>. Revisa la red seleccionada o pega otra dirección —
-            enviar por la red incorrecta puede perder los fondos permanentemente.
+            <Trans
+              i18nKey="withdraw.cryptoMismatch"
+              values={{ network: activeNetwork.label }}
+              components={{ 1: <strong /> }}
+            />
           </span>
         </p>
       )}
@@ -398,24 +413,25 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
 
 
 function TotpField({ totpCode, setTotpCode }) {
+  const { t } = useTranslation();
   return (
     <div className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/5 p-3">
       <Label className="micro-label text-[#8B5CF6] flex items-center gap-1.5">
-        <ShieldCheck className="w-3.5 h-3.5" /> Código 2FA <span className="text-[#8B5CF6]">*</span>
+        <ShieldCheck className="w-3.5 h-3.5" /> {t("withdraw.totpLabel")} <span className="text-[#8B5CF6]">*</span>
       </Label>
       <Input
         data-testid="withdraw-totp"
         value={totpCode}
         onChange={(e) => setTotpCode(e.target.value)}
-        placeholder="123456 o XXXXX-XXXXX"
+        placeholder={t("withdraw.totpPh")}
         maxLength={11}
         inputMode="text"
         className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono text-center text-lg tracking-wider"
         required
       />
       <p className="text-[0.65rem] text-neutral-500 mt-1">
-        Código de 6 dígitos de tu app autenticadora o un código de recuperación.{" "}
-        <a href="/dashboard/security" className="text-[#8B5CF6] hover:underline">¿Aún no configuras 2FA?</a>
+        {t("withdraw.totpHelper")}{" "}
+        <a href="/dashboard/security" className="text-[#8B5CF6] hover:underline">{t("withdraw.totpSetupLink")}</a>
       </p>
     </div>
   );

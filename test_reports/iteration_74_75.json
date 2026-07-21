@@ -1,0 +1,73 @@
+{
+  "summary": "Combined validation of iter74 (backend notification i18n) + iter75 (strict directional receivable-currency whitelist). Ran the 30 existing unit/integration tests (24 iter74 + 6 iter75) — ALL PASSED. Additionally verified iter75 endpoint live against 3 real currencies (USDT/USD/BTC) and iter74 by inserting real notifications for admin (preferred_language=en) and vip (preferred_language=es) and inspecting the resulting Mongo documents. Frontend ExchangeView live-verified for strict filtering, auto-reset, and the zero-receivable empty state.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "iter74_backend_notification_i18n": {
+      "status": "PASS",
+      "checks": [
+        "30/30 pytest test_iter74_notification_i18n.py + test_iter75_receivable_endpoint.py passed (1.67s)",
+        "CATALOG: every key has both es and en with matching field sets",
+        "resolve_lang(): stored preference wins, locale normalisation (en-US → en), fallback to DEFAULT_LANG='es' when user or field absent",
+        "push_service.build_rate_changed_payload(lang='en') → 'New rate USD → CUP' + '1 USD = 395 CUP (VIP)' for VIP; (lang='es') → 'Nueva tasa USD → CUP' + '1 USD = 380 CUP' for normal",
+        "push_service.build_order_approved_payload / build_phone_verified / build_new_pending_user / build_order_completed all honour lang= kwarg",
+        "_rate_fanout_inapp() per-user language: 3 mock clients (u_es, u_en, u_default[vip]) each got their own localised title/message and (VIP rate) suffix only on VIP recipients",
+        "create_inapp_order_notification() picks recipient language via resolve_lang and calls the i18n catalogue",
+        "LIVE E2E: Set admin.preferred_language='en' and vip.preferred_language='es'. Called create_inapp_order_notification('approved') for admin and ('completed') for vip. Resulting Mongo docs: admin got 'Order #ITER74_L confirmed' / 'We received your payment. We're preparing the delivery of 250 CUP.' — ENGLISH; vip got 'Orden #ITER74_L completada' / 'Enviamos 175 USDT a tu wallet. Revisa el TX hash en la orden.' — SPANISH. Test docs cleaned up, preferred_language restored (unset)."
+      ]
+    },
+    "iter75_backend_receivable_endpoint": {
+      "status": "PASS",
+      "checks": [
+        "6/6 iter75 pytest passed: 404 unknown currency, direct-rate-only filter (inverse rates excluded), alphabetical sort, empty list for zero outbound, no auth required, case-insensitive normalisation",
+        "LIVE GET /api/currencies/USDT/receivable → {code:'USDT', receivable:['BRL','CUP','USD'], count:3} — ZELLE absent (currency does not exist; USDT→ZELLE never configurable)",
+        "LIVE GET /api/currencies/USD/receivable → {code:'USD', receivable:['BRL','CUP','MXN','USDT'], count:4}",
+        "LIVE GET /api/currencies/BTC/receivable → {code:'BTC', receivable:[], count:0} — BTC has no outbound rates in seed",
+        "LIVE GET /api/currencies/XYZ/receivable → 404",
+        "LIVE case-insensitive: GET /api/currencies/usdt/receivable normalises to code='USDT'",
+        "LIVE no-auth: request with empty cookie jar returned 200 — endpoint is public"
+      ]
+    },
+    "iter75_frontend_exchange_view": {
+      "status": "PASS",
+      "route": "/dashboard/exchange",
+      "test_user": "vip.test@resilience.com (session_token=test_session_vip_X)",
+      "checks": [
+        "exchange-view container renders; from-currency-select shows all 13 active currencies (unfiltered — source is unconstrained)",
+        "fromCode=USDT: to-currency-select filtered to exactly {USD, CUP, BRL} — matches /api/currencies/USDT/receivable (no BTC, no USDT_TEST, no CUPT, no MXN, no CUPCASH27, no ZELLE)",
+        "fromCode=USD: to-currency-select filtered to exactly {USDT, CUP, BRL, MXN} — matches /api/currencies/USD/receivable",
+        "Source currency never appears in destination list (self-filter via c.code !== fromCode)",
+        "AUTO-RESET: Set fromCode=USD, picked toCode=MXN. Then switched fromCode → USDT (where MXN is unreachable). toCode auto-reset to USD (first entry in receivableCurrencies preserving the currencies-array order). MXN correctly cleared — invariant satisfied.",
+        "ZERO-RECEIVABLE (fromCode=BTC, 0 outbound rates): no-receivable-hint testid renders with amber-colored (#F59E0B) text: 'There are no configured rates for BTC. Contact support to open a new pair.'",
+        "to-currency-select has data-disabled attribute set when noDestinations=true (Radix Select disabled prop honoured, opacity-60 applied)",
+        "receivableCurrencies useMemo correctly falls back to full currencies list while receivableLoading=true & receivable=[] (no dropdown flicker on source switch)"
+      ]
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter74_notification_i18n.py",
+    "/app/backend/tests/test_iter75_receivable_endpoint.py",
+    "/app/test_reports/pytest/iter74_75_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "iter75: The frontend `receivableCurrencies` useMemo (ExchangeView.jsx:78-83) preserves the ORIGINAL currencies array order (from GET /api/currencies) — NOT the alphabetical order returned by the backend receivable endpoint. This is technically fine (both are deterministic) but the endpoint's docstring claims 'Ordering is stable ... alphabetically' with the intent that the auto-reset picks the alphabetical-first item. In practice the frontend picks the currencies-array-first item. Not a bug (both orderings are valid), just worth documenting.",
+    "iter75: Endpoint returns EVERY to_code from rates including entries whose destination currency doc is inactive or missing. Frontend guards this via `currencies.filter(...allowed.has(c.code))` so inactive/missing destinations don't surface. Comment in market.py:200-205 already documents this — good.",
+    "iter74: `_norm(lang)` correctly handles 'en-US' → 'en'. However the CATALOG only supports 'es' and 'en' hard-coded; adding a third language requires updating both `SUPPORTED` and every entry in `CATALOG`. Documented in the file header — acceptable for current scope.",
+    "iter74: `create_inapp_order_notification` uses `services.notification_i18n.resolve_lang` which does its OWN Mongo lookup for `users.preferred_language`. When called in a hot loop (e.g. rate fanout to N clients) each notification triggers a separate `users.find_one` — this is fine because `_rate_fanout_inapp` receives the pre-fetched `clients` list and reads `preferred_language` directly from it (no per-notification lookup). Verified in the test `test_rate_fanout_inapp_uses_recipient_lang`.",
+    "Frontend UI language: The exchange screen currently renders in English strings ('YOU RECEIVE', 'Confirm Order', 'There are no configured rates for BTC...') even though the bottom-left switcher shows the ES flag. This may be a stale i18next language setting on the VIP test user — orthogonal to iter74/75. If the customer expects Spanish copy by default, worth checking react-i18next language init logic. NOT a regression of this iteration."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (30/30 pytest + all live endpoint checks)", "frontend": "100% (strict filter + auto-reset + empty state all verified live)" },
+  "test_credentials": "vip session_token=test_session_vip_X (user_test_vip01) — used for live frontend flow. admin session_token=test_session_admin_X used only via direct Mongo access for iter74 live E2E (preferred_language temporarily flipped to 'en' and restored).",
+  "seed_data_creation": "Temporary during iter74 live E2E: set users.preferred_language='en' on admin and ='es' on vip, inserted 2 order notifications (marker 'ITER74_LIVE_<hex>'). ALL cleaned up at end of the script — preferred_language unset, notifications deleted. No changes remain in the DB. No rate mutations performed (per review request constraint).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter74 backend notification i18n is fully wired: services.notification_i18n.CATALOG + resolve_lang, push_service builders, routes.notifications._insert_notification callers, services.orders_helpers.create_inapp_order_notification. All 24 unit tests + live E2E green. iter75 receivable endpoint + ExchangeView + CurrencyPairSelector are fully wired with strict directional filter (no inverse rates). ZELLE is not a currency in the DB — the review-request assertion 'USDT/receivable should NOT include ZELLE' is vacuously true (impossible to appear). If future iters add ZELLE as a currency AND a ZELLE→USDT rate (inverse only), verify /api/currencies/USDT/receivable still excludes ZELLE. Frontend `receivableCurrencies` preserves the currencies-array order — auto-reset picks the FIRST item in that filtered order (not alphabetical). VIP balances unchanged from iter67 (USD=1000, USDT=1.97). No test data left behind.",
+  "rca of the issue": "N/A — no defects found. Both iterations behave as specified."
+}

@@ -563,19 +563,21 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             detail=(f"No hay tasa cotizada para {from_code} → {to_code}. "
                     "Contacta a soporte para habilitarla."),
         )
-    amount_to_gross = round(payload.amount_from * rate_used, 4)
-    # iter55.36i — universal conversion fee + universal minimum.
-    #   • FEE: flat 0.01 USDT charged on EVERY conversion regardless of the
-    #     source/destination pair. The fee is always denominated in USDT for
-    #     revenue accounting (audit_log.details.usdt_fee), but is deducted
-    #     from the *destination* amount using the same rate path — so the
-    #     client always sees "I sent X, I received Y minus a small fee".
-    #   • MIN: the source amount must be worth at least 1.00 USDT equivalent.
-    #     Prevents dust conversions that generate audit-log noise without
-    #     meaningful economic activity.
+    # iter77 — Fee model: the 0.01 USDT fee is charged as a **separate**
+    # additional debit from the client's USDT balance. Destination receives
+    # the FULL equivalent `amount_from × rate_used` (no fee subtraction).
+    #
+    #   USDT → X   : USDT balance must be ≥ amount_from + 0.01 (same account).
+    #   Y → X      : USDT balance must be ≥ 0.01 (separate from source).
+    #   Y → USDT   : USDT balance requirement of 0.01 is trivially met if the
+    #                client has ANY USDT — otherwise refuse. Client must top
+    #                up USDT first (buy 0.01 USDT from another currency).
+    #
+    # The frontend displays the fee as a clean "0.01 USDT" line — never
+    # converted to destination-currency spread.
     CONVERT_FEE_USDT = 0.01
     CONVERT_MIN_USDT = 1.00
-    from services.balances import build_rate_lookup, convert_to_usdt, convert_from_usdt
+    from services.balances import build_rate_lookup, convert_to_usdt
     rates_lookup = await build_rate_lookup()
     # Minimum-source guard: reject if `amount_from` is worth < 1.00 USDT.
     amount_from_usdt = convert_to_usdt(payload.amount_from, from_code, rates_lookup)
@@ -594,32 +596,39 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                 f"conversión es el equivalente a {CONVERT_MIN_USDT:.2f} USDT."
             ),
         )
-    # Fee: 0.01 USDT translated into the destination currency.
-    fee_in_to_code = convert_from_usdt(CONVERT_FEE_USDT, to_code, rates_lookup)
-    if fee_in_to_code is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(f"No hay ruta de valoración USDT para {to_code}. "
-                    "Contacta a soporte para habilitar la tasa."),
-        )
-    amount_to = round(amount_to_gross - fee_in_to_code, 4)
-    if amount_to <= 0:
+    # iter77 — USDT-balance-for-fee guard (always applies, both source cases).
+    usdt_balance = float(get_user_balance(user, "USDT") or 0)
+    required_usdt = CONVERT_FEE_USDT + (payload.amount_from if from_code == "USDT" else 0.0)
+    if usdt_balance < required_usdt:
+        if from_code == "USDT":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Saldo insuficiente en USDT: necesitas al menos "
+                    f"{required_usdt:.2f} USDT ({payload.amount_from:.2f} para "
+                    f"convertir + {CONVERT_FEE_USDT:.2f} de comisión). Tienes "
+                    f"{usdt_balance:.4f} USDT."
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail=(
-                f"La comisión ({CONVERT_FEE_USDT:.2f} USDT ≈ "
-                f"{fee_in_to_code:.4f} {to_code}) supera el monto convertido "
-                f"({amount_to_gross:.4f} {to_code}). "
-                "Convierte una cantidad mayor."
+                f"Necesitas al menos {CONVERT_FEE_USDT:.2f} USDT en tu saldo "
+                f"para pagar la comisión de la conversión. Tienes "
+                f"{usdt_balance:.4f} USDT — recárgalos antes de continuar."
             ),
         )
-    # Fee for the audit log: always denominated in USDT so revenue
-    # aggregation (routes/admin_revenue.py::_compute_conversion_fees) can
-    # sum them cleanly across every pair. Callers who need the destination-
-    # currency amount can inspect `fee_in_to_code` in the same details blob.
+    # Destination receives the FULL equivalent, no fee subtraction.
+    amount_to = round(payload.amount_from * rate_used, 4)
+    amount_to_gross = amount_to  # kept for backwards compat in the response
     fee = CONVERT_FEE_USDT
-    # Atomic swap: decrement from + increment to (net of fee)
+    # Atomic ledger update:
+    #   1. Debit `amount_from` from the source currency.
+    #   2. Debit `0.01` from USDT (fee). If source is USDT, this is the same
+    #      currency — decrement_balance handles both calls independently.
+    #   3. Credit `amount_to` to the destination currency.
     await decrement_balance(user["user_id"], from_code, payload.amount_from)
+    await decrement_balance(user["user_id"], "USDT", CONVERT_FEE_USDT)
     await db.users.update_one(
         {"user_id": user["user_id"]},
         {"$inc": {f"vip_balances.{to_code}": amount_to}},
@@ -632,15 +641,14 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             entity_type="user", entity_id=user["user_id"],
             summary=(
                 f"{payload.amount_from} {from_code} → {amount_to} {to_code}"
-                + (f" (fee {fee} USDT)" if fee > 0 else "")
+                f" (fee {fee} USDT charged separately)"
             ),
             details={
                 "from_code": from_code, "to_code": to_code,
                 "amount_from": payload.amount_from,
-                "amount_to_gross": amount_to_gross,
-                "amount_to": amount_to, "rate": rate_used,
+                "amount_to": amount_to,
+                "rate": rate_used,
                 "usdt_fee": fee,
-                "fee_in_to_code": round(fee_in_to_code, 4),
                 "amount_from_usdt": round(amount_from_usdt, 4),
             },
         )
@@ -651,41 +659,258 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         "from_code": from_code, "to_code": to_code,
         "amount_from": payload.amount_from,
         "amount_to": amount_to,
-        "amount_to_gross": amount_to_gross,
         "usdt_fee": fee,
-        "fee_in_to_code": round(fee_in_to_code, 4),
         "rate": rate_used,
     }
 
 
-@router.get("/vip/daily-closing")
-async def vip_daily_closing(request: Request, date: Optional[str] = None) -> Any:
-    user = await require_user(request)
-    if user["role"] not in ("vip", "admin"):
-        raise HTTPException(status_code=403, detail="Solo clientes VIP")
-    if not date:
-        date = now_utc().strftime("%Y-%m-%d")
-    try:
-        day_start = datetime.fromisoformat(f"{date}T00:00:00+00:00")
-        day_end = day_start + timedelta(days=1)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Fecha inválida (usa YYYY-MM-DD)")
+# ============================================================
+# iter79 — Dust converter (batch-clean small balances → USDT)
+# ============================================================
 
-    cursor = db.orders.find({
-        "user_id": user["user_id"],
-        "status": {"$in": ["approved", "completed"]},
-        "updated_at": {"$gte": day_start.isoformat(), "$lt": day_end.isoformat()},
-    }, {"_id": 0}).sort("updated_at", 1)
-    orders = await cursor.to_list(1000)
+# Reuse the same threshold that the transaction-registry uses to flag
+# `small_balance` conversion subtypes. Anything below this USDT-equivalent
+# is considered "dust" that the user can sweep in one shot.
+from services.transactions import SMALL_BALANCE_THRESHOLD_USDT  # noqa: E402
+
+
+async def _collect_dust(user: dict, rates: dict) -> list[dict]:
+    """Return the list of the user's non-USDT balances whose USDT equivalent
+    is strictly positive and strictly less than SMALL_BALANCE_THRESHOLD_USDT.
+
+    Each entry:
+        {
+          "currency": str,
+          "amount": float,
+          "usdt_equivalent": float,   # rounded to 4 decimals
+          "rate": float,              # code→USDT rate (client-preview)
+        }
+    """
+    balances = dict(user.get("vip_balances") or {})
+    dust: list[dict] = []
+    for code, amount in balances.items():
+        code = str(code).upper().strip()
+        if code == "USDT":
+            continue
+        amt = float(amount or 0.0)
+        if amt <= 0:
+            continue
+        eq = convert_to_usdt(amt, code, rates)
+        if eq is None or eq <= 0:
+            continue
+        if eq >= SMALL_BALANCE_THRESHOLD_USDT:
+            continue
+        # Derive an effective code→USDT rate from the pair we just used so
+        # the frontend can render "1 CUP ≈ 0.0025 USDT" cleanly.
+        rate_used = eq / amt if amt > 0 else 0.0
+        dust.append({
+            "currency": code,
+            "amount": round(amt, 8),
+            "usdt_equivalent": round(eq, 4),
+            "rate": round(rate_used, 8),
+        })
+    dust.sort(key=lambda d: -d["usdt_equivalent"])
+    return dust
+
+
+@router.get("/vip/dust")
+async def vip_dust_preview(request: Request) -> Any:
+    """Preview what a dust-conversion sweep would do RIGHT NOW.
+
+    Response:
+      {
+        "items": [ { currency, amount, usdt_equivalent, rate }, ...],
+        "total_usdt": float,           # sum of usdt_equivalent
+        "fee_usdt": 0.01,              # flat single fee for the whole batch
+        "net_usdt": float,             # total_usdt - fee_usdt (never < 0)
+        "usdt_balance": float,         # current USDT balance (fee source)
+        "threshold_usdt": 5.0,
+        "can_convert": bool,           # false when items empty or fee guard fails
+        "reason": str | null,
+      }
+    """
+    user = await require_user(request)
+    if user["role"] == "employee":
+        raise HTTPException(
+            status_code=403,
+            detail="Empleados no tienen saldo a convertir.",
+        )
+    rates = await build_rate_lookup()
+    dust = await _collect_dust(user, rates)
+    total_usdt = round(sum(d["usdt_equivalent"] for d in dust), 4)
+    fee = 0.01
+    usdt_bal = float(get_user_balance(user, "USDT") or 0)
+    reason = None
+    can = True
+    if not dust:
+        can = False
+        reason = "no_dust"
+    elif usdt_bal < fee:
+        can = False
+        reason = "usdt_fee_required"
+    return {
+        "items": dust,
+        "total_usdt": total_usdt,
+        "fee_usdt": fee,
+        "net_usdt": round(max(0.0, total_usdt - fee), 4),
+        "usdt_balance": round(usdt_bal, 4),
+        "threshold_usdt": SMALL_BALANCE_THRESHOLD_USDT,
+        "can_convert": can,
+        "reason": reason,
+    }
+
+
+@router.post("/vip/convert-dust")
+async def vip_convert_dust(request: Request) -> Any:
+    """Sweep ALL dust balances (each < 5 USDT equivalent) into USDT in a
+    single batch with a FLAT 0.01 USDT fee for the whole operation.
+
+    Rules:
+      • Requires full identity verification (same gate as /vip/convert).
+      • Requires ≥ 0.01 USDT balance to pay the flat fee.
+      • Rejects when the user has no dust balances (nothing to sweep).
+      • Each currency swept is audit-logged separately under
+        `vip.convert.dust` so the History section shows one row per swept
+        currency with `conversion_subtype: "small_balance"`. The FIRST
+        audited row carries the flat 0.01 USDT fee; subsequent rows carry
+        `usdt_fee: 0.00`.
+
+    Response mirrors the preview shape with the ACTUAL swept items:
+      { ok, items, total_usdt, fee_usdt, credited_usdt }
+    """
+    user = await require_user(request)
+    await assert_account_active(user)
+    if user["role"] == "employee":
+        raise HTTPException(
+            status_code=403,
+            detail="Empleados no tienen saldo a convertir.",
+        )
+    if user["role"] != "admin":
+        await assert_not_defensive("conversiones")
+    await assert_user_fully_verified(
+        db, user, action_label="convertir saldos pequeños a USDT"
+    )
+    rates = await build_rate_lookup()
+    dust = await _collect_dust(user, rates)
+    if not dust:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No tienes saldos pequeños para convertir "
+                f"(monedas con equivalente < {SMALL_BALANCE_THRESHOLD_USDT:.2f} USDT)."
+            ),
+        )
+    FLAT_FEE = 0.01
+    usdt_bal = float(get_user_balance(user, "USDT") or 0)
+    if usdt_bal < FLAT_FEE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Necesitas al menos {FLAT_FEE:.2f} USDT en tu saldo "
+                f"para pagar la comisión del barrido. Tienes {usdt_bal:.4f} USDT."
+            ),
+        )
+    # 1) Debit the flat fee ONCE from USDT.
+    await decrement_balance(user["user_id"], "USDT", FLAT_FEE)
+    # 2) For each dust currency: debit the full balance, credit the USDT
+    #    equivalent. We recompute the USDT equivalent from `rates` here to
+    #    guarantee the amount we actually credit matches what _collect_dust
+    #    said (same rate table, called once).
+    credited_total = 0.0
+    from audit_log import log_action
+    for idx, d in enumerate(dust):
+        code = d["currency"]
+        amt = d["amount"]
+        eq_usdt = float(d["usdt_equivalent"])
+        await decrement_balance(user["user_id"], code, amt)
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$inc": {"vip_balances.USDT": eq_usdt}},
+        )
+        credited_total += eq_usdt
+        # Audit one row per swept currency so History shows one line per
+        # currency. The first row carries the shared 0.01 USDT fee; the
+        # rest carry 0.00 to avoid double-counting the fee.
+        try:
+            await log_action(
+                db, actor=user, action="vip.convert.dust",
+                entity_type="user", entity_id=user["user_id"],
+                summary=(
+                    f"Dust sweep: {amt} {code} → {round(eq_usdt, 4)} USDT"
+                    + (f" (fee {FLAT_FEE} USDT charged once)" if idx == 0 else "")
+                ),
+                details={
+                    "from_code": code, "to_code": "USDT",
+                    "amount_from": amt,
+                    "amount_to": round(eq_usdt, 4),
+                    "rate": d["rate"],
+                    "usdt_fee": FLAT_FEE if idx == 0 else 0.0,
+                    "amount_from_usdt": round(eq_usdt, 4),
+                    "batch": True,
+                    "batch_size": len(dust),
+                    "batch_index": idx,
+                },
+            )
+        except Exception as e:
+            logger.error(f"vip.convert.dust audit log failed: {e}")
+    return {
+        "ok": True,
+        "items": dust,
+        "total_usdt": round(credited_total, 4),
+        "fee_usdt": FLAT_FEE,
+        "credited_usdt": round(credited_total, 4),
+    }
+
+
+@router.get("/vip/daily-closing")
+async def vip_daily_closing(request: Request,
+                             date: Optional[str] = None,
+                             since: Optional[str] = None,
+                             until: Optional[str] = None) -> Any:
+    """iter90 — Range-aware closing PDF. Any signed-in client (normal,
+    vip, admin) can download their own closing report over an
+    arbitrary date range. The old `date=YYYY-MM-DD` single-day query
+    still works for back-compat: it collapses to since=until=date.
+    Employees remain excluded (they don't run an operating balance).
+    """
+    user = await require_user(request)
+    if user["role"] == "employee":
+        raise HTTPException(
+            status_code=403,
+            detail="Staff members do not have an operating balance to close.",
+        )
+
+    # Back-compat: legacy callers still pass just `?date=YYYY-MM-DD`.
+    if date and not since and not until:
+        since = date
+        until = date
+
+    from services.transactions import build_transactions
+    entries = await build_transactions(
+        direction=None, currency=None, holder=None,
+        since=since, until=until,
+        min_amount=None, max_amount=None,
+        user_id=user["user_id"],
+    )
 
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    is_vip = (fresh or {}).get("role") == "vip"
     pdf_bytes = generate_vip_closing_pdf(
         user=fresh,
-        orders=orders,
-        date_label=date,
-        final_balance=fresh.get("vip_balance_usd", 0),
+        entries=entries,
+        since=since or "",
+        until=until or "",
+        final_balance=(fresh or {}).get("vip_balance_usd", 0) or 0,
+        is_vip=is_vip,
     )
-    filename = f"cierre_vip_{date}_{user['user_id']}.pdf"
+    # Filename mirrors the range so a user downloading multiple closings
+    # doesn't end up with 3× cierre_2026-07-18.pdf overwriting each other.
+    if since and until and since != until:
+        range_slug = f"{since}_{until}"
+    else:
+        range_slug = since or until or now_utc().strftime("%Y-%m-%d")
+    slug_kind = "cierre_vip" if is_vip else "cierre_contable"
+    filename = f"{slug_kind}_{range_slug}_{user['user_id']}.pdf"
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",

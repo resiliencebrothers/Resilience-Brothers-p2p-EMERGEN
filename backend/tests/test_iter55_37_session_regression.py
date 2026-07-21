@@ -23,7 +23,7 @@ import bcrypt
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT
+from tests.conftest import BASE_URL as API_ROOT, TEST_USER_PASSWORD
 
 API = f"{API_ROOT}/api"
 MONGO_URL = os.environ["MONGO_URL"]
@@ -78,7 +78,7 @@ def _login(email, password, remember_hours=None):
 
 def test_db_expires_at_matches_clamped_ttl_for_over_request():
     email = f"iter5537_reg_clamp_{uuid4().hex[:6]}@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = _login(email, password, remember_hours=168)
@@ -102,7 +102,7 @@ def test_db_expires_at_matches_clamped_ttl_for_over_request():
 
 def test_db_expires_at_matches_under_request_6h():
     email = f"iter5537_reg_under_{uuid4().hex[:6]}@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = _login(email, password, remember_hours=6)
@@ -125,7 +125,7 @@ def test_db_expires_at_matches_under_request_6h():
 
 def test_me_authorized_with_fresh_login_token():
     email = f"iter5537_reg_me_{uuid4().hex[:6]}@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = _login(email, password)
@@ -143,7 +143,7 @@ def test_me_authorized_with_fresh_login_token():
 
 def test_logout_invalidates_session_and_me_returns_401():
     email = f"iter5537_reg_logout_{uuid4().hex[:6]}@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     s = requests.Session()
@@ -184,7 +184,7 @@ def test_expired_session_is_rejected():
     """A session_token whose expires_at is in the past must not authenticate,
     regardless of the (frontend) cookie Max-Age."""
     email = f"iter5537_reg_exp_{uuid4().hex[:6]}@ex.com"
-    password = "TestPass123!"
+    password = TEST_USER_PASSWORD
     _seed_verified_user(email, _hash(password))
 
     r = _login(email, password)

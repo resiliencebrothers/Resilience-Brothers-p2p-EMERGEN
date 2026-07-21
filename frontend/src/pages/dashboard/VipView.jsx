@@ -13,6 +13,7 @@ import { VipWithdrawalForm } from "./vip/VipWithdrawalForm";
 import { VipWithdrawalHistory } from "./vip/VipWithdrawalHistory";
 import { VipLedgerDialog } from "./vip/VipLedgerDialog";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
+import QuickDateRange from "@/components/QuickDateRange";
 
 export default function VipView() {
   const { refresh } = useAuth();
@@ -23,21 +24,30 @@ export default function VipView() {
   const [ledger, setLedger] = useState({ by_currency: {}, total_orders: 0 });
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerCurrency, setLedgerCurrency] = useState("");
-  const [closingDate, setClosingDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // iter90 — closing report now covers an arbitrary date range instead of
+  // one single day. Empty strings mean "full history" (server accepts that).
+  const [closingSince, setClosingSince] = useState("");
+  const [closingUntil, setClosingUntil] = useState("");
   const [downloading, setDownloading] = useState(false);
 
   const downloadClosing = async () => {
     setDownloading(true);
     try {
       const res = await axios.get(`${API}/vip/daily-closing`, {
-        params: { date: closingDate },
+        params: {
+          since: closingSince || undefined,
+          until: closingUntil || undefined,
+        },
         responseType: "blob",
         withCredentials: true,
       });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `cierre_vip_${closingDate}.pdf`;
+      const slug = closingSince && closingUntil
+        ? `${closingSince}_${closingUntil}`
+        : (closingSince || closingUntil || "historico");
+      a.download = `cierre_${slug}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -106,33 +116,54 @@ export default function VipView() {
       />
 
       <div className="tactile-card p-6">
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <h2 className="font-display text-xl flex items-center gap-2">
-              <FileDown className="w-5 h-5 text-[#8B5CF6]" /> {t("vipView.dailyClosing")}
-            </h2>
-            <p className="text-sm text-neutral-400 mt-1">
-              {t("vipView.dailyClosingSub")}
-            </p>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h2 className="font-display text-xl flex items-center gap-2">
+                <FileDown className="w-5 h-5 text-[#8B5CF6]" /> {t("vipView.dailyClosing")}
+              </h2>
+              <p className="text-sm text-neutral-400 mt-1">
+                {t("vipView.dailyClosingSub")}
+              </p>
+            </div>
+            <div className="flex items-end gap-3 flex-wrap">
+              <div className="flex flex-col">
+                <label className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.since")}</label>
+                <Input
+                  data-testid="closing-since-input"
+                  type="date"
+                  value={closingSince}
+                  onChange={(e) => setClosingSince(e.target.value)}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-40"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="micro-label text-neutral-500 mb-1">{t("myTransactions.filters.until")}</label>
+                <Input
+                  data-testid="closing-until-input"
+                  type="date"
+                  value={closingUntil}
+                  onChange={(e) => setClosingUntil(e.target.value)}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-40"
+                />
+              </div>
+              <Button
+                data-testid="download-closing-btn"
+                onClick={downloadClosing}
+                disabled={downloading}
+                className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-11"
+              >
+                <FileDown className="w-4 h-4 mr-2" />
+                {downloading ? t("vipView.generating") : t("vipView.downloadPdf")}
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Input
-              data-testid="closing-date-input"
-              type="date"
-              value={closingDate}
-              onChange={(e) => setClosingDate(e.target.value)}
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-44"
-            />
-            <Button
-              data-testid="download-closing-btn"
-              onClick={downloadClosing}
-              disabled={downloading}
-              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-11"
-            >
-              <FileDown className="w-4 h-4 mr-2" />
-              {downloading ? t("vipView.generating") : t("vipView.downloadPdf")}
-            </Button>
-          </div>
+          <QuickDateRange
+            since={closingSince}
+            until={closingUntil}
+            onRangeChange={({ since: s, until: u }) => { setClosingSince(s); setClosingUntil(u); }}
+            testIdPrefix="closing-quick"
+          />
         </div>
       </div>
 

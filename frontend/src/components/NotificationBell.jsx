@@ -3,6 +3,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNotifications } from "@/hooks/useNotifications";
 
 const TYPE_ICON = {
@@ -12,17 +13,22 @@ const TYPE_ICON = {
   info: { Icon: BellRing, color: "text-neutral-400" },
 };
 
-function timeAgo(iso) {
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return "ahora";
-  if (seconds < 3600) return `hace ${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `hace ${Math.floor(seconds / 3600)}h`;
-  return `hace ${Math.floor(seconds / 86400)}d`;
+function useTimeAgo() {
+  const { t } = useTranslation();
+  return (iso) => {
+    const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (seconds < 60) return t("notifications.bell.timeNow");
+    if (seconds < 3600) return t("notifications.bell.timeMin", { n: Math.floor(seconds / 60) });
+    if (seconds < 86400) return t("notifications.bell.timeHour", { n: Math.floor(seconds / 3600) });
+    return t("notifications.bell.timeDay", { n: Math.floor(seconds / 86400) });
+  };
 }
 
 /* ----------------- sub-components ----------------- */
 
 function NotificationRow({ item, onClick, onDelete }) {
+  const { t } = useTranslation();
+  const timeAgo = useTimeAgo();
   const { Icon, color } = TYPE_ICON[item.type] || TYPE_ICON.info;
   const explorerUrl = item.data?.explorer_url;
   const network = item.data?.crypto_network;
@@ -53,7 +59,7 @@ function NotificationRow({ item, onClick, onDelete }) {
               className="mt-2 inline-flex items-center gap-1 text-[0.65rem] font-mono uppercase tracking-wider text-[#8B5CF6] hover:text-[#A78BFA] hover:underline"
             >
               <ExternalLink className="w-3 h-3" />
-              <span>Verificar en {network || "explorer"}</span>
+              <span>{network ? t("notifications.bell.verifyOn", { network }) : t("notifications.bell.verifyOnExplorer")}</span>
             </a>
           )}
         </div>
@@ -63,8 +69,8 @@ function NotificationRow({ item, onClick, onDelete }) {
         type="button"
         data-testid={`notification-delete-${item.id}`}
         onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}
-        title="Eliminar notificación"
-        aria-label="Eliminar notificación"
+        title={t("notifications.bell.deleteTitle")}
+        aria-label={t("notifications.bell.deleteTitle")}
         className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-neutral-600 hover:text-[#EF4444] hover:bg-[#EF4444]/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
       >
         <X className="w-3.5 h-3.5" />
@@ -74,14 +80,15 @@ function NotificationRow({ item, onClick, onDelete }) {
 }
 
 function NotificationList({ items, loading, onItemClick, onDelete }) {
+  const { t } = useTranslation();
   if (loading) {
-    return <div className="py-10 text-center text-xs text-neutral-500">Cargando...</div>;
+    return <div className="py-10 text-center text-xs text-neutral-500">{t("notifications.bell.loading")}</div>;
   }
   if (items.length === 0) {
     return (
       <div className="py-12 text-center" data-testid="notifications-empty">
         <Bell className="w-8 h-8 text-neutral-700 mx-auto mb-2" />
-        <p className="text-xs text-neutral-500">No tienes notificaciones todavía.</p>
+        <p className="text-xs text-neutral-500">{t("notifications.bell.empty")}</p>
       </div>
     );
   }
@@ -98,6 +105,7 @@ function NotificationList({ items, loading, onItemClick, onDelete }) {
 /* ----------------- main component ----------------- */
 
 export default function NotificationBell() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const {
@@ -122,7 +130,7 @@ export default function NotificationBell() {
           type="button"
           data-testid="notification-bell"
           className="relative inline-flex items-center justify-center w-9 h-9 hover:bg-white/5 transition-colors"
-          aria-label="Notificaciones"
+          aria-label={t("notifications.bell.ariaLabel")}
         >
           <Bell className="w-5 h-5 text-neutral-400" />
           {unreadCount > 0 && (
@@ -142,8 +150,10 @@ export default function NotificationBell() {
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 gap-2">
           <div className="min-w-0">
-            <h3 className="font-display text-base">Notificaciones</h3>
-            <p className="text-[0.65rem] text-neutral-500">{unreadCount > 0 ? `${unreadCount} sin leer` : "Todo al día"}</p>
+            <h3 className="font-display text-base">{t("notifications.bell.title")}</h3>
+            <p className="text-[0.65rem] text-neutral-500">
+              {unreadCount > 0 ? t("notifications.bell.unread", { n: unreadCount }) : t("notifications.bell.allCaughtUp")}
+            </p>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
             {hasUnread && (
@@ -153,7 +163,7 @@ export default function NotificationBell() {
                 onClick={markAllRead}
                 className="text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] flex items-center gap-1"
               >
-                <CheckCheck className="w-3 h-3" /> Marcar todo
+                <CheckCheck className="w-3 h-3" /> {t("notifications.bell.markAll")}
               </button>
             )}
             {hasRead && (
@@ -161,10 +171,10 @@ export default function NotificationBell() {
                 type="button"
                 data-testid="delete-all-read-btn"
                 onClick={deleteAllRead}
-                title="Eliminar todas las notificaciones leídas"
+                title={t("notifications.bell.deleteAllTitle")}
                 className="text-[0.65rem] uppercase tracking-widest text-neutral-500 hover:text-[#EF4444] flex items-center gap-1"
               >
-                <Trash2 className="w-3 h-3" /> Borrar leídas
+                <Trash2 className="w-3 h-3" /> {t("notifications.bell.deleteRead")}
               </button>
             )}
           </div>

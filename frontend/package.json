@@ -67,7 +67,8 @@
   },
   "scripts": {
     "start": "craco start",
-    "build": "craco build",
+    "build": "node scripts/stamp-build-id.js && craco build",
+    "prestart": "node scripts/stamp-build-id.js",
     "test": "craco test",
     "lint": "eslint --config eslint.hooks.config.mjs \"src/**/*.{js,jsx}\""
   },

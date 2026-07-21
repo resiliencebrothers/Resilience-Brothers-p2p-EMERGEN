@@ -1,5 +1,6 @@
 import { Coins, History, Eye } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import CurrencyIcon from "@/components/CurrencyIcon";
 
 /**
  * iter55.29 — Extracted from VipView. Per-currency clickable grid that
@@ -8,6 +9,13 @@ import { useTranslation } from "react-i18next";
 export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
   const { t } = useTranslation();
   const hasBalances = balances.balances.length > 0;
+  // iter85 — Sort the grid by USDT equivalent DESC so the largest asset
+  // in the account shows up first (consistent with History's widget).
+  const sortedBalances = hasBalances
+    ? balances.balances.slice().sort(
+      (a, b) => Number(b.usdt_equivalent || 0) - Number(a.usdt_equivalent || 0),
+    )
+    : [];
   return (
     <div className="tactile-card p-6" data-testid="vip-balances-card">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -32,7 +40,7 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
             {t("vipView.clickToDrilldown")}
           </p>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {balances.balances.map((b) => {
+            {sortedBalances.map((b) => {
               const bucket = ledger.by_currency?.[b.currency];
               const orderCount = bucket?.orders?.length || 0;
               const hasDrillDown = orderCount > 0;
@@ -53,7 +61,10 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
                     <div className="absolute top-4 right-4 w-2 h-2 rounded-full bg-violet-500 shadow-[0_0_8px_rgba(139,92,246,0.6)]" />
                   )}
                   <div className="flex items-center justify-between w-full mb-1">
-                    <span className="text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase">{b.currency}</span>
+                    <span className="flex items-center gap-2">
+                      <CurrencyIcon code={b.currency} size="md" />
+                      <span className="text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase">{b.currency}</span>
+                    </span>
                     <span className="text-xs text-neutral-500 font-mono tabular-nums">≈ {b.usdt_equivalent?.toFixed(2) ?? "—"} USDT</span>
                   </div>
                   <div className="font-mono tabular-nums text-2xl text-white tracking-tight">

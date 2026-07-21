@@ -19,11 +19,11 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
   const { t } = useTranslation();
   const [exporting, setExporting] = useState(null);
 
-  const CAT_META = [
+  const CAT_META = useMemo(() => [
     { key: "p2p_profit_usdt",         label: t("admin.revenue.catP2P"),          color: "#8B5CF6" },
     { key: "marketplace_profit_usdt", label: t("admin.revenue.catMarketplace"),  color: "#22C55E" },
     { key: "conversion_fees_usdt",    label: t("admin.revenue.catConversions"),  color: "#EAB308" },
-  ];
+  ], [t]);
 
   const download = async (format) => {
     setExporting(format);
@@ -67,7 +67,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
       negative: values[i] < 0,
     })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
     return { rows, total, absTotal };
-  }, [data]);
+  }, [data, CAT_META]);
 
   const topPair = useMemo(() => {
     if (!data?.by_pair?.length) return null;
@@ -92,7 +92,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
         total:              Number((r.total_profit_usdt || 0).toFixed(2)),
         orders:             r.orders || 0,
       }));
-  }, [monthly]);
+  }, [monthly, t]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -1,0 +1,66 @@
+{
+  "summary": "iter88 (Quick Date Range) fully verified end-to-end on the frontend. Admin CSV export dialog (/admin/company-funds) and client transaction history filters both render the new QuickDateRange chip row with the exact expected data-testids. All preset math (last-7-days, this-month, this-year) computes the correct dates (verified against wall-clock 2026-07-18). Active-preset highlight logic works and is invalidated when the user manually edits either date input. Clear chip only appears when a preset is active and correctly empties both bounds. Existing filters (currency select, min/max amount, tab selector, PDF/CSV exports) are unaffected by the new flex-col wrapper layout. CSV download completes with the applied quick range. i18n keys resolve in ES ('Últimos 7 días' / 'Este mes' / 'Este año' / 'Limpiar rango') without any raw i18n keys visible in the DOM.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "admin_export_dialog": {
+      "status": "PASS",
+      "route": "/admin/company-funds → Export button → cw-export-dialog",
+      "checks": [
+        "data-testid=cw-export-dialog opens on click of Export button.",
+        "data-testid=cw-export-quick-row + cw-export-quick-7d + cw-export-quick-month + cw-export-quick-year all visible below the Since/Until date inputs and above the hint.",
+        "cw-export-quick-clear is HIDDEN while both dates are empty (rendered only after a preset is applied or a date is entered).",
+        "Click cw-export-quick-7d → cw-export-since=2026-07-12 (today-6d), cw-export-until=2026-07-18 (today). Correct inclusive-of-today 7-day window.",
+        "Click cw-export-quick-month → cw-export-since=2026-07-01 (1st of month), cw-export-until=2026-07-18. Only the month chip receives the active class (bg-[#8B5CF6]/15 + border-[#8B5CF6]); 7d and year remain neutral.",
+        "Click cw-export-quick-year → cw-export-since=2026-01-01 (Jan 1st). Highlight moves to year chip.",
+        "Manually overwriting cw-export-since to 2020-05-15 removes the highlight from ALL three chips (detectActivePreset returns null).",
+        "Click cw-export-quick-clear → both cw-export-since and cw-export-until become empty; the clear chip disappears again."
+      ]
+    },
+    "client_history_filters": {
+      "status": "PASS",
+      "route": "/dashboard/transactions (sidebar 'History' link) — direct navigation to /dashboard/history rendered a blank content area but the same route resolves to /dashboard/transactions when reached via the sidebar link.",
+      "checks": [
+        "QuickDateRange row (my-tx-quick-row) renders BELOW the existing filters row (currency Y≈693px, chip row Y≈741px, ~48px gap — clean second row, no overlap).",
+        "Existing filters (my-tx-currency, my-tx-since, my-tx-until, my-tx-min, my-tx-max) all still visible and functional after the parent flex-col wrapper change.",
+        "Click my-tx-quick-7d → my-tx-since=2026-07-12, my-tx-until=2026-07-18. Transaction list re-fetches and re-renders with the filtered results.",
+        "my-tx-quick-clear appears once a preset is active; clicking it empties both date inputs to '' and hides itself.",
+        "Click my-tx-quick-month → my-tx-since=2026-07-01. This-Month chip highlighted (bg-[#8B5CF6]/15), 7d not highlighted.",
+        "Regression: my-tx-min accepts '1' and my-tx-max accepts '1000'; both persist and update the tx list.",
+        "Regression: my-tx-currency dropdown shows 14 options (All + 13 currencies). Selecting USDT correctly re-filters the visible tx list to USDT-only rows.",
+        "Existing my-tx-clear chip still appears when any filter is active and clears all filters.",
+        "CSV export: clicking my-tx-export-csv while month preset is applied triggered a real download of my_transactions_202607181855.csv. No console errors during the flow.",
+        "i18n (ES active by default): chips render 'LAST 7 DAYS' / 'THIS MONTH' / 'THIS YEAR' / 'CLEAR RANGE' (uppercased by CSS). No raw 'quickRange.*' key visible."
+      ]
+    }
+  },
+  "critical_code_review_comments": [
+    "QuickDateRange.jsx (116 lines) is a clean, dependency-injectable reusable component. Uses local-timezone formatting (fmtLocalDate) to avoid the toISOString off-by-one bug — correct choice for <input type=\"date\"> whose value is a naive local-day string. Well-documented inline.",
+    "computeQuickRange and detectActivePreset are exported as pure functions with an injectable `now` parameter, which is exactly why the unit test suite (10/10 PASS per E1) can validate them deterministically without freezing the clock.",
+    "The active-preset detection re-computes ranges every render (O(3) trivial). No memoization needed — chips only re-render on since/until changes.",
+    "TransactionFilters.jsx: the extra flex-col wrapper is a minimal, non-invasive change; the inner flex-wrap row keeps its full behavior. Regression test confirmed all pre-existing testids still work.",
+    "ExportCsvDialog.jsx: correctly places the QuickDateRange BETWEEN the date-input grid and the hint text; className='pt-1' gives a tiny visual gap without breaking the modal layout.",
+    "Minor route inconsistency observed (pre-existing, NOT introduced by iter88): the request mentions /dashboard/history but the sidebar link resolves to /dashboard/transactions. Direct navigation to /dashboard/history rendered an empty content area (sidebar shown, right pane blank). Consider either aliasing the route or updating docs — not blocking iter88 acceptance since the sidebar link works.",
+    "Small polish: the empty-state 'clear' chip visually toggles in/out (mount/unmount) rather than fading — could benefit from a CSS transition but functionally correct."
+  ],
+  "test_report_links": [
+    "/app/test_reports/iteration_88.json"
+  ],
+  "action_items": [
+    "None blocking. Optional: route alias /dashboard/history → /dashboard/transactions (or fix the direct-nav blank render) so deep links from the review request work.",
+    "Optional: add a data-testid to the CSV export button that opens the ExportCsvDialog (currently the trigger button is only reachable via text 'Export'/'Exportar'; giving it e.g. data-testid='cw-export-open' would harden future E2E tests)."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A (frontend-only iteration)", "frontend": "100% (all 5 request bullets pass)" },
+  "test_credentials": "session_token=test_session_admin_1784400755309 (admin), test_session_vip_1784400755319 (VIP) — created via mongosh direct insert per /app/auth_testing.md.",
+  "seed_data_creation": "Only inserted two session_token rows into db.user_sessions for the pre-seeded admin/VIP user_ids. No data mutation.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter88 ships production-ready. Admin: /admin/company-funds → 'Export' button → dialog with data-testids cw-export-dialog / cw-export-since / cw-export-until / cw-export-quick-row / cw-export-quick-7d / cw-export-quick-month / cw-export-quick-year / cw-export-quick-clear / cw-export-download. Client: /dashboard/transactions (via sidebar 'History' link) → data-testids my-tx-currency / my-tx-since / my-tx-until / my-tx-min / my-tx-max / my-tx-quick-row / my-tx-quick-7d / my-tx-quick-month / my-tx-quick-year / my-tx-quick-clear / my-tx-export-csv / my-tx-export-pdf / my-tx-clear. Direct navigation to /dashboard/history returns an empty content pane; only the sidebar link resolves correctly to /dashboard/transactions. Highlight class marker: bg-[#8B5CF6]/15 (Tailwind arbitrary value — must be included in safelist if not already; verified rendered).",
+  "rca_of_the_issue": "N/A — no bugs found."
+}

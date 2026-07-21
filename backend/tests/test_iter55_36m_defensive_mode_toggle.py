@@ -22,7 +22,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, make_admin_totp
+from conftest import BASE_URL, make_admin_totp, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, EMPLOYEE_TOKEN
 
 
 # ---------- helpers ----------
@@ -39,7 +39,7 @@ def _reset_defensive():
     cli.close()
 
 
-def _toggle(*, enabled: bool, token: str = "test_session_admin_X",
+def _toggle(*, enabled: bool, token: str = ADMIN_TOKEN,
             totp_code=None, reason: str = "iter55.36m test",
             include_totp: bool = True):
     body = {"enabled": enabled, "reason": reason}
@@ -104,7 +104,7 @@ class TestToggleHappyPath:
         body = {"enabled": True, "totp_code": make_admin_totp()}
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json=body,
         )
         assert r.status_code == 200
@@ -134,15 +134,15 @@ class TestToggleRBAC:
 
     def test_employee_role_rejected(self):
         # Staff cannot enable defensive mode — admin only.
-        r = _toggle(enabled=True, token="test_session_employee_X")
+        r = _toggle(enabled=True, token=EMPLOYEE_TOKEN)
         assert r.status_code == 403, r.text
 
     def test_vip_role_rejected(self):
-        r = _toggle(enabled=True, token="test_session_vip_X")
+        r = _toggle(enabled=True, token=VIP_TOKEN)
         assert r.status_code == 403
 
     def test_normal_user_rejected(self):
-        r = _toggle(enabled=True, token="test_session_normal_X")
+        r = _toggle(enabled=True, token=NORMAL_TOKEN)
         assert r.status_code == 403
 
 
@@ -183,7 +183,7 @@ class TestToggleTotp:
         body = {"enabled": True, "totp_code": "1" * 20}
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json=body,
         )
         assert r.status_code == 422
@@ -207,7 +207,7 @@ class TestTogglePayloadValidation:
     def test_missing_enabled_flag_returns_422(self):
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={"totp_code": make_admin_totp()},
         )
         assert r.status_code == 422
@@ -220,7 +220,7 @@ class TestTogglePayloadValidation:
         }
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json=body,
         )
         assert r.status_code == 422
@@ -235,7 +235,7 @@ class TestTogglePayloadValidation:
         body = {"enabled": "not-a-bool", "totp_code": make_admin_totp()}
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json=body,
         )
         assert r.status_code == 422
@@ -313,7 +313,7 @@ class TestToggleAudit:
         assert count == 0
 
     def test_rejected_non_admin_does_not_create_audit_entry(self):
-        _toggle(enabled=True, token="test_session_employee_X")
+        _toggle(enabled=True, token=EMPLOYEE_TOKEN)
         cli, db = _db()
         count = db.audit_log.count_documents({"action": "system.defensive_mode"})
         cli.close()
