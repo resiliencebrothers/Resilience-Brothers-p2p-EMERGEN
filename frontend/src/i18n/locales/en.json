@@ -36,6 +36,7 @@
       "vip": "Balance & Withdrawals",
       "capitalRequests": "Capital Request",
       "marketplace": "Marketplace",
+      "support": "Support",
       "adminPanel": "Admin Panel",
       "teamPanel": "Team Panel"
     },
@@ -56,6 +57,7 @@
       "health": "Health",
       "security": "Security",
       "audit": "Audit",
+      "support": "Support",
       "backToClient": "Back to client"
     }
   },
@@ -63,6 +65,8 @@
     "tabs": {
       "list": "List",
       "appeals": "Appeals",
+      "support": "Support",
+      "vipRequests": "VIP requests",
       "kyc": "KYC",
       "changes": "Profile changes"
     }
@@ -620,6 +624,7 @@
       "colUserId": "User ID",
       "colEmail": "Email",
       "colRole": "Role",
+      "colKyc": "KYC",
       "colRegistered": "Registered",
       "colActions": "Actions",
       "empty": "No results",
@@ -1498,12 +1503,74 @@
       "ordersUnit": "ORDS"
     }
   },
+  "vipRequest": {
+    "sectionTitle": "VIP Program",
+    "emptyBody": "Do you trade high volumes? Apply for VIP status to unlock preferred rates, priority withdrawals and dedicated support.",
+    "ctaFirstTime": "Request VIP access",
+    "ctaRetry": "Request again",
+    "pendingTitle": "Your request is under review",
+    "pendingBody": "Submitted on {{date}}. A team member will review it shortly — we'll notify you with the decision.",
+    "rejectedTitle": "Request rejected",
+    "rejectedNoNote": "The team left no additional comment.",
+    "cooldownRemaining": "You can request again in {{days}} day(s).",
+    "approvedBody": "Your account is now marked as VIP. Refresh the app to see the new perks.",
+    "status": {
+      "pending": "Under review",
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
+    "method": {
+      "crypto": "Crypto",
+      "bank_transfer": "Bank transfer",
+      "cash": "Cash",
+      "other": "Other"
+    },
+    "dialog": {
+      "title": "Request VIP access",
+      "body": "Tell us briefly why you fit the VIP program. The team will review your request within 48h.",
+      "messageLabel": "Reason",
+      "messagePlaceholder": "e.g. I've been trading on the platform for 6 months at >$20k/mo, mostly crypto…",
+      "volumeLabel": "Estimated monthly volume (USD)",
+      "methodLabel": "Preferred payment method",
+      "submit": "Submit request",
+      "successToast": "Request submitted. We'll notify you with the decision.",
+      "errorToast": "Could not submit the request."
+    }
+  },
+  "adminVipRequests": {
+    "eyebrow": "USERS",
+    "title": "VIP requests",
+    "loadError": "Could not load VIP requests queue",
+    "empty": "No requests in this queue.",
+    "colUser": "Client",
+    "colVolume": "Volume/mo",
+    "colMethod": "Method",
+    "colMessage": "Reason",
+    "colCreated": "Submitted",
+    "colStatus": "Status",
+    "colActions": "Actions",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approvedToast": "Request approved — the user is now VIP.",
+    "rejectedToast": "Request rejected.",
+    "actionError": "Could not process the action.",
+    "filter": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "all": "All"
+    },
+    "rejectDialogTitle": "Reject VIP request",
+    "rejectDialogBody": "The client {{name}} will receive a notification with your note. They can request again in 7 days.",
+    "rejectDialogPlaceholder": "Reason for rejection (optional but recommended)…"
+  },
   "adminAppeals": {
     "title": "Appeals",
     "subtitle": "Messages from clients under review asking for reactivation. Resolving here <1>does not</1> reactivate the account — use <2>Verify phone</2> in Users when you decide to activate.",
     "pendingCount": "Pending:",
     "loadError": "Could not load appeals queue",
     "emptyQueue": "There are no appeals in this queue.",
+    "supportHint": "Looking for client help tickets? They live in the <1>Support</1> tab — appeals are only for accounts under review.",
     "loading": "Loading…",
     "tabs": {
       "pending": "Pending",
@@ -1545,6 +1612,8 @@
     "loadError": "Error loading queue",
     "allClear": "/ all clear",
     "emptyBody": "No orders or withdrawals pending in your scope.",
+    "liveOn": "Live",
+    "liveOff": "Paused",
     "orders": {
       "sectionTitle": "Pending orders",
       "goto": "Go to Orders →",
@@ -1670,6 +1739,30 @@
     "blocked": {
       "title": "Account blocked",
       "body": "Your account has been blocked by the team. If you believe this is a mistake, contact support."
+    }
+  },
+  "liveToast": {
+    "order": {
+      "approved": "Your order was approved",
+      "rejected": "Your order was rejected",
+      "pair": "{{from}} → {{to}}"
+    },
+    "withdrawal": {
+      "approved": "Your withdrawal was approved",
+      "paid": "Your withdrawal was paid",
+      "rejected": "Your withdrawal was rejected"
+    },
+    "balance": {
+      "updated": "Your balance was updated"
+    },
+    "rates": {
+      "updated": "New rate available"
+    },
+    "admin": {
+      "orderCreated": "New pending order",
+      "orderCreatedDesc": "{{user}} · {{from}} → {{to}}",
+      "withdrawalCreated": "New pending withdrawal",
+      "withdrawalCreatedDesc": "{{user}} · {{amount}} {{currency}}"
     }
   },
   "security": {
@@ -2041,6 +2134,148 @@
     "footer": {
       "copy": "© Resilience Brothers · P2P Network",
       "tagline": "Global Trade Infrastructure"
+    }
+  },
+  "support": {
+    "eyebrow": "/ Support",
+    "title": "Help Center",
+    "subtitle": "Browse the FAQ or open a ticket. A team member will get back to you within 24h.",
+    "refresh": "Refresh",
+    "tabs": {
+      "faq": "Frequently Asked",
+      "newTicket": "New Ticket",
+      "myTickets": "My Tickets"
+    },
+    "category": {
+      "general": "General",
+      "kyc": "KYC / Verification",
+      "convert": "Conversions",
+      "withdrawal": "Withdrawals",
+      "fees": "Fees",
+      "other": "Other"
+    },
+    "status": {
+      "open": "Open",
+      "answered": "Answered",
+      "closed": "Closed"
+    },
+    "faq": {
+      "empty": "No frequently asked questions have been published yet."
+    },
+    "newTicket": {
+      "eyebrow": "/ Contact Support",
+      "title": "Send us your request",
+      "subtitle": "Describe your situation in as much detail as possible. If it's about a specific order or withdrawal, include its ID.",
+      "category": "Category",
+      "subject": "Subject",
+      "subjectPlaceholder": "Summarize your request in one line",
+      "message": "Message",
+      "messagePlaceholder": "Tell us what's going on. The more specific, the better.",
+      "images": "Images (optional)",
+      "uploadImages": "Attach images",
+      "submit": "Send Ticket",
+      "sending": "Sending…",
+      "created": "Ticket created. We'll notify you when there's a reply.",
+      "createFailed": "We couldn't create the ticket. Please try again in a moment.",
+      "missingFields": "Please fill in both subject and message."
+    },
+    "ticket": {
+      "imageLimitReached": "Max {{max}} images per ticket.",
+      "imageTooLarge": "Image \"{{name}}\" is larger than 8 MB.",
+      "imageReadFailed": "We couldn't read that image. Please try another.",
+      "created": "Ticket successfully created.",
+      "createFailed": "Failed to create ticket."
+    },
+    "tickets": {
+      "empty": "You have no open tickets. Start one from the 'New Ticket' tab."
+    },
+    "thread": {
+      "you": "You",
+      "staff": "Support",
+      "newBadge": "New",
+      "replyPlaceholder": "Write your reply…",
+      "sendReply": "Send reply",
+      "sending": "Sending…",
+      "replySent": "Reply sent.",
+      "replyFailed": "We couldn't send your reply.",
+      "closedNote": "This ticket is closed. Open a new one if you still need help."
+    }
+  },
+  "adminSupport": {
+    "eyebrow": "/ Support",
+    "title": "Support Center",
+    "subtitle": "Client tickets and public FAQ editor.",
+    "refresh": "Refresh",
+    "loadError": "Failed to load tickets.",
+    "faqLoadError": "Failed to load FAQ.",
+    "replySent": "Reply sent.",
+    "replyFailed": "Failed to send reply.",
+    "closed": "Ticket closed.",
+    "closeFailed": "Failed to close ticket.",
+    "confirmClose": "Close this ticket? The client won't be able to reply anymore in this thread.",
+    "faqSaved": "FAQ saved.",
+    "faqSaveFailed": "Failed to save FAQ.",
+    "faqDeleted": "FAQ deleted.",
+    "faqDeleteFailed": "Failed to delete FAQ.",
+    "faqConfirmDelete": "Delete this FAQ permanently?",
+    "tabs": {
+      "tickets": "Tickets",
+      "faq": "FAQ"
+    },
+    "filters": {
+      "status": "Status",
+      "category": "Category",
+      "allStatuses": "All",
+      "allCategories": "All"
+    },
+    "tickets": {
+      "counter": "Total {{total}} · Pending {{unread}}",
+      "empty": "No tickets match the current filters.",
+      "new": "New",
+      "close": "Close",
+      "selectHint": "Pick a ticket on the left to read the thread and reply."
+    },
+    "thread": {
+      "staff": "You (Staff)",
+      "replyPlaceholder": "Write your reply to the client…",
+      "send": "Send",
+      "sending": "Sending…"
+    },
+    "faq": {
+      "counter": "{{total}} entries",
+      "new": "New FAQ",
+      "empty": "No FAQs yet. Create the first one with the button above.",
+      "category": "Category",
+      "order": "Order",
+      "questionEs": "Question (ES)",
+      "questionEn": "Question (EN)",
+      "answerEs": "Answer (ES)",
+      "answerEn": "Answer (EN)",
+      "isActive": "Published (visible to clients)",
+      "cancel": "Cancel",
+      "saveNew": "Create FAQ",
+      "saveEdit": "Save changes",
+      "editBtn": "Edit",
+      "deleteBtn": "Delete"
+    }
+  },
+  "pwa": {
+    "installApp": "Install app",
+    "banner": {
+      "label": "INSTALL APP",
+      "body": "Install Resilience on your phone for instant access and notifications.",
+      "iosBody": "Tap",
+      "iosBodyEnd": "to use Resilience as an app."
+    },
+    "iosHelp": {
+      "title": "Install on iPhone / iPad",
+      "description": "Instructions to install the app on Apple devices.",
+      "step1": "Tap the",
+      "step1cont": "button in the Safari toolbar.",
+      "step2": "Scroll and select",
+      "step3": "Tap «Add» and Resilience will appear on your home screen as a native app.",
+      "share": "Share",
+      "addToHome": "Add to Home Screen"
     }
   }
 }

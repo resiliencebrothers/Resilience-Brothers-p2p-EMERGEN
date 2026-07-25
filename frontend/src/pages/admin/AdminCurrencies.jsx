@@ -65,8 +65,8 @@ export default function AdminCurrencies() {
         }
       />
 
-      <div className="tactile-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="tactile-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.currencies.colCode")}</th>

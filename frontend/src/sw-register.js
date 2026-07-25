@@ -28,7 +28,6 @@ let reloadedForNewVersion = false;
 function softReload(reason) {
   if (reloadedForNewVersion) return;
   reloadedForNewVersion = true;
-  // eslint-disable-next-line no-console
   console.info(`[SW] Reloading tab to pick up new version — ${reason}`);
   window.location.reload();
 }
@@ -53,7 +52,11 @@ export function registerSW() {
         // deploy scenario.
         document.addEventListener("visibilitychange", () => {
           if (document.visibilityState === "visible") {
-            reg.update().catch(() => {});
+            reg.update().catch((err) => {
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("[SW] update() failed:", err);
+              }
+            });
           }
         });
 
@@ -75,7 +78,6 @@ export function registerSW() {
       })
       .catch((err) => {
         if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
           console.error("SW registration failed:", err);
         }
       });
@@ -116,8 +118,10 @@ export function registerSW() {
           }
           softReload("build-id-changed");
         }
-      } catch (_) {
-        // Poll failures are silent — probably a transient network glitch.
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[SW] build-id poll failed (transient):", err);
+        }
       }
     }, 120000); // 2min
   });
@@ -131,7 +135,10 @@ async function fetchBuildId() {
     if (!r.ok) return null;
     const j = await r.json();
     return j && j.buildId;
-  } catch (_) {
+  } catch (err) {
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[SW] fetchBuildId failed:", err);
+    }
     return null;
   }
 }

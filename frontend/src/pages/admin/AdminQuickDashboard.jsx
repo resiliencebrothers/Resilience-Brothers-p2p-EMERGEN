@@ -125,8 +125,7 @@ export default function AdminQuickDashboard() {
         </div>
         <BigUsdtValue value={fundsTotalUsdt} testId="quick-funds-total" t={t} />
         <div className="grid grid-cols-3 gap-2 mt-4">
-          {MAIN_CURRENCIES.map((code) => (
-            <CurrencyChip
+          {MAIN_CURRENCIES.map((code) => (            <CurrencyChip
               key={code}
               code={code}
               item={fundsByCurrency[code]}

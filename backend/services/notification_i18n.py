@@ -279,7 +279,7 @@ def t(key: str, lang: Optional[str], field: str, **params: Any) -> str:
         return template  # unrendered template so callers still get *something*
 
 
-async def resolve_lang(db, user_id: str) -> str:
+async def resolve_lang(db: Any, user_id: str) -> str:
     """Look up the recipient's preferred_language from Mongo. Returns 'es'
     as the safe default when the user is unknown or the field is missing."""
     if not user_id:

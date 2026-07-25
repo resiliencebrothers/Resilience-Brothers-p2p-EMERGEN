@@ -23,24 +23,46 @@ async def resolve_admin_email_recipients(db, admins: list | None = None) -> list
     return [a["email"] for a in admins if a.get("email")]
 
 
+async def _send_push_to_subscription(sub: dict, payload: dict) -> tuple[int, str | None]:
+    """Send one push and normalise the result. Returns (delivered_count, dead_id_or_None)."""
+    result = send_push(sub["subscription"], payload)
+    if result == "ok":
+        return 1, None
+    if result == "dead":
+        return 0, sub["id"]
+    return 0, None
+
+
+async def _push_fanout_to_admin(db, admin: dict, payload: dict) -> tuple[int, list[str]]:
+    """Push `payload` to every subscription of a single admin.
+    Guard-clause style keeps nesting shallow."""
+    try:
+        subs = await db.push_subscriptions.find(
+            {"user_id": admin["user_id"]}, {"_id": 0}
+        ).to_list(20)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Push subscription fetch for admin {admin.get('email')} failed: {e}")
+        return 0, []
+
+    sent = 0
+    dead: list[str] = []
+    for s in subs:
+        delivered, dead_id = await _send_push_to_subscription(s, payload)
+        sent += delivered
+        if dead_id:
+            dead.append(dead_id)
+    return sent, dead
+
+
 async def _push_fanout_to_admins(db, admins: list, payload: dict) -> tuple[int, list[str]]:
     """Send `payload` via Web Push to every device subscribed by any admin.
     Returns (pushes_sent, dead_subscription_ids)."""
     push_sent = 0
     dead_ids: list[str] = []
     for admin in admins:
-        try:
-            subs = await db.push_subscriptions.find(
-                {"user_id": admin["user_id"]}, {"_id": 0}
-            ).to_list(20)
-            for s in subs:
-                result = send_push(s["subscription"], payload)
-                if result == "ok":
-                    push_sent += 1
-                elif result == "dead":
-                    dead_ids.append(s["id"])
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Push to admin {admin.get('email')} failed: {e}")
+        sent, dead = await _push_fanout_to_admin(db, admin, payload)
+        push_sent += sent
+        dead_ids.extend(dead)
     return push_sent, dead_ids
 
 

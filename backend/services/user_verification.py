@@ -22,7 +22,7 @@ The helper raises `HTTPException(403)` with a machine-readable `code`
 `missing` list so the SPA can highlight all pending steps in one shot
 without triggering multiple round trips.
 """
-from typing import Any, List, Optional
+from typing import Any, List
 
 from fastapi import HTTPException
 
@@ -99,7 +99,10 @@ async def assert_user_fully_verified(
         return
 
     missing = state["missing"]
-    first: Optional[str] = missing[0] if missing else None
+    # `fully_verified` was False, so `missing` is guaranteed non-empty and
+    # `first` is a concrete string. Assign directly (no Optional) so the
+    # code_map / msg_map / _CTA_MAP indexers below type-check cleanly.
+    first: str = missing[0]
 
     # Pick the most user-actionable code (first missing step in a natural
     # order: email → phone → KYC). All three codes are returned in the

@@ -12,10 +12,16 @@ import { useAuth } from "@/context/AuthContext";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import CopyableText from "@/components/CopyableText";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
+import RequestVipCard from "@/pages/dashboard/profile/RequestVipCard";
 import {
   User, Mail, Phone, Globe, ShieldCheck, IdCard, Clock, CheckCircle2,
   AlertTriangle, Pencil, Fingerprint,
 } from "lucide-react";
+
+// Module-level constants — hoisted so <Trans> gets a stable identity for
+// its `components` prop on every parent re-render.
+const TRANS_STRONG_MONO = { 1: <strong className="text-white font-mono" /> };
+const TRANS_STRONG_WHITE = { 1: <strong className="text-white" /> };
 
 
 /**
@@ -99,6 +105,9 @@ export default function ProfileView() {
                      value={new Date(profile.created_at).toLocaleDateString()}
                      readOnly />
       </section>
+
+      {/* --- VIP request card (iter109) — only for role="normal" --- */}
+      <RequestVipCard userRole={user?.role} />
 
       {/* --- KYC card --- */}
       <section className="tactile-card p-6 space-y-3" data-testid="profile-kyc">
@@ -336,7 +345,7 @@ function EmailChangeDialog({ open, onClose, currentEmail, navigate }) {
               <Trans
                 i18nKey="profile.email.step2Body"
                 values={{ target: maskedTarget }}
-                components={{ 1: <strong className="text-white font-mono" /> }}
+                components={TRANS_STRONG_MONO}
               />
             </p>
             <div>
@@ -422,7 +431,7 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
                 <Trans
                   i18nKey="profile.phone.pendingRequestBody"
                   values={{ phone: pending.new_phone_masked }}
-                  components={{ 1: <strong className="text-white font-mono" /> }}
+                  components={TRANS_STRONG_MONO}
                 />
               </div>
             </div>
@@ -438,7 +447,7 @@ function PhoneChangeDialog({ open, onClose, currentPhone, pending, navigate }) {
               <Trans
                 i18nKey="profile.phone.currentLabelBody"
                 values={{ phone: currentPhone || t("profile.phone.currentNotRegistered") }}
-                components={{ 1: <strong className="text-white font-mono" /> }}
+                components={TRANS_STRONG_MONO}
               />
             </p>
             <div>
@@ -509,7 +518,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
             <Trans
               i18nKey="profile.country.currentLabelBody"
               values={{ country: currentCountry || "—" }}
-              components={{ 1: <strong className="text-white font-mono" /> }}
+              components={TRANS_STRONG_MONO}
             />
           </p>
           {willResetKyc && (
@@ -520,7 +529,7 @@ function CountryChangeDialog({ open, onClose, currentCountry, kycStatus }) {
               <p className="text-[0.7rem] text-neutral-400 leading-relaxed">
                 <Trans
                   i18nKey="profile.country.willResetKycBody"
-                  components={{ 1: <strong className="text-white" /> }}
+                  components={TRANS_STRONG_WHITE}
                 />
               </p>
             </div>

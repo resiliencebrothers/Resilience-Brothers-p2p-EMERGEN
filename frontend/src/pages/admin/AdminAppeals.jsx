@@ -144,8 +144,21 @@ export default function AdminAppeals() {
         <TabsContent value={tab} className="mt-4">
           {loading && <div className="text-sm text-neutral-500">{t("adminAppeals.loading")}</div>}
           {!loading && items.length === 0 && (
-            <div className="text-sm text-neutral-500 italic border border-white/5 bg-black/20 px-4 py-6 text-center">
-              {t("adminAppeals.emptyQueue")}
+            <div className="space-y-3">
+              <div className="text-sm text-neutral-500 italic border border-white/5 bg-black/20 px-4 py-6 text-center">
+                {t("adminAppeals.emptyQueue")}
+              </div>
+              <div
+                className="text-xs text-amber-400/80 border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-center"
+                data-testid="appeals-support-hint"
+              >
+                <Trans i18nKey="adminAppeals.supportHint">
+                  <a
+                    href="/admin/users?tab=support"
+                    className="text-amber-300 underline underline-offset-4 hover:text-amber-200"
+                  >Soporte</a>
+                </Trans>
+              </div>
             </div>
           )}
           <ul className="space-y-3">

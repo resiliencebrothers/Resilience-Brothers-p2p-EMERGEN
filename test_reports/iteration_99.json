@@ -1,0 +1,35 @@
+{
+  "summary": "iter99 retest of the iter98 CRITICAL bug — order_status_changed / withdrawal_status_changed dual-publish (owner + admin/employee roles). Regression PASSED: all row-removal flows now work in real time via SSE with no page refresh. 7/7 acceptance criteria PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/test_reports/iteration_98.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/admin.py:279-284 correctly dual-publishes: user_id=target_uid for the owner tab AND roles=('admin','employee') for the admin-queue broadcast. Fix matches iter98's recommended Option A (safer, smaller change than modifying live_bus.publish).",
+    "routes/admin_withdrawals.py:161-167 mirrors the same pattern. Both changes are guarded by a try/except (admin.py wraps everything, admin_withdrawals.py wraps the whole block) so a live_bus failure never breaks the HTTP request — good defensive coding.",
+    "Frontend PENDING_ORDER_STATUSES={pending, requires_double_approval} and PENDING_WITHDRAWAL_STATUSES={pending, approved} in AdminQueue.jsx match the backend model: only terminal statuses (approved/rejected/completed for orders; paid/rejected for withdrawals) trigger row removal. Verified experimentally that an 'approved' withdrawal stays visible in the queue and only 'paid' removes it.",
+    "One nit: services/live_bus.publish() still treats user_id and roles as mutually exclusive (services/live_bus.py:114). Not a bug given the dual-call workaround, but leaving a TODO to extend the API to union the two target sets would remove a foot-gun for future callers."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only requested)", "frontend": "100% (7/7)"},
+  "test_credentials": "session_token cookies: test_session_admin_X / test_session_normal_X / test_session_vip_X (per /app/memory/test_credentials.md). TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP used for VIP withdrawal creation AND admin withdrawal PUT step-up.",
+  "seed_data_creation": "Created ~5 test orders (all now approved/rejected — no longer pending) and 2 test withdrawals (paid/rejected). All row-removal assertions verified so no lingering pending rows attributable to iter99.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two-context pattern still works well: page.context.browser.new_context() then request.post/put for API calls with a different role's cookie. IMPORTANT gotcha found this run: PUT /api/admin/withdrawals/{wid}/status (NOT /api/admin/withdrawals/{wid}) and admin needs to include totp_code in the PUT body (TOTP step-up gate). PUT /api/admin/orders/{id}/status does NOT require TOTP for the pending→approved/rejected transition (only for requires_double_approval→approved).",
+  "verified_flows": [
+    "Admin session cookie loads /admin/queue and admin-queue-live-indicator turns green LIVE.",
+    "Client POST /api/orders → admin sees new queue-order-{id} row appear via SSE order_created + toast 'New pending order' (verified in second screenshot).",
+    "Admin PUT /api/admin/orders/{id}/status status=approved → queue-order-{id} row is DETACHED within 2s. (CRITICAL BUG FROM ITER98 FIXED — dual-publish works)",
+    "Admin PUT /api/admin/orders/{id}/status status=rejected → row DETACHED within 2s.",
+    "Admin PUT /api/admin/orders/{id}/status status=approved (path to completed) → row DETACHED (queue only lists pending anyway).",
+    "VIP POST /api/vip/withdraw with TOTP → admin sees new queue-withdrawal-{id} row + toast 'New pending withdrawal'.",
+    "Admin PUT /api/admin/withdrawals/{id}/status status=rejected (with TOTP) → withdrawal row DETACHED.",
+    "Admin PUT status=approved → withdrawal row STAYS visible (PENDING_WITHDRAWAL_STATUSES contains 'approved').",
+    "Admin PUT status=paid (with TOTP + payout_tx_hash + payout_proof_image) → withdrawal row DETACHED."
+  ],
+  "failed_flows": [],
+  "rca_of_the_issue": "Previously (iter98) publish() at services/live_bus.py:114 branched on `if user_id is None` — when the routes passed user_id, roles were ignored, so admin-queue subscribers never received order_status_changed / withdrawal_status_changed. Fix applied in iter99 = dual-publish in the two routes (admin.py L279-284 and admin_withdrawals.py L161-167): first call with user_id=owner (so the owner's tab gets its toast + balance refresh), second call with roles=('admin','employee') (so all admin/employee /admin/queue tabs get the removal signal). Verified end-to-end with two-context Playwright — every terminal-status PUT now removes the row within 2s of the request."
+}

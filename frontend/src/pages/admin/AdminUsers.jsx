@@ -1,19 +1,17 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/Pagination";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
-import CopyableText from "@/components/CopyableText";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { Search, BarChart3, Settings2 } from "lucide-react";
 
 import UserFunctionsDialog from "./users/UserFunctionsDialog";
+import UsersFiltersBar from "./users/UsersFiltersBar";
+import UsersTableRow from "./users/UsersTableRow";
 
 const PAGE_SIZE = 50;
 
@@ -21,12 +19,14 @@ export default function AdminUsers() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
   const navigate = useNavigate();
-  const ROLE_LABELS = {
+
+  const ROLE_LABELS = useMemo(() => ({
     normal: t("admin.users.roleNormal"),
     vip: t("admin.users.roleVip"),
     employee: t("admin.users.roleEmployee"),
     admin: t("admin.users.roleAdmin"),
-  };
+  }), [t]);
+
   const [users, setUsers] = useState([]);
   const [permCatalog, setPermCatalog] = useState([]);
   const [search, setSearch] = useState("");
@@ -46,8 +46,8 @@ export default function AdminUsers() {
 
   // Debounce search input → 300ms
   useEffect(() => {
-    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(timer);
   }, [searchInput]);
 
   const load = useCallback(async () => {
@@ -58,8 +58,8 @@ export default function AdminUsers() {
       if (roleFilter !== "all") params.role = roleFilter;
       const r = await axios.get(`${API}/admin/users`, { params, withCredentials: true });
       setUsers(r.data);
-      const t = Number(r.headers["x-total-count"]);
-      setTotal(Number.isFinite(t) ? t : r.data.length);
+      const tt = Number(r.headers["x-total-count"]);
+      setTotal(Number.isFinite(tt) ? tt : r.data.length);
     } catch (e) {
       toast.error(t("admin.users.loadError"));
     } finally {
@@ -70,23 +70,33 @@ export default function AdminUsers() {
 
   // Load active currencies once
   useEffect(() => {
-    axios.get(`${API}/currencies`).then(r => setCurrencies(r.data || [])).catch(() => {});
+    axios.get(`${API}/currencies`)
+      .then((r) => setCurrencies(r.data || []))
+      .catch((err) => {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[admin.users] currencies load failed:", err);
+        }
+      });
   }, []);
 
   // iter55.16 — load permission catalog once for the multi-select.
   useEffect(() => {
     axios.get(`${API}/admin/permissions/catalog`, { withCredentials: true })
-      .then(r => setPermCatalog(r.data?.items || []))
-      .catch(() => {});
+      .then((r) => setPermCatalog(r.data?.items || []))
+      .catch((err) => {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[admin.users] permCatalog load failed:", err);
+        }
+      });
   }, []);
 
-  const verifyEmailManually = (user_id, email) =>
+  const verifyEmailManually = useCallback((user_id, email) =>
     setPendingTotp({
       kind: "verify-email",
       user_id,
       payload: {},
       label: t("admin.users.totpDescriptionVerify", { email }),
-    });
+    }), [t]);
 
   const confirmWithTotp = async (code) => {
     const { user_id, payload, kind } = pendingTotp;
@@ -115,9 +125,23 @@ export default function AdminUsers() {
   const canManageBlocklist =
     isAdmin ||
     (currentUser?.role === "employee" && !!currentUser?.can_manage_blocklist);
-  const allowedRoles = isAdmin
-    ? ["normal", "vip", "employee", "admin"]
-    : ["normal", "vip"];
+  const allowedRoles = useMemo(() => (
+    isAdmin ? ["normal", "vip", "employee", "admin"] : ["normal", "vip"]
+  ), [isAdmin]);
+
+  const clearFilters = useCallback(() => {
+    setSearchInput("");
+    setRoleFilter("all");
+  }, []);
+
+  const openStats = useCallback((uid) => navigate(`/admin/users/${uid}/stats`), [navigate]);
+  const openFunctions = useCallback((u) => setFunctionsUser(u), []);
+  const closeFunctions = useCallback(() => setFunctionsUser(null), []);
+  const onUserUpdated = useCallback((fresh) => {
+    setFunctionsUser(fresh);
+    load();
+  }, [load]);
+  const closeTotp = useCallback(() => setPendingTotp(null), []);
 
   return (
     <div data-testid="admin-users" className="space-y-4">
@@ -127,168 +151,53 @@ export default function AdminUsers() {
         testid="admin-users-header"
       />
 
-      <div className="flex items-end gap-3 mb-4 flex-wrap">
-        <div>
-          <div className="micro-label text-neutral-500 mb-1">{t("admin.users.searchLabel")}</div>
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
-            <Input
-              data-testid="users-search"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder={t("admin.users.searchPlaceholder")}
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-80 pl-9 font-mono text-xs"
-            />
-          </div>
-        </div>
-        <div>
-          <div className="micro-label text-neutral-500 mb-1">{t("admin.users.roleLabel")}</div>
-          <Select value={roleFilter} onValueChange={setRoleFilter}>
-            <SelectTrigger
-              data-testid="users-role-filter"
-              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-44"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              <SelectItem value="all">{t("admin.users.allRoles")}</SelectItem>
-              <SelectItem value="normal">{t("admin.users.roleNormal")}</SelectItem>
-              <SelectItem value="vip">{t("admin.users.roleVip")}</SelectItem>
-              <SelectItem value="employee">{t("admin.users.roleEmployee")}</SelectItem>
-              <SelectItem value="admin">{t("admin.users.roleAdmin")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {(searchInput || roleFilter !== "all") && (
-          <button
-            data-testid="users-clear-search"
-            onClick={() => { setSearchInput(""); setRoleFilter("all"); }}
-            className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-10"
-          >
-            {t("admin.common.clearFilters")}
-          </button>
-        )}
-        <div className="ml-auto text-xs text-neutral-500" data-testid="users-result-count">
-          {total} {total === 1 ? t("admin.users.resultOne") : t("admin.users.resultMany")}
-        </div>
-      </div>
+      <UsersFiltersBar
+        searchInput={searchInput}
+        onSearchInputChange={setSearchInput}
+        roleFilter={roleFilter}
+        onRoleFilterChange={setRoleFilter}
+        total={total}
+        onClear={clearFilters}
+      />
 
-      <div className="tactile-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="tactile-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[1020px]">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
               <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("admin.users.colUser")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("admin.users.colUserId")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colEmail")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colRole")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colKyc")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("admin.users.colRegistered")}</th>
-              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.users.colActions")}</th>
+              <th
+                className="px-4 py-3 micro-label text-neutral-500 sticky right-0 bg-[#0a0a0a] z-10 shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.6)]"
+                data-testid="admin-users-col-actions"
+              >
+                {t("admin.users.colActions")}
+              </th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">{t("admin.common.loadingEllipsis")}</td>
+                <td colSpan="7" className="text-center text-neutral-500 py-8">{t("admin.common.loadingEllipsis")}</td>
               </tr>
             )}
             {!loading && users.length === 0 && (
               <tr>
-                <td colSpan="6" className="text-center text-neutral-500 py-8">{t("admin.users.empty")}</td>
+                <td colSpan="7" className="text-center text-neutral-500 py-8">{t("admin.users.empty")}</td>
               </tr>
             )}
-            {users.map(u => (
-              <tr key={u.user_id} className="border-b border-white/5">
-                <td className="px-4 py-3 flex items-center gap-2">
-                  {u.picture && <img src={u.picture} alt="" className="w-7 h-7 rounded-full" />}
-                  <span>{u.name}</span>
-                </td>
-                <td
-                  className="px-4 py-3 text-xs text-neutral-400 whitespace-nowrap align-middle"
-                  data-testid={`user-id-cell-${u.user_id}`}
-                >
-                  <CopyableText
-                    value={u.user_id}
-                    testid={`user-id-copy-${u.user_id}`}
-                    toastMessage={t("admin.users.userIdCopied")}
-                    label={t("admin.users.copyUserId")}
-                    className="text-xs"
-                  />
-                </td>
-                <td className="px-4 py-3 text-neutral-400">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span>{u.email}</span>
-                    {u.auth_provider === "password" && u.email_verified === false && (
-                      <>
-                        <span
-                          data-testid={`email-unverified-${u.user_id}`}
-                          className="text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 border border-[#EF4444]/40 text-[#EF4444] bg-[#EF4444]/10"
-                          title={t("admin.users.notVerifiedTitle")}
-                        >
-                          {t("admin.users.notVerified")}
-                        </span>
-                        <button
-                          type="button"
-                          data-testid={`verify-email-btn-${u.user_id}`}
-                          onClick={() => verifyEmailManually(u.user_id, u.email)}
-                          className="text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-4"
-                          title={t("admin.users.verifyTitle")}
-                        >
-                          {t("admin.users.verify")}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </td>
-                <td
-                  className="px-4 py-3"
-                  data-testid={`role-cell-${u.user_id}`}
-                >
-                  <span
-                    data-testid={`role-badge-${u.user_id}`}
-                    className={
-                      "text-[0.65rem] uppercase tracking-widest px-2 py-1 border font-mono " +
-                      (u.role === "admin"
-                        ? "border-[#8B5CF6]/50 bg-[#8B5CF6]/10 text-[#8B5CF6]"
-                        : u.role === "employee"
-                        ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-400"
-                        : u.role === "vip"
-                        ? "border-amber-500/40 bg-amber-500/5 text-amber-400"
-                        : "border-white/10 bg-white/5 text-neutral-300")
-                    }
-                  >
-                    {ROLE_LABELS[u.role] || u.role}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-xs text-neutral-500">
-                  {new Date(u.created_at).toLocaleDateString()}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    {(u.role === "vip" || u.role === "normal") && (
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/users/${u.user_id}/stats`)}
-                        className="flex items-center gap-1.5 px-3 py-2 border border-[#8B5CF6]/40 hover:border-[#8B5CF6] hover:bg-[#8B5CF6]/10 text-[#8B5CF6] text-xs uppercase tracking-widest transition-all"
-                        title={t("admin.users.statsTitle")}
-                        data-testid={`user-stats-btn-${u.user_id}`}
-                      >
-                        <BarChart3 className="w-3.5 h-3.5" />
-                        {t("admin.users.stats")}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setFunctionsUser(u)}
-                      className="flex items-center gap-1.5 px-3 py-2 border border-emerald-500/40 hover:border-emerald-500 hover:bg-emerald-500/10 text-emerald-400 text-xs uppercase tracking-widest transition-all"
-                      title={t("admin.users.functionsTitle")}
-                      data-testid={`user-perms-btn-${u.user_id}`}
-                    >
-                      <Settings2 className="w-3.5 h-3.5" />
-                      {t("admin.users.functions")}
-                    </button>
-                  </div>
-                </td>
-              </tr>
+            {users.map((u) => (
+              <UsersTableRow
+                key={u.user_id}
+                user={u}
+                roleLabel={ROLE_LABELS[u.role] || u.role}
+                onVerifyEmail={verifyEmailManually}
+                onOpenStats={openStats}
+                onOpenFunctions={openFunctions}
+              />
             ))}
           </tbody>
         </table>
@@ -308,22 +217,19 @@ export default function AdminUsers() {
         title={t("admin.users.totpTitle")}
         description={pendingTotp?.label || t("admin.users.totpDescriptionUpdate")}
         onConfirm={confirmWithTotp}
-        onCancel={() => setPendingTotp(null)}
+        onCancel={closeTotp}
       />
 
       <UserFunctionsDialog
         user={functionsUser}
         open={!!functionsUser}
-        onClose={() => setFunctionsUser(null)}
+        onClose={closeFunctions}
         currencies={currencies}
         permCatalog={permCatalog}
         allowedRoles={allowedRoles}
         isAdmin={isAdmin}
         canManageBlocklist={canManageBlocklist}
-        onUserUpdated={(fresh) => {
-          setFunctionsUser(fresh);
-          load();
-        }}
+        onUserUpdated={onUserUpdated}
       />
     </div>
   );

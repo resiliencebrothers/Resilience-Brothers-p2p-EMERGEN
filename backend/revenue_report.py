@@ -280,28 +280,26 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
     return buf.getvalue()
 
 
-def _revenue_chart(rows) -> Drawing:
-    """Combined chart: vertical bars (daily profit) + cumulative line.
+def _revenue_chart_data(rows):
+    """Extract the two series that the daily-profit chart plots.
 
-    Sorted by date ascending. X-axis labels show day-of-month (DD).
+    Returns (labels, daily_values, cumulative_values). Sorted by date
+    ascending; the labels are two-digit day-of-month strings so the
+    x-axis stays readable.
     """
     sorted_rows = sorted(rows, key=lambda x: x["bucket"])
     daily = [r["total_profit_usdt"] for r in sorted_rows]
     labels = [r["bucket"][-2:] for r in sorted_rows]  # DD only
-    # Cumulative
     cum = []
     running = 0.0
     for v in daily:
         running += v
         cum.append(running)
+    return labels, daily, cum
 
-    width = 7.0 * inch
-    height = 2.4 * inch
-    d = Drawing(width, height)
-    # Background
-    d.add(Rect(0, 0, width, height, fillColor=PANEL, strokeColor=BORDER, strokeWidth=0.5))
 
-    # --- Bars ---
+def _revenue_chart_bars(daily, labels, width, height) -> VerticalBarChart:
+    """Configured bar chart — daily profit as vertical bars."""
     bar = VerticalBarChart()
     bar.x = 40
     bar.y = 28
@@ -319,47 +317,63 @@ def _revenue_chart(rows) -> Drawing:
     bar.valueAxis.gridStrokeColor = BORDER
     bar.valueAxis.gridStrokeWidth = 0.25
     bar.valueAxis.visibleGrid = True
-    d.add(bar)
+    return bar
 
-    # --- Cumulative line (overlaid, separate axis scale) ---
-    # Map cumulative values onto bar.y / bar.height using its own min/max
-    if cum:
-        cmin = min(0.0, min(cum))
-        cmax = max(0.0, max(cum)) or 1.0
-        span = cmax - cmin or 1.0
-        n = len(cum)
-        line = LinePlot()
-        line.x = bar.x
-        line.y = bar.y
-        line.width = bar.width
-        line.height = bar.height
-        # X positions: center of each bar slot
-        step = bar.width / max(1, n)
-        pts = []
-        for i, v in enumerate(cum):
-            px = (i + 0.5) * step
-            py = ((v - cmin) / span) * bar.height
-            pts.append((px, py))
-        # Use absolute coords by setting plot ranges
-        line.data = [pts]
-        line.xValueAxis.valueMin = 0
-        line.xValueAxis.valueMax = bar.width
-        line.yValueAxis.valueMin = 0
-        line.yValueAxis.valueMax = bar.height
-        line.xValueAxis.visible = False
-        line.yValueAxis.visible = False
-        line.lines[0].strokeColor = GREEN
-        line.lines[0].strokeWidth = 1.5
-        line.lines[0].symbol = makeMarker("Circle", size=2, fillColor=GREEN, strokeColor=None)
-        d.add(line)
 
-    # Legend
+def _revenue_chart_cumulative(cum, bar) -> LinePlot:
+    """Overlaid cumulative line — its own axis so it fits the bar plot area."""
+    cmin = min(0.0, min(cum))
+    cmax = max(0.0, max(cum)) or 1.0
+    span = cmax - cmin or 1.0
+    n = len(cum)
+    step = bar.width / max(1, n)
+
+    line = LinePlot()
+    line.x = bar.x
+    line.y = bar.y
+    line.width = bar.width
+    line.height = bar.height
+    line.data = [[
+        ((i + 0.5) * step, ((v - cmin) / span) * bar.height)
+        for i, v in enumerate(cum)
+    ]]
+    line.xValueAxis.valueMin = 0
+    line.xValueAxis.valueMax = bar.width
+    line.yValueAxis.valueMin = 0
+    line.yValueAxis.valueMax = bar.height
+    line.xValueAxis.visible = False
+    line.yValueAxis.visible = False
+    line.lines[0].strokeColor = GREEN
+    line.lines[0].strokeWidth = 1.5
+    line.lines[0].symbol = makeMarker("Circle", size=2, fillColor=GREEN, strokeColor=None)
+    return line
+
+
+def _revenue_chart_legend(d: Drawing, height: float) -> None:
     d.add(Rect(50, height - 18, 12, 6, fillColor=BRAND_PURPLE, strokeColor=None))
     d.add(String(66, height - 14, "Ganancia diaria",
-                  fontSize=7, fillColor=TEXT_MUTED))
+                 fontSize=7, fillColor=TEXT_MUTED))
     d.add(Line(150, height - 15, 162, height - 15, strokeColor=GREEN, strokeWidth=1.5))
     d.add(String(166, height - 14, "Acumulado",
-                  fontSize=7, fillColor=TEXT_MUTED))
+                 fontSize=7, fillColor=TEXT_MUTED))
+
+
+def _revenue_chart(rows) -> Drawing:
+    """Combined chart: vertical bars (daily profit) + cumulative line.
+
+    Sorted by date ascending. X-axis labels show day-of-month (DD).
+    """
+    labels, daily, cum = _revenue_chart_data(rows)
+    width = 7.0 * inch
+    height = 2.4 * inch
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, fillColor=PANEL, strokeColor=BORDER, strokeWidth=0.5))
+
+    bar = _revenue_chart_bars(daily, labels, width, height)
+    d.add(bar)
+    if cum:
+        d.add(_revenue_chart_cumulative(cum, bar))
+    _revenue_chart_legend(d, height)
     return d
 
 
@@ -490,38 +504,14 @@ def _analytics_bars(monthly_rows) -> Drawing:
     return d
 
 
-def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> bytes:
-    """PDF for the operator's "Estadísticas" analytics dialog. Layout:
-      1. Highlights strip (mejor mes · categoría líder · par top)
-      2. Category breakdown table with magnitude-share %
-      3. Stacked bar chart per month
-      4. Monthly comparison table sorted DESC
-    Uses the same brand palette as the on-screen dialog for consistency.
-    """
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=LETTER,
-                            topMargin=84, bottomMargin=48,
-                            leftMargin=36, rightMargin=36)
-    styles = getSampleStyleSheet()
-    title = ParagraphStyle("title", parent=styles["Title"],
-                            fontName="Helvetica-Bold", fontSize=16,
-                            textColor=TEXT, spaceAfter=4)
-    meta = ParagraphStyle("meta", parent=styles["Normal"],
-                          fontName="Helvetica", fontSize=9, textColor=TEXT_MUTED)
-    big = ParagraphStyle("big", parent=styles["Normal"],
-                         fontName="Helvetica-Bold", fontSize=14,
-                         textColor=BRAND_PURPLE)
-
-    story = [
-        Paragraph("Estadísticas comparativas de ingresos", title),
-        Paragraph(f"Período: <b>{period_label}</b>", meta),
-        Spacer(1, 12),
-    ]
-
+def _analytics_prepare(monthly_rows: list, summary: dict):
+    """Compute the derived data shown across the analytics report:
+    top month, top pair, category rows (name/value), abs_total for %
+    magnitude, and category rows sorted DESC by absolute value.
+    Centralised so CSV + PDF stay in lock-step."""
     top_month = max(monthly_rows, key=lambda r: r.get("total_profit_usdt", 0),
                     default=None) if monthly_rows else None
     top_pair = (summary.get("by_pair") or [None])[0]
-
     cats = [
         ("Intercambio P2P",  summary.get("p2p_profit_usdt", 0.0)),
         ("Marketplace",      summary.get("marketplace_profit_usdt", 0.0)),
@@ -529,8 +519,26 @@ def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> byt
     ]
     abs_total = sum(abs(v) for _, v in cats) or 1.0
     cats_sorted = sorted(cats, key=lambda x: abs(x[1]), reverse=True)
+    return top_month, top_pair, cats, abs_total, cats_sorted
 
-    # --- Highlights strip ---
+
+def _analytics_pdf_styles():
+    styles = getSampleStyleSheet()
+    return {
+        "title": ParagraphStyle("title", parent=styles["Title"],
+                                fontName="Helvetica-Bold", fontSize=16,
+                                textColor=TEXT, spaceAfter=4),
+        "meta": ParagraphStyle("meta", parent=styles["Normal"],
+                               fontName="Helvetica", fontSize=9, textColor=TEXT_MUTED),
+        "big": ParagraphStyle("big", parent=styles["Normal"],
+                              fontName="Helvetica-Bold", fontSize=14,
+                              textColor=BRAND_PURPLE),
+    }
+
+
+def _analytics_highlights(styles, top_month, top_pair, cats_sorted, abs_total) -> Table:
+    """3-column highlights strip at the top of the analytics PDF."""
+    meta, big = styles["meta"], styles["big"]
     hl_rows = [[
         Paragraph("Mejor mes", meta),
         Paragraph("Categoría líder", meta),
@@ -557,10 +565,11 @@ def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> byt
         ("TOPPADDING", (0,0), (-1,-1), 6),
         ("BOTTOMPADDING", (0,0), (-1,-1), 6),
     ]))
-    story.append(hl)
-    story.append(Spacer(1, 14))
+    return hl
 
-    # --- Category breakdown table ---
+
+def _analytics_category_table(cats_sorted, abs_total) -> Table:
+    """Category breakdown with magnitude-share %."""
     cat_data = [["Categoría", "USDT", "% magnitud"]]
     for name, val in cats_sorted:
         share = abs(val) / abs_total * 100
@@ -581,16 +590,11 @@ def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> byt
         ("TOPPADDING", (0,0), (-1,-1), 5),
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
-    story.append(cat_tbl)
-    story.append(Spacer(1, 14))
+    return cat_tbl
 
-    # --- Monthly bar chart ---
-    story.append(Paragraph("Ganancias por mes · barras apiladas", meta))
-    story.append(Spacer(1, 6))
-    story.append(_analytics_bars(monthly_rows))
-    story.append(Spacer(1, 14))
 
-    # --- Monthly comparison table (DESC) ---
+def _analytics_monthly_table(monthly_rows) -> Table:
+    """Full monthly comparison table sorted DESC (freshest first)."""
     head = ["Mes", "P2P", "Marketplace", "Conversiones", "Total", "Órdenes"]
     data = [head]
     for r in sorted(monthly_rows, key=lambda x: x["bucket"], reverse=True):
@@ -621,11 +625,40 @@ def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> byt
         ("TOPPADDING", (0,0), (-1,-1), 5),
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
-    story.append(mtbl)
-    story.append(Spacer(1, 22))
-    story.append(build_signature_block(
-        lang="es", include_client_side=False, total_width_inches=7.0,
-    ))
+    return mtbl
+
+
+def revenue_analytics_pdf(monthly_rows, summary: dict, period_label: str) -> bytes:
+    """PDF for the operator's "Estadísticas" analytics dialog. Layout:
+      1. Highlights strip (mejor mes · categoría líder · par top)
+      2. Category breakdown table with magnitude-share %
+      3. Stacked bar chart per month
+      4. Monthly comparison table sorted DESC
+    Uses the same brand palette as the on-screen dialog for consistency.
+    """
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER,
+                            topMargin=84, bottomMargin=48,
+                            leftMargin=36, rightMargin=36)
+    styles = _analytics_pdf_styles()
+    top_month, top_pair, _cats, abs_total, cats_sorted = _analytics_prepare(monthly_rows, summary)
+
+    story = [
+        Paragraph("Estadísticas comparativas de ingresos", styles["title"]),
+        Paragraph(f"Período: <b>{period_label}</b>", styles["meta"]),
+        Spacer(1, 12),
+        _analytics_highlights(styles, top_month, top_pair, cats_sorted, abs_total),
+        Spacer(1, 14),
+        _analytics_category_table(cats_sorted, abs_total),
+        Spacer(1, 14),
+        Paragraph("Ganancias por mes · barras apiladas", styles["meta"]),
+        Spacer(1, 6),
+        _analytics_bars(monthly_rows),
+        Spacer(1, 14),
+        _analytics_monthly_table(monthly_rows),
+        Spacer(1, 22),
+        build_signature_block(lang="es", include_client_side=False, total_width_inches=7.0),
+    ]
 
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     return buf.getvalue()

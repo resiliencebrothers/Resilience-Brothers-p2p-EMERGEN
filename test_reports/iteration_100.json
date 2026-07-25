@@ -1,0 +1,49 @@
+{
+  "summary": "iter100 · Frontend-only E2E validation of the behavior-preserving Fase-3 refactor (Landing/AdminUsers/AdminKYC split into sub-components, Trans/kpis memoised, keyboard-shortcut extracted to a hook, decorative SVG keys stabilised). All 15 acceptance criteria PASS. Zero pageerror / uncaught exceptions across 5 pages tested (Landing, /admin/users, /admin/kyc, /dashboard/vip, /dashboard/profile, /admin/queue, /admin/rates, /admin/currencies).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_99.json",
+    "/app/test_reports/iteration_98.json"
+  ],
+  "action_items": [
+    "OPTIONAL (not a refactor regression): the [data-testid='hero-email-link'] inside <Trans i18nKey='landing.hero.emailFallback' components={[...]} /> is NOT rendered because the current es/en translation for landing.hero.emailFallback appears to lack the `<0>...</0>` placeholder (renders as plain text 'Google boosts...'). Not a refactor bug — the pre-existing i18n string simply has no interpolation for that link. The other 3 email entry-points (header-login-btn, hero-email-btn, cta-email-link) all open the EmailAuthDialog correctly, so email-auth flow is fully reachable."
+  ],
+  "critical_code_review_comments": [
+    "Landing.jsx orchestrator (61 LOC) is very clean — pure composition, useCallback wrapping on the two handlers, and closeEmailAuth is also memoised. Good.",
+    "LandingHero.useMemo dependencies are minimal (`[scrollY]` and `[t]`), which is correct. `t` is stable per language, so the KPI array won't be rebuilt on scroll.",
+    "LandingServices reads bullets via `t(..., { returnObjects: true })` on every render — returns a fresh array identity each render. Minor: could be memoised too, but bullets have stable text keys so React reconciliation is fine. Non-blocker.",
+    "UsersFiltersBar / UsersTableRow: pure children (props-only), ROLE_BADGE_CLASSES hoisted to module scope as intended. Good.",
+    "useKycKeyboard hook keeps all its dependencies in the effect's dep array (items, focusedIdx, setFocusedIdx, selected, showHelp, setShowHelp, openAction, toggleBatch, bulkApprove) — correct, no missing-dep footgun.",
+    "CurrencyIcon: `eur-star-${i}`, `ars-ray-${i}`, `ves-star-${i}` keys are stable and unique per loop (as intended). No React key-warning in console during EUR/ARS/VES render.",
+    "ProfileView TRANS_STRONG_MONO / TRANS_STRONG_WHITE and VipWithdrawalForm TRANS_STRONG_ONE / TRANS_STRONG_ONE_TWO are module-level frozen constants — Trans no longer receives a new object identity per render. Verified rendered <strong>+5350000000</strong>, <strong>Under review</strong>, <strong>Does not match Tron (TRC20)</strong>, and <strong>phone</strong>/<strong>address</strong> in the cash hint.",
+    "One nit: LandingHero.jsx line 71 still has `// eslint-disable-next-line react/jsx-key` for the <button> child of Trans — after the refactor this could be replaced with a proper `key='email-fallback-btn'` and the disable removed. Cosmetic only."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skip backend)", "frontend": "100% (15/15 acceptance criteria)"},
+  "test_credentials": "session_token cookies from /app/memory/test_credentials.md: test_session_admin_X, test_session_vip_X, test_session_normal_X.",
+  "seed_data_creation": "None. Only read-only navigation + non-persisted form state (withdrawal address filled but not submitted, profile dialogs opened+closed without saving).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Refactor is 100% behavior-preserving. Every testid (header-login-btn, hero-start-btn, hero-email-btn, cta-signup-btn, cta-email-link, admin-users, users-search, users-role-filter, users-clear-search, users-result-count, user-perms-btn-*, user-stats-btn-*, role-badge-*, admin-kyc-page, kyc-help-btn, admin-queue, admin-queue-live-indicator, currency-icon-*, withdraw-details, crypto-address-mismatch, withdraw-cash-hint, profile-email-row-edit, profile-phone-row-edit, profile-country-row-edit) is preserved and hit-testable. Use `wait_until='domcontentloaded'` not `networkidle` on any authenticated page — the SSE /live/stream keeps a persistent HTTP connection open, so networkidle will always time out.",
+  "verified_flows": [
+    "Landing (/) unauth: header (logo+nav+lang switcher+Sign-in) + hero H1/description/CTAs + 4 KPI cards + About tetris (5 cards: Globe2/ShieldCheck/Zap/Activity/Boxes) + Services (2 cards, 8 bullets, marketplace parallax bg) + How (4 steps) + VIP section + final CTA + footer. All copy via i18n.",
+    "Email dialog opens from hero-email-btn, cta-email-link, header-login-btn.",
+    "/admin/users (admin): 52 users load; search debounce (300ms) works — 'vip.test' filters to 1 result; role=vip filters to 2, role=admin filters to 3; users-clear-search resets; UserFunctionsDialog opens on Functions-btn click.",
+    "UsersTableRow renders correctly: admin row has ONLY Functions btn (no Stats), VIP row has both Stats + Functions, role-badge-* has hoisted ROLE_BADGE_CLASSES colours (purple/amber/emerald/neutral).",
+    "/admin/kyc (admin): page + funnel cards (Total 52, Pending 0…) load; kyc-help-btn visible; `?` opens shortcut-help dialog and `Escape` closes it (useKycKeyboard hook wired correctly). j/k/x/a/r/i intercepted correctly when no rows exist.",
+    "/dashboard/vip (vip) crypto method: fill 'clearlyNotATronAddress' → crypto-address-mismatch renders with <strong>Does not match Tron (TRC20)</strong> (Trans + TRANS_STRONG_ONE memoised).",
+    "/dashboard/vip (vip) CUP cash method: withdraw-cash-hint renders with <strong>phone</strong> + <strong>address</strong> (Trans + TRANS_STRONG_ONE_TWO memoised).",
+    "/dashboard/profile (normal) Change Email dialog: renders Trans with current email; no broken markers.",
+    "/dashboard/profile Change Phone dialog: renders <strong>+5350000000</strong>; no broken markers.",
+    "/dashboard/profile Change Country dialog: renders <strong>—</strong> + <strong>\"Under review\"</strong>; no broken markers.",
+    "/admin/queue (admin): admin-queue + admin-queue-live-indicator (LIVE) both visible → SSE from iter98/99 still works.",
+    "Currency icons rendered on /admin/rates + /admin/currencies: USD, USDT, BTC, CUP, CUPT, CUPE, BRL, MXN, COP, PEN + custom operator suffixes (USDCASH_TEST, USDCASH2_TEST, USDT_TEST, USD_TEST_XFR, CUPCASH27, USDXFR19C) — no React key-warning in console, stable keys work."
+  ],
+  "failed_flows": [],
+  "rca_of_the_issue": "N/A — behavior-preserving refactor validated end-to-end. Zero regressions found."
+}

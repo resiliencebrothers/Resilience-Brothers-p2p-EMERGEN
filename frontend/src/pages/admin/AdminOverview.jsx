@@ -151,7 +151,7 @@ export default function AdminOverview() {
           </div>
         </div>
         <div className="flex items-end gap-3 flex-wrap">
-          <div className="flex-1 min-w-[200px]">
+          <div className="flex-1 min-w-0 sm:min-w-[200px]">
             <label className="micro-label text-neutral-500 text-[0.65rem]">{t("adminOverview.alerts.thresholdLabel")}</label>
             <Input
               type="number"

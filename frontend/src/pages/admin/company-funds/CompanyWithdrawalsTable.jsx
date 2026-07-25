@@ -117,7 +117,7 @@ export default function CompanyWithdrawalsTable({
             </SelectContent>
           </Select>
         </div>
-        <div className="flex-1 min-w-[220px] max-w-md">
+        <div className="flex-1 min-w-0 sm:min-w-[220px] max-w-md">
           <div className="micro-label text-neutral-500 mb-1">
             {t("admin.companyFunds.filterBeneficiary")}
           </div>
@@ -150,8 +150,8 @@ export default function CompanyWithdrawalsTable({
         </div>
       </div>
 
-      <div className="tactile-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="tactile-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
           <thead className="bg-[#0a0a0a] border-b border-white/10">
             <tr className="text-left">
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colAmount")}</th>

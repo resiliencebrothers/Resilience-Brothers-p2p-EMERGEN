@@ -49,7 +49,7 @@ export default function WithdrawalDialog({
               onProofUpload={onProofUpload}
               fileRef={fileRef}
             />
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <Button data-testid="withdrawal-approve" onClick={() => onAskChange("approved")} className="bg-[#22C55E] text-black rounded-none">
                 {open.method === "cash" ? t("admin.withdrawals.approveInProgress") : t("admin.withdrawals.approveConfirm")}
               </Button>

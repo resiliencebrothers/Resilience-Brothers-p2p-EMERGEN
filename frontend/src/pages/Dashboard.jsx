@@ -2,7 +2,7 @@ import { useState } from "react";
 import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight, HandCoins } from "lucide-react";
+import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight, HandCoins, HelpCircle } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -16,10 +16,12 @@ import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 import KYCView from "@/pages/dashboard/KYCView";
 import ProfileView from "@/pages/dashboard/ProfileView";
 import NotificationsView from "@/pages/dashboard/NotificationsView";
+import SupportView from "@/pages/dashboard/SupportView";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import AppealDialog from "@/components/AppealDialog";
+import InstallAppButton from "@/components/InstallAppButton";
 
 // iter55.36r — role labels moved to i18n. Values are `t()` keys under
 // `dashboard.roleLabel.*`, resolved inline where used.
@@ -57,6 +59,7 @@ export default function Dashboard() {
       ] : []),
       { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
     ] : []),
+    { to: "/dashboard/support", icon: HelpCircle, label: t("sidebar.client.support"), id: "nav-support" },
   ];
 
   const navLinkClass = ({ isActive }) =>
@@ -116,7 +119,8 @@ export default function Dashboard() {
         </div>
         <NotificationBell />
       </div>
-      <div className="flex items-center gap-2">
+      <InstallAppButton testid={`${logoutTestid}-install-app`} compact />
+      <div className="flex items-center gap-2 mt-3">
         <CompactLanguageSwitcher testid="dashboard-lang-switcher" />
         <button
           data-testid={logoutTestid}
@@ -145,7 +149,7 @@ export default function Dashboard() {
         {renderUserFooter("logout-btn")}
       </aside>
 
-      <main className="flex-1 lg:ml-64">
+      <main className="flex-1 lg:ml-64 min-w-0 overflow-x-hidden">
         {/* MOBILE TOP BAR with hamburger */}
         <div className="lg:hidden sticky top-0 z-30 glass-panel h-14 px-4 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-2">
@@ -191,7 +195,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="p-6 lg:p-10">
+        <div className="p-4 sm:p-6 lg:p-10">
           {user?.account_status === "under_review" && user?.role !== "admin" && user?.role !== "employee" && (
             <div
               data-testid="under-review-banner"
@@ -234,6 +238,7 @@ export default function Dashboard() {
             <Route path="vip" element={<VipView />} />
             <Route path="capital-requests" element={<VipCapitalRequestsView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
+            <Route path="support" element={<SupportView />} />
           </Routes>
         </div>
       </main>

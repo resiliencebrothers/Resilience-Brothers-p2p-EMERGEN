@@ -24,23 +24,27 @@ from typing import Any, Dict, List
 
 
 # Codes are stable strings — do NOT rename them once persisted in user docs.
+# iter108.2 — added `category` field so the admin UI can group permissions.
+# Category codes are stable too; frontend maps them to display metadata.
 PERMISSION_CATALOG: List[Dict[str, str]] = [
-    {"code": "orders",           "label": "Órdenes",              "description": "Aprobar / rechazar / gestionar órdenes P2P"},
-    {"code": "withdrawals",      "label": "Retiros VIP",          "description": "Aprobar retiros de saldo VIP"},
-    {"code": "kyc",              "label": "Verificación KYC",     "description": "Revisar y aprobar verificaciones de identidad"},
-    {"code": "appeals",          "label": "Apelaciones",          "description": "Revisar apelaciones self-service de usuarios"},
-    {"code": "products",         "label": "Productos",            "description": "Crear / editar / eliminar productos del marketplace"},
-    {"code": "rates",            "label": "Tasas",                "description": "Ajustar tasas de cambio (reales y comisiones)"},
-    {"code": "currencies",       "label": "Monedas",              "description": "Añadir / editar / ocultar monedas"},
-    {"code": "users",            "label": "Usuarios",             "description": "Ver la lista de usuarios (sin datos sensibles ni funciones)"},
-    {"code": "user_stats",       "label": "Estadísticas de usuario", "description": "Ver la página de estadísticas detalladas de un cliente (saldo, deudas, KYC, teléfono)"},
-    {"code": "user_functions",   "label": "Funciones de usuario", "description": "Modificar rol, permisos, monedas y accesos del marketplace de un usuario"},
-    {"code": "view_user_sensitive", "label": "Datos sensibles del usuario", "description": "Ver teléfonos, saldos y comisiones en la lista de usuarios"},
-    {"code": "company_funds",    "label": "Fondo Empresa",        "description": "Registrar aportes / retiros de capital"},
-    {"code": "blocked_contacts", "label": "Bloqueos",             "description": "Gestionar la lista de contactos bloqueados"},
-    {"code": "transactions",     "label": "Registro Contable",    "description": "Ver el registro de transacciones (auditoría)"},
-    {"code": "quick_view",       "label": "Vista Rápida / Cola",  "description": "Acceso a la vista rápida y a mi cola de trabajo"},
-    {"code": "profile_changes",  "label": "Cambios de datos",     "description": "Aprobar cambios de teléfono/email solicitados por clientes"},
+    {"code": "orders",           "category": "operations", "label": "Órdenes",              "description": "Aprobar / rechazar / gestionar órdenes P2P"},
+    {"code": "withdrawals",      "category": "operations", "label": "Retiros VIP",          "description": "Aprobar retiros de saldo VIP"},
+    {"code": "kyc",              "category": "operations", "label": "Verificación KYC",     "description": "Revisar y aprobar verificaciones de identidad"},
+    {"code": "appeals",          "category": "operations", "label": "Apelaciones",          "description": "Revisar apelaciones self-service de usuarios"},
+    {"code": "profile_changes",  "category": "operations", "label": "Cambios de datos",     "description": "Aprobar cambios de teléfono/email solicitados por clientes"},
+    {"code": "products",         "category": "catalog",    "label": "Productos",            "description": "Crear / editar / eliminar productos del marketplace"},
+    {"code": "rates",            "category": "catalog",    "label": "Tasas",                "description": "Ajustar tasas de cambio (reales y comisiones)"},
+    {"code": "currencies",       "category": "catalog",    "label": "Monedas",              "description": "Añadir / editar / ocultar monedas"},
+    {"code": "users",            "category": "users",      "label": "Usuarios",             "description": "Ver la lista de usuarios (sin datos sensibles ni funciones)"},
+    {"code": "user_stats",       "category": "users",      "label": "Estadísticas de usuario", "description": "Ver la página de estadísticas detalladas de un cliente (saldo, deudas, KYC, teléfono)"},
+    {"code": "user_functions",   "category": "users",      "label": "Funciones de usuario", "description": "Modificar rol, permisos, monedas y accesos del marketplace de un usuario"},
+    {"code": "view_user_sensitive", "category": "users",   "label": "Datos sensibles del usuario", "description": "Ver teléfonos, saldos y comisiones en la lista de usuarios"},
+    {"code": "support",          "category": "users",      "label": "Soporte",              "description": "Responder tickets de soporte de clientes y editar el FAQ"},
+    {"code": "blocked_contacts", "category": "users",      "label": "Bloqueos",             "description": "Gestionar la lista de contactos bloqueados"},
+    {"code": "vip_requests",     "category": "users",      "label": "Solicitudes VIP",      "description": "Revisar y aprobar / rechazar solicitudes de upgrade a VIP"},
+    {"code": "company_funds",    "category": "finance",    "label": "Fondo Empresa",        "description": "Registrar aportes / retiros de capital"},
+    {"code": "transactions",     "category": "finance",    "label": "Registro Contable",    "description": "Ver el registro de transacciones (auditoría)"},
+    {"code": "quick_view",       "category": "finance",    "label": "Vista Rápida / Cola",  "description": "Acceso a la vista rápida y a mi cola de trabajo"},
 ]
 
 VALID_CODES = {p["code"] for p in PERMISSION_CATALOG}

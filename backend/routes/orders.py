@@ -205,6 +205,29 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
             logger.error(f"residue audit log failed: {e}")
     await maybe_flag_defensive_margin(order)
     await dispatch_new_order_alerts(order, user)
+    # iter98 — SSE push to admins so /admin/queue prepends the new order
+    # in real-time (staff sees the ticker without hammering F5).
+    try:
+        from services.live_bus import publish as live_publish
+        fresh = await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
+        await live_publish(
+            "order_created",
+            {
+                "id": fresh.get("id"),
+                "user_id": fresh.get("user_id"),
+                "user_name": user.get("name") or user.get("email"),
+                "from_code": fresh.get("from_code"),
+                "to_code": fresh.get("to_code"),
+                "amount_from": fresh.get("amount_from"),
+                "amount_to": fresh.get("amount_to"),
+                "delivery_method": fresh.get("delivery_method"),
+                "status": fresh.get("status"),
+                "created_at": fresh.get("created_at"),
+            },
+            roles=("admin", "employee"),
+        )
+    except Exception as e:
+        logger.error(f"order_created SSE publish failed: {e}")
     return await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
 
 
@@ -364,6 +387,26 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         )
     except Exception as e:
         logger.error(f"Admin notify (withdrawal) failed: {e}")
+    # iter98 — SSE push to admins so /admin/queue prepends the pending
+    # withdrawal in real-time.
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish(
+            "withdrawal_created",
+            {
+                "id": w.id,
+                "user_id": w.user_id,
+                "user_name": w.user_name,
+                "amount_usd": w.amount_usd,
+                "currency": w.currency,
+                "method": w.method,
+                "crypto_network": crypto_network,
+                "created_at": w.created_at,
+            },
+            roles=("admin", "employee"),
+        )
+    except Exception as e:
+        logger.error(f"withdrawal_created SSE publish failed: {e}")
     return w.model_dump()
 
 
@@ -542,19 +585,43 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     # no P2P trade is happening (it's an internal balance reshuffle within
     # the same user), using the inverse quote when direct is unavailable is
     # the natural behaviour.
+    #
+    # iter101 — TIER pricing for self-conversion:
+    #   • VIP  → `rate_vip`  (the VIP-tier client price)
+    #   • NORMAL → `real_rate` (the operator's REAL market exit rate — the
+    #                          same one used to compute platform revenue).
+    #     Fallback to `rate_normal` only when a legacy rate row has no
+    #     `real_rate` set.
+    #
+    # Why not `rate_normal` for normal clients? Because `rate_normal` on a
+    # P2P direction is a promotional street price the client earns by
+    # sending funds to the operator. Inverting it for a self-conversion
+    # (where no external market trade happens) would give the client a
+    # free 5% arbitrage the operator never intended to grant. `real_rate`
+    # keeps the platform's true margin intact for every convertible pair —
+    # and if admin edits `real_rate`, the conversion follows automatically.
+    is_vip = user.get("role") in ("vip", "admin")
+
+    def _pick_tier_rate(doc: dict) -> float:
+        if is_vip:
+            return float(doc.get("rate_vip") or 0.0)
+        real = doc.get("real_rate")
+        if real is not None and float(real) > 0:
+            return float(real)
+        return float(doc.get("rate_normal") or 0.0)
+
     rate_doc = await db.rates.find_one(
         {"from_code": from_code, "to_code": to_code}, {"_id": 0}
     )
-    is_vip = user.get("role") in ("vip", "admin")
     rate_used: float = 0.0
     if rate_doc:
-        rate_used = float(rate_doc.get("rate_vip" if is_vip else "rate_normal", 0))
+        rate_used = _pick_tier_rate(rate_doc)
     else:
         inverse_doc = await db.rates.find_one(
             {"from_code": to_code, "to_code": from_code}, {"_id": 0}
         )
         if inverse_doc:
-            inv = float(inverse_doc.get("rate_vip" if is_vip else "rate_normal", 0))
+            inv = _pick_tier_rate(inverse_doc)
             if inv > 0:
                 rate_used = 1.0 / inv
     if rate_used <= 0:
@@ -620,7 +687,6 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         )
     # Destination receives the FULL equivalent, no fee subtraction.
     amount_to = round(payload.amount_from * rate_used, 4)
-    amount_to_gross = amount_to  # kept for backwards compat in the response
     fee = CONVERT_FEE_USDT
     # Atomic ledger update:
     #   1. Debit `amount_from` from the source currency.

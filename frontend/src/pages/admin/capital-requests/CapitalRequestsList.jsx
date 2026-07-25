@@ -137,7 +137,7 @@ function CapitalRequestCard({ cr, meta, onApprove, onReject, t }) {
   return (
     <div className="tactile-card p-5" data-testid={`cr-item-${cr.id}`}>
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex-1 min-w-[260px]">
+        <div className="flex-1 min-w-0 sm:min-w-[260px]">
           <div className="flex items-center gap-2 mb-1">
             <span className={`text-[0.65rem] uppercase tracking-widest border px-2 py-0.5 flex items-center gap-1 ${meta.cls}`}>
               <StatusIcon className="w-3 h-3" /> {meta.label}

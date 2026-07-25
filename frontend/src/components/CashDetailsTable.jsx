@@ -23,7 +23,7 @@
  * `structured` boolean returned by `parseCashDetails`.
  */
 import { Copy, Check, MessageCircle, MapPin } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 // Labels we recognise. Order matters — we render rows in this order.
@@ -146,7 +146,14 @@ function MapsCell({ address }) {
 }
 
 export default function CashDetailsTable({ details }) {
-  const parsed = parseCashDetails(details);
+  const parsed = useMemo(() => parseCashDetails(details), [details]);
+  // Compute the filtered row list once per `parsed` change so we don't
+  // filter the whole `KNOWN_LABELS` array on every render (called per-row
+  // in the admin queue where dozens of orders share the same layout).
+  const visibleLabels = useMemo(
+    () => (parsed ? KNOWN_LABELS.filter((k) => parsed[k]) : []),
+    [parsed]
+  );
   if (!parsed) return null;
 
   return (
@@ -155,7 +162,7 @@ export default function CashDetailsTable({ details }) {
       className="w-full text-xs font-mono border border-white/5"
     >
       <tbody>
-        {KNOWN_LABELS.filter((k) => parsed[k]).map((label) => (
+        {visibleLabels.map((label) => (
           <tr
             key={label}
             className="border-b border-white/5 last:border-0"

@@ -43,6 +43,29 @@ def _build_users_query(q: Optional[str], role: Optional[str]) -> Dict[str, Any]:
     return mongo_q
 
 
+async def _fetch_effective_kyc_map(user_ids: List[str]) -> Dict[str, str]:
+    """iter106 — fetch the latest KYC status per user in a single aggregation.
+
+    Mirrors the fallback logic used by `admin_user_stats`:
+      - If a `kyc_verifications` doc exists, use its `status`.
+      - Else caller falls back to `user.kyc_status` (or `not_started`).
+      - `unverified` is normalized to `not_started` for UI consistency.
+    """
+    if not user_ids:
+        return {}
+    pipeline = [
+        {"$match": {"user_id": {"$in": user_ids}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$user_id", "status": {"$first": "$status"}}},
+    ]
+    rows = await db.kyc_verifications.aggregate(pipeline).to_list(len(user_ids))
+    out: Dict[str, str] = {}
+    for r in rows:
+        st = r.get("status") or ""
+        out[r["_id"]] = "not_started" if st == "unverified" else st
+    return out
+
+
 def _enrich_user_with_usdt_total(user_doc: dict, rates: dict) -> None:
     """Iter47 enrichment — attaches `vip_balance_usdt` to any non-staff user
     by summing every currency in `vip_balances` (plus the legacy USD balance)
@@ -75,8 +98,13 @@ async def list_users(request: Request, q: Optional[str] = None,
     total = await db.users.count_documents(mongo_q)
     docs = await db.users.find(mongo_q, {"_id": 0}).sort("created_at", -1).skip(offset).to_list(limit)
     rates = await build_rate_lookup()
+    kyc_map = await _fetch_effective_kyc_map([d["user_id"] for d in docs])
     for d in docs:
         _enrich_user_with_usdt_total(d, rates)
+        # iter106 — mirror the fallback used by /admin/users/:id/stats so the
+        # list badge and the stats page stay in sync when Bug iter55.35 fixed.
+        raw = kyc_map.get(d["user_id"]) or d.get("kyc_status") or "not_started"
+        d["effective_kyc_status"] = "not_started" if raw == "unverified" else raw
     # iter55.33 — strip sensitive fields when the requester lacks the
     # `view_user_sensitive` permission. Kept as an additive filter so
     # existing admins and employees with allowed_permissions=[] keep the
@@ -330,6 +358,9 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
         {"user_id": user_id}, {"_id": 0},
         sort=[("created_at", -1)],
     ) or {}
+    kyc_status = kyc_doc.get("status") or user.get("kyc_status") or "not_started"
+    if kyc_status == "unverified":
+        kyc_status = "not_started"
 
     return {
         "user": {
@@ -340,12 +371,12 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
             "role": user.get("role", ""),
             "account_status": user.get("account_status", "active"),
             "phone": user.get("phone", ""),
-            "phone_verified": bool(user.get("phone_verified_at")),
+            "phone_verified": bool(user.get("phone_verified")),
             "created_at": user.get("created_at", ""),
             "twofa_enabled": bool(user.get("totp_enabled", False)),
         },
         "kyc": {
-            "status": kyc_doc.get("status", "not_started"),
+            "status": kyc_status,
             "submitted_at": kyc_doc.get("created_at", ""),
             "reviewed_at": kyc_doc.get("reviewed_at", ""),
             "reviewer_notes": kyc_doc.get("review_notes", ""),

@@ -1,13 +1,6 @@
 # Resilience Brothers — P2P Trading Platform
 
-<!--
-  TODO · When you first push this repo to GitHub, replace `<ORG>/<REPO>` in
-  the CI badge below with your real slug (e.g. `resilience-brothers/p2p-exchange-hub`).
-  It's a single find-and-replace — the badge will start auto-updating with
-  each push.
--->
-
-[![CI](https://github.com/<ORG>/<REPO>/actions/workflows/ci.yml/badge.svg)](https://github.com/<ORG>/<REPO>/actions/workflows/ci.yml)
+[![CI](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/actions/workflows/ci.yml/badge.svg)](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-935%20total%20%C2%B7%2091%20critical-22C55E?style=flat-square&logo=pytest&logoColor=white)](./backend/tests)
 [![Backend](https://img.shields.io/badge/backend-FastAPI%20%2B%20Motor-8B5CF6?style=flat-square&logo=fastapi&logoColor=white)](./backend)
 [![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20Tailwind-8B5CF6?style=flat-square&logo=react&logoColor=white)](./frontend)

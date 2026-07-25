@@ -13,6 +13,7 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import SpreadCalculator from "@/components/SpreadCalculator";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 import { Plus, Edit2, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
@@ -41,6 +42,8 @@ export default function AdminRates() {
     setRates(r.data); setCurrencies(c.data);
   };
   useEffect(() => { load(); }, []);
+  // iter97 — live sync for other admins editing rates in parallel.
+  useLiveEvent("rates_updated", load);
 
   const buildPayload = () => ({
     ...form,
@@ -99,8 +102,8 @@ export default function AdminRates() {
 
       <SpreadCalculator rates={rates} />
 
-      <div className="tactile-card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="tactile-card overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.rates.colPair")}</th>

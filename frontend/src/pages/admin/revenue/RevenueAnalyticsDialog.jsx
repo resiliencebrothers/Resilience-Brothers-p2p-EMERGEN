@@ -25,6 +25,14 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
     { key: "conversion_fees_usdt",    label: t("admin.revenue.catConversions"),  color: "#EAB308" },
   ], [t]);
 
+  // Memoise the DESC-sorted monthly rows so we don't rebuild the array
+  // (and clone every row) on every parent state change. `monthly` comes
+  // from the parent's polling loop so its identity is stable-per-fetch.
+  const monthlyRowsDesc = useMemo(
+    () => [...(monthly || [])].sort((a, b) => (b.bucket || "").localeCompare(a.bucket || "")),
+    [monthly]
+  );
+
   const download = async (format) => {
     setExporting(format);
     try {
@@ -260,32 +268,30 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                   </tr>
                 </thead>
                 <tbody>
-                  {[...(monthly || [])]
-                    .sort((a, b) => (b.bucket || "").localeCompare(a.bucket || ""))
-                    .map((r) => (
-                      <tr
-                        key={r.bucket}
-                        className="border-b border-white/5"
-                        data-testid={`monthly-row-${r.bucket}`}
-                      >
-                        <td className="px-4 py-2 font-mono">{r.bucket}</td>
-                        <td className="px-4 py-2 text-right font-mono text-[#8B5CF6]">
-                          {fmt(r.p2p_profit_usdt)}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-[#22C55E]">
-                          {fmt(r.marketplace_profit_usdt)}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-[#EAB308]">
-                          {fmt(r.conversion_fees_usdt)}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-white font-semibold">
-                          {fmt(r.total_profit_usdt)}
-                        </td>
-                        <td className="px-4 py-2 text-right font-mono text-neutral-400">
-                          {r.orders || 0}
-                        </td>
-                      </tr>
-                    ))}
+                  {monthlyRowsDesc.map((r) => (
+                    <tr
+                      key={r.bucket}
+                      className="border-b border-white/5"
+                      data-testid={`monthly-row-${r.bucket}`}
+                    >
+                      <td className="px-4 py-2 font-mono">{r.bucket}</td>
+                      <td className="px-4 py-2 text-right font-mono text-[#8B5CF6]">
+                        {fmt(r.p2p_profit_usdt)}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono text-[#22C55E]">
+                        {fmt(r.marketplace_profit_usdt)}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono text-[#EAB308]">
+                        {fmt(r.conversion_fees_usdt)}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono text-white font-semibold">
+                        {fmt(r.total_profit_usdt)}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono text-neutral-400">
+                        {r.orders || 0}
+                      </td>
+                    </tr>
+                  ))}
                   {(monthly || []).length === 0 && (
                     <tr>
                       <td colSpan={6} className="text-center text-neutral-500 py-8">

@@ -63,7 +63,7 @@ export default function MarketplaceView() {
           <div className="micro-label text-[#8B5CF6] mb-2">{t("marketplace.eyebrow")}</div>
           <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#8B5CF6]" /> {t("marketplace.titleFull")}</h1>
         </div>
-        <div className="tactile-card px-5 py-3 min-w-[180px]" data-testid="marketplace-balance-widget">
+        <div className="tactile-card px-5 py-3 min-w-full sm:min-w-[180px]" data-testid="marketplace-balance-widget">
           <div className="micro-label text-neutral-500">{t("marketplace.balanceLabel")}</div>
           <div
             className="font-display text-2xl text-[#8B5CF6]"
@@ -116,8 +116,8 @@ export default function MarketplaceView() {
 
       <div>
         <h2 className="font-display text-xl mb-4">{t("marketplace.myRedemptions")}</h2>
-        <div className="tactile-card overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="tactile-card overflow-x-auto">
+          <table className="w-full text-sm min-w-[560px]">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
                 <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnProduct")}</th>

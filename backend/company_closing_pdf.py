@@ -213,6 +213,57 @@ def _revenue_table(revenue_rows: List[dict]) -> Table:
     return tbl
 
 
+def _company_closing_styles():
+    """Reusable Paragraph styles for the company closing PDF."""
+    styles = getSampleStyleSheet()
+    return {
+        "base": styles,
+        "h1": ParagraphStyle(
+            "h1", parent=styles["Heading1"], textColor=TEXT,
+            fontSize=22, leading=24, spaceAfter=4, fontName="Helvetica-Bold",
+        ),
+        "label": ParagraphStyle(
+            "label", parent=styles["Normal"], textColor=BRAND_PURPLE,
+            fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold",
+        ),
+        "sub": ParagraphStyle(
+            "sub", parent=styles["Normal"], textColor=TEXT_MUTED,
+            fontSize=10, leading=13, spaceAfter=18,
+        ),
+        "section": ParagraphStyle(
+            "section", parent=styles["Normal"], textColor=BRAND_PURPLE,
+            fontSize=9, leading=12, spaceAfter=6, fontName="Helvetica-Bold",
+        ),
+    }
+
+
+def _company_title_block(story: list, styles: dict, since: str, until: str, actor: dict) -> None:
+    """Eyebrow + H1 + issuer identity + confidentiality tag."""
+    story.append(Paragraph("/ CIERRE CONTABLE EMPRESA", styles["label"]))
+    story.append(Paragraph(_range_title(since, until), styles["h1"]))
+    story.append(Paragraph(
+        f"Emisor: <font color='#FFFFFF'><b>{actor.get('name', '')}</b></font> · {actor.get('email', '')}<br/>"
+        "Documento confidencial destinado a socios y auditores de Resilience Brothers FZ-LLC.",
+        styles["sub"],
+    ))
+
+
+def _company_executive_summary_cards(kpis: Dict[str, float]) -> list:
+    """Build the 4 KPI card definitions consumed by _summary_card_row."""
+    return [
+        {"label": "Órdenes ejecutadas",
+         "value": f"{kpis.get('total_orders', 0):,}"},
+        {"label": "Volumen bruto USD",
+         "value": f"${kpis.get('gross_volume_usd', 0):,.2f}"},
+        {"label": "Ingresos (fees)",
+         "value": f"${kpis.get('revenue_usd', 0):,.2f}",
+         "color": "#22C55E"},
+        {"label": "Tesorería neta USD",
+         "value": f"${kpis.get('treasury_usd', 0):,.2f}",
+         "color": "#8B5CF6"},
+    ]
+
+
 def generate_company_closing_pdf(
     since: str,
     until: str,
@@ -239,59 +290,18 @@ def generate_company_closing_pdf(
         buf, pagesize=LETTER,
         leftMargin=36, rightMargin=36, topMargin=90, bottomMargin=50,
     )
-    styles = getSampleStyleSheet()
-    h1 = ParagraphStyle(
-        "h1", parent=styles["Heading1"], textColor=TEXT,
-        fontSize=22, leading=24, spaceAfter=4, fontName="Helvetica-Bold",
-    )
-    label = ParagraphStyle(
-        "label", parent=styles["Normal"], textColor=BRAND_PURPLE,
-        fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold",
-    )
-    sub = ParagraphStyle(
-        "sub", parent=styles["Normal"], textColor=TEXT_MUTED,
-        fontSize=10, leading=13, spaceAfter=18,
-    )
-    section = ParagraphStyle(
-        "section", parent=styles["Normal"], textColor=BRAND_PURPLE,
-        fontSize=9, leading=12, spaceAfter=6, fontName="Helvetica-Bold",
-    )
+    styles = _company_closing_styles()
 
     story: list = []
-    story.append(Paragraph("/ CIERRE CONTABLE EMPRESA", label))
-    story.append(Paragraph(_range_title(since, until), h1))
-    story.append(Paragraph(
-        f"Emisor: <font color='#FFFFFF'><b>{actor.get('name', '')}</b></font> · {actor.get('email', '')}<br/>"
-        "Documento confidencial destinado a socios y auditores de Resilience Brothers FZ-LLC.",
-        sub,
-    ))
-
-    # Executive summary
-    story.append(_summary_card_row(styles, [
-        {"label": "Órdenes ejecutadas",
-         "value": f"{kpis.get('total_orders', 0):,}"},
-        {"label": "Volumen bruto USD",
-         "value": f"${kpis.get('gross_volume_usd', 0):,.2f}"},
-        {"label": "Ingresos (fees)",
-         "value": f"${kpis.get('revenue_usd', 0):,.2f}",
-         "color": "#22C55E"},
-        {"label": "Tesorería neta USD",
-         "value": f"${kpis.get('treasury_usd', 0):,.2f}",
-         "color": "#8B5CF6"},
-    ]))
+    _company_title_block(story, styles, since, until, actor)
+    story.append(_summary_card_row(styles["base"], _company_executive_summary_cards(kpis)))
     story.append(Spacer(1, 20))
-
-    # Treasury decomposition per currency
-    story.append(Paragraph("TESORERÍA POR MONEDA", section))
+    story.append(Paragraph("TESORERÍA POR MONEDA", styles["section"]))
     story.append(_funds_table(funds_rows))
     story.append(Spacer(1, 22))
-
-    # Revenue breakdown
-    story.append(Paragraph("INGRESOS POR MONEDA (fees generados)", section))
+    story.append(Paragraph("INGRESOS POR MONEDA (fees generados)", styles["section"]))
     story.append(_revenue_table(revenue_rows))
     story.append(Spacer(1, 24))
-
-    # Notes
     story.append(Paragraph(
         "<font color='#A3A3A3' size=7>* Los importes reflejan los movimientos "
         "registrados por la plataforma en el rango indicado. Retiros a clientes "
@@ -299,11 +309,9 @@ def generate_company_closing_pdf(
         "manuales incluyen conciliaciones de tesorería aprobadas por Dirección. "
         "Este documento es CONFIDENCIAL y su distribución requiere autorización "
         "del titular.</font>",
-        styles["Normal"],
+        styles["base"]["Normal"],
     ))
     story.append(Spacer(1, 20))
-
-    # Signature block (same helper used by every other PDF).
     story.append(build_signature_block(
         lang=(actor.get("preferred_language") or "es"),
         client_name="", include_client_side=False, total_width_inches=7.0,

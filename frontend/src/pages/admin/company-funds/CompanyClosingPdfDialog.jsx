@@ -58,7 +58,7 @@ export default function CompanyClosingPdfDialog({ open, onOpenChange }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="company-closing-dialog"
-        className="bg-[#0c0c0c] border border-white/10 text-white max-w-md rounded-none"
+        className="bg-[#0c0c0c] border border-white/10 text-white max-w-md max-h-[85vh] overflow-y-auto rounded-none"
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

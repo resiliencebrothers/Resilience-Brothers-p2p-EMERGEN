@@ -41,10 +41,28 @@ export function useConverterData({ isVip, enabled = true }) {
     [balances.balances],
   );
 
-  // Mirrors `services/balances.py::_convert_direct` (inverse-first).
+  // Mirrors `services/balances.py::_convert_direct` + iter101 tier-picker
+  // for SELF-CONVERSION.
+  //
+  // iter101.1 — Server now injects `rate_convert` on every rate row —
+  // pre-computed against the caller's role — so the client never sees the
+  // raw `real_rate` (competitive info stays server-side) while the
+  // preview still matches the confirmed conversion byte-for-byte. When
+  // `rate_convert` is present we use it; otherwise fall back to the
+  // legacy per-role picker (kept for admin/staff who still receive
+  // `real_rate` and for offline unit tests).
   const computeRate = useCallback((f, tCode) => {
     if (!f || !tCode || f === tCode) return null;
-    const pick = (r) => Number(isVip ? (r.rate_vip || r.rate_normal) : r.rate_normal);
+    const pick = (r) => {
+      if (r.rate_convert != null && Number(r.rate_convert) > 0) {
+        return Number(r.rate_convert);
+      }
+      if (isVip) return Number(r.rate_vip || r.rate_normal);
+      if (r.real_rate != null && Number(r.real_rate) > 0) {
+        return Number(r.real_rate);
+      }
+      return Number(r.rate_normal);
+    };
     const direct = rates.find((r) => r.from_code === f && r.to_code === tCode);
     if (direct) {
       const v = pick(direct);

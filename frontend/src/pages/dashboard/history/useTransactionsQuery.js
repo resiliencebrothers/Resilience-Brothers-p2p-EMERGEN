@@ -68,10 +68,18 @@ export function useTransactionsQuery() {
   useEffect(() => {
     axios.get(`${API}/currencies`, { withCredentials: true })
       .then((r) => setCurrencies(r.data.filter((c) => c.is_active)))
-      .catch(() => {});
+      .catch((err) => {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[history] currencies bootstrap failed:", err);
+        }
+      });
     axios.get(`${API}/vip/balances`, { withCredentials: true })
       .then((r) => setBalanceSummary(r.data))
-      .catch(() => {});
+      .catch((err) => {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[history] balances bootstrap failed:", err);
+        }
+      });
   }, []);
 
   // Reset to page 0 whenever any filter changes.
@@ -100,7 +108,11 @@ export function useTransactionsQuery() {
       // backend, keeps the top-of-page widget in sync with the ledger.
       axios.get(`${API}/vip/balances`, { withCredentials: true })
         .then((rb) => setBalanceSummary(rb.data))
-        .catch(() => {});
+        .catch((err) => {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("[history] balances refresh failed:", err);
+          }
+        });
     } catch (e) {
       toast.error(e.response?.data?.detail || t("myTransactions.loadError"));
     } finally {
@@ -129,8 +141,10 @@ export function useTransactionsQuery() {
         const seen = seenRefIdsRef.current;
         const newlyArrived = r.data.items.filter((it) => !seen.has(it.ref_id));
         if (newlyArrived.length > 0) setNewItemsCount(newlyArrived.length);
-      } catch {
-        // Silently swallow — poll retries every LIVE_POLL_MS.
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("[history] live poll transient failure:", err);
+        }
       }
     };
     const id = setInterval(poll, LIVE_POLL_MS);

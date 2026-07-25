@@ -70,7 +70,7 @@ async def _refund_balance_on_reject(withdrawal: dict, new_status: str) -> None:
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,
-                              withdrawal: dict = None) -> None:
+                              withdrawal: Optional[dict] = None) -> None:
     """Persist optional payout proof image + tx hash on the update document.
 
     iter55.19h: when the withdrawal declares a crypto_network (TRC20/BEP20)
@@ -141,6 +141,32 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     _validate_paid_evidence(w, update_doc, new_status)
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+
+    # iter97 — SSE push to the withdrawal owner so /dashboard/vip
+    # reflects the new status + refreshes balance immediately.
+    # iter98 — ALSO push to admin/employee broadcast subscribers so the
+    # row is removed from /admin/queue when the withdrawal leaves
+    # pending status.
+    try:
+        from services.live_bus import publish as live_publish
+        target_uid = updated.get("user_id") if isinstance(updated, dict) else None
+        if new_status != w["status"]:
+            status_payload = {
+                "withdrawal_id": wid,
+                "status": new_status,
+                "prev_status": w["status"],
+                "amount_usd": updated.get("amount_usd"),
+                "currency": updated.get("currency"),
+            }
+            if target_uid:
+                await live_publish("withdrawal_status_changed", status_payload,
+                                   user_id=target_uid)
+                await live_publish("balance_updated", {"reason": "withdrawal", "withdrawal_id": wid},
+                                   user_id=target_uid)
+            await live_publish("withdrawal_status_changed", status_payload,
+                               roles=("admin", "employee"))
+    except Exception:
+        pass
 
     # iter55.23 — audit trail. Without this, "quién rechazó este retiro?" is
     # unanswerable from the audit log (the endpoint used to be silent). We

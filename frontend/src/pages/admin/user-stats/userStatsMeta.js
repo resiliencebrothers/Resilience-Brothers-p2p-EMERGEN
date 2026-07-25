@@ -13,8 +13,10 @@ export const STATUS_META = {
 };
 
 export const KYC_META = {
+  verified:    { label: "Verificada", cls: "text-emerald-400", icon: CheckCircle2 },
   approved:    { label: "Aprobado",   cls: "text-emerald-400", icon: CheckCircle2 },
   pending:     { label: "Pendiente",  cls: "text-amber-400",   icon: Clock },
+  needs_more_info: { label: "Requiere más info", cls: "text-amber-400", icon: Clock },
   rejected:    { label: "Rechazado",  cls: "text-red-400",     icon: XCircle },
   not_started: { label: "Sin iniciar",cls: "text-neutral-500", icon: IdCard },
 };

@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional, Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -194,7 +194,7 @@ def _validate_crypto_tx_hash(tx_hash: str, network: str) -> None:
 
 
 def _collect_order_payout_evidence(payload: dict, update_doc: dict,
-                                    order: dict = None) -> None:
+                                    order: Optional[dict] = None) -> None:
     """Persist optional payout proof image + tx hash on the update document.
     Used by staff/admin when marking an order as completed."""
     proof = payload.get("payout_proof_image")
@@ -236,6 +236,32 @@ def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: s
             )
 
 
+async def _publish_order_status_sse(order_id: str, updated: dict,
+                                   new_status: str, prev_status: str) -> None:
+    """Fan-out `order_status_changed` + `balance_updated` to owner + admins.
+    Isolated in a try/except so a live-bus hiccup can't fail the HTTP write."""
+    try:
+        from services.live_bus import publish as live_publish
+        target_uid = updated.get("user_id") if isinstance(updated, dict) else None
+        status_payload = {
+            "order_id": order_id,
+            "status": new_status,
+            "prev_status": prev_status,
+            "from_code": updated.get("from_code"),
+            "to_code": updated.get("to_code"),
+            "amount_from": updated.get("amount_from"),
+            "amount_to": updated.get("amount_to"),
+        }
+        if target_uid:
+            await live_publish("order_status_changed", status_payload, user_id=target_uid)
+            await live_publish("balance_updated", {"reason": "order", "order_id": order_id},
+                               user_id=target_uid)
+        await live_publish("order_status_changed", status_payload,
+                           roles=("admin", "employee"))
+    except Exception as e:
+        logger.error(f"Order SSE publish failed: {e}")
+
+
 @router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "orders")
@@ -257,6 +283,8 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
     await db.orders.update_one({"id": order_id}, {"$set": update_doc})
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     await run_post_status_side_effects(updated, new_status, prev_status)
+
+    await _publish_order_status_sse(order_id, updated, new_status, prev_status)
 
     await log_action(
         db, actor, f"order.{new_status}", "order", order_id,
@@ -482,21 +510,57 @@ def _validate_txn_filters(direction: Optional[str], min_amount: Optional[float],
         raise HTTPException(status_code=400, detail="min_amount no puede ser mayor que max_amount")
 
 
+class TxnFilters:
+    """FastAPI dependency that gathers all /admin/transactions* query params.
+    Reduces each endpoint from 7 filter args to 1, and centralises validation.
+    """
+
+    def __init__(
+        self,
+        direction: Optional[str] = None,
+        currency: Optional[str] = None,
+        holder: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
+    ):
+        _validate_txn_filters(direction, min_amount, max_amount)
+        self.direction = direction
+        self.currency = currency
+        self.holder = holder
+        self.since = since
+        self.until = until
+        self.min_amount = min_amount
+        self.max_amount = max_amount
+
+    async def build_items(self) -> list:
+        return await build_transactions(
+            self.direction, self.currency, self.holder,
+            self.since, self.until, self.min_amount, self.max_amount,
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "direction": self.direction,
+            "currency": self.currency,
+            "holder": self.holder,
+            "since": self.since,
+            "until": self.until,
+            "min_amount": self.min_amount,
+            "max_amount": self.max_amount,
+        }
+
+
 @router.get("/admin/transactions")
-async def list_transactions(request: Request,
-                            direction: Optional[str] = None,
-                            currency: Optional[str] = None,
-                            holder: Optional[str] = None,
-                            since: Optional[str] = None,
-                            until: Optional[str] = None,
-                            min_amount: Optional[float] = None,
-                            max_amount: Optional[float] = None,
-                            limit: int = 100, offset: int = 0) -> Any:
+async def list_transactions(
+    request: Request,
+    filters: TxnFilters = Depends(),
+    limit: int = 100,
+    offset: int = 0,
+) -> Any:
     await require_permission(request, "transactions")
-    _validate_txn_filters(direction, min_amount, max_amount)
-    items = await build_transactions(
-        direction, currency, holder, since, until, min_amount, max_amount
-    )
+    items = await filters.build_items()
     totals = compute_transaction_totals(items)
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
@@ -513,18 +577,12 @@ async def list_transactions(request: Request,
 
 
 @router.get("/admin/transactions/export.csv")
-async def export_transactions_csv(request: Request,
-                                  direction: Optional[str] = None,
-                                  currency: Optional[str] = None,
-                                  holder: Optional[str] = None,
-                                  since: Optional[str] = None,
-                                  until: Optional[str] = None,
-                                  min_amount: Optional[float] = None,
-                                  max_amount: Optional[float] = None) -> Any:
+async def export_transactions_csv(
+    request: Request,
+    filters: TxnFilters = Depends(),
+) -> Any:
     await require_permission(request, "transactions")
-    items = await build_transactions(
-        direction, currency, holder, since, until, min_amount, max_amount
-    )
+    items = await filters.build_items()
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
     writer.writerow(["created_at", "direction", "currency", "amount",
@@ -557,26 +615,14 @@ async def export_transactions_csv(request: Request,
 
 
 @router.get("/admin/transactions/export.pdf")
-async def export_transactions_pdf(request: Request,
-                                  direction: Optional[str] = None,
-                                  currency: Optional[str] = None,
-                                  holder: Optional[str] = None,
-                                  since: Optional[str] = None,
-                                  until: Optional[str] = None,
-                                  min_amount: Optional[float] = None,
-                                  max_amount: Optional[float] = None) -> Any:
+async def export_transactions_pdf(
+    request: Request,
+    filters: TxnFilters = Depends(),
+) -> Any:
     await require_permission(request, "transactions")
-    items = await build_transactions(
-        direction, currency, holder, since, until, min_amount, max_amount
-    )
+    items = await filters.build_items()
     totals = compute_transaction_totals(items)
-    pdf_bytes = generate_transactions_pdf(
-        items,
-        {"direction": direction, "currency": currency, "holder": holder,
-         "since": since, "until": until,
-         "min_amount": min_amount, "max_amount": max_amount},
-        totals,
-    )
+    pdf_bytes = generate_transactions_pdf(items, filters.as_dict(), totals)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     filename = f"transacciones_{ts}.pdf"
     return StreamingResponse(

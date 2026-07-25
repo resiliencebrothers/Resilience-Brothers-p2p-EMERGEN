@@ -4,6 +4,12 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow-x: hidden;
+}
+
 body {
     margin: 0;
     background: #14101F;
@@ -11,6 +17,18 @@ body {
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+}
+
+/* Mobile-first: prevent long strings (emails, user_ids, hashes) from
+   forcing a horizontal scroll on narrow devices. */
+@media (max-width: 640px) {
+    .break-anywhere,
+    [data-testid$="-copy"],
+    .font-mono {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
 }
 
 ::selection {

@@ -30,6 +30,7 @@ from db_client import db
 from auth_utils import (
     require_staff, require_permission,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
+    get_session_user,
     now_utc, iso,
 )
 from audit_log import log_action
@@ -263,9 +264,55 @@ async def delete_currency(currency_id: str, request: Request) -> Any:
 # Exchange rates
 # ============================================================
 
+def _rate_convert_for_role(doc: dict, role: str) -> Optional[float]:
+    """iter101.1 — Compute the effective self-conversion rate for a given
+    role WITHOUT exposing the raw `real_rate`. Mirrors the tier picker in
+    `routes/orders.py::vip_convert::_pick_tier_rate`."""
+    if role in ("vip", "admin"):
+        v = doc.get("rate_vip")
+        return float(v) if v is not None else None
+    # normal + employee + anonymous → operator's real profit rate if set,
+    # else the promotional rate_normal.
+    real = doc.get("real_rate")
+    if real is not None and float(real) > 0:
+        return float(real)
+    v = doc.get("rate_normal")
+    return float(v) if v is not None else None
+
+
+def _scrub_rate_for_client(doc: dict, role: str) -> dict:
+    """Strip competitively-sensitive fields (`real_rate`) from a rate row
+    before sending it to non-staff clients, and inject a pre-computed
+    `rate_convert` so the client-side converter preview stays correct
+    without ever seeing the raw margin."""
+    clean = {k: v for k, v in doc.items() if k != "real_rate"}
+    clean["rate_convert"] = _rate_convert_for_role(doc, role)
+    return clean
+
+
 @router.get("/rates")
-async def list_rates() -> Any:
-    return await db.rates.find({}, {"_id": 0}).to_list(500)
+async def list_rates(request: Request) -> Any:
+    """Public rate list.
+
+    iter101.1 — `real_rate` is the operator's real market exit rate and
+    encodes the platform's profit margin. Exposing it to normal/VIP
+    clients is a competitive leak, so we scrub it here and inject a
+    pre-computed `rate_convert` field (server-side tier picker) so the
+    self-conversion preview stays accurate. Admins + employees keep the
+    raw `real_rate` since they need it to audit revenue and edit rates.
+    """
+    docs = await db.rates.find({}, {"_id": 0}).to_list(500)
+    session_user = await get_session_user(request)
+    role = (session_user or {}).get("role", "anonymous")
+    if role in ("admin", "employee"):
+        # Staff sees everything as-is (admin dashboard, revenue analytics,
+        # rate editor all read `real_rate`). Still add `rate_convert` so
+        # the converter widget's tier picker works even for admin/vip
+        # clients using their own dashboard as clients (unlikely but safe).
+        return [
+            {**d, "rate_convert": _rate_convert_for_role(d, role)} for d in docs
+        ]
+    return [_scrub_rate_for_client(d, role) for d in docs]
 
 
 @router.post("/admin/rates")
@@ -282,6 +329,12 @@ async def create_rate(payload: ExchangeRateCreate, request: Request) -> Any:
             {"$set": {**rate_data, "updated_at": iso(now_utc())}},
         )
         fresh = await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
+        # iter97 — SSE fan-out on create-with-upsert branch too.
+        try:
+            from services.live_bus import publish as live_publish
+            await live_publish("rates_updated", {"rate_id": existing["id"], "rate": fresh})
+        except Exception as e:
+            logger.error(f"Rate SSE publish failed: {e}")
         # iter55.5 — mirror PUT: fanout push when the customer-facing rate moves
         # so this alternate upsert path notifies clients too.
         try:
@@ -291,6 +344,12 @@ async def create_rate(payload: ExchangeRateCreate, request: Request) -> Any:
         return fresh
     r = ExchangeRate(**payload.model_dump(exclude={"totp_code"}))
     await db.rates.insert_one(r.model_dump())
+    # iter97 — SSE fan-out for brand-new rate.
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("rates_updated", {"rate_id": r.id, "rate": r.model_dump()})
+    except Exception as e:
+        logger.error(f"Rate SSE publish failed: {e}")
     # New rate: fanout with old=None → first-ever normal/vip values count as a change
     try:
         await _fanout_rate_change_push(None, r.model_dump())
@@ -313,6 +372,13 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
         {"$set": {**rate_data, "updated_at": iso(now_utc())}},
     )
     fresh = await db.rates.find_one({"id": rate_id}, {"_id": 0})
+    # iter97 — SSE fan-out to every open tab so users see the new rate
+    # without a manual refresh. Fire-and-forget; publish is in-memory.
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("rates_updated", {"rate_id": rate_id, "rate": fresh})
+    except Exception as e:
+        logger.error(f"Rate SSE publish failed: {e}")
     # If real_rate changed, scan pending orders for negative margin and ping admins
     try:
         await _scan_rate_change_margin(old, fresh)
@@ -481,6 +547,12 @@ async def delete_rate(rate_id: str, request: Request) -> Any:
     if existing:
         _enforce_employee_currency_scope(actor, existing["from_code"], existing["to_code"])
     await db.rates.delete_one({"id": rate_id})
+    # iter97 — SSE fan-out on delete so exchange screens drop the row.
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("rates_updated", {"rate_id": rate_id, "deleted": True})
+    except Exception as e:
+        logger.error(f"Rate SSE publish failed: {e}")
     return {"ok": True}
 
 

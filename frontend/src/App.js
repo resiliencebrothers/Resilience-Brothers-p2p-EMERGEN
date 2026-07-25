@@ -14,6 +14,8 @@ import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
 import InstallPrompt from "@/components/InstallPrompt";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { LiveStreamProvider } from "@/hooks/useLiveStream";
+import LiveToaster from "@/components/LiveToaster";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
@@ -64,10 +66,13 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Toaster theme="dark" position="top-right" toastOptions={TOAST_OPTIONS} />
-        <DefensiveBanner />
-        <AppRouter />
-        <InstallPrompt />
+        <LiveStreamProvider>
+          <LiveToaster />
+          <Toaster theme="dark" position="top-right" toastOptions={TOAST_OPTIONS} />
+          <DefensiveBanner />
+          <AppRouter />
+          <InstallPrompt />
+        </LiveStreamProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -13,6 +13,7 @@ import KYCBatchBar from "./kyc/KYCBatchBar";
 import KYCVerificationRow from "./kyc/KYCVerificationRow";
 import KYCActionDialog from "./kyc/KYCActionDialog";
 import KYCHelpDialog from "./kyc/KYCHelpDialog";
+import { useKycKeyboard } from "./kyc/useKycKeyboard";
 
 /**
  * AdminKYC — iter55.36q keyboard-driven review console.
@@ -157,62 +158,12 @@ export default function AdminKYC() {
     [items],
   );
 
-  // ---------- Global keyboard handler ----------
-  useEffect(() => {
-    const isTyping = (el) => {
-      if (!el) return false;
-      const tag = el.tagName;
-      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
-    };
-
-    const handler = (e) => {
-      if (isTyping(document.activeElement)) return;
-      if (selected) return;
-      if (showHelp) {
-        if (e.key === "Escape" || e.key === "?") setShowHelp(false);
-        return;
-      }
-
-      const focused = items[focusedIdx];
-      const key = e.key;
-
-      if (key === "j" || key === "J" || key === "ArrowDown") {
-        e.preventDefault();
-        setFocusedIdx((i) => Math.min(items.length - 1, i + 1));
-      } else if (key === "k" || key === "K" || key === "ArrowUp") {
-        e.preventDefault();
-        setFocusedIdx((i) => Math.max(0, i - 1));
-      } else if (key === "?") {
-        e.preventDefault();
-        setShowHelp(true);
-      } else if (!focused) {
-        return;
-      } else if (key === "a" && !e.shiftKey && (focused.status === "pending" || focused.status === "needs_more_info")) {
-        e.preventDefault();
-        openAction(focused, "approve");
-      } else if ((key === "A" && e.shiftKey) || (key === "a" && e.shiftKey)) {
-        e.preventDefault();
-        bulkApprove();
-      } else if (key === "r" || key === "R") {
-        if (focused.status === "pending" || focused.status === "needs_more_info") {
-          e.preventDefault();
-          openAction(focused, "reject");
-        }
-      } else if (key === "i" || key === "I") {
-        if (focused.status === "pending" || focused.status === "needs_more_info") {
-          e.preventDefault();
-          openAction(focused, "more_info");
-        }
-      } else if (key === "x" || key === "X") {
-        if (focused.status === "pending" || focused.status === "needs_more_info") {
-          e.preventDefault();
-          toggleBatch(focused.id);
-        }
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [items, focusedIdx, selected, showHelp, openAction, toggleBatch, bulkApprove]);
+  // ---------- Global keyboard handler (extracted) ----------
+  useKycKeyboard({
+    items, focusedIdx, setFocusedIdx,
+    selected, showHelp, setShowHelp,
+    openAction, toggleBatch, bulkApprove,
+  });
 
   // Scroll focused row into view
   useEffect(() => {

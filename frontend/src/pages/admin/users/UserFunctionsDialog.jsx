@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { toast } from "sonner";
@@ -52,6 +52,14 @@ export default function UserFunctionsDialog({
   // inline table behavior.
   const [pendingCurrencies, setPendingCurrencies] = useState(null);
   const [pendingPerms, setPendingPerms] = useState(null);
+
+  // Memoise the visible tab list — the filter is trivial but running it
+  // per render also drops the `perms` tab when the user is not an
+  // employee. Recompute only when the role actually flips.
+  const visibleTabs = useMemo(
+    () => TABS.filter((tt) => tt.id !== "perms" || user?.role === "employee"),
+    [user?.role]
+  );
 
   if (!user) return null;
 
@@ -163,7 +171,7 @@ export default function UserFunctionsDialog({
           </DialogHeader>
 
           <nav className="flex gap-1 border-b border-white/10 -mx-6 px-6 overflow-x-auto">
-            {TABS.filter((tt) => tt.id !== "perms" || user.role === "employee").map((tt) => {
+            {visibleTabs.map((tt) => {
               const Icon = tt.icon;
               const active = tab === tt.id;
               return (

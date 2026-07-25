@@ -14,6 +14,12 @@ import { CRYPTO_NETWORKS, validateCryptoAddress } from "@/services/cryptoValidat
 import { toast } from "sonner";
 import { ArrowDownToLine, ShieldCheck } from "lucide-react";
 
+// Module-level constants — hoisted out of the render path so they don't
+// create fresh object identities on every keystroke. Both objects are
+// pure structural config for <Trans>; no state depends on them.
+const TRANS_STRONG_ONE = { 1: <strong /> };
+const TRANS_STRONG_ONE_TWO = { 1: <strong />, 2: <strong /> };
+
 /**
  * iter55.29 — Extracted from VipView.jsx. Owns the withdrawal request form
  * (currency + method + method-specific fields + 2FA + submit). Kept all
@@ -351,7 +357,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
         className="text-[0.7rem] text-[#8B5CF6] mt-1 leading-relaxed"
         data-testid="withdraw-cash-hint"
       >
-        <Trans i18nKey="withdraw.cashHint" components={{ 1: <strong />, 2: <strong /> }} />
+        <Trans i18nKey="withdraw.cashHint" components={TRANS_STRONG_ONE_TWO} />
       </p>
     </div>
   );
@@ -360,6 +366,13 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
 
 function NonCashDetailsField({ method, details, setDetails, activeNetwork, cryptoAddressMatch }) {
   const { t } = useTranslation();
+  // `activeNetwork.label` changes when the user picks a different chain,
+  // so we memoise the `values` prop against it — no fresh identity per
+  // parent re-render for the same network.
+  const cryptoTransValues = useMemo(
+    () => ({ network: activeNetwork.label }),
+    [activeNetwork.label]
+  );
   return (
     <div>
       <Label className="micro-label text-neutral-500">
@@ -386,8 +399,8 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
           <span>
             <Trans
               i18nKey="withdraw.cryptoMatchOk"
-              values={{ network: activeNetwork.label }}
-              components={{ 1: <strong /> }}
+              values={cryptoTransValues}
+              components={TRANS_STRONG_ONE}
             />
           </span>
         </p>
@@ -401,8 +414,8 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
           <span>
             <Trans
               i18nKey="withdraw.cryptoMismatch"
-              values={{ network: activeNetwork.label }}
-              components={{ 1: <strong /> }}
+              values={cryptoTransValues}
+              components={TRANS_STRONG_ONE}
             />
           </span>
         </p>

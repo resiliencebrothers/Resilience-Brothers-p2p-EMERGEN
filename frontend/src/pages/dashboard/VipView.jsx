@@ -14,6 +14,7 @@ import { VipWithdrawalHistory } from "./vip/VipWithdrawalHistory";
 import { VipLedgerDialog } from "./vip/VipLedgerDialog";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import QuickDateRange from "@/components/QuickDateRange";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 
 export default function VipView() {
   const { refresh } = useAuth();
@@ -76,6 +77,13 @@ export default function VipView() {
     } catch (_) { setLedger({ by_currency: {}, total_orders: 0 }); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // iter97 — live-refresh balances and withdrawals when the platform
+  // pushes a change. `load` already refetches everything, so we just
+  // wire both events straight to it.
+  useLiveEvent("balance_updated", load);
+  useLiveEvent("withdrawal_status_changed", load);
+  useLiveEvent("order_status_changed", load);
 
   const handleDrillDown = (currency) => {
     setLedgerCurrency(currency);

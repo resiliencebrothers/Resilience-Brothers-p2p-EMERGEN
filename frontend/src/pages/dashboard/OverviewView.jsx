@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -7,6 +7,7 @@ import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock } from "
 import { Link } from "react-router-dom";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 import {
   ORDER_IN_FLIGHT,
   ORDER_COMPLETED,
@@ -32,6 +33,22 @@ export default function OverviewView() {
       .then(r => setWithdrawals(r.data))
       .catch(() => {});
   }, []);
+
+  // iter97 — live SSE refresh so operators don't have to reload the tab
+  // after an admin updates a rate, or after their own order/withdrawal
+  // moves to a new status.
+  const refreshRates = useCallback(() => {
+    axios.get(`${API}/rates`).then(r => setRates(r.data)).catch(() => {});
+  }, []);
+  const refreshOrdersAndBalances = useCallback(() => {
+    axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => setOrders(r.data)).catch(() => {});
+    axios.get(`${API}/vip/balances`, { withCredentials: true }).then(r => setBalances(r.data)).catch(() => {});
+    axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true }).then(r => setWithdrawals(r.data)).catch(() => {});
+  }, []);
+  useLiveEvent("rates_updated", refreshRates);
+  useLiveEvent("order_status_changed", refreshOrdersAndBalances);
+  useLiveEvent("withdrawal_status_changed", refreshOrdersAndBalances);
+  useLiveEvent("balance_updated", refreshOrdersAndBalances);
 
   const isVip = user?.role === "vip" || user?.role === "admin";
   const isStaff = user?.role === "admin" || user?.role === "employee";

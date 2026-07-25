@@ -190,6 +190,172 @@ def _compute_by_currency_totals(entries: list) -> dict:
     return by_cur
 
 
+def _build_pdf_styles():
+    """Reusable Paragraph styles for the closing PDF."""
+    styles = getSampleStyleSheet()
+    return {
+        "h1": ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT, fontSize=22, leading=24, spaceAfter=4, fontName="Helvetica-Bold"),
+        "label": ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_PURPLE, fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold"),
+        "sub": ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=10, leading=12, spaceAfter=18),
+        "body": ParagraphStyle('body', parent=styles['Normal'], textColor=TEXT, fontSize=10, leading=14),
+        "body_muted": ParagraphStyle('bodym', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=9, leading=12),
+    }
+
+
+def _closing_title_text(since: str, until: str) -> str:
+    """Human-friendly headline reflecting the date range of the report."""
+    if since and until and since == until:
+        return f"Reporte del {since}"
+    if since and until:
+        return f"Reporte del {since} al {until}"
+    if since:
+        return f"Reporte desde {since}"
+    if until:
+        return f"Reporte hasta {until}"
+    return "Reporte histórico completo"
+
+
+def _build_title_block(story: list, styles: dict, user: dict, is_vip: bool,
+                       since: str, until: str) -> None:
+    """Eyebrow + H1 + client identity."""
+    eyebrow_txt = "/ CIERRE DIARIO VIP" if is_vip else "/ CIERRE CONTABLE"
+    story.append(Paragraph(eyebrow_txt, styles["label"]))
+    story.append(Paragraph(_closing_title_text(since, until), styles["h1"]))
+    story.append(Paragraph(
+        f"Cliente: <font color='#FFFFFF'><b>{user.get('name', '')}</b></font> · {user.get('email', '')}",
+        styles["sub"],
+    ))
+
+
+def _sum_usd_headline(by_cur: dict) -> tuple[float, float]:
+    """Only USD / USDT-family codes roll into the headline USD totals.
+    LATAM fiats aren't rate-converted here to keep this stateless."""
+    total_in = 0.0
+    total_out = 0.0
+    for code, v in by_cur.items():
+        if code in ("USD", "USDT", "USDCASH_TEST", "USDT_TEST"):
+            total_in += v["in"]
+            total_out += v["out"]
+    return total_in, total_out
+
+
+def _build_summary_band(story: list, styles: dict, entries: list, by_cur: dict,
+                        final_balance: float) -> None:
+    """4-column KPI band + per-currency breakdown."""
+    total_in_usd, total_out_usd = _sum_usd_headline(by_cur)
+    body = styles["body"]
+    body_muted = styles["body_muted"]
+
+    summary_data = [
+        [
+            Paragraph("Transacciones totales", body_muted),
+            Paragraph("Entradas USD·USDT", body_muted),
+            Paragraph("Salidas USD·USDT", body_muted),
+            Paragraph("Saldo al cierre", body_muted),
+        ],
+        [
+            Paragraph(f"<font size=18 color='#FFFFFF'><b>{len(entries)}</b></font>", body),
+            Paragraph(f"<font size=14 color='#22C55E'><b>+${total_in_usd:,.2f}</b></font>", body),
+            Paragraph(f"<font size=14 color='#EF4444'><b>-${total_out_usd:,.2f}</b></font>", body),
+            Paragraph(f"<font size=14 color='#8B5CF6'><b>${final_balance:,.2f}</b></font>", body),
+        ],
+    ]
+    tbl = Table(summary_data, colWidths=[1.85 * inch] * 4)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 14))
+
+    if not by_cur:
+        return
+
+    story.append(Paragraph("Totales por moneda", styles["label"]))
+    story.append(Spacer(1, 4))
+    cur_data = [["Moneda", "Entradas", "Salidas", "Neto"]]
+    for code in sorted(by_cur.keys()):
+        v = by_cur[code]
+        net = v["in"] - v["out"]
+        cur_data.append([code, f"+{v['in']:,.2f}", f"-{v['out']:,.2f}", f"{net:+,.2f}"])
+    cur_tbl = Table(cur_data, colWidths=[1.4 * inch, 1.8 * inch, 1.8 * inch, 1.4 * inch])
+    cur_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), PANEL),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
+        ("TEXTCOLOR", (0, 1), (-1, -1), TEXT),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("TEXTCOLOR", (1, 1), (1, -1), GREEN),
+        ("TEXTCOLOR", (2, 1), (2, -1), colors.HexColor("#EF4444")),
+        ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(cur_tbl)
+    story.append(Spacer(1, 18))
+
+
+def _direction_color(direction: str):
+    if direction == "in":
+        return GREEN
+    if direction == "out":
+        return colors.HexColor("#EF4444")
+    return None
+
+
+def _build_detail_transactions_table(story: list, styles: dict, entries: list) -> None:
+    """Full transaction ledger table with per-row colour coding by direction."""
+    story.append(Paragraph("Detalle de transacciones", styles["label"]))
+    story.append(Spacer(1, 6))
+
+    headers = ["ID", "Fecha", "Tipo", "Moneda", "Monto", "Titular", "Método"]
+    data = [headers] + [_format_tx_row(e) for e in entries]
+    if len(data) == 1:
+        data.append(["—"] * 7)
+
+    tx_tbl = Table(
+        data,
+        colWidths=[0.6 * inch, 0.85 * inch, 0.85 * inch, 0.7 * inch,
+                   1.0 * inch, 1.5 * inch, 1.1 * inch],
+        repeatRows=1,
+    )
+    tx_style: list = [
+        ("BACKGROUND", (0, 0), (-1, 0), PANEL),
+        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
+        ("TEXTCOLOR", (0, 1), (-1, -1), TEXT),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 1), (-1, -1), 7.5),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.3, BORDER),
+        ("ALIGN", (4, 1), (4, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+    ]
+    for row_idx, entry in enumerate(entries, start=1):
+        col = _direction_color(entry.get("direction"))
+        if col is not None:
+            tx_style.append(("TEXTCOLOR", (2, row_idx), (2, row_idx), col))
+        tx_style.append(("FONTNAME", (2, row_idx), (2, row_idx), "Helvetica-Bold"))
+    tx_tbl.setStyle(TableStyle(tx_style))
+    story.append(tx_tbl)
+    story.append(Spacer(1, 22))
+
+
 def generate_vip_closing_pdf(
     user: dict,
     entries: list,
@@ -219,156 +385,14 @@ def generate_vip_closing_pdf(
         buf, pagesize=LETTER,
         leftMargin=36, rightMargin=36, topMargin=90, bottomMargin=50,
     )
-
-    styles = getSampleStyleSheet()
-    h1 = ParagraphStyle('h1', parent=styles['Heading1'], textColor=TEXT, fontSize=22, leading=24, spaceAfter=4, fontName="Helvetica-Bold")
-    label = ParagraphStyle('label', parent=styles['Normal'], textColor=BRAND_PURPLE, fontSize=8, leading=10, spaceAfter=2, fontName="Helvetica-Bold")
-    sub = ParagraphStyle('sub', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=10, leading=12, spaceAfter=18)
-    body = ParagraphStyle('body', parent=styles['Normal'], textColor=TEXT, fontSize=10, leading=14)
-    body_muted = ParagraphStyle('bodym', parent=styles['Normal'], textColor=TEXT_MUTED, fontSize=9, leading=12)
-
+    styles = _build_pdf_styles()
     story: list = []
 
-    # ─── Title ─────────────────────────────────────────────────────
-    eyebrow_txt = "/ CIERRE DIARIO VIP" if is_vip else "/ CIERRE CONTABLE"
-    story.append(Paragraph(eyebrow_txt, label))
-
-    if since and until and since == until:
-        title = f"Reporte del {since}"
-    elif since and until:
-        title = f"Reporte del {since} al {until}"
-    elif since:
-        title = f"Reporte desde {since}"
-    elif until:
-        title = f"Reporte hasta {until}"
-    else:
-        title = "Reporte histórico completo"
-    story.append(Paragraph(title, h1))
-
-    story.append(Paragraph(
-        f"Cliente: <font color='#FFFFFF'><b>{user.get('name','')}</b></font> · {user.get('email','')}",
-        sub,
-    ))
-
-    # ─── Summary band ──────────────────────────────────────────────
+    _build_title_block(story, styles, user, is_vip, since, until)
     by_cur = _compute_by_currency_totals(entries)
-    total_in_usd = 0.0
-    total_out_usd = 0.0
-    # Only USD/USDT sum into the USD headline (LATAM fiats aren't rate-
-    # converted here to keep the PDF stateless — a future iter can pull
-    # live rates once the treasury service exposes them synchronously).
-    for code, v in by_cur.items():
-        if code in ("USD", "USDT", "USDCASH_TEST", "USDT_TEST"):
-            total_in_usd += v["in"]
-            total_out_usd += v["out"]
-    total_tx = len(entries)
+    _build_summary_band(story, styles, entries, by_cur, final_balance)
+    _build_detail_transactions_table(story, styles, entries)
 
-    summary_data = [
-        [
-            Paragraph("Transacciones totales", body_muted),
-            Paragraph("Entradas USD·USDT", body_muted),
-            Paragraph("Salidas USD·USDT", body_muted),
-            Paragraph("Saldo al cierre", body_muted),
-        ],
-        [
-            Paragraph(f"<font size=18 color='#FFFFFF'><b>{total_tx}</b></font>", body),
-            Paragraph(f"<font size=14 color='#22C55E'><b>+${total_in_usd:,.2f}</b></font>", body),
-            Paragraph(f"<font size=14 color='#EF4444'><b>-${total_out_usd:,.2f}</b></font>", body),
-            Paragraph(f"<font size=14 color='#8B5CF6'><b>${final_balance:,.2f}</b></font>", body),
-        ],
-    ]
-    tbl = Table(summary_data, colWidths=[1.85 * inch] * 4)
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), PANEL),
-        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, BORDER),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
-    ]))
-    story.append(tbl)
-    story.append(Spacer(1, 14))
-
-    # ─── Per-currency breakdown ───────────────────────────────────
-    if by_cur:
-        story.append(Paragraph("Totales por moneda", label))
-        story.append(Spacer(1, 4))
-        cur_data = [["Moneda", "Entradas", "Salidas", "Neto"]]
-        for code in sorted(by_cur.keys()):
-            v = by_cur[code]
-            net = v["in"] - v["out"]
-            cur_data.append([
-                code,
-                f"+{v['in']:,.2f}",
-                f"-{v['out']:,.2f}",
-                f"{net:+,.2f}",
-            ])
-        cur_tbl = Table(cur_data, colWidths=[1.4 * inch, 1.8 * inch, 1.8 * inch, 1.4 * inch])
-        cur_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-            ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 8),
-            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
-            ("TEXTCOLOR", (0, 1), (-1, -1), TEXT),
-            ("FONTSIZE", (0, 1), (-1, -1), 9),
-            ("TEXTCOLOR", (1, 1), (1, -1), GREEN),
-            ("TEXTCOLOR", (2, 1), (2, -1), colors.HexColor("#EF4444")),
-            ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ]))
-        story.append(cur_tbl)
-        story.append(Spacer(1, 18))
-
-    # ─── Detailed transactions table ───────────────────────────────
-    story.append(Paragraph("Detalle de transacciones", label))
-    story.append(Spacer(1, 6))
-    headers = ["ID", "Fecha", "Tipo", "Moneda", "Monto", "Titular", "Método"]
-    data = [headers] + [_format_tx_row(e) for e in entries]
-    if len(data) == 1:
-        data.append(["—"] * 7)
-
-    tx_tbl = Table(
-        data,
-        colWidths=[0.6 * inch, 0.85 * inch, 0.85 * inch, 0.7 * inch,
-                   1.0 * inch, 1.5 * inch, 1.1 * inch],
-        repeatRows=1,
-    )
-    tx_style: list = [
-        ("BACKGROUND", (0, 0), (-1, 0), PANEL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#0c0c0c")),
-        ("TEXTCOLOR", (0, 1), (-1, -1), TEXT),
-        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 1), (-1, -1), 7.5),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("GRID", (0, 0), (-1, -1), 0.3, BORDER),
-        ("ALIGN", (4, 1), (4, -1), "RIGHT"),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-    ]
-    # Colour the Tipo column per direction (green in / red out).
-    for row_idx, entry in enumerate(entries, start=1):
-        d = entry.get("direction")
-        if d == "in":
-            tx_style.append(("TEXTCOLOR", (2, row_idx), (2, row_idx), GREEN))
-        elif d == "out":
-            tx_style.append(("TEXTCOLOR", (2, row_idx), (2, row_idx), colors.HexColor("#EF4444")))
-        tx_style.append(("FONTNAME", (2, row_idx), (2, row_idx), "Helvetica-Bold"))
-    tx_tbl.setStyle(TableStyle(tx_style))
-    story.append(tx_tbl)
-    story.append(Spacer(1, 22))
-
-    # ─── Signature block (shared) ──────────────────────────────────
     story.append(build_signature_block(
         lang=(user.get("preferred_language") or "es"),
         client_name=user.get("name", ""),

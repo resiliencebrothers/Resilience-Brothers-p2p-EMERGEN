@@ -43,6 +43,9 @@ from routes.admin_security import router as admin_security_router  # noqa: E402
 from routes.kyc import router as kyc_router  # noqa: E402
 from routes.profile import router as profile_router  # noqa: E402
 from routes.capital_requests import router as capital_requests_router  # noqa: E402
+from routes.live import router as live_router  # noqa: E402
+from routes.support import router as support_router  # noqa: E402
+from routes.vip_requests import router as vip_requests_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -84,6 +87,9 @@ api_router.include_router(admin_security_router)
 api_router.include_router(kyc_router)
 api_router.include_router(profile_router)
 api_router.include_router(capital_requests_router)
+api_router.include_router(live_router)
+api_router.include_router(support_router)
+api_router.include_router(vip_requests_router)
 
 app.include_router(api_router)
 
@@ -149,6 +155,13 @@ async def start_background_jobs() -> None:
         await kyc_indexes(db)
     except Exception as e:  # noqa: BLE001
         logger.error(f"kyc_verifications index setup failed: {e}")
+
+    # iter102 — FAQ default seed (idempotent, only if collection empty).
+    try:
+        from services.support_seed import seed_faq_defaults
+        await seed_faq_defaults(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"FAQ seed failed: {e}")
 
     async def _build_timeseries(
         granularity: str,

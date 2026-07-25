@@ -1,0 +1,63 @@
+{
+  "summary": "iter98 (LiveToaster + AdminQueue live prepend) end-to-end tested with two browser contexts (admin viewing /admin/queue + client/vip posting new orders/withdrawals). 7/9 acceptance criteria PASS. One CRITICAL backend bug found: order_status_changed / withdrawal_status_changed are published ONLY to user_id=owner, so admin subscriptions never receive them and rows do NOT disappear from /admin/queue when items leave pending — this breaks half of the '/admin/queue live' feature.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PUT /api/admin/orders/{order_id}/status  &  PUT /api/admin/withdrawals/{id}",
+        "issue": "Backend publishes `order_status_changed` (routes/admin.py:268) and `withdrawal_status_changed` (routes/admin_withdrawals.py:151) with user_id=target_uid only. `live_bus.publish()` treats user_id and roles as mutually exclusive (services/live_bus.py:120), so admin/employee subscriptions on /live/stream never receive these events. Consequence: rows in AdminQueue.jsx are never removed after approve/reject/complete/pay. The client-side toast for order approval still works because it is user-scoped.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Admin queue → status change removal",
+        "issue": "AdminQueue.jsx correctly listens for order_status_changed / withdrawal_status_changed but never receives them (see backend critical bug above). Frontend code path is fine; needs backend fix.",
+        "affected_selectors": ["[data-testid=queue-order-*]", "[data-testid=queue-withdrawal-*]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "MAIN AGENT: Fix admin queue row-removal SSE. Two options: (A) In routes/admin.py after live_publish('order_status_changed', ..., user_id=target_uid), add a second call: `await live_publish('order_status_changed', {...}, roles=('admin','employee'))`. Do the same in routes/admin_withdrawals.py:151 for withdrawal_status_changed. (B) Or extend services/live_bus.publish() so a single call can target both `user_id` AND `roles`. Option A is safer/smaller change.",
+    "Optional: verify TOTP-gated rate update throttle end-to-end (test agent hit 422 because I didn't send the full ExchangeRateCreate payload — rates_updated broadcast code itself looks correct and is user_id=None so it will fan out; the 30s throttle in LiveToaster.jsx is straightforward and unit-testable)."
+  ],
+  "critical_code_review_comments": [
+    "LiveToaster.jsx (124 LOC): clean, focused, correctly gates admin toasts with `isStaff = ['admin','employee'].includes(user?.role)`. Throttle uses lastByKeyRef.current keyed by event type — 30s for rates / 10s for balance are per user session, which is exactly what the spec asked for. Passes.",
+    "AdminQueue.jsx: prepend logic guards against dupes with prev.orders.some(x => x.id === o.id). Good. Flash timeout cleanup on unmount via flashTimeoutsRef.current is correct. CSS injected inline via <style> works but polluting global CSS on every mount is slightly ugly — could be moved to App.css. Non-blocker.",
+    "services/live_bus.py:114-121: publish() branches on `if user_id is None` — meaning `user_id + roles` are mutually exclusive. This design forces the bug described above. If the intent is 'target the owner AND admins', publish() should accept both and union the two target sets. Suggested minimal patch: after computing targets when user_id is set, ALSO include broadcast_subs filtered by roles when roles is not None. Or dual-publish in the routes (simpler).",
+    "routes/admin.py:268 and routes/admin_withdrawals.py:151 both explicitly say '# iter97 — SSE push to the order OWNER' — so iter98's admin-queue removal was never wired in on the publish side. This is a design gap between iter97 and iter98.",
+    "AdminQueue.jsx handler for order_status_changed reads `payload.order_id` (correct — matches backend). For withdrawal_status_changed reads `payload.withdrawal_id` (also correct). No frontend fix needed once backend broadcasts.",
+    "Toast text respects i18n — verified both 'Nueva orden pendiente' (es) and 'New pending order' (en) work; admin test user's stored preference happens to be `en` so the browser showed English despite the request stating Spanish should be default. Not a bug in this iter, just an admin_seed preference."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "n/a (not requested — but critical publish-target bug uncovered while running frontend E2E)",
+    "frontend": "78% (7 of 9 criteria pass; row-removal on status change fails because of upstream backend publish bug)"
+  },
+  "test_credentials": "session_token cookies from /app/memory/test_credentials.md: test_session_admin_X, test_session_normal_X, test_session_vip_X. TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP used to sign VIP withdrawal.",
+  "seed_data_creation": "Created 4 test orders (12.34, 7.89, 5.55, 3.21, 99.99 USDT→USD accumulate) and 1 withdrawal (15 USD transfer) during E2E runs — all still in DB as PENDING (order approval PUT did not remove them from admin visible list due to bug). Main agent may want to prune with `db.orders.delete_many({\"delivery_details\": {\"$in\": [\"test\", \"spanish toast\", \"toast client\", \"bug repro\"]}})` once fixed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two-context Playwright pattern works well here: `context2 = await page.context.browser.new_context()` + add_cookies for a second role, then `context2.request.post(...)` posts an order that the admin's SSE-connected page picks up. TOTP for withdrawals is generated on-the-fly from the shared secret (see script). Rate-update throttle test requires the full ExchangeRateCreate schema (from_code, to_code, rate_normal, rate_vip, real_rate?, totp_code) — my first attempt with only rate_normal/vip returned 422. Once the backend broadcast fix ships, retest by re-running the same script and asserting `state=\"detached\"` on the queue-order-{id} selector after PUT /api/admin/orders/{id}/status.",
+  "verified_flows": [
+    "Admin session via cookie: /admin/queue loads, data-testid=admin-queue present.",
+    "data-testid=admin-queue-live-indicator visible with green '#22C55E' border/bg + Radio icon + text 'LIVE'/'En vivo' (per lang).",
+    "Client POST /api/orders → admin sees new row prepended AT TOP with queue-row-flash class within ~1s. Verified for both normal user and VIP user creating orders.",
+    "queue-row-flash class removed after 4.5s (matches FLASH_MS=4000).",
+    "Admin sonner toast 'Nueva orden pendiente' / 'New pending order' fires with the client name + pair in description.",
+    "VIP POST /api/vip/withdraw with TOTP → admin sees new withdrawal row prepended AT TOP with flash + toast 'Nuevo retiro pendiente' / 'New pending withdrawal'.",
+    "Client (dashboard tab) receives 'Tu orden fue aprobada' + 'Tu saldo se actualizó' toasts when admin approves their order via PUT /api/admin/orders/{id}/status.",
+    "Normal user with dashboard open does NOT receive 'Nueva orden pendiente' when another user creates an order (isStaff guard in LiveToaster works).",
+    "Landing page (/) unauthenticated: 0 JS errors, LiveStreamProvider is a no-op when there is no session cookie."
+  ],
+  "failed_flows": [
+    "Admin queue row NOT removed after PUT /api/admin/orders/{id}/status (status 200 succeeds, order moves to approved in DB, but /admin/queue keeps showing it). Confirmed 3 times with different order ids. RCA: backend publish targets only the owner user_id.",
+    "Withdrawal row removal on status change: not directly tested at status transition, but same code path (routes/admin_withdrawals.py:151 uses user_id=target_uid) — will fail identically per the RCA."
+  ],
+  "rca_of_the_issue": "services/live_bus.publish() at line 114 branches on `if user_id is None` — when user_id is set, roles filter is ignored and only per-user subscriptions receive the event. Admin queue subscribes as an admin broadcast subscriber (with role='admin' stamped in iter98) but is NOT in the per-user subscription map for arbitrary client user_ids. Backend fix: in routes/admin.py:268 and routes/admin_withdrawals.py:151, publish twice — once to the owner and once to admin/employee roles — OR extend live_bus.publish() to union both target sets when both user_id and roles are provided."
+}

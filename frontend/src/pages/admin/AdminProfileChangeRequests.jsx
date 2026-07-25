@@ -105,8 +105,8 @@ export default function AdminProfileChangeRequests() {
       )}
 
       {!loading && items.length > 0 && (
-        <div className="tactile-card overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="tactile-card overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-[#0a0a0a] border-b border-white/10">
               <tr>
                 <th className="text-left px-4 py-3 micro-label text-neutral-500">{t("admin.profileChanges.colClient")}</th>

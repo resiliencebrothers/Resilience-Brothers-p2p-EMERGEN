@@ -1,40 +1,69 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Users, MessageSquare, IdCard, UserCog } from "lucide-react";
+import { Users, MessageSquare, IdCard, UserCog, HelpCircle, Crown } from "lucide-react";
 import AdminUsers from "./AdminUsers";
 import AdminAppeals from "./AdminAppeals";
 import AdminKYC from "./AdminKYC";
 import AdminProfileChangeRequests from "./AdminProfileChangeRequests";
+import AdminSupport from "./AdminSupport";
+import AdminVipRequests from "./AdminVipRequests";
+import { useAuth } from "@/context/AuthContext";
 
 /**
  * iter55.31 — Consolidates 4 admin user-management sections under a single
  * "Usuarios" hub with sticky tabs (list · appeals · KYC · profile-change requests).
  * iter55.33 — tab labels now translatable via i18next.
+ * iter107 — adds the "Soporte" tab so support tickets (from `/admin/support`)
+ * live next to Apelaciones in the same natural place operators already look —
+ * no more confusion between "Apelaciones" (account_status=under_review) and
+ * "Support tickets" (client help requests).
  *
  * URL contract:
  *   /admin/users               → tab=list (default)
  *   /admin/users?tab=appeals   → Apelaciones
+ *   /admin/users?tab=support   → Soporte
  *   /admin/users?tab=kyc       → KYC verificación
  *   /admin/users?tab=changes   → Cambios de datos
  *
- * Legacy paths `/admin/appeals`, `/admin/kyc`, `/admin/profile-change-requests`
- * still work via redirect routes registered in AdminPanel.jsx.
+ * Legacy paths `/admin/appeals`, `/admin/kyc`, `/admin/support`,
+ * `/admin/profile-change-requests` still work via redirect routes registered
+ * in AdminPanel.jsx.
  */
-const TAB_META = [
-  { id: "list",     labelKey: "usersHub.tabs.list",     icon: Users,          Component: AdminUsers },
-  { id: "appeals",  labelKey: "usersHub.tabs.appeals",  icon: MessageSquare,  Component: AdminAppeals },
-  { id: "kyc",      labelKey: "usersHub.tabs.kyc",      icon: IdCard,         Component: AdminKYC },
-  { id: "changes",  labelKey: "usersHub.tabs.changes",  icon: UserCog,        Component: AdminProfileChangeRequests },
+const ALL_TABS = [
+  { id: "list",         labelKey: "usersHub.tabs.list",         icon: Users,          Component: AdminUsers,                perm: "users" },
+  { id: "appeals",      labelKey: "usersHub.tabs.appeals",      icon: MessageSquare,  Component: AdminAppeals,              perm: "appeals" },
+  { id: "support",      labelKey: "usersHub.tabs.support",      icon: HelpCircle,     Component: AdminSupport,              perm: "support" },
+  { id: "vip-requests", labelKey: "usersHub.tabs.vipRequests",  icon: Crown,          Component: AdminVipRequests,          perm: "vip_requests" },
+  { id: "kyc",          labelKey: "usersHub.tabs.kyc",          icon: IdCard,         Component: AdminKYC,                  perm: "kyc" },
+  { id: "changes",      labelKey: "usersHub.tabs.changes",      icon: UserCog,        Component: AdminProfileChangeRequests, perm: "profile_changes" },
 ];
+
+function hasPerm(user, code) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  if (user.role !== "employee") return false;
+  const perms = user.allowed_permissions || [];
+  return perms.length === 0 || perms.includes(code);
+}
 
 export default function AdminUsersHub() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const activeId = params.get("tab") || "list";
-  const active = useMemo(() => TAB_META.find((tt) => tt.id === activeId) || TAB_META[0], [activeId]);
-  const ActiveComponent = active.Component;
+
+  const TAB_META = useMemo(
+    () => ALL_TABS.filter((tt) => hasPerm(user, tt.perm)),
+    [user],
+  );
+
+  const activeId = params.get("tab") || (TAB_META[0]?.id || "list");
+  const active = useMemo(
+    () => TAB_META.find((tt) => tt.id === activeId) || TAB_META[0],
+    [activeId, TAB_META],
+  );
+  const ActiveComponent = active?.Component || AdminUsers;
 
   const setTab = (id) => {
     if (id === "list") {

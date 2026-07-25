@@ -74,21 +74,46 @@ def teardown_module(module):
 def test_permissions_catalog_returns_13_items():
     # iter55.33 — 3 new codes added (user_stats, user_functions,
     # view_user_sensitive). Baseline lifted from 13 → 16 items.
+    # iter102 — `support` added for the Support Center + FAQ editor.
+    # Baseline lifted from 16 → 17.
+    # iter109 — `vip_requests` added for the VIP upgrade request queue.
+    # Baseline lifted from 17 → 18.
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 16
+    assert len(items) == 18
     codes = {i["code"] for i in items}
     assert codes == {
         "orders", "withdrawals", "kyc", "appeals", "products", "rates",
         "currencies", "users", "company_funds", "blocked_contacts",
         "transactions", "quick_view", "profile_changes",
         "user_stats", "user_functions", "view_user_sensitive",
+        "support", "vip_requests",
     }
     # Each item has label + description
     for it in items:
         assert "label" in it and it["label"]
         assert "description" in it and it["description"]
+
+    # iter108.2 — each item carries a category so the admin UI can group them.
+    for it in items:
+        assert "category" in it and it["category"]
+        assert it["category"] in {"operations", "catalog", "users", "finance"}
+
+
+def test_permissions_catalog_categories_are_populated():
+    # iter108.2 — sanity check that every catalog entry has a category and
+    # that the 4 known categories all have at least one item.
+    r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
+    assert r.status_code == 200
+    items = r.json()["items"]
+    by_cat = {}
+    for it in items:
+        by_cat.setdefault(it["category"], []).append(it["code"])
+    assert set(by_cat.keys()) == {"operations", "catalog", "users", "finance"}
+    # Each category has at least 3 items — protects against accidental drops.
+    for cat, codes in by_cat.items():
+        assert len(codes) >= 3, f"Category {cat} only has {codes}"
 
 
 def test_permissions_catalog_accessible_by_staff():

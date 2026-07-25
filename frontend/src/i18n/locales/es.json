@@ -36,6 +36,7 @@
       "vip": "Saldo y Retiros",
       "capitalRequests": "Solicitud de Fondos",
       "marketplace": "Marketplace",
+      "support": "Soporte",
       "adminPanel": "Panel Admin",
       "teamPanel": "Panel Equipo"
     },
@@ -56,6 +57,7 @@
       "health": "Salud",
       "security": "Seguridad",
       "audit": "Auditoría",
+      "support": "Soporte",
       "backToClient": "Volver al cliente"
     }
   },
@@ -63,6 +65,8 @@
     "tabs": {
       "list": "Lista",
       "appeals": "Apelaciones",
+      "support": "Soporte",
+      "vipRequests": "Solicitudes VIP",
       "kyc": "KYC",
       "changes": "Cambios de datos"
     }
@@ -620,6 +624,7 @@
       "colUserId": "User ID",
       "colEmail": "Email",
       "colRole": "Rol",
+      "colKyc": "KYC",
       "colRegistered": "Registrado",
       "colActions": "Acciones",
       "empty": "Sin resultados",
@@ -1498,12 +1503,74 @@
       "ordersUnit": "ORDS"
     }
   },
+  "vipRequest": {
+    "sectionTitle": "Programa VIP",
+    "emptyBody": "¿Manejas alto volumen de trading? Solicita ser cliente VIP para acceder a tasas preferenciales, retiros priorizados y soporte dedicado.",
+    "ctaFirstTime": "Solicitar acceso VIP",
+    "ctaRetry": "Volver a solicitar",
+    "pendingTitle": "Tu solicitud está en revisión",
+    "pendingBody": "Enviada el {{date}}. Un miembro del equipo la revisará en breve — te notificaremos con la decisión.",
+    "rejectedTitle": "Solicitud rechazada",
+    "rejectedNoNote": "El equipo no dejó comentario adicional.",
+    "cooldownRemaining": "Podrás volver a solicitar en {{days}} día(s).",
+    "approvedBody": "Tu cuenta ya está marcada como VIP. Refresca la app para ver los nuevos accesos.",
+    "status": {
+      "pending": "En revisión",
+      "approved": "Aprobada",
+      "rejected": "Rechazada"
+    },
+    "method": {
+      "crypto": "Cripto",
+      "bank_transfer": "Transferencia bancaria",
+      "cash": "Efectivo",
+      "other": "Otro"
+    },
+    "dialog": {
+      "title": "Solicitar acceso VIP",
+      "body": "Cuéntanos brevemente por qué encajas en el programa VIP. El equipo revisará tu solicitud en menos de 48h.",
+      "messageLabel": "Motivo",
+      "messagePlaceholder": "Ej: llevo 6 meses operando en la plataforma con >20k USD/mes, uso principalmente cripto…",
+      "volumeLabel": "Volumen mensual estimado (USD)",
+      "methodLabel": "Método de pago preferido",
+      "submit": "Enviar solicitud",
+      "successToast": "Solicitud enviada. Te notificaremos con la decisión.",
+      "errorToast": "No se pudo enviar la solicitud."
+    }
+  },
+  "adminVipRequests": {
+    "eyebrow": "USUARIOS",
+    "title": "Solicitudes VIP",
+    "loadError": "No se pudo cargar la cola de solicitudes VIP",
+    "empty": "No hay solicitudes en esta cola.",
+    "colUser": "Cliente",
+    "colVolume": "Volumen/mes",
+    "colMethod": "Método",
+    "colMessage": "Motivo",
+    "colCreated": "Solicitada",
+    "colStatus": "Estado",
+    "colActions": "Acciones",
+    "approve": "Aprobar",
+    "reject": "Rechazar",
+    "approvedToast": "Solicitud aprobada — el usuario ahora es VIP.",
+    "rejectedToast": "Solicitud rechazada.",
+    "actionError": "No se pudo procesar la acción.",
+    "filter": {
+      "pending": "Pendientes",
+      "approved": "Aprobadas",
+      "rejected": "Rechazadas",
+      "all": "Todas"
+    },
+    "rejectDialogTitle": "Rechazar solicitud VIP",
+    "rejectDialogBody": "El cliente {{name}} recibirá una notificación con tu comentario. Podrá volver a solicitar en 7 días.",
+    "rejectDialogPlaceholder": "Motivo del rechazo (opcional pero recomendado)…"
+  },
   "adminAppeals": {
     "title": "Apelaciones",
     "subtitle": "Mensajes de clientes bajo revisión pidiendo reactivación. Resolver aquí <1>no</1> activa la cuenta — usa <2>Verificar teléfono</2> en Usuarios cuando decidas activar.",
     "pendingCount": "Pendientes:",
     "loadError": "No se pudo cargar la cola de apelaciones",
     "emptyQueue": "No hay apelaciones en esta cola.",
+    "supportHint": "¿Buscas tickets de ayuda del cliente? Están en la pestaña <1>Soporte</1> — las apelaciones son solo para cuentas bajo revisión.",
     "loading": "Cargando…",
     "tabs": {
       "pending": "Pendientes",
@@ -1545,6 +1612,8 @@
     "loadError": "Error al cargar cola",
     "allClear": "/ todo al día",
     "emptyBody": "No hay órdenes ni retiros pendientes en tu scope.",
+    "liveOn": "En vivo",
+    "liveOff": "Pausado",
     "orders": {
       "sectionTitle": "Órdenes pendientes",
       "goto": "Ir a Órdenes →",
@@ -1670,6 +1739,30 @@
     "blocked": {
       "title": "Cuenta bloqueada",
       "body": "Tu cuenta ha sido bloqueada por el equipo. Si crees que es un error, contacta a soporte."
+    }
+  },
+  "liveToast": {
+    "order": {
+      "approved": "Tu orden fue aprobada",
+      "rejected": "Tu orden fue rechazada",
+      "pair": "{{from}} → {{to}}"
+    },
+    "withdrawal": {
+      "approved": "Tu retiro fue aprobado",
+      "paid": "Tu retiro fue pagado",
+      "rejected": "Tu retiro fue rechazado"
+    },
+    "balance": {
+      "updated": "Tu saldo se actualizó"
+    },
+    "rates": {
+      "updated": "Nueva tasa disponible"
+    },
+    "admin": {
+      "orderCreated": "Nueva orden pendiente",
+      "orderCreatedDesc": "{{user}} · {{from}} → {{to}}",
+      "withdrawalCreated": "Nuevo retiro pendiente",
+      "withdrawalCreatedDesc": "{{user}} · {{amount}} {{currency}}"
     }
   },
   "security": {
@@ -2041,6 +2134,148 @@
     "footer": {
       "copy": "© Resilience Brothers · P2P Network",
       "tagline": "Global Trade Infrastructure"
+    }
+  },
+  "support": {
+    "eyebrow": "/ Soporte",
+    "title": "Centro de Ayuda",
+    "subtitle": "Consulta preguntas frecuentes o abre un ticket. Un miembro del equipo te responderá en menos de 24h.",
+    "refresh": "Refrescar",
+    "tabs": {
+      "faq": "Preguntas Frecuentes",
+      "newTicket": "Nuevo Ticket",
+      "myTickets": "Mis Tickets"
+    },
+    "category": {
+      "general": "General",
+      "kyc": "KYC / Verificación",
+      "convert": "Conversiones",
+      "withdrawal": "Retiros",
+      "fees": "Comisiones",
+      "other": "Otro"
+    },
+    "status": {
+      "open": "Abierto",
+      "answered": "Respondido",
+      "closed": "Cerrado"
+    },
+    "faq": {
+      "empty": "Aún no hay preguntas frecuentes publicadas."
+    },
+    "newTicket": {
+      "eyebrow": "/ Contactar Soporte",
+      "title": "Envíanos tu consulta",
+      "subtitle": "Describe tu situación con el mayor detalle posible. Si es sobre una orden o retiro específico, incluye su ID.",
+      "category": "Categoría",
+      "subject": "Asunto",
+      "subjectPlaceholder": "Resume tu consulta en una línea",
+      "message": "Mensaje",
+      "messagePlaceholder": "Cuéntanos qué ocurre. Sé lo más específico posible.",
+      "images": "Imágenes (opcional)",
+      "uploadImages": "Adjuntar imágenes",
+      "submit": "Enviar Ticket",
+      "sending": "Enviando…",
+      "created": "Tu ticket se creó correctamente. Te avisaremos cuando haya respuesta.",
+      "createFailed": "No pudimos crear el ticket. Intenta nuevamente en unos minutos.",
+      "missingFields": "Completa el asunto y el mensaje antes de enviar."
+    },
+    "ticket": {
+      "imageLimitReached": "Máximo {{max}} imágenes por ticket.",
+      "imageTooLarge": "La imagen \"{{name}}\" pesa más de 8 MB.",
+      "imageReadFailed": "No pudimos leer la imagen. Intenta con otra.",
+      "created": "Ticket creado con éxito.",
+      "createFailed": "No pudimos crear el ticket."
+    },
+    "tickets": {
+      "empty": "No tienes tickets abiertos. Abre uno desde la pestaña 'Nuevo Ticket'."
+    },
+    "thread": {
+      "you": "Tú",
+      "staff": "Soporte",
+      "newBadge": "Nuevo",
+      "replyPlaceholder": "Escribe tu respuesta…",
+      "sendReply": "Enviar respuesta",
+      "sending": "Enviando…",
+      "replySent": "Respuesta enviada.",
+      "replyFailed": "No pudimos enviar tu respuesta.",
+      "closedNote": "Este ticket fue cerrado. Si necesitas continuar, abre uno nuevo."
+    }
+  },
+  "adminSupport": {
+    "eyebrow": "/ Soporte",
+    "title": "Centro de Soporte",
+    "subtitle": "Tickets de clientes y edición del FAQ público.",
+    "refresh": "Refrescar",
+    "loadError": "Error al cargar los tickets.",
+    "faqLoadError": "Error al cargar el FAQ.",
+    "replySent": "Respuesta enviada.",
+    "replyFailed": "No se pudo enviar la respuesta.",
+    "closed": "Ticket cerrado.",
+    "closeFailed": "No se pudo cerrar el ticket.",
+    "confirmClose": "¿Cerrar este ticket? El cliente no podrá responder más en este hilo.",
+    "faqSaved": "FAQ guardada.",
+    "faqSaveFailed": "No se pudo guardar la FAQ.",
+    "faqDeleted": "FAQ eliminada.",
+    "faqDeleteFailed": "No se pudo eliminar la FAQ.",
+    "faqConfirmDelete": "¿Eliminar esta FAQ definitivamente?",
+    "tabs": {
+      "tickets": "Tickets",
+      "faq": "FAQ"
+    },
+    "filters": {
+      "status": "Estado",
+      "category": "Categoría",
+      "allStatuses": "Todos",
+      "allCategories": "Todas"
+    },
+    "tickets": {
+      "counter": "Total {{total}} · Pendientes {{unread}}",
+      "empty": "No hay tickets con los filtros actuales.",
+      "new": "Nuevo",
+      "close": "Cerrar",
+      "selectHint": "Selecciona un ticket de la izquierda para leer el hilo y responder."
+    },
+    "thread": {
+      "staff": "Tú (Staff)",
+      "replyPlaceholder": "Escribe tu respuesta al cliente…",
+      "send": "Enviar",
+      "sending": "Enviando…"
+    },
+    "faq": {
+      "counter": "{{total}} entradas",
+      "new": "Nueva FAQ",
+      "empty": "Aún no hay FAQs configuradas. Crea la primera con el botón de arriba.",
+      "category": "Categoría",
+      "order": "Orden",
+      "questionEs": "Pregunta (ES)",
+      "questionEn": "Pregunta (EN)",
+      "answerEs": "Respuesta (ES)",
+      "answerEn": "Respuesta (EN)",
+      "isActive": "Publicada (visible para clientes)",
+      "cancel": "Cancelar",
+      "saveNew": "Crear FAQ",
+      "saveEdit": "Guardar cambios",
+      "editBtn": "Editar",
+      "deleteBtn": "Eliminar"
+    }
+  },
+  "pwa": {
+    "installApp": "Instalar app",
+    "banner": {
+      "label": "INSTALAR APP",
+      "body": "Instala Resilience en tu móvil para acceso instantáneo y notificaciones.",
+      "iosBody": "Toca",
+      "iosBodyEnd": "para usar Resilience como app."
+    },
+    "iosHelp": {
+      "title": "Instalar en iPhone / iPad",
+      "description": "Instrucciones para instalar la app en dispositivos Apple.",
+      "step1": "Toca el botón",
+      "step1cont": "en la barra de Safari.",
+      "step2": "Desliza y selecciona",
+      "step3": "Toca «Añadir» y encontrarás Resilience en tu pantalla de inicio como una app nativa.",
+      "share": "Compartir",
+      "addToHome": "Añadir a inicio"
     }
   }
 }

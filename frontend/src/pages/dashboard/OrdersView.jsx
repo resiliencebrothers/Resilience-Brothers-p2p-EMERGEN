@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -8,6 +8,7 @@ import ExplorerLink from "@/components/ExplorerLink";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
 import { ORDER_FILTER_STATUSES } from "@/constants/orderStatus";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 
 const STATUS_STYLES = {
   pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
@@ -36,6 +37,21 @@ export default function OrdersView() {
   useEffect(() => {
     axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => setOrders(r.data));
   }, []);
+
+  // iter97 — live refresh when the platform pushes an order status
+  // change for this user. Also update the currently-open detail dialog
+  // so `selected` reflects the new status without closing the modal.
+  const refreshOrders = useCallback(() => {
+    axios.get(`${API}/orders/mine`, { withCredentials: true }).then(r => {
+      setOrders(r.data);
+      setSelected((cur) => {
+        if (!cur) return cur;
+        const fresh = r.data.find((o) => o.id === cur.id);
+        return fresh || cur;
+      });
+    }).catch(() => {});
+  }, []);
+  useLiveEvent("order_status_changed", refreshOrders);
 
   const filteredOrders = useMemo(() => {
     const statuses = ORDER_FILTER_STATUSES[filter];

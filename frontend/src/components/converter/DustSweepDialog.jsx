@@ -66,7 +66,7 @@ export default function DustSweepDialog({ open, onOpenChange, onConverted }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="dust-sweep-dialog"
-        className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white max-w-lg rounded-none"
+        className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white max-w-lg max-h-[85vh] overflow-y-auto rounded-none"
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

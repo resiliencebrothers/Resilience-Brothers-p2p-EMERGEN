@@ -34,8 +34,8 @@ export default function AdjustmentsTable({ items }) {
     );
   }
   return (
-    <div className="tactile-card overflow-hidden" data-testid="adjustments-table">
-      <table className="w-full text-sm">
+    <div className="tactile-card overflow-x-auto" data-testid="adjustments-table">
+      <table className="w-full text-sm min-w-[720px]">
         <thead className="bg-[#0a0a0a] border-b border-white/10">
           <tr className="text-left">
             <th className="px-4 py-3 micro-label text-neutral-500">Fecha</th>

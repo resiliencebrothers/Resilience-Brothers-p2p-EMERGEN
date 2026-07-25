@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -13,6 +13,7 @@ import CurrencyPairSelector from "./exchange/CurrencyPairSelector";
 import QuotePreview from "./exchange/QuotePreview";
 import PaymentAccountBlock from "./exchange/PaymentAccountBlock";
 import SenderAndProof from "./exchange/SenderAndProof";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 import DeliverySection from "./exchange/DeliverySection";
 
 export default function ExchangeView() {
@@ -46,6 +47,13 @@ export default function ExchangeView() {
     axios.get(`${API}/currencies`).then((r) => setCurrencies(r.data.filter((c) => c.is_active)));
     axios.get(`${API}/rates`).then((r) => setRates(r.data));
   }, []);
+
+  // iter97 — live rate refresh so the exchange screen stays in sync
+  // when admin edits a rate while the client has this tab open.
+  const refreshRates = useCallback(() => {
+    axios.get(`${API}/rates`).then((r) => setRates(r.data)).catch(() => {});
+  }, []);
+  useLiveEvent("rates_updated", refreshRates);
 
   // Fetch valid delivery methods for the chosen destination currency (iter43).
   useEffect(() => {

@@ -88,7 +88,7 @@ const CUSTOM_RENDER = {
           const cy = 12 + Math.sin(angle) * 7.5;
           return (
             <text
-              key={i}
+              key={`eur-star-${i}`}
               x={cx}
               y={cy + 1.4}
               textAnchor="middle"
@@ -179,7 +179,7 @@ const CUSTOM_RENDER = {
             const y2 = Math.sin(a) * 3.5;
             return (
               <line
-                key={i}
+                key={`ars-ray-${i}`}
                 x1="0" y1="0" x2={x2} y2={y2}
                 stroke="#F6B40E" strokeWidth="0.9" strokeLinecap="round"
               />
@@ -209,7 +209,7 @@ const CUSTOM_RENDER = {
           const cy = 13 - Math.abs(t) * 1.5;
           return (
             <text
-              key={i}
+              key={`ves-star-${i}`}
               x={cx} y={cy + 1.3} textAnchor="middle"
               fontSize="2.4" fill="#FFFFFF" fontWeight="700"
             >
