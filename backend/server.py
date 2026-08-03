@@ -36,6 +36,7 @@ from routes.admin_withdrawals import router as admin_withdrawals_router  # noqa:
 from routes.admin_users import router as admin_users_router  # noqa: E402
 from routes.admin_audit import router as admin_audit_router  # noqa: E402
 from routes.admin_company_funds import router as admin_company_funds_router  # noqa: E402
+from routes.admin_profitability import router as admin_profitability_router  # noqa: E402
 from routes.admin_revenue import router as admin_revenue_router  # noqa: E402
 from routes.files import router as files_router  # noqa: E402
 from routes.appeals import router as appeals_router  # noqa: E402
@@ -46,6 +47,10 @@ from routes.capital_requests import router as capital_requests_router  # noqa: E
 from routes.live import router as live_router  # noqa: E402
 from routes.support import router as support_router  # noqa: E402
 from routes.vip_requests import router as vip_requests_router  # noqa: E402
+from routes.vip_batches import router as vip_batches_router  # noqa: E402
+from routes.vip_ledger_ops import router as vip_ledger_ops_router  # noqa: E402
+from routes.deposits import router as deposits_router  # noqa: E402
+from routes.referrals import router as referrals_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -80,6 +85,7 @@ api_router.include_router(admin_withdrawals_router)
 api_router.include_router(admin_users_router)
 api_router.include_router(admin_audit_router)
 api_router.include_router(admin_company_funds_router)
+api_router.include_router(admin_profitability_router)
 api_router.include_router(admin_revenue_router)
 api_router.include_router(files_router)
 api_router.include_router(appeals_router)
@@ -90,6 +96,10 @@ api_router.include_router(capital_requests_router)
 api_router.include_router(live_router)
 api_router.include_router(support_router)
 api_router.include_router(vip_requests_router)
+api_router.include_router(vip_batches_router)
+api_router.include_router(vip_ledger_ops_router)
+api_router.include_router(deposits_router)
+api_router.include_router(referrals_router)
 
 app.include_router(api_router)
 
@@ -131,6 +141,14 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"Currency code migration failed: {e}")
 
+    # iter113 — one-shot: merge legacy VIP ledger positive balances into the
+    # per-currency account balance (vip_balances.USDT) per owner decision.
+    try:
+        from services.db_migrations import migrate_vip_ledger_positive_to_balances
+        await migrate_vip_ledger_positive_to_balances(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"VIP ledger positive migration failed: {e}")
+
     # iter48 — security_events collection indexes (idempotent).
     try:
         await security_events_indexes()
@@ -162,6 +180,12 @@ async def start_background_jobs() -> None:
         await seed_faq_defaults(db)
     except Exception as e:  # noqa: BLE001
         logger.error(f"FAQ seed failed: {e}")
+
+    # iter116 — TTL index for the ledger-email rate-limit log (auto-expire 2h).
+    try:
+        await db.ledger_email_events.create_index("at", expireAfterSeconds=7200)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"ledger_email_events TTL index setup failed: {e}")
 
     async def _build_timeseries(
         granularity: str,

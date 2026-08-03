@@ -316,7 +316,7 @@ export default function AdminSupport() {
                         {m.images?.length > 0 && (
                           <div className="flex flex-wrap gap-2 mt-2">
                             {m.images.map((src, i) => (
-                              <a key={i} href={src} target="_blank" rel="noopener noreferrer">
+                              <a key={`${src.slice(-40)}-${i}`} href={src} target="_blank" rel="noopener noreferrer">
                                 <img src={src} alt="" className="w-16 h-16 object-cover border border-white/10 hover:border-[#8B5CF6]/40" />
                               </a>
                             ))}

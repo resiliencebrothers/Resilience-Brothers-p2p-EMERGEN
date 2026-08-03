@@ -37,8 +37,7 @@ def _create_order(token: str, from_code: str, to_code: str, amount: float):
     )
 
 
-NORMAL_TOKEN = os.environ.get("TEST_TOKEN_NORMAL", "test_session_normal_X")
-VIP_TOKEN = os.environ.get("TEST_TOKEN_VIP", "test_session_vip_X")
+from conftest import NORMAL_TOKEN, VIP_TOKEN
 
 
 class TestCommissionRemoved:

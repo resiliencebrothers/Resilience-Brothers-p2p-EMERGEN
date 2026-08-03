@@ -18,7 +18,9 @@
     "date": "Fecha",
     "yes": "Sí",
     "no": "No",
-    "copied": "Copiado al portapapeles"
+    "copied": "Copiado al portapapeles",
+    "shareLinkCopied": "Enlace copiado al portapapeles",
+    "shareLinkError": "No se pudo copiar el enlace"
   },
   "quickRange": {
     "last7Days": "Últimos 7 días",
@@ -30,21 +32,25 @@
     "client": {
       "profile": "Mi Perfil",
       "overview": "Resumen",
-      "exchange": "Intercambio",
+      "exchange": "Intercambio Único",
       "orders": "Mis Órdenes",
-      "history": "Mi Historial",
-      "vip": "Saldo y Retiros",
+      "history": "Transacciones",
+      "vip": "Depósitos y Retiros",
       "capitalRequests": "Solicitud de Fondos",
+      "batches": "Intercambio por Lotes",
       "marketplace": "Marketplace",
       "support": "Soporte",
       "adminPanel": "Panel Admin",
-      "teamPanel": "Panel Equipo"
+      "teamPanel": "Panel Equipo",
+      "referrals": "Invita y Gana",
+      "assets": "Activos"
     },
     "admin": {
       "overview": "Resumen",
       "quick": "Vista Rápida",
       "queue": "Mi Cola",
       "orders": "Órdenes",
+      "vipBatches": "Lotes VIP",
       "withdrawals": "Retiros",
       "currencies": "Monedas",
       "rates": "Tasas",
@@ -58,7 +64,8 @@
       "security": "Seguridad",
       "audit": "Auditoría",
       "support": "Soporte",
-      "backToClient": "Volver al cliente"
+      "backToClient": "Volver al cliente",
+      "referrals": "Referidos"
     }
   },
   "usersHub": {
@@ -81,7 +88,8 @@
     "tabs": {
       "funds": "Fondos",
       "revenue": "Ingresos",
-      "requests": "Solicitudes"
+      "requests": "Solicitudes",
+      "profitability": "Rentabilidad"
     }
   },
   "auditHub": {
@@ -347,7 +355,7 @@
     "cryptoMismatch": "<1>No coincide con {{network}}</1>. Revisa la red seleccionada o pega otra dirección — enviar por la red incorrecta puede perder los fondos permanentemente."
   },
   "vipView": {
-    "eyebrow": "/ Saldo y Retiros",
+    "eyebrow": "/ Depósitos y Retiros",
     "title": "Tu balance acumulado",
     "totalValue": "Valor total (USDT)",
     "consolidatedNote": "Equivalente consolidado de todas tus monedas · usa tasa normal",
@@ -365,7 +373,23 @@
     "generating": "Generando…",
     "downloadPdf": "Descargar PDF",
     "closingDownloaded": "Cierre descargado",
-    "closingError": "Error al generar el cierre"
+    "closingError": "Error al generar el cierre",
+    "actions": {
+      "deposit": "Depositar",
+      "withdraw": "Retirar",
+      "convert": "Convertir",
+      "history": "Historial"
+    },
+    "historyDialog": {
+      "title": "Historial de Depósitos y Retiros",
+      "subtitle": "Tus movimientos de capital en la plataforma, separados por tipo.",
+      "tabs": {
+        "deposits": "Depósitos",
+        "withdrawals": "Retiros",
+        "conversions": "Conversiones"
+      },
+      "conversionsEmpty": "Aún no has hecho conversiones entre monedas."
+    }
   },
   "orders": {
     "eyebrow": "/ Historial",
@@ -545,7 +569,9 @@
     "twofaOn": "2FA activo",
     "twofaOff": "2FA no configurado",
     "securityHelperBody": "Gestiona tu autenticación de dos factores, cambia tu contraseña y consulta las sesiones activas.",
-    "openSecurity": "Abrir seguridad"
+    "openSecurity": "Abrir seguridad",
+    "fieldStatus": "Estatus de cliente",
+    "tabsSwipeHint": "Desliza para ver más secciones"
   },
   "admin": {
     "common": {
@@ -1309,7 +1335,9 @@
       "toastCreated": "Retiro de fondo registrado",
       "toastStatus": "Estado actualizado",
       "toastLoadError": "Error al cargar fondos",
-      "toastMax4": "Máx 4MB"
+      "toastMax4": "Máx 4MB",
+      "vipBatchesIn": "Lotes VIP",
+      "depositsIn": "Depósitos de clientes"
     },
     "revenue": {
       "loading": "Cargando ingresos...",
@@ -1401,7 +1429,9 @@
       "catConversions": "Conversiones",
       "catNote": "Los porcentajes representan la magnitud relativa de cada categoría sobre el total absoluto. Las barras atenuadas indican pérdida neta.",
       "monthlyComparison": "Comparativa mensual",
-      "noMonthlyData": "Sin datos mensuales aún."
+      "noMonthlyData": "Sin datos mensuales aún.",
+      "vipBatches": "Lotes VIP",
+      "vipBatchesCount": "{{n}} órdenes de lote"
     },
     "profileChanges": {
       "title": "Solicitudes de cambio de datos",
@@ -1489,7 +1519,22 @@
       "totpAuditOn": "Activar envío automático",
       "totpAuditOff": "Desactivar envío automático",
       "totpAuditOnDesc": "El informe mensual de auditoría se enviará el día 1 a las 09:15 UTC. Ingresa tu código 2FA para confirmar.",
-      "totpAuditOffDesc": "Al desactivar dejarás de recibir el informe mensual por email. Ingresa tu código 2FA para confirmar."
+      "totpAuditOffDesc": "Al desactivar dejarás de recibir el informe mensual por email. Ingresa tu código 2FA para confirmar.",
+      "vipLedgerLabel": "ESTADO DE CUENTA VIP · ENVÍO AUTOMÁTICO",
+      "vipLedgerBody": "Cuando está activo, cada día 1 a las 09:30 UTC se envía por email a cada VIP el PDF con los movimientos confirmados del mes anterior (VIPs con saldo y movimientos vacíos se omiten). Los VIPs pueden desactivar su propio envío desde /dashboard/batches.",
+      "vipLedgerToggleOn": "Envío mensual del ledger VIP activado",
+      "vipLedgerToggleOff": "Envío mensual del ledger VIP desactivado",
+      "vipLedgerRunNow": "Ejecutar envío ahora",
+      "vipLedgerRunning": "Enviando…",
+      "vipLedgerRanSummary": "Envío {{period}} completado — {{sent}} enviados · {{skipped}} vacíos · {{failed}} fallidos.",
+      "vipLedgerRunError": "No se pudo ejecutar el envío mensual.",
+      "totpVipLedgerOn": "Activar envío VIP mensual",
+      "totpVipLedgerOff": "Desactivar envío VIP mensual",
+      "totpVipLedgerOnDesc": "El estado de cuenta VIP se enviará automáticamente a cada VIP el día 1 a las 09:30 UTC. Ingresa tu código 2FA para confirmar.",
+      "totpVipLedgerOffDesc": "Al desactivar dejarás de enviar automáticamente los estados de cuenta VIP. Ingresa tu código 2FA para confirmar.",
+      "officeAddressLabel": "Dirección de oficinas (depósitos en efectivo)",
+      "officeAddressPlaceholder": "Ej: Calle 23 #456, Vedado, La Habana",
+      "officeAddressHint": "Se muestra a los clientes que depositan efectivo por montos de hasta 1000 USDT (deben entregar en oficinas). Se guarda con el botón Guardar de esta tarjeta."
     },
     "cards": {
       "inflow": "Volumen entrante",
@@ -1502,6 +1547,252 @@
       "noData": "Sin datos aún.",
       "ordersUnit": "ORDS"
     }
+  },
+  "vipBatches": {
+    "eyebrow": "OPERATIVA POR LOTES",
+    "title": "Intercambio por Lotes",
+    "newBatch": "Nuevo lote",
+    "newBatchTitle": "Crear nuevo lote de órdenes",
+    "newBatchBody": "Elige el par de cambio del lote. Agregas órdenes con titular y monto en la moneda origen; el admin las confirma una a una y tu saldo se acredita en la moneda destino a la tasa VIP.",
+    "createBatch": "Crear lote",
+    "batchCreated": "Lote creado — ya puedes agregar órdenes.",
+    "recentBatches": "Lotes recientes",
+    "empty": "Aún no tienes lotes. Crea el primero para empezar a enviar órdenes en batch.",
+    "loadError": "No se pudieron cargar los datos de lotes.",
+    "actionError": "No se pudo procesar la acción.",
+    "directionLabel": "Dirección",
+    "currencyLabel": "Moneda",
+    "noteLabel": "Nota (opcional)",
+    "notePlaceholder": "Ej: Envíos del turno matutino",
+    "balanceCredit": "A favor (Ingresos)",
+    "balanceDebit": "En deuda (Egresos)",
+    "balanceNet": "Balance neto",
+    "direction": {
+      "credit": "Ingresos",
+      "creditHelp": "Envié yo, me acumula a favor",
+      "debit": "Egresos",
+      "debitHelp": "Me deben pagar, se acumula en deuda"
+    },
+    "status": {
+      "batch": {
+        "open": "Abierto",
+        "closed": "Cerrado"
+      },
+      "item": {
+        "pending": "Pendiente",
+        "approved": "Aprobada",
+        "rejected": "Rechazada"
+      }
+    },
+    "addRow": "Agregar orden al lote",
+    "holderPlaceholder": "Nombre del titular",
+    "addItem": "Agregar",
+    "itemAdded": "Orden agregada al lote.",
+    "colHolder": "Titular",
+    "colAmount": "Monto",
+    "colStatus": "Estado",
+    "itemsEmpty": "Este lote aún no tiene órdenes.",
+    "closeBatch": "Cerrar lote",
+    "confirmClose": "¿Cerrar este lote? No podrás agregar más órdenes.",
+    "batchClosed": "Lote cerrado.",
+    "batchClosedInfo": "Este lote está cerrado — ya no se pueden agregar órdenes.",
+    "pairLabel": "Par de cambio",
+    "pairPlaceholder": "Selecciona el par",
+    "noPairs": "No hay pares disponibles para lotes. Contacta al equipo.",
+    "rateVipHint": "Tasa VIP: 1 {{from}} = {{rate}} {{to}}",
+    "estReceive": "Recibirás ≈ {{amount}} {{to}} en tu saldo al confirmarse",
+    "colReceive": "Recibes",
+    "creditedInfo": "Cada orden confirmada acredita tu saldo en la moneda destino del lote a la tasa VIP. Revisa tus saldos en la sección Activos.",
+    "legacyDebt": "Deuda pendiente",
+    "legacyDebtHint": "Deuda del sistema anterior — se liquida con el equipo (cobros registrados por el admin)."
+  },
+  "adminVipHub": {
+    "eyebrow": "ÓRDENES",
+    "title": "Operativa VIP",
+    "tabs": {
+      "items": "Órdenes por lote",
+      "capital": "Depósitos de capital",
+      "settle": "Cobros y Pagos",
+      "deposits": "Depósitos de clientes"
+    }
+  },
+  "vipCurrencies": {
+    "placeholder": "Selecciona moneda",
+    "empty": "No hay monedas disponibles — contacta al admin.",
+    "rateLabel": "Tasa representativa",
+    "baseCurrency": "USDT — moneda base del ledger"
+  },
+  "vipLedgerOps": {
+    "sendCapital": "Enviar capital",
+    "sendCapitalTitle": "Enviar capital a la empresa",
+    "sendCapitalBody": "Registra el envío del capital de tu jornada. Especifica el método de depósito: para transferencias (banco, USDT, Zelle…) debes adjuntar la captura y el titular de la cuenta de origen; para USDT también el hash de la transacción. El admin confirma y tu saldo positivo aumenta automáticamente.",
+    "depositSent": "Depósito registrado. Un admin lo confirmará en breve.",
+    "requestPayout": "Cobrar saldo",
+    "requestPayoutTitle": "Solicitar cobro de saldo",
+    "requestPayoutBody": "Puedes cobrar hasta ${{max}} USDT de saldo a favor. Elige la moneda en la que quieres recibirlo — se aplicará la conversión al momento de la aprobación.",
+    "payoutRequested": "Solicitud enviada. El admin la revisará en breve.",
+    "actionError": "No se pudo procesar la acción.",
+    "currencyLabel": "Moneda",
+    "amountLabel": "Monto",
+    "methodLabel": "Método de pago",
+    "directionLabel": "Dirección",
+    "proofUrlLabel": "URL de prueba (opcional)",
+    "proofUrlPlaceholder": "https://... (captura, comprobante)",
+    "depositMethodLabel": "Método de depósito",
+    "accountHolderLabel": "Titular de la cuenta de origen",
+    "accountHolderPlaceholder": "Nombre de quien hizo el envío",
+    "txHashLabel": "Hash de la transacción",
+    "txHashPlaceholder": "Pega el hash de la red usada (TRC20/BEP20…)",
+    "proofFileLabel": "Captura de la transferencia",
+    "proofFileRequiredHint": "Obligatoria para métodos distintos de efectivo.",
+    "proofFileOptionalHint": "Opcional para depósitos en efectivo.",
+    "proofFileCta": "Toca para subir la captura (máx 8 MB)",
+    "proofSelected": "Captura cargada",
+    "proofTooLarge": "La imagen supera 8 MB. Comprímela o toma otra captura.",
+    "needProofError": "Adjunta la captura de la transferencia realizada.",
+    "needHolderError": "Indica el titular de la cuenta desde donde se hizo el depósito.",
+    "needHashError": "Indica el hash de la transacción (mínimo 10 caracteres).",
+    "noteLabel": "Nota (opcional)",
+    "notePlaceholder": "Ej: capital para la jornada",
+    "payoutNotePlaceholder": "Ej: transferir a mi cuenta principal",
+    "method": {
+      "bank_transfer": "Transferencia bancaria",
+      "crypto": "Cripto",
+      "zelle": "Zelle",
+      "cash": "Efectivo",
+      "other": "Otro"
+    },
+    "direction": {
+      "payout": "Pago (te pagamos)",
+      "collection": "Cobro (nos pagas)"
+    },
+    "status": {
+      "pending": "Pendiente",
+      "confirmed": "Confirmado",
+      "rejected": "Rechazado"
+    },
+    "kind": {
+      "deposit": "Depósito de capital",
+      "payout": "Cobro (a tu favor)",
+      "collection": "Pago (a nosotros)"
+    },
+    "movementsTitle": "Historial de movimientos",
+    "movementsEmpty": "Aún no hay movimientos registrados.",
+    "colDate": "Fecha",
+    "colKind": "Tipo",
+    "colAmount": "Monto",
+    "colStatus": "Estado",
+    "downloadPdf": "Descargar PDF",
+    "downloadingPdf": "Generando PDF…",
+    "pdfError": "No se pudo generar el PDF.",
+    "pdfHint": "Estado de cuenta oficial de los últimos 90 días — movimientos confirmados/aprobados con saldos inicial y final.",
+    "emailPdf": "Enviar por email",
+    "emailHint": "Envía el estado de cuenta PDF al email indicado (por defecto, tu correo registrado).",
+    "emailTitle": "Enviar estado de cuenta",
+    "emailToLabel": "Destinatario",
+    "emailNoteLabel": "Nota personal (opcional)",
+    "emailNotePlaceholder": "Ej: adjunto el resumen para tu contabilidad de julio…",
+    "emailSend": "Enviar",
+    "emailSending": "Enviando…",
+    "emailSent": "PDF enviado a {{to}}.",
+    "emailError": "No se pudo enviar el correo.",
+    "monthlyToggleTitle": "Estado mensual automático",
+    "monthlyToggleHint": "Cada día 1 recibirás por email el PDF con los movimientos confirmados del mes anterior. Puedes activarlo o desactivarlo cuando quieras.",
+    "monthlyEnabled": "Activado",
+    "monthlyDisabled": "Desactivado",
+    "monthlyEnabledToast": "Envío mensual activado — recibirás el PDF el día 1.",
+    "monthlyDisabledToast": "Envío mensual desactivado.",
+    "monthlyToggleError": "No se pudo actualizar la preferencia."
+  },
+  "adminVipLedgerOps": {
+    "loadError": "No se pudieron cargar los datos.",
+    "actionError": "No se pudo procesar la acción.",
+    "empty": "No hay movimientos en esta cola.",
+    "approve": "Aprobar",
+    "confirm": "Confirmar",
+    "reject": "Rechazar",
+    "approvedToast": "Solicitud aprobada — saldo del VIP actualizado.",
+    "confirmedToast": "Depósito confirmado — saldo del VIP incrementado.",
+    "rejectedToast": "Operación rechazada.",
+    "registeredToast": "Movimiento registrado — saldo del VIP actualizado.",
+    "colVip": "VIP",
+    "colAmount": "Monto",
+    "colProof": "Prueba",
+    "colNote": "Nota",
+    "colCreated": "Creado",
+    "colStatus": "Estado",
+    "colActions": "Acciones",
+    "colMethod": "Método",
+    "holderLabel": "Titular",
+    "hashCopied": "Hash copiado al portapapeles",
+    "dupWarningBadge": "Hash duplicado",
+    "dupDialogTitle": "Hash ya utilizado",
+    "dupDialogBody": "El hash de esta transacción ya aparece en otro depósito no rechazado. Verifica que no sea un comprobante repetido antes de confirmar.",
+    "dupConfirmAnyway": "Confirmar de todas formas",
+    "colOrigin": "Origen",
+    "colDirection": "Dirección",
+    "viewProof": "Ver",
+    "origin": {
+      "vip": "Cliente",
+      "admin": "Admin"
+    },
+    "filter": {
+      "pending": "Pendientes",
+      "confirmed": "Confirmados",
+      "rejected": "Rechazados"
+    },
+    "registerBtn": "Registrar movimiento",
+    "registerTitle": "Registrar movimiento de saldo",
+    "registerBody": "Registra un cobro que recibiste del VIP o un pago que le hiciste. El ledger se actualiza al instante — no requiere aprobación adicional.",
+    "collectionHelp": "el VIP nos pagó (baja negativo)",
+    "payoutHelp": "le pagamos al VIP (baja positivo)",
+    "rejectDialogTitle": "Rechazar operación",
+    "rejectPlaceholder": "Motivo del rechazo (opcional)…"
+  },
+  "adminVipBatches": {
+    "eyebrow": "ÓRDENES",
+    "title": "Lotes VIP",
+    "loadError": "No se pudieron cargar los lotes VIP",
+    "actionError": "No se pudo procesar la acción",
+    "empty": "No hay órdenes en esta cola.",
+    "approve": "Aprobar",
+    "reject": "Rechazar",
+    "approvedToast": "Orden aprobada — saldo del VIP actualizado.",
+    "rejectedToast": "Orden rechazada.",
+    "colVip": "VIP",
+    "colDirection": "Dirección",
+    "colHolder": "Titular",
+    "colAmount": "Monto",
+    "colCreated": "Creada",
+    "colStatus": "Estado",
+    "colActions": "Acciones",
+    "filter": {
+      "pending": "Pendientes",
+      "approved": "Aprobadas",
+      "rejected": "Rechazadas"
+    },
+    "rejectDialogTitle": "Rechazar orden",
+    "rejectDialogBody": "Vas a rechazar la orden de \"{{holder}}\". El VIP recibirá una notificación con tu comentario.",
+    "rejectPlaceholder": "Motivo del rechazo (opcional)…",
+    "marginLabel": "Margen",
+    "viewDetails": "Ver detalles",
+    "detailsTitle": "Orden de lote #{{id}}",
+    "dClient": "Cliente",
+    "dEmail": "Correo",
+    "dPair": "Par",
+    "dHolder": "Titular del pago",
+    "dSends": "Envía",
+    "dReceives": "Recibe",
+    "dRate": "Tasa VIP aplicada",
+    "dRealRate": "Tasa real",
+    "dMargin": "Margen",
+    "dAdminNote": "Nota del equipo",
+    "dReviewed": "Revisada",
+    "dReviewedBy": "Revisada por",
+    "dBatch": "Lote",
+    "pairFilterLabel": "Par",
+    "pairAll": "Todos",
+    "pairLegacy": "Sin par"
   },
   "vipRequest": {
     "sectionTitle": "Programa VIP",
@@ -1611,7 +1902,7 @@
     "loading": "Cargando cola…",
     "loadError": "Error al cargar cola",
     "allClear": "/ todo al día",
-    "emptyBody": "No hay órdenes ni retiros pendientes en tu scope.",
+    "emptyBody": "No hay órdenes, retiros ni lotes VIP pendientes en tu scope.",
     "liveOn": "En vivo",
     "liveOff": "Pausado",
     "orders": {
@@ -1627,6 +1918,22 @@
       "statusPending": "Pendiente",
       "statusDoubleApproval": "Doble aprobación"
     },
+    "vipBatches": {
+      "sectionTitle": "Lotes VIP pendientes",
+      "goto": "Ir a Lotes VIP →",
+      "colVip": "VIP",
+      "colDirection": "Dirección",
+      "colCurrency": "Moneda",
+      "colItemsPending": "Ítems pendientes",
+      "colAmountPending": "Monto pendiente",
+      "colStatus": "Estado",
+      "colCreated": "Creado",
+      "showingOf": "Mostrando 50 de {{count}} — ver el resto en /admin/vip-batches",
+      "directionCredit": "VIP nos envió",
+      "directionDebit": "VIP nos debe",
+      "statusOpen": "Abierto",
+      "statusClosed": "Cerrado"
+    },
     "withdrawals": {
       "sectionTitle": "Retiros pendientes",
       "goto": "Ir a Retiros →",
@@ -1638,9 +1945,9 @@
     }
   },
   "myTransactions": {
-    "breadcrumb": "/ Mi Historial",
+    "breadcrumb": "/ Transacciones",
     "title": "Mis Transacciones",
-    "subtitle": "Registro de tus entradas, salidas y conversiones de saldo, todo en un solo lugar.",
+    "subtitle": "Todas tus operaciones de intercambio — órdenes normales y de lotes. Los depósitos y retiros de capital viven en Depósitos y Retiros.",
     "in": "Entradas",
     "out": "Salidas",
     "net": "Neto",
@@ -1681,7 +1988,14 @@
       "out": "Salida",
       "conversion": "Conversión",
       "methodSelfConvert": "Auto-conversión",
-      "subtypeSmall": "Saldo pequeño"
+      "subtypeSmall": "Saldo pequeño",
+      "methodBatch": "Lote VIP",
+      "pair": "Par",
+      "sends": "Envías",
+      "receives": "Recibes",
+      "kindExchange": "Intercambio",
+      "kindDeposit": "Depósito",
+      "kindWithdrawal": "Retiro"
     },
     "detail": {
       "title": "Detalle",
@@ -1946,13 +2260,15 @@
     "accountStandard": "Cuenta Estándar · Tasa según estatus",
     "stats": {
       "totalBalance": "Saldo Total",
-      "totalBalanceSub": "USDT equivalente",
+      "totalBalanceSub": "USDT · ver activos →",
       "pending": "Pendientes",
       "pendingSub": "órdenes · ver →",
       "completed": "Completadas",
       "completedSub": "órdenes · ver →",
       "statusLabel": "Estatus",
-      "statusSub": "nivel"
+      "statusSub": "nivel · ver perfil →",
+      "marketplace": "Marketplace",
+      "marketplaceSub": "productos · ver →"
     },
     "currentRates": "Tasas Vigentes",
     "operate": "Operar →",
@@ -2027,7 +2343,10 @@
     },
     "header": {
       "loginButton": "Iniciar Sesión",
-      "enterPanel": "Entrar al Panel"
+      "enterPanel": "Entrar al Panel",
+      "shareApp": "Compartir",
+      "enterPanelShort": "Panel",
+      "loginButtonShort": "Entrar"
     },
     "hero": {
       "livePill": "Live Network · 24/7 Settlement",
@@ -2134,7 +2453,10 @@
     "footer": {
       "copy": "© Resilience Brothers · P2P Network",
       "tagline": "Global Trade Infrastructure"
-    }
+    },
+    "shareText": "Comercia y disfruta de nuestros productos en nuestro entorno global P2P — Resilience Brothers:",
+    "shareApp": "Compartir app",
+    "refCaptured": "Código de referido detectado. Se aplicará automáticamente al iniciar sesión."
   },
   "support": {
     "eyebrow": "/ Soporte",
@@ -2276,6 +2598,281 @@
       "step3": "Toca «Añadir» y encontrarás Resilience en tu pantalla de inicio como una app nativa.",
       "share": "Compartir",
       "addToHome": "Añadir a inicio"
+    },
+    "installHint": {
+      "title": "Nuevo aquí",
+      "body": "Instala Resilience en tu pantalla de inicio — se abre como una app nativa, más rápido y sin buscar la URL cada vez.",
+      "arrow": "Toca el botón morado",
+      "ack": "Entendido"
+    }
+  },
+  "referrals": {
+    "title": "Invita y Gana",
+    "subtitle": "Comparte tu código y gana el {{pct}}% de la ganancia que genere la primera orden de cada persona que invites.",
+    "yourCode": "Tu código de referido",
+    "copyCode": "Copiar enlace",
+    "codeCopied": "Enlace de referido copiado",
+    "shareBtn": "Compartir mi enlace",
+    "shareText": "Únete a Resilience Brothers P2P con mi código {{code}}, comercia y disfruta de nuestros productos en nuestro entorno global P2P:",
+    "howTitle": "¿Cómo funciona?",
+    "how1": "Comparte tu enlace o código con amigos y colegas.",
+    "how2": "Tu invitado se registra con tu enlace y completa su primera orden.",
+    "how3": "Recibes automáticamente el {{pct}}% de la ganancia reportada de esa orden, en USDT, directo a tu saldo.",
+    "statReferred": "Invitados",
+    "statActivated": "Activados",
+    "statEarned": "USDT ganados",
+    "historyTitle": "Historial de bonos",
+    "historyEmpty": "Aún no tienes bonos. ¡Comparte tu código para empezar a ganar!",
+    "bonusFrom": "Bono por {{name}}",
+    "claimSuccess": "¡Código de referido aplicado! Te invitó {{name}}.",
+    "loadError": "No se pudieron cargar tus referidos"
+  },
+  "adminReferrals": {
+    "title": "Referidos",
+    "subtitle": "Leaderboard de embajadores y configuración del bono de referido.",
+    "configTitle": "Bono de referido",
+    "configHint": "% de la ganancia de la primera orden del referido que se acredita al referidor (en USDT). Solo se paga una vez por referido.",
+    "pctLabel": "Porcentaje del bono",
+    "save": "Guardar",
+    "saved": "Porcentaje actualizado a {{pct}}%",
+    "saveError": "No se pudo guardar el porcentaje",
+    "totpTitle": "Confirmar cambio de bono",
+    "totpDesc": "Ingresa tu código 2FA para actualizar el porcentaje del bono de referidos.",
+    "leaderboardTitle": "Leaderboard de referidores",
+    "empty": "Todavía no hay referidos registrados.",
+    "colRank": "#",
+    "colUser": "Usuario",
+    "colReferred": "Invitados",
+    "colActivated": "Activados",
+    "colEarned": "USDT ganados",
+    "colLast": "Último bono",
+    "loadError": "No se pudo cargar el leaderboard"
+  },
+  "assetsView": {
+    "eyebrow": "/ ACTIVOS",
+    "title": "Activos",
+    "subtitle": "Tu saldo por moneda dentro de la plataforma. Los lotes aprobados, depósitos confirmados y órdenes acumuladas se acreditan aquí.",
+    "total": "Saldo total",
+    "approxNote": "Equivalente consolidado de todas tus monedas",
+    "perCurrency": "Saldo por moneda",
+    "empty": "Aún no tienes activos. Deposita o crea órdenes para acumular saldo.",
+    "convertBtn": "Convertir Saldos",
+    "hideConverter": "Ocultar convertidor",
+    "calcBtn": "Calculadora de rentabilidad",
+    "hideCalc": "Ocultar calculadora",
+    "calcNote": "Herramienta privada de cálculo — introduce tus propios precios y porcentajes. No se guarda nada."
+  },
+  "deposits": {
+    "title": "Depositar activos",
+    "subtitle": "Ingresa tus activos a la plataforma. El saldo se acredita en la misma moneda una vez que el equipo confirma la recepción.",
+    "currencyLabel": "Moneda",
+    "amountLabel": "Monto",
+    "methodLabel": "Método de depósito",
+    "method": {
+      "transfer": "Transferencia",
+      "cash": "Efectivo",
+      "crypto": "Cripto"
+    },
+    "cashMode": {
+      "courier": "Mensajería",
+      "office": "Oficinas"
+    },
+    "holderLabel": "Titular de la cuenta que envía",
+    "holderPlaceholder": "Nombre del titular",
+    "proofLabel": "Comprobante",
+    "proofPick": "Adjuntar captura del comprobante",
+    "proofTooLarge": "La imagen supera el tamaño máximo permitido (5 MB).",
+    "hashLabel": "Hash de la transacción",
+    "hashPlaceholder": "0x…",
+    "courierTitle": "Recogida por mensajería",
+    "courierHint": "Para montos mayores a {{min}} USDT enviamos mensajería a recoger el efectivo. Indica los datos de la persona que entrega el dinero.",
+    "contactName": "Nombre de quien entrega el dinero",
+    "pickupPhone": "Celular de contacto",
+    "pickupAddress": "Dirección de recogida",
+    "officeTitle": "Entrega en nuestras oficinas",
+    "officeHint": "Para montos de hasta {{min}} USDT, entrega el efectivo directamente en las oficinas de la empresa.",
+    "officeAddressFallback": "Consulta la dirección de nuestras oficinas con el equipo de soporte.",
+    "noteLabel": "Nota (opcional)",
+    "notePlaceholder": "Ej: depósito para operar la semana",
+    "submit": "Enviar depósito",
+    "submitted": "Depósito registrado — el equipo lo confirmará en breve.",
+    "error": "No se pudo registrar el depósito.",
+    "historyTitle": "Historial de depósitos",
+    "status": {
+      "pending": "Pendiente",
+      "confirmed": "Confirmado",
+      "rejected": "Rechazado"
+    },
+    "historyEmpty": "Aún no tienes depósitos registrados."
+  },
+  "adminDeposits": {
+    "colClient": "Cliente",
+    "colAmount": "Monto",
+    "colMethod": "Método / Detalles",
+    "colProof": "Comprobante",
+    "colCreated": "Creado",
+    "colStatus": "Estado",
+    "colActions": "Acciones",
+    "empty": "No hay depósitos en este estado.",
+    "loadError": "No se pudieron cargar los depósitos.",
+    "actionError": "No se pudo procesar la acción.",
+    "confirm": "Confirmar",
+    "reject": "Rechazar",
+    "confirmedToast": "Depósito confirmado — saldo acreditado al cliente.",
+    "rejectedToast": "Depósito rechazado.",
+    "rejectTitle": "Rechazar depósito",
+    "rejectPlaceholder": "Motivo (visible para el cliente)",
+    "courier": "Recogida por mensajería",
+    "office": "Entrega en oficinas"
+  },
+  "historyHub": {
+    "breadcrumb": "/ HISTORIAL",
+    "ordersTab": "Órdenes",
+    "txTab": "Transacciones"
+  },
+  "profitability": {
+    "eyebrow": "Fondo de Empresa",
+    "title": "Cálculo de Rentabilidad",
+    "subtitle": "Simula a qué precio poner tus tasas y cuánto ganas en cada conversión",
+    "settingsBtn": "% Transferencia",
+    "logBtn": "Registrar operación",
+    "calc": {
+      "title": "Calculadora integrada",
+      "pairPlaceholder": "Elegir par...",
+      "sellPrice": "Precio de venta",
+      "sellHint": "Precio pactado con tu cliente",
+      "buyPrice": "Precio de compra",
+      "buyHint": "Costo real para conseguir la divisa",
+      "buyPct": "% compra transf.",
+      "sellPct": "% venta transf.",
+      "quantity": "Cantidad",
+      "netGain": "Ganancia neta por unidad",
+      "netMargin": "Margen neto",
+      "maxBuy": "Precio máximo de compra",
+      "maxBuyHint": "Punto de equilibrio — comprar por encima da pérdida",
+      "cushion": "Colchón disponible",
+      "resultFx": "Resultado en la divisa",
+      "transferCost": "Costo equivalente en transferencia",
+      "transferValue": "Valor generado en transferencia",
+      "conversionGain": "Ganancia por conversión",
+      "marginOnBuy": "Rentabilidad sobre compra",
+      "mode1": "Modo 1 · Venta en transferencia",
+      "mode2": "Modo 2 · Flujo combinado",
+      "m1BuyPrice": "Precio de compra",
+      "m1BuyHint": "Costo de compra de la divisa (efectivo)",
+      "m1SellPrice": "Precio de venta",
+      "m1SellHint": "Precio cobrado al cliente (transferencia)",
+      "m1CostPct": "% costo transferencia",
+      "m1RealCost": "Costo real en transferencia",
+      "m1MarginOnCost": "Rentabilidad sobre costo real",
+      "m1MinSell": "Precio mínimo de venta",
+      "m1MinSellHint": "Punto de equilibrio — vender por debajo da pérdida",
+      "m1TotalGain": "Ganancia total operación"
+    },
+    "proj": {
+      "title": "Proyección por volumen",
+      "opsPerDay": "Operaciones por día",
+      "daysPerMonth": "Días operativos al mes",
+      "period": "Período",
+      "units": "Unidades",
+      "fxGain": "Ganancia divisa",
+      "convGain": "Ganancia conversión",
+      "netGain": "Ganancia neta",
+      "profitability": "Rentabilidad",
+      "perOp": "Por operación",
+      "daily": "Diario",
+      "weekly": "Semanal",
+      "monthly": "Mensual",
+      "sellTotal": "Venta total",
+      "costTotal": "Costo real total"
+    },
+    "pairs": {
+      "title": "Rentabilidad por par",
+      "subtitle": "Todas tus tasas vigentes — edita precios y % para simular",
+      "pair": "Par",
+      "sell": "Venta",
+      "buy": "Compra",
+      "buyPctShort": "% compra",
+      "sellPctShort": "% venta",
+      "netUnit": "Neta / unidad",
+      "margin": "Rent.",
+      "maxBuy": "Máx. compra",
+      "status": "Estado",
+      "toCalc": "Abrir en la calculadora",
+      "profitable": "Rentable",
+      "loss": "Pérdida",
+      "empty": "No hay tasas registradas"
+    },
+    "ops": {
+      "title": "Registro de operaciones",
+      "subtitle": "Historial de cambios con clientes y su rentabilidad real",
+      "date": "Fecha",
+      "client": "Cliente",
+      "pair": "Par",
+      "qty": "Cantidad",
+      "sell": "Venta",
+      "buy": "Compra",
+      "convGain": "G. conversión",
+      "netGain": "G. neta",
+      "margin": "Rent.",
+      "status": "Estado",
+      "totalOps": "operaciones",
+      "profitableCount": "rentables",
+      "lossCount": "en pérdida",
+      "netTotal": "Neta total",
+      "empty": "Aún no hay operaciones registradas",
+      "deleted": "Operación eliminada",
+      "deleteFailed": "No se pudo eliminar la operación",
+      "confirmDelete": "¿Eliminar esta operación del registro?",
+      "filter_all": "Todas",
+      "filter_profitable": "Rentables",
+      "filter_loss": "Pérdida",
+      "mode": "Modo",
+      "mode1Short": "M1 Directa",
+      "mode2Short": "M2 Combinada"
+    },
+    "dialog": {
+      "title": "Registrar operación",
+      "description": "Guarda un cambio con un cliente en el registro de rentabilidad",
+      "date": "Fecha",
+      "client": "Cliente",
+      "clientPlaceholder": "Nombre del cliente",
+      "currency": "Divisa vendida",
+      "paymentCurrency": "Moneda de pago",
+      "quantity": "Cantidad",
+      "sellPrice": "Precio de venta",
+      "buyPrice": "Precio de compra",
+      "buyPct": "% compra transf.",
+      "sellPct": "% venta transf.",
+      "note": "Nota (opcional)",
+      "preview": "Ganancia neta estimada",
+      "save": "Guardar operación",
+      "saved": "Operación registrada",
+      "missing": "Completa cliente, monedas, cantidad y precio de venta",
+      "mode1": "Modo 1 · Venta en transferencia",
+      "mode2": "Modo 2 · Flujo combinado"
+    },
+    "settings": {
+      "title": "% de transferencia por moneda",
+      "description": "Configura el % al que compras y vendes la transferencia de cada moneda de pago. Se usan como valores por defecto en la calculadora y la tabla de pares.",
+      "currency": "Moneda",
+      "buyPct": "% compra",
+      "sellPct": "% venta",
+      "save": "Guardar cambios",
+      "saved": "Porcentajes guardados"
+    },
+    "pdf": {
+      "btn": "Exportar PDF",
+      "title": "Reporte de rentabilidad PDF",
+      "description": "Genera un PDF con el registro de operaciones, la ganancia neta por moneda y la tasa de éxito — listo para compartir con socios inversores.",
+      "since": "Desde",
+      "until": "Hasta",
+      "hint": "Deja el rango vacío para exportar el histórico completo.",
+      "cancel": "Cancelar",
+      "download": "Descargar PDF",
+      "working": "Generando...",
+      "exportedToast": "Reporte PDF descargado",
+      "exportError": "No se pudo generar el PDF"
     }
   }
 }

@@ -63,6 +63,50 @@ body {
     letter-spacing: -0.02em;
 }
 
+/* Brand name presentation title — pearl-white → lavender gradient with a
+   violet glow. Chosen to harmonise with the platform's #8B5CF6 accent
+   (used across CTAs, H1 accent line, hero KPIs) while still reading as
+   an elegant "brand mark" over the dark background. */
+.brand-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    background: linear-gradient(
+        180deg,
+        #FFFFFF 0%,
+        #F3EEFF 28%,
+        #C4B5FD 60%,
+        #A78BFA 82%,
+        #E9E1FF 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 2px 14px rgba(139, 92, 246, 0.55));
+}
+
+.brand-divider {
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        rgba(139, 92, 246, 0) 0%,
+        rgba(139, 92, 246, 0.55) 40%,
+        rgba(196, 181, 253, 0.9) 50%,
+        rgba(139, 92, 246, 0.55) 60%,
+        rgba(139, 92, 246, 0) 100%
+    );
+}
+
+.brand-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: radial-gradient(circle at 30% 30%, #F5F3FF 0%, #A78BFA 50%, #6D28D9 100%);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.75);
+}
+
 .font-mono {
     font-family: 'IBM Plex Mono', monospace;
 }
@@ -159,4 +203,31 @@ body {
     body {
         @apply bg-background text-foreground;
     }
+}
+
+
+/* iter84 — Transactions table body: vertical scroll inside the table (not
+   the page). Horizontal scroll is driven by a custom top scrollbar rendered
+   as a real DOM element (see TransactionTable.jsx) so it stays visible on
+   mobile browsers where native scrollbars auto-hide. The native body
+   horizontal scrollbar is kept minimal since the custom top one is the
+   primary affordance. */
+.tx-body-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #5d4b8a #0a0a0a;
+}
+.tx-body-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 6px;
+}
+.tx-body-scroll::-webkit-scrollbar-track {
+    background: #0a0a0a;
+}
+.tx-body-scroll::-webkit-scrollbar-thumb {
+    background: #5d4b8a;
+    border-radius: 5px;
+    border: 2px solid #0a0a0a;
+}
+.tx-body-scroll::-webkit-scrollbar-thumb:hover {
+    background: #8B5CF6;
 }

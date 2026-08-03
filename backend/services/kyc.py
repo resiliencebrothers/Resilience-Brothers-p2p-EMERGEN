@@ -37,6 +37,7 @@ Users' collection gains 2 fields at approval time:
 - `kyc_verified_at` — iso str set on approval
 """
 import logging
+import re
 import uuid
 from typing import Any, Optional
 
@@ -79,7 +80,7 @@ async def _flag_duplicate_name(db: Any, user_id: str, name: str) -> Optional[dic
         return None
     norm = name.strip().lower()
     count = await db.users.count_documents({
-        "name": {"$regex": f"^{norm}$", "$options": "i"},
+        "name": {"$regex": f"^{re.escape(norm)}$", "$options": "i"},
         "user_id": {"$ne": user_id},
     })
     if count >= 2:  # this user + 2 others = 3 accounts with same name
@@ -332,10 +333,11 @@ async def list_queue(
     if min_risk:
         q["risk_score"] = {"$gte": min_risk}
     if search:
+        rx_search = re.escape(search)
         q["$or"] = [
-            {"user_email": {"$regex": search, "$options": "i"}},
-            {"user_name": {"$regex": search, "$options": "i"}},
-            {"user_phone": {"$regex": search, "$options": "i"}},
+            {"user_email": {"$regex": rx_search, "$options": "i"}},
+            {"user_name": {"$regex": rx_search, "$options": "i"}},
+            {"user_phone": {"$regex": rx_search, "$options": "i"}},
         ]
     cursor = db.kyc_verifications.find(q, {"_id": 0}).sort([
         ("risk_score", -1), ("created_at", -1),

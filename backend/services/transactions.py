@@ -4,6 +4,7 @@
 Builds the unified transaction list (entradas = orders, salidas = withdrawals)
 plus the date-range normalization used by the audit log queries.
 """
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -140,6 +141,10 @@ def _order_to_entrada(o: dict) -> TransactionItem:
         "proof_image": o.get("proof_image", ""),
         "delivery_details": o.get("delivery_details", ""),
         "admin_note": o.get("admin_note", ""),
+        "from_code": o.get("from_code", ""),
+        "to_code": o.get("to_code", ""),
+        "amount_from": float(o.get("amount_from", 0.0)),
+        "amount_to": float(o.get("amount_to", 0.0)),
     }
 
 
@@ -196,6 +201,10 @@ def _order_payout_to_salida(o: dict) -> TransactionItem:
         "payout_tx_hash": tx_hash,
         "crypto_network": inferred_network,
         "explorer_url": _build_explorer_url(inferred_network, tx_hash),
+        "from_code": o.get("from_code", ""),
+        "to_code": o.get("to_code", ""),
+        "amount_from": float(o.get("amount_from", 0.0)),
+        "amount_to": float(o.get("amount_to", 0.0)),
     }
 
 
@@ -369,7 +378,7 @@ async def _fetch_entradas_orders(date_q: dict, currency: Optional[str], holder: 
     if currency:
         q["from_code"] = currency
     if holder:
-        q["sender_name"] = {"$regex": holder, "$options": "i"}
+        q["sender_name"] = {"$regex": re.escape(holder), "$options": "i"}
     rows = await db.orders.find(q, {"_id": 0}).to_list(5000)
     return [_order_to_entrada(o) for o in rows]
 
@@ -386,7 +395,7 @@ async def _fetch_salidas_withdrawals(date_q: dict, currency: Optional[str], hold
     if currency:
         q["currency"] = currency
     if holder:
-        q["beneficiary_name"] = {"$regex": holder, "$options": "i"}
+        q["beneficiary_name"] = {"$regex": re.escape(holder), "$options": "i"}
     rows = await db.withdrawals.find(q, {"_id": 0}).to_list(5000)
     return [_withdrawal_to_salida(w) for w in rows]
 
@@ -454,6 +463,144 @@ async def _fetch_company_withdrawals(
     return [_company_withdrawal_to_salida(cw) for cw in rows]
 
 
+def _vip_batch_item_to_entrada(it: dict) -> TransactionItem:
+    """iter113 — approved VIP batch item (pair-based): the company received
+    `amount` in `from_code` from the VIP's downstream client; the VIP's
+    balance was credited `amount_to` in `to_code` at the VIP rate."""
+    pair = (f"{it.get('from_code')}→{it.get('to_code')}"
+            if it.get("to_code") else (it.get("currency") or ""))
+    credited = it.get("amount_to")
+    details = f"Lote VIP {pair}"
+    if credited and it.get("to_code"):
+        details += f" · acreditado {credited} {it['to_code']} al saldo"
+    margin = it.get("margin_usdt")
+    note = it.get("admin_note") or ""
+    if margin:
+        note = (note + " · " if note else "") + f"Margen plataforma: {margin:+.4f} USDT"
+    return {
+        "direction": "in",
+        "currency": it.get("from_code") or it.get("currency", ""),
+        "amount": float(it.get("amount", 0.0)),
+        "holder_name": it.get("holder_name", ""),
+        "client_name": it.get("vip_name", "") or it.get("vip_email", ""),
+        "client_email": it.get("vip_email", ""),
+        "method": "vip_batch",
+        "status": it.get("status", ""),
+        "ref_id": it.get("id", ""),
+        "ref_type": "vip_batch_item",
+        "created_at": it.get("reviewed_at") or it.get("created_at", ""),
+        "proof_image": "",
+        "delivery_details": details,
+        "admin_note": note,
+        "from_code": it.get("from_code") or "",
+        "to_code": it.get("to_code") or "",
+        "amount_from": float(it.get("amount", 0.0)),
+        "amount_to": float(it.get("amount_to") if it.get("amount_to") is not None else 0.0),
+    }
+
+
+def _vip_batch_item_to_user_tx(it: dict) -> TransactionItem:
+    """iter115 — same batch item, CLIENT perspective for /me/transactions:
+    the client sent `amount from_code` and received `amount_to to_code`
+    credited to their balance. Shown as an ENTRADA of the credited side."""
+    pair = (f"{it.get('from_code')}→{it.get('to_code')}"
+            if it.get("to_code") else (it.get("currency") or ""))
+    details = f"Lote {pair}"
+    if it.get("to_code"):
+        details += f" · enviaste {it.get('amount')} {it.get('from_code')}"
+    return {
+        "direction": "in",
+        "currency": it.get("to_code") or it.get("currency", ""),
+        "amount": float(it.get("amount_to") if it.get("amount_to") is not None else it.get("amount", 0.0)),
+        "holder_name": it.get("holder_name", ""),
+        "client_name": "",
+        "client_email": "",
+        "method": "vip_batch",
+        "status": it.get("status", ""),
+        "ref_id": it.get("id", ""),
+        "ref_type": "vip_batch_item",
+        "created_at": it.get("reviewed_at") or it.get("created_at", ""),
+        "proof_image": "",
+        "delivery_details": details,
+        "admin_note": "",
+        "from_code": it.get("from_code") or "",
+        "to_code": it.get("to_code") or "",
+        "amount_from": float(it.get("amount", 0.0)),
+        "amount_to": float(it.get("amount_to") if it.get("amount_to") is not None else it.get("amount", 0.0)),
+    }
+
+
+async def _fetch_vip_batch_items(
+    date_q: dict, currency: Optional[str], holder: Optional[str],
+    user_id: Optional[str] = None,
+) -> List[TransactionItem]:
+    """iter113 — approved VIP batch items. Admin scope (user_id None) maps to
+    company ENTRADAS; user scope (iter115) maps to the client's own view."""
+    q: dict = {"status": "approved", **date_q}
+    if user_id:
+        q["vip_user_id"] = user_id
+        if currency:
+            q["$or"] = [{"from_code": currency}, {"to_code": currency},
+                        {"from_code": None, "currency": currency}]
+    elif currency:
+        q["$or"] = [{"from_code": currency},
+                    {"from_code": None, "currency": currency}]
+    if holder:
+        q["holder_name"] = {"$regex": re.escape(holder), "$options": "i"}
+    rows = await db.vip_batch_items.find(q, {"_id": 0}).to_list(5000)
+    if user_id:
+        return [_vip_batch_item_to_user_tx(it) for it in rows]
+    if rows:
+        vip_ids = list({r["vip_user_id"] for r in rows})
+        users = await db.users.find(
+            {"user_id": {"$in": vip_ids}},
+            {"_id": 0, "user_id": 1, "name": 1, "email": 1},
+        ).to_list(len(vip_ids))
+        umap = {u["user_id"]: u for u in users}
+        for r in rows:
+            u = umap.get(r["vip_user_id"], {})
+            r["vip_name"] = u.get("name", "")
+            r["vip_email"] = u.get("email", "")
+    return [_vip_batch_item_to_entrada(it) for it in rows]
+
+
+def _deposit_to_entrada(d: dict) -> TransactionItem:
+    """iter113 — confirmed client deposit → inbound company transaction."""
+    mode = d.get("cash_mode")
+    details = f"Depósito {d.get('method', '')}" + (f" ({mode})" if mode else "")
+    return {
+        "direction": "in",
+        "currency": d.get("currency", ""),
+        "amount": float(d.get("amount", 0.0)),
+        "holder_name": d.get("account_holder") or d.get("contact_name") or d.get("user_name", ""),
+        "client_name": d.get("user_name", ""),
+        "client_email": d.get("user_email", ""),
+        "method": d.get("method", ""),
+        "status": d.get("status", ""),
+        "ref_id": d.get("id", ""),
+        "ref_type": "deposit",
+        "created_at": d.get("reviewed_at") or d.get("created_at", ""),
+        "proof_image": d.get("proof_url", "") or "",
+        "delivery_details": details,
+        "admin_note": d.get("admin_note") or "",
+    }
+
+
+async def _fetch_deposits(
+    date_q: dict, currency: Optional[str], holder: Optional[str],
+) -> List[TransactionItem]:
+    q: dict = {"status": "confirmed", **date_q}
+    if currency:
+        q["currency"] = currency
+    if holder:
+        q["$or"] = [
+            {"account_holder": {"$regex": re.escape(holder), "$options": "i"}},
+            {"user_name": {"$regex": re.escape(holder), "$options": "i"}},
+        ]
+    rows = await db.deposits.find(q, {"_id": 0}).to_list(5000)
+    return [_deposit_to_entrada(d) for d in rows]
+
+
 async def build_transactions(direction: Optional[str], currency: Optional[str],
                              holder: Optional[str], since: Optional[str],
                              until: Optional[str],
@@ -472,9 +619,17 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
 
     if direction in (None, "all", "in"):
         items.extend(await _fetch_entradas_orders(date_q, currency, holder, user_id))
+        # iter115 — the client's own batch items show up as exchange
+        # transactions in the personal register ("Transacciones").
+        if user_id:
+            items.extend(await _fetch_vip_batch_items(date_q, currency, holder, user_id=user_id))
 
     if direction in (None, "all", "out"):
-        items.extend(await _fetch_salidas_withdrawals(date_q, currency, holder, user_id))
+        # iter115 — capital withdrawals were MOVED OUT of the personal
+        # register (owner decision): they now live in the "Depósitos y
+        # Retiros" history dialog. Admin register keeps them.
+        if user_id is None:
+            items.extend(await _fetch_salidas_withdrawals(date_q, currency, holder, user_id))
         items.extend(await _fetch_salidas_order_payouts(date_q, currency, holder, user_id))
 
     # iter78 — Personal self-conversions (`vip.convert`). Only surfaced on
@@ -493,6 +648,11 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
         items.extend(await _fetch_company_adjustments(date_q, currency, holder, adj_dir))
         if direction in (None, "all", "out"):
             items.extend(await _fetch_company_withdrawals(date_q, currency, holder))
+        # iter113 — VIP batch items + client deposits (ENTRADAS) in the admin
+        # register so batch operations show up next to regular orders.
+        if direction in (None, "all", "in"):
+            items.extend(await _fetch_vip_batch_items(date_q, currency, holder))
+            items.extend(await _fetch_deposits(date_q, currency, holder))
 
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     if min_amount is not None:

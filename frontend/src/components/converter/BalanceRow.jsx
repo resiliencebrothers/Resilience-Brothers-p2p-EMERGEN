@@ -18,12 +18,12 @@ export function BalanceRow({ balance, onConvert }) {
       <div className="flex items-center gap-3">
         <CurrencyIcon code={currency} size="md" />
         <div>
-          <div className="font-mono text-sm text-neutral-200">
+          <div className="font-mono text-sm text-neutral-200 whitespace-nowrap">
             {Number(amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
             <span className="text-neutral-500 ml-1">{currency}</span>
           </div>
           {usdt_equivalent != null && currency !== "USDT" && (
-            <div className="text-[0.65rem] text-neutral-600 font-mono mt-0.5">
+            <div className="text-[0.65rem] text-neutral-600 font-mono mt-0.5 whitespace-nowrap">
               ≈ {usdt_equivalent.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
             </div>
           )}

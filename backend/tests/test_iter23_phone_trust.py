@@ -10,7 +10,7 @@ import os
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, make_admin_totp, NORMAL_TOKEN
+from conftest import BASE_URL, make_admin_totp, NORMAL_TOKEN, ADMIN_TOKEN
 
 
 def _db():
@@ -40,7 +40,7 @@ def _register(email, phone, password=DEFAULT_TEST_PWD, name="Test User"):
 def _block(phone=None, email=None, reason="iter23_test block"):
     return requests.post(
         f"{BASE_URL}/api/admin/blocked-contacts",
-        headers={"Authorization": "Bearer test_session_admin_X"},
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         json={"phone": phone, "email": email, "reason": reason},
     )
 
@@ -110,20 +110,20 @@ class TestBlockedContacts:
         cid = b.json()["id"]
         lst = requests.get(
             f"{BASE_URL}/api/admin/blocked-contacts",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         )
         assert lst.status_code == 200
         assert any(item["id"] == cid for item in lst.json()["items"])
         d = requests.delete(
             f"{BASE_URL}/api/admin/blocked-contacts/{cid}",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         )
         assert d.status_code == 200
 
     def test_non_staff_cannot_block(self):
         r = requests.post(
             f"{BASE_URL}/api/admin/blocked-contacts",
-            headers={"Authorization": "Bearer test_session_normal_X"},
+            headers={"Authorization": f"Bearer {NORMAL_TOKEN}"},
             json={"phone": "+5300000001", "reason": "iter23_test"},
         )
         assert r.status_code == 403
@@ -145,7 +145,7 @@ class TestPhoneVerification:
         cli.close()
         r = requests.post(
             f"{BASE_URL}/api/admin/users/{u['user_id']}/verify-phone",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={"totp_code": make_admin_totp()},
         )
         assert r.status_code == 200, r.text
@@ -158,7 +158,7 @@ class TestPhoneVerification:
         cli.close()
         r = requests.post(
             f"{BASE_URL}/api/admin/users/{u['user_id']}/verify-phone",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={},
         )
         assert r.status_code == 401
@@ -175,7 +175,7 @@ class TestPhoneVerification:
         cli.close()
         r = requests.post(
             f"{BASE_URL}/api/admin/users/user_test_normal01/verify-phone",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={"totp_code": make_admin_totp()},
         )
         assert r.status_code == 400
@@ -190,7 +190,7 @@ class TestSelfServicePhone:
         # Use legacy normal test user (no phone)
         r = requests.post(
             f"{BASE_URL}/api/me/phone",
-            headers={"Authorization": "Bearer test_session_normal_X"},
+            headers={"Authorization": f"Bearer {NORMAL_TOKEN}"},
             json={"phone": "+5350999000"},
         )
         assert r.status_code == 200, r.text

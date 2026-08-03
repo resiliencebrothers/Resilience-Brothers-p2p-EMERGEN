@@ -6,6 +6,7 @@ import { API } from "@/App";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
+import HistorySectionTabs from "@/components/HistorySectionTabs";
 import { extractCryptoNetwork } from "@/services/delivery_validators";
 import { ORDER_FILTER_STATUSES } from "@/constants/orderStatus";
 import { useLiveEvent } from "@/hooks/useLiveStream";
@@ -80,8 +81,8 @@ export default function OrdersView() {
 
   return (
     <div data-testid="orders-view">
+      <HistorySectionTabs />
       <div className="mb-6">
-        <div className="micro-label text-[#8B5CF6] mb-2">{t("orders.eyebrow")}</div>
         <h1 className="font-display text-3xl">{t("orders.title")}</h1>
       </div>
 

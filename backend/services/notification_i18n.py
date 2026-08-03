@@ -126,6 +126,19 @@ CATALOG: dict[str, dict[str, dict[str, str]]] = {
         },
     },
     # -----------------------------------------------------------------------
+    # CLIENT — REFERRALS (iter112)
+    # -----------------------------------------------------------------------
+    "referral_bonus": {
+        "es": {
+            "title": "¡Bono de referido ganado!",
+            "message": "{name} completó su primera orden. Ganaste {bonus:g} USDT ({pct:g}% de la ganancia reportada). Ya está acreditado en tu saldo.",
+        },
+        "en": {
+            "title": "Referral bonus earned!",
+            "message": "{name} completed their first order. You earned {bonus:g} USDT ({pct:g}% of the reported profit). It has been credited to your balance.",
+        },
+    },
+    # -----------------------------------------------------------------------
     # CLIENT — KYC
     # -----------------------------------------------------------------------
     "kyc_verified": {

@@ -22,9 +22,7 @@ from datetime import datetime, timezone
 # We test through the httpx AsyncClient against the running app.
 API_URL = os.environ.get("REACT_APP_BACKEND_URL",
                          "https://p2p-exchange-hub-2.preview.emergentagent.com")
-NORMAL_TOKEN = "test_session_normal_X"
-VIP_TOKEN = "test_session_vip_X"
-ADMIN_TOKEN = "test_session_admin_X"
+from conftest import NORMAL_TOKEN, VIP_TOKEN, ADMIN_TOKEN
 
 
 async def _seed_rate(from_code: str, to_code: str,

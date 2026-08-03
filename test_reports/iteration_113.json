@@ -1,0 +1,40 @@
+{
+  "summary": "iter113 Profitability Calculator — backend + frontend testing complete. Created /app/backend/tests/test_iter113_profitability.py with 13 pytest cases covering settings CRUD, operation compute correctness (net_gain=107.3, profitability_pct≈7.5035 for the anchor case, loss branch works), list totals + filters, delete + 404, permission gating (admin OK, employee default [] OK, employee scoped ['orders'] → 403, VIP → 403), permission catalog includes 'profitability' with label 'Cálculo de Rentabilidad', and Company Funds regression. ALL 13 PASSED. Frontend: logged in as admin via cookie, /admin/company-funds?tab=profitability renders admin-profitability page with hub tab visible. Calculator with 715/740/26/37/1 shows Net gain 53,65 (green), Margin 7,5%, Max buy 793,65. Projections table, pairs summary table, ops table, ops totals, filter buttons all present. Settings dialog opens, per-currency CUP inputs work, save triggers 'Percentages saved' toast. Log-operation dialog contains all required data-testids (client/currency/payment/qty/sell/buy/preview-net/submit).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CalculatorPanel", "issue": "React warning: 'Each child in a list should have a unique key prop' — check .map() in render", "selector": "profit-calc panel", "priority": "LOW"},
+      {"component": "PairsSummaryTable", "issue": "Same React key warning — missing key on mapped rows", "selector": "profit-pairs-table", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "OperationDialog date field", "issues": ["Uses browser-native HTML <input type='date'> picker instead of shadcn Calendar component — inconsistent with the rest of the app"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter113_profitability.py",
+    "/app/test_reports/pytest/iter113_results.xml"
+  ],
+  "action_items": [
+    "Add unique 'key' props to the mapped children in CalculatorPanel.jsx and PairsSummaryTable.jsx (React warnings visible in console)",
+    "Consider replacing the native HTML date input in OperationDialog with the shadcn Calendar/DatePicker for UI consistency (optional design polish)"
+  ],
+  "critical_code_review_comments": [
+    "Backend router is clean, uses async/await + Motor properly, excludes MongoDB _id via projection {_id:0}, proper 401/403/404 status codes, Pydantic validation on all inputs, no hardcoded values.",
+    "_compute rounds to 4 decimals — good for currency math. Division-by-zero on gross==0 handled.",
+    "Percentages capped at ge=0/le=1000 which is reasonable; consider tightening buy_pct/sell_pct to le=100 if the operator truly never exceeds 100% (currently permissive)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter113_profitability.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Used seeded test_session_admin_X / test_session_employee_X / test_session_vip_X (per conftest.py). The review request's smoke_session_* tokens were not present in DB; conftest tokens work identically.",
+  "seed_data_creation": "None persistent — test ops all prefixed TEST_ and cleaned up by autouse fixture. Employee allowed_permissions restored to [] after scoped-403 test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter113 profitability tests live at /app/backend/tests/test_iter113_profitability.py. Frontend tab reachable at /admin/company-funds?tab=profitability with data-testid='admin-profitability'. All 5 endpoints under /api/admin/profitability/* verified working. Only outstanding items are 2 minor React key warnings and a native date picker used in OperationDialog.",
+  "rca of the issue": "N/A — no bugs, all functionality works as specified."
+}

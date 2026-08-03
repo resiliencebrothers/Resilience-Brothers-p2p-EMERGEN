@@ -1,0 +1,36 @@
+{
+  "summary": "Full backend + frontend verification of the client-dashboard restructure (Overview stat cards, Assets converter toggle+CurrencyIcon, unified Orders/Transactions hub, restructured tx table with new fields, profile status badge, mobile swipe hint, trimmed sidebar). 8/8 backend pytest cases pass. All 9 frontend testids/flows verified on VIP and Normal client for desktop + mobile.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "OverviewView (VIP)", "issues": ["React console warning: 'Each child in a list should have a unique key prop' — check the map() rendering the 4 stat cards (or rates card) in OverviewView.jsx. Non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter_client_dashboard_restructure.py",
+    "/app/test_reports/pytest/iter_restruct.xml"
+  ],
+  "action_items": [
+    "(Low priority) Add unique key prop to the list rendered inside OverviewView.jsx to silence the React warning observed in browser console."
+  ],
+  "critical_code_review_comments": [
+    "Backend transactions formatter changes correctly add from_code/to_code/amount_from/amount_to to order, order_payout and vip_batch_item rows (verified against live VIP data).",
+    "Sidebar trim is correct: nav-exchange, nav-transactions, nav-batches, nav-capital-requests are absent for both VIP and Normal users; routes remain reachable via hub buttons.",
+    "History hub role gating works: history-action-batches / history-action-capital only render for VIP; both hidden for Normal user.",
+    "Transactions table headers (Date/Type/Pair/You send/You receive/Status) and horizontal pair labels (whitespace-nowrap confirmed in DOM) match spec; row click opens my-tx-modal.",
+    "Assets convert toggle correctly mounts/unmounts balance-converter-card; converter is no longer on Overview.",
+    "Profile status badge renders 'VIP' for VIP user and 'Client' for Normal user; mobile viewport (390px) shows profile-tabs-scroll-hint and profile-tabs-swipe-text as required."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter_client_dashboard_restructure.py (new)"
+  ],
+  "success_rate": { "backend": "100% (8/8)", "frontend": "100% (all spec checkpoints verified)" },
+  "test_credentials": "VIP: Bearer/cookie smoke_session_vip_jun26. Normal: smoke_session_normal_jun26. Admin session inserted ad-hoc via MongoDB (test_session_admin_iter_restruct, cleaned up on teardown).",
+  "seed_data_creation": "Only an ad-hoc admin user_sessions doc during the admin regression test; cleaned up in fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend export paths are /api/me/transactions/export.csv and /api/me/transactions/export.pdf (not .csv/.pdf directly). Cookie must be set with domain p2p-exchange-hub-2.preview.emergentagent.com, secure=True, sameSite=None. Use wait_until='domcontentloaded' — networkidle hangs on the SSE stream. Overview VIP shows a React 'unique key' console warning that is non-blocking; main agent can address by keying the stat cards map in OverviewView.jsx.",
+  "rca_of_the_issue": "No blocking issues. Sole finding is a cosmetic React key-warning inside OverviewView.jsx (fix: add key={item.id||item.testid} to the stat card map)."
+}

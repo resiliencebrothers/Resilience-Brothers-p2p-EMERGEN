@@ -55,6 +55,47 @@ async def _compute_conversion_fees(days: Optional[int]) -> dict:
     return {"total_usdt": round(total, 4), "count": len(rows)}
 
 
+async def _compute_vip_batch_profit(days: Optional[int]) -> dict:
+    """iter113 — platform margin on approved VIP batch items (pair-based):
+    each approved item stores `margin_usdt` = (amount × real_rate −
+    amount × rate_vip) converted to USDT at approval time. Window filter
+    uses `reviewed_at` (the moment the margin was realized)."""
+    q: Dict[str, Any] = {
+        "status": "approved",
+        "margin_usdt": {"$nin": [None, 0]},
+    }
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["reviewed_at"] = {"$gte": cutoff}
+    rows = await db.vip_batch_items.find(
+        q, {"_id": 0, "margin_usdt": 1}
+    ).to_list(20000)
+    total = sum(float(r.get("margin_usdt") or 0.0) for r in rows)
+    return {"total_usdt": round(total, 4), "count": len(rows)}
+
+
+async def _fetch_vip_batch_margins(
+    year: Optional[int], month: Optional[int], days: Optional[int]
+) -> list:
+    """iter113 — approved batch items with margin, scoped to the window
+    (year/month or last N days) by reviewed_at, for the timeseries buckets."""
+    q: Dict[str, Any] = {
+        "status": "approved",
+        "margin_usdt": {"$nin": [None, 0]},
+    }
+    if year and month:
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+               if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc))
+        q["reviewed_at"] = {"$gte": start.isoformat(), "$lt": end.isoformat()}
+    elif days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["reviewed_at"] = {"$gte": cutoff}
+    return await db.vip_batch_items.find(
+        q, {"_id": 0, "reviewed_at": 1, "margin_usdt": 1}
+    ).to_list(20000)
+
+
 async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
     """Profit from delivered redemptions: total_usd - cost_usd. USD ≈ USDT for simplicity."""
     q: Dict[str, Any] = {"status": "delivered"}
@@ -206,18 +247,22 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
 
     marketplace = await _compute_marketplace_revenue(days)
     conversion_fees = await _compute_conversion_fees(days)
+    vip_batches = await _compute_vip_batch_profit(days)
 
     return {
         "total_profit_usdt": round(
             total_profit_usdt
             + marketplace["total_profit_usd"]
-            + conversion_fees["total_usdt"],
+            + conversion_fees["total_usdt"]
+            + vip_batches["total_usdt"],
             4,
         ),
         "p2p_profit_usdt": round(total_profit_usdt, 4),
         "marketplace_profit_usdt": round(marketplace["total_profit_usd"], 4),
         "conversion_fees_usdt": conversion_fees["total_usdt"],
         "conversion_fees_count": conversion_fees["count"],
+        "vip_batches_profit_usdt": vip_batches["total_usdt"],
+        "vip_batches_count": vip_batches["count"],
         "total_volume_usdt": round(total_volume_usdt, 4),
         "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
         "by_pair": pair_items,
@@ -289,9 +334,11 @@ async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
         profit_map[o["id"]] = prof_usdt
 
     conversion_fees = await _fetch_conversion_fees(year, month, days)
+    vip_batch_margins = await _fetch_vip_batch_margins(year, month, days)
 
     return build_buckets(orders, redemptions, profit_map, granularity,
-                          conversion_fees=conversion_fees)
+                          conversion_fees=conversion_fees,
+                          vip_batch_margins=vip_batch_margins)
 
 
 @router.get("/admin/revenue/timeseries")
@@ -331,11 +378,12 @@ async def admin_revenue_monthly_export(request: Request, year: int, month: int,
 
 def _build_totals(rows_asc: list) -> dict:
     """Aggregate the totals card for the monthly export/email — includes
-    iter55.28 conversion fees."""
+    iter55.28 conversion fees + iter113 VIP batch margins."""
     return {
         "p2p": sum(r["p2p_profit_usdt"] for r in rows_asc),
         "marketplace": sum(r["marketplace_profit_usdt"] for r in rows_asc),
         "conversion_fees": sum(r.get("conversion_fees_usdt", 0.0) for r in rows_asc),
+        "vip_batches": sum(r.get("vip_batches_profit_usdt", 0.0) for r in rows_asc),
         "total": sum(r["total_profit_usdt"] for r in rows_asc),
         "volume": sum(r["volume_usdt"] for r in rows_asc),
         "orders": sum(r["orders"] for r in rows_asc),

@@ -6,6 +6,7 @@ Extracted from routes/admin.py during the iter39 split. Owns:
 
 The validation/refund/evidence helpers are private to this module.
 """
+import re
 from fastapi import APIRouter, HTTPException, Request
 from typing import Optional, Any, Dict
 
@@ -33,7 +34,7 @@ async def all_withdrawals(request: Request,
     if currency:
         q["currency"] = currency.upper()
     if user_q:
-        rx = {"$regex": user_q, "$options": "i"}
+        rx = {"$regex": re.escape(user_q), "$options": "i"}
         q["$or"] = [{"user_name": rx}, {"user_email": rx}]
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
@@ -58,15 +59,35 @@ def _assert_paid_lock(actor: dict, withdrawal: dict, new_status: str) -> None:
         )
 
 
-async def _refund_balance_on_reject(withdrawal: dict, new_status: str) -> None:
-    """Restore the VIP balance when a withdrawal moves into 'rejected'."""
-    if new_status != "rejected" or withdrawal["status"] == "rejected":
-        return
-    refund_currency = withdrawal.get("currency", "USD")
-    await db.users.update_one(
-        {"user_id": withdrawal["user_id"]},
-        {"$inc": {f"vip_balances.{refund_currency}": withdrawal["amount_usd"]}},
-    )
+async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
+                                                update_doc: dict) -> None:
+    """SEC hardening (auditoría 28/7/2026) — idempotent balance reconciliation.
+
+    A `balance_refunded` flag on the withdrawal makes refunds safe against any
+    status flip sequence (e.g. rejected→pending→rejected no longer double-credits):
+      - Entering 'rejected' while NOT yet refunded → credit the balance back once.
+      - Leaving 'rejected' while previously refunded → re-debit (the payout is
+        active again, so the funds must not sit in the balance too).
+    The flag is written into `update_doc` so it persists atomically with status.
+    """
+    already_refunded = bool(withdrawal.get("balance_refunded"))
+    currency = withdrawal.get("currency", "USD")
+    amount = float(withdrawal.get("amount_usd") or 0.0)
+    was_rejected = withdrawal["status"] == "rejected"
+    entering_rejected = new_status == "rejected" and not was_rejected
+    leaving_rejected = was_rejected and new_status != "rejected"
+    if entering_rejected and not already_refunded:
+        await db.users.update_one(
+            {"user_id": withdrawal["user_id"]},
+            {"$inc": {f"vip_balances.{currency}": amount}},
+        )
+        update_doc["balance_refunded"] = True
+    elif leaving_rejected and already_refunded:
+        await db.users.update_one(
+            {"user_id": withdrawal["user_id"]},
+            {"$inc": {f"vip_balances.{currency}": -amount}},
+        )
+        update_doc["balance_refunded"] = False
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,
@@ -135,8 +156,8 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="No encontrado")
     _assert_paid_lock(actor, w, new_status)
     _enforce_employee_currency_scope(actor, w.get("currency"))
-    await _refund_balance_on_reject(w, new_status)
     update_doc = {"status": new_status, "admin_note": payload.get("admin_note", "")}
+    await _reconcile_balance_on_status_change(w, new_status, update_doc)
     _collect_payout_evidence(payload, update_doc, w)
     _validate_paid_evidence(w, update_doc, new_status)
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})

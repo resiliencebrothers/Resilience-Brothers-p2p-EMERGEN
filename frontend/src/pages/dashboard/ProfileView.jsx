@@ -15,7 +15,7 @@ import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 import RequestVipCard from "@/pages/dashboard/profile/RequestVipCard";
 import {
   User, Mail, Phone, Globe, ShieldCheck, IdCard, Clock, CheckCircle2,
-  AlertTriangle, Pencil, Fingerprint,
+  AlertTriangle, Pencil, Fingerprint, Star,
 } from "lucide-react";
 
 // Module-level constants — hoisted so <Trans> gets a stable identity for
@@ -87,6 +87,7 @@ export default function ProfileView() {
           <span className="micro-label text-neutral-500">{t("profile.sectionPersonal")}</span>
         </div>
         <PersonalRow icon={User} label={t("profile.fieldName")} value={profile.name || t("profile.fieldDash")} readOnly />
+        <StatusRow role={user?.role} />
         <UserIdRow userId={profile.user_id} />
         <PersonalRow icon={Mail} label={t("profile.fieldEmail")} value={profile.email}
                      onEdit={() => setEmailDialog(true)}
@@ -191,6 +192,45 @@ const KYC_BADGE = {
   verified: { labelKey: "profile.kycStatus.verified", className: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30" },
   rejected: { labelKey: "profile.kycStatus.rejected", className: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30" },
 };
+
+
+// Jun 2026 — the client's tier (VIP / Normal) is now visible in Mi Perfil,
+// mirroring the "Estatus" quick-action card of the dashboard summary.
+function StatusRow({ role }) {
+  const { t } = useTranslation();
+  const isVip = role === "vip";
+  const labelKey = {
+    normal: "dashboard.roleLabel.normal",
+    vip: "dashboard.roleLabel.vip",
+    admin: "dashboard.roleLabel.admin",
+    employee: "dashboard.roleLabel.employee",
+  }[role] || "dashboard.roleLabel.normal";
+  return (
+    <div className="flex items-center justify-between gap-4 py-2" data-testid="profile-status-row">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <Star className="w-4 h-4 text-neutral-500 flex-shrink-0" />
+        <div className="min-w-0">
+          <div className="text-[0.65rem] uppercase tracking-widest text-neutral-500">
+            {t("profile.fieldStatus")}
+          </div>
+          <div className="text-sm mt-1">
+            <span
+              data-testid="profile-status-badge"
+              className={`inline-flex items-center gap-1.5 text-[0.7rem] uppercase tracking-widest border px-2.5 py-1 font-mono ${
+                isVip
+                  ? "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30"
+                  : "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30"
+              }`}
+            >
+              {isVip && <Star className="w-3 h-3 fill-current" />}
+              {t(labelKey)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 
 function UserIdRow({ userId }) {

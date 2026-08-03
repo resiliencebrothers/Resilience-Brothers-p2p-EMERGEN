@@ -43,6 +43,7 @@ PERMISSION_CATALOG: List[Dict[str, str]] = [
     {"code": "blocked_contacts", "category": "users",      "label": "Bloqueos",             "description": "Gestionar la lista de contactos bloqueados"},
     {"code": "vip_requests",     "category": "users",      "label": "Solicitudes VIP",      "description": "Revisar y aprobar / rechazar solicitudes de upgrade a VIP"},
     {"code": "company_funds",    "category": "finance",    "label": "Fondo Empresa",        "description": "Registrar aportes / retiros de capital"},
+    {"code": "profitability",    "category": "finance",    "label": "Cálculo de Rentabilidad", "description": "Calculadora de rentabilidad por conversión y registro de operaciones"},
     {"code": "transactions",     "category": "finance",    "label": "Registro Contable",    "description": "Ver el registro de transacciones (auditoría)"},
     {"code": "quick_view",       "category": "finance",    "label": "Vista Rápida / Cola",  "description": "Acceso a la vista rápida y a mi cola de trabajo"},
 ]

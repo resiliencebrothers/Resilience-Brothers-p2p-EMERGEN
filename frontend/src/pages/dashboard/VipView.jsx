@@ -6,30 +6,39 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Wallet, FileDown } from "lucide-react";
+import {
+  Wallet, FileDown, History, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
+} from "lucide-react";
 
 import { VipBalancesGrid } from "./vip/VipBalancesGrid";
 import { VipWithdrawalForm } from "./vip/VipWithdrawalForm";
-import { VipWithdrawalHistory } from "./vip/VipWithdrawalHistory";
 import { VipLedgerDialog } from "./vip/VipLedgerDialog";
+import { DepositForm } from "./vip/DepositForm";
+import { AccountHistoryDialog } from "./vip/AccountHistoryDialog";
+import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import QuickDateRange from "@/components/QuickDateRange";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 
+/**
+ * iter115 — "Depósitos y Retiros" redesigned as an exchange-style hub:
+ * three big action buttons (Depositar / Retirar / Convertir) that toggle
+ * their panel, plus a small History button opening a dialog with separate
+ * tabs for deposits, withdrawals and conversions.
+ */
 export default function VipView() {
   const { refresh } = useAuth();
   const { t } = useTranslation();
   const [withdrawals, setWithdrawals] = useState([]);
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
-  // iter52 — per-currency ledger (which orders contributed to each balance)
   const [ledger, setLedger] = useState({ by_currency: {}, total_orders: 0 });
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerCurrency, setLedgerCurrency] = useState("");
-  // iter90 — closing report now covers an arbitrary date range instead of
-  // one single day. Empty strings mean "full history" (server accepts that).
   const [closingSince, setClosingSince] = useState("");
   const [closingUntil, setClosingUntil] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [action, setAction] = useState(null); // null | deposit | withdraw | convert
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const downloadClosing = async () => {
     setDownloading(true);
@@ -62,7 +71,6 @@ export default function VipView() {
   };
 
   const load = useCallback(async () => {
-    // Each call independent so a 403 on one (legacy guard) doesn't break the page
     try {
       const r = await axios.get(`${API}/vip/withdrawals/mine`, { withCredentials: true });
       setWithdrawals(r.data);
@@ -78,9 +86,6 @@ export default function VipView() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  // iter97 — live-refresh balances and withdrawals when the platform
-  // pushes a change. `load` already refetches everything, so we just
-  // wire both events straight to it.
   useLiveEvent("balance_updated", load);
   useLiveEvent("withdrawal_status_changed", load);
   useLiveEvent("order_status_changed", load);
@@ -90,16 +95,36 @@ export default function VipView() {
     setLedgerOpen(true);
   };
 
-  const handleWithdrawalSubmitted = async () => {
+  const handleSubmitted = async () => {
     await load();
     await refresh();
   };
 
+  const toggleAction = (key) => setAction((cur) => (cur === key ? null : key));
+
+  const ACTIONS = [
+    { key: "deposit",  icon: ArrowDownToLine, label: t("vipView.actions.deposit"),  accent: "text-emerald-400", ring: "border-emerald-500/60 bg-emerald-500/10" },
+    { key: "withdraw", icon: ArrowUpFromLine, label: t("vipView.actions.withdraw"), accent: "text-[#A78BFA]",   ring: "border-[#8B5CF6]/70 bg-[#8B5CF6]/10" },
+    { key: "convert",  icon: ArrowRightLeft,  label: t("vipView.actions.convert"),  accent: "text-sky-400",     ring: "border-sky-500/60 bg-sky-500/10" },
+  ];
+
   return (
     <div className="space-y-8" data-testid="vip-view">
-      <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">{t("vipView.eyebrow")}</div>
-        <h1 className="font-display text-3xl">{t("vipView.title")}</h1>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="micro-label text-[#8B5CF6] mb-2">{t("vipView.eyebrow")}</div>
+          <h1 className="font-display text-3xl">{t("vipView.title")}</h1>
+        </div>
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          data-testid="account-history-btn"
+          className="flex items-center gap-2 border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-white/5 text-neutral-400 hover:text-white px-3 h-9 text-[0.65rem] uppercase tracking-widest font-mono transition-colors shrink-0"
+          title={t("vipView.actions.history")}
+        >
+          <History className="w-4 h-4" />
+          <span className="hidden sm:inline">{t("vipView.actions.history")}</span>
+        </button>
       </div>
 
       <div className="relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#1A1730] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50 hover:border-violet-500/20 transition-colors duration-500">
@@ -116,6 +141,50 @@ export default function VipView() {
           {t("vipView.consolidatedNote")}
         </div>
       </div>
+
+      {/* iter115 — exchange-style action buttons */}
+      <div className="grid grid-cols-3 gap-3" data-testid="vip-action-buttons">
+        {ACTIONS.map(({ key, icon: Icon, label, accent, ring }) => {
+          const active = action === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => toggleAction(key)}
+              data-testid={`action-${key}-btn`}
+              aria-pressed={active}
+              className={`tactile-card p-4 sm:p-5 flex flex-col items-center gap-2.5 transition-colors ${
+                active ? ring : "hover:border-white/25"
+              }`}
+            >
+              <span className={`w-11 h-11 rounded-full border border-white/10 bg-black/40 flex items-center justify-center ${accent}`}>
+                <Icon className="w-5 h-5" />
+              </span>
+              <span className={`text-xs sm:text-sm font-semibold uppercase tracking-widest ${active ? "text-white" : "text-neutral-300"}`}>
+                {label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {action === "deposit" && (
+        <div data-testid="panel-deposit" className="animate-in fade-in slide-in-from-top-2 duration-300">
+          <DepositForm onSubmitted={handleSubmitted} showHistory={false} />
+        </div>
+      )}
+      {action === "withdraw" && (
+        <div data-testid="panel-withdraw" className="animate-in fade-in slide-in-from-top-2 duration-300">
+          <VerificationGateBanner blocking action="withdraw">
+            <VipWithdrawalForm balances={balances} onSubmitted={handleSubmitted} />
+          </VerificationGateBanner>
+        </div>
+      )}
+      {action === "convert" && (
+        <div data-testid="panel-convert" className="animate-in fade-in slide-in-from-top-2 duration-300">
+          <BalanceConverterCard onConverted={load} />
+        </div>
+      )}
 
       <VipBalancesGrid
         balances={balances}
@@ -175,15 +244,11 @@ export default function VipView() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <VerificationGateBanner blocking action="withdraw">
-          <VipWithdrawalForm
-            balances={balances}
-            onSubmitted={handleWithdrawalSubmitted}
-          />
-        </VerificationGateBanner>
-        <VipWithdrawalHistory withdrawals={withdrawals} />
-      </div>
+      <AccountHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        withdrawals={withdrawals}
+      />
 
       <VipLedgerDialog
         open={ledgerOpen}

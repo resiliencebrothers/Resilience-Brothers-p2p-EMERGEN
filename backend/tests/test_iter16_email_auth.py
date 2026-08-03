@@ -158,17 +158,18 @@ class TestEmailPasswordAuth:
             json={"email": TEST_EMAIL, "password": "wrong-pass-1234"},
         )
         assert r.status_code == 401
-        assert r.json()["detail"]["code"] == "INVALID_PASSWORD"
+        assert r.json()["detail"]["code"] == "INVALID_CREDENTIALS"
 
-    def test_login_unknown_user_returns_user_not_found(self):
+    def test_login_unknown_user_returns_generic_credentials_error(self):
+        # SEC hardening (auditoría 28/7/2026) — unified credentials error so an
+        # attacker cannot tell "no account" apart from "wrong password".
         r = requests.post(
             f"{BASE_URL}/api/auth/login",
             json={"email": "nobody@example.com", "password": "whatever-strong"},
         )
-        assert r.status_code == 404
+        assert r.status_code == 401
         body = r.json()["detail"]
-        assert body["code"] == "USER_NOT_FOUND"
-        assert "cuenta" in body["message"].lower()
+        assert body["code"] == "INVALID_CREDENTIALS"
 
     def test_login_google_only_account_returns_use_google(self):
         """User exists but has no password_hash (created via Google OAuth)."""

@@ -165,10 +165,35 @@ async def security_audit(request: Request) -> Any:
     }
 
 
+@router.get("/admin/security/self-audit")
+async def get_security_selfaudit(request: Request) -> Any:
+    """iter116 — run the security self-audit checklist on demand (no email).
+    Admin-only. Returns the same structured report the monthly job emails."""
+    await _require_admin_only(request)
+    from services.security_selfaudit import run_security_selfaudit
+    return await run_security_selfaudit(db)
+
+
+@router.post("/admin/security/self-audit/run-now")
+async def run_security_selfaudit_now(request: Request) -> Any:
+    """iter116 — run the checklist AND email every admin (same as the monthly
+    day-1 09:45 UTC job). Admin-only. Useful for smoke tests & spot checks."""
+    actor = await _require_admin_only(request)
+    from services.security_selfaudit import run_and_email_security_selfaudit
+    from audit_log import log_action
+    report = await run_and_email_security_selfaudit(db)
+    await log_action(
+        db, actor, "security.selfaudit_run_now", "security", "self_audit",
+        summary=f"Auditoría de seguridad ejecutada — veredicto {report.get('verdict')}",
+        details={"verdict": report.get("verdict"), "summary": report.get("summary"),
+                 "emailed_to": report.get("emailed_to")},
+    )
+    return {"ok": True, **report}
+
+
 @router.post("/admin/security/sessions/{user_id}/revoke")
 async def revoke_user_sessions(user_id: str, request: Request) -> Any:
-    """Kill every active session for `user_id`. Emergency knob when a staff
-    account is suspected of being compromised."""
+    """Kill every active session for `user_id`. Emergency knob when a staff    account is suspected of being compromised."""
     await _require_admin_only(request)
     r = await db.user_sessions.delete_many({"user_id": user_id})
     logger.warning(f"[security] Revoked {r.deleted_count} sessions for user {user_id}")

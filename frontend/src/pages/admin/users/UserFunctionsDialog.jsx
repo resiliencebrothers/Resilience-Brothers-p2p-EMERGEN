@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Settings2, Coins, ShieldCheck, ShoppingBag, Phone as PhoneIcon, Shield } from "lucide-react";
+import { Settings2, Coins, ShieldCheck, ShoppingBag, Phone as PhoneIcon, Shield, Layers } from "lucide-react";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
 import { CurrencyMultiSelect } from "./CurrencyMultiSelect";
 import { PermissionMultiSelect } from "./PermissionMultiSelect";
@@ -16,6 +16,7 @@ const TABS = [
   { id: "role",       label: "Rol",         icon: Shield },
   { id: "currencies", label: "Monedas",     icon: Coins },
   { id: "perms",      label: "Permisos",    icon: ShieldCheck },
+  { id: "batchpairs", label: "Lotes",       icon: Layers },
   { id: "market",     label: "Marketplace", icon: ShoppingBag },
   { id: "phone",      label: "Teléfono",    icon: PhoneIcon },
 ];
@@ -57,7 +58,7 @@ export default function UserFunctionsDialog({
   // per render also drops the `perms` tab when the user is not an
   // employee. Recompute only when the role actually flips.
   const visibleTabs = useMemo(
-    () => TABS.filter((tt) => tt.id !== "perms" || user?.role === "employee"),
+    () => TABS.filter((tt) => !["perms", "batchpairs"].includes(tt.id) || user?.role === "employee"),
     [user?.role]
   );
 
@@ -282,6 +283,21 @@ export default function UserFunctionsDialog({
               </div>
             )}
 
+            {tab === "batchpairs" && user.role === "employee" && (
+              <div data-testid="uf-batchpairs-tab">
+                <div className="micro-label text-neutral-500 mb-3">Pares de lotes VIP autorizados</div>
+                <BatchPairsSelect
+                  selected={user.allowed_batch_pairs || []}
+                  onSave={(list) => putUserField("allowed_batch_pairs", list)}
+                  busy={busy}
+                />
+                <p className="text-xs text-neutral-500 mt-3 leading-relaxed">
+                  Si la lista queda vacía, el staff puede confirmar/rechazar TODOS los pares de lotes.
+                  Con pares seleccionados, solo podrá trabajar esos pares. Solo un admin puede modificarlo.
+                </p>
+              </div>
+            )}
+
             {tab === "market" && (
               <div data-testid="uf-market-tab">
                 <div className="micro-label text-neutral-500 mb-3">Permisos del marketplace</div>
@@ -352,5 +368,70 @@ export default function UserFunctionsDialog({
         </Dialog>
       )}
     </>
+  );
+}
+
+
+/** iter113 — checkbox grid of VIP batch pairs for staff RBAC. */
+function BatchPairsSelect({ selected, onSave, busy }) {
+  const [catalog, setCatalog] = useState([]);
+  const [pending, setPending] = useState(null);
+  const list = pending ?? selected;
+
+  useEffect(() => {
+    axios.get(`${API}/admin/vip-batch-pairs`, { withCredentials: true })
+      .then((r) => setCatalog(r.data?.items || []))
+      .catch(() => setCatalog([]));
+  }, []);
+
+  const toggle = (pair) => {
+    const next = list.includes(pair) ? list.filter((p) => p !== pair) : [...list, pair];
+    setPending(next);
+  };
+
+  return (
+    <div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+        {catalog.length === 0 && (
+          <div className="col-span-full text-xs text-neutral-500">Sin pares configurados.</div>
+        )}
+        {catalog.map((p) => {
+          const on = list.includes(p.pair);
+          return (
+            <button
+              key={p.pair}
+              type="button"
+              onClick={() => toggle(p.pair)}
+              data-testid={`uf-batch-pair-${p.from_code}-${p.to_code}`}
+              className={`text-left px-2.5 py-2 border text-xs font-mono transition-colors ${
+                on
+                  ? "border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#A78BFA]"
+                  : "border-white/10 text-neutral-400 hover:border-white/30"
+              }`}
+            >
+              {p.from_code} → {p.to_code}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <Button
+          onClick={() => onSave(list)}
+          disabled={busy || pending === null}
+          data-testid="uf-batch-pairs-save"
+          className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white h-9 px-4 text-xs disabled:opacity-40"
+        >
+          Guardar pares
+        </Button>
+        <Button
+          onClick={() => setPending([])}
+          variant="ghost"
+          data-testid="uf-batch-pairs-clear"
+          className="rounded-none border border-white/10 text-neutral-400 h-9 px-4 text-xs"
+        >
+          Vaciar (acceso total)
+        </Button>
+      </div>
+    </div>
   );
 }

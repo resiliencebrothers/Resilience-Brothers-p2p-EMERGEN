@@ -72,9 +72,10 @@ class TestRatesRealRate:
         r = requests.post(f"{BASE_URL}/api/admin/rates", json=payload, headers=_h(EMP))
         assert r.status_code in (200, 201), r.text
         rid = r.json()["id"]
-        # Verify GET shows real_rate
-        rates = requests.get(f"{BASE_URL}/api/rates").json()
-        found = next((x for x in rates if x["id"] == rid), None)
+        # Verify GET shows real_rate — staff view required since iter101
+        # scrubs `real_rate` from anonymous/normal responses.
+        rates = requests.get(f"{BASE_URL}/api/rates", headers=_h(ADMIN)).json()
+        found = next((x for x in rates if x.get("id") == rid), None)
         assert found is not None
         assert float(found["real_rate"]) == 5.1
         # Cleanup
@@ -86,8 +87,8 @@ class TestRatesRealRate:
         r = requests.post(f"{BASE_URL}/api/admin/rates", json=payload, headers=_h(ADMIN))
         assert r.status_code in (200, 201), r.text
         rid = r.json()["id"]
-        rates = requests.get(f"{BASE_URL}/api/rates").json()
-        found = next((x for x in rates if x["id"] == rid), None)
+        rates = requests.get(f"{BASE_URL}/api/rates", headers=_h(ADMIN)).json()
+        found = next((x for x in rates if x.get("id") == rid), None)
         assert found is not None
         assert found.get("real_rate") in (None, 0, 0.0) or found.get("real_rate") is None
         requests.delete(f"{BASE_URL}/api/admin/rates/{rid}", headers=_h(ADMIN))
@@ -100,8 +101,8 @@ class TestRatesRealRate:
         upd = {**payload, "real_rate": 5.25, "totp_code": make_employee_totp()}
         ur = requests.put(f"{BASE_URL}/api/admin/rates/{rid}", json=upd, headers=_h(EMP))
         assert ur.status_code == 200, ur.text
-        rates = requests.get(f"{BASE_URL}/api/rates").json()
-        found = next((x for x in rates if x["id"] == rid), None)
+        rates = requests.get(f"{BASE_URL}/api/rates", headers=_h(ADMIN)).json()
+        found = next((x for x in rates if x.get("id") == rid), None)
         assert float(found["real_rate"]) == 5.25
         requests.delete(f"{BASE_URL}/api/admin/rates/{rid}", headers=_h(ADMIN))
 

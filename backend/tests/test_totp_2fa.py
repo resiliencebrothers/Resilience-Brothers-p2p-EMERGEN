@@ -97,6 +97,12 @@ class TestWithdrawalStepUp:
         assert r.json()["detail"]["code"] == "TOTP_INVALID"
 
     def test_valid_code_accepts(self):
+        # iter115c — seed the USD balance so the test is deterministic instead
+        # of depending on ambient DB state left by other suites.
+        from pymongo import MongoClient
+        db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        db.users.update_one({"user_id": "user_test_vip01"},
+                            {"$set": {"vip_balances.USD": 100.0}})
         code = make_vip_totp()
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
                           json={"amount_usd": 1, "method": "transfer",

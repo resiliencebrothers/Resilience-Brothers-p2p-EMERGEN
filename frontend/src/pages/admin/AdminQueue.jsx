@@ -3,7 +3,7 @@ import axios from "axios";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
-import { ListChecks, ArrowDownToLine, Radio } from "lucide-react";
+import { ListChecks, ArrowDownToLine, Radio, Layers } from "lucide-react";
 import { toast } from "sonner";
 import DefensiveModePanel from "@/components/DefensiveModePanel";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
@@ -15,7 +15,7 @@ const FLASH_MS = 4000;
 
 export default function AdminQueue() {
   const { t } = useTranslation();
-  const [data, setData] = useState({ orders: [], withdrawals: [], counts: { orders: 0, withdrawals: 0 } });
+  const [data, setData] = useState({ orders: [], withdrawals: [], vip_batches: [], counts: { orders: 0, withdrawals: 0, vip_batches: 0 } });
   const [loading, setLoading] = useState(true);
   // iter98 — track newly-arrived rows (via SSE) so we can flash them briefly.
   const [flashIds, setFlashIds] = useState(new Set());
@@ -118,7 +118,7 @@ export default function AdminQueue() {
 
   if (loading) return <div className="text-neutral-500 micro-label">{t("adminQueue.loading")}</div>;
 
-  const empty = data.counts.orders === 0 && data.counts.withdrawals === 0;
+  const empty = data.counts.orders === 0 && data.counts.withdrawals === 0 && (data.counts.vip_batches || 0) === 0;
   const flashClass = "queue-row-flash";
 
   return (
@@ -207,6 +207,76 @@ export default function AdminQueue() {
             {data.orders.length > 50 && (
               <div className="px-4 py-2 text-xs text-neutral-500 border-t border-white/10">
                 {t("adminQueue.orders.showingOf", { count: data.orders.length })}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {data.counts.vip_batches > 0 && (
+        <section data-testid="queue-vip-batches">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-xl flex items-center gap-2">
+              <Layers className="w-5 h-5 text-[#8B5CF6]" /> {t("adminQueue.vipBatches.sectionTitle")}
+              <span className="text-xs text-neutral-500 font-mono">({data.counts.vip_batches})</span>
+            </h2>
+            <Link to="/admin/vip-batches" className="micro-label text-[#8B5CF6] hover:underline">
+              {t("adminQueue.vipBatches.goto")}
+            </Link>
+          </div>
+          <div className="tactile-card overflow-x-auto">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead className="bg-[#0a0a0a] border-b border-white/10">
+                <tr className="text-left">
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colVip")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colDirection")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colCurrency")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colItemsPending")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colAmountPending")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colStatus")}</th>
+                  <th className="px-4 py-3 micro-label text-neutral-500">{t("adminQueue.vipBatches.colCreated")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.vip_batches.slice(0, 50).map(b => (
+                  <tr
+                    key={b.id}
+                    className={`border-b border-white/5 ${flashIds.has(b.id) ? flashClass : ""}`}
+                    data-testid={`queue-vip-batch-${b.id}`}
+                  >
+                    <td className="px-4 py-3">{b.vip_name || b.vip_email}</td>
+                    <td className="px-4 py-3 text-xs uppercase">
+                      {b.direction === "pair" ? (
+                        <span
+                          className="inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider font-mono border text-[#A78BFA] border-[#8B5CF6]/40 bg-[#8B5CF6]/10"
+                          data-testid={`queue-batch-pair-${b.id}`}
+                        >
+                          {b.from_code}→{b.to_code}
+                        </span>
+                      ) : (
+                        <span className={`inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider font-mono border ${
+                          b.direction === "credit"
+                            ? "text-[#22C55E] border-[#22C55E]/40 bg-[#22C55E]/10"
+                            : "text-[#F59E0B] border-[#F59E0B]/40 bg-[#F59E0B]/10"
+                        }`}>
+                          {b.direction === "credit" ? t("adminQueue.vipBatches.directionCredit") : t("adminQueue.vipBatches.directionDebit")}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-mono">{b.from_code || b.currency}</td>
+                    <td className="px-4 py-3 font-mono text-[#8B5CF6]">{b.items_pending}</td>
+                    <td className="px-4 py-3 font-mono text-[#8B5CF6]">{b.amount_pending} {b.from_code || b.currency}</td>
+                    <td className="px-4 py-3 text-xs uppercase">
+                      {b.status === "open" ? t("adminQueue.vipBatches.statusOpen") : t("adminQueue.vipBatches.statusClosed")}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-neutral-500">{new Date(b.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {data.vip_batches.length > 50 && (
+              <div className="px-4 py-2 text-xs text-neutral-500 border-t border-white/10">
+                {t("adminQueue.vipBatches.showingOf", { count: data.vip_batches.length })}
               </div>
             )}
           </div>

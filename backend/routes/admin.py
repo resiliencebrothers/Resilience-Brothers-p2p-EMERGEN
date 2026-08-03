@@ -20,6 +20,7 @@ import csv
 import io
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional, Any, Dict, List
@@ -74,6 +75,18 @@ class AdminSettings(BaseModel):
     auto_send_monthly_audit: Optional[bool] = Field(
         default=None,
         description="Si es False, desactiva el envío automático mensual del informe de auditoría (día 1 09:15 UTC). Cualquier otro valor = activo.",
+    )
+    auto_send_monthly_vip_ledger: Optional[bool] = Field(
+        default=None,
+        description="Si es False, desactiva el envío automático mensual del estado de cuenta VIP a todos los VIPs (día 1 09:30 UTC). Cualquier otro valor = activo.",
+    )
+    office_address: Optional[str] = Field(
+        default=None, max_length=300,
+        description="iter113 — Dirección de las oficinas de la empresa mostrada a clientes que depositan efectivo ≤ umbral de mensajería.",
+    )
+    referral_bonus_pct: Optional[float] = Field(
+        default=None, ge=0, le=100,
+        description="iter112 — % de la ganancia de la primera orden del referido que se acredita al referidor (USDT). Default 10.",
     )
     totp_code: Optional[str] = Field(default=None, max_length=11,
                                        description="Código 2FA requerido")
@@ -135,7 +148,7 @@ async def all_orders(request: Request, status: Optional[str] = None,
         currency = currency.upper()
         q["$or"] = [{"from_code": currency}, {"to_code": currency}]
     if user_q:
-        rx = {"$regex": user_q, "$options": "i"}
+        rx = {"$regex": re.escape(user_q), "$options": "i"}
         user_clause = {"$or": [{"user_name": rx}, {"user_email": rx}]}
         if "$or" in q:
             q["$and"] = [{"$or": q.pop("$or")}, user_clause]
@@ -465,14 +478,21 @@ async def get_admin_settings(request: Request) -> Any:
             "defensive_margin_pct": None,
             "ops_notifications_email": None,
             "auto_send_monthly_audit": True,
+            "auto_send_monthly_vip_ledger": True,
+            "referral_bonus_pct": 10.0,
         }
     # Missing / non-False → treated as enabled (matches scheduler.py opt-out semantics)
     raw_flag = doc.get("auto_send_monthly_audit")
+    raw_vip_flag = doc.get("auto_send_monthly_vip_ledger")
+    raw_pct = doc.get("referral_bonus_pct")
     return {
         "vip_threshold_usdt": float(doc.get("vip_threshold_usdt", 5000)),
         "defensive_margin_pct": doc.get("defensive_margin_pct"),
         "ops_notifications_email": doc.get("ops_notifications_email"),
+        "office_address": doc.get("office_address"),
         "auto_send_monthly_audit": raw_flag is not False,
+        "auto_send_monthly_vip_ledger": raw_vip_flag is not False,
+        "referral_bonus_pct": float(raw_pct) if raw_pct is not None else 10.0,
     }
 
 
@@ -638,19 +658,33 @@ async def export_transactions_pdf(
 
 @router.get("/admin/queue")
 async def staff_queue(request: Request) -> Any:
-    """Pending items in the actor's scope: orders + withdrawals."""
+    """Pending items in the actor's scope: orders + withdrawals + VIP batches."""
     actor = await require_permission(request, "quick_view")
     order_q: Dict[str, Any] = {"status": {"$in": ["pending", "requires_double_approval"]}}
     wd_q: Dict[str, Any] = {"status": "pending"}
+    # VIP batches show up when they still have items awaiting approval,
+    # regardless of the parent batch's `open`/`closed` state (a closed
+    # batch can still have pending items awaiting admin decision).
+    vip_batch_q: Dict[str, Any] = {"items_pending": {"$gt": 0}}
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
         if allowed:
             order_q["$or"] = [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]
             wd_q["currency"] = {"$in": allowed}
+            vip_batch_q["currency"] = {"$in": allowed}
     orders = await db.orders.find(order_q, {"_id": 0}).sort("created_at", -1).to_list(500)
     withdrawals = await db.withdrawals.find(wd_q, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return {"orders": orders, "withdrawals": withdrawals,
-            "counts": {"orders": len(orders), "withdrawals": len(withdrawals)}}
+    vip_batches = await db.vip_batches.find(vip_batch_q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {
+        "orders": orders,
+        "withdrawals": withdrawals,
+        "vip_batches": vip_batches,
+        "counts": {
+            "orders": len(orders),
+            "withdrawals": len(withdrawals),
+            "vip_batches": len(vip_batches),
+        },
+    }
 
 
 # ============================================================

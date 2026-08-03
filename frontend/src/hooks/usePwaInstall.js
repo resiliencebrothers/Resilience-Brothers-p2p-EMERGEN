@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
+// Non-sensitive UI preference (dismiss timestamp only — no tokens/PII), so
+// plain localStorage is the right storage: it must persist across sessions.
 const DISMISS_KEY = "rb_install_dismissed_until";
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 

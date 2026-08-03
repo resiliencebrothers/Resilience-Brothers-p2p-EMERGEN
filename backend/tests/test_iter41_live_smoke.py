@@ -11,19 +11,19 @@ BASE = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 # Deterministic TOTP secret for reproducible tests. Documented in
 # /app/memory/test_credentials.md — NOT a production credential. Override via
 # TEST_TOTP_SECRET env var in CI environments if needed.
-TOTP_SECRET = os.environ.get("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
+from conftest import ADMIN_TOKEN, VIP_TOKEN, TEST_TOTP_SECRET as TOTP_SECRET
 
 
 def _admin_headers():
-    return {"Cookie": "session_token=test_session_admin_X"}
+    return {"Cookie": f"session_token={ADMIN_TOKEN}"}
 
 
 def _totp():
     return pyotp.TOTP(TOTP_SECRET).now()
 
 
-ADMIN = {"Cookie": "session_token=test_session_admin_X"}
-VIP = {"Cookie": "session_token=test_session_vip_X"}
+ADMIN = {"Cookie": f"session_token={ADMIN_TOKEN}"}
+VIP = {"Cookie": f"session_token={VIP_TOKEN}"}
 VIP_UID = "user_test_vip01"
 
 

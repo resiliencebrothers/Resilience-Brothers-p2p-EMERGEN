@@ -63,3 +63,46 @@ async def clean_currency_whitespace(
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Currency whitespace migration failed on {coll_attr}.{field}: {e}")
     return total
+
+
+async def migrate_vip_ledger_positive_to_balances(db: Any) -> int:
+    """iter113 — one-shot: move every VIP ledger `positive_usdt` into the
+    user's per-currency balance (`vip_balances.USDT`). Owner decision
+    (30 Jul 2026): the ledger surplus IS account balance — withdrawable via
+    Depósitos y Retiros like any other balance. Idempotent via a marker doc
+    in the `migrations` collection."""
+    from datetime import datetime, timezone
+    key = "vip_ledger_positive_to_balances"
+    if await db.migrations.find_one({"key": key}):
+        return 0
+    moved = 0
+    now = datetime.now(timezone.utc).isoformat()
+    async for row in db.vip_ledger.find({"positive_usdt": {"$gt": 0}}, {"_id": 0}):
+        amount = round(float(row.get("positive_usdt") or 0.0), 4)
+        if amount <= 0:
+            continue
+        await db.users.update_one(
+            {"user_id": row["vip_user_id"]},
+            {"$inc": {"vip_balances.USDT": amount}},
+        )
+        await db.vip_ledger.update_one(
+            {"vip_user_id": row["vip_user_id"]},
+            {"$set": {"positive_usdt": 0.0, "updated_at": now}},
+        )
+        await db.audit_log.insert_one({
+            "id": f"mig_{row['vip_user_id'][-8:]}_{int(datetime.now(timezone.utc).timestamp())}",
+            "actor_id": "system",
+            "actor_email": "system@resilience",
+            "actor_name": "Migración automática",
+            "actor_role": "system",
+            "action": "vip_ledger.migrate_positive_to_balance",
+            "entity_type": "user",
+            "entity_id": row["vip_user_id"],
+            "summary": f"Saldo a favor del ledger ({amount} USDT) migrado al balance USDT de la cuenta",
+            "details": {"amount_usdt": amount},
+            "created_at": now,
+        })
+        logger.info(f"Migrated vip_ledger positive {amount} USDT → vip_balances.USDT for {row['vip_user_id']}")
+        moved += 1
+    await db.migrations.insert_one({"key": key, "at": now, "moved": moved})
+    return moved

@@ -8,7 +8,9 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
-ADMIN_COOKIE = {"session_token": "test_session_admin_X"}
+from conftest import ADMIN_TOKEN
+
+ADMIN_COOKIE = {"session_token": ADMIN_TOKEN}
 
 
 def _g(path, **params):

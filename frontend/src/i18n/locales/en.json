@@ -18,7 +18,9 @@
     "date": "Date",
     "yes": "Yes",
     "no": "No",
-    "copied": "Copied to clipboard"
+    "copied": "Copied to clipboard",
+    "shareLinkCopied": "Link copied to clipboard",
+    "shareLinkError": "Could not copy the link"
   },
   "quickRange": {
     "last7Days": "Last 7 days",
@@ -30,21 +32,25 @@
     "client": {
       "profile": "My Profile",
       "overview": "Overview",
-      "exchange": "Exchange",
+      "exchange": "Single Exchange",
       "orders": "My Orders",
-      "history": "History",
-      "vip": "Balance & Withdrawals",
+      "history": "Transactions",
+      "vip": "Deposits & Withdrawals",
       "capitalRequests": "Capital Request",
+      "batches": "Batch Exchange",
       "marketplace": "Marketplace",
       "support": "Support",
       "adminPanel": "Admin Panel",
-      "teamPanel": "Team Panel"
+      "teamPanel": "Team Panel",
+      "referrals": "Refer & Earn",
+      "assets": "Assets"
     },
     "admin": {
       "overview": "Overview",
       "quick": "Quick View",
       "queue": "My Queue",
       "orders": "Orders",
+      "vipBatches": "VIP Batches",
       "withdrawals": "Withdrawals",
       "currencies": "Currencies",
       "rates": "Rates",
@@ -58,7 +64,8 @@
       "security": "Security",
       "audit": "Audit",
       "support": "Support",
-      "backToClient": "Back to client"
+      "backToClient": "Back to client",
+      "referrals": "Referrals"
     }
   },
   "usersHub": {
@@ -81,7 +88,8 @@
     "tabs": {
       "funds": "Funds",
       "revenue": "Revenue",
-      "requests": "Requests"
+      "requests": "Requests",
+      "profitability": "Profitability"
     }
   },
   "auditHub": {
@@ -347,7 +355,7 @@
     "cryptoMismatch": "<1>Does not match {{network}}</1>. Check the selected network or paste a different address — sending on the wrong network can lose the funds permanently."
   },
   "vipView": {
-    "eyebrow": "/ Balance & Withdrawals",
+    "eyebrow": "/ Deposits & Withdrawals",
     "title": "Your accumulated balance",
     "totalValue": "Total value (USDT)",
     "consolidatedNote": "Consolidated equivalent of all your currencies · uses normal rate",
@@ -365,7 +373,23 @@
     "generating": "Generating…",
     "downloadPdf": "Download PDF",
     "closingDownloaded": "Closing downloaded",
-    "closingError": "Error generating the closing"
+    "closingError": "Error generating the closing",
+    "actions": {
+      "deposit": "Deposit",
+      "withdraw": "Withdraw",
+      "convert": "Convert",
+      "history": "History"
+    },
+    "historyDialog": {
+      "title": "Deposits & Withdrawals history",
+      "subtitle": "Your capital movements on the platform, separated by type.",
+      "tabs": {
+        "deposits": "Deposits",
+        "withdrawals": "Withdrawals",
+        "conversions": "Conversions"
+      },
+      "conversionsEmpty": "You haven't made any conversions yet."
+    }
   },
   "orders": {
     "eyebrow": "/ History",
@@ -545,7 +569,9 @@
     "twofaOn": "2FA active",
     "twofaOff": "2FA not configured",
     "securityHelperBody": "Manage your two-factor authentication, change your password and view active sessions.",
-    "openSecurity": "Open security"
+    "openSecurity": "Open security",
+    "fieldStatus": "Client status",
+    "tabsSwipeHint": "Swipe to see more sections"
   },
   "admin": {
     "common": {
@@ -1309,7 +1335,9 @@
       "toastCreated": "Fund withdrawal registered",
       "toastStatus": "Status updated",
       "toastLoadError": "Error loading funds",
-      "toastMax4": "Max 4MB"
+      "toastMax4": "Max 4MB",
+      "vipBatchesIn": "VIP batches",
+      "depositsIn": "Client deposits"
     },
     "revenue": {
       "loading": "Loading revenue...",
@@ -1401,7 +1429,9 @@
       "catConversions": "Conversions",
       "catNote": "Percentages represent the magnitude relative to the absolute total. Faded bars indicate net loss.",
       "monthlyComparison": "Monthly comparison",
-      "noMonthlyData": "No monthly data yet."
+      "noMonthlyData": "No monthly data yet.",
+      "vipBatches": "VIP Batches",
+      "vipBatchesCount": "{{n}} batch orders"
     },
     "profileChanges": {
       "title": "Profile change requests",
@@ -1489,7 +1519,22 @@
       "totpAuditOn": "Enable auto-send",
       "totpAuditOff": "Disable auto-send",
       "totpAuditOnDesc": "The monthly audit report will be sent on the 1st at 09:15 UTC. Enter your 2FA code to confirm.",
-      "totpAuditOffDesc": "By disabling, you will stop receiving the monthly report by email. Enter your 2FA code to confirm."
+      "totpAuditOffDesc": "By disabling, you will stop receiving the monthly report by email. Enter your 2FA code to confirm.",
+      "vipLedgerLabel": "VIP LEDGER STATEMENT · AUTOMATIC SEND",
+      "vipLedgerBody": "When enabled, every 1st of the month at 09:30 UTC each VIP receives a PDF with the previous month's confirmed movements (VIPs with empty balance and no movements are skipped). VIPs can disable their own delivery from /dashboard/batches.",
+      "vipLedgerToggleOn": "VIP ledger monthly send enabled",
+      "vipLedgerToggleOff": "VIP ledger monthly send disabled",
+      "vipLedgerRunNow": "Run send now",
+      "vipLedgerRunning": "Sending…",
+      "vipLedgerRanSummary": "Send {{period}} complete — {{sent}} sent · {{skipped}} empty · {{failed}} failed.",
+      "vipLedgerRunError": "Could not run the monthly send.",
+      "totpVipLedgerOn": "Enable VIP monthly send",
+      "totpVipLedgerOff": "Disable VIP monthly send",
+      "totpVipLedgerOnDesc": "VIP ledger statements will be sent automatically to each VIP on the 1st at 09:30 UTC. Enter your 2FA code to confirm.",
+      "totpVipLedgerOffDesc": "By disabling, you will stop the automatic monthly VIP ledger send. Enter your 2FA code to confirm.",
+      "officeAddressLabel": "Office address (cash deposits)",
+      "officeAddressPlaceholder": "E.g.: 23rd St #456, Vedado, Havana",
+      "officeAddressHint": "Shown to clients depositing cash amounts up to 1000 USDT (they must deliver at the offices). Saved with this card's Save button."
     },
     "cards": {
       "inflow": "Inflow volume",
@@ -1502,6 +1547,252 @@
       "noData": "No data yet.",
       "ordersUnit": "ORDS"
     }
+  },
+  "vipBatches": {
+    "eyebrow": "BATCH OPERATIONS",
+    "title": "Batch Exchange",
+    "newBatch": "New batch",
+    "newBatchTitle": "Create a new order batch",
+    "newBatchBody": "Pick the batch exchange pair. You add orders with holder and amount in the source currency; the admin confirms them one by one and your balance is credited in the destination currency at the VIP rate.",
+    "createBatch": "Create batch",
+    "batchCreated": "Batch created — you can add orders now.",
+    "recentBatches": "Recent batches",
+    "empty": "No batches yet. Create your first one to start sending orders in bulk.",
+    "loadError": "Could not load batch data.",
+    "actionError": "Could not process the action.",
+    "directionLabel": "Direction",
+    "currencyLabel": "Currency",
+    "noteLabel": "Note (optional)",
+    "notePlaceholder": "e.g. Morning shift orders",
+    "balanceCredit": "Owed to you (Credit)",
+    "balanceDebit": "You owe (Debit)",
+    "balanceNet": "Net balance",
+    "direction": {
+      "credit": "Credit",
+      "creditHelp": "I sent — balance goes up",
+      "debit": "Debit",
+      "debitHelp": "I'll pay later — balance goes negative"
+    },
+    "status": {
+      "batch": {
+        "open": "Open",
+        "closed": "Closed"
+      },
+      "item": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      }
+    },
+    "addRow": "Add order to batch",
+    "holderPlaceholder": "Holder name",
+    "addItem": "Add",
+    "itemAdded": "Order added to batch.",
+    "colHolder": "Holder",
+    "colAmount": "Amount",
+    "colStatus": "Status",
+    "itemsEmpty": "This batch has no orders yet.",
+    "closeBatch": "Close batch",
+    "confirmClose": "Close this batch? You won't be able to add more orders.",
+    "batchClosed": "Batch closed.",
+    "batchClosedInfo": "This batch is closed — no more orders can be added.",
+    "pairLabel": "Exchange pair",
+    "pairPlaceholder": "Select a pair",
+    "noPairs": "No pairs available for batches. Contact the team.",
+    "rateVipHint": "VIP rate: 1 {{from}} = {{rate}} {{to}}",
+    "estReceive": "You will receive ≈ {{amount}} {{to}} in your balance once confirmed",
+    "colReceive": "You get",
+    "creditedInfo": "Each confirmed order credits your balance in the batch's destination currency at the VIP rate. Check your balances in the Assets section.",
+    "legacyDebt": "Outstanding debt",
+    "legacyDebtHint": "Debt from the previous system — settled with the team (collections registered by the admin)."
+  },
+  "adminVipHub": {
+    "eyebrow": "ORDERS",
+    "title": "VIP Operations",
+    "tabs": {
+      "items": "Batch orders",
+      "capital": "Capital deposits",
+      "settle": "Settlements",
+      "deposits": "Client deposits"
+    }
+  },
+  "vipCurrencies": {
+    "placeholder": "Select currency",
+    "empty": "No currencies available — contact the admin.",
+    "rateLabel": "Reference rate",
+    "baseCurrency": "USDT — ledger base currency"
+  },
+  "vipLedgerOps": {
+    "sendCapital": "Send capital",
+    "sendCapitalTitle": "Send capital to the company",
+    "sendCapitalBody": "Register the capital you're sending for today's session. Specify the deposit method: for transfers (bank, USDT, Zelle…) you must attach the transfer screenshot and the source account holder; for USDT also the transaction hash. Admin confirms and your positive balance goes up automatically.",
+    "depositSent": "Deposit registered. An admin will confirm shortly.",
+    "requestPayout": "Cash out",
+    "requestPayoutTitle": "Request settlement of your balance",
+    "requestPayoutBody": "You can cash out up to ${{max}} USDT. Pick the currency you want to receive — conversion is applied at approval time.",
+    "payoutRequested": "Request submitted. Admin will review shortly.",
+    "actionError": "Could not process the action.",
+    "currencyLabel": "Currency",
+    "amountLabel": "Amount",
+    "methodLabel": "Payment method",
+    "directionLabel": "Direction",
+    "proofUrlLabel": "Proof URL (optional)",
+    "proofUrlPlaceholder": "https://... (screenshot, receipt)",
+    "depositMethodLabel": "Deposit method",
+    "accountHolderLabel": "Source account holder",
+    "accountHolderPlaceholder": "Name of the person who sent it",
+    "txHashLabel": "Transaction hash",
+    "txHashPlaceholder": "Paste the hash of the network used (TRC20/BEP20…)",
+    "proofFileLabel": "Transfer screenshot",
+    "proofFileRequiredHint": "Required for non-cash methods.",
+    "proofFileOptionalHint": "Optional for cash deposits.",
+    "proofFileCta": "Tap to upload the screenshot (max 8 MB)",
+    "proofSelected": "Screenshot loaded",
+    "proofTooLarge": "Image exceeds 8 MB. Compress it or take another screenshot.",
+    "needProofError": "Attach the screenshot of the transfer you made.",
+    "needHolderError": "Provide the holder of the account the deposit was sent from.",
+    "needHashError": "Provide the transaction hash (min 10 characters).",
+    "noteLabel": "Note (optional)",
+    "notePlaceholder": "e.g. Working capital for today",
+    "payoutNotePlaceholder": "e.g. Transfer to my main account",
+    "method": {
+      "bank_transfer": "Bank transfer",
+      "crypto": "Crypto",
+      "zelle": "Zelle",
+      "cash": "Cash",
+      "other": "Other"
+    },
+    "direction": {
+      "payout": "Payout (we pay you)",
+      "collection": "Collection (you pay us)"
+    },
+    "status": {
+      "pending": "Pending",
+      "confirmed": "Confirmed",
+      "rejected": "Rejected"
+    },
+    "kind": {
+      "deposit": "Capital deposit",
+      "payout": "Payout (owed to you)",
+      "collection": "Collection (paid to us)"
+    },
+    "movementsTitle": "Movements history",
+    "movementsEmpty": "No movements yet.",
+    "colDate": "Date",
+    "colKind": "Kind",
+    "colAmount": "Amount",
+    "colStatus": "Status",
+    "downloadPdf": "Download PDF",
+    "downloadingPdf": "Generating PDF…",
+    "pdfError": "Could not generate the PDF.",
+    "pdfHint": "Official 90-day statement — only confirmed/approved movements, with opening and closing balances.",
+    "emailPdf": "Send via email",
+    "emailHint": "Send the PDF statement to the given email (defaults to your registered address).",
+    "emailTitle": "Send statement via email",
+    "emailToLabel": "Recipient",
+    "emailNoteLabel": "Personal note (optional)",
+    "emailNotePlaceholder": "e.g. attached is the summary for your accounting…",
+    "emailSend": "Send",
+    "emailSending": "Sending…",
+    "emailSent": "PDF sent to {{to}}.",
+    "emailError": "Could not send the email.",
+    "monthlyToggleTitle": "Automatic monthly statement",
+    "monthlyToggleHint": "On the 1st of every month you'll receive a PDF with the previous month's confirmed movements. Turn it on or off anytime.",
+    "monthlyEnabled": "Enabled",
+    "monthlyDisabled": "Disabled",
+    "monthlyEnabledToast": "Monthly mailing enabled — you'll receive the PDF on the 1st.",
+    "monthlyDisabledToast": "Monthly mailing disabled.",
+    "monthlyToggleError": "Could not update preference."
+  },
+  "adminVipLedgerOps": {
+    "loadError": "Could not load data.",
+    "actionError": "Could not process the action.",
+    "empty": "No movements in this queue.",
+    "approve": "Approve",
+    "confirm": "Confirm",
+    "reject": "Reject",
+    "approvedToast": "Request approved — VIP balance updated.",
+    "confirmedToast": "Deposit confirmed — VIP balance credited.",
+    "rejectedToast": "Operation rejected.",
+    "registeredToast": "Movement registered — VIP balance updated.",
+    "colVip": "VIP",
+    "colAmount": "Amount",
+    "colProof": "Proof",
+    "colNote": "Note",
+    "colCreated": "Created",
+    "colStatus": "Status",
+    "colActions": "Actions",
+    "colMethod": "Method",
+    "holderLabel": "Holder",
+    "hashCopied": "Hash copied to clipboard",
+    "dupWarningBadge": "Duplicate hash",
+    "dupDialogTitle": "Hash already used",
+    "dupDialogBody": "This transaction hash already appears in another non-rejected deposit. Make sure it's not a reused receipt before confirming.",
+    "dupConfirmAnyway": "Confirm anyway",
+    "colOrigin": "Origin",
+    "colDirection": "Direction",
+    "viewProof": "View",
+    "origin": {
+      "vip": "Client",
+      "admin": "Admin"
+    },
+    "filter": {
+      "pending": "Pending",
+      "confirmed": "Confirmed",
+      "rejected": "Rejected"
+    },
+    "registerBtn": "Register movement",
+    "registerTitle": "Register a balance movement",
+    "registerBody": "Register a collection you received from the VIP or a payout you made. The ledger updates instantly — no separate approval needed.",
+    "collectionHelp": "the VIP paid us (lowers debit)",
+    "payoutHelp": "we paid the VIP (lowers credit)",
+    "rejectDialogTitle": "Reject operation",
+    "rejectPlaceholder": "Rejection reason (optional)…"
+  },
+  "adminVipBatches": {
+    "eyebrow": "ORDERS",
+    "title": "VIP Batches",
+    "loadError": "Could not load VIP batches",
+    "actionError": "Could not process the action",
+    "empty": "No orders in this queue.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approvedToast": "Order approved — VIP balance updated.",
+    "rejectedToast": "Order rejected.",
+    "colVip": "VIP",
+    "colDirection": "Direction",
+    "colHolder": "Holder",
+    "colAmount": "Amount",
+    "colCreated": "Created",
+    "colStatus": "Status",
+    "colActions": "Actions",
+    "filter": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
+    "rejectDialogTitle": "Reject order",
+    "rejectDialogBody": "You're about to reject the order from \"{{holder}}\". The VIP will get a notification with your note.",
+    "rejectPlaceholder": "Rejection reason (optional)…",
+    "marginLabel": "Margin",
+    "viewDetails": "View details",
+    "detailsTitle": "Batch order #{{id}}",
+    "dClient": "Client",
+    "dEmail": "Email",
+    "dPair": "Pair",
+    "dHolder": "Payment holder",
+    "dSends": "Sends",
+    "dReceives": "Receives",
+    "dRate": "VIP rate applied",
+    "dRealRate": "Real rate",
+    "dMargin": "Margin",
+    "dAdminNote": "Team note",
+    "dReviewed": "Reviewed",
+    "dReviewedBy": "Reviewed by",
+    "dBatch": "Batch",
+    "pairFilterLabel": "Pair",
+    "pairAll": "All",
+    "pairLegacy": "No pair"
   },
   "vipRequest": {
     "sectionTitle": "VIP Program",
@@ -1611,7 +1902,7 @@
     "loading": "Loading queue…",
     "loadError": "Error loading queue",
     "allClear": "/ all clear",
-    "emptyBody": "No orders or withdrawals pending in your scope.",
+    "emptyBody": "No orders, withdrawals or VIP batches pending in your scope.",
     "liveOn": "Live",
     "liveOff": "Paused",
     "orders": {
@@ -1627,6 +1918,22 @@
       "statusPending": "Pending",
       "statusDoubleApproval": "Double approval"
     },
+    "vipBatches": {
+      "sectionTitle": "Pending VIP batches",
+      "goto": "Go to VIP Batches →",
+      "colVip": "VIP",
+      "colDirection": "Direction",
+      "colCurrency": "Currency",
+      "colItemsPending": "Pending items",
+      "colAmountPending": "Pending amount",
+      "colStatus": "Status",
+      "colCreated": "Created",
+      "showingOf": "Showing 50 of {{count}} — see the rest in /admin/vip-batches",
+      "directionCredit": "VIP sent us",
+      "directionDebit": "VIP owes us",
+      "statusOpen": "Open",
+      "statusClosed": "Closed"
+    },
     "withdrawals": {
       "sectionTitle": "Pending withdrawals",
       "goto": "Go to Withdrawals →",
@@ -1638,9 +1945,9 @@
     }
   },
   "myTransactions": {
-    "breadcrumb": "/ My History",
+    "breadcrumb": "/ Transactions",
     "title": "My Transactions",
-    "subtitle": "Record of your inflows, outflows and balance conversions, all in one place.",
+    "subtitle": "All your exchange operations — regular and batch orders. Capital deposits and withdrawals live in Deposits & Withdrawals.",
     "in": "Inflows",
     "out": "Outflows",
     "net": "Net",
@@ -1681,7 +1988,14 @@
       "out": "Outflow",
       "conversion": "Conversion",
       "methodSelfConvert": "Self-convert",
-      "subtypeSmall": "Small balance"
+      "subtypeSmall": "Small balance",
+      "methodBatch": "VIP Batch",
+      "pair": "Pair",
+      "sends": "You send",
+      "receives": "You receive",
+      "kindExchange": "Exchange",
+      "kindDeposit": "Deposit",
+      "kindWithdrawal": "Withdrawal"
     },
     "detail": {
       "title": "Detail",
@@ -1946,20 +2260,22 @@
     "accountStandard": "Standard Account · Rate based on your tier",
     "stats": {
       "totalBalance": "Total Balance",
-      "totalBalanceSub": "USDT equivalent",
+      "totalBalanceSub": "USDT · view assets →",
       "pending": "Pending",
       "pendingSub": "orders · view →",
       "completed": "Completed",
       "completedSub": "orders · view →",
       "statusLabel": "Status",
-      "statusSub": "tier"
+      "statusSub": "tier · view profile →",
+      "marketplace": "Marketplace",
+      "marketplaceSub": "products · view →"
     },
     "currentRates": "Current Rates",
     "operate": "Trade →",
     "noRatesYet": "No rates configured yet.",
     "vipRateLabel": "VIP RATE",
     "quickActions": "Quick Actions",
-    "newExchange": "New Exchange",
+    "newExchange": "Single Exchange",
     "newExchangeSub": "Crypto ↔ Fiat",
     "viewOrders": "View Orders",
     "viewOrdersSub": "Full history",
@@ -2027,7 +2343,10 @@
     },
     "header": {
       "loginButton": "Sign in",
-      "enterPanel": "Enter Panel"
+      "enterPanel": "Enter Panel",
+      "shareApp": "Share",
+      "enterPanelShort": "Panel",
+      "loginButtonShort": "Sign in"
     },
     "hero": {
       "livePill": "Live Network · 24/7 Settlement",
@@ -2134,7 +2453,10 @@
     "footer": {
       "copy": "© Resilience Brothers · P2P Network",
       "tagline": "Global Trade Infrastructure"
-    }
+    },
+    "shareText": "Trade and enjoy our products in our global P2P environment — Resilience Brothers:",
+    "shareApp": "Share app",
+    "refCaptured": "Referral code detected. It will be applied automatically after you sign in."
   },
   "support": {
     "eyebrow": "/ Support",
@@ -2276,6 +2598,281 @@
       "step3": "Tap «Add» and Resilience will appear on your home screen as a native app.",
       "share": "Share",
       "addToHome": "Add to Home Screen"
+    },
+    "installHint": {
+      "title": "New here",
+      "body": "Install Resilience on your home screen — it opens as a native app, faster and without hunting for the URL every time.",
+      "arrow": "Tap the purple button",
+      "ack": "Got it"
+    }
+  },
+  "referrals": {
+    "title": "Refer & Earn",
+    "subtitle": "Share your code and earn {{pct}}% of the profit generated by the first order of every person you invite.",
+    "yourCode": "Your referral code",
+    "copyCode": "Copy link",
+    "codeCopied": "Referral link copied",
+    "shareBtn": "Share my link",
+    "shareText": "Join Resilience Brothers P2P with my code {{code}}, trade and enjoy our products in our global P2P environment:",
+    "howTitle": "How does it work?",
+    "how1": "Share your link or code with friends and colleagues.",
+    "how2": "Your invitee registers with your link and completes their first order.",
+    "how3": "You automatically receive {{pct}}% of the reported profit of that order, in USDT, straight to your balance.",
+    "statReferred": "Invited",
+    "statActivated": "Activated",
+    "statEarned": "USDT earned",
+    "historyTitle": "Bonus history",
+    "historyEmpty": "No bonuses yet. Share your code to start earning!",
+    "bonusFrom": "Bonus for {{name}}",
+    "claimSuccess": "Referral code applied! You were invited by {{name}}.",
+    "loadError": "Could not load your referrals"
+  },
+  "adminReferrals": {
+    "title": "Referrals",
+    "subtitle": "Ambassador leaderboard and referral bonus configuration.",
+    "configTitle": "Referral bonus",
+    "configHint": "% of the referred user's first-order profit credited to the referrer (in USDT). Paid only once per referral.",
+    "pctLabel": "Bonus percentage",
+    "save": "Save",
+    "saved": "Percentage updated to {{pct}}%",
+    "saveError": "Could not save the percentage",
+    "totpTitle": "Confirm bonus change",
+    "totpDesc": "Enter your 2FA code to update the referral bonus percentage.",
+    "leaderboardTitle": "Referrer leaderboard",
+    "empty": "No referrals registered yet.",
+    "colRank": "#",
+    "colUser": "User",
+    "colReferred": "Invited",
+    "colActivated": "Activated",
+    "colEarned": "USDT earned",
+    "colLast": "Last bonus",
+    "loadError": "Could not load the leaderboard"
+  },
+  "assetsView": {
+    "eyebrow": "/ ASSETS",
+    "title": "Assets",
+    "subtitle": "Your per-currency balance on the platform. Approved batches, confirmed deposits and accumulated orders are credited here.",
+    "total": "Total balance",
+    "approxNote": "Consolidated equivalent across all your currencies",
+    "perCurrency": "Balance per currency",
+    "empty": "No assets yet. Deposit or create orders to accumulate balance.",
+    "convertBtn": "Convert Balances",
+    "hideConverter": "Hide converter",
+    "calcBtn": "Profitability calculator",
+    "hideCalc": "Hide calculator",
+    "calcNote": "Private calculation tool — enter your own prices and percentages. Nothing is saved."
+  },
+  "deposits": {
+    "title": "Deposit assets",
+    "subtitle": "Bring your assets onto the platform. The balance is credited in the same currency once the team confirms receipt.",
+    "currencyLabel": "Currency",
+    "amountLabel": "Amount",
+    "methodLabel": "Deposit method",
+    "method": {
+      "transfer": "Bank transfer",
+      "cash": "Cash",
+      "crypto": "Crypto"
+    },
+    "cashMode": {
+      "courier": "Courier",
+      "office": "Offices"
+    },
+    "holderLabel": "Sending account holder",
+    "holderPlaceholder": "Holder name",
+    "proofLabel": "Proof",
+    "proofPick": "Attach proof screenshot",
+    "proofTooLarge": "Image exceeds the maximum allowed size (5 MB).",
+    "hashLabel": "Transaction hash",
+    "hashPlaceholder": "0x…",
+    "courierTitle": "Courier pickup",
+    "courierHint": "For amounts above {{min}} USDT we send a courier to pick up the cash. Provide the details of the person handing over the money.",
+    "contactName": "Name of the person delivering the money",
+    "pickupPhone": "Contact phone",
+    "pickupAddress": "Pickup address",
+    "officeTitle": "Deliver at our offices",
+    "officeHint": "For amounts up to {{min}} USDT, deliver the cash directly at the company offices.",
+    "officeAddressFallback": "Ask our support team for the office address.",
+    "noteLabel": "Note (optional)",
+    "notePlaceholder": "E.g.: deposit to operate this week",
+    "submit": "Submit deposit",
+    "submitted": "Deposit registered — the team will confirm it shortly.",
+    "error": "Could not register the deposit.",
+    "historyTitle": "Deposit history",
+    "status": {
+      "pending": "Pending",
+      "confirmed": "Confirmed",
+      "rejected": "Rejected"
+    },
+    "historyEmpty": "No deposits registered yet."
+  },
+  "adminDeposits": {
+    "colClient": "Client",
+    "colAmount": "Amount",
+    "colMethod": "Method / Details",
+    "colProof": "Proof",
+    "colCreated": "Created",
+    "colStatus": "Status",
+    "colActions": "Actions",
+    "empty": "No deposits in this state.",
+    "loadError": "Could not load deposits.",
+    "actionError": "Could not process the action.",
+    "confirm": "Confirm",
+    "reject": "Reject",
+    "confirmedToast": "Deposit confirmed — balance credited to the client.",
+    "rejectedToast": "Deposit rejected.",
+    "rejectTitle": "Reject deposit",
+    "rejectPlaceholder": "Reason (visible to the client)",
+    "courier": "Courier pickup",
+    "office": "Office delivery"
+  },
+  "historyHub": {
+    "breadcrumb": "/ HISTORY",
+    "ordersTab": "Orders",
+    "txTab": "Transactions"
+  },
+  "profitability": {
+    "eyebrow": "Company Funds",
+    "title": "Profitability Calculator",
+    "subtitle": "Simulate where to set your rates and how much you earn on each conversion",
+    "settingsBtn": "Transfer %",
+    "logBtn": "Log operation",
+    "calc": {
+      "title": "Integrated calculator",
+      "pairPlaceholder": "Pick pair...",
+      "sellPrice": "Sell price",
+      "sellHint": "Price agreed with your client",
+      "buyPrice": "Buy price",
+      "buyHint": "Real cost to source the currency",
+      "buyPct": "Transfer buy %",
+      "sellPct": "Transfer sell %",
+      "quantity": "Quantity",
+      "netGain": "Net gain per unit",
+      "netMargin": "Net margin",
+      "maxBuy": "Max buy price",
+      "maxBuyHint": "Break-even point — buying above this loses money",
+      "cushion": "Available cushion",
+      "resultFx": "FX result",
+      "transferCost": "Equivalent transfer cost",
+      "transferValue": "Transfer value generated",
+      "conversionGain": "Conversion gain",
+      "marginOnBuy": "Return on buy cost",
+      "mode1": "Mode 1 · Direct transfer sale",
+      "mode2": "Mode 2 · Combined flow",
+      "m1BuyPrice": "Buy price",
+      "m1BuyHint": "Cost to buy the currency (cash)",
+      "m1SellPrice": "Sell price",
+      "m1SellHint": "Price charged to the client (transfer)",
+      "m1CostPct": "Transfer cost %",
+      "m1RealCost": "Real cost in transfer",
+      "m1MarginOnCost": "Return on real cost",
+      "m1MinSell": "Min sell price",
+      "m1MinSellHint": "Break-even point — selling below this loses money",
+      "m1TotalGain": "Total operation gain"
+    },
+    "proj": {
+      "title": "Volume projection",
+      "opsPerDay": "Operations per day",
+      "daysPerMonth": "Working days per month",
+      "period": "Period",
+      "units": "Units",
+      "fxGain": "FX gain",
+      "convGain": "Conversion gain",
+      "netGain": "Net gain",
+      "profitability": "Profitability",
+      "perOp": "Per operation",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "sellTotal": "Total sale",
+      "costTotal": "Total real cost"
+    },
+    "pairs": {
+      "title": "Profitability by pair",
+      "subtitle": "All your current rates — edit prices and % to simulate",
+      "pair": "Pair",
+      "sell": "Sell",
+      "buy": "Buy",
+      "buyPctShort": "Buy %",
+      "sellPctShort": "Sell %",
+      "netUnit": "Net / unit",
+      "margin": "Margin",
+      "maxBuy": "Max buy",
+      "status": "Status",
+      "toCalc": "Open in calculator",
+      "profitable": "Profitable",
+      "loss": "Loss",
+      "empty": "No rates registered"
+    },
+    "ops": {
+      "title": "Operations log",
+      "subtitle": "History of client trades and their real profitability",
+      "date": "Date",
+      "client": "Client",
+      "pair": "Pair",
+      "qty": "Quantity",
+      "sell": "Sell",
+      "buy": "Buy",
+      "convGain": "Conv. gain",
+      "netGain": "Net gain",
+      "margin": "Margin",
+      "status": "Status",
+      "totalOps": "operations",
+      "profitableCount": "profitable",
+      "lossCount": "at loss",
+      "netTotal": "Net total",
+      "empty": "No operations logged yet",
+      "deleted": "Operation deleted",
+      "deleteFailed": "Could not delete the operation",
+      "confirmDelete": "Delete this operation from the log?",
+      "filter_all": "All",
+      "filter_profitable": "Profitable",
+      "filter_loss": "Loss",
+      "mode": "Mode",
+      "mode1Short": "M1 Direct",
+      "mode2Short": "M2 Combined"
+    },
+    "dialog": {
+      "title": "Log operation",
+      "description": "Save a client trade into the profitability log",
+      "date": "Date",
+      "client": "Client",
+      "clientPlaceholder": "Client name",
+      "currency": "Currency sold",
+      "paymentCurrency": "Payment currency",
+      "quantity": "Quantity",
+      "sellPrice": "Sell price",
+      "buyPrice": "Buy price",
+      "buyPct": "Transfer buy %",
+      "sellPct": "Transfer sell %",
+      "note": "Note (optional)",
+      "preview": "Estimated net gain",
+      "save": "Save operation",
+      "saved": "Operation logged",
+      "missing": "Fill in client, currencies, quantity and sell price",
+      "mode1": "Mode 1 · Direct transfer sale",
+      "mode2": "Mode 2 · Combined flow"
+    },
+    "settings": {
+      "title": "Transfer % per currency",
+      "description": "Set the % at which you buy and sell the bank transfer for each payment currency. Used as defaults in the calculator and the pairs table.",
+      "currency": "Currency",
+      "buyPct": "Buy %",
+      "sellPct": "Sell %",
+      "save": "Save changes",
+      "saved": "Percentages saved"
+    },
+    "pdf": {
+      "btn": "Export PDF",
+      "title": "Profitability PDF report",
+      "description": "Generates a PDF with the operations log, net gain per currency and success rate — ready to share with investor partners.",
+      "since": "From",
+      "until": "Until",
+      "hint": "Leave the range empty to export the full history.",
+      "cancel": "Cancel",
+      "download": "Download PDF",
+      "working": "Generating...",
+      "exportedToast": "PDF report downloaded",
+      "exportError": "Could not generate the PDF"
     }
   }
 }

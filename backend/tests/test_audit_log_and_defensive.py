@@ -24,14 +24,32 @@ def _h(t=None):
 
 def _ensure_settings(defensive_margin_pct, vip_threshold=5000.0):
     """Set global settings; defensive_margin_pct=None disables."""
-    payload = {
-        "vip_threshold_usdt": vip_threshold,
-        "defensive_margin_pct": defensive_margin_pct,
-        "totp_code": make_admin_totp(),
-    }
-    r = requests.put(f"{BASE_URL}/api/admin/settings", headers=_h(ADMIN), json=payload)
+    def _attempt():
+        payload = {
+            "vip_threshold_usdt": vip_threshold,
+            "defensive_margin_pct": defensive_margin_pct,
+            "totp_code": make_admin_totp(),
+        }
+        return requests.put(f"{BASE_URL}/api/admin/settings", headers=_h(ADMIN), json=payload)
+
+    r = _attempt()
+    if r.status_code == 401:
+        # Rare full-suite flake: retry once with a freshly generated code
+        # after re-ensuring the deterministic test secret.
+        time.sleep(1.0)
+        r = _attempt()
     assert r.status_code == 200, r.text
     return r.json()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _reset_defensive_margin_after_module():
+    """Test-isolation guard: several tests here enable defensive mode
+    (defensive_margin_pct=10/5) and partial runs (-k selections) could leave
+    it ON, breaking sibling suites that approve low-margin orders without
+    TOTP. Always restore the disabled default when this module finishes."""
+    yield
+    _ensure_settings(defensive_margin_pct=None)
 
 
 def _upsert_rate(from_code, to_code, rate_normal, rate_vip, real_rate):

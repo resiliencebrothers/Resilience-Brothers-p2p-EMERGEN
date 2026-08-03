@@ -110,14 +110,21 @@ class TestAlertHooksNonBreaking:
 # ---------- VIP threshold alert flow ----------
 class TestVipThresholdAlert:
     def test_threshold_crossing_sets_last_vip_alert_threshold(self, db):
-        # Reset VIP state and ensure threshold = 5000
+        # Reset VIP state and ensure threshold = 5000. Also disable defensive
+        # mode explicitly — a sibling test may leave `defensive_margin_pct`
+        # set, which would flag the thin-margin USD→CUP order as
+        # requires_double_approval and turn the plain approve into a 401.
         requests.put(f"{BASE_URL}/api/admin/settings", headers=_h(ADMIN_TOKEN),
-                     json={"vip_threshold_usdt": 5000, "totp_code": make_admin_totp()})
-        # Seed user state: vip_balances.USD = 4900, last_vip_alert_threshold = 0
+                     json={"vip_threshold_usdt": 5000,
+                           "defensive_margin_pct": None,
+                           "totp_code": make_admin_totp()})
+        # Seed user state: vip_balances.USDT = 4900 (1:1 with the threshold
+        # unit — using USD here would make the test depend on whatever
+        # USDT→USD rate a sibling test left planted), last alert = 0
         db.users.update_one(
             {"user_id": "user_test_vip01"},
             {"$set": {
-                "vip_balances": {"USD": 4900.0},
+                "vip_balances": {"USDT": 4900.0},
                 "vip_balance_usd": 0.0,
                 "last_vip_alert_threshold": 0.0,
             }}
@@ -143,15 +150,16 @@ class TestVipThresholdAlert:
         r = requests.post(f"{BASE_URL}/api/orders", headers=_h(VIP_TOKEN), json=order_payload)
         assert r.status_code == 200
         oid = r.json()["id"]
-        # Bump balance over threshold BEFORE approval
+        # Bump balance over threshold BEFORE approval (USDT counts 1:1)
         db.users.update_one(
             {"user_id": "user_test_vip01"},
-            {"$set": {"vip_balances": {"USD": 5100.0}, "last_vip_alert_threshold": 0.0}}
+            {"$set": {"vip_balances": {"USDT": 5100.0}, "last_vip_alert_threshold": 0.0}}
         )
         # Approve order → triggers threshold check; total_usdt ≈ 5100 (USD) + small CUP credit
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                           headers=_h(ADMIN_TOKEN),
-                          json={"status": "approved", "admin_note": "ok"})
+                          json={"status": "approved", "admin_note": "ok",
+                                "totp_code": make_admin_totp()})
         assert r2.status_code == 200
         # Verify last_vip_alert_threshold was updated
         u = db.users.find_one({"user_id": "user_test_vip01"})
@@ -170,7 +178,8 @@ class TestVipThresholdAlert:
         oid = r.json()["id"]
         r2 = requests.put(f"{BASE_URL}/api/admin/orders/{oid}/status",
                           headers=_h(ADMIN_TOKEN),
-                          json={"status": "approved", "admin_note": "ok"})
+                          json={"status": "approved", "admin_note": "ok",
+                                "totp_code": make_admin_totp()})
         assert r2.status_code == 200
         after = db.users.find_one({"user_id": "user_test_vip01"}).get("last_vip_alert_threshold", 0)
         # value should not decrease (only updates if total_usdt > last_alert)

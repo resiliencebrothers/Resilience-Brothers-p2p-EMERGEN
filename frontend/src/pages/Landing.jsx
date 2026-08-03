@@ -1,6 +1,7 @@
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import EmailAuthDialog from "@/components/EmailAuthDialog";
 import { useScrollParallax } from "@/hooks/useScrollParallax";
@@ -18,9 +19,21 @@ export default function Landing() {
   const { user, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const [emailAuthOpen, setEmailAuthOpen] = useState(false);
   const [prefillEmail, setPrefillEmail] = useState("");
   const scrollY = useScrollParallax();
+
+  // iter112 — capture ?ref=CODE so the post-login claim can apply it.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const ref = (params.get("ref") || "").trim().toUpperCase();
+    if (ref && /^[A-Z0-9]{4,16}$/.test(ref)) {
+      try { localStorage.setItem("rb_ref_code", ref); } catch {}
+      toast.info(t("landing.refCaptured"), { duration: 5000 });
+      navigate("/", { replace: true });
+    }
+  }, [location.search, navigate, t]);
 
   // Handle "?verified=1&email=..." from the verify-email flow:
   // show a success toast and auto-open the login dialog with the email pre-filled.

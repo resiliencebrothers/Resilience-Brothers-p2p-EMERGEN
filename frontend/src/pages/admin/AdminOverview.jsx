@@ -18,10 +18,14 @@ export default function AdminOverview() {
   const [threshold, setThreshold] = useState("");
   const [defensivePct, setDefensivePct] = useState("");
   const [opsEmail, setOpsEmail] = useState("");
+  const [officeAddress, setOfficeAddress] = useState("");
   const [autoMonthlyAudit, setAutoMonthlyAudit] = useState(true);
+  const [autoMonthlyVipLedger, setAutoMonthlyVipLedger] = useState(true);
   const [savingThreshold, setSavingThreshold] = useState(false);
   const [pendingSettings, setPendingSettings] = useState(null);
   const [pendingAudit, setPendingAudit] = useState(null);
+  const [pendingVipLedger, setPendingVipLedger] = useState(null);
+  const [runningVipLedger, setRunningVipLedger] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -34,7 +38,9 @@ export default function AdminOverview() {
       setThreshold(String(set.data.vip_threshold_usdt));
       setDefensivePct(set.data.defensive_margin_pct == null ? "" : String(set.data.defensive_margin_pct));
       setOpsEmail(set.data.ops_notifications_email || "");
+      setOfficeAddress(set.data.office_address || "");
       setAutoMonthlyAudit(set.data.auto_send_monthly_audit !== false);
+      setAutoMonthlyVipLedger(set.data.auto_send_monthly_vip_ledger !== false);
     } catch (e) {
       toast.error(t("adminOverview.loadError"));
     } finally {
@@ -55,6 +61,7 @@ export default function AdminOverview() {
       vip_threshold_usdt: v,
       defensive_margin_pct: def,
       ops_notifications_email: trimmedEmail || null,
+      office_address: officeAddress.trim() || null,
     });
   };
 
@@ -103,6 +110,57 @@ export default function AdminOverview() {
   const cancelAuditToggle = () => {
     setAutoMonthlyAudit(!pendingAudit);
     setPendingAudit(null);
+  };
+
+  const toggleAutoMonthlyVipLedger = (checked) => {
+    setAutoMonthlyVipLedger(checked);
+    setPendingVipLedger(checked);
+  };
+
+  const confirmVipLedgerToggleWithTotp = async (code) => {
+    setSavingThreshold(true);
+    try {
+      await axios.put(
+        `${API}/admin/settings`,
+        { auto_send_monthly_vip_ledger: pendingVipLedger, totp_code: code },
+        { withCredentials: true }
+      );
+      toast.success(pendingVipLedger
+        ? t("adminOverview.alerts.vipLedgerToggleOn")
+        : t("adminOverview.alerts.vipLedgerToggleOff"));
+      setPendingVipLedger(null);
+    } catch (e) {
+      setAutoMonthlyVipLedger(!pendingVipLedger);
+      if (!handleTotpError(e, navigate)) toast.error(t("adminOverview.alerts.toggleError"));
+    } finally {
+      setSavingThreshold(false);
+    }
+  };
+
+  const cancelVipLedgerToggle = () => {
+    setAutoMonthlyVipLedger(!pendingVipLedger);
+    setPendingVipLedger(null);
+  };
+
+  const runVipLedgerNow = async () => {
+    setRunningVipLedger(true);
+    try {
+      const r = await axios.post(
+        `${API}/admin/vip-ledger/monthly-mailing/run-now`,
+        {}, { withCredentials: true },
+      );
+      const d = r.data || {};
+      toast.success(t("adminOverview.alerts.vipLedgerRanSummary", {
+        period: d.period || "-",
+        sent: d.sent ?? 0,
+        skipped: d.skipped_empty ?? 0,
+        failed: d.failed ?? 0,
+      }));
+    } catch {
+      toast.error(t("adminOverview.alerts.vipLedgerRunError"));
+    } finally {
+      setRunningVipLedger(false);
+    }
   };
 
   const seed = async () => {
@@ -194,6 +252,25 @@ export default function AdminOverview() {
           </p>
         </div>
 
+        {/* iter113 — company office address (shown to cash depositors ≤ courier threshold) */}
+        <div className="mt-6 pt-6 border-t border-white/5">
+          <label className="micro-label text-neutral-500 text-[0.65rem]">
+            {t("adminOverview.alerts.officeAddressLabel")}
+          </label>
+          <Input
+            type="text"
+            placeholder={t("adminOverview.alerts.officeAddressPlaceholder")}
+            value={officeAddress}
+            onChange={(e) => setOfficeAddress(e.target.value)}
+            maxLength={300}
+            className="mt-1 rounded-none bg-black/40 border-white/10"
+            data-testid="office-address-input"
+          />
+          <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
+            {t("adminOverview.alerts.officeAddressHint")}
+          </p>
+        </div>
+
         {/* Auto-send monthly audit report toggle */}
         <div
           className="mt-6 pt-6 border-t border-white/5"
@@ -231,6 +308,52 @@ export default function AdminOverview() {
                 disabled={savingThreshold || pendingAudit !== null}
                 data-testid="auto-audit-toggle"
                 aria-label={t("adminOverview.alerts.auditLabel")}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Auto-send monthly VIP ledger PDF toggle (iter111.3) */}
+        <div
+          className="mt-6 pt-6 border-t border-white/5"
+          data-testid="auto-vip-ledger-toggle-card"
+        >
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-start gap-3 min-w-0">
+              <FileText className="w-5 h-5 text-[#8B5CF6] mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <label className="micro-label text-neutral-500 text-[0.65rem] block">
+                  {t("adminOverview.alerts.vipLedgerLabel")}
+                </label>
+                <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed max-w-xl">
+                  {t("adminOverview.alerts.vipLedgerBody")}
+                </p>
+                <Button
+                  onClick={runVipLedgerNow}
+                  disabled={runningVipLedger}
+                  variant="ghost"
+                  data-testid="vip-ledger-run-now-btn"
+                  className="mt-2 rounded-none border border-white/10 hover:border-[#8B5CF6]/60 hover:text-[#8B5CF6] text-neutral-300 h-7 px-2 text-[0.6rem] uppercase tracking-widest font-mono"
+                >
+                  {runningVipLedger
+                    ? t("adminOverview.alerts.vipLedgerRunning")
+                    : t("adminOverview.alerts.vipLedgerRunNow")}
+                </Button>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span
+                className={`micro-label text-[0.65rem] ${autoMonthlyVipLedger ? "text-[#8B5CF6]" : "text-neutral-500"}`}
+                data-testid="auto-vip-ledger-status-label"
+              >
+                {autoMonthlyVipLedger ? t("adminOverview.alerts.auditActive") : t("adminOverview.alerts.auditInactive")}
+              </span>
+              <Switch
+                checked={autoMonthlyVipLedger}
+                onCheckedChange={toggleAutoMonthlyVipLedger}
+                disabled={savingThreshold || pendingVipLedger !== null}
+                data-testid="auto-vip-ledger-toggle"
+                aria-label={t("adminOverview.alerts.vipLedgerLabel")}
               />
             </div>
           </div>
@@ -294,6 +417,15 @@ export default function AdminOverview() {
         busy={savingThreshold}
         onConfirm={confirmAuditToggleWithTotp}
         onCancel={cancelAuditToggle}
+      />
+
+      <TotpPromptDialog
+        open={pendingVipLedger !== null}
+        title={pendingVipLedger ? t("adminOverview.alerts.totpVipLedgerOn") : t("adminOverview.alerts.totpVipLedgerOff")}
+        description={pendingVipLedger ? t("adminOverview.alerts.totpVipLedgerOnDesc") : t("adminOverview.alerts.totpVipLedgerOffDesc")}
+        busy={savingThreshold}
+        onConfirm={confirmVipLedgerToggleWithTotp}
+        onCancel={cancelVipLedgerToggle}
       />
     </div>
   );

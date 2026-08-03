@@ -78,17 +78,19 @@ def test_permissions_catalog_returns_13_items():
     # Baseline lifted from 16 → 17.
     # iter109 — `vip_requests` added for the VIP upgrade request queue.
     # Baseline lifted from 17 → 18.
+    # iter113 — `profitability` added for the profitability calculator.
+    # Baseline lifted from 18 → 19.
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 18
+    assert len(items) == 19
     codes = {i["code"] for i in items}
     assert codes == {
         "orders", "withdrawals", "kyc", "appeals", "products", "rates",
         "currencies", "users", "company_funds", "blocked_contacts",
         "transactions", "quick_view", "profile_changes",
         "user_stats", "user_functions", "view_user_sensitive",
-        "support", "vip_requests",
+        "support", "vip_requests", "profitability",
     }
     # Each item has label + description
     for it in items:

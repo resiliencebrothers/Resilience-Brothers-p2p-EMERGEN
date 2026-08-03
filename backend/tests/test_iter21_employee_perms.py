@@ -4,7 +4,7 @@ import uuid
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, make_admin_totp
+from conftest import BASE_URL, make_admin_totp, ADMIN_TOKEN
 
 
 def _db():
@@ -13,7 +13,7 @@ def _db():
 
 
 EMP_USER_ID = "user_test_emp_iter21"
-EMP_SESSION = "test_session_emp_iter21"
+EMP_SESSION = f"test_session_emp_iter21_{uuid.uuid4().hex[:8]}"
 
 
 def _seed_employee(**perms):
@@ -28,6 +28,8 @@ def _seed_employee(**perms):
         "role": "employee",
         "auth_provider": "google",
         "email_verified": True,
+        # iter117 — staff mutations are blocked with 412 until 2FA is enabled.
+        "totp_enabled": True,
         "can_edit_product_prices": perms.get("price", False),
         "can_upload_product_images": perms.get("image", False),
         "can_delete_products": perms.get("delete", False),
@@ -176,7 +178,7 @@ class TestEmployeeProductPerms:
     # ---------- Admin bypass ----------
     def test_admin_bypasses_all_perms(self):
         pid = _seed_product()
-        r = _put_product("test_session_admin_X", pid,
+        r = _put_product(ADMIN_TOKEN, pid,
                          price_usd=999.0, image_url="https://e.com/admin.jpg")
         assert r.status_code == 200
         assert r.json()["price_usd"] == 999.0
@@ -186,7 +188,7 @@ class TestEmployeeProductPerms:
         _seed_employee()
         r = requests.put(
             f"{BASE_URL}/api/admin/users/{EMP_USER_ID}",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={"can_edit_product_prices": True, "totp_code": make_admin_totp()},
         )
         assert r.status_code == 200, r.text

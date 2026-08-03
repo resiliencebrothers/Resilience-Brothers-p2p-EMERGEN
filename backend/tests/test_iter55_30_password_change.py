@@ -45,7 +45,11 @@ def _fresh_totp() -> str:
 
 TEST_EMAIL = "pwd.change.test@resilience.com"
 TEST_UID = "user_test_pwdchg01"
-TEST_SESSION = "test_session_pwdchg_X"
+import secrets as _secrets
+
+TEST_SESSION = f"test_session_pwdchg_{_secrets.token_hex(8)}"
+_EXTRA_SESSION_A = f"test_session_pwdchg_other_{_secrets.token_hex(4)}"
+_EXTRA_SESSION_B = f"test_session_pwdchg_other_{_secrets.token_hex(4)}"
 INITIAL_PW = "OldPassword123!"
 
 
@@ -256,7 +260,7 @@ def test_change_password_revokes_other_sessions():
     # Plant 2 extra sessions
     now = datetime.now(timezone.utc)
     exp = now.replace(year=now.year + 1)
-    for extra in ("test_session_pwdchg_other1", "test_session_pwdchg_other2"):
+    for extra in (_EXTRA_SESSION_A, _EXTRA_SESSION_B):
         db_.user_sessions.update_one(
             {"session_token": extra},
             {"$set": {"session_token": extra, "user_id": TEST_UID,
@@ -279,7 +283,7 @@ def test_change_password_revokes_other_sessions():
     finally:
         _cleanup()
         _db().user_sessions.delete_many({"session_token": {
-            "$in": ["test_session_pwdchg_other1", "test_session_pwdchg_other2"]}})
+            "$in": [_EXTRA_SESSION_A, _EXTRA_SESSION_B]}})
 
 
 def test_profile_me_exposes_auth_provider():

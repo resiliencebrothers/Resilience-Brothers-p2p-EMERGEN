@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { ChevronRight, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ShareAppButton } from "@/components/ShareAppButton";
 
 const HERO_BG = "url(https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85)";
 
@@ -32,6 +33,15 @@ export default function LandingHero({ scrollY, onEnter, onEmailAuth }) {
       <div className="absolute inset-0 bg-gradient-to-b from-[#14101F]/20 via-[#14101F]/55 to-[#14101F]"></div>
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 grid lg:grid-cols-12 gap-8 items-end">
         <div className="lg:col-span-8 fade-up">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="brand-dot"></span>
+            <span className="brand-divider flex-1 max-w-[80px] sm:max-w-[120px]"></span>
+            <span className="brand-title text-[1.05rem] sm:text-xl md:text-2xl whitespace-nowrap" data-testid="landing-brand-title">
+              Resilience Brothers
+            </span>
+            <span className="brand-divider flex-1 max-w-[80px] sm:max-w-[120px]"></span>
+            <span className="brand-dot"></span>
+          </div>
           <div className="flex items-center gap-3 mb-6">
             <span className="w-2 h-2 bg-[#22C55E] rounded-full pulse-dot"></span>
             <span className="micro-label text-neutral-400">{t("landing.hero.livePill")}</span>
@@ -62,6 +72,14 @@ export default function LandingHero({ scrollY, onEnter, onEmailAuth }) {
             >
               <Mail className="w-4 h-4 mr-2" /> {t("landing.hero.emailButton")}
             </Button>
+            <ShareAppButton
+              testid="hero-share-btn"
+              url={typeof window !== "undefined" ? window.location.origin : ""}
+              text={t("landing.shareText")}
+              label={t("landing.shareApp")}
+              variant="ghost"
+              className="sm:hidden inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-6 h-14 rounded-full transition-all duration-300"
+            />
           </div>
           <p className="text-[0.7rem] text-neutral-500 mt-3 max-w-md">
             <Trans

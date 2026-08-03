@@ -5,6 +5,7 @@ Extracted from routes/admin.py during the iter39 split.
 import csv
 import io
 import json as _json
+import re
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Optional, Any
@@ -55,11 +56,12 @@ async def list_audit_actors(request: Request, q: Optional[str] = None,
         {"$sort": {"last_seen": -1}},
     ]
     if q_str:
+        rx_q = re.escape(q_str)
         pipeline.append({"$match": {
             "$or": [
-                {"_id": {"$regex": q_str, "$options": "i"}},
-                {"actor_name": {"$regex": q_str, "$options": "i"}},
-                {"actor_email": {"$regex": q_str, "$options": "i"}},
+                {"_id": {"$regex": rx_q, "$options": "i"}},
+                {"actor_name": {"$regex": rx_q, "$options": "i"}},
+                {"actor_email": {"$regex": rx_q, "$options": "i"}},
             ],
         }})
     pipeline.append({"$limit": limit})

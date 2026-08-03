@@ -13,9 +13,11 @@ load_dotenv(ROOT / "frontend" / ".env")
 load_dotenv(ROOT / "backend" / ".env")
 
 BASE = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-ADMIN = {"Authorization": "Bearer test_session_admin_X"}
-EMPLOYEE = {"Authorization": "Bearer test_session_employee_X"}
-SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+_ADMIN_TOKEN = os.environ.get("TEST_TOKEN_ADMIN", "test_session_admin_X")
+_EMPLOYEE_TOKEN = os.environ.get("TEST_TOKEN_EMPLOYEE", "test_session_employee_X")
+ADMIN = {"Authorization": f"Bearer {_ADMIN_TOKEN}"}
+EMPLOYEE = {"Authorization": f"Bearer {_EMPLOYEE_TOKEN}"}
+SECRET = os.environ.get("TEST_TOTP_SECRET", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
 
 
 def now_code():

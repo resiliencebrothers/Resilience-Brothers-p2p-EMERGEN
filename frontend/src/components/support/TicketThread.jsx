@@ -115,7 +115,7 @@ export default function TicketThread({ ticket, defaultOpen = false, onUpdated })
                   {m.images?.length > 0 && (
                     <div className="flex flex-wrap gap-2 mt-2">
                       {m.images.map((src, i) => (
-                        <a key={i} href={src} target="_blank" rel="noopener noreferrer" className="block">
+                        <a key={`${src.slice(-40)}-${i}`} href={src} target="_blank" rel="noopener noreferrer" className="block">
                           <img
                             src={src}
                             alt={`attachment-${i}`}

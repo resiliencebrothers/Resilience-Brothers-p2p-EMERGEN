@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Wallet, Banknote, HandCoins } from "lucide-react";
+import { Wallet, Banknote, HandCoins, Calculator } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 import AdminCompanyFunds from "./AdminCompanyFunds";
 import AdminRevenue from "./AdminRevenue";
 import AdminCapitalRequests from "./AdminCapitalRequests";
+import AdminProfitability from "./AdminProfitability";
 
 /**
  * iter55.31 — Consolidates "Fondos de la Empresa" (treasury view) and
@@ -20,17 +22,27 @@ import AdminCapitalRequests from "./AdminCapitalRequests";
  * Legacy `/admin/revenue` still works via redirect in AdminPanel.jsx.
  */
 const TAB_META = [
-  { id: "funds",    labelKey: "companyFundsHub.tabs.funds",    icon: Wallet,    Component: AdminCompanyFunds },
-  { id: "revenue",  labelKey: "companyFundsHub.tabs.revenue",  icon: Banknote,  Component: AdminRevenue },
-  { id: "requests", labelKey: "companyFundsHub.tabs.requests", icon: HandCoins, Component: AdminCapitalRequests },
+  { id: "funds",    labelKey: "companyFundsHub.tabs.funds",    icon: Wallet,    Component: AdminCompanyFunds,   perm: "company_funds" },
+  { id: "revenue",  labelKey: "companyFundsHub.tabs.revenue",  icon: Banknote,  Component: AdminRevenue,        perm: "company_funds" },
+  { id: "requests", labelKey: "companyFundsHub.tabs.requests", icon: HandCoins, Component: AdminCapitalRequests, perm: "company_funds" },
+  // iter113 — profitability calculator, gated by its own permission code so
+  // the admin can designate a staff member for rate-setting only.
+  { id: "profitability", labelKey: "companyFundsHub.tabs.profitability", icon: Calculator, Component: AdminProfitability, perm: "profitability" },
 ];
 
 export default function AdminCompanyFundsHub() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const activeId = params.get("tab") || "funds";
-  const active = useMemo(() => TAB_META.find((tt) => tt.id === activeId) || TAB_META[0], [activeId]);
+  const tabs = useMemo(() => {
+    const perms = user?.allowed_permissions || [];
+    const can = (code) => user?.role === "admin" || perms.length === 0 || perms.includes(code);
+    return TAB_META.filter((tt) => can(tt.perm));
+  }, [user]);
+  const activeId = params.get("tab") || tabs[0]?.id || "funds";
+  const active = useMemo(() => tabs.find((tt) => tt.id === activeId) || tabs[0], [tabs, activeId]);
+  if (!active) return null;
   const ActiveComponent = active.Component;
 
   const setTab = (id) => {
@@ -48,7 +60,7 @@ export default function AdminCompanyFundsHub() {
         role="tablist"
         aria-label={t("admin.hubs.companyFundsAria")}
       >
-        {TAB_META.map((tt) => {
+        {tabs.map((tt) => {
           const Icon = tt.icon;
           const isActive = tt.id === activeId;
           return (

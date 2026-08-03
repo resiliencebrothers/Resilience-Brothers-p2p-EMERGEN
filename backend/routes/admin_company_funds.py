@@ -5,7 +5,7 @@ working capital (inflows from confirmed orders − client payouts − company
 payouts) and manages staff-initiated company withdrawals.
 """
 import uuid
-from typing import List, Literal, Optional, Any, Dict
+from typing import Callable, List, Literal, Optional, Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -226,14 +226,31 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         "currency", "amount",
     )
     manual_in, manual_out = await _aggregate_manual_adjustments()
+    # iter113 — VIP batch inflows: on each approved pair item the company
+    # RECEIVES `amount` in `from_code` (the VIP sends it externally before
+    # staff confirms). Client deposits are also real money entering company
+    # custody in the deposited currency.
+    in_vip_batches = await _aggregate_by_currency(
+        db.vip_batch_items,
+        {"status": "approved", "to_code": {"$nin": [None, ""]}},
+        "from_code", "amount",
+    )
+    in_deposits = await _aggregate_by_currency(
+        db.deposits,
+        {"status": "confirmed"},
+        "currency", "amount",
+    )
 
     codes = (set(inflow) | set(out_orders) | set(out_clients_vip) | set(out_clients_normal)
-             | set(out_company) | set(manual_in) | set(manual_out))
+             | set(out_company) | set(manual_in) | set(manual_out)
+             | set(in_vip_batches) | set(in_deposits))
     rows = []
     for c in sorted(codes):
         if scope and c not in scope:
             continue
         i = inflow.get(c, 0.0)
+        ivb = in_vip_batches.get(c, 0.0)
+        idep = in_deposits.get(c, 0.0)
         oo = out_orders.get(c, 0.0)
         ocv = out_clients_vip.get(c, 0.0)
         ocn = out_clients_normal.get(c, 0.0)
@@ -244,6 +261,8 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
         rows.append({
             "currency": c,
             "inflow": round(i, 4),
+            "inflow_vip_batches": round(ivb, 4),
+            "inflow_deposits": round(idep, 4),
             "outflow_orders": round(oo, 4),
             "outflow_clients": round(oc, 4),
             "outflow_clients_vip": round(ocv, 4),
@@ -251,7 +270,7 @@ async def _compute_company_funds(scope: Optional[List[str]] = None) -> List[dict
             "outflow_company": round(ok, 4),
             "manual_inflow": round(mi, 4),
             "manual_outflow": round(mo, 4),
-            "balance": round(i + mi - oo - oc - ok - mo, 4),
+            "balance": round(i + ivb + idep + mi - oo - oc - ok - mo, 4),
         })
     return rows
 
@@ -484,6 +503,69 @@ def _date_range_query(since: Optional[str], until: Optional[str]) -> Dict[str, A
     return q
 
 
+def _csv_currency_filter(actor: dict, currency: Optional[str]) -> "Callable[[Any], bool]":
+    """Predicate combining the explicit ?currency filter with the employee
+    `allowed_currencies` scope."""
+    scope_codes: Optional[List[str]] = None
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            scope_codes = [c.upper() for c in allowed]
+
+    def _ok(code: Any) -> bool:
+        c = _norm_code(code)
+        if not c:
+            return False
+        if currency and c != currency.upper():
+            return False
+        if scope_codes is not None and c not in scope_codes:
+            return False
+        return True
+
+    return _ok
+
+
+def _adjustment_csv_row(a: dict) -> List[str]:
+    """Manual adjustment → CSV row (inflow = +, outflow = -)."""
+    amt = float(a.get("amount") or 0.0)
+    direction = a.get("adjustment_type") or ""
+    signed = amt if direction == "inflow" else -amt
+    return [
+        a.get("created_at", ""),
+        "adjustment",
+        direction,
+        _norm_code(a.get("currency")) or "",
+        f"{signed:.4f}",
+        a.get("source_name", ""),
+        a.get("method", ""),
+        (a.get("note") or ""),
+        "completed",
+        a.get("actor_name", ""),
+        a.get("id", ""),
+    ]
+
+
+def _company_withdrawal_csv_row(w: dict) -> List[str]:
+    """Company withdrawal → CSV row. Paid outflows are negative; non-paid
+    rows carry the raw absolute amount because they haven't moved money yet."""
+    amt = float(w.get("amount") or 0.0)
+    status = w.get("status") or "pending"
+    signed = -amt if status == "paid" else amt
+    return [
+        w.get("created_at", ""),
+        "company_withdrawal",
+        "outflow",
+        _norm_code(w.get("currency")) or "",
+        f"{signed:.4f}",
+        w.get("beneficiary", ""),
+        "",  # method N/A for company_withdrawal
+        (w.get("concept") or w.get("note") or ""),
+        status,
+        w.get("authorized_by_name", ""),
+        w.get("id", ""),
+    ]
+
+
 @router.get("/admin/company-funds/export.csv")
 async def export_company_funds_csv(
     request: Request,
@@ -503,71 +585,15 @@ async def export_company_funds_csv(
 
     actor = await require_permission(request, "company_funds")
     date_q = _date_range_query(since, until)
-
-    # Employee currency scope — if `allowed_currencies` is set, only rows in
-    # those currencies come through.
-    scope_codes: Optional[List[str]] = None
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed:
-            scope_codes = [c.upper() for c in allowed]
-
-    def _currency_ok(code: Any) -> bool:
-        c = _norm_code(code)
-        if not c:
-            return False
-        if currency and c != currency.upper():
-            return False
-        if scope_codes is not None and c not in scope_codes:
-            return False
-        return True
+    _currency_ok = _csv_currency_filter(actor, currency)
 
     rows: List[List[str]] = []
-
-    # 1) Manual adjustments (inflow = +, outflow = -).
     async for a in db.company_fund_adjustments.find(date_q, {"_id": 0}):
-        if not _currency_ok(a.get("currency")):
-            continue
-        amt = float(a.get("amount") or 0.0)
-        direction = a.get("adjustment_type") or ""
-        signed = amt if direction == "inflow" else -amt
-        rows.append([
-            a.get("created_at", ""),
-            "adjustment",
-            direction,
-            _norm_code(a.get("currency")) or "",
-            f"{signed:.4f}",
-            a.get("source_name", ""),
-            a.get("method", ""),
-            (a.get("note") or ""),
-            "completed",
-            a.get("actor_name", ""),
-            a.get("id", ""),
-        ])
-
-    # 2) Company withdrawals (status paid → applied, others → informational).
+        if _currency_ok(a.get("currency")):
+            rows.append(_adjustment_csv_row(a))
     async for w in db.company_withdrawals.find(date_q, {"_id": 0}):
-        if not _currency_ok(w.get("currency")):
-            continue
-        amt = float(w.get("amount") or 0.0)
-        status = w.get("status") or "pending"
-        # Signed amount for accounting: paid outflows are negative; the
-        # non-paid rows carry the raw absolute amount because they haven't
-        # moved money yet.
-        signed = -amt if status == "paid" else amt
-        rows.append([
-            w.get("created_at", ""),
-            "company_withdrawal",
-            "outflow",
-            _norm_code(w.get("currency")) or "",
-            f"{signed:.4f}",
-            w.get("beneficiary", ""),
-            "",  # method N/A for company_withdrawal
-            (w.get("concept") or w.get("note") or ""),
-            status,
-            w.get("authorized_by_name", ""),
-            w.get("id", ""),
-        ])
+        if _currency_ok(w.get("currency")):
+            rows.append(_company_withdrawal_csv_row(w))
 
     # Sort by date ascending so the CSV reads as a chronological ledger.
     rows.sort(key=lambda r: r[0])
@@ -697,6 +723,96 @@ async def _compute_company_funds_range(
     return rows
 
 
+def _range_bounds(date_query: Dict[str, Any]) -> tuple[str, str]:
+    """Extract (since_iso, until_iso) from a `_date_range_query` result."""
+    if "created_at" not in date_query:
+        return "", ""
+    return (
+        date_query["created_at"].get("$gte", "") or "",
+        date_query["created_at"].get("$lte", "") or "",
+    )
+
+
+def _updated_at_range_query(since_iso: str, until_iso: str) -> Dict[str, Any]:
+    """Confirmed/completed orders filter constrained by `updated_at` range."""
+    q: Dict[str, Any] = {"status": {"$in": ["approved", "completed"]}}
+    ts_q: Dict[str, Any] = {}
+    if since_iso:
+        ts_q["$gte"] = since_iso
+    if until_iso:
+        ts_q["$lte"] = until_iso
+    if ts_q:
+        q["updated_at"] = ts_q
+    return q
+
+
+async def _closing_revenue_rows(
+    orders: List[dict], rate_by_pair: Dict[Any, dict], fx: Any,
+) -> tuple[List[dict], float, int]:
+    """Per-currency fees from in-range orders + USD total + order count."""
+    from services.orders_helpers import compute_order_profit
+    from services.balances import convert_to_usdt
+
+    revenue_by_currency: Dict[str, float] = {}
+    total_orders = 0
+    for o in orders:
+        fc, tc = o.get("from_code"), o.get("to_code")
+        if not fc or not tc:
+            continue
+        total_orders += 1
+        p = await compute_order_profit(o, rate_by_pair.get((fc, tc)))
+        if p:
+            code = _norm_code(p.get("currency")) or tc
+            revenue_by_currency[code] = revenue_by_currency.get(code, 0.0) + float(p.get("amount", 0) or 0)
+
+    rows: List[dict] = []
+    total_usd = 0.0
+    for code in sorted(revenue_by_currency):
+        fees_native = revenue_by_currency[code]
+        fees_usd = convert_to_usdt(fees_native, code, fx) or 0.0
+        rows.append({
+            "currency": code,
+            "fees": round(fees_native, 4),
+            "fees_usd": round(fees_usd, 2),
+        })
+        total_usd += fees_usd
+    return rows, total_usd, total_orders
+
+
+def _closing_kpis(orders: List[dict], funds_rows: List[dict], fx: Any,
+                  total_orders: int, total_revenue_usd: float) -> Dict[str, Any]:
+    """Executive KPIs — gross volume USD + treasury USD in-range."""
+    from services.balances import convert_to_usdt
+    total_volume_usd = sum(
+        convert_to_usdt(o.get("amount_from", 0), o.get("from_code") or "", fx) or 0.0
+        for o in orders
+    )
+    treasury_usd = sum(
+        convert_to_usdt(r["balance"], r["currency"], fx) or 0.0
+        for r in funds_rows
+    )
+    return {
+        "total_orders": total_orders,
+        "gross_volume_usd": round(total_volume_usd, 2),
+        "revenue_usd": round(total_revenue_usd, 2),
+        "treasury_usd": round(treasury_usd, 2),
+    }
+
+
+def _closing_filename(since: Optional[str], until: Optional[str]) -> str:
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    if since and until:
+        slug = f"_{since}_{until}"
+    elif since:
+        slug = f"_desde_{since}"
+    elif until:
+        slug = f"_hasta_{until}"
+    else:
+        slug = ""
+    return f"cierre_empresa{slug}_{ts}.pdf"
+
+
 @router.get("/admin/company-funds/closing.pdf")
 async def export_company_closing_pdf(
     request: Request,
@@ -716,79 +832,28 @@ async def export_company_closing_pdf(
     """
     from io import BytesIO
     from fastapi.responses import StreamingResponse
-    from datetime import datetime, timezone
 
     from company_closing_pdf import generate_company_closing_pdf
-    from services.orders_helpers import compute_order_profit
+    from services.balances import build_rate_lookup
 
     actor = await require_permission(request, "company_funds")
 
-    # Parse bounds using the same date-range helper the CSV export uses.
-    date_query = _date_range_query(since, until)
-    since_iso = ""
-    until_iso = ""
-    if "created_at" in date_query:
-        since_iso = date_query["created_at"].get("$gte", "") or ""
-        until_iso = date_query["created_at"].get("$lte", "") or ""
+    since_iso, until_iso = _range_bounds(_date_range_query(since, until))
 
     # Treasury movements per currency in-range.
     funds_rows = await _compute_company_funds_range(since_iso, until_iso)
 
-    # Per-currency fees (profits) from confirmed/completed orders in-range.
-    order_q: Dict[str, Any] = {"status": {"$in": ["approved", "completed"]}}
-    if since_iso and until_iso:
-        order_q["updated_at"] = {"$gte": since_iso, "$lte": until_iso}
-    elif since_iso:
-        order_q["updated_at"] = {"$gte": since_iso}
-    elif until_iso:
-        order_q["updated_at"] = {"$lte": until_iso}
-    orders = await db.orders.find(order_q, {"_id": 0}).to_list(20000)
+    orders = await db.orders.find(
+        _updated_at_range_query(since_iso, until_iso), {"_id": 0},
+    ).to_list(20000)
     rates = await db.rates.find({}, {"_id": 0}).to_list(500)
     rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
 
-    revenue_by_currency: Dict[str, float] = {}
-    total_orders = 0
-    for o in orders:
-        fc, tc = o.get("from_code"), o.get("to_code")
-        if not fc or not tc:
-            continue
-        total_orders += 1
-        p = await compute_order_profit(o, rate_by_pair.get((fc, tc)))
-        if p:
-            code = _norm_code(p.get("currency")) or tc
-            revenue_by_currency[code] = revenue_by_currency.get(code, 0.0) + float(p.get("amount", 0) or 0)
-
-    # Convert fees to USD equivalent for the executive summary.
-    from services.balances import build_rate_lookup, convert_to_usdt
     fx = await build_rate_lookup()
-    revenue_rows: List[dict] = []
-    total_revenue_usd = 0.0
-    for code in sorted(revenue_by_currency):
-        fees_native = revenue_by_currency[code]
-        fees_usd = convert_to_usdt(fees_native, code, fx) or 0.0
-        revenue_rows.append({
-            "currency": code,
-            "fees": round(fees_native, 4),
-            "fees_usd": round(fees_usd, 2),
-        })
-        total_revenue_usd += fees_usd
-
-    # KPIs — total volume USD + treasury USD (sum of balance in-range).
-    total_volume_usd = 0.0
-    for o in orders:
-        v = convert_to_usdt(o.get("amount_from", 0), o.get("from_code"), fx) or 0.0
-        total_volume_usd += v
-    treasury_usd = 0.0
-    for r in funds_rows:
-        b_usd = convert_to_usdt(r["balance"], r["currency"], fx) or 0.0
-        treasury_usd += b_usd
-
-    kpis = {
-        "total_orders": total_orders,
-        "gross_volume_usd": round(total_volume_usd, 2),
-        "revenue_usd": round(total_revenue_usd, 2),
-        "treasury_usd": round(treasury_usd, 2),
-    }
+    revenue_rows, total_revenue_usd, total_orders = await _closing_revenue_rows(
+        orders, rate_by_pair, fx,
+    )
+    kpis = _closing_kpis(orders, funds_rows, fx, total_orders, total_revenue_usd)
 
     pdf_bytes = generate_company_closing_pdf(
         since=since or "", until=until or "",
@@ -805,15 +870,7 @@ async def export_company_closing_pdf(
             "revenue_usd": kpis["revenue_usd"],
         },
     )
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
-    range_slug = ""
-    if since and until:
-        range_slug = f"_{since}_{until}"
-    elif since:
-        range_slug = f"_desde_{since}"
-    elif until:
-        range_slug = f"_hasta_{until}"
-    filename = f"cierre_empresa{range_slug}_{ts}.pdf"
+    filename = _closing_filename(since, until)
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",

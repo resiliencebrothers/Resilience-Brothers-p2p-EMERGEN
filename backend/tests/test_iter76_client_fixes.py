@@ -33,10 +33,12 @@ if not MONGO_URL or not DB_NAME:
             if line.startswith("DB_NAME="):
                 DB_NAME = line.split("=", 1)[1].strip()
 
-NORMAL = {"session_token": "test_session_normal_X"}
-VIP = {"session_token": "test_session_vip_X"}
-EMPLOYEE = {"session_token": "test_session_employee_X"}
-ADMIN = {"session_token": "test_session_admin_X"}
+from conftest import ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, EMPLOYEE_TOKEN
+
+NORMAL = {"session_token": NORMAL_TOKEN}
+VIP = {"session_token": VIP_TOKEN}
+EMPLOYEE = {"session_token": EMPLOYEE_TOKEN}
+ADMIN = {"session_token": ADMIN_TOKEN}
 
 
 # ============================================================
@@ -179,7 +181,7 @@ def test_me_transactions_exposes_payout_hash_and_explorer():
         r = requests.get(
             f"{API}/me/transactions",
             params={"direction": "out"},
-            cookies={"session_token": "test_session_normal_X"},
+            cookies=NORMAL,
         )
         assert r.status_code == 200, r.text
         items = r.json()["items"]
@@ -196,11 +198,14 @@ def test_me_transactions_exposes_payout_hash_and_explorer():
 
 def test_me_transactions_withdrawal_exposes_explorer_url_from_stored_network():
     """For withdrawals we store `crypto_network` on the doc directly (no
-    inference from delivery_details needed). Verify the explorer URL is
-    built for supported networks and empty for unsupported ones."""
+    inference from delivery_details needed). Since iter115 capital withdrawals
+    live in "Depósitos y Retiros" and are EXCLUDED from the client's personal
+    register — the explorer URL is still built for the ADMIN register."""
+    from datetime import datetime, timezone
     cli = MongoClient(MONGO_URL)
     coll = cli[DB_NAME].withdrawals
     with_id = f"iter76_wd_{uuid.uuid4().hex[:8]}"
+    now_iso = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": with_id,
         "user_id": "user_test_normal01",
@@ -214,18 +219,30 @@ def test_me_transactions_withdrawal_exposes_explorer_url_from_stored_network():
         "beneficiary_name": "Iter76",
         "status": "paid",
         "payout_tx_hash": "0x" + "a" * 62,
-        "created_at": "2026-02-17T10:00:00+00:00",
-        "updated_at": "2026-02-17T11:00:00+00:00",
+        "created_at": now_iso,
+        "updated_at": now_iso,
     }
     coll.insert_one(doc)
     try:
+        # iter115 — withdrawals must NOT appear in the user-scope register.
         r = requests.get(
             f"{API}/me/transactions",
             params={"direction": "out"},
-            cookies={"session_token": "test_session_normal_X"},
+            cookies=NORMAL,
         )
         assert r.status_code == 200
-        matches = [it for it in r.json()["items"] if it.get("ref_id") == with_id]
+        assert [it for it in r.json()["items"] if it.get("ref_id") == with_id] == []
+
+        # Admin register still surfaces the stored network + explorer URL.
+        r_adm = requests.get(
+            f"{API}/admin/transactions",
+            params={"direction": "out", "limit": 200},
+            cookies={"session_token": ADMIN_TOKEN},
+        )
+        assert r_adm.status_code == 200
+        payload = r_adm.json()
+        items = payload["items"] if isinstance(payload, dict) else payload
+        matches = [it for it in items if it.get("ref_id") == with_id]
         assert len(matches) == 1
         assert matches[0]["explorer_url"] == f"https://bscscan.com/tx/{doc['payout_tx_hash']}"
         assert matches[0]["crypto_network"] == "BEP20"
@@ -263,7 +280,7 @@ def test_me_transactions_no_explorer_url_for_transfer_payouts():
         r = requests.get(
             f"{API}/me/transactions",
             params={"direction": "out"},
-            cookies={"session_token": "test_session_normal_X"},
+            cookies=NORMAL,
         )
         assert r.status_code == 200
         matches = [it for it in r.json()["items"] if it.get("ref_id") == order_id]

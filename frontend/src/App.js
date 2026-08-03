@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, useLocation, useNavigate, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
+import { toast } from "sonner";
 import axios from "axios";
 import Landing from "@/pages/Landing";
 import VerifyEmail from "@/pages/VerifyEmail";
@@ -20,6 +21,27 @@ import LiveToaster from "@/components/LiveToaster";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 axios.defaults.withCredentials = true;
+
+// iter117 — Global safety net: any staff mutation blocked because the actor
+// hasn't enabled 2FA returns 412 TOTP_SETUP_REQUIRED. Surface a single toast
+// with a shortcut to the security page so the flow is obvious app-wide. Local
+// component handlers still run (we re-reject the promise).
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const detail = error?.response?.data?.detail;
+    if (error?.response?.status === 412 && detail?.code === "TOTP_SETUP_REQUIRED") {
+      toast.error(detail.message || "Activa la verificación en dos pasos (2FA) para continuar.", {
+        id: "totp-setup-required",
+        action: {
+          label: "Activar 2FA",
+          onClick: () => { window.location.href = detail.setup_url || "/dashboard/security"; },
+        },
+      });
+    }
+    return Promise.reject(error);
+  }
+);
 
 function AppRouter() {
   const location = useLocation();

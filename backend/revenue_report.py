@@ -42,10 +42,12 @@ def _new_bucket(key: str) -> dict:
         "p2p_profit_usdt": 0.0,
         "marketplace_profit_usdt": 0.0,
         "conversion_fees_usdt": 0.0,
+        "vip_batches_profit_usdt": 0.0,
         "total_profit_usdt": 0.0,
         "orders": 0,
         "deliveries": 0,
         "conversions": 0,
+        "vip_batch_items": 0,
         "volume_usdt": 0.0,
     }
 
@@ -87,25 +89,46 @@ def _accumulate_conversion_fees(buckets: dict, fee_entries, granularity: str) ->
         b["total_profit_usdt"] += fee
 
 
+def _accumulate_vip_batch_margins(buckets: dict, rows, granularity: str) -> None:
+    """iter113 — bucket the platform margin realized on approved VIP batch
+    items (pair-based, tasa VIP vs tasa real) per period, by reviewed_at."""
+    for row in rows or []:
+        ts = row.get("reviewed_at") or ""
+        b = buckets.setdefault(_bucket_key(ts, granularity), _new_bucket(_bucket_key(ts, granularity)))
+        try:
+            m = float(row.get("margin_usdt") or 0.0)
+        except (TypeError, ValueError):
+            m = 0.0
+        if m == 0:
+            continue
+        b["vip_batch_items"] += 1
+        b["vip_batches_profit_usdt"] += m
+        b["total_profit_usdt"] += m
+
+
 def build_buckets(orders, redemptions, profit_per_order_usdt, granularity: str,
-                   conversion_fees: list = None):
-    """Group orders + delivered redemptions + USDT conversion fees into
-    day/month buckets.
+                   conversion_fees: list = None, vip_batch_margins: list = None):
+    """Group orders + delivered redemptions + USDT conversion fees +
+    VIP batch margins into day/month buckets.
 
     profit_per_order_usdt: dict mapping order_id -> profit_usdt.
     conversion_fees: optional list of `audit_log` rows for `vip.convert` with
                      `details.usdt_fee > 0` (iter55.28).
+    vip_batch_margins: optional list of approved `vip_batch_items` rows with
+                       `margin_usdt` (iter113).
     Returns sorted list (most recent first) of per-period aggregates.
     """
     buckets: dict = {}
     _accumulate_orders(buckets, orders, profit_per_order_usdt, granularity)
     _accumulate_redemptions(buckets, redemptions, granularity)
     _accumulate_conversion_fees(buckets, conversion_fees, granularity)
+    _accumulate_vip_batch_margins(buckets, vip_batch_margins, granularity)
 
     rows = []
     for v in buckets.values():
         for k in ("p2p_profit_usdt", "marketplace_profit_usdt",
-                  "conversion_fees_usdt", "total_profit_usdt", "volume_usdt"):
+                  "conversion_fees_usdt", "vip_batches_profit_usdt",
+                  "total_profit_usdt", "volume_usdt"):
             v[k] = round(v[k], 4)
         rows.append(v)
     rows.sort(key=lambda x: x["bucket"], reverse=True)
@@ -126,13 +149,15 @@ def revenue_monthly_csv(rows, period_label: str) -> bytes:
     w.writerow([])
     w.writerow(["Fecha", "Órdenes", "Volumen (USDT)", "Ganancia P2P (USDT)",
                 "Ganancia Marketplace (USDT)", "Comisiones USDT",
-                "Conversiones", "Ganancia Total (USDT)"])
-    tot_p2p = tot_mkt = tot_fees = tot_total = tot_vol = 0.0
+                "Conversiones", "Ganancia Lotes VIP (USDT)",
+                "Ganancia Total (USDT)"])
+    tot_p2p = tot_mkt = tot_fees = tot_vip = tot_total = tot_vol = 0.0
     tot_ords = tot_convs = 0
     for r in rows:
         tot_p2p += r["p2p_profit_usdt"]
         tot_mkt += r["marketplace_profit_usdt"]
         tot_fees += r.get("conversion_fees_usdt", 0.0)
+        tot_vip += r.get("vip_batches_profit_usdt", 0.0)
         tot_total += r["total_profit_usdt"]
         tot_vol += r["volume_usdt"]
         tot_ords += r["orders"]
@@ -145,12 +170,13 @@ def revenue_monthly_csv(rows, period_label: str) -> bytes:
             f"{r['marketplace_profit_usdt']:.4f}",
             f"{r.get('conversion_fees_usdt', 0.0):.4f}",
             r.get("conversions", 0),
+            f"{r.get('vip_batches_profit_usdt', 0.0):.4f}",
             f"{r['total_profit_usdt']:.4f}",
         ])
     w.writerow([])
     w.writerow(["TOTAL", tot_ords, f"{tot_vol:.4f}", f"{tot_p2p:.4f}",
                 f"{tot_mkt:.4f}", f"{tot_fees:.4f}", tot_convs,
-                f"{tot_total:.4f}"])
+                f"{tot_vip:.4f}", f"{tot_total:.4f}"])
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -206,6 +232,7 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
         Paragraph("Ganancia P2P", meta),
         Paragraph("Marketplace", meta),
         Paragraph("Comisiones USDT", meta),
+        Paragraph("Lotes VIP", meta),
         Paragraph("Ganancia Total", meta),
         Paragraph("Volumen", meta),
         Paragraph("Órdenes", meta),
@@ -213,11 +240,12 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
         Paragraph(f"{totals['p2p']:.2f} USDT", big),
         Paragraph(f"{totals['marketplace']:.2f} USDT", big),
         Paragraph(f"{totals.get('conversion_fees', 0.0):.2f} USDT", big),
+        Paragraph(f"{totals.get('vip_batches', 0.0):.2f} USDT", big),
         Paragraph(f"{totals['total']:.2f} USDT", big),
         Paragraph(f"{totals['volume']:.2f} USDT", big),
         Paragraph(f"{totals['orders']}", big),
     ]]
-    tbl = Table(totals_data, colWidths=[1.25*inch]*6)
+    tbl = Table(totals_data, colWidths=[1.07*inch]*7)
     tbl.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,-1), PANEL),
         ("BOX", (0,0), (-1,-1), 0.5, BORDER),
@@ -240,7 +268,7 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
 
     # Daily table
     head = ["Fecha", "Órdenes", "Volumen USDT", "P2P", "Marketplace",
-            "Fees USDT", "Total"]
+            "Fees USDT", "Lotes VIP", "Total"]
     data = [head]
     for r in rows:
         data.append([
@@ -250,17 +278,18 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
             f"{r['p2p_profit_usdt']:.2f}",
             f"{r['marketplace_profit_usdt']:.2f}",
             f"{r.get('conversion_fees_usdt', 0.0):.2f}",
+            f"{r.get('vip_batches_profit_usdt', 0.0):.2f}",
             f"{r['total_profit_usdt']:.2f}",
         ])
-    tbl2 = Table(data, colWidths=[1.1*inch, 0.7*inch, 1.1*inch, 0.9*inch,
-                                    1.1*inch, 0.9*inch, 0.9*inch])
+    tbl2 = Table(data, colWidths=[1.0*inch, 0.65*inch, 1.0*inch, 0.85*inch,
+                                    1.0*inch, 0.85*inch, 0.85*inch, 0.85*inch])
     tbl2.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), BRAND_PURPLE),
         ("TEXTCOLOR", (0,0), (-1,0), TEXT),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
         ("BACKGROUND", (0,1), (-1,-1), PANEL),
         ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
-        ("TEXTCOLOR", (6,1), (6,-1), GREEN),  # total column green
+        ("TEXTCOLOR", (7,1), (7,-1), GREEN),  # total column green
         ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
         ("FONTSIZE", (0,0), (-1,-1), 9),
         ("ALIGN", (1,0), (-1,-1), "RIGHT"),
@@ -380,18 +409,8 @@ def _revenue_chart(rows) -> Drawing:
 
 # ---------------- Multi-month analytics report (iter55.36l) ----------------
 
-def revenue_analytics_csv(monthly_rows, summary: dict, period_label: str) -> bytes:
-    """CSV for the operator's "Estadísticas" analytics dialog. Includes:
-      • a header block with the 3 top-line highlights + category totals
-      • a monthly comparison table sorted DESC (freshest first)
-
-    The two sections are separated by a blank line so spreadsheets keep them
-    distinct. UTF-8 with BOM so Excel handles Spanish accents correctly.
-    """
-    buf = StringIO()
-    w = csv.writer(buf)
-
-    # --- Highlights block ---
+def _write_analytics_highlights(w, monthly_rows, summary: dict) -> None:
+    """Top-line highlights + category totals block."""
     top_month = max(monthly_rows, key=lambda r: r.get("total_profit_usdt", 0),
                     default=None) if monthly_rows else None
     top_pair = (summary.get("by_pair") or [None])[0]
@@ -400,14 +419,11 @@ def revenue_analytics_csv(monthly_rows, summary: dict, period_label: str) -> byt
         ("Intercambio P2P",  summary.get("p2p_profit_usdt", 0.0)),
         ("Marketplace",      summary.get("marketplace_profit_usdt", 0.0)),
         ("Conversiones",     summary.get("conversion_fees_usdt", 0.0)),
+        ("Lotes VIP",        summary.get("vip_batches_profit_usdt", 0.0)),
     ]
     abs_total = sum(abs(v) for _, v in cats) or 1.0
     cats_sorted = sorted(cats, key=lambda x: abs(x[1]), reverse=True)
 
-    w.writerow(["Reporte de Ingresos — Analítica comparativa"])
-    w.writerow(["Período", period_label])
-    w.writerow(["Generado", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")])
-    w.writerow([])
     w.writerow(["Mejor mes",
                  top_month["bucket"] if top_month else "—",
                  f"{top_month['total_profit_usdt']:.2f} USDT" if top_month else ""])
@@ -424,20 +440,42 @@ def revenue_analytics_csv(monthly_rows, summary: dict, period_label: str) -> byt
     for name, val in cats_sorted:
         share = abs(val) / abs_total * 100
         w.writerow([name, f"{val:.2f}", f"{share:.1f}%"])
-    w.writerow([])
 
-    # --- Monthly table ---
+
+def _write_analytics_monthly_table(w, monthly_rows) -> None:
+    """Monthly comparison table sorted DESC (freshest first)."""
     w.writerow(["Mes", "P2P (USDT)", "Marketplace (USDT)",
-                "Conversiones (USDT)", "Total (USDT)", "Órdenes"])
+                "Conversiones (USDT)", "Lotes VIP (USDT)", "Total (USDT)", "Órdenes"])
     for r in sorted(monthly_rows, key=lambda x: x["bucket"], reverse=True):
         w.writerow([
             r["bucket"],
             f"{r.get('p2p_profit_usdt', 0.0):.2f}",
             f"{r.get('marketplace_profit_usdt', 0.0):.2f}",
             f"{r.get('conversion_fees_usdt', 0.0):.2f}",
+            f"{r.get('vip_batches_profit_usdt', 0.0):.2f}",
             f"{r.get('total_profit_usdt', 0.0):.2f}",
             r.get("orders", 0),
         ])
+
+
+def revenue_analytics_csv(monthly_rows, summary: dict, period_label: str) -> bytes:
+    """CSV for the operator's "Estadísticas" analytics dialog. Includes:
+      • a header block with the 3 top-line highlights + category totals
+      • a monthly comparison table sorted DESC (freshest first)
+
+    The two sections are separated by a blank line so spreadsheets keep them
+    distinct. UTF-8 with BOM so Excel handles Spanish accents correctly.
+    """
+    buf = StringIO()
+    w = csv.writer(buf)
+
+    w.writerow(["Reporte de Ingresos — Analítica comparativa"])
+    w.writerow(["Período", period_label])
+    w.writerow(["Generado", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")])
+    w.writerow([])
+    _write_analytics_highlights(w, monthly_rows, summary)
+    w.writerow([])
+    _write_analytics_monthly_table(w, monthly_rows)
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -516,6 +554,7 @@ def _analytics_prepare(monthly_rows: list, summary: dict):
         ("Intercambio P2P",  summary.get("p2p_profit_usdt", 0.0)),
         ("Marketplace",      summary.get("marketplace_profit_usdt", 0.0)),
         ("Conversiones",     summary.get("conversion_fees_usdt", 0.0)),
+        ("Lotes VIP",        summary.get("vip_batches_profit_usdt", 0.0)),
     ]
     abs_total = sum(abs(v) for _, v in cats) or 1.0
     cats_sorted = sorted(cats, key=lambda x: abs(x[1]), reverse=True)
@@ -595,7 +634,7 @@ def _analytics_category_table(cats_sorted, abs_total) -> Table:
 
 def _analytics_monthly_table(monthly_rows) -> Table:
     """Full monthly comparison table sorted DESC (freshest first)."""
-    head = ["Mes", "P2P", "Marketplace", "Conversiones", "Total", "Órdenes"]
+    head = ["Mes", "P2P", "Marketplace", "Conversiones", "Lotes VIP", "Total", "Órdenes"]
     data = [head]
     for r in sorted(monthly_rows, key=lambda x: x["bucket"], reverse=True):
         data.append([
@@ -603,18 +642,19 @@ def _analytics_monthly_table(monthly_rows) -> Table:
             f"{r.get('p2p_profit_usdt', 0.0):.2f}",
             f"{r.get('marketplace_profit_usdt', 0.0):.2f}",
             f"{r.get('conversion_fees_usdt', 0.0):.2f}",
+            f"{r.get('vip_batches_profit_usdt', 0.0):.2f}",
             f"{r.get('total_profit_usdt', 0.0):.2f}",
             str(r.get("orders", 0)),
         ])
-    mtbl = Table(data, colWidths=[1.1*inch, 1.1*inch, 1.3*inch, 1.4*inch,
-                                    1.1*inch, 0.8*inch])
+    mtbl = Table(data, colWidths=[1.0*inch, 1.0*inch, 1.15*inch, 1.2*inch,
+                                    1.0*inch, 1.0*inch, 0.75*inch])
     mtbl.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), BRAND_PURPLE),
         ("TEXTCOLOR", (0,0), (-1,0), TEXT),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
         ("BACKGROUND", (0,1), (-1,-1), PANEL),
         ("TEXTCOLOR", (0,1), (-1,-1), TEXT),
-        ("TEXTCOLOR", (4,1), (4,-1), GREEN),
+        ("TEXTCOLOR", (5,1), (5,-1), GREEN),
         ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
         ("FONTSIZE", (0,0), (-1,-1), 9),
         ("ALIGN", (1,0), (-1,-1), "RIGHT"),

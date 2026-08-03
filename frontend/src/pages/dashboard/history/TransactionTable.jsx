@@ -1,67 +1,197 @@
 /**
  * iter83 — TransactionTable
  *
- * Renders the paginated ledger table + the row-detail modal. Owns the
- * "selected row" local state because it's a purely UI concern that lives
- * and dies with the table (no upstream state consumer).
+ * Renders the paginated ledger table + the row-detail modal.
  *
- * Extracted from the original MyTransactions.jsx (iter78/iter79) with
- * behaviour-preserving edits only — CSS classes, testids, dialog wiring
- * and copy are byte-identical.
+ * Jun 2026 restructure (owner request): the table now mirrors the Orders
+ * table semantics — Par / Envías / Recibes columns — and each row carries a
+ * unified TYPE: Intercambio (order / batch / payout rows), Conversión
+ * (internal balance conversions), Retiro (withdrawals) and Depósito
+ * (deposits). Currency pair labels render horizontally (nowrap).
  */
-import { useState } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import CurrencyIcon from "@/components/CurrencyIcon";
+import CurrencyPairIcon from "@/components/CurrencyPairIcon";
 import {
   Receipt, ArrowDown, ArrowUp, ArrowRightLeft, Download, FileText, X,
 } from "lucide-react";
 
-// Row-style resolver. Keeps colour + icon + label together per direction.
-export function directionMeta(direction, t) {
-  if (direction === "in") {
-    return { color: "#22C55E", icon: ArrowDown, label: t("myTransactions.table.in") };
-  }
-  if (direction === "out") {
-    return { color: "#EF4444", icon: ArrowUp, label: t("myTransactions.table.out") };
-  }
-  return { color: "#8B5CF6", icon: ArrowRightLeft, label: t("myTransactions.table.conversion") };
+// Unified movement kind resolver (owner semantics, Jun 2026):
+//   exchange   → rows born from a P2P order / VIP batch (pair available)
+//   conversion → internal balance conversion (Convertir Saldos)
+//   deposit    → plain inbound movement
+//   withdrawal → plain outbound movement
+export function txKind(it) {
+  if (it.direction === "conversion") return "conversion";
+  if (["order", "order_payout", "vip_batch_item"].includes(it.ref_type)) return "exchange";
+  return it.direction === "in" ? "deposit" : "withdrawal";
 }
+
+export function kindMeta(it, t) {
+  const kind = txKind(it);
+  if (kind === "exchange") {
+    return { kind, color: "#8B5CF6", icon: ArrowRightLeft, label: t("myTransactions.table.kindExchange") };
+  }
+  if (kind === "conversion") {
+    return { kind, color: "#8B5CF6", icon: ArrowRightLeft, label: t("myTransactions.table.conversion") };
+  }
+  if (kind === "deposit") {
+    return { kind, color: "#22C55E", icon: ArrowDown, label: t("myTransactions.table.kindDeposit") };
+  }
+  return { kind, color: "#EF4444", icon: ArrowUp, label: t("myTransactions.table.kindWithdrawal") };
+}
+
+function hasPair(it) {
+  return Boolean(it.from_code && it.to_code);
+}
+
+const fmt = (n, d = 4) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: d });
 
 export default function TransactionTable({ items, loading, hasFilters }) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState(null);
 
+  // iter84 — Owner request (Feb 2026): horizontal scrollbar mirrored at the
+  // top of the table so users notice it, plus a proper vertical scroll on the
+  // table body (not the whole viewport). Columns reordered to Par-first and
+  // Fecha-last so trading identity is the leading data point.
+  //
+  // We render a *custom* top scrollbar (visible on every browser incl. mobile
+  // where native scrollbars are auto-hidden) with a draggable purple thumb.
+  // Body scroll and top scrollbar stay in sync bidirectionally.
+  const bodyScrollRef = useRef(null);
+  const tableRef = useRef(null);
+  const trackRef = useRef(null);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [thumbLeft, setThumbLeft] = useState(0);
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    const measure = () => {
+      if (tableRef.current && bodyScrollRef.current) {
+        setContentWidth(tableRef.current.scrollWidth);
+        setViewportWidth(bodyScrollRef.current.clientWidth);
+      }
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [items, loading]);
+
+  const overflow = Math.max(0, contentWidth - viewportWidth);
+  const hasOverflow = overflow > 4;
+  const trackW = viewportWidth || 0;
+  const thumbW = hasOverflow ? Math.max(40, (trackW * trackW) / (contentWidth || 1)) : 0;
+  const maxThumbLeft = Math.max(0, trackW - thumbW);
+
+  const onBodyScroll = useCallback(() => {
+    const body = bodyScrollRef.current;
+    if (!body) return;
+    const ratio = overflow > 0 ? body.scrollLeft / overflow : 0;
+    setThumbLeft(ratio * maxThumbLeft);
+  }, [overflow, maxThumbLeft]);
+
+  const scrollToThumb = useCallback((nextLeft) => {
+    const clamped = Math.max(0, Math.min(maxThumbLeft, nextLeft));
+    setThumbLeft(clamped);
+    const body = bodyScrollRef.current;
+    if (body && maxThumbLeft > 0) {
+      body.scrollLeft = (clamped / maxThumbLeft) * overflow;
+    }
+  }, [maxThumbLeft, overflow]);
+
+  // Drag handlers on the custom thumb (mouse + touch)
+  useEffect(() => {
+    if (!dragging) return;
+    const state = { startX: dragging.startX, startLeft: dragging.startLeft };
+    const onMove = (e) => {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      scrollToThumb(state.startLeft + (clientX - state.startX));
+    };
+    const onUp = () => setDragging(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+  }, [dragging, scrollToThumb]);
+
+  const onThumbDown = (e) => {
+    e.preventDefault();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    setDragging({ startX: clientX, startLeft: thumbLeft });
+  };
+
+  const onTrackClick = (e) => {
+    if (!trackRef.current) return;
+    const rect = trackRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    // Center the thumb around the click position
+    scrollToThumb(clickX - thumbW / 2);
+  };
+
   return (
     <>
-      <div className="tactile-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-white/10 bg-[#0a0a0a]">
+      <div className="tactile-card overflow-hidden" data-testid="my-tx-table-wrapper">
+        {/* Custom horizontal scrollbar mirrored on top of the table */}
+        {hasOverflow && (
+          <div
+            ref={trackRef}
+            onClick={onTrackClick}
+            className="relative h-3 bg-[#0a0a0a] border-b border-[#8B5CF6]/20 cursor-pointer select-none"
+            data-testid="my-tx-top-scrollbar"
+            aria-hidden="true"
+          >
+            <div
+              onMouseDown={onThumbDown}
+              onTouchStart={onThumbDown}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-0.5 bottom-0.5 rounded-full bg-[#8B5CF6] hover:bg-[#A78BFA] transition-colors cursor-grab active:cursor-grabbing shadow-[0_0_8px_rgba(139,92,246,0.5)]"
+              style={{ left: `${thumbLeft}px`, width: `${thumbW}px` }}
+              data-testid="my-tx-top-scrollbar-thumb"
+            />
+          </div>
+        )}
+        {/* Actual scrollable body: vertical scroll bound to the table, not the page */}
+        <div
+          ref={bodyScrollRef}
+          onScroll={onBodyScroll}
+          className="tx-body-scroll overflow-x-auto overflow-y-auto max-h-[70vh]"
+          data-testid="my-tx-body-scroll"
+        >
+          <table ref={tableRef} className="w-full text-sm">
+            <thead className="border-b border-white/10 bg-[#0a0a0a] sticky top-0 z-10">
               <tr className="text-left">
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.date")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.pair")}</th>
                 <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.type")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.currency")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500 text-right">{t("myTransactions.table.amount")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.holder")}</th>
-                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.method")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500 text-right">{t("myTransactions.table.sends")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500 text-right">{t("myTransactions.table.receives")}</th>
                 <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.status")}</th>
+                <th className="px-3 py-3 micro-label text-neutral-500">{t("myTransactions.table.date")}</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan="7" className="text-center text-neutral-500 py-8">
+                  <td colSpan="6" className="text-center text-neutral-500 py-8">
                     {t("myTransactions.table.loading")}
                   </td>
                 </tr>
               )}
               {!loading && items.length === 0 && (
                 <tr>
-                  <td colSpan="7" className="text-center text-neutral-500 py-8">
+                  <td colSpan="6" className="text-center text-neutral-500 py-8">
                     {hasFilters ? t("myTransactions.table.emptyFiltered") : t("myTransactions.table.empty")}
                   </td>
                 </tr>
@@ -84,7 +214,7 @@ export default function TransactionTable({ items, loading, hasFilters }) {
               <Receipt className="w-5 h-5 text-[#8B5CF6]" />
               {t("myTransactions.detail.title")}
               {selected && (() => {
-                const meta = directionMeta(selected.direction, t);
+                const meta = kindMeta(selected, t);
                 const Icon = meta.icon;
                 return (
                   <span
@@ -105,9 +235,11 @@ export default function TransactionTable({ items, loading, hasFilters }) {
 }
 
 function TransactionRow({ it, onSelect, t }) {
-  const meta = directionMeta(it.direction, t);
+  const meta = kindMeta(it, t);
   const Icon = meta.icon;
-  const isConversion = it.direction === "conversion";
+  const pair = hasPair(it);
+  const isConversion = meta.kind === "conversion";
+  const showFlow = pair && (isConversion || meta.kind === "exchange");
   return (
     <tr
       data-testid={`my-tx-row-${it.ref_id}`}
@@ -115,16 +247,37 @@ function TransactionRow({ it, onSelect, t }) {
       onClick={() => onSelect(it)}
       className="border-b border-white/5 hover:bg-[#8B5CF6]/5 cursor-pointer transition-colors"
     >
-      <td className="px-3 py-2 font-mono text-xs text-neutral-400">
-        {new Date(it.created_at).toLocaleString()}
+      <td className="px-3 py-2 whitespace-nowrap">
+        {showFlow ? (
+          <CurrencyPairIcon from={it.from_code} to={it.to_code} size="sm" showLabel className="text-xs" />
+        ) : (
+          <span className="inline-flex items-center gap-1.5 font-mono text-[#8B5CF6] whitespace-nowrap">
+            <CurrencyIcon code={it.currency} size="sm" />
+            {it.currency}
+          </span>
+        )}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 whitespace-nowrap">
         <span
           className="inline-flex items-center gap-1 text-xs font-bold uppercase"
           style={{ color: meta.color }}
         >
           <Icon className="w-3 h-3" /> {meta.label}
         </span>
+        {meta.kind === "exchange" && it.direction === "in" && (
+          <div className="mt-0.5">
+            <span className="inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#22C55E]/10 text-[#22C55E] border border-[#22C55E]/30 font-mono">
+              {t("myTransactions.table.in")}
+            </span>
+          </div>
+        )}
+        {meta.kind === "exchange" && it.direction === "out" && (
+          <div className="mt-0.5">
+            <span className="inline-flex items-center px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider bg-[#EF4444]/10 text-[#EF4444] border border-[#EF4444]/30 font-mono">
+              {t("myTransactions.table.out")}
+            </span>
+          </div>
+        )}
         {isConversion && it.conversion_subtype === "small_balance" && (
           <div className="mt-0.5">
             <span
@@ -136,67 +289,82 @@ function TransactionRow({ it, onSelect, t }) {
           </div>
         )}
       </td>
-      <td className="px-3 py-2">
-        {isConversion ? (
-          <span className="inline-flex items-center gap-1 font-mono text-xs">
-            <CurrencyIcon code={it.from_code} size="sm" />
-            <span className="text-neutral-300">{it.from_code}</span>
-            <ArrowRightLeft className="w-3 h-3 text-[#8B5CF6] mx-0.5" />
-            <CurrencyIcon code={it.to_code} size="sm" />
-            <span className="text-neutral-300">{it.to_code}</span>
-          </span>
+      <td className="px-3 py-2 font-mono text-right whitespace-nowrap">
+        {showFlow ? (
+          <span className="text-neutral-300">{fmt(it.amount_from ?? it.amount)} {it.from_code}</span>
+        ) : meta.kind === "withdrawal" ? (
+          <span className="text-[#EF4444]">-{fmt(it.amount)} {it.currency}</span>
         ) : (
-          <span className="inline-flex items-center gap-1.5 font-mono text-[#8B5CF6]">
-            <CurrencyIcon code={it.currency} size="sm" />
-            {it.currency}
-          </span>
+          <span className="text-neutral-600">—</span>
         )}
       </td>
-      <td className="px-3 py-2 font-mono text-right">
-        {isConversion ? (
-          <span className="text-neutral-300">
-            {Number(it.amount_from || it.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-            <span className="text-neutral-600 mx-1">→</span>
-            <span className="text-[#8B5CF6]">
-              {Number(it.amount_to || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}
-            </span>
-          </span>
-        ) : it.amount.toLocaleString()}
+      <td className="px-3 py-2 font-mono text-right whitespace-nowrap">
+        {showFlow ? (
+          <span className="text-[#8B5CF6]">{fmt(it.amount_to)} {it.to_code}</span>
+        ) : meta.kind === "deposit" ? (
+          <span className="text-[#22C55E]">+{fmt(it.amount)} {it.currency}</span>
+        ) : (
+          <span className="text-neutral-600">—</span>
+        )}
       </td>
-      <td className="px-3 py-2">{it.holder_name || "—"}</td>
-      <td className="px-3 py-2 text-xs uppercase text-neutral-500">
-        {isConversion ? t("myTransactions.table.methodSelfConvert") : it.method}
+      <td className="px-3 py-2 text-xs uppercase text-neutral-500 whitespace-nowrap">{it.status}</td>
+      <td className="px-3 py-2 font-mono text-xs text-neutral-400 whitespace-nowrap">
+        {new Date(it.created_at).toLocaleString()}
       </td>
-      <td className="px-3 py-2 text-xs uppercase text-neutral-500">{it.status}</td>
     </tr>
   );
 }
 
 function TransactionDetail({ selected, t }) {
+  const meta = kindMeta(selected, t);
+  const pair = hasPair(selected) && meta.kind === "exchange";
   return (
     <div className="space-y-4 text-sm">
       {selected.direction === "conversion" ? (
         <ConversionDetailBlock selected={selected} t={t} />
       ) : (
         <div className="grid grid-cols-2 gap-3 border border-white/5 p-4 bg-[#0a0a0a]">
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.currency")}</div>
-            <div className="font-mono text-[#8B5CF6] text-lg flex items-center gap-2">
-              <CurrencyIcon code={selected.currency} size="md" />
-              {selected.currency}
-            </div>
-          </div>
-          <div>
-            <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.amount")}</div>
-            <div className="font-mono text-xl">{selected.amount.toLocaleString()}</div>
-          </div>
+          {pair ? (
+            <>
+              <div className="col-span-2">
+                <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.table.pair")}</div>
+                <CurrencyPairIcon from={selected.from_code} to={selected.to_code} size="md" showLabel />
+              </div>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.table.sends")}</div>
+                <div className="font-mono text-lg">{fmt(selected.amount_from)} {selected.from_code}</div>
+              </div>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.table.receives")}</div>
+                <div className="font-mono text-lg text-[#8B5CF6]">{fmt(selected.amount_to)} {selected.to_code}</div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.currency")}</div>
+                <div className="font-mono text-[#8B5CF6] text-lg flex items-center gap-2">
+                  <CurrencyIcon code={selected.currency} size="md" />
+                  {selected.currency}
+                </div>
+              </div>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.amount")}</div>
+                <div className="font-mono text-xl">{selected.amount.toLocaleString()}</div>
+              </div>
+            </>
+          )}
           <div>
             <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.holder")}</div>
             <div className="font-medium">{selected.holder_name || "—"}</div>
           </div>
           <div>
             <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.method")}</div>
-            <div className="uppercase text-xs">{selected.method}</div>
+            <div className="uppercase text-xs">
+              {selected.ref_type === "vip_batch_item"
+                ? t("myTransactions.table.methodBatch")
+                : selected.method}
+            </div>
           </div>
           <div>
             <div className="micro-label text-neutral-500 mb-1">{t("myTransactions.detail.status")}</div>

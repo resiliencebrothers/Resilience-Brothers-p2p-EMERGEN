@@ -17,10 +17,7 @@ import pytest
 import httpx
 
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")
-NORMAL_TOKEN = "test_session_normal_X"
-VIP_TOKEN = "test_session_vip_X"
-EMPLOYEE_TOKEN = "test_session_employee_X"
-ADMIN_TOKEN = "test_session_admin_X"
+from conftest import NORMAL_TOKEN, VIP_TOKEN, EMPLOYEE_TOKEN, ADMIN_TOKEN
 
 
 def h(token: str) -> dict:

@@ -205,11 +205,20 @@ class TestVipConvert:
                             "vip_balances.USDT": ""}},
             )
 
-    def test_normal_role_can_convert_uses_rate_normal(self):
-        """iter50 — normal users (non-VIP) are also allowed to convert and
-        the backend uses `rate_normal` instead of `rate_vip`."""
+    def test_normal_role_can_convert_uses_real_rate(self):
+        """iter50 — normal users (non-VIP) are also allowed to convert.
+        iter101 — TIER pricing: normals convert at `real_rate` (the
+        operator's true market exit rate), NOT `rate_normal`; fallback to
+        `rate_normal` only when the row lacks `real_rate`."""
         db = MongoClient(MONGO_URL)[DB_NAME]
         uid = "user_test_normal01"
+        # Pin the rate row so the assertion doesn't depend on ambient state.
+        prev_rate = db.rates.find_one({"from_code": "USDT", "to_code": "CUP"})
+        db.rates.update_one(
+            {"from_code": "USDT", "to_code": "CUP"},
+            {"$set": {"rate_normal": 380.0, "rate_vip": 395.0, "real_rate": 410.0}},
+            upsert=True,
+        )
         db.users.update_one(
             {"user_id": uid},
             {"$set": {"vip_balances.USDT": 10.0, "vip_balances.CUP": 0.0}},
@@ -223,11 +232,20 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            # rate_normal=380 (vs rate_vip=395) — normals get the worse rate.
+            # real_rate=410 (vs rate_vip=395 / rate_normal=380) — normals
+            # convert at the operator's real market rate since iter101.
             # iter77 — Full equivalent delivered; fee 0.01 USDT charged separately.
-            assert body["rate"] == 380.0
-            assert body["amount_to"] == 380.0
+            assert body["rate"] == 410.0
+            assert body["amount_to"] == 410.0
         finally:
+            if prev_rate is not None:
+                db.rates.update_one(
+                    {"from_code": "USDT", "to_code": "CUP"},
+                    {"$set": {k: prev_rate.get(k) for k in
+                              ("rate_normal", "rate_vip", "real_rate")}},
+                )
+            else:
+                db.rates.delete_one({"from_code": "USDT", "to_code": "CUP"})
             db.users.update_one(
                 {"user_id": uid},
                 {"$unset": {"vip_balances.USDT": "",

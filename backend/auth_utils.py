@@ -45,6 +45,12 @@ def _verify_password(pw: str, hashed: str) -> bool:
         return False
 
 
+# SEC hardening (auditoría 28/7/2026) — precomputed hash used to equalize
+# response timing on login when the email has no account, so an attacker
+# cannot distinguish "no account" from "wrong password" by latency.
+_DUMMY_PASSWORD_HASH = _hash_password("timing-equalizer-not-a-real-password")
+
+
 # ---------- Session helpers ----------
 
 # iter55.37 — Security policy: ALL sessions are capped at 24 hours regardless
@@ -127,6 +133,7 @@ async def require_admin(request: Request) -> dict:
     user = await require_user(request)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
+    _enforce_staff_2fa_enabled(user, request)
     return user
 
 
@@ -135,7 +142,39 @@ async def require_staff(request: Request) -> dict:
     user = await require_user(request)
     if user.get("role") not in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Staff only")
+    _enforce_staff_2fa_enabled(user, request)
     return user
+
+
+# iter117 — Proactive 2FA-enrollment gate for staff mutations. Any admin or
+# employee performing a state-changing (POST/PUT/PATCH/DELETE) action must have
+# 2FA ENABLED, otherwise the request is blocked with 412 TOTP_SETUP_REQUIRED so
+# the frontend can route them to the setup page. GET reads stay allowed, and the
+# 2FA-setup + logout endpoints are explicitly exempt to avoid a lockout. This is
+# distinct from `_enforce_totp_step_up` (which also asks for a fresh code on the
+# most sensitive actions).
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_STAFF_2FA_EXEMPT_PREFIXES = ("/api/me/2fa/", "/api/auth/logout")
+
+
+def _enforce_staff_2fa_enabled(user: dict, request: Request) -> None:
+    if user.get("role") not in ("admin", "employee"):
+        return
+    if request.method not in _UNSAFE_METHODS:
+        return
+    path = request.url.path
+    if any(path.startswith(p) for p in _STAFF_2FA_EXEMPT_PREFIXES):
+        return
+    if not user.get("totp_enabled"):
+        raise HTTPException(
+            status_code=412,
+            detail={
+                "code": "TOTP_SETUP_REQUIRED",
+                "message": ("Debes activar la verificación en dos pasos (2FA) "
+                            "antes de realizar operaciones sensibles."),
+                "setup_url": "/dashboard/security",
+            },
+        )
 
 
 # iter55.16 — HTTP gate for per-staff permissions. The catalog + pure
@@ -156,6 +195,7 @@ async def require_permission(request: Request, code: str) -> dict:
         raise HTTPException(status_code=500, detail=f"unknown_permission_code:{code}")
 
     user = await require_user(request)
+    _enforce_staff_2fa_enabled(user, request)
     if _has_perm(user, code):
         return user
 

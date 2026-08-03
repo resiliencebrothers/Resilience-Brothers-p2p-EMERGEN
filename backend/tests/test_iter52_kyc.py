@@ -324,6 +324,12 @@ def test_risk_score_no_country_check():
     """Regression — per operator's request, country of IP vs phone must NOT
     be a risk factor. Even if we simulate a mismatch, no flag should surface."""
     _reset_user_kyc("user_test_normal01")
+    # Save + restore the shared user's identity: leaving `regular@example.com`
+    # behind corrupts sibling suites (a later reject-phone test blocklists it).
+    prev = _sync_db().users.find_one(
+        {"user_id": "user_test_normal01"},
+        {"_id": 0, "email": 1, "name": 1, "phone": 1},
+    ) or {}
     _sync_db().users.update_one(
         {"user_id": "user_test_normal01"},
         {"$set": {"email": "regular@example.com", "name": "Regular User", "phone": "+5355551234"}},
@@ -340,9 +346,19 @@ def test_risk_score_no_country_check():
         finally:
             client.close()
 
-    _, flags = _run(_do)
-    codes = {f["code"] for f in flags}
-    # No country-related flag exists in the code
-    assert "country_mismatch" not in codes
-    assert "geo_block" not in codes
-    assert "sanctioned_country" not in codes
+    try:
+        _, flags = _run(_do)
+        codes = {f["code"] for f in flags}
+        # No country-related flag exists in the code
+        assert "country_mismatch" not in codes
+        assert "geo_block" not in codes
+        assert "sanctioned_country" not in codes
+    finally:
+        _sync_db().users.update_one(
+            {"user_id": "user_test_normal01"},
+            {"$set": {
+                "email": prev.get("email") or "normal.test@resilience.com",
+                "name": prev.get("name") or "Normal Test",
+                "phone": prev.get("phone") or "+5350000004",
+            }},
+        )

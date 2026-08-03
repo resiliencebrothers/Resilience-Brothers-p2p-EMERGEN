@@ -17,7 +17,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pagination } from "@/components/Pagination";
 import CurrencyIcon from "@/components/CurrencyIcon";
-import { Receipt, ArrowDown, ArrowUp, ArrowRightLeft, Radio, Pause, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowRightLeft, Radio, Pause, ChevronRight } from "lucide-react";
+import HistorySectionTabs from "@/components/HistorySectionTabs";
 import { useTransactionsQuery, PAGE_SIZE } from "@/pages/dashboard/history/useTransactionsQuery";
 import TransactionFilters from "@/pages/dashboard/history/TransactionFilters";
 import TransactionTable from "@/pages/dashboard/history/TransactionTable";
@@ -47,11 +48,9 @@ export default function MyTransactions() {
 
   return (
     <div data-testid="my-transactions" className="space-y-5">
+      <HistorySectionTabs />
       <div className="mb-2 flex items-start justify-between flex-wrap gap-3">
         <div>
-          <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-2">
-            <Receipt className="w-3.5 h-3.5" /> {t("myTransactions.breadcrumb")}
-          </div>
           <h1 className="font-display text-3xl">{t("myTransactions.title")}</h1>
           <p className="text-neutral-500 text-sm mt-1">
             {t("myTransactions.subtitle")}

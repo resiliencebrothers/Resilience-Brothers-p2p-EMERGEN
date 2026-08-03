@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field, EmailStr
 from db_client import db
 from auth_utils import (
     now_utc, iso,
-    _hash_password, _verify_password,
+    _hash_password, _verify_password, _DUMMY_PASSWORD_HASH,
     _create_session, require_user,
     _too_many_failed_attempts, _record_login_attempt,
     normalize_phone, assert_not_blocked,
@@ -158,6 +158,14 @@ async def auth_me(request: Request) -> Any:
 # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
 # ============================================================
 
+def _safe_post_login_redirect(raw: Optional[str]) -> str:
+    """SEC-002 — only same-site relative paths (no open redirect after login)."""
+    r = (raw or "").strip()
+    if not r.startswith("/") or r.startswith("//") or "\\" in r:
+        return "/dashboard"
+    return r
+
+
 @router.get("/auth/google/login")
 async def google_login(request: Request, redirect: Optional[str] = None) -> Any:
     """Build the Google OAuth URL and 302-redirect the browser to it."""
@@ -168,7 +176,7 @@ async def google_login(request: Request, redirect: Optional[str] = None) -> Any:
     origin = f"{proto}://{host}"
     redirect_uri = f"{origin}/api/auth/google/callback"
     state_token = uuid.uuid4().hex
-    post_login_redirect = redirect or "/dashboard"
+    post_login_redirect = _safe_post_login_redirect(redirect)
     await db.oauth_states.insert_one({
         "state": state_token,
         "redirect": post_login_redirect,
@@ -305,7 +313,7 @@ async def google_callback(request: Request, code: Optional[str] = None,
         picture=claims.get("picture") or "",
     )
 
-    response = RedirectResponse(url=state_doc.get("redirect", "/dashboard"), status_code=302)
+    response = RedirectResponse(url=_safe_post_login_redirect(state_doc.get("redirect")), status_code=302)
     # iter55.37 — All sessions capped at 24h. `_create_session` enforces the
     # cap internally too, but we pass 24 explicitly for auditability.
     await _create_session(user_id, response, ttl_hours=24)
@@ -510,13 +518,20 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
             detail="Demasiados intentos fallidos. Espera 15 minutos.",
         )
     user = await db.users.find_one({"email": email}, {"_id": 0})
+    # SEC hardening (auditoría 28/7/2026) — unified credentials error to stop
+    # account enumeration. "No account" and "wrong password" return the SAME
+    # 401 INVALID_CREDENTIALS. A dummy bcrypt verify keeps timing constant when
+    # the account is missing. The Google-only hint is kept intentionally: a
+    # passwordless account cannot log in otherwise, and email-not-verified only
+    # fires AFTER a correct password (not an enumeration vector).
+    _INVALID_CREDENTIALS = {
+        "code": "INVALID_CREDENTIALS",
+        "message": "Correo o contraseña incorrectos.",
+    }
     if not user:
+        _verify_password(payload.password, _DUMMY_PASSWORD_HASH)
         await _record_login_attempt(identifier, False)
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "USER_NOT_FOUND",
-                    "message": "No existe una cuenta con este email. Crea una cuenta para acceder a la plataforma."},
-        )
+        raise HTTPException(status_code=401, detail=_INVALID_CREDENTIALS)
     if not user.get("password_hash"):
         await _record_login_attempt(identifier, False)
         raise HTTPException(
@@ -526,11 +541,7 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
         )
     if not _verify_password(payload.password, user["password_hash"]):
         await _record_login_attempt(identifier, False)
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "INVALID_PASSWORD",
-                    "message": "Contraseña incorrecta. Si la olvidaste, usa \"¿Olvidaste tu contraseña?\"."},
-        )
+        raise HTTPException(status_code=401, detail=_INVALID_CREDENTIALS)
     if user.get("auth_provider") == "password" and not user.get("email_verified", False):
         raise HTTPException(
             status_code=403,

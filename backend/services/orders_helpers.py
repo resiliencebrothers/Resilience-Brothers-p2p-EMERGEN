@@ -27,6 +27,9 @@ from services.balances import (
     compute_total_usdt,
     accumulate_vip_balance,
 )
+# Re-exported for existing importers (health, market, admin_revenue, ...).
+from services.order_profit import compute_order_profit  # noqa: F401
+from services.referrals import maybe_award_referral_bonus
 
 
 logger = logging.getLogger(__name__)
@@ -171,27 +174,6 @@ def build_order_from_payload(payload: "OrderCreate", user: dict, rate: float,
     return order
 
 
-async def compute_order_profit(order: dict, rate_doc: Optional[dict]) -> Optional[dict]:
-    """Compute profit for a single approved/completed order in to_code currency.
-    Profit logic: we receive amount_from in F, deliver amount_to in T.
-    Real value of incoming = amount_from * real_rate (in T units).
-    Profit (in T) = (amount_from * real_rate) - amount_to.
-    """
-    if not rate_doc or rate_doc.get("real_rate") is None:
-        return None
-    real_rate = float(rate_doc["real_rate"])
-    if real_rate <= 0:
-        return None
-    real_value = order["amount_from"] * real_rate
-    profit_to = real_value - order["amount_to"]
-    profit_pct = (profit_to / real_value * 100) if real_value > 0 else 0.0
-    return {
-        "amount": profit_to,
-        "currency": order["to_code"],
-        "pct": round(profit_pct, 3),
-    }
-
-
 async def maybe_flag_defensive_margin(order: "Order") -> None:
     """If profit pct is below the configured defensive margin, flag the order for
     double approval. Best-effort — never raises."""
@@ -314,87 +296,107 @@ async def send_client_order_push(order: dict, new_status: str) -> None:
         logger.error(f"Push notification failed: {e}")
 
 
+_EXPLORER_URLS = {
+    "TRC20": "https://tronscan.org/#/transaction/{tx_hash}",
+    "BEP20": "https://bscscan.com/tx/{tx_hash}",
+    "ERC20": "https://etherscan.io/tx/{tx_hash}",
+    "POLYGON": "https://polygonscan.com/tx/{tx_hash}",
+}
+
+
+def _detect_payout_network(delivery: str) -> str:
+    """Infer the on-chain network from delivery details (same heuristic as the UI)."""
+    from services.crypto_networks import detect_family
+    up = (delivery or "").upper()
+    if "TRC20" in up or detect_family(delivery) == "tron":
+        return "TRC20"
+    if "BEP20" in up:
+        return "BEP20"
+    if "ERC20" in up or "ETH" in up:
+        return "ERC20"
+    if "POLYGON" in up or "MATIC" in up:
+        return "POLYGON"
+    return ""
+
+
+def _crypto_payout_payload(order: dict) -> tuple[dict, str]:
+    """iter55.19g — on-chain artefacts (hash/network/explorer URL) for a
+    completed crypto order. Returns ({}, "") when no hash exists."""
+    tx_hash = (order.get("payout_tx_hash") or "").strip()
+    if not tx_hash:
+        return {}, ""
+    network = _detect_payout_network(order.get("delivery_details") or "")
+    payload: dict = {"payout_tx_hash": tx_hash}
+    if network:
+        payload["crypto_network"] = network
+        template = _EXPLORER_URLS.get(network)
+        if template:
+            payload["explorer_url"] = template.format(tx_hash=tx_hash)
+    return payload, network
+
+
+def _completed_order_msg(lang: str, method: Optional[str], network: str,
+                         amt: object, code: str) -> str:
+    from services.notification_i18n import t as _t
+    if method == "accumulate":
+        return _t("order_completed", lang, "msg_accumulate", amt=amt, code=code)
+    if method == "crypto":
+        if network:
+            return _t("order_completed", lang, "msg_crypto_with_net",
+                      amt=amt, code=code, network=network)
+        return _t("order_completed", lang, "msg_crypto", amt=amt, code=code)
+    if method == "cash":
+        return _t("order_completed", lang, "msg_cash", amt=amt, code=code)
+    return _t("order_completed", lang, "msg_transfer", amt=amt, code=code)
+
+
+def _order_notification_copy(order: dict, new_status: str, lang: str,
+                             network: str) -> tuple[str, str]:
+    """Localised (title, message) pair for an order status notification."""
+    from services.notification_i18n import t as _t
+    short_id = order["id"][:8]
+    amt = order.get("amount_to", 0)
+    code = order.get("to_code", "")
+    if new_status == "approved":
+        return (_t("order_approved", lang, "title", short_id=short_id),
+                _t("order_approved", lang, "message", amt=amt, code=code))
+    if new_status == "completed":
+        return (_t("order_completed", lang, "title", short_id=short_id),
+                _completed_order_msg(lang, order.get("delivery_method"),
+                                     network, amt, code))
+    note = (order.get("admin_note") or "").strip()[:120]
+    msg = (
+        _t("order_rejected", lang, "message_note", note=note)
+        if note
+        else _t("order_rejected", lang, "message_default")
+    )
+    return _t("order_rejected", lang, "title", short_id=short_id), msg
+
+
 async def create_inapp_order_notification(order: dict, new_status: str) -> None:
     """iter55.6 — Mirror push into the in-app inbox so users still see the event
     even if they never subscribed to Web Push (or the push endpoint was pruned).
     iter74 — Renders title/message in the recipient's `preferred_language`."""
     try:
         from routes.notifications import _insert_notification
-        from services.notification_i18n import t as _t, resolve_lang
+        from services.notification_i18n import resolve_lang
         lang = await resolve_lang(db, order["user_id"])
-        short_id = order["id"][:8]
-        amt = order.get("amount_to", 0)
-        code = order.get("to_code", "")
         method = order.get("delivery_method")
 
-        # iter55.19g — enrich the payload with the on-chain artefacts so the
-        # frontend renders "Ver en explorer" directly from the notification.
         data_payload: dict = {
             "order_id": order["id"],
             "from_code": order.get("from_code"),
-            "to_code": code,
+            "to_code": order.get("to_code", ""),
             "amount_from": order.get("amount_from"),
-            "amount_to": amt,
+            "amount_to": order.get("amount_to", 0),
             "delivery_method": method,
         }
-
         network = ""
         if new_status == "completed" and method == "crypto":
-            tx_hash = (order.get("payout_tx_hash") or "").strip()
-            if tx_hash:
-                # Infer the network from delivery_details (same helper used in
-                # the UI). Only build the URL if network is unambiguous.
-                from services.crypto_networks import detect_family
-                delivery = order.get("delivery_details") or ""
-                if "TRC20" in delivery.upper() or detect_family(delivery) == "tron":
-                    network = "TRC20"
-                elif "BEP20" in delivery.upper():
-                    network = "BEP20"
-                elif "ERC20" in delivery.upper() or "ETH" in delivery.upper():
-                    network = "ERC20"
-                elif "POLYGON" in delivery.upper() or "MATIC" in delivery.upper():
-                    network = "POLYGON"
-                explorer_urls = {
-                    "TRC20": f"https://tronscan.org/#/transaction/{tx_hash}",
-                    "BEP20": f"https://bscscan.com/tx/{tx_hash}",
-                    "ERC20": f"https://etherscan.io/tx/{tx_hash}",
-                    "POLYGON": f"https://polygonscan.com/tx/{tx_hash}",
-                }
-                data_payload["payout_tx_hash"] = tx_hash
-                if network:
-                    data_payload["crypto_network"] = network
-                    if network in explorer_urls:
-                        data_payload["explorer_url"] = explorer_urls[network]
+            extra, network = _crypto_payout_payload(order)
+            data_payload.update(extra)
 
-        # -----------------------------------------------------
-        # Localised title/message
-        # -----------------------------------------------------
-        if new_status == "approved":
-            title = _t("order_approved", lang, "title", short_id=short_id)
-            msg = _t("order_approved", lang, "message", amt=amt, code=code)
-        elif new_status == "completed":
-            title = _t("order_completed", lang, "title", short_id=short_id)
-            if method == "accumulate":
-                msg = _t("order_completed", lang, "msg_accumulate", amt=amt, code=code)
-            elif method == "crypto":
-                if network:
-                    msg = _t("order_completed", lang, "msg_crypto_with_net",
-                             amt=amt, code=code, network=network)
-                else:
-                    msg = _t("order_completed", lang, "msg_crypto", amt=amt, code=code)
-            elif method == "cash":
-                msg = _t("order_completed", lang, "msg_cash", amt=amt, code=code)
-            else:  # transfer
-                msg = _t("order_completed", lang, "msg_transfer", amt=amt, code=code)
-        else:  # rejected
-            title = _t("order_rejected", lang, "title", short_id=short_id)
-            note = (order.get("admin_note") or "").strip()[:120]
-            msg = (
-                _t("order_rejected", lang, "message_note", note=note)
-                if note
-                else _t("order_rejected", lang, "message_default")
-            )
-
+        title, msg = _order_notification_copy(order, new_status, lang, network)
         await _insert_notification(
             recipient_user_id=order["user_id"],
             type=f"order_{new_status}",
@@ -447,6 +449,9 @@ async def run_post_status_side_effects(order: dict, new_status: str, prev_status
         await accumulate_vip_balance(order)
         if order["user_role"] in ("vip", "admin"):
             await check_vip_threshold_alert(order)
+    if is_first_credit:
+        # iter112 — one-time referral bonus on the user's first settled order.
+        await maybe_award_referral_bonus(order)
     if new_status in ("approved", "rejected", "completed") and prev_status != new_status:
         target_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})
         if target_user:

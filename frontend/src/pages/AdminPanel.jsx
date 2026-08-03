@@ -2,7 +2,7 @@ import { NavLink, Routes, Route, Navigate, useNavigate, useLocation } from "reac
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -11,6 +11,7 @@ import AdminUsersHub from "@/pages/admin/AdminUsersHub";
 import AdminUserStatsPage from "@/pages/admin/AdminUserStatsPage";
 import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
+import AdminVipBatches from "@/pages/admin/AdminVipBatches";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
 import AdminAuditHub from "@/pages/admin/AdminAuditHub";
@@ -21,6 +22,7 @@ import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
 import AdminSupport from "@/pages/admin/AdminSupport";
+import AdminReferrals from "@/pages/admin/AdminReferrals";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
@@ -59,7 +61,13 @@ export default function AdminPanel() {
         { to: "/admin/queue", icon: Inbox, label: t("sidebar.admin.queue"), id: "admin-nav-queue", highlight: true },
       ] : []),
       ...(has("orders") ? [
-        { to: "/admin/orders", icon: ListChecks, label: t("sidebar.admin.orders"), id: "admin-nav-orders" },
+        {
+          to: "/admin/orders", icon: ListChecks, label: t("sidebar.admin.orders"),
+          id: "admin-nav-orders",
+          children: [
+            { to: "/admin/vip-batches", icon: Layers, label: t("sidebar.admin.vipBatches"), id: "admin-nav-vip-batches", highlight: true },
+          ],
+        },
       ] : []),
       ...(has("withdrawals") ? [
         { to: "/admin/withdrawals", icon: ArrowDownToLine, label: t("sidebar.admin.withdrawals"), id: "admin-nav-withdrawals" },
@@ -103,12 +111,16 @@ export default function AdminPanel() {
           ],
         },
       ] : []),
-      ...(has("company_funds") ? [
+      ...((has("company_funds") || has("profitability")) ? [
         { to: "/admin/company-funds", icon: Wallet, label: t("sidebar.admin.companyFunds"), id: "admin-nav-company-funds",
           hasSubsections: user?.role === "admin" },
       ] : []),
       ...(has("transactions") ? [
         { to: "/admin/transactions", icon: Receipt, label: t("sidebar.admin.transactions"), id: "admin-nav-transactions", highlight: true },
+      ] : []),
+      // iter112 — Referral leaderboard + bonus config.
+      ...(has("users") ? [
+        { to: "/admin/referrals", icon: Gift, label: t("sidebar.admin.referrals"), id: "admin-nav-referrals" },
       ] : []),
       // iter102.1 — Seguridad agrupa Salud + Auditoría: todas son vistas
       // de monitoreo con requisitos de acceso admin puro.
@@ -323,6 +335,7 @@ export default function AdminPanel() {
             <Route path="queue" element={<AdminQueue />} />
             <Route path="company-funds" element={<AdminCompanyFundsHub />} />
             <Route path="orders" element={<AdminOrders />} />
+            <Route path="vip-batches" element={<AdminVipBatches />} />
             <Route path="withdrawals" element={<AdminWithdrawals />} />
             <Route path="currencies" element={<AdminCurrencies />} />
             <Route path="rates" element={<AdminRates />} />
@@ -340,6 +353,7 @@ export default function AdminPanel() {
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
             {isStaff && <Route path="support" element={<AdminSupport />} />}
+            {hasPerm("users") && <Route path="referrals" element={<AdminReferrals />} />}
             {user?.role === "admin" && <Route path="audit" element={<AdminAuditHub />} />}
           </Routes>
         </div>

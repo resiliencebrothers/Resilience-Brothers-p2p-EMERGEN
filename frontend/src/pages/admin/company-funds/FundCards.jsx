@@ -44,6 +44,16 @@ function FundCard({ f, t }) {
       </div>
       <div className="text-[0.65rem] text-neutral-500 mt-3 space-y-0.5 font-mono">
         <div>+ {t("admin.companyFunds.orders")}: {fmt2(f.inflow)}</div>
+        {(f.inflow_vip_batches ?? 0) > 0 && (
+          <div className="text-[#A78BFA]" data-testid={`fund-vip-batches-in-${f.currency}`}>
+            + {t("admin.companyFunds.vipBatchesIn")}: {fmt2(f.inflow_vip_batches)}
+          </div>
+        )}
+        {(f.inflow_deposits ?? 0) > 0 && (
+          <div className="text-[#22C55E]/80" data-testid={`fund-deposits-in-${f.currency}`}>
+            + {t("admin.companyFunds.depositsIn")}: {fmt2(f.inflow_deposits)}
+          </div>
+        )}
         {f.manual_inflow > 0 && (
           <div className="text-[#22C55E]/80" data-testid={`fund-manual-in-${f.currency}`}>
             + {t("admin.companyFunds.ownContribution")}: {fmt2(f.manual_inflow)}

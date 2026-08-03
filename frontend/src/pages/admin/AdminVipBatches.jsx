@@ -1,0 +1,91 @@
+import { useState, useEffect, useCallback } from "react";
+import axios from "axios";
+import { useTranslation } from "react-i18next";
+import { Layers, Coins, HandCoins, PiggyBank } from "lucide-react";
+import { API } from "@/App";
+import AdminPageHeader from "@/components/AdminPageHeader";
+import { useLiveEvent } from "@/hooks/useLiveStream";
+import AdminVipBatchItems from "./vip/AdminVipBatchItems";
+import AdminDeposits from "./vip/AdminDeposits";
+import { AdminCapitalDeposits, AdminSettlements } from "./vip/AdminVipLedgerOps";
+
+/**
+ * iter110 — Admin hub for the VIP ledger workflows.
+ * Three sub-tabs share the same `orders` permission gate:
+ *   - items  : Phase 1 — per-order approval queue
+ *   - capital: Phase 2 — capital deposit confirmations
+ *   - settle : Phase 3 — payout & collection settlements
+ * iter112 — each tab shows a live pending-count badge.
+ */
+const SUBTABS = [
+  { id: "items",    labelKey: "adminVipHub.tabs.items",    icon: Layers,    countKey: "items_pending",       Component: AdminVipBatchItems },
+  { id: "deposits", labelKey: "adminVipHub.tabs.deposits", icon: PiggyBank, countKey: "deposits_pending",    Component: AdminDeposits },
+  { id: "capital",  labelKey: "adminVipHub.tabs.capital",  icon: Coins,     countKey: "capital_pending",     Component: AdminCapitalDeposits },
+  { id: "settle",   labelKey: "adminVipHub.tabs.settle",   icon: HandCoins, countKey: "settlements_pending", Component: AdminSettlements },
+];
+
+export default function AdminVipBatches() {
+  const { t } = useTranslation();
+  const [active, setActive] = useState("items");
+  const [counts, setCounts] = useState(null);
+
+  const loadCounts = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API}/admin/vip-batches/pending-count`, { withCredentials: true });
+      setCounts(r.data);
+    } catch { /* badge is best-effort */ }
+  }, []);
+
+  useEffect(() => { loadCounts(); }, [loadCounts]);
+  useLiveEvent("new_vip_batch", loadCounts);
+  useLiveEvent("capital_deposit", loadCounts);
+  useLiveEvent("settlement_request", loadCounts);
+  useLiveEvent("deposit_created", loadCounts);
+
+  const Meta = SUBTABS.find((s) => s.id === active) || SUBTABS[0];
+  const ActiveComponent = Meta.Component;
+
+  return (
+    <div className="space-y-4" data-testid="admin-vip-hub">
+      <AdminPageHeader
+        eyebrow={t("adminVipHub.eyebrow")}
+        title={t("adminVipHub.title")}
+        testid="admin-vip-hub-header"
+      />
+
+      <nav className="flex items-center gap-1 border-b border-white/5 overflow-x-auto" data-testid="admin-vip-hub-tabs">
+        {SUBTABS.map((tt) => {
+          const Icon = tt.icon;
+          const isActive = active === tt.id;
+          const count = counts?.[tt.countKey] || 0;
+          return (
+            <button
+              key={tt.id}
+              type="button"
+              onClick={() => setActive(tt.id)}
+              data-testid={`admin-vip-hub-tab-${tt.id}`}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 text-xs uppercase tracking-widest font-mono border-b-2 transition-colors whitespace-nowrap ${
+                isActive
+                  ? "text-[#8B5CF6] border-[#8B5CF6]"
+                  : "text-neutral-500 border-transparent hover:text-neutral-300"
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {t(tt.labelKey)}
+              {count > 0 && (
+                <span
+                  data-testid={`admin-vip-hub-count-${tt.id}`}
+                  className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-[0.6rem] font-bold border border-amber-500/50 bg-amber-500/10 text-amber-400"
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      <ActiveComponent onChanged={loadCounts} />
+    </div>
+  );
+}

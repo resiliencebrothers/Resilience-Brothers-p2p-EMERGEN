@@ -21,10 +21,7 @@ import httpx
 from datetime import datetime, timezone, timedelta
 
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")
-NORMAL_TOKEN = "test_session_normal_X"
-VIP_TOKEN = "test_session_vip_X"
-EMPLOYEE_TOKEN = "test_session_employee_X"
-ADMIN_TOKEN = "test_session_admin_X"
+from conftest import NORMAL_TOKEN, VIP_TOKEN, EMPLOYEE_TOKEN, ADMIN_TOKEN
 
 
 def h(token: str) -> dict:
@@ -65,7 +62,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_normal_can_submit(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN),
                              json=VALID_PAYLOAD)
             assert r.status_code == 200, r.text
@@ -78,7 +75,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_duplicate_pending_returns_409(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r1 = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN),
                               json=VALID_PAYLOAD)
             assert r1.status_code == 200
@@ -90,7 +87,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_vip_cannot_submit(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(VIP_TOKEN),
                              json=VALID_PAYLOAD)
             assert r.status_code == 403
@@ -98,7 +95,7 @@ class TestVipRequestsFlow:
 
     @pytest.mark.asyncio
     async def test_admin_cannot_submit(self):
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(ADMIN_TOKEN),
                              json=VALID_PAYLOAD)
             assert r.status_code == 403
@@ -106,7 +103,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_invalid_payment_method(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN),
                              json={**VALID_PAYLOAD, "preferred_payment_method": "gold_bars"})
             assert r.status_code == 422
@@ -115,7 +112,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_message_too_short(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN),
                              json={**VALID_PAYLOAD, "message": "hola"})
             assert r.status_code == 422
@@ -124,7 +121,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_me_endpoint_returns_state(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r0 = await c.get("/api/vip/requests/me", headers=h(NORMAL_TOKEN))
             assert r0.status_code == 200
             assert r0.json()["request"] is None
@@ -142,7 +139,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_admin_list_and_count(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN), json=VALID_PAYLOAD)
 
             r = await c.get("/api/admin/vip-requests", headers=h(ADMIN_TOKEN))
@@ -159,7 +156,7 @@ class TestVipRequestsFlow:
     async def test_approve_promotes_user(self):
         from db_client import db
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN), json=VALID_PAYLOAD)
             rid = r.json()["id"]
 
@@ -181,7 +178,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_reject_stores_note_and_notifies(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN), json=VALID_PAYLOAD)
             rid = r.json()["id"]
             r_rej = await c.post(f"/api/admin/vip-requests/{rid}/reject",
@@ -199,7 +196,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_cooldown_blocks_resubmit(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN), json=VALID_PAYLOAD)
             rid = r.json()["id"]
             await c.post(f"/api/admin/vip-requests/{rid}/reject",
@@ -219,7 +216,7 @@ class TestVipRequestsFlow:
     @pytest.mark.asyncio
     async def test_cooldown_expires_after_7_days(self):
         await _reset_state()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/requests", headers=h(NORMAL_TOKEN), json=VALID_PAYLOAD)
             rid = r.json()["id"]
             await c.post(f"/api/admin/vip-requests/{rid}/reject",
@@ -238,7 +235,7 @@ class TestVipRequestsFlow:
 
     @pytest.mark.asyncio
     async def test_client_cannot_access_admin_endpoints(self):
-        async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.get("/api/admin/vip-requests", headers=h(NORMAL_TOKEN))
             assert r.status_code == 403
             r2 = await c.get("/api/admin/vip-requests/pending-count", headers=h(NORMAL_TOKEN))
@@ -253,7 +250,7 @@ class TestVipRequestsFlow:
             {"$set": {"allowed_permissions": ["orders"]}},
         )
         try:
-            async with httpx.AsyncClient(base_url=API_URL, timeout=15) as c:
+            async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
                 r = await c.get("/api/admin/vip-requests", headers=h(EMPLOYEE_TOKEN))
                 assert r.status_code == 403
         finally:

@@ -2,6 +2,7 @@
 
 Extracted from routes/admin.py during the iter39 split.
 """
+import re
 from typing import Dict, List, Literal, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +24,7 @@ class UserUpdate(BaseModel):
     vip_balances: Optional[Dict[str, float]] = None
     allowed_currencies: Optional[List[str]] = None
     allowed_permissions: Optional[List[str]] = None  # iter55.16 — capability-based access
+    allowed_batch_pairs: Optional[List[str]] = None  # iter113 — VIP batch pair RBAC ("EUR->USDT")
     can_edit_product_prices: Optional[bool] = None
     can_upload_product_images: Optional[bool] = None
     can_delete_products: Optional[bool] = None
@@ -36,7 +38,8 @@ def _build_users_query(q: Optional[str], role: Optional[str]) -> Dict[str, Any]:
     """Compose the Mongo filter for GET /admin/users."""
     mongo_q: Dict[str, Any] = {}
     if q:
-        rx = {"$regex": q, "$options": "i"}
+        # SEC-003 — escape user input so crafted patterns can't ReDoS Mongo.
+        rx = {"$regex": re.escape(q), "$options": "i"}
         mongo_q["$or"] = [{"name": rx}, {"email": rx}]
     if role and role in ("normal", "vip", "employee", "admin"):
         mongo_q["role"] = role
@@ -136,13 +139,29 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
     update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
+    # SEC-001 (auditoría 28/7/2026) — balance & staff-capability fields are
+    # STRICTLY admin-only. A scoped employee (even with `user_functions`)
+    # must never mint spendable balance nor grant capability booleans.
+    ADMIN_ONLY_FIELDS = {
+        "vip_balance_usd", "vip_balances",
+        "can_edit_product_prices", "can_upload_product_images",
+        "can_delete_products", "can_manage_blocklist",
+        "can_manage_company_funds",
+    }
+    touched_admin_only = sorted(ADMIN_ONLY_FIELDS & set(update))
+    if touched_admin_only and requester.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail=("Solo un admin puede modificar saldos o capacidades de staff "
+                    f"({', '.join(touched_admin_only)})."),
+        )
     # iter55.33 — modifying "functions" fields (role, allowed_currencies,
     # allowed_permissions, market perms, account_status) requires the
     # dedicated `user_functions` permission on top of the `users` gate. This
     # lets an admin grant a staff member *view-only* access to the user list
     # while keeping powerful edits (like promoting to VIP) admin-only.
     FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
-                         "market_perms", "account_status"}
+                         "market_perms", "account_status", "allowed_batch_pairs"}
     if any(k in update for k in FUNCTIONS_FIELDS):
         from services.permissions import _has_permission
         if not _has_permission(requester, "user_functions"):
@@ -159,13 +178,24 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
             raise HTTPException(status_code=403, detail="Solo un admin puede modificar los permisos de staff")
         from services.permissions import sanitize_permissions
         update["allowed_permissions"] = sanitize_permissions(update["allowed_permissions"])
+    # iter113 — VIP batch pair RBAC: admin-only, normalise "FROM->TO" entries.
+    if "allowed_batch_pairs" in update:
+        if requester.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo un admin puede modificar los pares de lotes autorizados")
+        clean = []
+        for p in update["allowed_batch_pairs"] or []:
+            p = str(p).strip().upper().replace("→", "->")
+            if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean:
+                clean.append(p)
+        update["allowed_batch_pairs"] = clean
     old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await log_action(db, requester, "user.update", "user", user_id,
                      summary=f"Usuario {new_user.get('email', '')} actualizado",
                      details={"changes": update,
-                              "prev_role": old_user.get("role") if old_user else None})
+                              "prev_role": old_user.get("role") if old_user else None,
+                              "balance_edit": any(k in update for k in ("vip_balance_usd", "vip_balances"))})
     return new_user
 
 
@@ -261,6 +291,86 @@ async def admin_user_audit_trail(user_id: str, request: Request,
     }
 
 
+async def _order_stats_30d(user_id: str, rates: Any) -> tuple[List[dict], float]:
+    """Approved/completed orders in the last 30 days + their USDT-eq volume."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    orders_30d = await db.orders.find(
+        {"user_id": user_id, "created_at": {"$gte": cutoff},
+         "status": {"$in": ["approved", "completed"]}},
+        {"_id": 0, "amount_from": 1, "from_code": 1, "amount_to": 1, "to_code": 1},
+    ).to_list(2000)
+    volume = 0.0
+    for o in orders_30d:
+        u = convert_to_usdt(float(o.get("amount_from") or 0), o.get("from_code", ""), rates)
+        if u:
+            volume += u
+    return orders_30d, volume
+
+
+async def _active_debts_summary(user_id: str) -> tuple[List[dict], Dict[str, float]]:
+    """Disbursed capital requests + remaining debt grouped by currency."""
+    active_debts = await db.capital_requests.find(
+        {"user_id": user_id, "status": "disbursed"}, {"_id": 0},
+    ).sort("disbursed_at", 1).to_list(500)
+    total: Dict[str, float] = {}
+    for d in active_debts:
+        code = d["currency_code"]
+        total[code] = total.get(code, 0.0) + float(d.get("debt_remaining") or 0.0)
+    return active_debts, total
+
+
+def _effective_balances(user: dict) -> Dict[str, float]:
+    """vip_balances merged with the legacy single-currency USD balance."""
+    balances = dict(user.get("vip_balances") or {})
+    legacy = float(user.get("vip_balance_usd") or 0.0)
+    if legacy:
+        balances["USD"] = balances.get("USD", 0.0) + legacy
+    return balances
+
+
+def _sum_usdt(amount_by_code: Dict[str, float], rates: Any) -> float:
+    total = 0.0
+    for code, amount in amount_by_code.items():
+        u = convert_to_usdt(float(amount or 0), code, rates)
+        if u:
+            total += u
+    return total
+
+
+async def _favorite_currencies(user_id: str) -> tuple[List[dict], Optional[str], int]:
+    """Top-5 currency codes by lifetime order count (from_code + to_code)."""
+    pipeline = [
+        {"$match": {"user_id": user_id}},
+        {"$project": {"codes": ["$from_code", "$to_code"]}},
+        {"$unwind": "$codes"},
+        {"$match": {"codes": {"$ne": None}}},
+        {"$group": {"_id": "$codes", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 5},
+    ]
+    top_codes = await db.orders.aggregate(pipeline).to_list(5)
+    if not top_codes:
+        return [], None, 0
+    return top_codes, top_codes[0]["_id"], top_codes[0]["count"]
+
+
+async def _kyc_snapshot(user_id: str, user: dict) -> Dict[str, str]:
+    kyc_doc = await db.kyc_verifications.find_one(
+        {"user_id": user_id}, {"_id": 0},
+        sort=[("created_at", -1)],
+    ) or {}
+    status = kyc_doc.get("status") or user.get("kyc_status") or "not_started"
+    if status == "unverified":
+        status = "not_started"
+    return {
+        "status": status,
+        "submitted_at": kyc_doc.get("created_at", ""),
+        "reviewed_at": kyc_doc.get("reviewed_at", ""),
+        "reviewer_notes": kyc_doc.get("review_notes", ""),
+    }
+
+
 @router.get("/admin/users/{user_id}/stats")
 async def admin_user_stats(user_id: str, request: Request) -> Any:
     """iter55.32 — aggregated per-user dashboard used by the new
@@ -286,81 +396,23 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
     rates = await build_rate_lookup()
     _enrich_user_with_usdt_total(user, rates)
 
-    # Order counts + volume (last 30d)
-    from datetime import datetime, timedelta, timezone
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     total_orders = await db.orders.count_documents({"user_id": user_id})
-    orders_30d_cursor = db.orders.find(
-        {"user_id": user_id, "created_at": {"$gte": cutoff},
-         "status": {"$in": ["approved", "completed"]}},
-        {"_id": 0, "amount_from": 1, "from_code": 1, "amount_to": 1, "to_code": 1},
-    )
-    orders_30d = await orders_30d_cursor.to_list(2000)
-    volume_30d_usdt = 0.0
-    for o in orders_30d:
-        u = convert_to_usdt(float(o.get("amount_from") or 0), o.get("from_code", ""), rates)
-        if u:
-            volume_30d_usdt += u
+    orders_30d, volume_30d_usdt = await _order_stats_30d(user_id, rates)
+    active_debts, total_debt_by_currency = await _active_debts_summary(user_id)
 
-    # Active capital requests + total debt
-    active_debts_cursor = db.capital_requests.find(
-        {"user_id": user_id, "status": "disbursed"}, {"_id": 0},
-    ).sort("disbursed_at", 1)
-    active_debts = await active_debts_cursor.to_list(500)
-    total_debt_by_currency: Dict[str, float] = {}
-    for d in active_debts:
-        code = d["currency_code"]
-        total_debt_by_currency[code] = total_debt_by_currency.get(code, 0.0) + float(d.get("debt_remaining") or 0.0)
-
-    # Net position: platform_owes_client = sum(vip_balances[c] * rate_to_usdt)
-    # client_owes_platform = sum(debt_remaining[c] * rate_to_usdt)
-    balances = dict(user.get("vip_balances") or {})
-    legacy = float(user.get("vip_balance_usd") or 0.0)
-    if legacy:
-        balances["USD"] = balances.get("USD", 0.0) + legacy
-    platform_owes_usdt = 0.0
-    for code, amount in balances.items():
-        u = convert_to_usdt(float(amount or 0), code, rates)
-        if u:
-            platform_owes_usdt += u
-    client_owes_usdt = 0.0
-    for code, amount in total_debt_by_currency.items():
-        u = convert_to_usdt(amount, code, rates)
-        if u:
-            client_owes_usdt += u
+    balances = _effective_balances(user)
+    platform_owes_usdt = _sum_usdt(balances, rates)
+    client_owes_usdt = _sum_usdt(total_debt_by_currency, rates)
     net_usdt = round(platform_owes_usdt - client_owes_usdt, 4)
 
-    # iter55.33 — additional context the operator asked for:
-    # (a) most-traded currency across the user's lifetime (by count),
-    # (b) success rate = (approved+completed) / total * 100,
-    # (c) KYC snapshot (status + submitted_at + reviewer notes if any),
-    # (d) phone status (verified vs pending).
     completed_orders = await db.orders.count_documents(
         {"user_id": user_id, "status": {"$in": ["approved", "completed"]}},
     )
     success_rate = round((completed_orders / total_orders) * 100, 1) if total_orders else 0.0
 
-    # Most-traded: aggregate order counts by from_code + to_code, pick highest.
-    pipeline = [
-        {"$match": {"user_id": user_id}},
-        {"$project": {"codes": ["$from_code", "$to_code"]}},
-        {"$unwind": "$codes"},
-        {"$match": {"codes": {"$ne": None}}},
-        {"$group": {"_id": "$codes", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 5},
-    ]
-    top_codes = await db.orders.aggregate(pipeline).to_list(5)
-    favorite_currency = top_codes[0]["_id"] if top_codes else None
-    favorite_currency_count = top_codes[0]["count"] if top_codes else 0
+    top_codes, favorite_currency, favorite_currency_count = await _favorite_currencies(user_id)
 
-    kyc_doc = await db.kyc_verifications.find_one(
-        {"user_id": user_id}, {"_id": 0},
-        sort=[("created_at", -1)],
-    ) or {}
-    kyc_status = kyc_doc.get("status") or user.get("kyc_status") or "not_started"
-    if kyc_status == "unverified":
-        kyc_status = "not_started"
+    kyc = await _kyc_snapshot(user_id, user)
 
     return {
         "user": {
@@ -375,12 +427,7 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
             "created_at": user.get("created_at", ""),
             "twofa_enabled": bool(user.get("totp_enabled", False)),
         },
-        "kyc": {
-            "status": kyc_status,
-            "submitted_at": kyc_doc.get("created_at", ""),
-            "reviewed_at": kyc_doc.get("reviewed_at", ""),
-            "reviewer_notes": kyc_doc.get("review_notes", ""),
-        },
+        "kyc": kyc,
         "balances": {k: round(float(v), 4) for k, v in balances.items() if float(v) != 0},
         "balance_total_usdt": user.get("vip_balance_usdt", 0.0),
         "orders": {

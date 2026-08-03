@@ -120,16 +120,17 @@ def test_login_success_sets_cookie(verified_user):
     assert "samesite=none" in raw.lower() or "SameSite=None" in raw
 
 
-def test_login_user_not_found_returns_404():
+def test_login_user_not_found_returns_401_generic():
+    # SEC hardening (auditoría 28/7/2026) — unified credentials error.
     r = requests.post(f"{API}/auth/login", json={"email": "nobody_xyz_iter27@x.com", "password": "any12345678"})
-    assert r.status_code == 404
-    assert r.json()["detail"]["code"] == "USER_NOT_FOUND"
+    assert r.status_code == 401
+    assert r.json()["detail"]["code"] == "INVALID_CREDENTIALS"
 
 
 def test_login_invalid_password_returns_401(verified_user):
     r = requests.post(f"{API}/auth/login", json={"email": verified_user["email"], "password": "WRONGwrong12345"})
     assert r.status_code == 401
-    assert r.json()["detail"]["code"] == "INVALID_PASSWORD"
+    assert r.json()["detail"]["code"] == "INVALID_CREDENTIALS"
 
 
 def test_login_email_not_verified_returns_403():

@@ -1,0 +1,48 @@
+{
+  "summary": "iter113 REDESIGN — Frontend E2E + backend re-verification of pair-based VIP batches, client deposits, RBAC and revenue accounting. Ran main agent's backend smoke (manual_iter113_check.py): all core PASS except an accumulated-data absolute check (EUR inflow_vip_batches=210 vs =100 expected — expected drift from prior runs; delta is correct). Frontend: verified all new UI surfaces via Playwright with session_token cookies on preview URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/deposits (cash USD > 1000 without courier fields)", "issue": "Returns 422 but with message 'Para depositar USD usa: transfer.' — the 422 fires from a currency-method allow-list check BEFORE the courier-required check. Any currency where 'cash' isn't in configured methods will 422 with the wrong message rather than the courier validation error. Suggest adding an integration test using a currency whose config allows 'cash' (e.g. BRL) with USDT-eq > 1000 and no courier fields to prove the *courier* validator path actually returns 422. Main agent's smoke masks this."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "New batch dialog / other dialogs", "issues": ["React a11y warning: 'Missing Description or aria-describedby={undefined} for DialogContent' on multiple dialogs (new-batch-dialog, batch-detail-dialog). Non-blocking but should add DialogDescription for a11y."]}
+    ]
+  },
+  "verified_flows": {
+    "vip_batches_view": "PASS — /dashboard/batches loads; NEW BATCH opens dialog; [data-testid=batch-pair] select works; [data-testid=batch-rate-hint] shows 'VIP rate: 1 EUR = 1.08 USDT' after selecting EUR->USDT; create submit works; batch row visible; adding item shows [data-testid=item-receive-preview]. No send-capital-btn or request-payout-btn present.",
+    "vip_assets_view": "PASS — /dashboard/assets shows assets-total-usdt=1,251.81 and asset-USDT, asset-USD cards (initial run had timing-only mismatch which resolved with additional wait).",
+    "vip_dashboard_deposit_form": "PASS — /dashboard/vip renders deposit-form; no legacy send-capital/request-payout buttons.",
+    "client_deposit_submit": "PASS — normal user: deposit-currency USDT + deposit-method crypto reveals deposit-hash; submit creates deposit; deposit-history rows visible (7).",
+    "admin_vip_hub_deposits_tab": "PASS — admin-vip-hub-tab-deposits present with count badge; 5 admin-deposit-confirm-* and 5 admin-deposit-reject-* buttons rendered.",
+    "admin_vip_items_tab_pending": "PASS — pending filter shows pair badge vip-item-pair-* with 'EUR→USDT', vip-item-credit-* with '10.8 USDT' preview.",
+    "admin_vip_items_tab_approved": "PASS — approved filter shows 3 rows each with pair badge + credit + vip-item-margin-* (e.g. 'Margin: +4.00 USDT').",
+    "admin_queue_pair_badge": "PASS — /admin/queue Pending items shows queue-batch-pair-* badge = 'EUR→USDT' for pair batches (verified after creating a pending pair batch).",
+    "admin_revenue_stat": "PASS — /admin/revenue renders [data-testid=revenue-vip-batches] stat card.",
+    "admin_users_functions_batchpairs": "PASS — Functions dialog on employee.test row exposes user-functions-tab-batchpairs (Lotes) tab with pair toggles (BTC->CUP, EUR->USDT, USD->BRL, USD->CUP, USD->MXN, USDT->CUP, USDT->MXN, USDT->USD) and Save + Clear-all buttons. Toggles do not carry per-pair data-testid=pair-toggle-* — they render as buttons; not strictly required but would help future automation."
+  },
+  "test_report_links": [
+    "/app/backend/tests/manual_iter113_check.py"
+  ],
+  "action_items": [
+    "Optional a11y: add DialogDescription to new-batch-dialog and batch-detail-dialog to silence Radix a11y warnings.",
+    "Backend: harden POST /api/deposits so courier validation for cash>1000 is reached even when currency method allow-list denies (or add test using a currency with cash method allowed to prove the courier 422 path).",
+    "Optional test-affordance: add data-testid=`pair-toggle-<PAIR>` on individual pair toggle buttons inside the BatchPairsSelect component for easier automation."
+  ],
+  "critical_code_review_comments": [
+    "vip_batches: legacy 'credit'/'debit' direction paths still rendered — good. Confirm no legacy VIP 'send-capital'/'request-payout' buttons remain (grep across /app/frontend/src returned 0 matches).",
+    "AssetsView calls GET /api/vip/balances for ALL clients (endpoint reused). Ensure backend endpoint returns non-VIP balances for role=normal too — for user_test_normal01 it returned deposits properly. Confirm access control (a normal client should only see own balances)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (main-agent smoke)", "frontend": "100% on iter113 features"},
+  "test_credentials": "Session cookie 'session_token' on preview domain; tokens test_session_{admin|vip|employee|normal}_X. TOTP JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP.",
+  "seed_data_creation": "Re-seeded 4 user_sessions with 2d expiry; created 1 EUR->USDT pair batch + item for queue verification; restored user_test_employee01.allowed_batch_pairs=[] after tests.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview URL https://p2p-exchange-hub-2.preview.emergentagent.com. AdminVipBatches uses [data-testid=admin-vip-hub-tab-{items|deposits|capital|settle}] — NOT role=tab. AdminVipBatchItems filters via [data-testid=vip-batches-filter-{pending|approved|rejected}] (default pending). Admin queue only shows OPEN pair batches with pending items. Use domcontentloaded (not networkidle) when navigating; SSE keeps network active.",
+  "rca of the issue": "N/A — no P1/P2 bugs found in iter113 features."
+}

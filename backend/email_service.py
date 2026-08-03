@@ -15,6 +15,7 @@ import resend
 logger = logging.getLogger(__name__)
 
 resend.api_key = os.environ.get("RESEND_API_KEY", "")
+EMAIL_SEND_ENABLED = os.environ.get("EMAIL_SEND_ENABLED", "true").strip().lower() != "false"
 SENDER = os.environ.get("EMAIL_SENDER", "Resilience Brothers <onboarding@resend.dev>")
 REPLY_TO = os.environ.get("EMAIL_REPLY_TO", "")
 APP_URL = os.environ.get("APP_PUBLIC_URL", "")
@@ -61,6 +62,9 @@ def _base_template(title: str, body_html: str, lang: str = "es") -> str:
 
 
 def _send(to: str, subject: str, html: str, attachments: list = None) -> bool:
+    if not EMAIL_SEND_ENABLED:
+        logger.info(f"[email-suppressed] to={to} subject={subject!r} (EMAIL_SEND_ENABLED=false)")
+        return True
     if not resend.api_key:
         logger.warning("RESEND_API_KEY not set, skipping email")
         return False
@@ -165,11 +169,62 @@ def notify_monthly_revenue(to: str, period_label: str, totals: dict, pdf_bytes: 
     return _send(to, subject, _base_template("Cierre mensual", body), attachments=[attachment])
 
 
+def notify_security_selfaudit(to: str, report: dict) -> bool:
+    """iter116 — email the monthly security self-audit checklist to an admin."""
+    verdict = (report.get("verdict") or "pass").lower()
+    summary = report.get("summary") or {}
+    verdict_color = {"pass": "#22C55E", "warn": "#F59E0B", "fail": "#EF4444"}.get(verdict, "#A3A3A3")
+    verdict_label = {"pass": "TODO EN ORDEN", "warn": "REVISAR AVISOS",
+                     "fail": "ACCIÓN REQUERIDA"}.get(verdict, verdict.upper())
+    subject = f"Auditoría de seguridad automática · {verdict_label}"
+    status_dot = {"pass": "#22C55E", "warn": "#F59E0B", "fail": "#EF4444"}
+    rows = ""
+    for c in report.get("checks", []):
+        color = status_dot.get(c.get("status"), "#A3A3A3")
+        rows += (
+            "<tr>"
+            f"<td style='padding:8px 0;vertical-align:top;width:14px;'>"
+            f"<span style='display:inline-block;width:8px;height:8px;border-radius:50%;background:{color};'></span></td>"
+            f"<td style='padding:8px 8px;vertical-align:top;'>"
+            f"<div style='color:#fff;font-size:13px;'>{c.get('id')} · {c.get('title')}</div>"
+            f"<div style='color:#A3A3A3;font-size:12px;line-height:1.5;margin-top:2px;'>{c.get('detail')}</div>"
+            "</td></tr>"
+        )
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        Chequeo automático mensual de las invariantes de seguridad de la plataforma.
+        Cada punto se re-verifica contra el código y la configuración en vivo.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid {verdict_color}40;padding:16px 20px;margin-bottom:16px;">
+        <tr>
+          <td style="color:#A3A3A3;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Veredicto</td>
+          <td style="text-align:right;color:{verdict_color};font-family:monospace;font-weight:bold;font-size:15px;">{verdict_label}</td>
+        </tr>
+        <tr>
+          <td style="color:#A3A3A3;font-size:12px;padding-top:8px;">Resultados</td>
+          <td style="text-align:right;padding-top:8px;color:#fff;font-family:monospace;font-size:12px;">
+            <span style="color:#22C55E;">{summary.get('pass', 0)} OK</span> ·
+            <span style="color:#F59E0B;">{summary.get('warn', 0)} avisos</span> ·
+            <span style="color:#EF4444;">{summary.get('fail', 0)} fallos</span>
+          </td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:8px 16px;">
+        {rows}
+      </table>
+      <p style="margin:20px 0 6px;color:#A3A3A3;font-size:12px;">
+        Puedes re-ejecutar este chequeo en cualquier momento desde
+        <em>POST /api/admin/security/self-audit/run-now</em>.
+      </p>
+    """
+    return _send(to, subject, _base_template("Auditoría de seguridad", body))
+
+
+
 # ============== iter17 — email verification & password reset ==============
 
 def _app_url() -> str:
     return APP_URL.rstrip("/") if APP_URL else "https://p2p.resiliencebrothers.com"
-
 def notify_email_change_code(to: str, name: str, code: str, lang: str = "es") -> bool:
     """iter55.20 — send OTP to the NEW email during profile email change."""
     subject = _L("Confirma tu nuevo email · Resilience Brothers",
@@ -349,6 +404,125 @@ def notify_password_changed(to: str, name: str, lang: str = "es") -> bool:
     """
     return _send(to, _L("Tu contraseña fue actualizada · Resilience Brothers", "Your password was updated · Resilience Brothers", lang),
                  _base_template(_L("Contraseña cambiada", "Password changed", lang), body, lang))
+
+
+from dataclasses import dataclass
+
+
+@dataclass
+class VipLedgerEmailContext:
+    """iter111 — payload for `notify_vip_ledger_statement`.
+
+    Collapsing 9 positional args into one dataclass keeps call sites
+    self-documenting and avoids the argument-count anti-pattern flagged
+    by the code-review agent.
+    """
+    to: str
+    vip_name: str
+    since: str
+    until: str
+    movements_count: int
+    pdf_bytes: bytes
+    issuer_name: str
+    personal_note: str = ""
+    lang: str = "es"
+
+
+def _ledger_period_label(since: str, until: str) -> str:
+    if since and until:
+        return f"{since} → {until}"
+    if since:
+        return f"desde {since}"
+    if until:
+        return f"hasta {until}"
+    return "histórico completo"
+
+
+def _ledger_note_block(ctx: VipLedgerEmailContext) -> str:
+    safe_note = (ctx.personal_note or "").strip()[:600]
+    if not safe_note:
+        return ""
+    label = _L("Nota de", "Note from", ctx.lang)
+    return (
+        f'<div style="background:#0a0a0a;border-left:3px solid #8B5CF6;'
+        f'padding:12px 16px;margin:20px 0;">'
+        f'<p style="margin:0 0 4px;color:#8B5CF6;font-size:11px;'
+        f'text-transform:uppercase;letter-spacing:1px;">'
+        f'{label} {ctx.issuer_name}</p>'
+        f'<p style="margin:0;color:#fff;font-size:13px;line-height:1.5;">'
+        f'{safe_note}</p></div>'
+    )
+
+
+def _ledger_body_html(ctx: VipLedgerEmailContext, period: str) -> str:
+    lang = ctx.lang
+    intro = _L(
+        f"Hola — adjunto encontrarás el estado de cuenta oficial del ledger VIP "
+        f"de <strong style='color:#fff;'>{ctx.vip_name or 'usuario'}</strong> "
+        f"correspondiente al período {period}.",
+        f"Hi — attached is the official VIP ledger statement for "
+        f"<strong style='color:#fff;'>{ctx.vip_name or 'user'}</strong> "
+        f"covering {period}.",
+        lang,
+    )
+    hold_lbl = _L("Titular VIP", "VIP holder", lang)
+    period_lbl = _L("Período", "Period", lang)
+    moves_lbl = _L("Movimientos incluidos", "Movements included", lang)
+    outro = _L(
+        "Este PDF contiene los saldos iniciales y finales del período, "
+        "junto con el detalle de todos los movimientos confirmados/aprobados. "
+        "Guarda una copia para conciliaciones y auditoría interna.",
+        "This PDF contains opening and closing balances for the period plus "
+        "every confirmed/approved movement. Keep a copy for reconciliation "
+        "and internal audit.",
+        lang,
+    )
+    footer = (
+        f'{_L("Documento generado el", "Document generated on", lang)} '
+        f'{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")} · '
+        f'{_L("Emisor", "Issued by", lang)}: {ctx.issuer_name}'
+    )
+    return f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">{intro}</p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="background:#0a0a0a;border:1px solid rgba(255,255,255,0.08);padding:20px;">
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{hold_lbl}</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{ctx.vip_name or "—"}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{period_lbl}</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{period}</td></tr>
+        <tr><td style="padding:6px 0;color:#A3A3A3;font-size:13px;">{moves_lbl}</td>
+            <td style="padding:6px 0;color:#fff;font-family:monospace;text-align:right;">{ctx.movements_count}</td></tr>
+      </table>
+      {_ledger_note_block(ctx)}
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">{outro}</p>
+      <p style="color:#666;font-size:11px;margin:22px 0 0;">{footer}</p>
+    """
+
+
+def notify_vip_ledger_statement(ctx: VipLedgerEmailContext) -> bool:
+    """iter111 — email the VIP ledger PDF statement as attachment.
+
+    Callers pass a `VipLedgerEmailContext`. See the dataclass docstring
+    for rationale. Used from `POST /api/vip/ledger/email`, its admin
+    twin, and the monthly APScheduler job.
+    """
+    period = _ledger_period_label(ctx.since, ctx.until)
+    subject = _L(
+        f"Estado de cuenta VIP · {period} · Resilience Brothers",
+        f"VIP ledger statement · {period} · Resilience Brothers", ctx.lang,
+    )
+    body = _ledger_body_html(ctx, period)
+    filename_period = (period.replace(" → ", "_").replace(" ", "_")
+                       .replace("→", "_"))
+    attachment = {
+        "filename": f"vip_ledger_{filename_period}.pdf",
+        "content": base64.b64encode(ctx.pdf_bytes).decode("ascii"),
+    }
+    template = _base_template(
+        _L("Estado de cuenta VIP", "VIP ledger statement", ctx.lang),
+        body, ctx.lang,
+    )
+    return _send(ctx.to, subject, template, attachments=[attachment])
 
 
 def notify_order_approved(order: dict, user: dict) -> bool:

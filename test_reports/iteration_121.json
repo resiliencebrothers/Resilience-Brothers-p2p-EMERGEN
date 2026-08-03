@@ -1,0 +1,51 @@
+{
+  "summary": "Frontend testing of iter115 Profitability Calculator dual-mode. Calculator panel (both modes) and mode-aware Projections table PASS with correct anchor values. Operation dialog M1/M2 flow BLOCKED by a critical ReferenceError crash when switching op dialog to 'direct' mode.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "OperationDialog",
+        "issue": "ReferenceError: computeDirect is not defined — crashes the OperationDialog (React error boundary shows 'Algo salió mal') the instant the user clicks op-mode-direct. Root cause: /app/frontend/src/pages/admin/profitability/OperationDialog.jsx line 10 only imports { computeUnit, fmt } from './calc' but line 41 calls computeDirect(...). Also emptyForm() (line 14-17) never sets an initial 'mode', so form.mode is undefined until a mode pill is clicked (works as combined by falsy check, but any downstream code assuming 'combined'|'direct' will misread it).",
+        "selector": "[data-testid=\"op-mode-direct\"]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Log M1 operation",
+        "issue": "Cannot create an M1 operation via the dialog — clicking op-mode-direct crashes the dialog, so op-sell/buy/buypct inputs and op-submit-btn become unreachable. Blocks the entire 'QA M1' anchor test (client 'QA M1', USD/CUP, 1, 952, 700, 26 → net 70). M2 submit path was not tested because the dialog was destroyed by the M1 crash during the same session.",
+        "affected_selectors": ["[data-testid=\"op-mode-direct\"]", "[data-testid=\"op-preview-net\"]", "[data-testid=\"op-submit-btn\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In /app/frontend/src/pages/admin/profitability/OperationDialog.jsx add computeDirect to the import from './calc': `import { computeUnit, computeDirect, fmt } from './calc';`",
+    "In the same file update emptyForm() to include `mode: 'combined'` so the initial state is explicit (also aligns with the pill highlight)",
+    "After the fix, re-verify: open dialog → op-mode-direct → op-sellpct-input should be hidden, fill 1/952/700/26 → op-preview-net = '70 CUP' → submit → row in profit-ops-table with blue M1 badge; then a second M2 op (715/740/26/37 → net 53,65) with purple M2 badge; delete both."
+  ],
+  "critical_code_review_comments": [
+    "OperationDialog.jsx: missing `computeDirect` import causes runtime crash on Mode 1 selection — not caught because the previous iter113 didn't have direct-mode code path; suggests no unit test for the dialog's preview.",
+    "OperationDialog.jsx emptyForm() should include mode default; relying on undefined-as-falsy is fragile.",
+    "Duplicate React key warning observed in an unrelated select ('TEST_X' key) — outside scope of this iter but worth surfacing.",
+    "Also saw a 429 (rate-limit) on some API calls during navigation — non-blocking for this feature."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "60% — CalculatorPanel + ProjectionsTable + mode toggles verified; OperationDialog crash blocks ops log + ops table badge verification"},
+  "verified_pass": [
+    "Default mode = combined; profit-max-buy hero card visible; profit-calc-sellpct-input visible",
+    "Mode 2 anchor (715/740/26/37): profit-net-gain=53,65 · profit-margin=7,5% · profit-max-buy=793,65 — MATCH",
+    "Switching profit-mode-direct hides sellpct input and swaps hero to profit-min-sell (max-buy removed)",
+    "Mode 1 anchor (buy 700, sell 952, buyPct 26, qty 1): profit-net-gain=70 (green) · profit-margin=7,35% · profit-min-sell=882 — MATCH",
+    "Projections table headers in direct mode: Period/Units/Net gain/Profitability/Total sale/Total real cost — MATCH",
+    "Projections table headers in combined mode: Period/Units/FX gain/Conversion gain/Net gain/Profitability — MATCH",
+    "OperationDialog opens with both op-mode-direct and op-mode-combined pills visible"
+  ],
+  "test_credentials": "session_token cookie 'test_session_admin_X' on p2p-exchange-hub-2.preview.emergentagent.com — works",
+  "seed_data_creation": "None — could not create QA M1/QA M2 operations due to dialog crash; log remains empty as required",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After the missing-import fix in OperationDialog.jsx, retest the dialog M1/M2 create+submit+delete flow and verify the Modo column badges (blue M1, purple A78BFA M2) in profit-ops-table. Calculator + Projections are already GREEN.",
+  "rca of the issue": "OperationDialog was extended with a mode toggle (iter115) but the import statement on line 10 was not updated to include computeDirect from ./calc. When form.mode transitions to 'direct' the preview expression `computeDirect({...})` throws a ReferenceError during render, which propagates up and the ErrorBoundary replaces the dialog with the generic 'Algo salió mal' screen. Reproduction: open profitability tab → click profit-add-op-btn → click op-mode-direct → app crashes. Mitigation: 1-line import fix in /app/frontend/src/pages/admin/profitability/OperationDialog.jsx."
+}

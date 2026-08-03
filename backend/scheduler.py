@@ -14,6 +14,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 import email_service
 from revenue_report import revenue_monthly_pdf
 from services.security_alerts import run_security_alert_scan
+from services.security_selfaudit import run_and_email_security_selfaudit
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ async def run_monthly_audit_email(db):
         settings = await db.settings.find_one({"_id": "global"}, {"_id": 0}) or {}
     except Exception:
         settings = {}
-    if settings.get("auto_send_monthly_audit") is False:
+    if not settings.get("auto_send_monthly_audit", True):
         logger.info("Monthly audit email %s: skipped (opt-out flag)", slug)
         return
 
@@ -134,6 +135,99 @@ async def run_monthly_audit_email(db):
     )
 
 
+async def run_monthly_vip_ledger_email(db):
+    """iter111.3 — email previous month's ledger PDF statement to every VIP.
+
+    Skips silently when `settings.global.auto_send_monthly_vip_ledger` is
+    explicitly False (global admin opt-out). Also skips individual VIPs
+    who set `users.monthly_ledger_email_enabled=False`.
+
+    VIPs with an empty statement (0 movements AND zero ledger) are skipped
+    to avoid noise — the point of a monthly statement is to reconcile
+    activity, not send empty inboxes.
+    """
+    from datetime import date
+    from calendar import monthrange
+    from services.vip_ledger_reporting import collect_ledger_movements
+    from vip_ledger_pdf import generate_vip_ledger_pdf
+
+    year, month, slug = _previous_month(datetime.now(timezone.utc))
+    since = date(year, month, 1).strftime("%Y-%m-%d")
+    until = date(year, month, monthrange(year, month)[1]).strftime("%Y-%m-%d")
+
+    try:
+        settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    except Exception:
+        settings = {}
+    if not settings.get("auto_send_monthly_vip_ledger", True):
+        logger.info("Monthly VIP ledger %s: skipped (opt-out flag)", slug)
+        return {"period": slug, "sent": 0, "skipped_empty": 0,
+                "failed": 0, "total_vips": 0, "opted_out": True}
+
+    since_dt = datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    until_dt = datetime.strptime(until, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+    vips = await db.users.find(
+        {"role": "vip", "email": {"$exists": True, "$ne": ""},
+         "monthly_ledger_email_enabled": {"$ne": False}},
+        {"_id": 0, "user_id": 1, "email": 1, "name": 1, "preferred_language": 1},
+    ).to_list(2000)
+
+    system_actor = {"user_id": "system.scheduler",
+                    "name": "Scheduler",
+                    "email": "system@resiliencebrothers.com",
+                    "preferred_language": "es"}
+
+    sent = 0
+    skipped_empty = 0
+    failed = 0
+    for vip in vips:
+        try:
+            initial_pos, initial_neg, movements = await collect_ledger_movements(
+                vip["user_id"], since_dt, until_dt,
+            )
+            if not movements and initial_pos == 0 and initial_neg == 0:
+                skipped_empty += 1
+                continue
+            pdf_bytes = generate_vip_ledger_pdf(
+                vip={"user_id": vip["user_id"], "name": vip.get("name", ""),
+                     "email": vip.get("email", "")},
+                since=since, until=until,
+                initial_positive=initial_pos,
+                initial_negative=initial_neg,
+                movements=movements,
+                actor=system_actor,
+            )
+            ok = email_service.notify_vip_ledger_statement(
+                email_service.VipLedgerEmailContext(
+                    to=vip["email"],
+                    vip_name=vip.get("name") or vip["email"],
+                    since=since, until=until,
+                    movements_count=len(movements),
+                    pdf_bytes=pdf_bytes,
+                    issuer_name="Resilience Brothers · Automatic Statement",
+                    personal_note=(
+                        "Este es tu estado de cuenta VIP mensual automático. "
+                        "Contiene todos los movimientos confirmados del período."
+                    ),
+                    lang=(vip.get("preferred_language") or "es"),
+                ),
+            )
+            if ok:
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+            logger.exception("Monthly VIP ledger: failed for %s", vip.get("email"))
+    logger.info(
+        "Monthly VIP ledger %s: sent=%s skipped_empty=%s failed=%s (total_vips=%s)",
+        slug, sent, skipped_empty, failed, len(vips),
+    )
+    return {"period": slug, "sent": sent, "skipped_empty": skipped_empty,
+            "failed": failed, "total_vips": len(vips), "opted_out": False}
+
+
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
 
@@ -162,6 +256,26 @@ def start_scheduler(db, build_timeseries):
         misfire_grace_time=3600,
         coalesce=True,
     )
+    # iter111.3 — monthly VIP ledger PDF (opt-out via settings.global)
+    _scheduler.add_job(
+        run_monthly_vip_ledger_email,
+        CronTrigger(day=1, hour=9, minute=30, timezone="UTC"),
+        kwargs={"db": db},
+        id="monthly_vip_ledger_email",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    # iter116 — monthly security self-audit checklist (day 1 @ 09:45 UTC).
+    _scheduler.add_job(
+        run_and_email_security_selfaudit,
+        CronTrigger(day=1, hour=9, minute=45, timezone="UTC"),
+        kwargs={"db": db},
+        id="monthly_security_selfaudit",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
     # iter49 — every 5 minutes scan security_events for anomalies and fanout
     # push + email alerts to every admin. Cheap query (indexed) + de-duped per
     # anomaly_key with 6h cool-off, so scaling this frequency is safe.
@@ -177,7 +291,10 @@ def start_scheduler(db, build_timeseries):
     _scheduler.start()
     logger.info(
         "Scheduler started: monthly_revenue_email (day 1 09:00 UTC) + "
-        "monthly_audit_email (day 1 09:15 UTC) + security_alert_scan (every 5m)"
+        "monthly_audit_email (day 1 09:15 UTC) + "
+        "monthly_vip_ledger_email (day 1 09:30 UTC) + "
+        "monthly_security_selfaudit (day 1 09:45 UTC) + "
+        "security_alert_scan (every 5m)"
     )
     return _scheduler
 

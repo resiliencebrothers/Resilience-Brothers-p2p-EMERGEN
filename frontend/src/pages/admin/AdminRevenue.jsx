@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3 } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
@@ -155,10 +155,18 @@ export default function AdminRevenue() {
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <BigStat icon={Banknote} label={t("admin.revenue.totalProfit")} value={fmt(data.total_profit_usdt)} unit="USDT" highlight />
         <BigStat icon={TrendingUp} label={t("admin.revenue.p2pProfit")} value={fmt(data.p2p_profit_usdt)} unit="USDT" />
         <BigStat icon={Boxes} label={t("admin.revenue.marketplaceProfit")} value={fmt(data.marketplace_profit_usdt)} unit="USDT" />
+        <BigStat
+          icon={Layers}
+          label={t("admin.revenue.vipBatches")}
+          value={fmt(data.vip_batches_profit_usdt)}
+          unit="USDT"
+          hint={t("admin.revenue.vipBatchesCount", { n: data.vip_batches_count || 0 })}
+          testid="revenue-vip-batches"
+        />
         <BigStat
           icon={Coins}
           label={t("admin.revenue.usdtFees")}

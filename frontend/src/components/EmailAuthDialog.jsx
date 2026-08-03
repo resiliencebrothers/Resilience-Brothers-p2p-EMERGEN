@@ -89,14 +89,12 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   };
 
   // Map backend error codes → UI side-effects. Reduces submit() complexity.
+  // NOTE (auditoría 28/7/2026): the backend intentionally returns a single
+  // generic INVALID_CREDENTIALS for both "no account" and "wrong password" to
+  // prevent account enumeration — so there is no per-code register prompt here.
   const ERROR_CODE_HANDLERS = {
     EMAIL_NOT_VERIFIED: (msg) =>
       setSuccessMsg(msg || "Verifica tu correo antes de iniciar sesión."),
-    USER_NOT_FOUND: (msg) =>
-      setNotice({
-        kind: "register",
-        message: msg || "No existe una cuenta con este email. Crea una cuenta para continuar.",
-      }),
     USE_GOOGLE_LOGIN: (msg) =>
       setNotice({
         kind: "google",

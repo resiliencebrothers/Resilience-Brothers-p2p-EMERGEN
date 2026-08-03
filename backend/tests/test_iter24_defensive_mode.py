@@ -3,7 +3,10 @@ import os
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, make_admin_totp
+from conftest import (
+    BASE_URL, make_admin_totp,
+    ADMIN_TOKEN, EMPLOYEE_TOKEN, NORMAL_TOKEN,
+)
 
 
 def _db():
@@ -21,7 +24,7 @@ def _reset_defensive():
 def _toggle(enabled: bool, reason: str = "iter24 test"):
     return requests.post(
         f"{BASE_URL}/api/admin/defensive-mode/toggle",
-        headers={"Authorization": "Bearer test_session_admin_X"},
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         json={"enabled": enabled, "reason": reason, "totp_code": make_admin_totp()},
     )
 
@@ -51,7 +54,7 @@ class TestDefensiveMode:
         # Employee staff is NOT enough — admin only
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_employee_X"},
+            headers={"Authorization": f"Bearer {EMPLOYEE_TOKEN}"},
             json={"enabled": True, "totp_code": make_admin_totp()},
         )
         assert r.status_code == 403
@@ -59,7 +62,7 @@ class TestDefensiveMode:
     def test_toggle_requires_totp(self):
         r = requests.post(
             f"{BASE_URL}/api/admin/defensive-mode/toggle",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={"enabled": True},  # no totp_code
         )
         assert r.status_code == 401
@@ -109,7 +112,7 @@ class TestDefensiveMode:
         _toggle(True, "freeze withdrawals")
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw",
-            headers={"Authorization": "Bearer test_session_normal_X"},
+            headers={"Authorization": f"Bearer {NORMAL_TOKEN}"},
             json={"amount_usd": 10, "method": "transfer",
                   "beneficiary_name": "Test Beneficiary",
                   "details": "Bank xyz 0001-0002",
@@ -124,7 +127,7 @@ class TestDefensiveMode:
         _toggle(True, "freeze")
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={"amount_usd": 10, "method": "transfer",
                   "beneficiary_name": "Admin Test",
                   "details": "Bank xyz"},

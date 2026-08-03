@@ -142,13 +142,24 @@ def test_email_confirm_change_rejects_wrong_code():
 
 def test_email_change_rejects_already_taken_email():
     _cleanup_user_state("user_test_vip01")
-    # normal.test@resilience.com belongs to user_test_normal01 (from conftest seed)
-    r = requests.post(
-        f"{API}/profile/email/request-change", headers=_hdr(VIP_TOKEN),
-        json={"new_email": "normal.test@resilience.com", "totp_code": make_vip_totp()},
-    )
-    assert r.status_code == 400
-    assert "uso" in r.json()["detail"].lower()
+    # Plant a throwaway user owning the target email — the conftest seed
+    # users' emails can drift when sibling email-change tests run first.
+    taken = f"taken-{uuid.uuid4().hex[:8]}@resilience-check.com"
+    db = _sync_db()
+    db.users.insert_one({
+        "user_id": f"user_taken_{uuid.uuid4().hex[:8]}",
+        "email": taken, "name": "Taken Email", "role": "normal",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    })
+    try:
+        r = requests.post(
+            f"{API}/profile/email/request-change", headers=_hdr(VIP_TOKEN),
+            json={"new_email": taken, "totp_code": make_vip_totp()},
+        )
+        assert r.status_code == 400
+        assert "uso" in r.json()["detail"].lower()
+    finally:
+        db.users.delete_many({"email": taken})
 
 
 def test_email_change_rejects_same_as_current():

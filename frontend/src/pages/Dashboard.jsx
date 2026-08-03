@@ -1,14 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
 import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, LayoutDashboard, ArrowLeftRight, ListOrdered, Star, Boxes, Shield, Menu, Receipt, UserCircle, ChevronRight, HandCoins, HelpCircle } from "lucide-react";
+import { API } from "@/App";
+import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
 import OrdersView from "@/pages/dashboard/OrdersView";
 import VipView from "@/pages/dashboard/VipView";
 import VipCapitalRequestsView from "@/pages/dashboard/VipCapitalRequestsView";
+import VipBatchesView from "@/pages/dashboard/VipBatchesView";
+import AssetsView from "@/pages/dashboard/AssetsView";
 import MarketplaceView from "@/pages/dashboard/MarketplaceView";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
@@ -17,11 +22,13 @@ import KYCView from "@/pages/dashboard/KYCView";
 import ProfileView from "@/pages/dashboard/ProfileView";
 import NotificationsView from "@/pages/dashboard/NotificationsView";
 import SupportView from "@/pages/dashboard/SupportView";
+import ReferralsView from "@/pages/dashboard/ReferralsView";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import AppealDialog from "@/components/AppealDialog";
 import InstallAppButton from "@/components/InstallAppButton";
+import InstallAppHint from "@/components/InstallAppHint";
 
 // iter55.36r — role labels moved to i18n. Values are `t()` keys under
 // `dashboard.roleLabel.*`, resolved inline where used.
@@ -42,22 +49,38 @@ export default function Dashboard() {
   const [mobileOpen, setMobileOpen] = useState(false);
   // Onboarding shows ONLY for users explicitly marked as not-onboarded (legacy users have the field missing and are treated as completed).
   const [showOnboarding, setShowOnboarding] = useState(user?.onboarding_completed === false);
+  // iter114 — snapshot at mount so the install hint keeps showing even after
+  // the OnboardingDialog flips `user.onboarding_completed` to true.
+  const [installHintEligible] = useState(user?.onboarding_completed === false);
+
+  // iter112 — apply a referral code captured on the landing (?ref=CODE).
+  // Best-effort: runs once after login; the backend enforces all the rules
+  // (no self-referral, only before the first approved order, one time).
+  useEffect(() => {
+    if (!isClient) return;
+    const code = localStorage.getItem("rb_ref_code");
+    if (!code) return;
+    localStorage.removeItem("rb_ref_code");
+    axios.post(`${API}/referrals/claim`, { code })
+      .then((r) => toast.success(t("referrals.claimSuccess", { name: r.data.referrer_name || "" })))
+      .catch(() => {});
+  }, [isClient, t]);
 
   // iter55.26 — "Mi Perfil" leads the sidebar (owner request, 11 Feb 2026).
   // Verificación y Seguridad quedan AGRUPADAS dentro de Mi Perfil como
   // tabs internos (ver ProfileSectionTabs) — ya no aparecen en el sidebar.
+  // Jun 2026 — sidebar simplificado (owner request): Intercambio, Envío por
+  // Lotes y Solicitud de Fondos salen del menú y viven como botones dentro
+  // de la sección unificada Mis Órdenes/Transacciones (HistorySectionTabs).
   const navItems = [
     { to: "/dashboard/profile", icon: UserCircle, label: t("sidebar.client.profile"), id: "nav-profile", hasSubsections: true },
     { to: "/dashboard", icon: LayoutDashboard, label: t("sidebar.client.overview"), end: true, id: "nav-overview" },
-    { to: "/dashboard/exchange", icon: ArrowLeftRight, label: t("sidebar.client.exchange"), id: "nav-exchange" },
-    { to: "/dashboard/orders", icon: ListOrdered, label: t("sidebar.client.orders"), id: "nav-orders" },
-    { to: "/dashboard/transactions", icon: Receipt, label: t("sidebar.client.history"), id: "nav-transactions" },
+    { to: "/dashboard/orders", icon: ListOrdered, label: t("sidebar.client.orders"), id: "nav-orders", hasSubsections: true },
     ...(isClient ? [
+      { to: "/dashboard/assets", icon: Coins, label: t("sidebar.client.assets"), id: "nav-assets" },
       { to: "/dashboard/vip", icon: Star, label: t("sidebar.client.vip"), id: "nav-vip" },
-      ...(user?.role === "vip" ? [
-        { to: "/dashboard/capital-requests", icon: HandCoins, label: t("sidebar.client.capitalRequests"), id: "nav-capital-requests", highlight: true },
-      ] : []),
       { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
+      { to: "/dashboard/referrals", icon: Gift, label: t("sidebar.client.referrals"), id: "nav-referrals" },
     ] : []),
     { to: "/dashboard/support", icon: HelpCircle, label: t("sidebar.client.support"), id: "nav-support" },
   ];
@@ -103,7 +126,7 @@ export default function Dashboard() {
     </>
   );
 
-  const renderUserFooter = (logoutTestid) => (
+  const renderUserFooter = (logoutTestid, { withInstallHint = false } = {}) => (
     <div className="p-4 border-t border-white/5 shrink-0">
       <div className="flex items-center gap-2 mb-3">
         {user?.picture ? (
@@ -119,6 +142,7 @@ export default function Dashboard() {
         </div>
         <NotificationBell />
       </div>
+      {withInstallHint && <InstallAppHint enabled={installHintEligible} />}
       <InstallAppButton testid={`${logoutTestid}-install-app`} compact />
       <div className="flex items-center gap-2 mt-3">
         <CompactLanguageSwitcher testid="dashboard-lang-switcher" />
@@ -189,7 +213,7 @@ export default function Dashboard() {
               <nav className="flex-1 min-h-0 p-4 space-y-1 overflow-y-auto">
                 {renderNavLinks(() => setMobileOpen(false))}
               </nav>
-              {renderUserFooter("logout-mobile-btn")}
+              {renderUserFooter("logout-mobile-btn", { withInstallHint: true })}
             </SheetContent>
           </Sheet>
           </div>
@@ -236,8 +260,11 @@ export default function Dashboard() {
             <Route path="profile" element={<ProfileView />} />
             <Route path="notifications" element={<NotificationsView />} />
             <Route path="vip" element={<VipView />} />
+            <Route path="assets" element={<AssetsView />} />
             <Route path="capital-requests" element={<VipCapitalRequestsView />} />
+            <Route path="batches" element={<VipBatchesView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
+            <Route path="referrals" element={<ReferralsView />} />
             <Route path="support" element={<SupportView />} />
           </Routes>
         </div>

@@ -3,7 +3,7 @@ import os
 import requests
 from pymongo import MongoClient
 
-from conftest import BASE_URL, make_admin_totp
+from conftest import BASE_URL, make_admin_totp, ADMIN_TOKEN, NORMAL_TOKEN
 
 
 def _db():
@@ -36,7 +36,7 @@ def _register():
 def _admin_verify(user_id: str):
     return requests.post(
         f"{BASE_URL}/api/admin/users/{user_id}/verify-email",
-        headers={"Authorization": "Bearer test_session_admin_X"},
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
         json={"totp_code": make_admin_totp()},
     )
 
@@ -76,7 +76,7 @@ class TestAdminManualVerify:
         target = _register()
         r = requests.post(
             f"{BASE_URL}/api/admin/users/{target['user_id']}/verify-email",
-            headers={"Authorization": "Bearer test_session_normal_X"},
+            headers={"Authorization": f"Bearer {NORMAL_TOKEN}"},
             json={},
         )
         assert r.status_code == 403
@@ -93,7 +93,7 @@ class TestAdminManualVerify:
         target = _register()
         r = requests.post(
             f"{BASE_URL}/api/admin/users/{target['user_id']}/verify-email",
-            headers={"Authorization": "Bearer test_session_admin_X"},
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             json={},  # no totp_code
         )
         assert r.status_code == 401

@@ -19,6 +19,7 @@ import httpx
 from datetime import datetime, timezone
 
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")
+from conftest import ADMIN_TOKEN, NORMAL_TOKEN, VIP_TOKEN
 
 
 async def _seed(from_code: str, to_code: str, *,
@@ -59,7 +60,7 @@ class TestRealRateScrubbing:
     @pytest.mark.asyncio
     async def test_real_rate_hidden_from_normal(self):
         await _seed("USDT", "USD", rate_normal=1.0, rate_vip=1.035, real_rate=1.05)
-        rates = await _get_rates("test_session_normal_X")
+        rates = await _get_rates(NORMAL_TOKEN)
         for r in rates:
             assert "real_rate" not in r, (
                 f"real_rate LEAKED to normal on {r.get('from_code')}→{r.get('to_code')}"
@@ -68,7 +69,7 @@ class TestRealRateScrubbing:
     @pytest.mark.asyncio
     async def test_real_rate_hidden_from_vip(self):
         await _seed("USDT", "USD", rate_normal=1.0, rate_vip=1.035, real_rate=1.05)
-        rates = await _get_rates("test_session_vip_X")
+        rates = await _get_rates(VIP_TOKEN)
         for r in rates:
             assert "real_rate" not in r, (
                 f"real_rate LEAKED to VIP on {r.get('from_code')}→{r.get('to_code')}"
@@ -77,7 +78,7 @@ class TestRealRateScrubbing:
     @pytest.mark.asyncio
     async def test_real_rate_visible_to_admin(self):
         await _seed("USDT", "USD", rate_normal=1.0, rate_vip=1.035, real_rate=1.05)
-        rates = await _get_rates("test_session_admin_X")
+        rates = await _get_rates(ADMIN_TOKEN)
         row = next((r for r in rates
                     if r["from_code"] == "USDT" and r["to_code"] == "USD"), None)
         assert row is not None, "seeded rate row missing from admin response"
@@ -90,11 +91,11 @@ class TestRealRateScrubbing:
         used by /vip/convert (`_pick_tier_rate`)."""
         await _seed("USDT", "USD", rate_normal=1.0, rate_vip=1.035, real_rate=1.05)
         # Normal → real_rate
-        rates = await _get_rates("test_session_normal_X")
+        rates = await _get_rates(NORMAL_TOKEN)
         row = next(r for r in rates if r["from_code"] == "USDT" and r["to_code"] == "USD")
         assert row["rate_convert"] == 1.05
         # VIP → rate_vip
-        rates = await _get_rates("test_session_vip_X")
+        rates = await _get_rates(VIP_TOKEN)
         row = next(r for r in rates if r["from_code"] == "USDT" and r["to_code"] == "USD")
         assert row["rate_convert"] == 1.035
 
@@ -104,6 +105,6 @@ class TestRealRateScrubbing:
         rate_convert (= rate_normal) so the converter preview never
         returns null for legacy data."""
         await _seed("USDT", "USD", rate_normal=1.10, rate_vip=1.05, real_rate=None)
-        rates = await _get_rates("test_session_normal_X")
+        rates = await _get_rates(NORMAL_TOKEN)
         row = next(r for r in rates if r["from_code"] == "USDT" and r["to_code"] == "USD")
         assert row["rate_convert"] == 1.10

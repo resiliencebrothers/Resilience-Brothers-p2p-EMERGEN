@@ -221,8 +221,12 @@ class TestRevenueMarketplaceSection:
         assert after["marketplace_profit_usdt"] == pytest.approx(mk["total_profit_usd"], abs=0.01)
         # Tolerance 0.05 to absorb accumulated float rounding across p2p_profit
         # aggregation (many completed orders in test DB → cent-level drift).
+        # total also includes the 0.01-USDT self-conversion fees (iter101).
         assert after["total_profit_usdt"] == pytest.approx(
-            after["p2p_profit_usdt"] + after["marketplace_profit_usdt"], abs=0.05
+            after["p2p_profit_usdt"] + after["marketplace_profit_usdt"]
+            + after.get("conversion_fees_usdt", 0.0)
+            + after.get("vip_batches_profit_usdt", 0.0),
+            abs=0.05,
         )
         item = next((x for x in mk["items"] if x["product"] == prod_name), None)
         assert item is not None, f"Product {prod_name} missing"

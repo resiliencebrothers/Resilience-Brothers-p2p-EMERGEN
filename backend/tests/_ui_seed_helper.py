@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
+from conftest import ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, EMPLOYEE_TOKEN
+
 load_dotenv("/app/backend/.env")
 
 cli = MongoClient(os.environ["MONGO_URL"])
@@ -23,10 +25,10 @@ db = cli[os.environ["DB_NAME"]]
 def seed_sessions():
     exp = datetime.now(timezone.utc) + timedelta(days=1)
     for tok, uid in [
-        ("test_session_admin_X", "user_test_admin01"),
-        ("test_session_vip_X", "user_test_vip01"),
-        ("test_session_normal_X", "user_test_normal01"),
-        ("test_session_employee_X", "user_test_employee01"),
+        (ADMIN_TOKEN, "user_test_admin01"),
+        (VIP_TOKEN, "user_test_vip01"),
+        (NORMAL_TOKEN, "user_test_normal01"),
+        (EMPLOYEE_TOKEN, "user_test_employee01"),
     ]:
         db.user_sessions.update_one(
             {"session_token": tok},

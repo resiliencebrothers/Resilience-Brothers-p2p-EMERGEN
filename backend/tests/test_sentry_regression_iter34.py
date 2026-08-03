@@ -11,10 +11,10 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN = "test_session_admin_X"
-EMPLOYEE = "test_session_employee_X"
-VIP = "test_session_vip_X"
-NORMAL = "test_session_normal_X"
+from conftest import (
+    ADMIN_TOKEN as ADMIN, EMPLOYEE_TOKEN as EMPLOYEE,
+    VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL,
+)
 
 
 def _hdr(token):

@@ -28,10 +28,10 @@ from conftest import make_admin_totp  # noqa: E402
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN = "test_session_admin_X"
-EMPLOYEE = "test_session_employee_X"
-NORMAL = "test_session_normal_X"
-VIP = "test_session_vip_X"
+from conftest import (
+    ADMIN_TOKEN as ADMIN, EMPLOYEE_TOKEN as EMPLOYEE,
+    NORMAL_TOKEN as NORMAL, VIP_TOKEN as VIP,
+)
 
 
 def _db():
@@ -202,6 +202,9 @@ class TestVerifyRejectNotifications:
 class TestEndpoints:
     def _seed_note(self, db, recipient, read=False):
         nid = uuid.uuid4().hex
+        # created_at must be NOW — the list endpoint sorts desc with limit 30,
+        # so a fixed old date would fall off page 1 in a lived-in test DB.
+        from datetime import datetime, timezone
         db.notifications.insert_one({
             "id": nid,
             "recipient_user_id": recipient,
@@ -210,7 +213,7 @@ class TestEndpoints:
             "message": "iter29 seed",
             "data": {"email": "test_iter29_seed@example.com"},
             "read": read,
-            "created_at": "2026-01-01T00:00:00+00:00",
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "read_at": None,
         })
         return nid
