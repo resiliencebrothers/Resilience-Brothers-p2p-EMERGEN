@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -15,14 +15,18 @@ import {
 import {
   Coins, HandCoins, Check, X as XIcon, Clock, Plus, ExternalLink, FileDown, Mail, AlertTriangle,
 } from "lucide-react";
-import { useLiveEvent } from "@/hooks/useLiveStream";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 import CopyableText from "@/components/CopyableText";
 import { EmailLedgerDialog } from "@/pages/dashboard/vip/VipLedgerOps";
 
 /**
  * iter110 · Phases 2+3 admin queues — capital deposits + settlements.
  * Rendered by `AdminVipBatches.jsx` when the sub-tab is switched.
+ * iter171 — refresh debounced (useLiveRefresh) + request cancellation to
+ * avoid the queue getting stuck in "Cargando..." under a burst of events.
  */
+const CAPITAL_EVENTS = ["capital_deposit"];
+const SETTLEMENT_EVENTS = ["settlement_request"];
 
 const METHODS = [
   { code: "bank_transfer", labelKey: "vipLedgerOps.method.bank_transfer" },
@@ -40,23 +44,45 @@ export function AdminCapitalDeposits({ onChanged }) {
   const [loading, setLoading] = useState(true);
   const [rejecting, setRejecting] = useState(null);
   const [dupConfirm, setDupConfirm] = useState(null);
+  const abortRef = useRef(null);
+  const initialLoadRef = useRef(true);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    if (initialLoadRef.current) setLoading(true);
     try {
       const r = await axios.get(`${API}/admin/vip-capital-deposits`, {
         params: { status: statusFilter, limit: 300 },
         withCredentials: true,
+        signal: controller.signal,
+        timeout: 30000,
       });
       setItems(r.data?.items || []);
       onChanged?.();
     } catch (err) {
+      if (axios.isCancel(err) || err?.code === "ERR_CANCELED") return;
       toast.error(err?.response?.data?.detail || t("adminVipLedgerOps.loadError"));
-    } finally { setLoading(false); }
+    } finally {
+      if (abortRef.current === controller) {
+        setLoading(false);
+        initialLoadRef.current = false;
+        abortRef.current = null;
+      }
+    }
   }, [statusFilter, t, onChanged]);
 
   useEffect(() => { load(); }, [load]);
-  useLiveEvent("capital_deposit", load);
+  useLiveRefresh(load, CAPITAL_EVENTS);
+
+  useEffect(() => () => {
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+  }, []);
 
   const confirm = async (id, force = false) => {
     try {
@@ -286,23 +312,45 @@ export function AdminSettlements({ onChanged }) {
   const [loading, setLoading] = useState(true);
   const [rejecting, setRejecting] = useState(null);
   const [creating, setCreating] = useState(false);
+  const abortRef = useRef(null);
+  const initialLoadRef = useRef(true);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    if (initialLoadRef.current) setLoading(true);
     try {
       const r = await axios.get(`${API}/admin/vip-settlements`, {
         params: { status: statusFilter, limit: 300 },
         withCredentials: true,
+        signal: controller.signal,
+        timeout: 30000,
       });
       setItems(r.data?.items || []);
       onChanged?.();
     } catch (err) {
+      if (axios.isCancel(err) || err?.code === "ERR_CANCELED") return;
       toast.error(err?.response?.data?.detail || t("adminVipLedgerOps.loadError"));
-    } finally { setLoading(false); }
+    } finally {
+      if (abortRef.current === controller) {
+        setLoading(false);
+        initialLoadRef.current = false;
+        abortRef.current = null;
+      }
+    }
   }, [statusFilter, t, onChanged]);
 
   useEffect(() => { load(); }, [load]);
-  useLiveEvent("settlement_request", load);
+  useLiveRefresh(load, SETTLEMENT_EVENTS);
+
+  useEffect(() => () => {
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+  }, []);
 
   const approve = async (id) => {
     try {

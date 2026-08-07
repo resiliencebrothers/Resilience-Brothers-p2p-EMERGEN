@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -8,9 +8,14 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { ArrowUpCircle, ArrowDownCircle, ArrowRightLeft, Check, X as XIcon, Clock, Eye } from "lucide-react";
-import { useLiveEvent } from "@/hooks/useLiveStream";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 import { TopScrollTable } from "@/components/TopScrollTable";
 import CopyableText from "@/components/CopyableText";
+
+// iter171 — coalesce SSE bursts (new_vip_batch + vip_batch_item_decision)
+// into a single refetch to prevent the queue from getting stuck in
+// "Cargando..." when many orders arrive at once.
+const LIVE_EVENTS = ["new_vip_batch", "vip_batch_item_decision"];
 
 /**
  * iter110 · Phase 1 — Admin queue for VIP batch items.
@@ -27,9 +32,18 @@ export default function AdminVipBatchItems({ onChanged }) {
   const [viewing, setViewing] = useState(null);
   const [pairFilter, setPairFilter] = useState("all");
   const [pairCounts, setPairCounts] = useState([]);
+  // iter171 — abort in-flight request when a newer one starts so stale
+  // responses can never overwrite fresh data or leave `loading=true`.
+  const abortRef = useRef(null);
+  const initialLoadRef = useRef(true);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    if (initialLoadRef.current) setLoading(true);
     try {
       const r = await axios.get(`${API}/admin/vip-batches`, {
         params: {
@@ -38,18 +52,32 @@ export default function AdminVipBatchItems({ onChanged }) {
           ...(pairFilter !== "all" ? { pair: pairFilter } : {}),
         },
         withCredentials: true,
+        signal: controller.signal,
+        timeout: 30000,
       });
       setItems(r.data?.items || []);
       setPairCounts(r.data?.pair_counts || []);
       onChanged?.();
     } catch (err) {
+      if (axios.isCancel(err) || err?.code === "ERR_CANCELED") return;
       toast.error(err?.response?.data?.detail || t("adminVipBatches.loadError"));
-    } finally { setLoading(false); }
+    } finally {
+      if (abortRef.current === controller) {
+        setLoading(false);
+        initialLoadRef.current = false;
+        abortRef.current = null;
+      }
+    }
   }, [statusFilter, pairFilter, t, onChanged]);
 
   useEffect(() => { load(); }, [load]);
-  useLiveEvent("new_vip_batch", load);
-  useLiveEvent("vip_batch_item_decision", load);
+  useLiveRefresh(load, LIVE_EVENTS);
+
+  useEffect(() => () => {
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+  }, []);
 
   const approve = async (id) => {
     try {

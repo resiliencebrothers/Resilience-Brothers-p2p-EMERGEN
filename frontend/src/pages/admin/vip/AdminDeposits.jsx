@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -9,12 +9,16 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2, Search } from "lucide-react";
-import { useLiveEvent } from "@/hooks/useLiveStream";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 
 /**
  * iter113 — Admin queue for client deposits (`deposits` collection).
  * Confirming credits the client's per-currency balance.
+ * iter171 — refresh debounced + request cancellation to avoid "Cargando..."
+ * stuck when many deposits arrive at once.
  */
+const DEPOSIT_EVENTS = ["deposit_created"];
+
 export default function AdminDeposits({ onChanged }) {
   const { t } = useTranslation();
   const [items, setItems] = useState([]);
@@ -24,6 +28,8 @@ export default function AdminDeposits({ onChanged }) {
   const [userQuery, setUserQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [rejecting, setRejecting] = useState(null);
+  const abortRef = useRef(null);
+  const initialLoadRef = useRef(true);
 
   useEffect(() => {
     const id = setTimeout(() => setUserQuery(userInput.trim()), 300);
@@ -31,7 +37,12 @@ export default function AdminDeposits({ onChanged }) {
   }, [userInput]);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+    if (initialLoadRef.current) setLoading(true);
     try {
       const params = { status: statusFilter, limit: 300 };
       if (methodFilter !== "all") params.method = methodFilter;
@@ -39,16 +50,31 @@ export default function AdminDeposits({ onChanged }) {
       const r = await axios.get(`${API}/admin/deposits`, {
         params,
         withCredentials: true,
+        signal: controller.signal,
+        timeout: 30000,
       });
       setItems(r.data?.items || []);
       onChanged?.();
     } catch (err) {
+      if (axios.isCancel(err) || err?.code === "ERR_CANCELED") return;
       toast.error(err?.response?.data?.detail || t("adminDeposits.loadError"));
-    } finally { setLoading(false); }
+    } finally {
+      if (abortRef.current === controller) {
+        setLoading(false);
+        initialLoadRef.current = false;
+        abortRef.current = null;
+      }
+    }
   }, [statusFilter, methodFilter, userQuery, t, onChanged]);
 
   useEffect(() => { load(); }, [load]);
-  useLiveEvent("deposit_created", load);
+  useLiveRefresh(load, DEPOSIT_EVENTS);
+
+  useEffect(() => () => {
+    if (abortRef.current) {
+      try { abortRef.current.abort(); } catch (_) { /* ignore */ }
+    }
+  }, []);
 
   const confirm = async (id) => {
     try {

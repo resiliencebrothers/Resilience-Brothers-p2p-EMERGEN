@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Layers, HandCoins } from "lucide-react";
 import { API } from "@/App";
 import AdminPageHeader from "@/components/AdminPageHeader";
-import { useLiveEvent } from "@/hooks/useLiveStream";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 import AdminVipBatchItems from "./vip/AdminVipBatchItems";
 import { AdminSettlements } from "./vip/AdminVipLedgerOps";
 
@@ -12,11 +12,16 @@ import { AdminSettlements } from "./vip/AdminVipLedgerOps";
  * iter110 — Admin hub for the VIP ledger workflows.
  * iter163 — client deposits + capital deposits moved to the dedicated
  * "Depósitos y Retiros" hub (/admin/withdrawals), gated by `withdrawals`.
+ * iter171 — badge refresh is debounced (useLiveRefresh) so a burst of new
+ * batches / settlements does not spawn dozens of concurrent /pending-count
+ * fetches.
  */
 const SUBTABS = [
   { id: "items",    labelKey: "adminVipHub.tabs.items",    icon: Layers,    countKey: "items_pending",       Component: AdminVipBatchItems },
   { id: "settle",   labelKey: "adminVipHub.tabs.settle",   icon: HandCoins, countKey: "settlements_pending", Component: AdminSettlements },
 ];
+
+const BADGE_EVENTS = ["new_vip_batch", "settlement_request", "vip_batch_item_decision"];
 
 export default function AdminVipBatches() {
   const { t } = useTranslation();
@@ -25,14 +30,16 @@ export default function AdminVipBatches() {
 
   const loadCounts = useCallback(async () => {
     try {
-      const r = await axios.get(`${API}/admin/vip-batches/pending-count`, { withCredentials: true });
+      const r = await axios.get(`${API}/admin/vip-batches/pending-count`, {
+        withCredentials: true,
+        timeout: 20000,
+      });
       setCounts(r.data);
     } catch { /* badge is best-effort */ }
   }, []);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
-  useLiveEvent("new_vip_batch", loadCounts);
-  useLiveEvent("settlement_request", loadCounts);
+  useLiveRefresh(loadCounts, BADGE_EVENTS);
 
   const Meta = SUBTABS.find((s) => s.id === active) || SUBTABS[0];
   const ActiveComponent = Meta.Component;

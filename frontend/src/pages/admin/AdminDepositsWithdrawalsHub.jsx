@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowDownToLine, PiggyBank, HandCoins } from "lucide-react";
 import { API } from "@/App";
 import AdminPageHeader from "@/components/AdminPageHeader";
-import { useLiveEvent } from "@/hooks/useLiveStream";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 import AdminWithdrawals from "./AdminWithdrawals";
 import AdminDeposits from "./vip/AdminDeposits";
 import AdminCapitalRequests from "./AdminCapitalRequests";
@@ -16,6 +16,9 @@ import AdminCapitalRequests from "./AdminCapitalRequests";
  * permission so one designated staff member handles both directions.
  * iter166 — capital deposits retired (unified into client deposits);
  * capital REQUESTS moved here from Company Funds.
+ * iter171 — badge counts refresh debounced via useLiveRefresh so a burst
+ * of deposit_created / new_withdrawal / ledger_changed events does not
+ * spawn dozens of concurrent /pending-count fetches.
  *
  * URL contract:
  *   /admin/withdrawals                → tab=withdrawals (default)
@@ -28,6 +31,8 @@ const TABS = [
   { id: "requests",    labelKey: "depositsWithdrawalsHub.tabs.requests",    icon: HandCoins,        countKey: "requests_pending" },
 ];
 
+const HUB_BADGE_EVENTS = ["deposit_created", "new_withdrawal", "ledger_changed"];
+
 export default function AdminDepositsWithdrawalsHub() {
   const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
@@ -38,15 +43,16 @@ export default function AdminDepositsWithdrawalsHub() {
 
   const loadCounts = useCallback(async () => {
     try {
-      const r = await axios.get(`${API}/admin/deposits-hub/pending-count`, { withCredentials: true });
+      const r = await axios.get(`${API}/admin/deposits-hub/pending-count`, {
+        withCredentials: true,
+        timeout: 20000,
+      });
       setCounts(r.data);
     } catch { /* badges are best-effort */ }
   }, []);
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
-  useLiveEvent("deposit_created", loadCounts);
-  useLiveEvent("new_withdrawal", loadCounts);
-  useLiveEvent("ledger_changed", loadCounts);
+  useLiveRefresh(loadCounts, HUB_BADGE_EVENTS);
 
   const setTab = (id) => {
     if (id === "withdrawals") setParams({});
