@@ -1,5 +1,5 @@
 """Manual smoke test for iter113 backend (pair batches, deposits, revenue)."""
-import os, sys, time
+import os, sys
 import requests
 from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient

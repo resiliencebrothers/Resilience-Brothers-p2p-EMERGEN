@@ -22,7 +22,7 @@ def _rendered_email_bodies(fn, *args, lang: str) -> tuple[str, str]:
     hitting Resend. Patches `es._send` temporarily via monkey-attribute."""
     captured = {}
     orig = es._send
-    def _fake_send(to, subject, html, attachments=None):
+    def _fake_send(to, subject, html, attachments=None, kind=""):
         captured["subject"] = subject
         captured["html"] = html
         return True

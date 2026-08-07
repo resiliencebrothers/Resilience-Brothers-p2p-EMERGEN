@@ -67,24 +67,25 @@ export default function ProjectionsTable({ calc, setCalc }) {
           <tbody>
             {rows.map((r) => {
               const net = u.netGain * r.units;
-              const rentPct = fmtPct(sellGross && r.units ? net / (sellGross * r.units) : 0);
+              const denomBase = isDirect ? sellGross : Number(calc.buy) || 0;
+              const rentPct = fmtPct(denomBase && r.units ? net / (denomBase * r.units) : 0);
               return (
                 <tr key={r.key} className="border-b border-white/5" data-testid={`profit-proj-row-${r.key}`}>
-                  <td className="py-2 pr-3 text-neutral-300">{t(`profitability.proj.${r.key}`)}</td>
-                  <td className="py-2 pr-3 text-right font-mono text-neutral-400">{fmt(r.units, 4)}</td>
+                  <td className="py-2 pr-3 text-neutral-300 whitespace-nowrap">{t(`profitability.proj.${r.key}`)}</td>
+                  <td className="py-2 pr-3 text-right font-mono text-neutral-400 whitespace-nowrap">{fmt(r.units, 4)}</td>
                   {isDirect ? (
                     <>
-                      <td className={`py-2 pr-3 text-right font-mono font-semibold ${net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(net)} {unit}</td>
-                      <td className="py-2 pr-3 text-right font-mono text-neutral-400">{rentPct}</td>
-                      <td className="py-2 pr-3 text-right font-mono text-neutral-400">{fmt(sellGross * r.units)}</td>
-                      <td className="py-2 text-right font-mono text-neutral-400">{fmt(u.realCost * r.units)}</td>
+                      <td className={`py-2 pr-3 text-right font-mono font-semibold whitespace-nowrap ${net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(net)} {unit}</td>
+                      <td className="py-2 pr-3 text-right font-mono text-neutral-400 whitespace-nowrap">{rentPct}</td>
+                      <td className="py-2 pr-3 text-right font-mono text-neutral-400 whitespace-nowrap">{fmt(sellGross * r.units)}</td>
+                      <td className="py-2 text-right font-mono text-neutral-400 whitespace-nowrap">{fmt(u.realCost * r.units)}</td>
                     </>
                   ) : (
                     <>
-                      <td className={`py-2 pr-3 text-right font-mono ${u.resultFx >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(u.resultFx * r.units)}</td>
-                      <td className={`py-2 pr-3 text-right font-mono ${u.conversionGain >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(u.conversionGain * r.units)}</td>
-                      <td className={`py-2 pr-3 text-right font-mono font-semibold ${net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(net)} {unit}</td>
-                      <td className="py-2 text-right font-mono text-neutral-400">{rentPct}</td>
+                      <td className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${u.resultFx >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(u.resultFx * r.units)}</td>
+                      <td className={`py-2 pr-3 text-right font-mono whitespace-nowrap ${u.conversionGain >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(u.conversionGain * r.units)}</td>
+                      <td className={`py-2 pr-3 text-right font-mono font-semibold whitespace-nowrap ${net >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>{fmt(net)} {unit}</td>
+                      <td className="py-2 text-right font-mono text-neutral-400 whitespace-nowrap">{rentPct}</td>
                     </>
                   )}
                 </tr>

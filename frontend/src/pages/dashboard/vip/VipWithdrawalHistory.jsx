@@ -1,11 +1,13 @@
-import CopyableText from "@/components/CopyableText";
-import ExplorerLink from "@/components/ExplorerLink";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ChevronRight } from "lucide-react";
+import { WithdrawalDetailDialog } from "./WithdrawalDetailDialog";
 
 const WITHDRAWAL_STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   approved: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
+  cancelled: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
   pending: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
 };
 
@@ -18,11 +20,13 @@ function getWithdrawalKey(method, status) {
 }
 
 /**
- * iter55.29 — Extracted from VipView. Renders the VIP client's withdrawal
- * history, including crypto-payout hash + explorer link when applicable.
+ * iter153 — Withdrawal history rows are now clickable: each opens the
+ * exchange-style WithdrawalDetailDialog with the progress timeline, payout
+ * evidence and (while pending) the self-service cancel button.
  */
-export function VipWithdrawalHistory({ withdrawals }) {
+export function VipWithdrawalHistory({ withdrawals, onChanged }) {
   const { t } = useTranslation();
+  const [selected, setSelected] = useState(null);
   return (
     <div className="tactile-card p-6">
       <h2 className="font-display text-xl mb-4">{t("withdraw.historyTitleFull")}</h2>
@@ -31,22 +35,32 @@ export function VipWithdrawalHistory({ withdrawals }) {
           <p className="text-neutral-500 text-sm">{t("withdraw.historyEmpty")}</p>
         )}
         {withdrawals.map((w) => (
-          <WithdrawalRow key={w.id} w={w} />
+          <WithdrawalRow key={w.id} w={w} onOpen={() => setSelected(w)} />
         ))}
       </div>
+      <WithdrawalDetailDialog
+        w={selected}
+        onClose={() => setSelected(null)}
+        onChanged={onChanged}
+      />
     </div>
   );
 }
 
 
-function WithdrawalRow({ w }) {
+function WithdrawalRow({ w, onOpen }) {
   const { t } = useTranslation();
   const label = t(getWithdrawalKey(w.method, w.status), { defaultValue: w.status });
   const statusStyle = WITHDRAWAL_STATUS_STYLES[w.status] || WITHDRAWAL_STATUS_STYLES.pending;
   return (
-    <div className="border border-white/10 p-3 text-sm" data-testid={`withdrawal-row-${w.id}`}>
-      <div className="flex justify-between items-start">
-        <div>
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full text-left border border-white/10 hover:border-[#8B5CF6]/40 transition-colors p-3 text-sm"
+      data-testid={`withdrawal-row-${w.id}`}
+    >
+      <div className="flex justify-between items-start gap-2">
+        <div className="min-w-0">
           <div className="font-mono">
             {w.amount_usd} {w.currency || "USD"} · {w.method}
             {w.crypto_network ? ` · ${w.crypto_network}` : ""}
@@ -55,46 +69,16 @@ function WithdrawalRow({ w }) {
             {new Date(w.created_at).toLocaleString()}
           </div>
         </div>
-        <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${statusStyle}`}>
-          {label}
-        </span>
-      </div>
-      {(w.payout_proof_image || w.payout_tx_hash) && (
-        <div className="mt-3 border-t border-white/5 pt-2 space-y-2">
-          {w.payout_tx_hash && (
-            <div
-              className="text-[0.65rem] text-neutral-400 flex flex-wrap items-center gap-2"
-              data-testid={`payout-hash-${w.id}`}
-            >
-              <span className="text-neutral-600">{t("withdraw.hashLabel")}</span>
-              <span className="text-[#22C55E]">
-                <CopyableText
-                  value={w.payout_tx_hash}
-                  label={t("withdraw.copyHash")}
-                  toastMessage={t("withdraw.hashCopied")}
-                  testid={`payout-hash-copy-${w.id}`}
-                />
-              </span>
-              <ExplorerLink
-                network={w.crypto_network}
-                txHash={w.payout_tx_hash}
-                testid={`payout-explorer-${w.id}`}
-              />
-            </div>
-          )}
-          {w.payout_proof_image && (
-            <a
-              href={w.payout_proof_image}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-[#8B5CF6] underline underline-offset-4"
-              data-testid={`payout-proof-${w.id}`}
-            >
-              {t("withdraw.viewTransferProof")}
-            </a>
-          )}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`text-xs uppercase tracking-wider border px-2 py-1 ${statusStyle}`}>
+            {label}
+          </span>
+          <ChevronRight className="w-4 h-4 text-neutral-600" />
         </div>
-      )}
-    </div>
+      </div>
+      <div className="text-[0.65rem] text-neutral-600 mt-2">
+        {t("withdraw.rowDetailHint")}
+      </div>
+    </button>
   );
 }

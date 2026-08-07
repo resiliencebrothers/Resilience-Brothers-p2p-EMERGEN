@@ -20,7 +20,6 @@ import os
 import requests
 from io import BytesIO
 
-import pytest
 from pypdf import PdfReader
 
 from conftest import (
@@ -52,6 +51,27 @@ def _reset_ledger():
                   "rate_normal": 1.0, "rate_vip": 1.0, "real_rate": 1.0}},
         upsert=True,
     )
+
+
+def _seed_capital_deposit(amount: float, note: str) -> str:
+    """iter166 — POST /vip/capital-deposits is retired (410); seed directly."""
+    import uuid as _uuid
+    from datetime import datetime, timezone
+    from pymongo import MongoClient
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    did = f"vdep_test_{_uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    db.vip_capital_deposits.insert_one({
+        "id": did, "vip_user_id": "user_test_vip01",
+        "vip_email": "vip.test@resilience.com", "vip_name": "VIP Test",
+        "currency": "USDT", "amount": float(amount), "deposit_method": "cash",
+        "account_holder": None, "tx_hash": None, "proof_url": None,
+        "note": note, "status": "pending", "balance_delta_usdt": None,
+        "admin_note": None, "reviewed_at": None, "reviewed_by": None,
+        "created_at": now, "updated_at": now,
+    })
+    return did
+
 
 
 class TestVipLedgerPdf:
@@ -103,14 +123,8 @@ class TestVipLedgerPdf:
 
     def test_confirmed_deposit_appears_in_pdf(self):
         _reset_ledger()
-        # Create + confirm a capital deposit so it moves the ledger.
-        r_create = requests.post(
-            f"{BASE_URL}/api/vip/capital-deposits",
-            headers=_h(VIP),
-            json={"currency": "USDT", "amount": 7500, "note": "capital regresión",
-                  "deposit_method": "cash"},
-        )
-        did = r_create.json()["id"]
+        # Seed + confirm a capital deposit so it moves the ledger.
+        did = _seed_capital_deposit(7500, "capital regresión")
         r_conf = requests.post(
             f"{BASE_URL}/api/admin/vip-capital-deposits/{did}/confirm",
             headers=_h(ADMIN),
@@ -129,13 +143,7 @@ class TestVipLedgerPdf:
 
     def test_rejected_deposit_excluded_from_pdf(self):
         _reset_ledger()
-        r_create = requests.post(
-            f"{BASE_URL}/api/vip/capital-deposits",
-            headers=_h(VIP),
-            json={"currency": "USDT", "amount": 3333, "note": "descartado",
-                  "deposit_method": "cash"},
-        )
-        did = r_create.json()["id"]
+        did = _seed_capital_deposit(3333, "descartado")
         r_rej = requests.post(
             f"{BASE_URL}/api/admin/vip-capital-deposits/{did}/reject",
             headers=_h(ADMIN),
@@ -155,14 +163,9 @@ class TestVipLedgerPdf:
         _reset_ledger()
         # Confirmed deposit lands "today" — request a past range with no
         # activity so the statement carries zero movements.
-        r_create = requests.post(
-            f"{BASE_URL}/api/vip/capital-deposits",
-            headers=_h(VIP),
-            json={"currency": "USDT", "amount": 1234, "note": "hoy",
-                  "deposit_method": "cash"},
-        )
+        did = _seed_capital_deposit(1234, "hoy")
         requests.post(
-            f"{BASE_URL}/api/admin/vip-capital-deposits/{r_create.json()['id']}/confirm",
+            f"{BASE_URL}/api/admin/vip-capital-deposits/{did}/confirm",
             headers=_h(ADMIN),
         )
         r = requests.get(

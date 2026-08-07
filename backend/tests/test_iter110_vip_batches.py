@@ -68,8 +68,8 @@ class TestVipBatches:
             r_add = await c.post(
                 f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
                 json={"items": [
-                    {"holder_name": "Arianna", "amount": 150},
-                    {"holder_name": "Alberto", "amount": 459},
+                    {"holder_name": "Arianna Pérez", "amount": 150},
+                    {"holder_name": "Alberto Gómez", "amount": 459},
                 ]},
             )
             assert r_add.status_code == 200
@@ -98,7 +98,7 @@ class TestVipBatches:
                              json={"direction": "debit", "currency": "USDT"})
             bid = b.json()["id"]
             await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                         json={"items": [{"holder_name": "Cliente A", "amount": 300}]})
+                         json={"items": [{"holder_name": "Cliente Alfa", "amount": 300}]})
 
             it = (await c.get(f"/api/vip/batches/{bid}", headers=h(VIP_TOKEN))).json()["items"][0]
             r_ap = await c.post(
@@ -122,7 +122,7 @@ class TestVipBatches:
                              json={"direction": "credit", "currency": "USDT"})
             bid = b.json()["id"]
             await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                         json={"items": [{"holder_name": "X", "amount": 100}]})
+                         json={"items": [{"holder_name": "Xiomara Díaz", "amount": 100}]})
             it = (await c.get(f"/api/vip/batches/{bid}", headers=h(VIP_TOKEN))).json()["items"][0]
 
             r_rej = await c.post(
@@ -150,7 +150,7 @@ class TestVipBatches:
 
             r_add = await c.post(
                 f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                json={"items": [{"holder_name": "Y", "amount": 50}]},
+                json={"items": [{"holder_name": "Yenny Ruiz", "amount": 50}]},
             )
             assert r_add.status_code == 409
         await _reset()
@@ -164,7 +164,7 @@ class TestVipBatches:
                              json={"direction": "credit", "currency": "USDT"})
             bid = b.json()["id"]
             await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                         json={"items": [{"holder_name": "Z", "amount": 20}]})
+                         json={"items": [{"holder_name": "Zoila Marrero", "amount": 20}]})
             it = (await c.get(f"/api/vip/batches/{bid}", headers=h(VIP_TOKEN))).json()["items"][0]
             await c.post(f"/api/admin/vip-batches/items/{it['id']}/approve",
                          headers=h(ADMIN_TOKEN))
@@ -185,7 +185,7 @@ class TestVipBatches:
                              json={"direction": "credit", "currency": "XYZ"})
             bid = b.json()["id"]
             await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                         json={"items": [{"holder_name": "T", "amount": 1}]})
+                         json={"items": [{"holder_name": "Tomás Vidal", "amount": 1}]})
             it = (await c.get(f"/api/vip/batches/{bid}", headers=h(VIP_TOKEN))).json()["items"][0]
             r = await c.post(f"/api/admin/vip-batches/items/{it['id']}/approve",
                              headers=h(ADMIN_TOKEN))
@@ -210,7 +210,7 @@ class TestVipBatches:
                                  json={"direction": "credit", "currency": "USDT"})
                 bid = b.json()["id"]
                 await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                             json={"items": [{"holder_name": "P", "amount": 10}]})
+                             json={"items": [{"holder_name": "Pablo Rojas", "amount": 10}]})
                 it = (await c.get(f"/api/vip/batches/{bid}", headers=h(VIP_TOKEN))).json()["items"][0]
                 r = await c.post(f"/api/admin/vip-batches/items/{it['id']}/approve",
                                  headers=h(EMPLOYEE_TOKEN))
@@ -232,9 +232,9 @@ class TestVipBatches:
             bid = b.json()["id"]
             await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
                          json={"items": [
-                             {"holder_name": "A", "amount": 100},
-                             {"holder_name": "B", "amount": 200},
-                             {"holder_name": "C", "amount": 300},
+                             {"holder_name": "Ana Prieto", "amount": 100},
+                             {"holder_name": "Beto Salas", "amount": 200},
+                             {"holder_name": "Caro Núñez", "amount": 300},
                          ]})
             items = (await c.get(f"/api/vip/batches/{bid}", headers=h(VIP_TOKEN))).json()["items"]
             # Approve 2, reject 1.
@@ -264,8 +264,8 @@ class TestVipBatches:
                              json={"direction": "credit", "currency": "USDT"})
             bid = b.json()["id"]
             await c.post(f"/api/vip/batches/{bid}/items", headers=h(VIP_TOKEN),
-                         json={"items": [{"holder_name": "N", "amount": 5},
-                                          {"holder_name": "N2", "amount": 6}]})
+                         json={"items": [{"holder_name": "Nora Peña", "amount": 5},
+                                          {"holder_name": "Nilo Peña", "amount": 6}]})
             r1 = (await c.get("/api/admin/vip-batches/pending-count",
                               headers=h(ADMIN_TOKEN))).json()
             assert r1["pending"] == base + 2

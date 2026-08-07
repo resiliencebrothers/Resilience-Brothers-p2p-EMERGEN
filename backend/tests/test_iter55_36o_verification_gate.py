@@ -18,7 +18,7 @@ from pymongo import MongoClient
 from conftest import (
     BASE_URL,
     ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN,
-    make_vip_totp, make_admin_totp,
+    make_vip_totp,
 )
 
 
@@ -104,7 +104,7 @@ def _vip_withdraw(token: str = VIP_TOKEN) -> requests.Response:
         headers={"Authorization": f"Bearer {token}"},
         json={"amount_usd": 5, "method": "transfer",
               "beneficiary_name": "Test Holder",
-              "details": "Bank details for withdrawal test flow",
+              "details": "Zelle: verified@test.com",
               "totp_code": make_vip_totp()},
     )
 

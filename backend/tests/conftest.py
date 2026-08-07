@@ -51,6 +51,37 @@ def base_url():
     return BASE_URL
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_payment_account_config():
+    """iter144 — Legacy tests create tiny USD/EUR orders; operator-seeded
+    tiered payment accounts (and rate `tiers`) would block or reprice them.
+    Stash BOTH at session start and restore at session end so the suite is
+    deterministic regardless of what the operator configured in this DB.
+    The tier test modules plant their own synthetic-currency data mid-run."""
+    from pymongo import MongoClient
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    stashed_accounts = list(db.payment_accounts.find({}, {"_id": 0}))
+    db.payment_accounts.delete_many({})
+    stashed_tiers = [
+        {"from_code": r["from_code"], "to_code": r["to_code"], "tiers": r["tiers"]}
+        for r in db.rates.find({"tiers": {"$exists": True, "$ne": []}},
+                               {"_id": 0, "from_code": 1, "to_code": 1, "tiers": 1})
+    ]
+    if stashed_tiers:
+        db.rates.update_many(
+            {"$or": [{"from_code": s["from_code"], "to_code": s["to_code"]}
+                     for s in stashed_tiers]},
+            {"$set": {"tiers": []}},
+        )
+    yield
+    for a in stashed_accounts:
+        db.payment_accounts.update_one({"id": a["id"]}, {"$set": a}, upsert=True)
+    # Restore by PAIR (legacy rate tests may delete/recreate the row with a new id)
+    for s in stashed_tiers:
+        db.rates.update_one({"from_code": s["from_code"], "to_code": s["to_code"]},
+                            {"$set": {"tiers": s["tiers"]}})
+
+
 @pytest.fixture(scope="session")
 def tokens():
     return {

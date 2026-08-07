@@ -21,6 +21,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
 
   const CAT_META = useMemo(() => [
     { key: "p2p_profit_usdt",         label: t("admin.revenue.catP2P"),          color: "#8B5CF6" },
+    { key: "vip_batches_profit_usdt", label: t("admin.revenue.catVipBatches"),   color: "#A78BFA" },
     { key: "marketplace_profit_usdt", label: t("admin.revenue.catMarketplace"),  color: "#22C55E" },
     { key: "conversion_fees_usdt",    label: t("admin.revenue.catConversions"),  color: "#EAB308" },
   ], [t]);
@@ -95,6 +96,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
       .map((r) => ({
         bucket: r.bucket,
         [t("admin.revenue.catP2P")]:         Number((r.p2p_profit_usdt || 0).toFixed(2)),
+        [t("admin.revenue.catVipBatches")]:  Number((r.vip_batches_profit_usdt || 0).toFixed(2)),
         [t("admin.revenue.catMarketplace")]: Number((r.marketplace_profit_usdt || 0).toFixed(2)),
         [t("admin.revenue.catConversions")]: Number((r.conversion_fees_usdt || 0).toFixed(2)),
         total:              Number((r.total_profit_usdt || 0).toFixed(2)),
@@ -261,6 +263,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                   <tr className="text-left">
                     <th className="px-4 py-2 micro-label text-neutral-500">{t("admin.revenue.colMonth")}</th>
                     <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colP2P")}</th>
+                    <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colVipBatches")}</th>
                     <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colMarketplace")}</th>
                     <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.catConversions")}</th>
                     <th className="px-4 py-2 micro-label text-neutral-500 text-right">{t("admin.revenue.colTotal")}</th>
@@ -278,6 +281,9 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                       <td className="px-4 py-2 text-right font-mono text-[#8B5CF6]">
                         {fmt(r.p2p_profit_usdt)}
                       </td>
+                      <td className="px-4 py-2 text-right font-mono text-[#A78BFA]">
+                        {fmt(r.vip_batches_profit_usdt)}
+                      </td>
                       <td className="px-4 py-2 text-right font-mono text-[#22C55E]">
                         {fmt(r.marketplace_profit_usdt)}
                       </td>
@@ -294,7 +300,7 @@ export default function RevenueAnalyticsDialog({ open, onOpenChange, data, month
                   ))}
                   {(monthly || []).length === 0 && (
                     <tr>
-                      <td colSpan={6} className="text-center text-neutral-500 py-8">
+                      <td colSpan={7} className="text-center text-neutral-500 py-8">
                         {t("admin.revenue.noMonthlyData")}
                       </td>
                     </tr>

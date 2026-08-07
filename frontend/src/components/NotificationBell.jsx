@@ -1,7 +1,6 @@
 import { useAuth } from "@/context/AuthContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink } from "lucide-react";
+import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink, Landmark } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -10,6 +9,8 @@ const TYPE_ICON = {
   new_user_pending: { Icon: UserCheck, color: "text-[#8B5CF6]" },
   phone_verified: { Icon: UserCheck, color: "text-[#22C55E]" },
   phone_rejected: { Icon: UserX, color: "text-[#EF4444]" },
+  payment_account_changed: { Icon: Landmark, color: "text-amber-400" },
+  payment_account_unavailable: { Icon: Landmark, color: "text-[#EF4444]" },
   info: { Icon: BellRing, color: "text-neutral-400" },
 };
 
@@ -179,9 +180,12 @@ export default function NotificationBell() {
             )}
           </div>
         </div>
-        <ScrollArea className="max-h-[420px]">
+        <div
+          className="max-h-[420px] overflow-y-auto notif-scroll"
+          data-testid="notifications-scroll"
+        >
           <NotificationList items={items} loading={loading} onItemClick={markRead} onDelete={deleteOne} />
-        </ScrollArea>
+        </div>
       </PopoverContent>
     </Popover>
   );

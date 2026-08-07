@@ -7,6 +7,7 @@ import { ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ShareAppButton } from "@/components/ShareAppButton";
+import { QrShareButton } from "@/components/QrShareButton";
 
 export default function LandingHeader({ user, onEnter, onEmailAuth }) {
   const { t } = useTranslation();
@@ -34,6 +35,12 @@ export default function LandingHeader({ user, onEnter, onEmailAuth }) {
             label={t("landing.shareApp")}
             variant="ghost"
             className="hidden sm:inline-flex items-center text-neutral-400 hover:text-white px-3 h-9 rounded-full border border-white/15 hover:border-violet-400/60 hover:bg-white/5 text-xs"
+          />
+          <QrShareButton
+            testid="landing-qr-btn"
+            url={typeof window !== "undefined" ? window.location.origin : ""}
+            variant="ghost"
+            className="hidden sm:inline-flex items-center text-neutral-400 hover:text-white px-2.5 h-9 rounded-full border border-white/15 hover:border-violet-400/60 hover:bg-white/5"
           />
           <CompactLanguageSwitcher testid="landing-lang-switcher" />
           <Button

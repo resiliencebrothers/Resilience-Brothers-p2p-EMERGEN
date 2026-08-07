@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
-  Wallet, FileDown, History, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
+  Wallet, FileDown, History, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Lock,
 } from "lucide-react";
 
 import { VipBalancesGrid } from "./vip/VipBalancesGrid";
@@ -15,6 +15,8 @@ import { VipWithdrawalForm } from "./vip/VipWithdrawalForm";
 import { VipLedgerDialog } from "./vip/VipLedgerDialog";
 import { DepositForm } from "./vip/DepositForm";
 import { AccountHistoryDialog } from "./vip/AccountHistoryDialog";
+import { MethodPicker } from "./vip/MethodPicker";
+import { FlashNumber } from "@/components/FlashNumber";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import QuickDateRange from "@/components/QuickDateRange";
@@ -38,6 +40,7 @@ export default function VipView() {
   const [closingUntil, setClosingUntil] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [action, setAction] = useState(null); // null | deposit | withdraw | convert
+  const [method, setMethod] = useState(null); // null | crypto | transfer | cash
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const downloadClosing = async () => {
@@ -100,7 +103,10 @@ export default function VipView() {
     await refresh();
   };
 
-  const toggleAction = (key) => setAction((cur) => (cur === key ? null : key));
+  const toggleAction = (key) => {
+    setMethod(null);
+    setAction((cur) => (cur === key ? null : key));
+  };
 
   const ACTIONS = [
     { key: "deposit",  icon: ArrowDownToLine, label: t("vipView.actions.deposit"),  accent: "text-emerald-400", ring: "border-emerald-500/60 bg-emerald-500/10" },
@@ -134,12 +140,22 @@ export default function VipView() {
           {t("vipView.totalValue")}
         </div>
         <div className="text-5xl sm:text-6xl font-mono tabular-nums tracking-tight font-semibold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)] relative">
-          {balances.total_usdt?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || "0.00"}{" "}
+          <FlashNumber value={balances.total_usdt} testid="vip-total-usdt-flash">
+            {balances.total_usdt?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || "0.00"}
+          </FlashNumber>{" "}
           <span className="text-2xl text-neutral-400">USDT</span>
         </div>
         <div className="text-sm text-neutral-500 mt-2 relative">
           {t("vipView.consolidatedNote")}
         </div>
+        {Number(balances.frozen_total_usdt) > 0 && (
+          <div className="flex items-center gap-2 text-sm text-amber-400/90 mt-3 relative" data-testid="frozen-total-note">
+            <Lock className="w-4 h-4" />
+            {t("vipView.frozenNote", {
+              amount: Number(balances.frozen_total_usdt).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+            })}
+          </div>
+        )}
       </div>
 
       {/* iter115 — exchange-style action buttons */}
@@ -170,13 +186,31 @@ export default function VipView() {
 
       {action === "deposit" && (
         <div data-testid="panel-deposit" className="animate-in fade-in slide-in-from-top-2 duration-300">
-          <DepositForm onSubmitted={handleSubmitted} showHistory={false} />
+          {!method ? (
+            <MethodPicker mode="deposit" onSelect={setMethod} />
+          ) : (
+            <DepositForm
+              method={method}
+              onBack={() => setMethod(null)}
+              onSubmitted={handleSubmitted}
+              showHistory={false}
+            />
+          )}
         </div>
       )}
       {action === "withdraw" && (
         <div data-testid="panel-withdraw" className="animate-in fade-in slide-in-from-top-2 duration-300">
           <VerificationGateBanner blocking action="withdraw">
-            <VipWithdrawalForm balances={balances} onSubmitted={handleSubmitted} />
+            {!method ? (
+              <MethodPicker mode="withdraw" onSelect={setMethod} />
+            ) : (
+              <VipWithdrawalForm
+                balances={balances}
+                method={method}
+                onBack={() => setMethod(null)}
+                onSubmitted={handleSubmitted}
+              />
+            )}
           </VerificationGateBanner>
         </div>
       )}
@@ -248,6 +282,7 @@ export default function VipView() {
         open={historyOpen}
         onOpenChange={setHistoryOpen}
         withdrawals={withdrawals}
+        onChanged={handleSubmitted}
       />
 
       <VipLedgerDialog

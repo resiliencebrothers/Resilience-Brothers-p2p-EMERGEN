@@ -239,13 +239,12 @@ def _sum_usd_headline(by_cur: dict) -> tuple[float, float]:
     return total_in, total_out
 
 
-def _build_summary_band(story: list, styles: dict, entries: list, by_cur: dict,
-                        final_balance: float) -> None:
-    """4-column KPI band + per-currency breakdown."""
+def _kpi_band_table(styles: dict, entries: list, by_cur: dict,
+                    final_balance: float) -> Table:
+    """4-column headline KPI table."""
     total_in_usd, total_out_usd = _sum_usd_headline(by_cur)
     body = styles["body"]
     body_muted = styles["body_muted"]
-
     summary_data = [
         [
             Paragraph("Transacciones totales", body_muted),
@@ -271,14 +270,11 @@ def _build_summary_band(story: list, styles: dict, entries: list, by_cur: dict,
         ("TOPPADDING", (0, 0), (-1, -1), 10),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
     ]))
-    story.append(tbl)
-    story.append(Spacer(1, 14))
+    return tbl
 
-    if not by_cur:
-        return
 
-    story.append(Paragraph("Totales por moneda", styles["label"]))
-    story.append(Spacer(1, 4))
+def _per_currency_totals_table(by_cur: dict) -> Table:
+    """Per-currency in/out/net breakdown table."""
     cur_data = [["Moneda", "Entradas", "Salidas", "Neto"]]
     for code in sorted(by_cur.keys()):
         v = by_cur[code]
@@ -301,7 +297,19 @@ def _build_summary_band(story: list, styles: dict, entries: list, by_cur: dict,
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
-    story.append(cur_tbl)
+    return cur_tbl
+
+
+def _build_summary_band(story: list, styles: dict, entries: list, by_cur: dict,
+                        final_balance: float) -> None:
+    """4-column KPI band + per-currency breakdown."""
+    story.append(_kpi_band_table(styles, entries, by_cur, final_balance))
+    story.append(Spacer(1, 14))
+    if not by_cur:
+        return
+    story.append(Paragraph("Totales por moneda", styles["label"]))
+    story.append(Spacer(1, 4))
+    story.append(_per_currency_totals_table(by_cur))
     story.append(Spacer(1, 18))
 
 

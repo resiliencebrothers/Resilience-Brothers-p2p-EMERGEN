@@ -15,14 +15,13 @@ New endpoint: `POST /api/profile/password/change` with body
   - Send security email + write audit_log entry.
 """
 import os
-import uuid
 import bcrypt
 import pyotp
 import requests
 from datetime import datetime, timezone
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN, ADMIN_TOKEN, TEST_TOTP_SECRET
+from tests.conftest import BASE_URL as API_ROOT, TEST_TOTP_SECRET
 
 API = f"{API_ROOT}/api"
 

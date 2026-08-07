@@ -19,6 +19,13 @@ import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { handleTotpError } from "@/components/TotpPromptDialog";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
+
+// iter159 — company funds move whenever balances/orders/withdrawals change.
+const CF_LIVE_EVENTS = [
+  "ledger_changed", "order_status_changed",
+  "withdrawal_status_changed", "daily_autoclose",
+];
 
 const emptyForm = {
   amount: "", currency: "", beneficiary: "",
@@ -68,6 +75,7 @@ export function useCompanyFunds() {
     }
   }, [t]);
   useEffect(() => { load(); }, [load]);
+  useLiveRefresh(load, CF_LIVE_EVENTS);
 
   const handleInvoiceUpload = useCallback((e) => {
     const file = e.target.files?.[0];

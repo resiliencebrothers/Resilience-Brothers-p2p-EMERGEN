@@ -1,11 +1,10 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Wallet, Banknote, HandCoins, Calculator } from "lucide-react";
+import { Wallet, Banknote, Calculator } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import AdminCompanyFunds from "./AdminCompanyFunds";
 import AdminRevenue from "./AdminRevenue";
-import AdminCapitalRequests from "./AdminCapitalRequests";
 import AdminProfitability from "./AdminProfitability";
 
 /**
@@ -24,7 +23,8 @@ import AdminProfitability from "./AdminProfitability";
 const TAB_META = [
   { id: "funds",    labelKey: "companyFundsHub.tabs.funds",    icon: Wallet,    Component: AdminCompanyFunds,   perm: "company_funds" },
   { id: "revenue",  labelKey: "companyFundsHub.tabs.revenue",  icon: Banknote,  Component: AdminRevenue,        perm: "company_funds" },
-  { id: "requests", labelKey: "companyFundsHub.tabs.requests", icon: HandCoins, Component: AdminCapitalRequests, perm: "company_funds" },
+  // iter166 — "requests" (capital requests) moved to the Deposits &
+  // Withdrawals hub (/admin/withdrawals?tab=requests, `withdrawals` gate).
   // iter113 — profitability calculator, gated by its own permission code so
   // the admin can designate a staff member for rate-setting only.
   { id: "profitability", labelKey: "companyFundsHub.tabs.profitability", icon: Calculator, Component: AdminProfitability, perm: "profitability" },
@@ -42,6 +42,11 @@ export default function AdminCompanyFundsHub() {
   }, [user]);
   const activeId = params.get("tab") || tabs[0]?.id || "funds";
   const active = useMemo(() => tabs.find((tt) => tt.id === activeId) || tabs[0], [tabs, activeId]);
+  // iter166 — legacy deep-links to the old capital-requests tab.
+  if (activeId === "requests") {
+    navigate("/admin/withdrawals?tab=requests", { replace: true });
+    return null;
+  }
   if (!active) return null;
   const ActiveComponent = active.Component;
 

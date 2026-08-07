@@ -10,6 +10,7 @@ import {
 import { ArrowUpCircle, ArrowDownCircle, ArrowRightLeft, Check, X as XIcon, Clock, Eye } from "lucide-react";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import { TopScrollTable } from "@/components/TopScrollTable";
+import CopyableText from "@/components/CopyableText";
 
 /**
  * iter110 · Phase 1 — Admin queue for VIP batch items.
@@ -127,6 +128,11 @@ export default function AdminVipBatchItems({ onChanged }) {
                       → {Number(it.amount_to).toLocaleString(undefined, { maximumFractionDigits: 4 })} {it.to_code}
                     </div>
                   )}
+                  {it.payment_account_label && (
+                    <div className="text-[0.6rem] text-neutral-500 font-normal" data-testid={`vip-item-account-${it.id}`}>
+                      {it.payment_account_label}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500 whitespace-nowrap">
                   {new Date(it.created_at).toLocaleString()}
@@ -200,13 +206,24 @@ export default function AdminVipBatchItems({ onChanged }) {
 }
 
 
-function DetailRow({ label, value, mono = true, tone = "text-white", testid }) {
+function DetailRow({ label, value, mono = true, tone = "text-white", testid, copyable = false, copyValue, copyToast, copyTestid }) {
   return (
     <div className="flex items-start justify-between gap-4 py-1.5 border-b border-white/5">
       <span className="micro-label text-neutral-500 shrink-0">{label}</span>
-      <span className={`text-sm text-right break-all ${mono ? "font-mono" : ""} ${tone}`} data-testid={testid}>
-        {value}
-      </span>
+      {copyable ? (
+        <span className={`text-sm text-right break-all ${tone} inline-flex items-center justify-end min-w-0 max-w-full`} data-testid={testid}>
+          <CopyableText
+            value={copyValue ?? value}
+            monospace={mono}
+            toastMessage={copyToast}
+            testid={copyTestid}
+          />
+        </span>
+      ) : (
+        <span className={`text-sm text-right break-all ${mono ? "font-mono" : ""} ${tone}`} data-testid={testid}>
+          {value}
+        </span>
+      )}
     </div>
   );
 }
@@ -235,8 +252,57 @@ function DetailsDialog({ open, item, onClose }) {
             value={item.to_code ? `${item.from_code} → ${item.to_code}` : t(`vipBatches.direction.${item.direction}`)}
             tone="text-[#A78BFA]"
           />
-          <DetailRow label={t("adminVipBatches.dHolder")} value={item.holder_name} mono={false} testid="vip-item-detail-holder" />
-          <DetailRow label={t("adminVipBatches.dSends")} value={`${fmt(item.amount)} ${item.from_code || item.currency}`} />
+          <DetailRow
+            label={t("adminVipBatches.dHolder")}
+            value={item.holder_name}
+            mono={false}
+            testid="vip-item-detail-holder"
+            copyable
+            copyValue={item.holder_name}
+            copyToast={t("adminVipBatches.copiedHolder")}
+            copyTestid="vip-item-detail-holder-copy"
+          />
+          {item.card_number && (
+            <DetailRow
+              label={t("adminVipBatches.dCard")}
+              value={item.card_number}
+              tone="text-[#22C55E]"
+              testid="vip-item-detail-card"
+              copyable
+              copyValue={item.card_number.replace(/\s+/g, "")}
+              copyToast={t("adminVipBatches.copiedCard")}
+              copyTestid="vip-item-detail-card-copy"
+            />
+          )}
+          <DetailRow
+            label={t("adminVipBatches.dSends")}
+            value={`${fmt(item.amount)} ${item.from_code || item.currency}`}
+            testid="vip-item-detail-sends"
+            copyable
+            copyValue={String(item.amount)}
+            copyToast={t("adminVipBatches.copiedAmount")}
+            copyTestid="vip-item-detail-sends-copy"
+          />
+          {item.payment_account_label && (
+            <DetailRow
+              label={t("adminVipBatches.dPayAccount")}
+              value={item.payment_account_label}
+              mono={false}
+              tone="text-emerald-400"
+              testid="vip-item-detail-account"
+            />
+          )}
+          {item.payment_account_details && (
+            <DetailRow
+              label={t("adminVipBatches.dPayAccountDetails")}
+              value={item.payment_account_details}
+              testid="vip-item-detail-account-details"
+              copyable
+              copyValue={item.payment_account_details}
+              copyToast={t("adminVipBatches.copiedAccount")}
+              copyTestid="vip-item-detail-account-copy"
+            />
+          )}
           {item.amount_to != null && item.to_code && (
             <DetailRow label={t("adminVipBatches.dReceives")} value={`${fmt(item.amount_to)} ${item.to_code}`} tone="text-emerald-400" testid="vip-item-detail-receives" />
           )}

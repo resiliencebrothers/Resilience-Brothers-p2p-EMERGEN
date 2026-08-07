@@ -15,7 +15,6 @@ test_iter55_37_session_ttl_24h.py:
 """
 import os
 import re
-import asyncio
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 

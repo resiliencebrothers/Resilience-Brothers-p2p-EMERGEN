@@ -2,22 +2,25 @@ import { NavLink, Routes, Route, Navigate, useNavigate, useLocation } from "reac
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift, Landmark } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
 import AdminRates from "@/pages/admin/AdminRates";
+import AdminPaymentAccounts from "@/pages/admin/AdminPaymentAccounts";
 import AdminUsersHub from "@/pages/admin/AdminUsersHub";
 import AdminUserStatsPage from "@/pages/admin/AdminUserStatsPage";
 import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminVipBatches from "@/pages/admin/AdminVipBatches";
 import AdminProducts from "@/pages/admin/AdminProducts";
-import AdminWithdrawals from "@/pages/admin/AdminWithdrawals";
+import AdminDepositsWithdrawalsHub from "@/pages/admin/AdminDepositsWithdrawalsHub";
+import AdminReconciliation from "@/pages/admin/AdminReconciliation";
 import AdminAuditHub from "@/pages/admin/AdminAuditHub";
 import AdminTransactions from "@/pages/admin/AdminTransactions";
 import AdminQueue from "@/pages/admin/AdminQueue";
 import AdminCompanyFundsHub from "@/pages/admin/AdminCompanyFundsHub";
+import ClientDebtsPage from "@/pages/admin/company-funds/ClientDebtsPage";
 import AdminBlockedContacts from "@/pages/admin/AdminBlockedContacts";
 import AdminHealth from "@/pages/admin/AdminHealth";
 import AdminSecurity from "@/pages/admin/AdminSecurity";
@@ -72,15 +75,22 @@ export default function AdminPanel() {
       ...(has("withdrawals") ? [
         { to: "/admin/withdrawals", icon: ArrowDownToLine, label: t("sidebar.admin.withdrawals"), id: "admin-nav-withdrawals" },
       ] : []),
+      // iter167 — bank statement reconciliation module (dedicated permission).
+      ...(has("reconciliation") ? [
+        { to: "/admin/reconciliation", icon: Landmark, label: t("sidebar.admin.reconciliation"), id: "admin-nav-reconciliation" },
+      ] : []),
       // iter102.1 — Monedas + Tasas agrupadas: la Rate table es una vista
       // secundaria del catálogo de monedas, no una sección independiente.
-      ...(has("currencies") || has("rates") ? [
+      ...(has("currencies") || has("rates") || has("payment_accounts") ? [
         {
           to: "/admin/currencies", icon: Coins, label: t("sidebar.admin.currencies"),
           id: "admin-nav-currencies",
           children: [
             ...(has("rates") ? [
               { to: "/admin/rates", icon: TrendingUp, label: t("sidebar.admin.rates"), id: "admin-nav-rates" },
+            ] : []),
+            ...(has("payment_accounts") ? [
+              { to: "/admin/payment-accounts", icon: Landmark, label: t("sidebar.admin.paymentAccounts"), id: "admin-nav-payment-accounts" },
             ] : []),
           ],
         },
@@ -334,11 +344,14 @@ export default function AdminPanel() {
             <Route path="quick" element={<Navigate to="/admin?tab=quick" replace />} />
             <Route path="queue" element={<AdminQueue />} />
             <Route path="company-funds" element={<AdminCompanyFundsHub />} />
+            <Route path="company-funds/client-debts" element={<ClientDebtsPage />} />
             <Route path="orders" element={<AdminOrders />} />
             <Route path="vip-batches" element={<AdminVipBatches />} />
-            <Route path="withdrawals" element={<AdminWithdrawals />} />
+            <Route path="withdrawals" element={<AdminDepositsWithdrawalsHub />} />
+            <Route path="reconciliation" element={<AdminReconciliation />} />
             <Route path="currencies" element={<AdminCurrencies />} />
             <Route path="rates" element={<AdminRates />} />
+            {hasPerm("payment_accounts") && <Route path="payment-accounts" element={<AdminPaymentAccounts />} />}
             <Route path="products" element={<AdminProducts />} />
             <Route path="users" element={<AdminUsersHub />} />
             <Route path="users/:userId/stats" element={<AdminUserStatsPage />} />
@@ -349,7 +362,7 @@ export default function AdminPanel() {
             <Route path="profile-change-requests" element={<Navigate to="/admin/users?tab=changes" replace />} />
             <Route path="security" element={<AdminSecurity />} />
             {user?.role === "admin" && <Route path="revenue" element={<Navigate to="/admin/company-funds?tab=revenue" replace />} />}
-            {user?.role === "admin" && <Route path="capital-requests" element={<Navigate to="/admin/company-funds?tab=requests" replace />} />}
+            {user?.role === "admin" && <Route path="capital-requests" element={<Navigate to="/admin/withdrawals?tab=requests" replace />} />}
             {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
             {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
             {isStaff && <Route path="support" element={<AdminSupport />} />}

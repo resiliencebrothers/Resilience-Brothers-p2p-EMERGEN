@@ -91,7 +91,17 @@ function OrdersTableRow({ order: o, onOpen }) {
       <td className="px-3 py-3">{o.user_name}</td>
       <td className="px-3 py-3"><span className="text-xs uppercase">{o.user_role}</span></td>
       <td className="px-3 py-3"><CurrencyPairIcon from={o.from_code} to={o.to_code} size="sm" showLabel /></td>
-      <td className="px-3 py-3 font-mono">{o.amount_from}</td>
+      <td className="px-3 py-3 font-mono">
+        {o.amount_from}
+        {o.payment_account_label && (
+          <div
+            className="text-[0.6rem] text-neutral-500 font-normal"
+            data-testid={`order-account-${o.id}`}
+          >
+            → {o.payment_account_label}
+          </div>
+        )}
+      </td>
       <td className="px-3 py-3 font-mono text-[#8B5CF6]">{o.amount_to}</td>
       <td className="px-3 py-3 text-xs">
         <div className="flex flex-col gap-1">

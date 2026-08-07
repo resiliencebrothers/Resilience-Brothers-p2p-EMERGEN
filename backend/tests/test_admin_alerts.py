@@ -91,14 +91,15 @@ class TestAlertHooksNonBreaking:
         db.users.update_one({"user_id": "user_test_vip01"},
                             {"$set": {"vip_balance_usd": 100.0}})
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                          json={"amount_usd": 5, "method": "transfer", "details": "Bank Y", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
+                          json={"amount_usd": 5, "method": "transfer", "details": "Zelle: test.holder@bank.com", "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200, r.text
 
     def test_vip_redeem_still_200(self, db):
         prods = requests.get(f"{BASE_URL}/api/products").json()
         if not prods:
             pytest.skip("no products")
-        cheap = min(prods, key=lambda p: p["price_usd"])
+        cheap = min([p for p in prods if p.get("stock", 0) > 0],
+                    key=lambda p: p["price_usd"])
         # Top up balance
         db.users.update_one({"user_id": "user_test_vip01"},
                             {"$set": {"vip_balance_usd": cheap["price_usd"] + 50}})

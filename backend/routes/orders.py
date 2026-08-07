@@ -18,7 +18,6 @@ Status transitions for admins live in routes/admin.py. Shared business logic
 lives in services/orders_helpers.py and services/balances.py.
 """
 import logging
-from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Literal, Optional, Any
 
@@ -40,6 +39,7 @@ from services.balances import (
     assert_account_active, assert_not_defensive,
 )
 from services.user_verification import assert_user_fully_verified
+from services.live_events import emit_balance_changed
 from services.delivery_rules import is_delivery_method_allowed, allowed_delivery_methods
 from services.orders_helpers import (
     OrderCreate,
@@ -95,7 +95,7 @@ class WithdrawalRequest(BaseModel):
     # know which chain to release on (and audit trail is preserved). Empty
     # string for non-crypto flows.
     crypto_network: str = ""
-    status: Literal["pending", "approved", "paid", "rejected"] = "pending"
+    status: Literal["pending", "approved", "paid", "rejected", "cancelled"] = "pending"
     admin_note: str = ""
     payout_proof_image: str = ""
     payout_tx_hash: str = ""
@@ -166,7 +166,13 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
     await assert_account_active(user)
     await assert_user_fully_verified(db, user, action_label="crear una orden de intercambio")
     await _assert_delivery_method_matches_currency(payload.to_code, payload.delivery_method)
-    rate, _rate_doc = await resolve_order_rate(payload.from_code, payload.to_code, user)
+    # iter143 — tiered payment accounts: enforce the per-currency minimum and
+    # resolve WHICH account the client was told to pay (snapshotted below).
+    from services.payment_accounts import assert_amount_meets_minimum
+    payment_account = await assert_amount_meets_minimum(
+        payload.from_code, payload.amount_from)
+    rate, _rate_doc = await resolve_order_rate(
+        payload.from_code, payload.to_code, user, payload.amount_from)
     # iter35 — if proof_image is a base64 data URL, persist it to object storage.
     # When storage is disabled the helper returns the value untouched (base64 fallback).
     payload.proof_image = maybe_upload_proof(payload.proof_image, "orders") or ""
@@ -177,6 +183,9 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
     ) or {}
     to_currency_type = to_currency_doc.get("type", "")
     order = build_order_from_payload(payload, user, rate, to_currency_type)
+    if payment_account:
+        order.payment_account_id = payment_account.get("id", "")
+        order.payment_account_label = payment_account.get("label", "")
     residue = getattr(order, "_residue_to_credit", 0.0)
     await db.orders.insert_one(order.model_dump())
     # If cash-to-fiat produced sub-unit residue, credit it to the client's
@@ -187,6 +196,8 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
             {"user_id": user["user_id"]},
             {"$inc": {f"vip_balances.{payload.to_code}": residue}},
         )
+        await emit_balance_changed(user["user_id"], "order_residue",
+                                   currency=payload.to_code, order_id=order.id)
         try:
             from audit_log import log_action
             await log_action(
@@ -273,6 +284,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     )
     await db.redemptions.insert_one(r.model_dump())
     await decrement_balance(user["user_id"], "USD", total)
+    await emit_balance_changed(user["user_id"], "marketplace_redeem",
+                               redemption_id=r.id)
     await db.products.update_one(
         {"id": product["id"]}, {"$inc": {"stock": -payload.quantity}}
     )
@@ -363,6 +376,12 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
                 },
             )
         crypto_network = network
+    if payload.method == "transfer":
+        # iter158 — reject fake/placeholder account numbers server-side.
+        from services.transfer_validation import validate_transfer_details
+        err = validate_transfer_details(currency, payload.details)
+        if err:
+            raise HTTPException(status_code=422, detail=err)
     if get_user_balance(user, currency) < payload.amount_usd:
         raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
     w = WithdrawalRequest(
@@ -378,6 +397,8 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     )
     await db.withdrawals.insert_one(w.model_dump())
     await decrement_balance(user["user_id"], currency, payload.amount_usd)
+    await emit_balance_changed(user["user_id"], "withdrawal_created",
+                               withdrawal_id=w.id, currency=currency)
     try:
         await notify_all_admins(
             db,
@@ -387,6 +408,13 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         )
     except Exception as e:
         logger.error(f"Admin notify (withdrawal) failed: {e}")
+    # iter155 — confirm receipt to the client (push + in-app) so they can
+    # follow the withdrawal progress without opening the app.
+    try:
+        from routes.notifications import notify_user_withdrawal_step
+        await notify_user_withdrawal_step(w.model_dump(), "received")
+    except Exception as e:
+        logger.error(f"withdrawal received push failed: {e}")
     # iter98 — SSE push to admins so /admin/queue prepends the pending
     # withdrawal in real-time.
     try:
@@ -419,6 +447,70 @@ async def my_withdrawals(request: Request) -> Any:
     return docs
 
 
+@router.post("/vip/withdrawals/{wid}/cancel")
+async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
+    """iter153 — the client cancels their own withdrawal while still pending.
+    The frozen amount returns to the available balance. Conditional update
+    makes double-clicks idempotent (second call gets 409)."""
+    user = await require_user(request)
+    w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    if not w or w.get("user_id") != user["user_id"]:
+        raise HTTPException(status_code=404, detail="Retiro no encontrado.")
+    now = iso(now_utc())
+    res = await db.withdrawals.update_one(
+        {"id": wid, "status": "pending"},
+        {"$set": {"status": "cancelled", "cancelled_at": now,
+                  "balance_refunded": True}},
+    )
+    if res.modified_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Este retiro ya está en proceso y no puede cancelarse. Contacta a soporte.",
+        )
+    currency = w.get("currency") or "USD"
+    amount = float(w.get("amount_usd") or 0.0)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$inc": {f"vip_balances.{currency}": amount}},
+    )
+    from audit_log import log_action
+    await log_action(
+        db, actor=user, action="withdrawal.cancelled_by_client",
+        entity_type="withdrawal", entity_id=wid,
+        summary=f"Retiro {amount} {currency} cancelado por el cliente",
+        details={"amount_usd": amount, "currency": currency,
+                 "method": w.get("method")},
+    )
+    try:
+        await notify_all_admins(
+            db,
+            title="Retiro cancelado por el cliente",
+            body=f"{user['name']} canceló su retiro de {amount} {currency}.",
+            url_path="/admin/withdrawals",
+        )
+    except Exception as e:
+        logger.error(f"Admin notify (withdrawal cancel) failed: {e}")
+    try:
+        from services.live_bus import publish as live_publish
+        status_payload = {"withdrawal_id": wid, "status": "cancelled",
+                          "prev_status": "pending", "amount_usd": amount,
+                          "currency": currency}
+        await live_publish("withdrawal_status_changed", status_payload,
+                           user_id=user["user_id"])
+        await live_publish("balance_updated",
+                           {"reason": "withdrawal_cancelled", "withdrawal_id": wid},
+                           user_id=user["user_id"])
+        await live_publish("withdrawal_status_changed", status_payload,
+                           roles=("admin", "employee"))
+        await live_publish("ledger_changed",
+                           {"reason": "withdrawal_cancelled", "withdrawal_id": wid,
+                            "user_id": user["user_id"]},
+                           roles=("admin", "employee"))
+    except Exception as e:
+        logger.error(f"withdrawal_cancelled SSE publish failed: {e}")
+    return await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+
+
 # ============================================================
 # VIP — Balances + Daily closing PDF
 # ============================================================
@@ -432,23 +524,43 @@ async def vip_balances(request: Request) -> Any:
     legacy_usd = float(user.get("vip_balance_usd") or 0.0)
     if legacy_usd > 0:
         balances["USD"] = balances.get("USD", 0.0) + legacy_usd
+    # iter153 — funds locked in pending/approved withdrawals are already
+    # deducted from the available balance at creation time; expose them per
+    # currency so the client SEES them as frozen instead of vanished.
+    frozen: dict[str, float] = {}
+    async for row in db.withdrawals.aggregate([
+        {"$match": {"user_id": user["user_id"],
+                    "status": {"$in": ["pending", "approved"]}}},
+        {"$group": {"_id": "$currency", "total": {"$sum": "$amount_usd"}}},
+    ]):
+        f_code = (row["_id"] or "USD").strip().upper()
+        if float(row["total"] or 0) > 0:
+            frozen[f_code] = round(float(row["total"]), 4)
     rates = await build_rate_lookup()
     items = []
     total_usdt = 0.0
-    for code, amount in balances.items():
-        amt = float(amount or 0.0)
-        if amt == 0:
+    frozen_total_usdt = 0.0
+    for code in set(balances) | set(frozen):
+        amt = float(balances.get(code) or 0.0)
+        fro = float(frozen.get(code) or 0.0)
+        if amt == 0 and fro == 0:
             continue
         usdt = convert_to_usdt(amt, code, rates)
         if usdt is not None:
             total_usdt += usdt
+        if fro:
+            f_usdt = convert_to_usdt(fro, code, rates)
+            if f_usdt:
+                frozen_total_usdt += f_usdt
         items.append({
             "currency": code,
             "amount": amt,
+            "frozen": fro,
             "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
         })
     items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
-    return {"balances": items, "total_usdt": round(total_usdt, 4)}
+    return {"balances": items, "total_usdt": round(total_usdt, 4),
+            "frozen_total_usdt": round(frozen_total_usdt, 4)}
 
 
 # ============================================================
@@ -699,6 +811,8 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         {"user_id": user["user_id"]},
         {"$inc": {f"vip_balances.{to_code}": amount_to}},
     )
+    await emit_balance_changed(user["user_id"], "convert",
+                               from_code=from_code, to_code=to_code)
     # Audit
     try:
         from audit_log import log_action
@@ -919,6 +1033,8 @@ async def vip_convert_dust(request: Request) -> Any:
             )
         except Exception as e:
             logger.error(f"vip.convert.dust audit log failed: {e}")
+    await emit_balance_changed(user["user_id"], "dust_sweep",
+                               credited_usdt=round(credited_total, 4))
     return {
         "ok": True,
         "items": dust,

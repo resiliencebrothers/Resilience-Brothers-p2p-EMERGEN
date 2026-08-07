@@ -1,9 +1,10 @@
 """Admin router — profitability calculator (iter113).
 
-Ports the operator's Excel "Panel Rentabilidad Integrado" into the app:
-  net_gain = fx_result + conversion_gain
-  fx_result        = (sell_price − buy_price) × qty
-  conversion_gain  = sell_price × (sell_pct − buy_pct)/100 × qty
+Ports the operator's Excel "Calculadora USDT → CUP" (cash cycle logic):
+  recovered        = sell_price × (1 + sell_pct/100) ÷ (1 + buy_pct/100)
+  net_gain         = (recovered − buy_price) × qty
+  conversion_gain  = (recovered − sell_price) × qty   (in cash units)
+  profitability    = net_gain ÷ (buy_price × qty)
 Percentages are stored as percent numbers (26 = 26%).
 
 Collections:
@@ -39,12 +40,14 @@ def _compute(mode: str, sell_price: float, buy_price: float, buy_pct: float, sel
         result_fx = (sell_price - real_cost) * quantity
         net_gain = result_fx
     else:
-        # Modo 2 — combined flow (FX result + transfer differential).
-        real_cost = sell_price * (1 + buy_pct / 100.0)
+        # Modo 2 — full cash cycle: sell for cash, cash→transfer at sell_pct,
+        # transfer→cash at buy_pct. Everything measured in cash units.
+        recovered = sell_price * (1 + sell_pct / 100.0) / (1 + buy_pct / 100.0)
+        real_cost = buy_price
         result_fx = (sell_price - buy_price) * quantity
-        conversion_gain = sell_price * ((sell_pct - buy_pct) / 100.0) * quantity
-        net_gain = result_fx + conversion_gain
-    gross = sell_price * quantity
+        conversion_gain = (recovered - sell_price) * quantity
+        net_gain = (recovered - buy_price) * quantity
+    gross = sell_price * quantity if mode == "direct" else buy_price * quantity
     profitability_pct = (net_gain / gross * 100.0) if gross else 0.0
     return {
         "real_cost": round(real_cost, 4),

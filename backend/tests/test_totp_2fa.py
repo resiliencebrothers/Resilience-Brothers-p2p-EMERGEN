@@ -6,7 +6,6 @@ Coverage:
 - Recovery code consumption (single-use)
 - Encryption at rest (secret never returned after setup)
 """
-import asyncio
 import os
 import requests
 import sys
@@ -73,7 +72,7 @@ class TestWithdrawalStepUp:
         cli.close()
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
                           json={"amount_usd": 1, "method": "transfer",
-                                "details": "x", "beneficiary_name": "Test Holder"})
+                                "details": "Zelle: cliente@test.com", "beneficiary_name": "Test Holder"})
         assert r.status_code == 412
         assert r.json()["detail"]["code"] == "TOTP_SETUP_REQUIRED"
         assert "setup_url" in r.json()["detail"]
@@ -83,7 +82,7 @@ class TestWithdrawalStepUp:
         make_vip_totp()  # ensures setup
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
                           json={"amount_usd": 1, "method": "transfer",
-                                "details": "x", "beneficiary_name": "Test Holder"})
+                                "details": "Zelle: cliente@test.com", "beneficiary_name": "Test Holder"})
         assert r.status_code == 401
         assert r.json()["detail"]["code"] == "TOTP_CODE_REQUIRED"
 
@@ -91,7 +90,7 @@ class TestWithdrawalStepUp:
         make_vip_totp()
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
                           json={"amount_usd": 1, "method": "transfer",
-                                "details": "x", "beneficiary_name": "Test Holder",
+                                "details": "Zelle: cliente@test.com", "beneficiary_name": "Test Holder",
                                 "totp_code": "000000"})
         assert r.status_code == 401
         assert r.json()["detail"]["code"] == "TOTP_INVALID"
@@ -106,7 +105,7 @@ class TestWithdrawalStepUp:
         code = make_vip_totp()
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
                           json={"amount_usd": 1, "method": "transfer",
-                                "details": "x", "beneficiary_name": "Test Holder",
+                                "details": "Zelle: cliente@test.com", "beneficiary_name": "Test Holder",
                                 "totp_code": code})
         assert r.status_code == 200
 

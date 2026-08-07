@@ -98,6 +98,12 @@ export function LiveStreamProvider({ children, enabled = true }) {
       "balance_updated",
       "order_created",
       "withdrawal_created",
+      // iter159 — forward every event the backend actually publishes so
+      // admin dashboards and client views refresh live (no F5 needed).
+      "deposit_created",
+      "vip_batch_item_decision",
+      "daily_autoclose",
+      "ledger_changed",
     ].forEach((t) => es.addEventListener(t, forward(t)));
 
     es.addEventListener("error", () => {
@@ -167,4 +173,32 @@ export function useLiveEvent(eventType, handler) {
 
 export function useLiveStatus() {
   return useContext(LiveCtx).connected;
+}
+
+/**
+ * iter159 — Debounced live refresh: re-run `reload` when ANY of the given
+ * event types arrives, coalescing bursts (e.g. an order approval fires
+ * order_status_changed + balance_updated + ledger_changed) into ONE fetch.
+ * `events` should be a module-level constant array.
+ */
+export function useLiveRefresh(reload, events, delay = 1200) {
+  const { subscribe } = useContext(LiveCtx);
+  const reloadRef = useRef(reload);
+  useEffect(() => { reloadRef.current = reload; }, [reload]);
+  const timerRef = useRef(null);
+  const eventsKey = JSON.stringify(events || []);
+  useEffect(() => {
+    const list = JSON.parse(eventsKey);
+    const handler = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        if (reloadRef.current) reloadRef.current();
+      }, delay);
+    };
+    const unsubs = list.map((t) => subscribe(t, handler));
+    return () => {
+      unsubs.forEach((u) => u());
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [subscribe, delay, eventsKey]);
 }

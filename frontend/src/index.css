@@ -231,3 +231,42 @@ body {
 .tx-body-scroll::-webkit-scrollbar-thumb:hover {
     background: #8B5CF6;
 }
+
+
+/* Notifications popover scroll */
+.notif-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #5d4b8a #14101F;
+}
+.notif-scroll::-webkit-scrollbar {
+    width: 8px;
+}
+.notif-scroll::-webkit-scrollbar-track {
+    background: #14101F;
+}
+.notif-scroll::-webkit-scrollbar-thumb {
+    background: #5d4b8a;
+    border-radius: 4px;
+    border: 1px solid #14101F;
+}
+.notif-scroll::-webkit-scrollbar-thumb:hover {
+    background: #8B5CF6;
+}
+
+/* iter160 — TradingView-style balance flash (green up / red down) */
+.balance-flash-up {
+  animation: balanceFlashUp 1.4s ease-out;
+}
+.balance-flash-down {
+  animation: balanceFlashDown 1.4s ease-out;
+}
+@keyframes balanceFlashUp {
+  0% { color: #22c55e; text-shadow: 0 0 16px rgba(34, 197, 94, 0.6); }
+  55% { color: #22c55e; text-shadow: 0 0 8px rgba(34, 197, 94, 0.35); }
+  100% { }
+}
+@keyframes balanceFlashDown {
+  0% { color: #ef4444; text-shadow: 0 0 16px rgba(239, 68, 68, 0.6); }
+  55% { color: #ef4444; text-shadow: 0 0 8px rgba(239, 68, 68, 0.35); }
+  100% { }
+}

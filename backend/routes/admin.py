@@ -136,34 +136,47 @@ async def admin_toggle_defensive_mode(payload: DefensiveModePayload, request: Re
 # Orders — admin listing + status transitions
 # ============================================================
 
-@router.get("/admin/orders")
-async def all_orders(request: Request, status: Optional[str] = None,
-                     user_q: Optional[str] = None, currency: Optional[str] = None,
-                     limit: int = 1000, offset: int = 0) -> Any:
-    actor = await require_permission(request, "orders")
+def _merge_or_clause(q: Dict[str, Any], clause: Dict[str, Any]) -> None:
+    """AND a `$or` clause into the query without clobbering an existing one."""
+    if "$and" in q:
+        q["$and"].append(clause)
+    elif "$or" in q:
+        q["$and"] = [{"$or": q.pop("$or")}, clause]
+    else:
+        q["$or"] = clause["$or"]
+
+
+def _orders_admin_query(actor: Dict[str, Any], status: Optional[str],
+                        user_q: Optional[str], currency: Optional[str],
+                        payment_account: Optional[str]) -> Dict[str, Any]:
+    """Build the Mongo filter for the admin orders listing (incl. the
+    employee `allowed_currencies` scope)."""
     q: Dict[str, Any] = {}
     if status:
         q["status"] = status
+    if payment_account:
+        q["payment_account_id"] = payment_account
     if currency:
-        currency = currency.upper()
-        q["$or"] = [{"from_code": currency}, {"to_code": currency}]
+        cur = currency.upper()
+        q["$or"] = [{"from_code": cur}, {"to_code": cur}]
     if user_q:
         rx = {"$regex": re.escape(user_q), "$options": "i"}
-        user_clause = {"$or": [{"user_name": rx}, {"user_email": rx}]}
-        if "$or" in q:
-            q["$and"] = [{"$or": q.pop("$or")}, user_clause]
-        else:
-            q["$or"] = user_clause["$or"]
+        _merge_or_clause(q, {"$or": [{"user_name": rx}, {"user_email": rx}]})
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
         if allowed:
-            scope_clause = {"$or": [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]}
-            if "$and" in q:
-                q["$and"].append(scope_clause)
-            elif "$or" in q:
-                q["$and"] = [{"$or": q.pop("$or")}, scope_clause]
-            else:
-                q["$or"] = scope_clause["$or"]
+            _merge_or_clause(q, {"$or": [{"from_code": {"$in": allowed}},
+                                         {"to_code": {"$in": allowed}}]})
+    return q
+
+
+@router.get("/admin/orders")
+async def all_orders(request: Request, status: Optional[str] = None,
+                     user_q: Optional[str] = None, currency: Optional[str] = None,
+                     payment_account: Optional[str] = None,
+                     limit: int = 1000, offset: int = 0) -> Any:
+    actor = await require_permission(request, "orders")
+    q = _orders_admin_query(actor, status, user_q, currency, payment_account)
     limit = max(1, min(limit, 1000))
     offset = max(0, offset)
     total = await db.orders.count_documents(q)
@@ -269,6 +282,10 @@ async def _publish_order_status_sse(order_id: str, updated: dict,
             await live_publish("order_status_changed", status_payload, user_id=target_uid)
             await live_publish("balance_updated", {"reason": "order", "order_id": order_id},
                                user_id=target_uid)
+            await live_publish("ledger_changed",
+                               {"reason": "order", "order_id": order_id,
+                                "user_id": target_uid},
+                               roles=("admin", "employee"))
         await live_publish("order_status_changed", status_payload,
                            roles=("admin", "employee"))
     except Exception as e:
@@ -691,6 +708,43 @@ async def staff_queue(request: Request) -> Any:
 # Quick summary — mobile dashboard (iter45)
 # ============================================================
 
+async def _quick_pending_section(allowed: Optional[list]) -> Dict[str, Any]:
+    """Pending orders + withdrawals counts and 5 most recent orders."""
+    order_q: Dict[str, Any] = {"status": {"$in": ["pending", "requires_double_approval"]}}
+    wd_q: Dict[str, Any] = {"status": "pending"}
+    if allowed:
+        order_q["$or"] = [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]
+        wd_q["currency"] = {"$in": allowed}
+    recent_orders = await db.orders.find(
+        order_q,
+        {"_id": 0, "id": 1, "from_code": 1, "to_code": 1,
+         "amount_from": 1, "amount_to": 1, "created_at": 1, "user_email": 1},
+    ).sort("created_at", -1).to_list(5)
+    return {
+        "orders_count": await db.orders.count_documents(order_q),
+        "withdrawals_count": await db.withdrawals.count_documents(wd_q),
+        "recent_orders": recent_orders,
+    }
+
+
+async def _quick_funds_section(allowed: Optional[list], rates: dict) -> Dict[str, Any]:
+    """Per-currency working capital + USDT-equivalent total."""
+    funds_items: List[Dict[str, Any]] = []
+    funds_total_usdt = 0.0
+    for row in await _compute_company_funds(allowed):
+        code = row["currency"]
+        bal = float(row.get("balance") or 0.0)
+        usdt = convert_to_usdt(bal, code, rates)
+        if usdt is not None:
+            funds_total_usdt += usdt
+        funds_items.append({
+            "currency": code,
+            "balance": bal,
+            "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
+        })
+    return {"items": funds_items, "total_usdt": round(funds_total_usdt, 4)}
+
+
 @router.get("/admin/quick-summary")
 async def admin_quick_summary(request: Request) -> Any:
     """Compact payload for the mobile-first quick dashboard at /admin/quick.
@@ -707,55 +761,12 @@ async def admin_quick_summary(request: Request) -> Any:
     # ---- scope filter (employee can only see currencies in allowed_currencies)
     allowed: Optional[list] = None
     if actor.get("role") == "employee":
-        cur = actor.get("allowed_currencies") or []
-        if cur:
-            allowed = cur
-
-    # ---- 1. Pendientes
-    order_q: Dict[str, Any] = {"status": {"$in": ["pending", "requires_double_approval"]}}
-    wd_q: Dict[str, Any] = {"status": "pending"}
-    if allowed:
-        order_q["$or"] = [{"from_code": {"$in": allowed}}, {"to_code": {"$in": allowed}}]
-        wd_q["currency"] = {"$in": allowed}
-
-    orders_count = await db.orders.count_documents(order_q)
-    withdrawals_count = await db.withdrawals.count_documents(wd_q)
-    recent_orders = await db.orders.find(
-        order_q,
-        {"_id": 0, "id": 1, "from_code": 1, "to_code": 1,
-         "amount_from": 1, "amount_to": 1, "created_at": 1, "user_email": 1},
-    ).sort("created_at", -1).to_list(5)
-
-    # ---- 2. Company funds (per-currency working capital + USDT total)
-    funds_rows = await _compute_company_funds(allowed)
-    funds_items: List[Dict[str, Any]] = []
-    funds_total_usdt = 0.0
-    for row in funds_rows:
-        code = row["currency"]
-        bal = float(row.get("balance") or 0.0)
-        usdt = convert_to_usdt(bal, code, rates)
-        if usdt is not None:
-            funds_total_usdt += usdt
-        funds_items.append({
-            "currency": code,
-            "balance": bal,
-            "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
-        })
-
-    # ---- 3. VIP holdings (what we owe to clients)
-    vip = await _aggregate_vip_holdings(rates)
+        allowed = actor.get("allowed_currencies") or None
 
     return {
-        "pending": {
-            "orders_count": orders_count,
-            "withdrawals_count": withdrawals_count,
-            "recent_orders": recent_orders,
-        },
-        "company_funds": {
-            "items": funds_items,
-            "total_usdt": round(funds_total_usdt, 4),
-        },
-        "vip_holdings": vip,
+        "pending": await _quick_pending_section(allowed),
+        "company_funds": await _quick_funds_section(allowed, rates),
+        "vip_holdings": await _aggregate_vip_holdings(rates),
     }
 
 

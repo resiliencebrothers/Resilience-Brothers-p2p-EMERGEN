@@ -51,7 +51,6 @@ from __future__ import annotations
 import uuid
 import logging
 from typing import Any, Optional, List
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,6 +60,11 @@ from auth_utils import require_user, require_permission, iso, now_utc
 from audit_log import log_action
 from services.balances import build_rate_lookup, convert_to_usdt
 from services.delivery_rules import allowed_delivery_methods
+from services.rate_tiers import effective_rates, normalize_tiers
+from services.payment_accounts import (
+    get_active_accounts, pick_account, min_required as pa_min_required,
+)
+from services.vip_batch_alerts import dispatch_vip_batch_alerts
 
 logger = logging.getLogger("vip_batches")
 
@@ -89,8 +93,11 @@ class VipBatchCreate(BaseModel):
 
 class VipBatchItemIn(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    holder_name: str = Field(..., min_length=1, max_length=120)
+    # holder_name is optional when the destination requires a CUP card — the
+    # card becomes the item identifier. Enforced per-batch in the endpoint.
+    holder_name: str = Field(default="", max_length=120)
     amount: float = Field(..., gt=0, le=10_000_000)
+    card_number: Optional[str] = Field(default=None, max_length=40)
 
 
 class VipBatchItemsBulk(BaseModel):
@@ -263,6 +270,12 @@ async def _allowed_batch_pairs() -> list:
         if rate_vip <= 0:
             continue
         seen.add((fc, tc))
+        tiers = [
+            {"min_amount": float(t["min_amount"]),
+             "rate_vip": float(t.get("rate_vip") or 0.0)}
+            for t in normalize_tiers(r.get("tiers"))
+        ]
+        tiers.sort(key=lambda t: t["min_amount"])
         items.append({
             "pair": f"{fc}->{tc}",
             "from_code": fc,
@@ -270,18 +283,25 @@ async def _allowed_batch_pairs() -> list:
             "from_name": (cur_by_code[fc].get("name") or fc).strip(),
             "to_name": (cur_by_code[tc].get("name") or tc).strip(),
             "rate_vip": rate_vip,
+            "tiers": tiers,
+            "requires_card": False,
         })
     items.sort(key=lambda x: (x["from_code"], x["to_code"]))
     return items
 
 
-async def _current_pair_rates(from_code: str, to_code: str) -> tuple:
-    """Return (rate_vip, real_rate) for the pair — 0.0 when missing."""
+async def _current_pair_rates(from_code: str, to_code: str,
+                              amount: Optional[float] = None) -> tuple:
+    """Return (rate_vip, real_rate) for the pair — 0.0 when missing.
+    iter143 — when `amount` is given and the rate row has amount `tiers`,
+    the matching tier overrides the base rates."""
     doc = await db.rates.find_one(
         {"from_code": from_code, "to_code": to_code}, {"_id": 0},
     )
-    return (float((doc or {}).get("rate_vip") or 0.0),
-            float((doc or {}).get("real_rate") or 0.0))
+    if not doc:
+        return (0.0, 0.0)
+    eff = effective_rates(doc, amount)
+    return (eff["rate_vip"], eff["real_rate"] or 0.0)
 
 
 def _staff_pair_allowed(staff: dict, item: dict) -> bool:
@@ -296,6 +316,23 @@ def _staff_pair_allowed(staff: dict, item: dict) -> bool:
     if not item.get("to_code"):
         return False  # legacy non-pair items reserved to unscoped staff/admin
     return f"{item.get('from_code')}->{item.get('to_code')}" in allowed
+
+
+def _requires_cup_card(cur: dict | None) -> bool:  # noqa: ARG001
+    """iter161 — ALWAYS False. Business rule changed (owner, Ago 2026): batch
+    items credit the client's PLATFORM BALANCE when confirmed; the payout card
+    is asked later, in the bank-transfer withdrawal flow. Batch rows now only
+    need the sender's name + amount (the collection account is auto-assigned
+    by amount). Kept as a function so legacy call sites stay untouched."""
+    return False
+
+
+def _normalize_cup_card(raw: Optional[str]) -> Optional[str]:
+    """16 digits → '9212 9598 7274 4356'; anything else → None."""
+    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+    if len(digits) != 16:
+        return None
+    return " ".join(digits[i:i + 4] for i in range(0, 16, 4))
 
 
 # ============================================================
@@ -407,6 +444,7 @@ async def create_vip_batch(payload: VipBatchCreate, request: Request) -> Any:
         "from_code": fc or None,
         "to_code": tc or None,
         "rate_vip": pair["rate_vip"] if pair else None,
+        "requires_card": False,
         "note": (payload.note or "").strip() or None,
         "status": "open",
         "items_pending": 0,
@@ -449,25 +487,69 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
 
     # iter113 — pair batches snapshot the CURRENT vip rate on each item so
     # the amount credited is exactly what the client saw when adding the row.
-    rate_applied = None
+    # iter143 — the rate can vary PER ITEM when the pair has amount tiers,
+    # and each item resolves the payment account matching its own amount.
+    rate_doc = None
     if batch.get("to_code"):
-        rate_applied, _ = await _current_pair_rates(batch["from_code"], batch["to_code"])
-        if rate_applied <= 0:
+        rate_doc = await db.rates.find_one(
+            {"from_code": batch["from_code"], "to_code": batch["to_code"]}, {"_id": 0},
+        )
+        if float((rate_doc or {}).get("rate_vip") or 0.0) <= 0:
             raise HTTPException(
                 status_code=422,
                 detail=(f"No hay tasa VIP configurada para {batch['from_code']}→{batch['to_code']}. "
                         "Contacta al equipo."),
             )
+    accounts = await get_active_accounts(batch["from_code"]) if batch.get("from_code") else []
+    accounts_min = pa_min_required(accounts)
+
+    requires_card = batch.get("requires_card")
+    if requires_card is None and batch.get("to_code"):
+        cur = await db.currencies.find_one({"code": batch["to_code"]}, {"_id": 0})
+        requires_card = _requires_cup_card(cur)
+    # iter161 — cards are no longer collected on batch items (they belong to
+    # the withdrawal flow); force off even for batches opened before the rule.
+    requires_card = False
 
     now = iso(now_utc())
     docs = []
     for it in payload.items:
         amount = round(float(it.amount), 2)
+        rate_applied = None
+        if rate_doc:
+            rate_applied = effective_rates(rate_doc, amount)["rate_vip"]
+        account = pick_account(accounts, amount) if accounts else None
+        if accounts and account is None:
+            if accounts_min is not None and amount < accounts_min:
+                detail = (f"El monto mínimo para enviar {batch['from_code']} "
+                          f"es {accounts_min:g}.")
+            else:
+                detail = (f"No hay una cuenta de cobro disponible para "
+                          f"{amount:g} {batch['from_code']}. Contacta al equipo.")
+            raise HTTPException(status_code=422, detail=detail)
+        card = _normalize_cup_card(it.card_number)
+        if requires_card and not card:
+            raise HTTPException(
+                status_code=422,
+                detail="La tarjeta CUP de destino debe tener exactamente 16 dígitos.",
+            )
+        holder = " ".join((it.holder_name or "").split())
+        if requires_card:
+            holder = holder or card
+        # iter161 — the FULL NAME (first + last) of the account holder who
+        # SENDS the transfer is mandatory so staff can match incoming payments.
+        if len([w for w in holder.split(" ") if len(w) >= 2]) < 2:
+            raise HTTPException(
+                status_code=422,
+                detail=("Escribe el nombre y apellidos del titular de la "
+                        "cuenta que envía la transferencia."),
+            )
         docs.append({
             "id": f"vitem_{uuid.uuid4().hex[:12]}",
             "batch_id": batch_id,
             "vip_user_id": user["user_id"],
-            "holder_name": it.holder_name.strip(),
+            "holder_name": holder,
+            "card_number": card if requires_card else None,
             "amount": amount,
             "currency": batch["currency"],
             "direction": batch["direction"],
@@ -475,6 +557,10 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
             "to_code": batch.get("to_code"),
             "rate_applied": rate_applied,
             "amount_to": round(amount * rate_applied, 4) if rate_applied else None,
+            "payment_account_id": (account or {}).get("id"),
+            "payment_account_label": (account or {}).get("label"),
+            "payment_account_details": (account or {}).get("account_details"),
+            "payment_account_network": (account or {}).get("network"),
             "status": "pending",
             "admin_note": None,
             "balance_delta_usdt": None,
@@ -486,6 +572,8 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
         })
     await db.vip_batch_items.insert_many([dict(d) for d in docs])
     await _refresh_batch_totals(batch_id)
+    # iter148 — massive-inflow threshold alerts (item + cumulative batch total)
+    await dispatch_vip_batch_alerts(batch_id, docs, "added")
     return {"added": len(docs), "items": [_serialize(d) for d in docs]}
 
 
@@ -523,8 +611,21 @@ async def get_vip_batch(batch_id: str, request: Request) -> Any:
     if not batch:
         raise HTTPException(status_code=404, detail="Lote no encontrado.")
     if batch.get("to_code"):
-        current_vip, _ = await _current_pair_rates(batch["from_code"], batch["to_code"])
-        batch["current_rate_vip"] = current_vip or None
+        rate_row = await db.rates.find_one(
+            {"from_code": batch["from_code"], "to_code": batch["to_code"]}, {"_id": 0},
+        )
+        batch["current_rate_vip"] = float((rate_row or {}).get("rate_vip") or 0.0) or None
+        # iter143 — expose amount tiers (VIP view only needs min + rate_vip)
+        # so the add-item preview can show the per-amount rate.
+        tiers = [
+            {"min_amount": float(t["min_amount"]),
+             "rate_vip": float(t.get("rate_vip") or 0.0)}
+            for t in normalize_tiers((rate_row or {}).get("tiers"))
+        ]
+        tiers.sort(key=lambda t: t["min_amount"])
+        batch["rate_tiers"] = tiers
+        # iter161 — cards are never collected on batch items anymore.
+        batch["requires_card"] = False
     items = await db.vip_batch_items.find(
         {"batch_id": batch_id}, {"_id": 0},
     ).sort("created_at", 1).to_list(MAX_ITEMS_PER_BATCH + 1)
@@ -655,8 +756,10 @@ async def _apply_item_decision(item_id: str, decision: str, staff: dict,
             # real rate as revenue.
             amount_to = float(item.get("amount_to") or 0.0)
             rate_applied = float(item.get("rate_applied") or 0.0)
+            item_amount = float(item.get("amount") or 0.0)
             if amount_to <= 0 or rate_applied <= 0:
-                rate_applied, _ = await _current_pair_rates(item["from_code"], item["to_code"])
+                rate_applied, _ = await _current_pair_rates(
+                    item["from_code"], item["to_code"], item_amount)
                 if rate_applied <= 0:
                     raise HTTPException(
                         status_code=422,
@@ -664,7 +767,8 @@ async def _apply_item_decision(item_id: str, decision: str, staff: dict,
                                 "Configúrala antes de aprobar."),
                     )
                 amount_to = round(float(item["amount"]) * rate_applied, 4)
-            _, real_rate = await _current_pair_rates(item["from_code"], item["to_code"])
+            _, real_rate = await _current_pair_rates(
+                item["from_code"], item["to_code"], item_amount)
             margin_usdt = 0.0
             if real_rate > 0:
                 margin_to = float(item["amount"]) * real_rate - amount_to
@@ -707,17 +811,33 @@ async def _apply_item_decision(item_id: str, decision: str, staff: dict,
     )
     await _refresh_batch_totals(item["batch_id"])
     fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
-    if decision == "approved" and item.get("to_code"):
-        try:
-            from services.live_bus import publish as live_publish
+    if decision == "approved":
+        # iter148 — massive-inflow threshold alerts on approval
+        await dispatch_vip_batch_alerts(item["batch_id"], [fresh], "approved")
+    # iter117 — real-time refresh: the VIP dashboard (VipBatchesView) listens
+    # for `vip_batch_item_decision`; emit it for BOTH approve and reject.
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish(
+            "vip_batch_item_decision",
+            {"item_id": item_id, "batch_id": item["batch_id"], "decision": decision},
+            user_id=item["vip_user_id"],
+        )
+        if decision == "approved" and item.get("to_code"):
             await live_publish(
                 "balance_updated",
                 {"reason": "vip_batch_item", "item_id": item_id,
                  "currency": item["to_code"]},
                 user_id=item["vip_user_id"],
             )
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"[vip_batches] balance_updated SSE failed: {e}")
+            await live_publish(
+                "ledger_changed",
+                {"reason": "vip_batch_item", "item_id": item_id,
+                 "user_id": item["vip_user_id"]},
+                roles=("admin", "employee"),
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[vip_batches] SSE publish failed: {e}")
     return fresh
 
 

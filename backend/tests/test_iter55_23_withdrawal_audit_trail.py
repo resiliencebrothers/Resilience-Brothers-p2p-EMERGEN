@@ -17,7 +17,7 @@ import requests
 from pymongo import MongoClient
 
 from tests.conftest import (
-    BASE_URL as API_ROOT, ADMIN_TOKEN, VIP_TOKEN, make_admin_totp, make_vip_totp,
+    BASE_URL as API_ROOT, ADMIN_TOKEN, make_admin_totp,
 )
 
 API = f"{API_ROOT}/api"

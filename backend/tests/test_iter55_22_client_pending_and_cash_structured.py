@@ -134,4 +134,4 @@ def test_vip_withdrawals_mine_endpoint_returns_approved_status():
     statuses = {w.get("status") for w in data}
     # Non-strict — we don't require an `approved` withdrawal to exist right
     # now, but if one exists it must NOT be filtered out.
-    assert statuses <= {"pending", "approved", "paid", "rejected"}, statuses
+    assert statuses <= {"pending", "approved", "paid", "rejected", "cancelled"}, statuses

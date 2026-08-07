@@ -58,9 +58,9 @@ class TestOperations:
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["result_fx"] == -50
-        assert abs(d["conversion_gain"] - 157.3) < 0.01
-        assert abs(d["net_gain"] - 107.3) < 0.01
-        assert abs(d["profitability_pct"] - 7.5035) < 0.01
+        assert abs(d["conversion_gain"] - 124.8413) < 0.01
+        assert abs(d["net_gain"] - 74.8413) < 0.01
+        assert abs(d["profitability_pct"] - 5.0568) < 0.01
         assert d["status"] == "profitable"
 
     def test_create_op_loss(self):

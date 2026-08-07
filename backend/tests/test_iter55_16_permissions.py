@@ -80,17 +80,20 @@ def test_permissions_catalog_returns_13_items():
     # Baseline lifted from 17 → 18.
     # iter113 — `profitability` added for the profitability calculator.
     # Baseline lifted from 18 → 19.
+    # iter167 — `reconciliation` added for the bank reconciliation module.
+    # Baseline lifted from 20 → 21.
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 19
+    assert len(items) == 21
     codes = {i["code"] for i in items}
     assert codes == {
         "orders", "withdrawals", "kyc", "appeals", "products", "rates",
         "currencies", "users", "company_funds", "blocked_contacts",
         "transactions", "quick_view", "profile_changes",
         "user_stats", "user_functions", "view_user_sensitive",
-        "support", "vip_requests", "profitability",
+        "support", "vip_requests", "profitability", "payment_accounts",
+        "reconciliation",
     }
     # Each item has label + description
     for it in items:

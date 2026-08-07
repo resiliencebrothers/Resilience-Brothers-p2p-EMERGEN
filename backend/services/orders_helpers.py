@@ -60,6 +60,10 @@ class Order(BaseModel):
     # (the screenshot of the bank transfer / crypto tx made TO the client).
     payout_proof_image: str = ""
     payout_tx_hash: str = ""
+    # iter143 — snapshot of the tiered payment account the client was told
+    # to send funds to (resolved by amount at creation time).
+    payment_account_id: str = ""
+    payment_account_label: str = ""
     status: Literal[
         "pending", "requires_double_approval", "approved", "rejected", "completed"
     ] = "pending"
@@ -90,12 +94,16 @@ VALID_ORDER_STATUSES = {
 # Order creation pipeline (used by POST /orders)
 # ============================================================
 
-async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[float, dict]:
+async def resolve_order_rate(from_code: str, to_code: str, user: dict,
+                             amount_from: Optional[float] = None) -> tuple[float, dict]:
     """Look up the active rate and pick vip vs normal. Returns (rate, rate_doc).
 
     iter55.7 — Lenient lookup: falls back to a case-insensitive regex that
     tolerates leading/trailing whitespace so legacy `CUP ` rate rows still
-    match a normalised `CUP` from the frontend."""
+    match a normalised `CUP` from the frontend.
+
+    iter143 — when `amount_from` is provided and the rate row has amount
+    `tiers`, the matching tier overrides the base rates."""
     fc = (from_code or "").strip().upper()
     tc = (to_code or "").strip().upper()
     rate_doc = await db.rates.find_one({"from_code": fc, "to_code": tc}, {"_id": 0})
@@ -110,8 +118,10 @@ async def resolve_order_rate(from_code: str, to_code: str, user: dict) -> tuple[
         )
     if not rate_doc:
         raise HTTPException(status_code=400, detail="Tasa de cambio no disponible para ese par")
+    from services.rate_tiers import effective_rates
+    eff = effective_rates(rate_doc, amount_from)
     is_vip = user["role"] in ("vip", "admin")
-    return rate_doc["rate_vip"] if is_vip else rate_doc["rate_normal"], rate_doc
+    return (eff["rate_vip"] if is_vip else eff["rate_normal"]), rate_doc
 
 
 def _cash_no_cents(to_code: str, to_type: str, delivery_method: str) -> bool:

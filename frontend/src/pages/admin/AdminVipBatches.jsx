@@ -1,26 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
-import { Layers, Coins, HandCoins, PiggyBank } from "lucide-react";
+import { Layers, HandCoins } from "lucide-react";
 import { API } from "@/App";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import AdminVipBatchItems from "./vip/AdminVipBatchItems";
-import AdminDeposits from "./vip/AdminDeposits";
-import { AdminCapitalDeposits, AdminSettlements } from "./vip/AdminVipLedgerOps";
+import { AdminSettlements } from "./vip/AdminVipLedgerOps";
 
 /**
  * iter110 — Admin hub for the VIP ledger workflows.
- * Three sub-tabs share the same `orders` permission gate:
- *   - items  : Phase 1 — per-order approval queue
- *   - capital: Phase 2 — capital deposit confirmations
- *   - settle : Phase 3 — payout & collection settlements
- * iter112 — each tab shows a live pending-count badge.
+ * iter163 — client deposits + capital deposits moved to the dedicated
+ * "Depósitos y Retiros" hub (/admin/withdrawals), gated by `withdrawals`.
  */
 const SUBTABS = [
   { id: "items",    labelKey: "adminVipHub.tabs.items",    icon: Layers,    countKey: "items_pending",       Component: AdminVipBatchItems },
-  { id: "deposits", labelKey: "adminVipHub.tabs.deposits", icon: PiggyBank, countKey: "deposits_pending",    Component: AdminDeposits },
-  { id: "capital",  labelKey: "adminVipHub.tabs.capital",  icon: Coins,     countKey: "capital_pending",     Component: AdminCapitalDeposits },
   { id: "settle",   labelKey: "adminVipHub.tabs.settle",   icon: HandCoins, countKey: "settlements_pending", Component: AdminSettlements },
 ];
 
@@ -38,9 +32,7 @@ export default function AdminVipBatches() {
 
   useEffect(() => { loadCounts(); }, [loadCounts]);
   useLiveEvent("new_vip_batch", loadCounts);
-  useLiveEvent("capital_deposit", loadCounts);
   useLiveEvent("settlement_request", loadCounts);
-  useLiveEvent("deposit_created", loadCounts);
 
   const Meta = SUBTABS.find((s) => s.id === active) || SUBTABS[0];
   const ActiveComponent = Meta.Component;

@@ -3,6 +3,8 @@
 Extracted from routes/admin.py during the iter39 split.
 """
 import re
+import uuid
+from datetime import timedelta
 from typing import Dict, List, Literal, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -10,7 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db_client import db
-from auth_utils import require_staff, require_permission, _enforce_totp_step_up
+from auth_utils import require_staff, require_permission, _enforce_totp_step_up, iso, now_utc
 from audit_log import log_action
 from services.balances import build_rate_lookup, convert_to_usdt
 
@@ -230,6 +232,73 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
                      summary=f"Email verificado manualmente para {target.get('email', '')}",
                      details={"email": target.get("email")})
     return {"ok": True, "already_verified": False, "user": fresh}
+
+
+@router.get("/admin/users/{user_id}/email-events")
+async def admin_user_email_events(user_id: str, request: Request,
+                                  limit: int = 10) -> Any:
+    """iter147 — delivery ledger for support: what emails did we (try to)
+    send this user and did the provider accept them?"""
+    await require_staff(request)
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0, "email": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    events = await db.email_events.find(
+        {"to": (target.get("email") or "").lower().strip()},
+        {"_id": 0, "subject": 1, "kind": 1, "status": 1, "error": 1,
+         "attempts": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(max(1, min(limit, 50)))
+    return {"email": target.get("email"), "events": events}
+
+
+@router.post("/admin/users/{user_id}/resend-verification")
+async def admin_resend_verification(user_id: str, request: Request) -> Any:
+    """iter147 — staff-triggered resend of the verification email (support
+    flow for 'no me llegó el correo'). 60s cooldown shared with the
+    user-initiated resend."""
+    requester = await require_staff(request)
+    target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if target.get("auth_provider") != "password":
+        raise HTTPException(status_code=400,
+                            detail="Este usuario no usa login con contraseña.")
+    if target.get("email_verified"):
+        raise HTTPException(status_code=400, detail="El email ya está verificado.")
+    last_resend = target.get("last_resend_at")
+    if last_resend:
+        try:
+            from datetime import datetime as _dt
+            elapsed = (now_utc() - _dt.fromisoformat(
+                last_resend.replace("Z", "+00:00"))).total_seconds()
+            if elapsed < 60:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Espera {int(60 - elapsed)}s antes de reenviar.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    new_token = uuid.uuid4().hex + uuid.uuid4().hex
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {
+            "verification_token": new_token,
+            "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
+            "last_resend_at": iso(now_utc()),
+        }},
+    )
+    import email_service
+    sent = email_service.notify_email_verification(
+        target.get("email", ""), target.get("name", ""), new_token,
+        lang=target.get("preferred_language") or "es",
+    )
+    await log_action(db, requester, "user.resend_verification", "user", user_id,
+                     summary=f"Reenvío de verificación a {target.get('email', '')} "
+                             f"({'aceptado' if sent else 'FALLÓ'})",
+                     details={"email": target.get("email"), "sent": sent})
+    return {"ok": True, "sent": sent}
 
 
 # ============================================================

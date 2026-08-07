@@ -7,6 +7,7 @@ import { useTranslation, Trans } from "react-i18next";
 import { ChevronRight, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShareAppButton } from "@/components/ShareAppButton";
+import { QrShareButton } from "@/components/QrShareButton";
 
 const HERO_BG = "url(https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85)";
 
@@ -79,6 +80,12 @@ export default function LandingHero({ scrollY, onEnter, onEmailAuth }) {
               label={t("landing.shareApp")}
               variant="ghost"
               className="sm:hidden inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-6 h-14 rounded-full transition-all duration-300"
+            />
+            <QrShareButton
+              testid="hero-qr-btn"
+              url={typeof window !== "undefined" ? window.location.origin : ""}
+              variant="ghost"
+              className="sm:hidden inline-flex items-center justify-center bg-transparent border border-white/15 hover:border-white/30 hover:bg-white/5 text-white font-medium text-sm py-3 px-5 h-14 rounded-full transition-all duration-300"
             />
           </div>
           <p className="text-[0.7rem] text-neutral-500 mt-3 max-w-md">

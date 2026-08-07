@@ -80,7 +80,7 @@ export default function AdminUserStatsPage() {
           <ArrowLeft className="w-4 h-4 mr-2" /> Lista de usuarios
         </Button>
         <Button
-          onClick={() => navigate("/admin/company-funds?tab=requests")}
+          onClick={() => navigate("/admin/withdrawals?tab=requests")}
           className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white"
           data-testid="user-stats-goto-requests-btn"
         >

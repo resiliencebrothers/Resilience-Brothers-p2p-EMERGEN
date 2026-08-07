@@ -5,6 +5,7 @@ const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
   approved: "bg-[#8B5CF6]/10 text-[#8B5CF6] border-[#8B5CF6]/30",
   rejected: "bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30",
+  cancelled: "bg-neutral-700/20 text-neutral-500 border-neutral-700/40",
   pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
 };
 

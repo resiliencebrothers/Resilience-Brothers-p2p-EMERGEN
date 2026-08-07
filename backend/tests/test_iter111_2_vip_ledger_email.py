@@ -22,6 +22,15 @@ VIP_URL = f"{BASE_URL}/api/vip/ledger/email"
 ADMIN_URL_TPL = f"{BASE_URL}/api/admin/vip-ledger/{{uid}}/email"
 SANDBOX_INBOX = "delivered@resend.dev"
 
+
+@pytest.fixture(autouse=True)
+def _reset_email_rate_limit():
+    from pymongo import MongoClient
+    cli = MongoClient(os.environ["MONGO_URL"])
+    cli[os.environ["DB_NAME"]].ledger_email_events.delete_many({})
+    cli.close()
+    yield
+
 _HAS_RESEND = bool(os.environ.get("RESEND_API_KEY"))
 resend_skip = pytest.mark.skipif(
     not _HAS_RESEND, reason="RESEND_API_KEY not set — happy path unavailable",

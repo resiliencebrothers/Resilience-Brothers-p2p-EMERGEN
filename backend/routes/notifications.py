@@ -33,6 +33,8 @@ from push_service import (
     build_new_pending_user_payload,
     build_phone_verified_payload,
     build_phone_rejected_payload,
+    build_withdrawal_step_payload,
+    _WITHDRAWAL_STEP_KEYS,
 )
 from services.notification_i18n import t as _t, resolve_lang
 
@@ -96,6 +98,30 @@ async def notify_staff_new_pending_user(target_user: dict) -> Any:
             await send_push_to_user(db, uid, build_new_pending_user_payload(target_user, lang=lang))
         except Exception as e:
             logger.error(f"Failed to deliver pending-user notification to {uid}: {e}")
+
+
+async def notify_user_withdrawal_step(w: dict, step: str, note: str = "") -> Any:
+    """iter155 — push + in-app notification to the withdrawal owner for each
+    lifecycle step (received / approved / paid / rejected)."""
+    key = _WITHDRAWAL_STEP_KEYS.get(step)
+    user_id = (w or {}).get("user_id")
+    if not key or not user_id:
+        return
+    lang = await resolve_lang(db, user_id)
+    reason = f" Motivo: {note.strip()}." if (note or "").strip() else ""
+    if lang == "en" and reason:
+        reason = f" Reason: {note.strip()}."
+    await _insert_notification(
+        recipient_user_id=user_id,
+        type=key,
+        title=_t(key, lang, "title"),
+        message=_t(key, lang, "message",
+                   amt=w.get("amount_usd"), code=w.get("currency") or "USD",
+                   reason=reason),
+        data={"withdrawal_id": w.get("id"), "step": step,
+              "amount_usd": w.get("amount_usd"), "currency": w.get("currency")},
+    )
+    await send_push_to_user(db, user_id, build_withdrawal_step_payload(w, step, lang=lang))
 
 
 async def notify_user_phone_verified(target_user: dict) -> Any:

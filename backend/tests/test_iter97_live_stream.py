@@ -14,7 +14,7 @@ import httpx
 import pytest
 import os
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from conftest import BASE_URL, VIP_TOKEN
 
 
 def _h(t=None):

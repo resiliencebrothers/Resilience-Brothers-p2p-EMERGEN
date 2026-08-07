@@ -13,7 +13,6 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-import pytest
 import requests
 from pymongo import MongoClient
 

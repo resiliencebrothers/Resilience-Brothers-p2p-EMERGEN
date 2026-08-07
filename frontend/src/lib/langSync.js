@@ -11,6 +11,7 @@
  * change never blocks on a network hiccup.
  */
 import axios from "axios";
+import i18n from "@/i18n";
 import { API } from "@/App";
 
 export function syncLanguagePreferenceToServer(lang) {
@@ -23,4 +24,23 @@ export function syncLanguagePreferenceToServer(lang) {
       // Silent by design — anonymous users get 401, offline users get network
       // errors, both are OK. The browser's localStorage keeps the choice.
     });
+}
+
+/**
+ * iter154 — Apply the user's server-side language on login/session load so
+ * the preference follows them to ANY device:
+ *   - has `preferred_language` → switch the UI to it (overrides whatever the
+ *     new device's browser detected).
+ *   - has none yet → adopt the device's current language as their global
+ *     preference (first login wins; from then on every device inherits it).
+ */
+export function applyServerLanguage(userDoc) {
+  if (!userDoc) return;
+  const preferred = userDoc.preferred_language;
+  const current = (i18n.resolvedLanguage || i18n.language || "es").split("-")[0];
+  if (preferred && preferred !== current) {
+    i18n.changeLanguage(preferred);
+  } else if (!preferred) {
+    syncLanguagePreferenceToServer(current);
+  }
 }

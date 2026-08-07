@@ -11,33 +11,33 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { CRYPTO_NETWORKS, validateCryptoAddress } from "@/services/cryptoValidators";
+import { getDeliveryValidator } from "@/services/delivery_validators";
 import { toast } from "sonner";
-import { ArrowDownToLine, ShieldCheck } from "lucide-react";
+import { ArrowDownToLine, ShieldCheck, Lock } from "lucide-react";
 
 // Module-level constants — hoisted out of the render path so they don't
-// create fresh object identities on every keystroke. Both objects are
-// pure structural config for <Trans>; no state depends on them.
+// create fresh object identities on every keystroke.
 const TRANS_STRONG_ONE = { 1: <strong /> };
 const TRANS_STRONG_ONE_TWO = { 1: <strong />, 2: <strong /> };
 
 /**
- * iter55.29 — Extracted from VipView.jsx. Owns the withdrawal request form
- * (currency + method + method-specific fields + 2FA + submit). Kept all
- * existing testids and validation copy verbatim so E2E tests continue to
- * pass unchanged.
+ * iter153 — Method-first withdrawal form. The method (crypto / transfer /
+ * cash) is now chosen BEFORE this form renders (see MethodPicker), so it
+ * arrives as a prop and only the fields for that method are shown. The
+ * currency dropdown is filtered to currencies compatible with the method.
  *
  * Props:
- *   - balances: from /vip/balances — used to populate the currency dropdown.
- *   - onSubmitted: callback fired after a successful POST /vip/withdraw so
- *                  the parent can reload withdrawals + balances.
+ *   - balances: from /vip/balances — currency dropdown + available/frozen.
+ *   - method: "crypto" | "transfer" | "cash" (fixed, from MethodPicker).
+ *   - onBack: switch back to the method picker.
+ *   - onSubmitted: callback fired after a successful POST /vip/withdraw.
  */
-export function VipWithdrawalForm({ balances, onSubmitted }) {
+export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", onBack }) {
   const navigate = useNavigate();
   const { t } = useTranslation();
 
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("USD");
-  const [method, setMethod] = useState("transfer");
+  const [currency, setCurrency] = useState("");
   const [details, setDetails] = useState("");
   const [cashReceiverName, setCashReceiverName] = useState("");
   const [cashReceiverPhone, setCashReceiverPhone] = useState("");
@@ -46,37 +46,38 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
   const [beneficiaryName, setBeneficiaryName] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [allowedMethods, setAllowedMethods] = useState([]);
   const [cryptoNetwork, setCryptoNetwork] = useState("TRC20");
+  const [methodsMap, setMethodsMap] = useState(null);
 
-  // Fetch allowed delivery methods per currency (iter43 backend source of truth)
+  // Fetch allowed delivery methods for every balance currency so we can
+  // filter the dropdown down to the ones compatible with `method`.
   useEffect(() => {
-    if (!currency) { setAllowedMethods([]); return; }
+    const codes = (balances.balances || []).map((b) => b.currency);
+    if (codes.length === 0) { setMethodsMap({}); return undefined; }
     let cancelled = false;
-    axios.get(`${API}/currencies/${encodeURIComponent(currency)}/delivery-methods`)
-      .then(r => { if (!cancelled) setAllowedMethods(r.data?.allowed || []); })
-      .catch(() => { if (!cancelled) setAllowedMethods([]); });
+    Promise.all(codes.map((c) =>
+      axios.get(`${API}/currencies/${encodeURIComponent(c)}/delivery-methods`)
+        .then((r) => [c, r.data?.allowed || null])
+        .catch(() => [c, null]),
+    )).then((entries) => { if (!cancelled) setMethodsMap(Object.fromEntries(entries)); });
     return () => { cancelled = true; };
-  }, [currency]);
+  }, [balances]);
 
-  const withdrawalMethodOptions = useMemo(() => {
-    const LABELS = {
-      transfer: { value: "transfer", label: t("withdraw.methodTransfer2") },
-      cash: { value: "cash", label: t("withdraw.methodCashUsdCup") },
-      crypto: { value: "crypto", label: t("withdraw.methodCryptoWallet") },
-    };
-    if (!allowedMethods || allowedMethods.length === 0) {
-      return [LABELS.transfer, LABELS.cash, LABELS.crypto];
-    }
-    return allowedMethods.filter((m) => LABELS[m]).map((m) => LABELS[m]);
-  }, [allowedMethods, t]);
+  const currencyOptions = useMemo(() => {
+    const codes = (balances.balances || []).map((b) => b.currency);
+    if (!methodsMap) return codes;
+    return codes.filter((c) => {
+      const allowed = methodsMap[c];
+      return !allowed || allowed.length === 0 || allowed.includes(method);
+    });
+  }, [balances, methodsMap, method]);
 
   useEffect(() => {
-    if (withdrawalMethodOptions.length === 0) return;
-    if (!withdrawalMethodOptions.some((o) => o.value === method)) {
-      setMethod(withdrawalMethodOptions[0].value);
-    }
-  }, [withdrawalMethodOptions, method]);
+    if (currencyOptions.length === 0) return;
+    if (!currencyOptions.includes(currency)) setCurrency(currencyOptions[0]);
+  }, [currencyOptions, currency]);
+
+  const selBal = (balances.balances || []).find((b) => b.currency === currency);
 
   const cryptoAddressMatch = useMemo(() => {
     if (method !== "crypto") return null;
@@ -85,6 +86,17 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
   }, [method, details, cryptoNetwork]);
 
   const activeNetwork = CRYPTO_NETWORKS.find((n) => n.value === cryptoNetwork) || CRYPTO_NETWORKS[0];
+
+  // iter158 — live bank-account validation for transfer withdrawals
+  // (16-digit Cuban card, CLABE, IBAN, Zelle…) with anti-placeholder rules.
+  const transferValidator = useMemo(
+    () => (method === "transfer" ? getDeliveryValidator(currency, "transfer") : null),
+    [method, currency],
+  );
+  const transferFeedback = useMemo(
+    () => (transferValidator?.validate ? transferValidator.validate(details, { code: currency }) : null),
+    [transferValidator, details, currency],
+  );
 
   const composedCashDetails = useMemo(() => {
     if (method !== "cash") return "";
@@ -105,6 +117,9 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
 
   const validate = (amt) => {
     if (!amt || amt <= 0) return t("withdraw.errInvalidAmount");
+    if (selBal && amt > Number(selBal.amount || 0)) {
+      return t("withdraw.insufficientBalance");
+    }
     if (method === "cash") {
       if (!cashReceiverName.trim() || cashReceiverName.trim().length < 3) {
         return t("withdraw.errReceiverName");
@@ -123,6 +138,9 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
       if (cryptoAddressMatch !== true) {
         return `${t("withdraw.networkMismatch")} ${activeNetwork.label}. ${t("withdraw.networkMismatchHint")}`;
       }
+    }
+    if (method === "transfer" && transferValidator && transferFeedback && !transferFeedback.ok) {
+      return transferFeedback.feedback.replace(/^⚠\s*/, "");
     }
     if (!beneficiaryName || beneficiaryName.trim().length < 2) {
       return t("withdraw.errBeneficiaryName");
@@ -168,117 +186,150 @@ export function VipWithdrawalForm({ balances, onSubmitted }) {
     }
   };
 
-  const currencyOptions = balances.balances.length > 0
-    ? balances.balances.map(b => b.currency)
-    : ["USD"];
+  const noCurrencies = methodsMap !== null && currencyOptions.length === 0;
 
   return (
     <div className="tactile-card p-6">
-      <h2 className="font-display text-xl mb-4 flex items-center gap-2">
-        <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> {t("withdraw.submitBtn")}
-      </h2>
-      <div className="space-y-4">
-        <FormField label={t("withdraw.amountLabel")}>
-          <Input data-testid="withdraw-amount" type="number" value={amount}
-            onChange={e => setAmount(e.target.value)}
-            className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
-        </FormField>
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+        <h2 className="font-display text-xl flex items-center gap-2">
+          <ArrowDownToLine className="w-5 h-5 text-[#8B5CF6]" /> {t("withdraw.submitBtn")}
+          <span className="text-[0.6rem] font-mono uppercase tracking-widest text-neutral-400 border border-white/10 px-2 py-1">
+            {t(`methodPicker.options.${method}.label`)}
+          </span>
+        </h2>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            data-testid="withdraw-change-method"
+            className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4"
+          >
+            {t("methodPicker.back")}
+          </button>
+        )}
+      </div>
 
-        <FormField label={t("withdraw.currencyLabel")}>
-          <Select value={currency} onValueChange={setCurrency}>
-            <SelectTrigger data-testid="withdraw-currency"
-              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              {currencyOptions.map(c => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FormField>
-
-        <div>
-          <Label className="micro-label text-neutral-500">{t("withdraw.methodLabel")}</Label>
-          <Select value={method} onValueChange={setMethod}>
-            <SelectTrigger data-testid="withdraw-method"
-              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-              {withdrawalMethodOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {method === "cash" && (
-            <p className="text-[0.65rem] text-[#8B5CF6] mt-1">
-              {t("withdraw.cashProgressNote")}
-            </p>
-          )}
-        </div>
-
-        {method === "crypto" && (
-          <div data-testid="crypto-network-block">
-            <Label className="micro-label text-neutral-500">
-              {t("withdraw.networkLabel")} <span className="text-[#8B5CF6]">*</span>
-            </Label>
-            <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
-              <SelectTrigger data-testid="withdraw-crypto-network"
+      {noCurrencies ? (
+        <p className="text-sm text-neutral-400 py-4" data-testid="withdraw-no-currency">
+          {t("withdraw.noCompatibleCurrency")}
+        </p>
+      ) : (
+        <div className="space-y-4">
+          <FormField label={t("withdraw.currencyLabel")}>
+            <Select value={currency} onValueChange={setCurrency}>
+              <SelectTrigger data-testid="withdraw-currency"
                 className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-                <SelectValue placeholder={t("withdraw.selectNetwork")} />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                {CRYPTO_NETWORKS.map((n) => (
-                  <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                {currencyOptions.map(c => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-[0.65rem] text-neutral-500 mt-1">
-              {t("withdraw.chooseCorrectNetwork")}
+          </FormField>
+
+          <div>
+            <Label className="micro-label text-neutral-500">{t("withdraw.amountLabel")}</Label>
+            <Input data-testid="withdraw-amount" type="number" value={amount}
+              onChange={e => setAmount(e.target.value)}
+              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
+            {selBal && (
+              <div className="flex items-center justify-between text-xs mt-2">
+                <span className="text-neutral-500">
+                  {t("withdraw.availableLabel")}:{" "}
+                  <span className="text-white font-mono" data-testid="withdraw-available">
+                    {Number(selBal.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  data-testid="withdraw-max-btn"
+                  onClick={() => setAmount(String(selBal.amount || 0))}
+                  className="text-[#8B5CF6] hover:text-[#A78BFA] font-semibold uppercase tracking-widest text-[0.65rem]"
+                >
+                  {t("withdraw.allBtn")}
+                </button>
+              </div>
+            )}
+            {Number(selBal?.frozen) > 0 && (
+              <div className="flex items-center gap-1.5 text-[0.65rem] text-amber-400 mt-1" data-testid="withdraw-frozen-hint">
+                <Lock className="w-3 h-3" />
+                {t("withdraw.frozenLabel")}: {Number(selBal.frozen).toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
+              </div>
+            )}
+          </div>
+
+          {method === "cash" && (
+            <p className="text-[0.65rem] text-[#8B5CF6]">
+              {t("withdraw.cashProgressNote")}
+            </p>
+          )}
+
+          {method === "crypto" && (
+            <div data-testid="crypto-network-block">
+              <Label className="micro-label text-neutral-500">
+                {t("withdraw.networkLabel")} <span className="text-[#8B5CF6]">*</span>
+              </Label>
+              <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
+                <SelectTrigger data-testid="withdraw-crypto-network"
+                  className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
+                  <SelectValue placeholder={t("withdraw.selectNetwork")} />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+                  {CRYPTO_NETWORKS.map((n) => (
+                    <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[0.65rem] text-neutral-500 mt-1">
+                {t("withdraw.chooseCorrectNetwork")}
+              </p>
+            </div>
+          )}
+
+          {method === "cash" ? (
+            <CashReceiverFields
+              name={cashReceiverName} setName={setCashReceiverName}
+              phone={cashReceiverPhone} setPhone={setCashReceiverPhone}
+              address={cashReceiverAddress} setAddress={setCashReceiverAddress}
+              id={cashReceiverId} setId={setCashReceiverId}
+            />
+          ) : (
+            <NonCashDetailsField
+              method={method} details={details} setDetails={setDetails}
+              activeNetwork={activeNetwork}
+              cryptoAddressMatch={cryptoAddressMatch}
+              transferValidator={transferValidator}
+              transferFeedback={transferFeedback}
+            />
+          )}
+
+          <div>
+            <Label className="micro-label text-neutral-500">
+              {t("withdraw.beneficiaryName2")} <span className="text-[#8B5CF6]">*</span>
+            </Label>
+            <Input
+              data-testid="withdraw-beneficiary"
+              value={beneficiaryName}
+              onChange={(e) => setBeneficiaryName(e.target.value)}
+              placeholder={t("withdraw.cashReceiverNamePh")}
+              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
+              required
+            />
+            <p className="text-[0.65rem] text-neutral-600 mt-1">
+              {t("withdraw.beneficiaryHint")}
             </p>
           </div>
-        )}
 
-        {method === "cash" ? (
-          <CashReceiverFields
-            name={cashReceiverName} setName={setCashReceiverName}
-            phone={cashReceiverPhone} setPhone={setCashReceiverPhone}
-            address={cashReceiverAddress} setAddress={setCashReceiverAddress}
-            id={cashReceiverId} setId={setCashReceiverId}
-          />
-        ) : (
-          <NonCashDetailsField
-            method={method} details={details} setDetails={setDetails}
-            activeNetwork={activeNetwork}
-            cryptoAddressMatch={cryptoAddressMatch}
-          />
-        )}
+          <TotpField totpCode={totpCode} setTotpCode={setTotpCode} />
 
-        <div>
-          <Label className="micro-label text-neutral-500">
-            {t("withdraw.beneficiaryName2")} <span className="text-[#8B5CF6]">*</span>
-          </Label>
-          <Input
-            data-testid="withdraw-beneficiary"
-            value={beneficiaryName}
-            onChange={(e) => setBeneficiaryName(e.target.value)}
-            placeholder={t("withdraw.cashReceiverNamePh")}
-            className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
-            required
-          />
-          <p className="text-[0.65rem] text-neutral-600 mt-1">
-            {t("withdraw.beneficiaryHint")}
-          </p>
+          <Button data-testid="submit-withdraw-btn" onClick={submit} disabled={busy}
+            className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
+            {busy ? t("withdraw.submittingBtn") : t("withdraw.submitBtn")}
+          </Button>
         </div>
-
-        <TotpField totpCode={totpCode} setTotpCode={setTotpCode} />
-
-        <Button data-testid="submit-withdraw-btn" onClick={submit} disabled={busy}
-          className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
-          {busy ? t("withdraw.submittingBtn") : t("withdraw.submitBtn")}
-        </Button>
-      </div>
+      )}
     </div>
   );
 }
@@ -364,11 +415,8 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
 }
 
 
-function NonCashDetailsField({ method, details, setDetails, activeNetwork, cryptoAddressMatch }) {
+function NonCashDetailsField({ method, details, setDetails, activeNetwork, cryptoAddressMatch, transferValidator, transferFeedback }) {
   const { t } = useTranslation();
-  // `activeNetwork.label` changes when the user picks a different chain,
-  // so we memoise the `values` prop against it — no fresh identity per
-  // parent re-render for the same network.
   const cryptoTransValues = useMemo(
     () => ({ network: activeNetwork.label }),
     [activeNetwork.label]
@@ -378,6 +426,11 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
       <Label className="micro-label text-neutral-500">
         {t("withdraw.detailsLabel")} {method === "crypto" && <span className="text-[#8B5CF6]">*</span>}
       </Label>
+      {method === "transfer" && transferValidator?.hint && (
+        <p className="text-[0.7rem] text-[#8B5CF6] mt-1 leading-relaxed" data-testid="transfer-details-hint">
+          {transferValidator.icon ? `${transferValidator.icon} ` : ""}{transferValidator.hint}
+        </p>
+      )}
       <Textarea
         data-testid="withdraw-details"
         value={details}
@@ -386,10 +439,18 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
         placeholder={
           method === "crypto"
             ? activeNetwork.addressPlaceholder
-            : t("withdraw.detailsPhTransfer")
+            : (transferValidator?.example || t("withdraw.detailsPhTransfer"))
         }
         className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"
       />
+      {method === "transfer" && transferFeedback && (
+        <p
+          data-testid="transfer-details-feedback"
+          className={`text-[0.75rem] mt-1 leading-relaxed ${transferFeedback.ok ? "text-[#22C55E]" : "text-[#EF4444]"}`}
+        >
+          {transferFeedback.feedback}
+        </p>
+      )}
       {method === "crypto" && cryptoAddressMatch === true && (
         <p
           data-testid="crypto-address-match-ok"

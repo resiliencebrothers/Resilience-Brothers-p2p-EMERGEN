@@ -7,8 +7,6 @@ touching this user, filtered by window (7/30/90 days) and gated by the same
 """
 import os
 import uuid
-import bcrypt
-import pyotp
 import requests
 from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient

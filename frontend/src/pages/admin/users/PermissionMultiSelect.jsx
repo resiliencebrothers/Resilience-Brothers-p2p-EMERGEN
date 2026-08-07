@@ -81,7 +81,8 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
           align="start"
           sideOffset={8}
           collisionPadding={16}
-          className="w-80 p-0 bg-[#1A1730] border border-white/10 rounded-none text-white flex flex-col max-h-[min(28rem,80vh)]"
+          className="w-80 p-0 bg-[#1A1730] border border-white/10 rounded-none text-white flex flex-col"
+          style={{ maxHeight: "min(28rem, var(--radix-popover-content-available-height, 80vh))" }}
         >
           <div className="px-3 py-2 micro-label text-neutral-500 border-b border-white/10 shrink-0">
             Selecciona funciones autorizadas

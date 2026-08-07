@@ -1,26 +1,28 @@
-// iter113 — pure profitability math (mirrors the operator's Excel panel).
+// Pure profitability math (mirrors the operator's Excel "Calculadora USDT→CUP").
 // Percentages are percent numbers (26 = 26%).
-// Modo 2 — combined flow: FX result + transfer differential.
+// Modo 2 — combined cash cycle: sell currency for cash, sell cash → transfer
+// at sellPct, buy cash back with transfer at buyPct. All results in cash units.
 export function computeUnit({ sell, buy, buyPct, sellPct }) {
   const s = Number(sell) || 0;
   const b = Number(buy) || 0;
   const bp = (Number(buyPct) || 0) / 100;
   const sp = (Number(sellPct) || 0) / 100;
   const resultFx = s - b;
-  const transferCost = s * (1 + bp);
   const transferValue = s * (1 + sp);
-  const conversionGain = transferValue - transferCost;
-  const netGain = resultFx + conversionGain;
+  const recoveredCash = transferValue / (1 + bp);
+  const conversionGain = recoveredCash - s;
+  const netGain = recoveredCash - b;
   return {
     resultFx,
-    transferCost,
     transferValue,
+    recoveredCash,
     conversionGain,
     netGain,
     marginOnSell: s ? netGain / s : 0,
     marginOnBuy: b ? netGain / b : 0,
-    maxBuyPrice: s + s * (sp - bp),
-    cushion: s + s * (sp - bp) - b,
+    maxBuyPrice: recoveredCash,
+    minSellPrice: (b * (1 + bp)) / (1 + sp),
+    cushion: recoveredCash - b,
   };
 }
 

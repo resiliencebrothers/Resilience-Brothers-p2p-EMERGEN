@@ -266,9 +266,8 @@ def generate_profitability_pdf(
     story.append(_operations_table(ops))
     story.append(Spacer(1, 24))
     story.append(Paragraph(
-        "<font color='#A3A3A3' size=7>* Ganancia neta = resultado en la divisa "
-        "(venta − compra) + ganancia por conversión de transferencia "
-        "(venta × diferencia de % transferencia). Los porcentajes %C/%V indican "
+        "<font color='#A3A3A3' size=7>* Ganancia neta = efectivo recuperado − costo de compra, "
+        "donde efectivo recuperado = venta × (1 + %V) ÷ (1 + %C). Los porcentajes %C/%V indican "
         "el precio de compra y venta de la transferencia bancaria de la moneda "
         "de pago. Este documento es CONFIDENCIAL y su distribución requiere "
         "autorización del titular.</font>",

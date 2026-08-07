@@ -215,7 +215,7 @@ class TestWithdrawals:
         """iter14: normal users can now withdraw too, but staff cannot withdraw to themselves."""
         from conftest import EMPLOYEE_TOKEN
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(EMPLOYEE_TOKEN),
-                          json={"amount_usd": 10, "method": "transfer", "details": "x", "beneficiary_name": "Test Holder"})
+                          json={"amount_usd": 10, "method": "transfer", "details": "Zelle: cliente@test.com", "beneficiary_name": "Test Holder"})
         assert r.status_code == 403
 
     def test_vip_withdraw_then_reject_refunds(self):
@@ -227,7 +227,7 @@ class TestWithdrawals:
         if bal < 5:
             pytest.skip("VIP balance too low")
         r = requests.post(f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP_TOKEN),
-                         json={"amount_usd": 5, "method": "transfer", "details": "Bank Y",
+                         json={"amount_usd": 5, "method": "transfer", "details": "Zelle: cliente@test.com",
                                "beneficiary_name": "Test Holder", "totp_code": make_vip_totp()})
         assert r.status_code == 200
         wid = r.json()["id"]
@@ -256,7 +256,8 @@ class TestRedemptions:
         # Ensure VIP has enough balance: top up via admin update
         # First find cheap product
         prods = requests.get(f"{BASE_URL}/api/products").json()
-        cheap = min(prods, key=lambda p: p["price_usd"])
+        cheap = min([p for p in prods if p.get("stock", 0) > 0],
+                    key=lambda p: p["price_usd"])
         # Top up VIP balance via admin
         me = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         new_bal = cheap["price_usd"] + 100

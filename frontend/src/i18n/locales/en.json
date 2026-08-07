@@ -51,7 +51,7 @@
       "queue": "My Queue",
       "orders": "Orders",
       "vipBatches": "VIP Batches",
-      "withdrawals": "Withdrawals",
+      "withdrawals": "Deposits & Withdrawals",
       "currencies": "Currencies",
       "rates": "Rates",
       "products": "Products",
@@ -65,7 +65,9 @@
       "audit": "Audit",
       "support": "Support",
       "backToClient": "Back to client",
-      "referrals": "Referrals"
+      "referrals": "Referrals",
+      "paymentAccounts": "Collection accounts",
+      "reconciliation": "Bank Reconciliation"
     }
   },
   "usersHub": {
@@ -244,7 +246,15 @@
     "detailsHelperGeneric": "Include all information required to process the payment.",
     "accuracyWarning": "Please make sure you enter the destination account details correctly. A numbering error may delay or divert the payment.",
     "noReceivable": "No configured destinations",
-    "noReceivableHint": "There are no configured rates for {{code}}. Contact support to open a new pair."
+    "noReceivableHint": "There are no configured rates for {{code}}. Contact support to open a new pair.",
+    "accountEnterAmount": "Enter the amount to send to see the destination account for your tier.",
+    "minAmountWarning": "The minimum amount to send {{code}} is {{min}}.",
+    "noAccountForAmount": "No collection account is available for that amount. Contact the team.",
+    "sendExactly": "Destination account for your amount — send your payment here:",
+    "networkWarningLine": "Send ONLY via {{network}} network — {{code}}",
+    "networkWarningHint": "Sending through any other network will result in loss of funds. Double-check the network in your wallet before confirming.",
+    "accountMinHint": "Minimum {{min}}",
+    "accountMaxHint": "· Maximum {{max}}"
   },
   "withdraw": {
     "eyebrow": "/ Withdraw",
@@ -325,19 +335,22 @@
         "paid": "Delivered",
         "approved": "In progress",
         "pending": "Pending",
-        "rejected": "Rejected"
+        "rejected": "Rejected",
+        "cancelled": "Cancelled"
       },
       "transfer": {
         "paid": "Paid",
         "approved": "Confirmed",
         "pending": "Pending",
-        "rejected": "Rejected"
+        "rejected": "Rejected",
+        "cancelled": "Cancelled"
       },
       "crypto": {
         "paid": "Paid",
         "approved": "Confirmed",
         "pending": "Pending",
-        "rejected": "Rejected"
+        "rejected": "Rejected",
+        "cancelled": "Cancelled"
       }
     },
     "cashReceiverNameLabel": "Full name of the receiver",
@@ -352,7 +365,48 @@
     "totpHelper": "6-digit code from your authenticator app, or a recovery code.",
     "totpSetupLink": "Haven't set up 2FA yet?",
     "cryptoMatchOk": "Address compatible with <1>{{network}}</1>",
-    "cryptoMismatch": "<1>Does not match {{network}}</1>. Check the selected network or paste a different address — sending on the wrong network can lose the funds permanently."
+    "cryptoMismatch": "<1>Does not match {{network}}</1>. Check the selected network or paste a different address — sending on the wrong network can lose the funds permanently.",
+    "availableLabel": "Available",
+    "allBtn": "Max",
+    "frozenLabel": "Frozen",
+    "noCompatibleCurrency": "You have no balance in currencies compatible with this method.",
+    "rowDetailHint": "Tap to see the withdrawal detail and progress",
+    "detail": {
+      "title": "Withdrawal details",
+      "amountArrival": "Withdrawal ({{currency}})",
+      "steps": {
+        "sent": "Request submitted",
+        "review": "Under review",
+        "reviewWait": "Awaiting approval",
+        "reviewOk": "Approved",
+        "processing": "Withdrawing",
+        "processingSub": "In progress",
+        "done": "Withdrawal successful"
+      },
+      "inProgressNote": "Your withdrawal is in progress. We'll notify you when it completes.",
+      "rejectedTitle": "Withdrawal rejected",
+      "cancelledTitle": "Withdrawal cancelled by you",
+      "refundNote": "The amount was returned to your available balance.",
+      "methodLabel": "Withdrawal method",
+      "networkLabel": "Network",
+      "addressLabel": "Withdrawal address",
+      "detailsLabel": "Details",
+      "beneficiaryLabel": "Beneficiary",
+      "txidLabel": "TxID",
+      "requestedAt": "Requested",
+      "paidAt": "Completed",
+      "staffNote": "Staff note",
+      "proofLink": "View payout proof",
+      "txidCopied": "TxID copied",
+      "addressCopied": "Copied",
+      "cancelBtn": "Cancel withdrawal",
+      "cancelConfirmTitle": "Cancel this withdrawal?",
+      "cancelConfirmBody": "The frozen amount will return to your available balance.",
+      "cancelYes": "Yes, cancel",
+      "cancelNo": "Go back",
+      "cancelledToast": "Withdrawal cancelled. The balance is back in your account.",
+      "cancelError": "The withdrawal could not be cancelled."
+    }
   },
   "vipView": {
     "eyebrow": "/ Deposits & Withdrawals",
@@ -389,7 +443,8 @@
         "conversions": "Conversions"
       },
       "conversionsEmpty": "You haven't made any conversions yet."
-    }
+    },
+    "frozenNote": "{{amount}} USDT frozen in withdrawals in progress"
   },
   "orders": {
     "eyebrow": "/ History",
@@ -625,7 +680,8 @@
       "totpDescription": "Enter your 2FA code to continue.",
       "empty": "No results",
       "yes": "Yes",
-      "no": "No"
+      "no": "No",
+      "cancelled": "Cancelled"
     },
     "hubs": {
       "usersAria": "User management",
@@ -669,7 +725,16 @@
       "userUpdated": "User updated",
       "totpTitle": "Confirm change on user",
       "totpDescriptionVerify": "You are going to manually verify {{email}}'s email. Enter your 2FA code.",
-      "totpDescriptionUpdate": "Enter your 2FA code."
+      "totpDescriptionUpdate": "Enter your 2FA code.",
+      "resendBtn": "Resend email",
+      "resendOk": "Verification email resent",
+      "resendAcceptedButFailed": "Provider rejected the send — check the last email status",
+      "resendFail": "Could not resend",
+      "emailEvLast": "Last send:",
+      "emailEv_sent": "SENT",
+      "emailEv_failed": "FAILED",
+      "emailEv_suppressed": "SUPPRESSED (preview)",
+      "emailEvNone": "No sends recorded"
     },
     "orders": {
       "eyebrow": "/ Orders",
@@ -738,7 +803,9 @@
       "copyFormatted": "Copy formatted",
       "copyWallet": "Copy wallet ({{short}})",
       "networkClientNotDeclared": "The client did NOT declare the network. Contact them before sending.",
-      "networkSendOn": "Send on the {{net}} network. Verify the destination wallet accepts it."
+      "networkSendOn": "Send on the {{net}} network. Verify the destination wallet accepts it.",
+      "fPayAccount": "Collection account:",
+      "allAccounts": "All accounts"
     },
     "kycAdmin": {
       "title": "Identity verification (KYC)",
@@ -1003,7 +1070,15 @@
       "realRateHelper": "Used only to compute business revenue. Optional.",
       "save": "Save",
       "totpTitle": "Confirm rate edit",
-      "totpDescription": "Editing rates impacts all clients. Enter your 2FA code."
+      "totpDescription": "Editing rates impacts all clients. Enter your 2FA code.",
+      "tiersTitle": "Amount tiers (optional)",
+      "tiersHelper": "If the pair has different rates depending on the amount sent (e.g. Zelle min 50 vs min 200), define each tier here. The tier with the highest qualifying minimum applies; below all tiers the base rate is used.",
+      "tierMin": "Min amount",
+      "tierNormal": "Normal",
+      "tierVip": "VIP",
+      "tierReal": "Real (opt)",
+      "addTier": "Add tier",
+      "tiersBadge": "{{count}} amount tier(s)"
     },
     "products": {
       "eyebrow": "/ Marketplace",
@@ -1263,8 +1338,35 @@
     },
     "companyFunds": {
       "eyebrow": "/ Company Fund",
+      "totalUsdt": {
+        "eyebrow": "Company-wide total",
+        "availableLabel": "Available (net — minus what we owe clients)",
+        "grossLabel": "Gross",
+        "custodyLabel": "Client custody",
+        "inflow": "Inflows",
+        "outflow": "Outflows",
+        "profit": "Profit",
+        "refresh": "Refresh",
+        "missingRates": "No USDT rate — excluded from the total: {{list}}. Configure them under Currencies → Rates to complete the figure."
+      },
+      "batchesToday": {
+        "title": "Batches by day",
+        "closed": "Batches closed",
+        "orders": "Orders approved",
+        "volume": "Volume moved",
+        "todayBtn": "Today",
+        "clickHint": "Tap to see the detail",
+        "detailTitle": "Batches of {{date}}",
+        "detailSub": "Closed batches and approved orders of that day.",
+        "batchesSection": "Closed batches",
+        "ordersSection": "Approved orders",
+        "colOrders": "Orders",
+        "colApproved": "Approved",
+        "colClose": "Closed at",
+        "emptyDay": "No batches or orders that day."
+      },
       "title": "Operating capital by currency",
-      "subtitle": "Balance = inflows (confirmed orders + own contributions) − delivered to clients (P2P + VIP and normal client withdrawals) − company outflows.",
+      "subtitle": "Available balance = inflows (orders + VIP batches + deposits + own contributions) − client deliveries − paid withdrawals − company outflows − client balances still owed (VIP and normal).",
       "empty": "No movements registered yet.",
       "orders": "Orders",
       "ownContribution": "Own contribution",
@@ -1337,7 +1439,35 @@
       "toastLoadError": "Error loading funds",
       "toastMax4": "Max 4MB",
       "vipBatchesIn": "VIP batches",
-      "depositsIn": "Client deposits"
+      "depositsIn": "Client deposits",
+      "clientBalancesOwed": "Client balances (owed)",
+      "grossCustody": "Gross custody",
+      "profitTotal": "Total profit",
+      "profitClickHint": "Tap to see the orders and batches behind it",
+      "profitDetailTitle": "Profit breakdown · {{currency}}",
+      "profitDetailSub": "Approved P2P orders and VIP batches contributing to the total profit in {{currency}}.",
+      "profitDetailEmpty": "No orders or batches with a real rate set in this currency.",
+      "profitOrdersSection": "P2P orders (paid in {{currency}})",
+      "profitBatchesSection": "VIP batches (sending {{currency}})",
+      "profitColDate": "Date",
+      "profitColClient": "Client",
+      "profitColHolder": "Holder",
+      "profitColPair": "Pair",
+      "profitColSends": "Sends",
+      "profitColReceives": "Receives",
+      "profitColRates": "Applied / Real rate",
+      "profitColProfit": "Profit",
+      "profitOrdersSubtotal": "Orders subtotal",
+      "profitBatchesSubtotal": "Batches subtotal",
+      "profitDetailTotal": "Total",
+      "profitDetailLoadError": "Could not load the breakdown.",
+      "noProfitData": "No operations with a real rate configured",
+      "inflows": "Inflows",
+      "outflows": "Outflows",
+      "availableBalance": "Available balance",
+      "sparklineEmpty": "Not enough data",
+      "sparklineAria": "Profit over the last 30 days",
+      "sparklineDay": "{{n}}d ago"
     },
     "revenue": {
       "loading": "Loading revenue...",
@@ -1382,7 +1512,7 @@
       "colMargin": "Margin",
       "byPairEmpty": "Not enough data. Configure real rates and approve orders.",
       "dailyTitle": "Daily Log",
-      "dailySubtitle": "Profit consolidated per day (P2P + Marketplace + USDT commissions).",
+      "dailySubtitle": "Profit consolidated per day (P2P + Marketplace + VIP batches + USDT commissions).",
       "dailyRange7": "Last 7 days",
       "dailyRange14": "Last 14 days",
       "dailyRange30": "Last 30 days",
@@ -1393,6 +1523,28 @@
       "colP2P": "P2P",
       "colMarketplace": "Marketplace",
       "colUsdtFees": "USDT commissions",
+      "colVipBatches": "VIP batches",
+      "ddTitle": "Day detail {{date}}",
+      "ddTotal": "Day total",
+      "ddEmpty": "No activity recorded this day.",
+      "ddLoadError": "Could not load the day detail.",
+      "ddOrdersSection": "P2P orders",
+      "ddMarketplaceSection": "Marketplace",
+      "ddVipSection": "VIP batches",
+      "ddFeesSection": "USDT commissions (conversions)",
+      "ddClient": "Client",
+      "ddSends": "Sends",
+      "ddReceives": "Receives",
+      "ddProfit": "Profit",
+      "ddProduct": "Product",
+      "ddQty": "Qty",
+      "ddSale": "Sale",
+      "ddCost": "Cost",
+      "ddCardHolder": "Card / Holder",
+      "ddMargin": "Margin",
+      "ddTime": "Time",
+      "ddFee": "Fee",
+      "ddClickHint": "Tap a row to see the detail.",
       "colTotal": "Total",
       "emptyRange": "No movements in this range.",
       "monthlyTitle": "Monthly Log",
@@ -1427,11 +1579,15 @@
       "catP2P": "P2P Exchange",
       "catMarketplace": "Marketplace",
       "catConversions": "Conversions",
+      "catVipBatches": "VIP Batches",
       "catNote": "Percentages represent the magnitude relative to the absolute total. Faded bars indicate net loss.",
       "monthlyComparison": "Monthly comparison",
       "noMonthlyData": "No monthly data yet.",
       "vipBatches": "VIP Batches",
-      "vipBatchesCount": "{{n}} batch orders"
+      "vipBatchesCount": "{{n}} batch orders",
+      "vipBatchesBreakdown": "Includes batches",
+      "totalMargin": "Total profitability",
+      "totalMarginHint": "profit / {{vol}} USDT volume in the period"
     },
     "profileChanges": {
       "title": "Profile change requests",
@@ -1475,6 +1631,74 @@
       "totalPrefix": "TOTAL ≈",
       "netLiquidity": "Net liquidity",
       "viewAllPending": "View all pending orders"
+    },
+    "paymentAccounts": {
+      "eyebrow": "Catalog",
+      "title": "Collection Accounts",
+      "helper": "Accounts clients send their payment to, selected automatically by amount. The client sees the account with the highest qualifying minimum for their amount. If a currency has no accounts here, the legacy account on the currency is used.",
+      "newBtn": "New account",
+      "colCurrency": "Currency",
+      "colLabel": "Label",
+      "colDetails": "Account details",
+      "colMin": "Minimum",
+      "colMax": "Maximum",
+      "colActive": "Active",
+      "editTitle": "Edit collection account",
+      "newTitle": "New collection account",
+      "currencyLabel": "Currency (what the client sends)",
+      "labelLabel": "Internal label",
+      "labelPh": "E.g. Zelle Yuri · min 50",
+      "networkLabel": "Network / Method (shown to the client)",
+      "networkPh": "E.g. BEP20, TRC20, ERC20, SEPA, Zelle…",
+      "networkHint": "Rendered as a yellow warning above the address so the client can't send through the wrong chain. Leave empty when not applicable.",
+      "detailsLabel": "Details the client will see",
+      "detailsPh": "Name, email / IBAN, bank, instructions...",
+      "minLabel": "Minimum amount",
+      "maxLabel": "Maximum amount (optional)",
+      "activeLabel": "Account active",
+      "save": "Save",
+      "confirmDelete": "Delete this collection account?",
+      "toastSaved": "Account saved",
+      "toastDeleted": "Account deleted",
+      "toastError": "Fill in currency, label and account details",
+      "totpTitle": "Confirm with 2FA",
+      "totpDescription": "Modifying collection accounts requires your authentication code.",
+      "empty": "No collection accounts configured. Clients see each currency's legacy account.",
+      "select": "Select",
+      "totalsTitle": "Daily totals (reconciliation)",
+      "totalsHelper": "How much came into each account per day, to reconcile against bank statements. Confirmed = approved/completed orders and approved batch items; Pending = under review (client usually already sent). Rejected rows don't count.",
+      "totalsAllAccounts": "All accounts",
+      "totalsDays": "{{n}} days",
+      "totalsColDate": "Date",
+      "totalsColAccount": "Account",
+      "totalsColConfirmed": "Confirmed",
+      "totalsColPending": "Pending",
+      "totalsColTotal": "Total",
+      "totalsColOps": "Ops",
+      "totalsEmpty": "No movements with a collection account in this period.",
+      "exportOk": "Exported ({{kind}})",
+      "exportError": "Error exporting {{kind}}"
+    },
+    "clientDebts": {
+      "open": "Client debts",
+      "eyebrow": "TREASURY",
+      "title": "Client debts",
+      "subtitle": "Clients who owe us and clients we owe, per currency with USDT equivalents.",
+      "back": "Back to Company Funds",
+      "refresh": "Refresh",
+      "oweUs": "They owe us",
+      "weOwe": "We owe them",
+      "net": "Net balance",
+      "netHint": "They owe us − We owe them (USDT equivalent)",
+      "oweUsTable": "Clients who owe us (VIP ledger debt)",
+      "weOweTable": "Clients we owe (custody balances)",
+      "colClient": "Client",
+      "colBalances": "Amounts per currency",
+      "colTotal": "Total USDT",
+      "emptyOweUs": "No client currently owes the company.",
+      "emptyWeOwe": "No client custody balances.",
+      "missingRates": "Currencies without a USDT rate (excluded from totals): {{codes}}",
+      "loadError": "Could not load the debts report. Try again."
     }
   },
   "adminOverview": {
@@ -1557,6 +1781,17 @@
     "createBatch": "Create batch",
     "batchCreated": "Batch created — you can add orders now.",
     "recentBatches": "Recent batches",
+    "openBatches": "Open batches",
+    "batchHistory": "Batch history",
+    "batchHistoryHint": "Closed batches — tap one to see its orders.",
+    "filterAllPairs": "All pairs",
+    "clearFilters": "Clear",
+    "noFilterResults": "No batches match the filters.",
+    "historyBtn": "History",
+    "closedEmpty": "You have no closed batches yet.",
+    "autoCloseInfo": "Open batches close automatically every day at midnight (Cuba time); batches without orders are removed.",
+    "autoBadge": "AUTO",
+    "showMovements": "Movements history",
     "empty": "No batches yet. Create your first one to start sending orders in bulk.",
     "loadError": "Could not load batch data.",
     "actionError": "Could not process the action.",
@@ -1585,7 +1820,10 @@
       }
     },
     "addRow": "Add order to batch",
-    "holderPlaceholder": "Holder name",
+    "holderPlaceholder": "Full name of the sending account holder",
+    "cardPlaceholder": "9212 9598 7274 4356",
+    "cardHint": "CUP transfer card where the amount will be received — must have 16 digits.",
+    "colCard": "Card",
     "addItem": "Add",
     "itemAdded": "Order added to batch.",
     "colHolder": "Holder",
@@ -1604,7 +1842,11 @@
     "colReceive": "You get",
     "creditedInfo": "Each confirmed order credits your balance in the batch's destination currency at the VIP rate. Check your balances in the Assets section.",
     "legacyDebt": "Outstanding debt",
-    "legacyDebtHint": "Debt from the previous system — settled with the team (collections registered by the admin)."
+    "legacyDebtHint": "Debt from the previous system — settled with the team (collections registered by the admin).",
+    "sendAccountLabel": "Account you must send {{code}} to:",
+    "belowMin": "The minimum amount for {{code}} is {{min}}.",
+    "holderHint": "Required: first and last name of the account holder making the transfer — so the team can match your payment. The amount credits your balance; the payout card is asked at withdrawal.",
+    "holderIncomplete": "Type the holder's full first and last name."
   },
   "adminVipHub": {
     "eyebrow": "ORDERS",
@@ -1781,6 +2023,7 @@
     "dEmail": "Email",
     "dPair": "Pair",
     "dHolder": "Payment holder",
+    "dCard": "Destination CUP card",
     "dSends": "Sends",
     "dReceives": "Receives",
     "dRate": "VIP rate applied",
@@ -1790,9 +2033,15 @@
     "dReviewed": "Reviewed",
     "dReviewedBy": "Reviewed by",
     "dBatch": "Batch",
+    "copiedHolder": "Holder copied",
+    "copiedCard": "Card copied",
+    "copiedAmount": "Amount copied",
     "pairFilterLabel": "Pair",
     "pairAll": "All",
-    "pairLegacy": "No pair"
+    "pairLegacy": "No pair",
+    "dPayAccount": "Collection account",
+    "dPayAccountDetails": "Destination wallet / account",
+    "copiedAccount": "Destination copied"
   },
   "vipRequest": {
     "sectionTitle": "VIP Program",
@@ -2703,7 +2952,28 @@
       "confirmed": "Confirmed",
       "rejected": "Rejected"
     },
-    "historyEmpty": "No deposits registered yet."
+    "historyEmpty": "No deposits registered yet.",
+    "networkLabel": "Network",
+    "networkHint": "Pick the network you sent the USDT on. A hash from another network will be rejected.",
+    "noCurrencyForMethod": "No currencies available to deposit with this method.",
+    "detail": {
+      "title": "Deposit details",
+      "amountLabel": "Deposit ({{currency}})",
+      "statusBig": {
+        "pending": "Under review",
+        "confirmed": "Completed",
+        "rejected": "Rejected"
+      },
+      "methodLabel": "Method",
+      "networkLabel": "Network",
+      "txidLabel": "TxID",
+      "holderLabel": "Account holder",
+      "timeLabel": "Time",
+      "reviewedLabel": "Reviewed",
+      "noteLabel": "Note",
+      "staffNote": "Staff response",
+      "proofLink": "View proof"
+    }
   },
   "adminDeposits": {
     "colClient": "Client",
@@ -2723,7 +2993,8 @@
     "rejectTitle": "Reject deposit",
     "rejectPlaceholder": "Reason (visible to the client)",
     "courier": "Courier pickup",
-    "office": "Office delivery"
+    "office": "Office delivery",
+    "methodAll": "All methods"
   },
   "historyHub": {
     "breadcrumb": "/ HISTORY",
@@ -2752,10 +3023,11 @@
       "maxBuyHint": "Break-even point — buying above this loses money",
       "cushion": "Available cushion",
       "resultFx": "FX result",
-      "transferCost": "Equivalent transfer cost",
+      "recoveredCash": "Cash recovered",
       "transferValue": "Transfer value generated",
       "conversionGain": "Conversion gain",
-      "marginOnBuy": "Return on buy cost",
+      "marginOnBuy": "Return on cost",
+      "marginOnSell": "Margin on sale",
       "mode1": "Mode 1 · Direct transfer sale",
       "mode2": "Mode 2 · Combined flow",
       "m1BuyPrice": "Buy price",
@@ -2873,6 +3145,170 @@
       "working": "Generating...",
       "exportedToast": "PDF report downloaded",
       "exportError": "Could not generate the PDF"
+    }
+  },
+  "qrShare": {
+    "button": "QR code",
+    "title": "Install the app via QR",
+    "hint": "Show this code to the customer: scanning it opens the app ready to install.",
+    "download": "Download PNG",
+    "print": "Print poster",
+    "downloaded": "QR downloaded",
+    "printError": "Could not open the print window. Check your pop-up blocker.",
+    "posterHeading": "Scan & install the app",
+    "posterCodeLabel": "Referral code",
+    "customize": "Customize poster",
+    "headingLabel": "Poster headline",
+    "promoLabel": "Promotion (optional)",
+    "promoPlaceholder": "E.g.: 10% off this month",
+    "resetText": "Reset text",
+    "customizeHint": "The text is saved on the server and will show on the poster across every device.",
+    "save": "Save promo",
+    "saving": "Saving…",
+    "saved": "Promo updated across all devices",
+    "saveError": "Could not save the promo.",
+    "saveForbidden": "Only admin/staff can edit the poster promo."
+  },
+  "methodPicker": {
+    "deposit": {
+      "title": "How will you deposit?",
+      "subtitle": "Pick the method to fill in only the data for that channel."
+    },
+    "withdraw": {
+      "title": "How do you want to withdraw?",
+      "subtitle": "Pick the method to fill in only the data for that channel."
+    },
+    "options": {
+      "crypto": {
+        "label": "Crypto transfer",
+        "desc": "USDT on-chain (TRC20 / BEP20)"
+      },
+      "transfer": {
+        "label": "Bank transfer",
+        "desc": "CUP or another bank currency"
+      },
+      "cash": {
+        "label": "Cash hand-off",
+        "desc": "At the office or by courier"
+      }
+    },
+    "back": "Change method"
+  },
+  "depositsWithdrawalsHub": {
+    "aria": "Deposits & Withdrawals",
+    "eyebrow": "CLIENT TREASURY",
+    "tabs": {
+      "withdrawals": "Withdrawals",
+      "deposits": "Client deposits",
+      "requests": "Capital requests"
+    },
+    "depositsSubtitle": "Confirm or reject client deposits (cash, transfer or crypto). Confirming credits the balance in the same currency."
+  },
+  "reconciliation": {
+    "eyebrow": "TREASURY",
+    "title": "Bank Reconciliation",
+    "subtitle": "Upload bank statements (CSV, XLS, XLSX or PDF) and the system identifies received payments and reconciles them against pending orders automatically.",
+    "tabs": {
+      "import": "Import statement",
+      "moves": "Transactions",
+      "history": "History & files",
+      "config": "Rules"
+    },
+    "status": {
+      "uploaded": "Uploaded",
+      "processing": "Processing",
+      "processed": "Processed",
+      "partially_processed": "Partial",
+      "failed": "Failed"
+    },
+    "counts": {
+      "detected": "Detected",
+      "credits": "Credits",
+      "auto": "Auto",
+      "review": "Review",
+      "unmatched": "Unmatched",
+      "duplicates": "Duplicates"
+    },
+    "filter": {
+      "manual_review": "Manual review",
+      "unmatched": "Unmatched",
+      "auto_matched": "Auto matched",
+      "manual_matched": "Manually matched",
+      "duplicate": "Duplicates",
+      "ignored": "Ignored"
+    },
+    "import": {
+      "account": "Payment account",
+      "accountPh": "Select the bank account",
+      "currency": "Currency",
+      "currencyPh": "Select the currency",
+      "bank": "Bank",
+      "bankPh": "Wells Fargo, Chase, Sabadell, BBVA…",
+      "file": "Statement file",
+      "fileHint": "CSV, XLS, XLSX or PDF · max 8 MB. Structured formats (CSV/XLSX) are processed with priority.",
+      "submit": "Upload & process",
+      "uploaded": "Statement uploaded — processing…",
+      "missingFields": "Fill in bank, currency and file.",
+      "error": "Could not upload the statement.",
+      "failed": "Processing failed. Check the file.",
+      "done": "Processed: {{auto}} auto-matched, {{review}} for review"
+    },
+    "tx": {
+      "date": "Date",
+      "sender": "Sender",
+      "description": "Description",
+      "amount": "Amount",
+      "method": "Method",
+      "score": "Score",
+      "review": "Review",
+      "link": "Link",
+      "confirm": "Confirm",
+      "order": "Order",
+      "empty": "No transactions for this filter.",
+      "candidatesTitle": "Suggested candidates",
+      "rejectAll": "Discard suggestions (unmatched)",
+      "linkTitle": "Link to a pending order",
+      "linkSearchPh": "Search by name, email or order…",
+      "noOrders": "No matching pending orders.",
+      "confirmOk": "Transaction reconciled — order marked as paid",
+      "rejectOk": "Suggestions discarded",
+      "ignoreOk": "Transaction ignored",
+      "rollback": "Rollback",
+      "rollbackTitle": "Revert reconciliation",
+      "rollbackHint": "The order returns to pending and the transaction becomes unreconciled. This action is audited.",
+      "rollbackReasonPh": "Rollback reason (required)…",
+      "rollbackOk": "Reconciliation reverted — order is pending again",
+      "possible_partial_payment": "Possible partial payment (received less than expected)",
+      "possible_partial_paymentShort": "Partial",
+      "possible_overpayment": "Possible overpayment (received more than expected)",
+      "possible_overpaymentShort": "Over"
+    },
+    "history": {
+      "refresh": "Refresh",
+      "empty": "No statements imported yet."
+    },
+    "config": {
+      "auto_match_enabled": "Automatic reconciliation",
+      "auto_match_enabledHint": "When off, everything goes to manual review.",
+      "require_exact_amount": "Require exact amount for auto",
+      "require_exact_amountHint": "Amount mismatches (partial/over) always go to review.",
+      "enable_ocr": "OCR for scanned PDFs",
+      "enable_ocrHint": "Uses AI to read scanned statements without a text layer.",
+      "auto_match_score": "Auto threshold (score ≥)",
+      "manual_review_score": "Review threshold (score ≥)",
+      "minimum_score_difference": "Minimum candidate separation",
+      "date_window_days": "Date window (days)",
+      "amount_tolerance_pct": "Amount tolerance (%)",
+      "max_auto_confirmation_amount": "Max amount for auto",
+      "hint": "Points: exact amount 45 / tolerance 30 · currency 10 · name up to 25 · date up to 10 · reference up to 20 · method 5. Auto-match also requires exact amount, a single clear candidate and a known receiving account.",
+      "save": "Save rules",
+      "saved": "Rules saved"
+    },
+    "stage": {
+      "reading": "reading file",
+      "deduplicating": "detecting duplicates",
+      "matching": "matching orders",
+      "finalizing": "finalizing"
     }
   }
 }

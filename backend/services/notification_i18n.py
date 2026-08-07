@@ -239,6 +239,32 @@ CATALOG: dict[str, dict[str, dict[str, str]]] = {
     # -----------------------------------------------------------------------
     # CLIENT — RATE CHANGE FANOUT (from `routes/market.py`)
     # -----------------------------------------------------------------------
+    "payment_account_changed": {
+        "es": {
+            "title": "⚠️ Cuenta de cobro actualizada",
+            "message": "La cuenta a la que debes enviar {currency} para tu operación en curso cambió. Si aún no enviaste tu pago, usa los datos vigentes antes de enviar.{details_block}",
+            "details_block": "\nNueva cuenta: {label}\n{details}",
+            "push_body": "La cuenta para enviar {currency} cambió. Revisa la app antes de enviar tu pago.",
+        },
+        "en": {
+            "title": "⚠️ Collection account updated",
+            "message": "The account you must send {currency} to for your in-progress operation changed. If you haven't sent your payment yet, use the current details before sending.{details_block}",
+            "details_block": "\nNew account: {label}\n{details}",
+            "push_body": "The account to send {currency} changed. Check the app before sending your payment.",
+        },
+    },
+    "payment_account_unavailable": {
+        "es": {
+            "title": "⚠️ Cuenta de cobro no disponible",
+            "message": "La cuenta a la que debías enviar {currency} ya no está disponible para tu monto. Si aún no enviaste tu pago, contacta al equipo de soporte antes de enviar.",
+            "push_body": "La cuenta para enviar {currency} ya no está disponible. Contacta a soporte antes de enviar tu pago.",
+        },
+        "en": {
+            "title": "⚠️ Collection account unavailable",
+            "message": "The account you were told to send {currency} to is no longer available for your amount. If you haven't sent your payment yet, contact support before sending.",
+            "push_body": "The account to send {currency} is no longer available. Contact support before sending your payment.",
+        },
+    },
     "rate_change": {
         "es": {
             "title": "Nueva tasa {from_code} → {to_code}",
@@ -253,6 +279,94 @@ CATALOG: dict[str, dict[str, dict[str, str]]] = {
             "vip_suffix": " (VIP rate)",
             "push_body": "1 {from_code} = {rate:g} {to_code}{vip_suffix}. Check the dashboard before trading.",
             "push_vip_suffix": " (VIP)",
+        },
+    },
+    # iter155 — withdrawal lifecycle steps. Each step pushes to the owner so
+    # they can follow the progress (received → in progress → done) without
+    # opening the app. Rejected is terminal and mentions the refund.
+    "withdrawal_received": {
+        "es": {
+            "title": "Solicitud de retiro enviada",
+            "message": "Recibimos tu solicitud de retiro de {amt} {code}. Está bajo revisión — te avisaremos en cada paso.",
+            "push_title": "Solicitud de retiro enviada 📤",
+            "push_body": "Tu retiro de {amt} {code} está bajo revisión. Te avisaremos cuando avance.",
+        },
+        "en": {
+            "title": "Withdrawal request submitted",
+            "message": "We received your withdrawal request for {amt} {code}. It's under review — we'll notify you at every step.",
+            "push_title": "Withdrawal request submitted 📤",
+            "push_body": "Your {amt} {code} withdrawal is under review. We'll notify you as it progresses.",
+        },
+    },
+    "withdrawal_approved": {
+        "es": {
+            "title": "Retiro en curso",
+            "message": "Tu retiro de {amt} {code} fue aprobado y está en curso.",
+            "push_title": "Retiro aprobado ✓",
+            "push_body": "Tu retiro de {amt} {code} está en curso. Te avisaremos al completarse.",
+        },
+        "en": {
+            "title": "Withdrawal in progress",
+            "message": "Your {amt} {code} withdrawal was approved and is in progress.",
+            "push_title": "Withdrawal approved ✓",
+            "push_body": "Your {amt} {code} withdrawal is in progress. We'll notify you when it completes.",
+        },
+    },
+    "withdrawal_paid": {
+        "es": {
+            "title": "Retiro exitoso",
+            "message": "Tu retiro de {amt} {code} se completó con éxito.",
+            "push_title": "Retiro exitoso 🎉",
+            "push_body": "Tu retiro de {amt} {code} se completó con éxito.",
+        },
+        "en": {
+            "title": "Withdrawal successful",
+            "message": "Your {amt} {code} withdrawal completed successfully.",
+            "push_title": "Withdrawal successful 🎉",
+            "push_body": "Your {amt} {code} withdrawal completed successfully.",
+        },
+    },
+    "withdrawal_rejected": {
+        "es": {
+            "title": "Retiro rechazado",
+            "message": "Tu retiro de {amt} {code} fue rechazado.{reason} El monto volvió a tu saldo disponible.",
+            "push_title": "Retiro rechazado",
+            "push_body": "Tu retiro de {amt} {code} fue rechazado. El monto volvió a tu saldo disponible.",
+        },
+        "en": {
+            "title": "Withdrawal rejected",
+            "message": "Your {amt} {code} withdrawal was rejected.{reason} The amount was returned to your available balance.",
+            "push_title": "Withdrawal rejected",
+            "push_body": "Your {amt} {code} withdrawal was rejected. The amount was returned to your balance.",
+        },
+    },
+    # iter156 — deposit review decision (staff confirms or rejects).
+    "deposit_confirmed": {
+        "es": {
+            "title": "Depósito confirmado",
+            "message": "Tu depósito de {amt} {code} fue confirmado. El saldo ya está disponible en tu cuenta.",
+            "push_title": "Depósito confirmado ✓",
+            "push_body": "Tu depósito de {amt} {code} fue acreditado. El saldo ya está disponible.",
+        },
+        "en": {
+            "title": "Deposit confirmed",
+            "message": "Your {amt} {code} deposit was confirmed. The balance is now available in your account.",
+            "push_title": "Deposit confirmed ✓",
+            "push_body": "Your {amt} {code} deposit was credited. The balance is now available.",
+        },
+    },
+    "deposit_rejected": {
+        "es": {
+            "title": "Depósito rechazado",
+            "message": "Tu depósito de {amt} {code} fue rechazado.{reason}",
+            "push_title": "Depósito rechazado",
+            "push_body": "Tu depósito de {amt} {code} fue rechazado. Revisa los detalles en la app.",
+        },
+        "en": {
+            "title": "Deposit rejected",
+            "message": "Your {amt} {code} deposit was rejected.{reason}",
+            "push_title": "Deposit rejected",
+            "push_body": "Your {amt} {code} deposit was rejected. Check the details in the app.",
         },
     },
 }

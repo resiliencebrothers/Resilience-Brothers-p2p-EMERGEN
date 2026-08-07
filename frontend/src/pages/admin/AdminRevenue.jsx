@@ -4,10 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers, Percent } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 
 import { BigStat, RoleCard } from "./revenue/RevenueCards";
 import { RevenueByPairTable } from "./revenue/RevenueByPairTable";
@@ -53,6 +54,9 @@ export default function AdminRevenue() {
     }
   }, [days, dailyRange, t]);
   useEffect(() => { load(); }, [load]);
+  // iter159 — live refresh: revenue moves with orders, VIP batches and any
+  // balance-mutating action (conversions, deposits, marketplace…).
+  useLiveRefresh(load, ["ledger_changed", "order_status_changed", "vip_batch_item_decision"]);
 
   const downloadMonth = async (bucket, format) => {
     const [year, month] = bucket.split("-");
@@ -155,8 +159,17 @@ export default function AdminRevenue() {
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <BigStat icon={Banknote} label={t("admin.revenue.totalProfit")} value={fmt(data.total_profit_usdt)} unit="USDT" highlight />
+        <BigStat
+          icon={Percent}
+          label={t("admin.revenue.totalMargin")}
+          value={fmt(data.total_margin_pct)}
+          unit="%"
+          highlight
+          hint={t("admin.revenue.totalMarginHint", { vol: fmt(data.total_volume_all_usdt) })}
+          testid="revenue-total-margin"
+        />
         <BigStat icon={TrendingUp} label={t("admin.revenue.p2pProfit")} value={fmt(data.p2p_profit_usdt)} unit="USDT" />
         <BigStat icon={Boxes} label={t("admin.revenue.marketplaceProfit")} value={fmt(data.marketplace_profit_usdt)} unit="USDT" />
         <BigStat

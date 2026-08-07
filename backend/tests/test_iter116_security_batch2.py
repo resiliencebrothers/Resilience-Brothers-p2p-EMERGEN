@@ -13,7 +13,7 @@ import pytest
 import httpx
 
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")
-from conftest import ADMIN_TOKEN, EMPLOYEE_TOKEN, VIP_TOKEN, NORMAL_TOKEN, with_totp_admin
+from conftest import ADMIN_TOKEN, EMPLOYEE_TOKEN, VIP_TOKEN, with_totp_admin
 
 VIP_UID = "user_test_vip01"
 

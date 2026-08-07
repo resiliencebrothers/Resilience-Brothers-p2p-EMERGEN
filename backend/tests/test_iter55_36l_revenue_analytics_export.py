@@ -7,7 +7,6 @@ Verifies:
   • format=invalid → 400.
   • Non-admin token → 403/401 (auth gate reused from require_admin).
 """
-import os
 import requests
 
 from tests.conftest import BASE_URL as API_ROOT, ADMIN_TOKEN, NORMAL_TOKEN

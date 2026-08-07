@@ -7,7 +7,11 @@
  * Falls back to "not_started" so anything unknown renders as neutral.
  */
 import { useTranslation } from "react-i18next";
-import { BarChart3, Settings2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
+import { BarChart3, Settings2, Send } from "lucide-react";
+import { API } from "@/App";
 import CopyableText from "@/components/CopyableText";
 import { KYC_META } from "../user-stats/userStatsMeta";
 
@@ -83,6 +87,7 @@ export default function UsersTableRow({
             </>
           )}
         </div>
+        {needsEmailVerify && <EmailDeliveryInline userId={user.user_id} t={t} />}
       </td>
       <td className="px-4 py-3" data-testid={`role-cell-${user.user_id}`}>
         <span
@@ -136,5 +141,69 @@ export default function UsersTableRow({
         </div>
       </td>
     </tr>
+  );
+}
+
+const EV_TONE = {
+  sent: "text-emerald-400",
+  failed: "text-[#EF4444]",
+  suppressed: "text-neutral-500",
+};
+
+// iter147 — delivery status of the last verification email + staff resend.
+function EmailDeliveryInline({ userId, t }) {
+  const [ev, setEv] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    axios.get(`${API}/admin/users/${userId}/email-events`, {
+      params: { limit: 1 }, withCredentials: true,
+    })
+      .then((r) => setEv(r.data.events?.[0] || null))
+      .catch(() => {});
+  };
+  useEffect(load, [userId]);
+
+  const resend = async () => {
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API}/admin/users/${userId}/resend-verification`,
+        {}, { withCredentials: true });
+      toast.success(r.data.sent
+        ? t("admin.users.resendOk")
+        : t("admin.users.resendAcceptedButFailed"));
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || t("admin.users.resendFail"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 mt-1 flex-wrap" data-testid={`email-delivery-${userId}`}>
+      {ev ? (
+        <span
+          className={`text-[0.6rem] font-mono ${EV_TONE[ev.status] || "text-neutral-500"}`}
+          title={ev.error || ev.subject}
+          data-testid={`email-delivery-status-${userId}`}
+        >
+          {t("admin.users.emailEvLast")} {t(`admin.users.emailEv_${ev.status}`, ev.status)}
+          {" · "}{new Date(ev.created_at).toLocaleString()}
+          {ev.status === "failed" && ev.error ? ` — ${ev.error.slice(0, 60)}` : ""}
+        </span>
+      ) : (
+        <span className="text-[0.6rem] text-neutral-600 font-mono">{t("admin.users.emailEvNone")}</span>
+      )}
+      <button
+        type="button"
+        data-testid={`resend-verification-btn-${userId}`}
+        onClick={resend}
+        disabled={busy}
+        className="inline-flex items-center gap-1 text-[0.65rem] uppercase tracking-widest text-amber-400 hover:text-amber-300 underline underline-offset-4 disabled:opacity-40"
+      >
+        <Send className="w-3 h-3" /> {t("admin.users.resendBtn")}
+      </button>
+    </div>
   );
 }

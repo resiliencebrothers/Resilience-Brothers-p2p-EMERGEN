@@ -16,7 +16,6 @@ Coverage:
 """
 import os
 import uuid
-import bcrypt
 import pyotp
 import requests
 from datetime import datetime, timezone

@@ -214,14 +214,14 @@ export function MovementsHistory() {
         </div>
       )}
       {!loading && rows.length > 0 && (
-        <div className="tactile-card overflow-hidden">
+        <div className="tactile-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[#0a0a0a] border-b border-white/10">
               <tr className="text-left">
-                <th className="px-3 py-2 micro-label text-neutral-500">{t("vipLedgerOps.colDate")}</th>
-                <th className="px-3 py-2 micro-label text-neutral-500">{t("vipLedgerOps.colKind")}</th>
-                <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("vipLedgerOps.colAmount")}</th>
-                <th className="px-3 py-2 micro-label text-neutral-500">{t("vipLedgerOps.colStatus")}</th>
+                <th className="px-3 py-2 micro-label text-neutral-500 whitespace-nowrap">{t("vipLedgerOps.colDate")}</th>
+                <th className="px-3 py-2 micro-label text-neutral-500 whitespace-nowrap">{t("vipLedgerOps.colKind")}</th>
+                <th className="px-3 py-2 micro-label text-neutral-500 text-right whitespace-nowrap">{t("vipLedgerOps.colAmount")}</th>
+                <th className="px-3 py-2 micro-label text-neutral-500 whitespace-nowrap">{t("vipLedgerOps.colStatus")}</th>
               </tr>
             </thead>
             <tbody>
@@ -328,14 +328,14 @@ function MovementRow({ row }) {
       <td className="px-3 py-2 text-xs text-neutral-500 font-mono whitespace-nowrap">
         {new Date(row.created_at).toLocaleDateString()}
       </td>
-      <td className={`px-3 py-2 text-xs font-mono ${tone}`}>
+      <td className={`px-3 py-2 text-xs font-mono whitespace-nowrap ${tone}`}>
         {label}
       </td>
-      <td className="px-3 py-2 font-mono text-white text-right">
+      <td className="px-3 py-2 font-mono text-white text-right whitespace-nowrap">
         ${Number(row.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
         <span className="text-[0.6rem] text-neutral-500 ml-1">{row.currency}</span>
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 py-2 whitespace-nowrap">
         <span className={`inline-flex items-center gap-1 text-[0.6rem] uppercase tracking-widest px-1.5 py-0.5 border font-mono ${statusMap.cls || ""}`}>
           <Icon className="w-3 h-3" />
           {t(`vipLedgerOps.status.${row.status}`, row.status)}

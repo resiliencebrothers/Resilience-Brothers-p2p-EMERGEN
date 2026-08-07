@@ -9,10 +9,8 @@ Coverage:
   * RBAC guards on all new endpoints.
 """
 import os
-import asyncio
 from datetime import datetime, timezone
 
-import pytest
 import requests
 
 from pymongo import MongoClient

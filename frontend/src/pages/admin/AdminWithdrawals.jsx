@@ -7,6 +7,7 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import AdminPageHeader from "@/components/AdminPageHeader";
 import { toast } from "sonner";
 import WithdrawalsFilters from "./withdrawals/WithdrawalsFilters";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 import WithdrawalsTable from "./withdrawals/WithdrawalsTable";
 import RedemptionsTable from "./withdrawals/RedemptionsTable";
 import WithdrawalDialog from "./withdrawals/WithdrawalDialog";
@@ -22,6 +23,7 @@ export default function AdminWithdrawals() {
         approved: t("admin.common.inProgress"),
         pending: t("admin.common.pending"),
         rejected: t("admin.common.rejected"),
+        cancelled: t("admin.common.cancelled"),
       })[status] || status;
     }
     return ({
@@ -29,6 +31,7 @@ export default function AdminWithdrawals() {
       approved: t("admin.common.confirmed"),
       pending: t("admin.common.pending"),
       rejected: t("admin.common.rejected"),
+      cancelled: t("admin.common.cancelled"),
     })[status] || status;
   };
 
@@ -67,6 +70,8 @@ export default function AdminWithdrawals() {
     setRedemptions(r.data);
   }, [statusFilter, currencyFilter, userQuery]);
   useEffect(() => { load(); }, [load]);
+  // iter159 — new/updated withdrawals appear without F5.
+  useLiveRefresh(load, ["withdrawal_created", "withdrawal_status_changed"], 800);
 
   const openDialog = (w) => {
     setOpen(w);

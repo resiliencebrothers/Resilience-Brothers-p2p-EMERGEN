@@ -3,6 +3,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
+import { applyServerLanguage } from "@/lib/langSync";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -136,6 +137,8 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
         return;
       }
       setUser(r.data);
+      // iter154 — the saved language follows the user to this device.
+      applyServerLanguage(r.data);
       toast.success("Sesión iniciada");
       onClose?.(); reset();
       navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard");

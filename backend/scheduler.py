@@ -228,6 +228,42 @@ async def run_monthly_vip_ledger_email(db):
             "failed": failed, "total_vips": len(vips), "opted_out": False}
 
 
+async def run_daily_batch_autoclose(db):
+    """Daily 00:00 America/Havana — close every open VIP batch so each batch
+    accounts for exactly one day of orders. Open batches WITHOUT items are
+    deleted instead, so the history never accumulates blank entries."""
+    now = datetime.now(timezone.utc).isoformat()
+    open_batches = await db.vip_batches.find(
+        {"status": "open"}, {"_id": 0, "id": 1, "vip_user_id": 1},
+    ).to_list(5000)
+    closed = deleted = 0
+    touched_vips = set()
+    for b in open_batches:
+        items = await db.vip_batch_items.count_documents({"batch_id": b["id"]})
+        if items == 0:
+            await db.vip_batches.delete_one({"id": b["id"]})
+            deleted += 1
+        else:
+            await db.vip_batches.update_one(
+                {"id": b["id"]},
+                {"$set": {"status": "closed", "closed_at": now,
+                          "updated_at": now, "auto_closed": True}},
+            )
+            closed += 1
+        if b.get("vip_user_id"):
+            touched_vips.add(b["vip_user_id"])
+    try:
+        from services.live_bus import publish as live_publish
+        for uid in touched_vips:
+            await live_publish(
+                "vip_batch_item_decision", {"reason": "daily_autoclose"}, user_id=uid,
+            )
+    except Exception:
+        logger.exception("Daily batch autoclose: SSE publish failed")
+    logger.info("Daily batch autoclose: closed=%s deleted_empty=%s", closed, deleted)
+    return {"closed": closed, "deleted_empty": deleted}
+
+
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
 
@@ -288,13 +324,24 @@ def start_scheduler(db, build_timeseries):
         misfire_grace_time=300,
         coalesce=True,
     )
+    # Daily VIP batch auto-close at Cuban midnight — one batch == one day.
+    _scheduler.add_job(
+        run_daily_batch_autoclose,
+        CronTrigger(hour=0, minute=0, timezone="America/Havana"),
+        kwargs={"db": db},
+        id="daily_batch_autoclose",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
     _scheduler.start()
     logger.info(
         "Scheduler started: monthly_revenue_email (day 1 09:00 UTC) + "
         "monthly_audit_email (day 1 09:15 UTC) + "
         "monthly_vip_ledger_email (day 1 09:30 UTC) + "
         "monthly_security_selfaudit (day 1 09:45 UTC) + "
-        "security_alert_scan (every 5m)"
+        "security_alert_scan (every 5m) + "
+        "daily_batch_autoclose (00:00 America/Havana)"
     )
     return _scheduler
 

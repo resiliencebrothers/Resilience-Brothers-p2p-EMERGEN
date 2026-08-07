@@ -1,4 +1,5 @@
-import { Coins, History, Eye } from "lucide-react";
+import { Coins, History, Eye, Lock } from "lucide-react";
+import { FlashNumber } from "@/components/FlashNumber";
 import { useTranslation } from "react-i18next";
 import CurrencyIcon from "@/components/CurrencyIcon";
 
@@ -68,8 +69,19 @@ export function VipBalancesGrid({ balances, ledger, onDrillDown }) {
                     <span className="text-xs text-neutral-500 font-mono tabular-nums">≈ {b.usdt_equivalent?.toFixed(2) ?? "—"} USDT</span>
                   </div>
                   <div className="font-mono tabular-nums text-2xl text-white tracking-tight">
-                    {b.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    <FlashNumber value={b.amount} testid={`balance-flash-${b.currency}`}>
+                      {b.amount.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    </FlashNumber>
                   </div>
+                  {Number(b.frozen) > 0 && (
+                    <div
+                      className="text-[0.65rem] text-amber-400 mt-1.5 flex items-center gap-1 font-mono"
+                      data-testid={`frozen-badge-${b.currency}`}
+                    >
+                      <Lock className="w-3 h-3" />
+                      {t("withdraw.frozenLabel")}: {Number(b.frozen).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    </div>
+                  )}
                   {hasDrillDown && (
                     <div className="text-[0.65rem] text-violet-400 mt-2 flex items-center gap-1">
                       <Eye className="w-3 h-3" />

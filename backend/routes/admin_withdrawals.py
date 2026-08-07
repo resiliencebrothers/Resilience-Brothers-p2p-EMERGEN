@@ -7,16 +7,19 @@ Extracted from routes/admin.py during the iter39 split. Owns:
 The validation/refund/evidence helpers are private to this module.
 """
 import re
+import logging
 from fastapi import APIRouter, HTTPException, Request
 from typing import Optional, Any, Dict
 
 from db_client import db
 from auth_utils import (
-    require_permission,
+    require_permission, iso, now_utc,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )
 from services.proof_upload import maybe_upload_proof
 from audit_log import log_action
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["Admin"])
@@ -154,9 +157,19 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     if not w:
         raise HTTPException(status_code=404, detail="No encontrado")
+    # iter153 — client-cancelled withdrawals are terminal: the funds already
+    # returned to the client's balance, so staff must not resurrect them.
+    if w["status"] == "cancelled":
+        raise HTTPException(
+            status_code=409,
+            detail="Este retiro fue cancelado por el cliente y no puede modificarse.",
+        )
     _assert_paid_lock(actor, w, new_status)
     _enforce_employee_currency_scope(actor, w.get("currency"))
     update_doc = {"status": new_status, "admin_note": payload.get("admin_note", "")}
+    # iter153 — per-status timestamps feed the client-facing progress timeline.
+    if new_status != w["status"] and new_status in ("approved", "paid", "rejected"):
+        update_doc[f"{new_status}_at"] = iso(now_utc())
     await _reconcile_balance_on_status_change(w, new_status, update_doc)
     _collect_payout_evidence(payload, update_doc, w)
     _validate_paid_evidence(w, update_doc, new_status)
@@ -184,10 +197,26 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
                                    user_id=target_uid)
                 await live_publish("balance_updated", {"reason": "withdrawal", "withdrawal_id": wid},
                                    user_id=target_uid)
+                await live_publish("ledger_changed",
+                                   {"reason": "withdrawal", "withdrawal_id": wid,
+                                    "user_id": target_uid},
+                                   roles=("admin", "employee"))
             await live_publish("withdrawal_status_changed", status_payload,
                                roles=("admin", "employee"))
     except Exception:
         pass
+
+    # iter155 — push + in-app notification to the withdrawal owner for each
+    # step (approved = "retirando/en curso", paid = "retiro exitoso",
+    # rejected = terminal + refund note).
+    if new_status != w["status"] and new_status in ("approved", "paid", "rejected"):
+        try:
+            from routes.notifications import notify_user_withdrawal_step
+            await notify_user_withdrawal_step(
+                updated, new_status, note=payload.get("admin_note", ""),
+            )
+        except Exception as e:
+            logger.error(f"withdrawal {new_status} push failed: {e}")
 
     # iter55.23 — audit trail. Without this, "quién rechazó este retiro?" is
     # unanswerable from the audit log (the endpoint used to be silent). We

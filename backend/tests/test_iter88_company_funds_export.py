@@ -7,7 +7,7 @@ import requests
 from pymongo import MongoClient
 from datetime import datetime, timezone
 
-from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, EMPLOYEE_TOKEN
+from conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]

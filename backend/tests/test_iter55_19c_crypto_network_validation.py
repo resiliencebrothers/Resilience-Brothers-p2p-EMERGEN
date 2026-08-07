@@ -249,7 +249,7 @@ def test_transfer_flow_ignores_crypto_network_field():
         f"{API}/vip/withdraw", headers=_hdr(VIP_TOKEN),
         json={
             "amount_usd": 10, "currency": "USDXFR19C", "method": "transfer",
-            "details": "Banco Popular · cuenta 12345", "beneficiary_name": "Test",
+            "details": "Banco Popular · cuenta 0102987654321", "beneficiary_name": "Test",
             # Bogus crypto_network — must be ignored for transfer
             "crypto_network": "BEP20",
             "totp_code": make_vip_totp(),

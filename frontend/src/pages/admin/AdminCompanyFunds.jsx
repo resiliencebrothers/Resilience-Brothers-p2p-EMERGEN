@@ -8,11 +8,16 @@
  * Behaviour is byte-identical to the pre-refactor 346-line version.
  */
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import { Scale } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import AdjustmentDialog from "./company-funds/AdjustmentDialog";
 import AdjustmentsHistoryDialog from "./company-funds/AdjustmentsHistoryDialog";
 import FundCards from "@/pages/admin/company-funds/FundCards";
+import BatchesTodayCard from "@/pages/admin/company-funds/BatchesTodayCard";
+import TotalUsdtCard from "@/pages/admin/company-funds/TotalUsdtCard";
 import CompanyWithdrawalsTable from "@/pages/admin/company-funds/CompanyWithdrawalsTable";
 import NewWithdrawalDialog from "@/pages/admin/company-funds/NewWithdrawalDialog";
 import ExportCsvDialog from "@/pages/admin/company-funds/ExportCsvDialog";
@@ -21,6 +26,7 @@ import { useCompanyFunds } from "@/pages/admin/company-funds/useCompanyFunds";
 
 export default function AdminCompanyFunds() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const cf = useCompanyFunds();
 
   return (
@@ -29,7 +35,20 @@ export default function AdminCompanyFunds() {
         eyebrow={t("admin.companyFunds.eyebrow")}
         title={t("admin.companyFunds.title")}
         subtitle={t("admin.companyFunds.subtitle")}
+        actions={
+          <Button
+            data-testid="open-client-debts-btn"
+            onClick={() => navigate("/admin/company-funds/client-debts")}
+            className="border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#c4b5fd] hover:bg-[#8B5CF6]/20 rounded-none"
+          >
+            <Scale className="w-4 h-4 mr-2" /> {t("admin.clientDebts.open")}
+          </Button>
+        }
       />
+
+      <TotalUsdtCard />
+
+      <BatchesTodayCard />
 
       <FundCards funds={cf.funds} />
 

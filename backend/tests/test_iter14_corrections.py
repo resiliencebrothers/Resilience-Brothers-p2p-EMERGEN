@@ -67,7 +67,7 @@ class TestNormalCanWithdraw:
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw",
             headers=_h(NORMAL_TOKEN),
-            json={"amount_usd": 20, "method": "transfer", "details": "Bank Z",
+            json={"amount_usd": 20, "method": "transfer", "details": "Zelle: cliente@test.com",
                   "beneficiary_name": "Normal Holder", "totp_code": code},
         )
         assert r.status_code == 200, r.text
@@ -83,7 +83,7 @@ class TestNormalCanWithdraw:
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw",
             headers=_h(EMPLOYEE_TOKEN),
-            json={"amount_usd": 5, "method": "transfer", "details": "x",
+            json={"amount_usd": 5, "method": "transfer", "details": "Zelle: cliente@test.com",
                   "beneficiary_name": "Staff"},
         )
         assert r.status_code == 403
@@ -224,7 +224,7 @@ class TestWithdrawalPayoutProof:
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw",
             headers=_h(VIP_TOKEN),
-            json={"amount_usd": 5, "method": method, "details": "—",
+            json={"amount_usd": 5, "method": method, "details": "Zelle: holder@test.com",
                   "beneficiary_name": "Holder", "totp_code": make_vip_totp()},
         )
         assert r.status_code == 200, r.text

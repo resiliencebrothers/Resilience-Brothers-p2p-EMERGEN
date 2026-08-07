@@ -87,6 +87,24 @@ async def _seed_negative(amount_usdt: float):
     )
 
 
+async def _seed_capital_deposit(amount=4000.0, currency="USDT", note=None) -> str:
+    """iter166 — POST /vip/capital-deposits is retired (410); seed directly."""
+    import uuid as _uuid
+    from db_client import db
+    did = f"vdep_test_{_uuid.uuid4().hex[:10]}"
+    now = "2026-06-01T00:00:00+00:00"
+    await db.vip_capital_deposits.insert_one({
+        "id": did, "vip_user_id": "user_test_vip01",
+        "vip_email": "vip.test@resilience.com", "vip_name": "VIP Test",
+        "currency": currency, "amount": float(amount), "deposit_method": "cash",
+        "account_holder": None, "tx_hash": None, "proof_url": None,
+        "note": note, "status": "pending", "balance_delta_usdt": None,
+        "admin_note": None, "reviewed_at": None, "reviewed_by": None,
+        "created_at": now, "updated_at": now,
+    })
+    return did
+
+
 VALID_DEPOSIT = {"currency": "USDT", "amount": 4000, "note": "capital inicial",
                  "deposit_method": "cash"}
 
@@ -98,8 +116,8 @@ class TestPhase2CapitalDeposits:
         async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
             r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
                              json=VALID_DEPOSIT)
-            assert r.status_code == 200, r.text
-            assert r.json()["status"] == "pending"
+            # iter166 — creation retired: unified with regular deposits.
+            assert r.status_code == 410, r.text
 
             bal = (await c.get("/api/vip/balance", headers=h(VIP_TOKEN))).json()
             assert bal["positive_usdt"] == 0.0
@@ -112,9 +130,7 @@ class TestPhase2CapitalDeposits:
         before = await _usdt_balance()
         try:
             async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
-                r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                                 json=VALID_DEPOSIT)
-                did = r.json()["id"]
+                did = await _seed_capital_deposit()
                 r_ok = await c.post(f"/api/admin/vip-capital-deposits/{did}/confirm",
                                     headers=h(ADMIN_TOKEN))
                 assert r_ok.status_code == 200
@@ -137,9 +153,7 @@ class TestPhase2CapitalDeposits:
     async def test_admin_reject_no_ledger(self):
         await _reset()
         async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json=VALID_DEPOSIT)
-            did = r.json()["id"]
+            did = await _seed_capital_deposit()
             r_rej = await c.post(f"/api/admin/vip-capital-deposits/{did}/reject",
                                  headers=h(ADMIN_TOKEN),
                                  json={"admin_note": "Foto poco clara."})
@@ -163,10 +177,7 @@ class TestPhase2CapitalDeposits:
         await db.rates.delete_many({"from_code": "XYZ2"})
         await db.rates.delete_many({"to_code": "XYZ2"})
         async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "XYZ2", "amount": 100,
-                                   "deposit_method": "cash"})
-            did = r.json()["id"]
+            did = await _seed_capital_deposit(amount=100, currency="XYZ2")
             r_c = await c.post(f"/api/admin/vip-capital-deposits/{did}/confirm",
                                headers=h(ADMIN_TOKEN))
             assert r_c.status_code == 422
@@ -179,9 +190,7 @@ class TestPhase2CapitalDeposits:
         before = await _usdt_balance()
         try:
             async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
-                r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                                 json=VALID_DEPOSIT)
-                did = r.json()["id"]
+                did = await _seed_capital_deposit()
                 await c.post(f"/api/admin/vip-capital-deposits/{did}/confirm",
                              headers=h(ADMIN_TOKEN))
                 dup = await c.post(f"/api/admin/vip-capital-deposits/{did}/confirm",

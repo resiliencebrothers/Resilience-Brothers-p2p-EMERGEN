@@ -10,6 +10,13 @@ function Row({ label, value, accent }) {
 }
 
 export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testid }) {
+  // iter157 — auto-scale the font so long amounts are never clipped by the
+  // card (production bug: "58.511,72" rendered as "58.511,").
+  const str = String(value ?? "");
+  const sizeCls =
+    str.length > 13 ? "text-lg" :
+      str.length > 10 ? "text-xl" :
+        str.length > 8 ? "text-2xl" : "text-3xl";
   return (
     <div
       className={
@@ -29,11 +36,11 @@ export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testi
           (highlight ? "text-[#22C55E]" : "text-violet-400/60")
         }
       />
-      <div className="text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase mb-2">
+      <div className="text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase mb-2 pr-8">
         {label}
       </div>
-      <div className="font-mono tabular-nums tracking-tight text-3xl font-medium text-white">
-        {value} <span className="text-sm text-neutral-400 font-sans">{unit}</span>
+      <div className={`font-mono tabular-nums tracking-tight ${sizeCls} font-medium text-white break-words leading-tight`}>
+        {value} <span className="text-sm text-neutral-400 font-sans whitespace-nowrap">{unit}</span>
       </div>
       {hint ? (
         <div className="text-xs text-neutral-500 mt-2 font-mono tabular-nums">
@@ -46,6 +53,9 @@ export function BigStat({ icon: Icon, label, value, unit, highlight, hint, testi
 
 export function RoleCard({ title, subtitle, data, accent }) {
   const { t } = useTranslation();
+  const b = data.batches;
+  const hasBatches = b && (b.orders > 0 || b.profit_usdt > 0);
+  const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
   return (
     <div className={`tactile-card p-6 border ${accent}`}>
       <div className="flex items-start justify-between mb-3">
@@ -58,14 +68,27 @@ export function RoleCard({ title, subtitle, data, accent }) {
         <Row label={t("admin.revenue.roleOrders")} value={data.orders} />
         <Row
           label={t("admin.revenue.roleVolume")}
-          value={`${(data.volume_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT`}
+          value={`${fmt(data.volume_usdt)} USDT`}
         />
         <Row
           label={t("admin.revenue.roleProfitGenerated")}
-          value={`${(data.profit_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT`}
+          value={`${fmt(data.profit_usdt)} USDT`}
           accent
         />
       </div>
+      {hasBatches && (
+        <div
+          className="mt-3 pt-3 border-t border-white/5 text-[0.65rem] font-mono text-neutral-500 space-y-0.5"
+          data-testid="role-card-batches"
+        >
+          <div className="flex justify-between">
+            <span className="uppercase tracking-widest text-[0.6rem] text-[#A78BFA]">
+              {t("admin.revenue.vipBatchesBreakdown")}
+            </span>
+            <span className="text-neutral-400">{b.orders} · {fmt(b.volume_usdt)} · {fmt(b.profit_usdt)} USDT</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

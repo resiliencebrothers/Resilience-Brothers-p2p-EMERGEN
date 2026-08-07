@@ -223,7 +223,7 @@ def test_default_transfer_currency_still_accepts_transfer():
             "amount_usd": 25,
             "currency": "USD_TEST_XFR",
             "method": "transfer",
-            "details": "banco X cuenta 999",
+            "details": "banco X cuenta 0102987654321",
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
         },
@@ -299,7 +299,7 @@ def test_transfer_details_length_not_restricted():
             "amount_usd": 10,
             "currency": "USD_TEST_XFR",
             "method": "transfer",
-            "details": "BCV 111",  # Short but transfer is not gated on length
+            "details": "BCV cuenta 0102 0123 4567 8901",  # Short but transfer is not gated on length
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
         },

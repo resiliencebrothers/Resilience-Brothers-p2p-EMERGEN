@@ -2,8 +2,13 @@
 
 Extracted from services/orders_helpers.py to break the circular dependency
 orders_helpers ⇄ referrals (both need this pure function). No DB access.
+
+iter143 — tier-aware: when the rate row carries amount `tiers`, the real
+rate matching the order's amount_from overrides the base real_rate.
 """
 from typing import Optional
+
+from services.rate_tiers import effective_rates
 
 
 async def compute_order_profit(order: dict, rate_doc: Optional[dict]) -> Optional[dict]:
@@ -12,10 +17,10 @@ async def compute_order_profit(order: dict, rate_doc: Optional[dict]) -> Optiona
     Real value of incoming = amount_from * real_rate (in T units).
     Profit (in T) = (amount_from * real_rate) - amount_to.
     """
-    if not rate_doc or rate_doc.get("real_rate") is None:
+    if not rate_doc:
         return None
-    real_rate = float(rate_doc["real_rate"])
-    if real_rate <= 0:
+    real_rate = effective_rates(rate_doc, order.get("amount_from")).get("real_rate")
+    if not real_rate or real_rate <= 0:
         return None
     real_value = order["amount_from"] * real_rate
     profit_to = real_value - order["amount_to"]

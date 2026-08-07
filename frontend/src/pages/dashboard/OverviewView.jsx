@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock, Boxes } from "lucide-react";
 import { Link } from "react-router-dom";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
+import { FlashNumber } from "@/components/FlashNumber";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import {
   ORDER_IN_FLIGHT,
@@ -93,7 +94,11 @@ export default function OverviewView() {
         <StatCard
           icon={Wallet}
           label={t("dashboard.stats.totalBalance")}
-          value={`${(balances?.total_usdt || 0).toFixed(2)}`}
+          value={(
+            <FlashNumber value={balances?.total_usdt || 0} testid="overview-total-flash">
+              {(balances?.total_usdt || 0).toFixed(2)}
+            </FlashNumber>
+          )}
           sub={t("dashboard.stats.totalBalanceSub")}
           to={isClient ? "/dashboard/assets" : undefined}
           testid="stat-saldo-total"

@@ -23,6 +23,7 @@ Collection `deposits`:
 """
 from __future__ import annotations
 
+import re
 import uuid
 import logging
 from typing import Any, Optional
@@ -55,6 +56,7 @@ class DepositCreate(BaseModel):
     method: str = Field(..., min_length=2, max_length=16)
     account_holder: Optional[str] = Field(default=None, max_length=120)
     tx_hash: Optional[str] = Field(default=None, max_length=200)
+    network: Optional[str] = Field(default=None, max_length=16)
     proof_image: Optional[str] = None
     pickup_address: Optional[str] = Field(default=None, max_length=300)
     pickup_phone: Optional[str] = Field(default=None, max_length=40)
@@ -86,7 +88,7 @@ async def _notify_staff_new_deposit(doc: dict) -> None:
     cursor = db.users.find(
         {"$or": [
             {"role": "admin"},
-            {"role": "employee", "allowed_permissions": "orders"},
+            {"role": "employee", "allowed_permissions": "withdrawals"},
             {"role": "employee", "allowed_permissions": {"$in": [[], None]}},
         ]},
         {"_id": 0, "user_id": 1},
@@ -105,22 +107,35 @@ async def _notify_staff_new_deposit(doc: dict) -> None:
 
 
 async def _notify_client_decision(doc: dict, approved: bool, admin_note: str = "") -> None:
+    """iter156 — in-app + Web Push to the deposit owner, localised to their
+    preferred language. Rejections include the staff note as the reason."""
     try:
         from routes.notifications import _insert_notification
+        from push_service import send_push_to_user, build_deposit_decision_payload
+        from services.notification_i18n import t as _t, resolve_lang
     except Exception as e:  # noqa: BLE001
         logger.error(f"[deposits] notif import failed: {e}")
         return
-    action = "confirmado" if approved else "rechazado"
+    key = "deposit_confirmed" if approved else "deposit_rejected"
     try:
+        lang = await resolve_lang(db, doc["user_id"])
+        note = (admin_note or "").strip()
+        if note:
+            reason = f" Reason: {note}." if lang == "en" else f" Motivo: {note}."
+        else:
+            reason = ""
         await _insert_notification(
             recipient_user_id=doc["user_id"],
-            type="deposit_decision",
-            title=f"Depósito {action}",
-            message=admin_note or (
-                f"Tu depósito de {doc['amount']} {doc['currency']} fue {action}."
-                + (" El saldo ya está disponible en tu cuenta." if approved else "")
-            ),
-            data={"id": doc["id"]},
+            type=key,
+            title=_t(key, lang, "title"),
+            message=_t(key, lang, "message",
+                       amt=doc["amount"], code=doc["currency"], reason=reason),
+            data={"id": doc["id"], "amount": doc["amount"],
+                  "currency": doc["currency"]},
+        )
+        await send_push_to_user(
+            db, doc["user_id"],
+            build_deposit_decision_payload(doc, approved, lang=lang),
         )
     except Exception as e:  # noqa: BLE001
         logger.error(f"[deposits] client notify failed: {e}")
@@ -185,6 +200,7 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
 
     holder = (payload.account_holder or "").strip()
     tx_hash = (payload.tx_hash or "").strip()
+    network = (payload.network or "").strip().upper() or None
     proof_raw = (payload.proof_image or "").strip()
     cash_mode = None
 
@@ -200,6 +216,18 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
     elif method == "crypto":
         if len(tx_hash) < 10:
             raise HTTPException(status_code=422, detail="Indica el hash de la transacción on-chain.")
+        from services.crypto_networks import (
+            SUPPORTED_NETWORKS, is_supported_network,
+            is_tx_hash_valid_for_network, tx_hash_mismatch_reason,
+        )
+        if network and not is_supported_network(network):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Red no soportada. Usa: {', '.join(SUPPORTED_NETWORKS)}.",
+            )
+        if network and not is_tx_hash_valid_for_network(tx_hash, network):
+            raise HTTPException(status_code=422,
+                                detail=tx_hash_mismatch_reason(tx_hash, network))
     else:  # cash
         if usdt_eq is not None and usdt_eq > COURIER_MIN_USDT:
             cash_mode = "courier"
@@ -224,6 +252,7 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
         "amount": round(float(payload.amount), 2),
         "method": method,
         "cash_mode": cash_mode,
+        "network": network if method == "crypto" else None,
         "usdt_equivalent": usdt_eq,
         "account_holder": holder or None,
         "tx_hash": tx_hash or None,
@@ -270,19 +299,45 @@ async def my_deposits(request: Request, limit: int = 50) -> Any:
 
 @router.get("/admin/deposits")
 async def admin_list_deposits(request: Request, status: Optional[str] = None,
+                               method: Optional[str] = None,
+                               user_q: Optional[str] = None,
                                limit: int = 200) -> Any:
-    await require_permission(request, "orders")
+    # iter163 — deposits moved from the `orders` gate to `withdrawals` so the
+    # designated money-in/money-out staff handles both flows.
+    await require_permission(request, "withdrawals")
     q: dict[str, Any] = {}
     if status in ("pending", "confirmed", "rejected"):
         q["status"] = status
+    # iter164 — method filter (cash / transfer / crypto) to speed up review.
+    if method in ALLOWED_METHODS:
+        q["method"] = method
+    # iter165 — client search by name or email (same UX as withdrawals).
+    if user_q:
+        rx = {"$regex": re.escape(user_q.strip()), "$options": "i"}
+        q["$or"] = [{"user_name": rx}, {"user_email": rx}]
     rows = await db.deposits.find(q, {"_id": 0}).sort("created_at", -1).to_list(min(max(1, limit), 500))
     pending = await db.deposits.count_documents({"status": "pending"})
     return {"items": rows, "pending": pending}
 
 
+@router.get("/admin/deposits-hub/pending-count")
+async def admin_deposits_hub_pending_count(request: Request) -> Any:
+    """iter163 — badges for the Deposits & Withdrawals hub tabs.
+    iter166 — capital deposits retired; capital REQUESTS joined the hub."""
+    await require_permission(request, "withdrawals")
+    deposits_pending = await db.deposits.count_documents({"status": "pending"})
+    requests_pending = await db.capital_requests.count_documents({"status": "pending"})
+    withdrawals_pending = await db.withdrawals.count_documents({"status": "pending"})
+    return {
+        "deposits_pending": deposits_pending,
+        "requests_pending": requests_pending,
+        "withdrawals_pending": withdrawals_pending,
+    }
+
+
 @router.post("/admin/deposits/{dep_id}/confirm")
 async def admin_confirm_deposit(dep_id: str, request: Request) -> Any:
-    staff = await require_permission(request, "orders")
+    staff = await require_permission(request, "withdrawals")
     doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")
@@ -313,6 +368,10 @@ async def admin_confirm_deposit(dep_id: str, request: Request) -> Any:
         from services.live_bus import publish as live_publish
         await live_publish("balance_updated", {"reason": "deposit", "deposit_id": dep_id},
                            user_id=doc["user_id"])
+        await live_publish("ledger_changed",
+                           {"reason": "deposit", "deposit_id": dep_id,
+                            "user_id": doc["user_id"]},
+                           roles=("admin", "employee"))
     except Exception as e:  # noqa: BLE001
         logger.error(f"[deposits] SSE publish failed: {e}")
     return fresh
@@ -320,7 +379,7 @@ async def admin_confirm_deposit(dep_id: str, request: Request) -> Any:
 
 @router.post("/admin/deposits/{dep_id}/reject")
 async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Request) -> Any:
-    staff = await require_permission(request, "orders")
+    staff = await require_permission(request, "withdrawals")
     doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")

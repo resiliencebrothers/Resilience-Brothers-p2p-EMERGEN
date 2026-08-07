@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { ShareAppButton } from "@/components/ShareAppButton";
+import { QrShareButton } from "@/components/QrShareButton";
 import { Gift, Copy, Check, Users, Zap, Coins, TrendingUp } from "lucide-react";
 
 function StatCard({ icon: Icon, label, value, testid }) {
@@ -103,6 +104,13 @@ export default function ReferralsView() {
               label={t("referrals.shareBtn")}
               variant="default"
               className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white"
+            />
+            <QrShareButton
+              testid="referral-qr-btn"
+              url={shareUrl}
+              label={t("qrShare.button")}
+              variant="outline"
+              posterCode={code || ""}
             />
           </div>
         </div>

@@ -21,6 +21,8 @@ export default function OrdersFilters({
   userInput, onUserInputChange,
   currencyFilter, onCurrencyFilterChange,
   currencies, total,
+  accountFilter = "all", onAccountFilterChange,
+  accountOptions = [],
 }) {
   const { t } = useTranslation();
   return (
@@ -47,10 +49,25 @@ export default function OrdersFilters({
             ))}
           </SelectContent>
         </Select>
-        {(userInput || currencyFilter !== "all") && (
+        {accountOptions.length > 0 && (
+          <Select value={accountFilter} onValueChange={onAccountFilterChange}>
+            <SelectTrigger data-testid="orders-account-filter" className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+              <SelectItem value="all">{t("admin.orders.allAccounts")}</SelectItem>
+              {accountOptions.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.currency_code} · {a.label}{a.is_active === false ? " ✕" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {(userInput || currencyFilter !== "all" || accountFilter !== "all") && (
           <button
             data-testid="orders-clear-filters"
-            onClick={() => { onUserInputChange(""); onCurrencyFilterChange("all"); }}
+            onClick={() => { onUserInputChange(""); onCurrencyFilterChange("all"); onAccountFilterChange?.("all"); }}
             className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 h-9"
           >
             {t("admin.common.clear")}

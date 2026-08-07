@@ -132,6 +132,9 @@ async def maybe_award_referral_bonus(order: dict) -> None:
             {"user_id": referrer_id},
             {"$inc": {"vip_balances.USDT": bonus}},
         )
+        from services.live_events import emit_balance_changed
+        await emit_balance_changed(referrer_id, "referral_bonus",
+                                   bonus_usdt=bonus)
         await db.referral_bonuses.insert_one({
             "id": uuid.uuid4().hex,
             "referrer_user_id": referrer_id,

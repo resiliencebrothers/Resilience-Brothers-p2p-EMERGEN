@@ -11,12 +11,30 @@ Coverage:
   distinct from `/api/vip/daily-closing`).
 """
 import requests
+import os
+import pytest
+from pymongo import MongoClient
 from pypdf import PdfReader
 from io import BytesIO
 
 from conftest import (
     BASE_URL, ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL,
 )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _force_admin_spanish():
+    # The signature block follows the actor's preferred_language.
+    cli = MongoClient(os.environ["MONGO_URL"])
+    users = cli[os.environ["DB_NAME"]].users
+    prev = (users.find_one({"user_id": "user_test_admin01"},
+                           {"preferred_language": 1}) or {}).get("preferred_language")
+    users.update_one({"user_id": "user_test_admin01"},
+                     {"$set": {"preferred_language": "es"}})
+    yield
+    users.update_one({"user_id": "user_test_admin01"},
+                     {"$set": {"preferred_language": prev or "es"}})
+    cli.close()
 
 
 def _h(t):

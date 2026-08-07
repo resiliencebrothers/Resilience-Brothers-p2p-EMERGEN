@@ -16,13 +16,12 @@ These tests hit the actual FastAPI endpoint and assert on the returned
 import os
 import pytest
 import httpx
-import asyncio
 from datetime import datetime, timezone
 
 # We test through the httpx AsyncClient against the running app.
 API_URL = os.environ.get("REACT_APP_BACKEND_URL",
                          "https://p2p-exchange-hub-2.preview.emergentagent.com")
-from conftest import NORMAL_TOKEN, VIP_TOKEN, ADMIN_TOKEN
+from conftest import NORMAL_TOKEN, VIP_TOKEN
 
 
 async def _seed_rate(from_code: str, to_code: str,

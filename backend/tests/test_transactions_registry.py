@@ -46,7 +46,7 @@ class TestRequiredFields:
     def test_withdrawal_create_rejects_missing_beneficiary(self):
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP),
-            json={"amount_usd": 1, "method": "transfer", "details": "x"},
+            json={"amount_usd": 1, "method": "transfer", "details": "Zelle: cliente@test.com"},
         )
         assert r.status_code == 422
 
@@ -109,7 +109,7 @@ class TestTransactionsE2E:
         # Withdraw 1 USD
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP),
-            json={"amount_usd": 1.0, "method": "transfer", "details": "Acc Z",
+            json={"amount_usd": 1.0, "method": "transfer", "details": "Zelle: cliente@test.com",
                   "beneficiary_name": unique_bene, "totp_code": make_vip_totp()},
         )
         # Could fail with 400 if balance insufficient — top up first by direct admin tweak:

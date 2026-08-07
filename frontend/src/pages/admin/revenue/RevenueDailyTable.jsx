@@ -1,9 +1,12 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "lucide-react";
+import { DayDetailDialog } from "./DayDetailDialog";
 
 export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
   const { t } = useTranslation();
+  const [selectedDay, setSelectedDay] = useState(null);
   return (
     <div className="tactile-card overflow-hidden" data-testid="revenue-daily-card">
       <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
@@ -12,7 +15,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
             <Calendar className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.revenue.dailyTitle")}
           </h2>
           <p className="text-xs text-neutral-500 mt-1">
-            {t("admin.revenue.dailySubtitle")}
+            {t("admin.revenue.dailySubtitle")} <span className="text-[#A78BFA]">{t("admin.revenue.ddClickHint")}</span>
           </p>
         </div>
         <Select value={dailyRange} onValueChange={setDailyRange}>
@@ -40,6 +43,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colVolume")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colP2P")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colMarketplace")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colVipBatches")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colUsdtFees")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.revenue.colTotal")}</th>
             </tr>
@@ -47,18 +51,29 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
           <tbody data-testid="daily-rows">
             {daily.length === 0 && (
               <tr>
-                <td colSpan="7" className="text-center text-neutral-500 py-8">
+                <td colSpan="8" className="text-center text-neutral-500 py-8">
                   {t("admin.revenue.emptyRange")}
                 </td>
               </tr>
             )}
             {daily.map(d => (
-              <tr key={d.bucket} className="border-b border-white/5">
+              <tr
+                key={d.bucket}
+                onClick={() => setSelectedDay(d.bucket)}
+                data-testid={`daily-row-${d.bucket}`}
+                className="border-b border-white/5 cursor-pointer hover:bg-[#8B5CF6]/5 transition-colors"
+              >
                 <td className="px-4 py-3 font-mono">{d.bucket}</td>
                 <td className="px-4 py-3 font-mono">{d.orders}</td>
                 <td className="px-4 py-3 font-mono text-neutral-400">{fmt(d.volume_usdt)} USDT</td>
                 <td className="px-4 py-3 font-mono">{fmt(d.p2p_profit_usdt)} USDT</td>
                 <td className="px-4 py-3 font-mono">{fmt(d.marketplace_profit_usdt)} USDT</td>
+                <td className="px-4 py-3 font-mono text-[#A78BFA]" data-testid={`daily-vip-batches-${d.bucket}`}>
+                  {fmt(d.vip_batches_profit_usdt || 0)} USDT
+                  {d.vip_batch_items > 0 && (
+                    <span className="text-neutral-500 text-xs"> · {d.vip_batch_items}</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 font-mono text-neutral-300">
                   {fmt(d.conversion_fees_usdt || 0)} USDT
                   {d.conversions > 0 && (
@@ -73,6 +88,7 @@ export function RevenueDailyTable({ daily, dailyRange, setDailyRange, fmt }) {
           </tbody>
         </table>
       </div>
+      <DayDetailDialog date={selectedDay} onClose={() => setSelectedDay(null)} fmt={fmt} />
     </div>
   );
 }

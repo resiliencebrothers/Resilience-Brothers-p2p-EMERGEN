@@ -57,7 +57,6 @@ from services.vip_ledger_reporting import (
     collect_ledger_movements as _collect_ledger_movements,
     DEFAULT_RANGE_DAYS,  # noqa: F401  (kept for backwards compat)
 )
-from services.proof_upload import maybe_upload_proof
 from routes.vip_batches import _ensure_ledger, _increment_ledger, _serialize
 from vip_ledger_pdf import generate_vip_ledger_pdf
 from email_service import notify_vip_ledger_statement, VipLedgerEmailContext
@@ -131,7 +130,8 @@ async def _amount_to_usdt(amount: float, currency: str) -> float:
     return round(float(val), 4)
 
 
-async def _notify_staff(kind: str, doc: dict, currency: str, amount: float) -> None:
+async def _notify_staff(kind: str, doc: dict, currency: str, amount: float,
+                        perm: str = "orders") -> None:
     try:
         from routes.notifications import _insert_notification
     except Exception as e:  # noqa: BLE001
@@ -146,7 +146,7 @@ async def _notify_staff(kind: str, doc: dict, currency: str, amount: float) -> N
     cursor = db.users.find(
         {"$or": [
             {"role": "admin"},
-            {"role": "employee", "allowed_permissions": "orders"},
+            {"role": "employee", "allowed_permissions": perm},
             {"role": "employee", "allowed_permissions": {"$in": [[], None]}},
         ]},
         {"_id": 0, "user_id": 1},
@@ -199,60 +199,16 @@ _METHOD_LABELS = {
 
 @router.post("/vip/capital-deposits")
 async def create_capital_deposit(payload: CapitalDepositCreate, request: Request) -> Any:
+    # iter166 — capital deposits were unified with regular client deposits
+    # (owner decision): VIPs now use POST /api/deposits. Existing records
+    # stay readable for history/statements.
     user = await require_user(request)
     _require_vip(user)
-    method = _validate_settlement_method(payload.deposit_method)
-    holder = (payload.account_holder or "").strip()
-    tx_hash = (payload.tx_hash or "").strip()
-    proof_raw = (payload.proof_image or "").strip() or (payload.proof_url or "").strip()
-    if method != "cash":
-        label = _METHOD_LABELS.get(method, method)
-        if not proof_raw:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Para depósitos por {label} debes adjuntar la captura de la transferencia realizada.",
-            )
-        if len(holder) < 3:
-            raise HTTPException(
-                status_code=422,
-                detail="Indica el titular de la cuenta desde donde se hizo el depósito.",
-            )
-    if method == "crypto" and len(tx_hash) < 10:
-        raise HTTPException(
-            status_code=422,
-            detail="Para depósitos en cripto (USDT) debes indicar el hash de la transacción.",
-        )
-    proof_ref = maybe_upload_proof(proof_raw, "vip_capital") if proof_raw else None
-    now = iso(now_utc())
-    doc = {
-        "id": f"vdep_{uuid.uuid4().hex[:12]}",
-        "vip_user_id": user["user_id"],
-        "vip_email": user.get("email", ""),
-        "vip_name": user.get("name", ""),
-        "currency": payload.currency.strip().upper(),
-        "amount": round(float(payload.amount), 2),
-        "deposit_method": method,
-        "account_holder": holder or None,
-        "tx_hash": tx_hash or None,
-        "proof_url": proof_ref,
-        "note": (payload.note or "").strip() or None,
-        "status": "pending",
-        "balance_delta_usdt": None,
-        "admin_note": None,
-        "reviewed_at": None,
-        "reviewed_by": None,
-        "created_at": now,
-        "updated_at": now,
-    }
-    await db.vip_capital_deposits.insert_one(dict(doc))
-    await log_action(
-        db=db, actor=user, action="vip_capital.create",
-        entity_type="vip_capital_deposit", entity_id=doc["id"],
-        details={"amount": doc["amount"], "currency": doc["currency"],
-                 "method": method},
+    raise HTTPException(
+        status_code=410,
+        detail=("Los depósitos de capital se unificaron con los depósitos "
+                "normales. Usa la sección Depositar de tu panel."),
     )
-    await _notify_staff("capital_deposit", doc, doc["currency"], doc["amount"])
-    return _serialize(doc)
 
 
 @router.get("/vip/capital-deposits")
@@ -268,7 +224,9 @@ async def list_own_capital_deposits(request: Request, limit: int = 50) -> Any:
 @router.get("/admin/vip-capital-deposits")
 async def admin_list_capital_deposits(request: Request, status: Optional[str] = None,
                                         limit: int = 200) -> Any:
-    await require_permission(request, "orders")
+    # iter163 — capital deposits moved to the `withdrawals` gate (unified
+    # Deposits & Withdrawals section).
+    await require_permission(request, "withdrawals")
     q: dict[str, Any] = {}
     if status in ("pending", "confirmed", "rejected"):
         q["status"] = status
@@ -304,7 +262,7 @@ async def _find_hash_duplicates(tx_hash: str, exclude_id: str) -> list[dict]:
 @router.post("/admin/vip-capital-deposits/{dep_id}/confirm")
 async def admin_confirm_capital_deposit(dep_id: str, request: Request,
                                           payload: Optional[ConfirmPayload] = None) -> Any:
-    staff = await require_permission(request, "orders")
+    staff = await require_permission(request, "withdrawals")
     doc = await db.vip_capital_deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")
@@ -329,6 +287,9 @@ async def admin_confirm_capital_deposit(dep_id: str, request: Request,
         {"user_id": doc["vip_user_id"]},
         {"$inc": {"vip_balances.USDT": delta}},
     )
+    from services.live_events import emit_balance_changed
+    await emit_balance_changed(doc["vip_user_id"], "capital_deposit_confirmed",
+                               deposit_id=dep_id)
     now = iso(now_utc())
     await db.vip_capital_deposits.update_one(
         {"id": dep_id},
@@ -351,7 +312,7 @@ async def admin_confirm_capital_deposit(dep_id: str, request: Request,
 
 @router.post("/admin/vip-capital-deposits/{dep_id}/reject")
 async def admin_reject_capital_deposit(dep_id: str, payload: RejectPayload, request: Request) -> Any:
-    staff = await require_permission(request, "orders")
+    staff = await require_permission(request, "withdrawals")
     doc = await db.vip_capital_deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")
@@ -400,6 +361,9 @@ async def _apply_settlement_to_ledger(direction: str, vip_user_id: str, amount_u
             {"user_id": vip_user_id},
             {"$inc": {"vip_balances.USDT": -float(amount_usdt)}},
         )
+        from services.live_events import emit_balance_changed
+        await emit_balance_changed(vip_user_id, "settlement_payout",
+                                   amount_usdt=float(amount_usdt))
     else:
         await _increment_ledger(vip_user_id, "debit", -float(amount_usdt))
 
@@ -726,7 +690,6 @@ async def _enforce_email_rate_limit(key: str, max_calls: int,
     limit for the ledger-email endpoints. Self-contained so it works despite
     this module's `from __future__ import annotations` (which breaks slowapi's
     body-param introspection). Prevents authenticated mail-relay abuse."""
-    from datetime import timedelta
     now = now_utc()
     cutoff = now - timedelta(seconds=window_seconds)
     await db.ledger_email_events.insert_one({"key": key, "at": now})

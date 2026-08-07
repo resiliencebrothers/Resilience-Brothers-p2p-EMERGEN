@@ -14,7 +14,7 @@ import { VipWithdrawalHistory } from "./VipWithdrawalHistory";
  * for deposits, withdrawals and self-conversions (owner request, exchange
  * style). Conversions come from /me/transactions?direction=conversion.
  */
-export function AccountHistoryDialog({ open, onOpenChange, withdrawals }) {
+export function AccountHistoryDialog({ open, onOpenChange, withdrawals, onChanged }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState("deposits");
 
@@ -62,7 +62,7 @@ export function AccountHistoryDialog({ open, onOpenChange, withdrawals }) {
         <div className="mt-2">
           {tab === "deposits" && <DepositHistory alwaysShow />}
           {tab === "withdrawals" && (
-            <VipWithdrawalHistory withdrawals={withdrawals} />
+            <VipWithdrawalHistory withdrawals={withdrawals} onChanged={onChanged} />
           )}
           {tab === "conversions" && <ConversionsHistory active={open} />}
         </div>

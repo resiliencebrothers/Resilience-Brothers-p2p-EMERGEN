@@ -94,6 +94,16 @@ class CurrencyCreate(BaseModel):
         return v.strip().upper() if isinstance(v, str) else v
 
 
+class RateTier(BaseModel):
+    """iter143 — amount tier: applies when amount_from >= min_amount. The
+    tier with the highest matching min wins (see services/rate_tiers.py)."""
+    model_config = ConfigDict(extra="ignore")
+    min_amount: float = Field(..., ge=0)
+    rate_normal: float = Field(..., gt=0)
+    rate_vip: float = Field(..., gt=0)
+    real_rate: Optional[float] = None
+
+
 class ExchangeRate(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -102,6 +112,7 @@ class ExchangeRate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None  # real market exit rate; used to compute revenue
+    tiers: Optional[list[RateTier]] = None  # iter143 — amount-tiered overrides
     updated_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 
@@ -111,6 +122,7 @@ class ExchangeRateCreate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None
+    tiers: Optional[list[RateTier]] = None
     totp_code: Optional[str] = Field(None, max_length=11)
 
 
@@ -286,6 +298,11 @@ def _scrub_rate_for_client(doc: dict, role: str) -> dict:
     `rate_convert` so the client-side converter preview stays correct
     without ever seeing the raw margin."""
     clean = {k: v for k, v in doc.items() if k != "real_rate"}
+    if isinstance(clean.get("tiers"), list):
+        clean["tiers"] = [
+            {k: v for k, v in t.items() if k != "real_rate"}
+            for t in clean["tiers"] if isinstance(t, dict)
+        ]
     clean["rate_convert"] = _rate_convert_for_role(doc, role)
     return clean
 

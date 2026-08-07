@@ -101,8 +101,8 @@ export default function CalculatorPanel({ rates = [], calc, setCalc, pctFor = ()
         />
         <HeroCard
           icon={u.netGain >= 0 ? TrendingUp : TrendingDown}
-          label={t("profitability.calc.netMargin")}
-          value={fmtPct(u.marginOnSell)}
+          label={t(isDirect ? "profitability.calc.netMargin" : "profitability.calc.marginOnBuy")}
+          value={fmtPct(isDirect ? u.marginOnSell : u.marginOnBuy)}
           positive={u.netGain >= 0}
           testid="profit-margin"
         />
@@ -128,20 +128,21 @@ export default function CalculatorPanel({ rates = [], calc, setCalc, pctFor = ()
       </div>
 
       {isDirect ? (
-        <div className="grid grid-cols-2 md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
           <DetailRow label={t("profitability.calc.m1RealCost")} value={`${fmt(u.realCost)} ${unit}`} />
           <DetailRow label={t("profitability.calc.m1MarginOnCost")} value={fmtPct(u.marginOnCost)} signed={u.netGain} />
           <DetailRow label={t("profitability.calc.cushion")} value={`${fmt(u.cushion)} ${unit}`} signed={u.cushion} />
           <DetailRow label={t("profitability.calc.m1TotalGain")} value={`${fmt(u.netGain * (Number(calc.qty) || 0))} ${unit}`} signed={u.netGain} />
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1.5 text-sm">
           <DetailRow label={t("profitability.calc.resultFx")} value={`${fmt(u.resultFx)} ${unit}`} signed={u.resultFx} />
           <DetailRow label={t("profitability.calc.conversionGain")} value={`${fmt(u.conversionGain)} ${unit}`} signed={u.conversionGain} />
           <DetailRow label={t("profitability.calc.cushion")} value={`${fmt(u.cushion)} ${unit}`} signed={u.cushion} />
-          <DetailRow label={t("profitability.calc.transferCost")} value={`${fmt(u.transferCost)} ${unit}`} />
           <DetailRow label={t("profitability.calc.transferValue")} value={`${fmt(u.transferValue)} ${unit}`} />
-          <DetailRow label={t("profitability.calc.marginOnBuy")} value={fmtPct(u.marginOnBuy)} signed={u.marginOnBuy} />
+          <DetailRow label={t("profitability.calc.recoveredCash")} value={`${fmt(u.recoveredCash)} ${unit}`} />
+          <DetailRow label={t("profitability.calc.m1MinSell")} value={`${fmt(u.minSellPrice)} ${unit}`} />
+          <DetailRow label={t("profitability.calc.marginOnSell")} value={fmtPct(u.marginOnSell)} signed={u.marginOnSell} />
         </div>
       )}
     </div>
@@ -177,9 +178,9 @@ function HeroCard({ icon: Icon, label, value, positive, hint, testid }) {
 function DetailRow({ label, value, signed }) {
   const color = signed === undefined ? "text-neutral-200" : signed >= 0 ? "text-[#22C55E]" : "text-[#EF4444]";
   return (
-    <div className="flex items-center justify-between border-b border-white/5 py-1">
-      <span className="text-neutral-500 text-xs">{label}</span>
-      <span className={`font-mono text-xs ${color}`}>{value}</span>
+    <div className="flex items-center justify-between gap-3 border-b border-white/5 py-1 min-w-0">
+      <span className="text-neutral-500 text-xs min-w-0">{label}</span>
+      <span className={`font-mono text-xs whitespace-nowrap shrink-0 text-right ${color}`}>{value}</span>
     </div>
   );
 }

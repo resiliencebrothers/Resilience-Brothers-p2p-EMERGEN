@@ -16,7 +16,6 @@ New permissions added to the catalog:
                               allowed_* on failure
 """
 import os
-import uuid
 import bcrypt
 import pyotp
 import requests

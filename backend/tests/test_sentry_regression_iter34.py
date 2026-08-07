@@ -12,8 +12,7 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"
 
 from conftest import (
-    ADMIN_TOKEN as ADMIN, EMPLOYEE_TOKEN as EMPLOYEE,
-    VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL,
+    ADMIN_TOKEN as ADMIN, VIP_TOKEN as VIP, NORMAL_TOKEN as NORMAL,
 )
 
 

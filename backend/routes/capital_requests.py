@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import uuid
 from typing import Any, Optional
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -156,7 +155,7 @@ async def admin_list_capital_requests(request: Request,
                                        user_id: Optional[str] = None) -> Any:
     """Admin/staff with `company_funds` permission lists all requests,
     optionally filtered by status or user. Newest first."""
-    await require_permission(request, "company_funds")
+    await require_permission(request, "withdrawals")
     mongo_q: dict = {}
     if status:
         mongo_q["status"] = status
@@ -173,7 +172,7 @@ async def admin_approve_capital_request(req_id: str, payload: CapitalRequestAppr
     """Approve + disburse in a single action: credit the VIP's balance in
     the requested currency AND mark the request as `disbursed` with the
     given discount %. Subsequent accumulated orders will auto-repay."""
-    actor = await require_permission(request, "company_funds")
+    actor = await require_permission(request, "withdrawals")
     await _enforce_totp_step_up(actor, payload.totp_code,
                                  action_label="aprobar solicitud de fondos")
     doc = await db.capital_requests.find_one({"id": req_id}, {"_id": 0})
@@ -192,6 +191,9 @@ async def admin_approve_capital_request(req_id: str, payload: CapitalRequestAppr
         {"user_id": doc["user_id"]},
         {"$inc": {f"vip_balances.{currency}": amount}},
     )
+    from services.live_events import emit_balance_changed
+    await emit_balance_changed(doc["user_id"], "capital_request_disbursed",
+                               request_id=req_id, currency=currency)
     await db.capital_requests.update_one(
         {"id": req_id},
         {"$set": {
@@ -222,7 +224,7 @@ async def admin_approve_capital_request(req_id: str, payload: CapitalRequestAppr
 async def admin_reject_capital_request(req_id: str, payload: CapitalRequestReject,
                                          request: Request) -> Any:
     """Reject a pending request with a required reason. No money moves."""
-    actor = await require_permission(request, "company_funds")
+    actor = await require_permission(request, "withdrawals")
     await _enforce_totp_step_up(actor, payload.totp_code,
                                  action_label="rechazar solicitud de fondos")
     doc = await db.capital_requests.find_one({"id": req_id}, {"_id": 0})

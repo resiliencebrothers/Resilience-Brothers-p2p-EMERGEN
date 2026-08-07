@@ -1,0 +1,43 @@
+{
+  "summary": "iter153 backend + frontend testing: frozen balances, client-cancel withdrawal, admin cancelled-guard/timestamps, and deposit crypto-network validation. Created /app/backend/tests/test_iter153_frozen_and_cancel.py — 9/9 pass. Ran withdraw/deposit/balance-tagged regression subset: only 1 iter153-caused breakage (test_iter55_22 fixture missing 'cancelled' in status allow-set) — fixed. One PRE-EXISTING failure unrelated to iter153 in test_iter15_company_funds.py::test_paid_locked (company-withdrawals admin lock now returns 200 instead of 403). Frontend UI verified against VIP dashboard: frozen-total-note banner, frozen-badge on cards, method-picker with 3 options for both deposit and withdraw, withdraw-change-method link, deposit-network + deposit-hash fields, withdrawal-detail-dialog + withdrawal-timeline + cancel-confirm flow all render with correct data-testids.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/admin/company-withdrawals/{id}/status", "issue": "test_iter15_company_funds.py::test_paid_locked expects 403 when admin tries to revert a paid company-withdrawal, but the endpoint now returns 200. Not part of iter153 scope but a pre-existing regression to investigate — company-withdrawals paid-lock guard for admin appears to have been removed or bypassed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "VIP dashboard / language", "issues": ["VIP test user has language='es' in users doc but UI still renders English strings ('Your accumulated balance', 'History', 'Deposit', 'Withdraw'). Might indicate the language field on the user doc isn't hydrated into the i18n instance at login, or that the language switcher only persists to localStorage. Not iter153-blocking but user-visible."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter153_frozen_and_cancel.py",
+    "/app/test_reports/pytest/iter153.xml"
+  ],
+  "action_items": [
+    "Investigate pre-existing test_iter15_company_funds::test_paid_locked — admin paid-lock guard on company-withdrawals seems to have been removed (unrelated to iter153, but a live regression).",
+    "Investigate why VIP user with language='es' still sees English UI copy after login (language preference not applied to i18n instance)."
+  ],
+  "critical_code_review_comments": [
+    "orders.py cancel_own_withdrawal: correct use of conditional update (status:'pending') to make cancel idempotent — atomic, race-safe.",
+    "orders.py vip_balances: frozen aggregation includes both 'pending' AND 'approved' statuses — matches spec (funds locked while admin is processing).",
+    "admin_withdrawals.py: cancelled-guard placed BEFORE _assert_paid_lock and evidence validation — correct order (no accidental writes to a cancelled row).",
+    "admin_withdrawals.py: per-status timestamp only written when new_status != current — good idempotency (no timestamp drift on repeated same-status PUTs).",
+    "deposits.py: network is Optional and only validated when provided AND non-empty — non-crypto flows unaffected. But note: network is stored ONLY when method=='crypto' (line 241 `network if method == 'crypto' else None`), so transfer/cash deposits will always show network=None — expected.",
+    "orders.py cancel_own_withdrawal: sets balance_refunded=True in the same $set. If a race lets an admin flip status to 'rejected' AFTER cancel, _reconcile_balance_on_status_change would treat entering_rejected as True (was_rejected=False) but is guarded now by the cancelled 409 in admin route — safe. Confirmed no double-credit path."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter153_frozen_and_cancel.py (new)",
+    "/app/backend/tests/test_iter55_22_client_pending_and_cash_structured.py (added 'cancelled' to allowed statuses set — trivial fixture update for new terminal status)"
+  ],
+  "success_rate": {"backend": "100% on iter153 scope (9/9)", "frontend": "100% on iter153 UI wiring verified"},
+  "test_credentials": "VIP session token 'ui_iter153_vip_sess' seeded in user_sessions for user_test_vip01 (browser cookie 'session_token').",
+  "seed_data_creation": "Seeded ui_iter153_vip_sess session for playwright. Created 4+ withdrawals and 2 deposits during tests, all cleaned up via cancel/reject in finally blocks.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter153 pytest is at /app/backend/tests/test_iter153_frozen_and_cancel.py — 9 tests covering frozen exposure, cancel flow (200/404/409), admin cancelled-guard + timestamps, and deposit crypto network validation. The VIP test user has legacy pending withdrawals (~3803 USD, 1400 USDTT19H) — expected fixture noise. Language preference hydration bug (language='es' in DB → still English UI) noted but out of iter153 scope.",
+  "rca of the issue": "N/A — iter153 features are functioning as designed. The two side-observations (company-withdrawals paid-lock, language hydration) are unrelated and reported for follow-up."
+}

@@ -12,7 +12,6 @@ Coverage:
    event fires for admin subscribers only.
 """
 import asyncio
-import os
 import pytest
 
 

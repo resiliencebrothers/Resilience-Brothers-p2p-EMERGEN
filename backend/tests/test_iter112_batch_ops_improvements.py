@@ -56,15 +56,31 @@ async def _ensure_currency(code: str, name: str, ctype: str = "fiat"):
     )
 
 
+async def _seed_capital_deposit(amount=100.0, currency="USDT", method="cash",
+                                tx_hash=None) -> str:
+    """iter166 — POST /vip/capital-deposits is retired (410); seed directly."""
+    import uuid as _uuid
+    from db_client import db
+    did = f"vdep_test_{_uuid.uuid4().hex[:10]}"
+    now = "2026-06-01T00:00:00+00:00"
+    await db.vip_capital_deposits.insert_one({
+        "id": did, "vip_user_id": "user_test_vip01",
+        "vip_email": "vip.test@resilience.com", "vip_name": "VIP Test",
+        "currency": currency, "amount": float(amount), "deposit_method": method,
+        "account_holder": None, "tx_hash": tx_hash, "proof_url": None,
+        "note": None, "status": "pending", "balance_delta_usdt": None,
+        "admin_note": None, "reviewed_at": None, "reviewed_by": None,
+        "created_at": now, "updated_at": now,
+    })
+    return did
+
+
 class TestPendingCount:
     @pytest.mark.asyncio
     async def test_counters_shape_and_capital_pending(self):
         await _reset()
         async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 100,
-                                   "deposit_method": "cash"})
-            assert r.status_code == 200, r.text
+            await _seed_capital_deposit(amount=100)
 
             rc = await c.get("/api/admin/vip-batches/pending-count", headers=h(ADMIN_TOKEN))
             assert rc.status_code == 200
@@ -109,98 +125,18 @@ class TestBatchCurrencies:
             assert r.status_code == 403
 
 
-class TestCapitalDepositValidation:
-    @pytest.mark.asyncio
-    async def test_method_required(self):
-        async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 100})
-            assert r.status_code == 422
+class TestCapitalDepositCreationRetired:
+    """iter166 — the VIP creation endpoint is retired (unified with the
+    regular deposits flow); only the 410 contract remains."""
 
     @pytest.mark.asyncio
-    async def test_transfer_requires_proof(self):
-        async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 100,
-                                   "deposit_method": "bank_transfer",
-                                   "account_holder": "Juan Pérez"})
-            assert r.status_code == 422
-            assert "captura" in r.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_transfer_requires_holder(self):
-        async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 100,
-                                   "deposit_method": "zelle",
-                                   "proof_image": PROOF})
-            assert r.status_code == 422
-            assert "titular" in r.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_crypto_requires_hash(self):
-        async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 100,
-                                   "deposit_method": "crypto",
-                                   "account_holder": "Juan Pérez",
-                                   "proof_image": PROOF})
-            assert r.status_code == 422
-            assert "hash" in r.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_cash_needs_nothing_extra(self):
-        await _reset()
+    async def test_creation_returns_410(self):
         async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
             r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
                              json={"currency": "USDT", "amount": 200,
                                    "deposit_method": "cash"})
-            assert r.status_code == 200, r.text
-            body = r.json()
-            assert body["status"] == "pending"
-            assert body["deposit_method"] == "cash"
-        await _reset()
-
-    @pytest.mark.asyncio
-    async def test_transfer_happy_path_persists_fields(self):
-        await _reset()
-        async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 500,
-                                   "deposit_method": "bank_transfer",
-                                   "account_holder": "María García",
-                                   "proof_image": PROOF})
-            assert r.status_code == 200, r.text
-            body = r.json()
-            assert body["deposit_method"] == "bank_transfer"
-            assert body["account_holder"] == "María García"
-            assert body["proof_url"]  # stored ref or base64 fallback
-
-            rl = await c.get("/api/admin/vip-capital-deposits",
-                             headers=h(ADMIN_TOKEN), params={"status": "pending"})
-            row = next(i for i in rl.json()["items"] if i["id"] == body["id"])
-            assert row["account_holder"] == "María García"
-        await _reset()
-
-    @pytest.mark.asyncio
-    async def test_crypto_happy_path_persists_hash(self):
-        await _reset()
-        tx = "a" * 64
-        async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                             json={"currency": "USDT", "amount": 500,
-                                   "deposit_method": "crypto",
-                                   "account_holder": "María García",
-                                   "tx_hash": tx,
-                                   "proof_image": PROOF})
-            assert r.status_code == 200, r.text
-            assert r.json()["tx_hash"] == tx
-        await _reset()
-
-
-def _crypto_payload(tx: str, amount: float = 300) -> dict:
-    return {"currency": "USDT", "amount": amount, "deposit_method": "crypto",
-            "account_holder": "Ana Ruiz", "tx_hash": tx, "proof_image": PROOF}
+            assert r.status_code == 410, r.text
+            assert "unificaron" in r.json()["detail"]
 
 
 class TestDuplicateHashGuard:
@@ -210,16 +146,12 @@ class TestDuplicateHashGuard:
         await _ensure_rate("USDT", "USDT", 1.0)
         tx = "b" * 64
         async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r1 = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                              json=_crypto_payload(tx))
-            d1 = r1.json()["id"]
+            d1 = await _seed_capital_deposit(amount=300, method="crypto", tx_hash=tx)
             ok = await c.post(f"/api/admin/vip-capital-deposits/{d1}/confirm",
                               headers=h(ADMIN_TOKEN))
             assert ok.status_code == 200, ok.text
 
-            r2 = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                              json=_crypto_payload(tx, amount=450))
-            d2 = r2.json()["id"]
+            d2 = await _seed_capital_deposit(amount=450, method="crypto", tx_hash=tx)
 
             rl = await c.get("/api/admin/vip-capital-deposits",
                              headers=h(ADMIN_TOKEN), params={"status": "pending"})
@@ -245,16 +177,12 @@ class TestDuplicateHashGuard:
         await _ensure_rate("USDT", "USDT", 1.0)
         tx = "c" * 64
         async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
-            r1 = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                              json=_crypto_payload(tx))
-            d1 = r1.json()["id"]
+            d1 = await _seed_capital_deposit(amount=300, method="crypto", tx_hash=tx)
             rej = await c.post(f"/api/admin/vip-capital-deposits/{d1}/reject",
                                headers=h(ADMIN_TOKEN), json={"admin_note": "borrosa"})
             assert rej.status_code == 200
 
-            r2 = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                              json=_crypto_payload(tx))
-            d2 = r2.json()["id"]
+            d2 = await _seed_capital_deposit(amount=300, method="crypto", tx_hash=tx)
 
             rl = await c.get("/api/admin/vip-capital-deposits",
                              headers=h(ADMIN_TOKEN), params={"status": "pending"})
@@ -272,10 +200,7 @@ class TestDuplicateHashGuard:
         await _ensure_rate("USDT", "USDT", 1.0)
         async with httpx.AsyncClient(base_url=API_URL, timeout=30) as c:
             for _ in range(2):
-                r = await c.post("/api/vip/capital-deposits", headers=h(VIP_TOKEN),
-                                 json={"currency": "USDT", "amount": 50,
-                                       "deposit_method": "cash"})
-                assert r.status_code == 200
+                await _seed_capital_deposit(amount=50)
             rl = await c.get("/api/admin/vip-capital-deposits",
                              headers=h(ADMIN_TOKEN), params={"status": "pending"})
             for row in rl.json()["items"]:

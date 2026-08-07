@@ -105,6 +105,12 @@ function OrderClientGrid({ order: o }) {
         <div><span className="text-neutral-500">{t("admin.orders.fCommission")}</span> {o.commission_percent}%</div>
       )}
       <div className="col-span-2"><span className="text-neutral-500">{t("admin.orders.fHolder")}</span> {o.sender_name}</div>
+      {o.payment_account_label && (
+        <div className="col-span-2" data-testid="order-detail-account">
+          <span className="text-neutral-500">{t("admin.orders.fPayAccount")}</span>{" "}
+          <span className="text-emerald-400">{o.payment_account_label}</span>
+        </div>
+      )}
     </div>
   );
 }

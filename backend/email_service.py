@@ -9,6 +9,8 @@ the ops team is Spanish-speaking.
 import os
 import base64
 import logging
+import time
+import uuid as _uuid
 from datetime import datetime, timezone
 import resend
 
@@ -19,6 +21,32 @@ EMAIL_SEND_ENABLED = os.environ.get("EMAIL_SEND_ENABLED", "true").strip().lower(
 SENDER = os.environ.get("EMAIL_SENDER", "Resilience Brothers <onboarding@resend.dev>")
 REPLY_TO = os.environ.get("EMAIL_REPLY_TO", "")
 APP_URL = os.environ.get("APP_PUBLIC_URL", "")
+
+# iter147 — delivery ledger: every send attempt is persisted to
+# `email_events` so staff can SEE why a user's email never arrived.
+_mongo_client = None
+
+
+def _record_event(to: str, subject: str, kind: str, status: str,
+                  error: str = "", provider_id: str = "", attempts: int = 1) -> None:
+    global _mongo_client
+    try:
+        if _mongo_client is None:
+            from pymongo import MongoClient
+            _mongo_client = MongoClient(os.environ["MONGO_URL"])
+        _mongo_client[os.environ["DB_NAME"]].email_events.insert_one({
+            "id": f"emev_{_uuid.uuid4().hex[:12]}",
+            "to": (to or "").lower().strip(),
+            "subject": subject,
+            "kind": kind or "",
+            "status": status,  # sent | failed | suppressed
+            "error": (error or "")[:500],
+            "provider_id": provider_id or "",
+            "attempts": attempts,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"email_events record failed: {e}")
 
 
 def _L(es: str, en: str, lang: str = "es") -> str:
@@ -61,27 +89,40 @@ def _base_template(title: str, body_html: str, lang: str = "es") -> str:
 </body></html>"""
 
 
-def _send(to: str, subject: str, html: str, attachments: list = None) -> bool:
+def _send(to: str, subject: str, html: str, attachments: list = None,
+          kind: str = "") -> bool:
+    """iter147 — up to 3 attempts with short backoff (Resend rate limits /
+    transient 5xx), and every outcome is persisted to `email_events`."""
     if not EMAIL_SEND_ENABLED:
         logger.info(f"[email-suppressed] to={to} subject={subject!r} (EMAIL_SEND_ENABLED=false)")
+        _record_event(to, subject, kind, "suppressed")
         return True
     if not resend.api_key:
         logger.warning("RESEND_API_KEY not set, skipping email")
+        _record_event(to, subject, kind, "failed", error="RESEND_API_KEY not set")
         return False
     if not to:
         return False
-    try:
-        params = {"from": SENDER, "to": [to], "subject": subject, "html": html}
-        if REPLY_TO:
-            params["reply_to"] = REPLY_TO
-        if attachments:
-            params["attachments"] = attachments
-        resp = resend.Emails.send(params)
-        logger.info(f"Email sent to {to}: id={resp.get('id')}")
-        return True
-    except Exception as e:
-        logger.error(f"Resend email failed for {to}: {e}")
-        return False
+    params = {"from": SENDER, "to": [to], "subject": subject, "html": html}
+    if REPLY_TO:
+        params["reply_to"] = REPLY_TO
+    if attachments:
+        params["attachments"] = attachments
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            resp = resend.Emails.send(params)
+            logger.info(f"Email sent to {to}: id={resp.get('id')}")
+            _record_event(to, subject, kind, "sent",
+                          provider_id=str(resp.get("id") or ""), attempts=attempt)
+            return True
+        except Exception as e:
+            last_err = e
+            logger.error(f"Resend email failed for {to} (attempt {attempt}/3): {e}")
+            if attempt < 3:
+                time.sleep(0.6 * attempt)
+    _record_event(to, subject, kind, "failed", error=str(last_err), attempts=3)
+    return False
 
 
 def notify_monthly_audit(to: str, period_label: str, kpis: dict,
@@ -357,7 +398,8 @@ def notify_email_verification(to: str, name: str, token: str, lang: str = "es") 
       <p style="color:#666;font-size:11px;word-break:break-all;">{_L("O copia:", "Or copy:", lang)} {link}</p>
     """
     return _send(to, _L("Verifica tu correo · Resilience Brothers", "Verify your email · Resilience Brothers", lang),
-                 _base_template(_L("Verifica tu cuenta", "Verify your account", lang), body, lang))
+                 _base_template(_L("Verifica tu cuenta", "Verify your account", lang), body, lang),
+                 kind="email_verification")
 
 
 def notify_password_reset(to: str, name: str, token: str, lang: str = "es") -> bool:
@@ -378,7 +420,8 @@ def notify_password_reset(to: str, name: str, token: str, lang: str = "es") -> b
       <p style="color:#666;font-size:11px;word-break:break-all;">{_L("O copia:", "Or copy:", lang)} {link}</p>
     """
     return _send(to, _L("Restablecer contraseña · Resilience Brothers", "Reset your password · Resilience Brothers", lang),
-                 _base_template(_L("Recuperar contraseña", "Recover password", lang), body, lang))
+                 _base_template(_L("Recuperar contraseña", "Recover password", lang), body, lang),
+                 kind="password_reset")
 
 
 def notify_password_changed(to: str, name: str, lang: str = "es") -> bool:

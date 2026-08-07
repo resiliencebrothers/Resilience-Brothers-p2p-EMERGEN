@@ -13,6 +13,14 @@
 
 const digitCount = (str) => (str.match(/\d/g) || []).length;
 
+// iter158 — repeated digits ("1111…") or perfect sequences ("1234…") are
+// placeholder numbers, not real accounts.
+const looksDummy = (digits) =>
+  !digits ||
+  new Set(digits).size <= 2 ||
+  "01234567890123456789".includes(digits) ||
+  "98765432109876543210".includes(digits);
+
 // -------- Individual validator factories --------
 
 const validators = {
@@ -24,8 +32,11 @@ const validators = {
     validate: (text) => {
       const n = digitCount(text);
       if (n === 0) return null;
-      if (n === 16) return { ok: true, feedback: "✓ 16 dígitos detectados" };
-      return { ok: false, feedback: `⚠ ${n} dígitos — faltan/sobran ${Math.abs(16 - n)}` };
+      if (n !== 16) return { ok: false, feedback: `⚠ ${n} dígitos — faltan/sobran ${Math.abs(16 - n)}` };
+      if (looksDummy(text.match(/\d/g).join(""))) {
+        return { ok: false, feedback: "⚠ El número parece de prueba (dígitos repetidos o en secuencia)" };
+      }
+      return { ok: true, feedback: "✓ 16 dígitos detectados" };
     },
   },
 
@@ -56,8 +67,11 @@ const validators = {
     validate: (text) => {
       const n = digitCount(text);
       if (n === 0) return null;
-      if (n === 18) return { ok: true, feedback: "✓ 18 dígitos (CLABE)" };
-      return { ok: false, feedback: `⚠ ${n} dígitos — CLABE espera 18` };
+      if (n !== 18) return { ok: false, feedback: `⚠ ${n} dígitos — CLABE espera 18` };
+      if (looksDummy(text.match(/\d/g).join(""))) {
+        return { ok: false, feedback: "⚠ La CLABE parece de prueba (dígitos repetidos o en secuencia)" };
+      }
+      return { ok: true, feedback: "✓ 18 dígitos (CLABE)" };
     },
   },
 
@@ -108,8 +122,11 @@ const validators = {
     validate: (text) => {
       const n = digitCount(text);
       if (n === 0) return null;
-      if (n >= 13) return { ok: true, feedback: `✓ ${n} dígitos (routing + cuenta)` };
-      return { ok: false, feedback: `⚠ Muy corto (${n} dígitos). Incluye routing (9) + cuenta.` };
+      if (n < 13) return { ok: false, feedback: `⚠ Muy corto (${n} dígitos). Incluye routing (9) + cuenta.` };
+      if (looksDummy(text.match(/\d/g).join(""))) {
+        return { ok: false, feedback: "⚠ El número parece de prueba (dígitos repetidos o en secuencia)" };
+      }
+      return { ok: true, feedback: `✓ ${n} dígitos (routing + cuenta)` };
     },
   },
 

@@ -208,26 +208,9 @@ def _header_footer(canvas, doc):
     canvas.restoreState()
 
 
-def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=LETTER,
-                            topMargin=84, bottomMargin=48,
-                            leftMargin=36, rightMargin=36)
-    styles = getSampleStyleSheet()
-    title = ParagraphStyle("title", parent=styles["Title"],
-                            fontName="Helvetica-Bold", fontSize=16, textColor=TEXT, spaceAfter=4)
-    meta = ParagraphStyle("meta", parent=styles["Normal"],
-                          fontName="Helvetica", fontSize=9, textColor=TEXT_MUTED)
-    big = ParagraphStyle("big", parent=styles["Normal"],
-                         fontName="Helvetica-Bold", fontSize=14, textColor=BRAND_PURPLE)
-
-    story = [
-        Paragraph("Ganancia Mensual", title),
-        Paragraph(f"Período: <b>{period_label}</b>", meta),
-        Spacer(1, 12),
-    ]
-
-    # Totals card
+def _monthly_totals_table(totals: dict, meta: ParagraphStyle,
+                          big: ParagraphStyle) -> Table:
+    """Top summary card with the 7 headline figures."""
     totals_data = [[
         Paragraph("Ganancia P2P", meta),
         Paragraph("Marketplace", meta),
@@ -256,17 +239,11 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
         ("TOPPADDING", (0,0), (-1,-1), 6),
         ("BOTTOMPADDING", (0,0), (-1,-1), 6),
     ]))
-    story.append(tbl)
-    story.append(Spacer(1, 16))
+    return tbl
 
-    # Chart: daily bars + cumulative line (only when there is data)
-    if rows:
-        story.append(Paragraph("Tendencia diaria · Barras = ganancia del día · Línea = acumulado", meta))
-        story.append(Spacer(1, 6))
-        story.append(_revenue_chart(rows))
-        story.append(Spacer(1, 14))
 
-    # Daily table
+def _monthly_daily_table(rows: list) -> Table:
+    """Per-day breakdown table."""
     head = ["Fecha", "Órdenes", "Volumen USDT", "P2P", "Marketplace",
             "Fees USDT", "Lotes VIP", "Total"]
     data = [head]
@@ -300,7 +277,38 @@ def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
         ("TOPPADDING", (0,0), (-1,-1), 5),
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
     ]))
-    story.append(tbl2)
+    return tbl2
+
+
+def revenue_monthly_pdf(rows, period_label: str, totals: dict) -> bytes:
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER,
+                            topMargin=84, bottomMargin=48,
+                            leftMargin=36, rightMargin=36)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("title", parent=styles["Title"],
+                            fontName="Helvetica-Bold", fontSize=16, textColor=TEXT, spaceAfter=4)
+    meta = ParagraphStyle("meta", parent=styles["Normal"],
+                          fontName="Helvetica", fontSize=9, textColor=TEXT_MUTED)
+    big = ParagraphStyle("big", parent=styles["Normal"],
+                         fontName="Helvetica-Bold", fontSize=14, textColor=BRAND_PURPLE)
+
+    story = [
+        Paragraph("Ganancia Mensual", title),
+        Paragraph(f"Período: <b>{period_label}</b>", meta),
+        Spacer(1, 12),
+        _monthly_totals_table(totals, meta, big),
+        Spacer(1, 16),
+    ]
+
+    # Chart: daily bars + cumulative line (only when there is data)
+    if rows:
+        story.append(Paragraph("Tendencia diaria · Barras = ganancia del día · Línea = acumulado", meta))
+        story.append(Spacer(1, 6))
+        story.append(_revenue_chart(rows))
+        story.append(Spacer(1, 14))
+
+    story.append(_monthly_daily_table(rows))
     story.append(Spacer(1, 22))
     story.append(build_signature_block(
         lang="es", include_client_side=False, total_width_inches=7.0,
@@ -409,12 +417,8 @@ def _revenue_chart(rows) -> Drawing:
 
 # ---------------- Multi-month analytics report (iter55.36l) ----------------
 
-def _write_analytics_highlights(w, monthly_rows, summary: dict) -> None:
-    """Top-line highlights + category totals block."""
-    top_month = max(monthly_rows, key=lambda r: r.get("total_profit_usdt", 0),
-                    default=None) if monthly_rows else None
-    top_pair = (summary.get("by_pair") or [None])[0]
-
+def _analytics_categories(summary: dict) -> tuple:
+    """Category totals sorted by magnitude + the absolute grand total."""
     cats = [
         ("Intercambio P2P",  summary.get("p2p_profit_usdt", 0.0)),
         ("Marketplace",      summary.get("marketplace_profit_usdt", 0.0)),
@@ -422,7 +426,15 @@ def _write_analytics_highlights(w, monthly_rows, summary: dict) -> None:
         ("Lotes VIP",        summary.get("vip_batches_profit_usdt", 0.0)),
     ]
     abs_total = sum(abs(v) for _, v in cats) or 1.0
-    cats_sorted = sorted(cats, key=lambda x: abs(x[1]), reverse=True)
+    return sorted(cats, key=lambda x: abs(x[1]), reverse=True), abs_total
+
+
+def _write_analytics_highlights(w, monthly_rows, summary: dict) -> None:
+    """Top-line highlights + category totals block."""
+    top_month = max(monthly_rows, key=lambda r: r.get("total_profit_usdt", 0),
+                    default=None) if monthly_rows else None
+    top_pair = (summary.get("by_pair") or [None])[0]
+    cats_sorted, abs_total = _analytics_categories(summary)
 
     w.writerow(["Mejor mes",
                  top_month["bucket"] if top_month else "—",
@@ -479,27 +491,12 @@ def revenue_analytics_csv(monthly_rows, summary: dict, period_label: str) -> byt
     return buf.getvalue().encode("utf-8-sig")
 
 
-def _analytics_bars(monthly_rows) -> Drawing:
-    """Stacked bar chart of the last-12 months revenue broken down by
-    category (P2P / Marketplace / Conversions). Mirrors the on-screen
-    recharts view in `RevenueAnalyticsDialog.jsx`."""
-    rows = sorted(monthly_rows, key=lambda x: x["bucket"])[-12:]
-    labels = [r["bucket"] for r in rows]
+def _analytics_stacked_chart(rows: list, labels: list,
+                             width: float, height: float) -> VerticalBarChart:
+    """Configured stacked bar chart for the category breakdown."""
     p2p  = [r.get("p2p_profit_usdt", 0.0) for r in rows]
     mkt  = [r.get("marketplace_profit_usdt", 0.0) for r in rows]
     conv = [r.get("conversion_fees_usdt", 0.0) for r in rows]
-
-    width = 7.0 * inch
-    height = 2.6 * inch
-    d = Drawing(width, height)
-    d.add(Rect(0, 0, width, height, fillColor=PANEL,
-               strokeColor=BORDER, strokeWidth=0.5))
-
-    if not rows:
-        d.add(String(width / 2, height / 2, "Sin datos mensuales aún.",
-                     fontSize=10, fillColor=TEXT_MUTED, textAnchor="middle"))
-        return d
-
     bar = VerticalBarChart()
     bar.x = 44
     bar.y = 32
@@ -528,9 +525,11 @@ def _analytics_bars(monthly_rows) -> Drawing:
     # Do NOT iterate `for b in bar.bars` either — the special `bars` accessor
     # entered a loop for us during testing.
     bar.categoryAxis.style = "stacked"
-    d.add(bar)
+    return bar
 
-    # Legend
+
+def _analytics_bars_legend(d: Drawing, height: float) -> None:
+    """Three-swatch legend at the top of the analytics chart."""
     legend_y = height - 16
     d.add(Rect(46, legend_y, 10, 6, fillColor=BRAND_PURPLE, strokeColor=None))
     d.add(String(60, legend_y + 1, "P2P", fontSize=7, fillColor=TEXT_MUTED))
@@ -539,6 +538,28 @@ def _analytics_bars(monthly_rows) -> Drawing:
     d.add(Rect(174, legend_y, 10, 6,
                 fillColor=colors.HexColor("#EAB308"), strokeColor=None))
     d.add(String(188, legend_y + 1, "Conversiones", fontSize=7, fillColor=TEXT_MUTED))
+
+
+def _analytics_bars(monthly_rows) -> Drawing:
+    """Stacked bar chart of the last-12 months revenue broken down by
+    category (P2P / Marketplace / Conversions). Mirrors the on-screen
+    recharts view in `RevenueAnalyticsDialog.jsx`."""
+    rows = sorted(monthly_rows, key=lambda x: x["bucket"])[-12:]
+    labels = [r["bucket"] for r in rows]
+
+    width = 7.0 * inch
+    height = 2.6 * inch
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, fillColor=PANEL,
+               strokeColor=BORDER, strokeWidth=0.5))
+
+    if not rows:
+        d.add(String(width / 2, height / 2, "Sin datos mensuales aún.",
+                     fontSize=10, fillColor=TEXT_MUTED, textAnchor="middle"))
+        return d
+
+    d.add(_analytics_stacked_chart(rows, labels, width, height))
+    _analytics_bars_legend(d, height)
     return d
 
 

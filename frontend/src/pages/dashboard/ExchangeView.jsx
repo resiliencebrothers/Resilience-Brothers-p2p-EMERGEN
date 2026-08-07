@@ -15,6 +15,8 @@ import PaymentAccountBlock from "./exchange/PaymentAccountBlock";
 import SenderAndProof from "./exchange/SenderAndProof";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import DeliverySection from "./exchange/DeliverySection";
+import { effectiveClientRate } from "@/services/rateTiers";
+import { usePaymentAccount } from "@/hooks/usePaymentAccount";
 
 export default function ExchangeView() {
   const { user } = useAuth();
@@ -107,9 +109,11 @@ export default function ExchangeView() {
   const fromCurr = currencies.find((c) => c.code === fromCode);
   const toCurr = currencies.find((c) => c.code === toCode);
 
-  const rate = selectedRate ? (isVip ? selectedRate.rate_vip : selectedRate.rate_normal) : 0;
+  const rate = effectiveClientRate(selectedRate, parseFloat(amount) || 0, isVip);
   const commission = 0;
   const amt = parseFloat(amount) || 0;
+  // iter143 — destination account resolved by the amount the client sends.
+  const paymentAccount = usePaymentAccount(fromCode, amt);
   const gross = amt * rate;
   // iter55.24 → 55.27 — Cash delivery to any fiat: floor deliverable and
   // CREDIT the residue to the client's on-platform balance.
@@ -163,6 +167,10 @@ export default function ExchangeView() {
       toast.error(t("exchange.deliveryDetailsRequired"));
       return;
     }
+    if (paymentAccount.hasTiers && (paymentAccount.belowMin || !paymentAccount.account)) {
+      toast.error(t("exchange.minAmountWarning", { code: fromCode, min: paymentAccount.minRequired ?? "" }));
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await axios.post(`${API}/orders`, {
@@ -197,7 +205,8 @@ export default function ExchangeView() {
   const submitDisabled =
     submitting ||
     (deliveryMethod === "crypto" && !cryptoNetwork) ||
-    (toCurr?.type === "crypto" && deliveryMethod !== "accumulate" && !cryptoNetwork);
+    (toCurr?.type === "crypto" && deliveryMethod !== "accumulate" && !cryptoNetwork) ||
+    (paymentAccount.hasTiers && amt > 0 && (paymentAccount.belowMin || !paymentAccount.account));
 
   return (
     <div className="max-w-4xl space-y-6" data-testid="exchange-view">
@@ -247,7 +256,7 @@ export default function ExchangeView() {
             isCashFiatDelivery={isCashFiatDelivery}
           />
 
-          <PaymentAccountBlock fromCurr={fromCurr} />
+          <PaymentAccountBlock fromCurr={fromCurr} amount={amt} paymentAccount={paymentAccount} />
 
           <SenderAndProof
             senderName={senderName}

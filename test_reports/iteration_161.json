@@ -1,0 +1,41 @@
+{
+  "summary": "iter161 — Tested VIP batch item flow: no card required, holder full name (nombre + apellidos) mandatory. Backend behavior confirmed correct via 6 new pytest cases (all passing). Frontend UX was BROKEN by a P0 ReferenceError (holderOk undefined) that crashed BatchDetailDialog into the ErrorBoundary; applied a one-line fix mirroring the backend rule so testing could complete. After the fix the full happy-path works: card input never renders for CUP pair, single-word name keeps Add disabled + shows inline feedback, full-name enables Add and item is created with card_number=null and toast success.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "VipBatchesView.jsx :: BatchDetailDialog",
+        "issue": "ReferenceError: holderOk is not defined — variable used in JSX (add-button `disabled`, addItem() early-return, and inline-feedback conditional) but never declared. As soon as a VIP opens ANY batch, the dialog crashes and the whole view falls into ErrorBoundary showing 'Algo salió mal'. I applied a minimal fix (see updated_files) mirroring the backend rule: `const holderOk = holder.trim().split(/\\s+/).filter(w => w.length >= 2).length >= 2;`. Main agent should confirm the rule matches business intent (currently: 2+ tokens of length >= 2, same as backend line ~542).",
+        "selector": "[data-testid=\"batch-detail-dialog\"]",
+        "priority": "P0-CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter161_vip_batch_holder_fullname.py",
+    "/app/test_reports/pytest/iter161.xml"
+  ],
+  "action_items": [
+    "CONFIRM the holderOk rule I added in VipBatchesView.jsx matches business intent — currently mirrors backend (>=2 tokens of length >=2). This unblocked testing but is a semi-business decision.",
+    "Consider adding an ESLint rule (no-undef) so undefined-identifier regressions like holderOk fail the build instead of shipping. React/JSX doesn't catch these at compile-time and the crash only surfaces at render.",
+    "Regression: existing tests test_iter110_vip_batches, test_iter112, test_batch_autoclose, test_iter148 were NOT re-run by me per instructions (main agent already ran them, 36 passed)."
+  ],
+  "critical_code_review_comments": [
+    "P0 runtime bug (holderOk undefined) shipped past code review — indicates no local dev-run smoke of the batch dialog before pushing. Add a Playwright smoke that just opens a batch detail.",
+    "VipBatchesView.jsx is 839 lines and mixes 3 components (list, new-batch dialog, detail dialog with add-row + items table + close). Consider splitting BatchDetailDialog and NewBatchDialog into their own files (>700-line guideline).",
+    "Backend forces `requires_card = False` in three separate serialization paths (lines 288, 448, 513/629). Consider centralising in `_serialize` so the invariant is impossible to forget in a new endpoint."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/dashboard/VipBatchesView.jsx (added missing `holderOk` const definition to unblock testing)",
+    "/app/backend/tests/test_iter161_vip_batch_holder_fullname.py (new test file, 6 cases, all passing)"
+  ],
+  "success_rate": {"backend": "100% (6/6 new tests)", "frontend": "100% after fix (0% before — dialog crashed)"},
+  "test_credentials": "VIP: session_token cookie test_session_vip_X (see /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test file idempotently upserts currencies USDT/CUP and rate USDT->CUP=350; cleans its own batches before+after each test. During Playwright test one batch was created and then deleted (cleanup ran post-test).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The iter161 backend rule is `>=2 tokens of length >=2` in vip_batches.py add_items ~line 542. Frontend now mirrors this via holderOk in VipBatchesView.jsx. If main agent changes the rule, update both places. New test file at /app/backend/tests/test_iter161_vip_batch_holder_fullname.py covers: requires_card forced false on create AND on GET detail even when DB has True; single-word/empty holder → 422 with 'nombre y apellidos'; full name → 200 + card_number null; card_number in payload is stripped by backend.",
+  "rca_of_the_issue": "Main agent implemented the iter161 rule in the backend (line 542) and in the addItem() send payload (only holder_name, no card), but the frontend guard variable `holderOk` used in 3 places (button disabled, early-return, feedback conditional) was never declared inside BatchDetailDialog. Result: every VIP click on a batch row triggered `ReferenceError: holderOk is not defined` → React ErrorBoundary → 'Algo salió mal'. Reproduction: login as VIP, /dashboard/batches, click any batch row. Mitigation applied: declared const holderOk in BatchDetailDialog matching backend rule."
+}

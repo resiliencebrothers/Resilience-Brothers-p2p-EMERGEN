@@ -9,6 +9,7 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import AdminPageHeader from "@/components/AdminPageHeader";
 import { toast } from "sonner";
 import OrdersFilters from "./orders/OrdersFilters";
+import { useLiveRefresh } from "@/hooks/useLiveStream";
 import OrdersTable from "./orders/OrdersTable";
 import OrderDetailDialog from "./orders/OrderDetailDialog";
 
@@ -34,6 +35,8 @@ export default function AdminOrders() {
   const [userInput, setUserInput] = useState("");
   const [currencyFilter, setCurrencyFilter] = useState("all");
   const [currencies, setCurrencies] = useState([]);
+  const [accountFilter, setAccountFilter] = useState("all");
+  const [accountOptions, setAccountOptions] = useState([]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -43,7 +46,7 @@ export default function AdminOrders() {
   const [payoutHash, setPayoutHash] = useState("");
   const [pendingStatus, setPendingStatus] = useState(null); // status waiting for 2FA (low-margin orders)
 
-  useEffect(() => { setPage(0); }, [filter, userQuery, currencyFilter]);
+  useEffect(() => { setPage(0); }, [filter, userQuery, currencyFilter, accountFilter]);
 
   // Debounce user query input
   useEffect(() => {
@@ -54,6 +57,8 @@ export default function AdminOrders() {
   // Load currencies once for the filter dropdown
   useEffect(() => {
     axios.get(`${API}/currencies`).then((r) => setCurrencies(r.data || [])).catch(() => {});
+    axios.get(`${API}/admin/payment-accounts/filter-options`, { withCredentials: true })
+      .then((r) => setAccountOptions(r.data || [])).catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -63,6 +68,7 @@ export default function AdminOrders() {
       if (filter !== "all") params.status = filter;
       if (userQuery) params.user_q = userQuery;
       if (currencyFilter !== "all") params.currency = currencyFilter;
+      if (accountFilter !== "all") params.payment_account = accountFilter;
       const r = await axios.get(`${API}/admin/orders`, { params, withCredentials: true });
       setOrders(r.data);
       const totalHeader = Number(r.headers["x-total-count"]);
@@ -72,8 +78,10 @@ export default function AdminOrders() {
     } finally {
       setLoading(false);
     }
-  }, [filter, page, userQuery, currencyFilter, t]);
+  }, [filter, page, userQuery, currencyFilter, accountFilter, t]);
   useEffect(() => { load(); }, [load]);
+  // iter159 — new/updated orders appear without F5.
+  useLiveRefresh(load, ["order_created", "order_status_changed"], 800);
 
   const openOrder = (o) => {
     setOpen(o);
@@ -131,6 +139,9 @@ export default function AdminOrders() {
         currencyFilter={currencyFilter}
         onCurrencyFilterChange={setCurrencyFilter}
         currencies={currencies}
+        accountFilter={accountFilter}
+        onAccountFilterChange={setAccountFilter}
+        accountOptions={accountOptions}
         total={total}
       />
 

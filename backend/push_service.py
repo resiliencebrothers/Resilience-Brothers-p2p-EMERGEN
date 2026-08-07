@@ -195,3 +195,43 @@ def build_phone_rejected_payload(target_user: dict, reason: str,
         "tag": f"rejected-{target_user.get('user_id', 'x')}",
         "url": f"{APP_URL}/dashboard" if APP_URL else "/dashboard",
     }
+
+
+# iter155 — withdrawal lifecycle push (received/approved/paid/rejected).
+_WITHDRAWAL_STEP_KEYS = {
+    "received": "withdrawal_received",
+    "approved": "withdrawal_approved",
+    "paid": "withdrawal_paid",
+    "rejected": "withdrawal_rejected",
+}
+
+
+def build_withdrawal_step_payload(w: dict, step: str,
+                                  lang: Optional[str] = None) -> dict:
+    key = _WITHDRAWAL_STEP_KEYS[step]
+    return {
+        "title": _t(key, lang, "push_title"),
+        "body": _t(key, lang, "push_body",
+                   amt=w.get("amount_usd"), code=w.get("currency") or "USD"),
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        # Same tag per withdrawal → each step REPLACES the previous push on
+        # the device, so the notification reads like a live progress tracker.
+        "tag": f"withdrawal-{w.get('id', 'x')}",
+        "url": f"{APP_URL}/dashboard/vip" if APP_URL else "/dashboard/vip",
+    }
+
+
+def build_deposit_decision_payload(doc: dict, approved: bool,
+                                   lang: Optional[str] = None) -> dict:
+    """iter156 — staff confirmed or rejected a client deposit."""
+    key = "deposit_confirmed" if approved else "deposit_rejected"
+    return {
+        "title": _t(key, lang, "push_title"),
+        "body": _t(key, lang, "push_body",
+                   amt=doc.get("amount"), code=doc.get("currency") or ""),
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": f"deposit-{doc.get('id', 'x')}",
+        "url": f"{APP_URL}/dashboard/vip" if APP_URL else "/dashboard/vip",
+    }

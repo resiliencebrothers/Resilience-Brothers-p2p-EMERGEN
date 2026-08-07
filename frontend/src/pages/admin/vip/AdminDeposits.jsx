@@ -4,10 +4,11 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2 } from "lucide-react";
+import { Check, X as XIcon, Clock, ExternalLink, Truck, Building2, Search } from "lucide-react";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 
 /**
@@ -18,14 +19,25 @@ export default function AdminDeposits({ onChanged }) {
   const { t } = useTranslation();
   const [items, setItems] = useState([]);
   const [statusFilter, setStatusFilter] = useState("pending");
+  const [methodFilter, setMethodFilter] = useState("all");
+  const [userInput, setUserInput] = useState("");
+  const [userQuery, setUserQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [rejecting, setRejecting] = useState(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setUserQuery(userInput.trim()), 300);
+    return () => clearTimeout(id);
+  }, [userInput]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const params = { status: statusFilter, limit: 300 };
+      if (methodFilter !== "all") params.method = methodFilter;
+      if (userQuery) params.user_q = userQuery;
       const r = await axios.get(`${API}/admin/deposits`, {
-        params: { status: statusFilter, limit: 300 },
+        params,
         withCredentials: true,
       });
       setItems(r.data?.items || []);
@@ -33,7 +45,7 @@ export default function AdminDeposits({ onChanged }) {
     } catch (err) {
       toast.error(err?.response?.data?.detail || t("adminDeposits.loadError"));
     } finally { setLoading(false); }
-  }, [statusFilter, t, onChanged]);
+  }, [statusFilter, methodFilter, userQuery, t, onChanged]);
 
   useEffect(() => { load(); }, [load]);
   useLiveEvent("deposit_created", load);
@@ -51,6 +63,16 @@ export default function AdminDeposits({ onChanged }) {
   return (
     <div className="space-y-4" data-testid="admin-deposits">
       <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none" />
+          <Input
+            data-testid="deposits-user-search"
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            placeholder={t("admin.withdrawals.searchPlaceholder")}
+            className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-56 pl-9 text-xs"
+          />
+        </div>
         {["pending", "confirmed", "rejected"].map((s) => (
           <button
             key={s}
@@ -64,6 +86,22 @@ export default function AdminDeposits({ onChanged }) {
             }`}
           >
             {t(`adminVipLedgerOps.filter.${s}`)}
+          </button>
+        ))}
+        <span className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
+        {["all", "cash", "transfer", "crypto"].map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => setMethodFilter(m)}
+            data-testid={`deposits-method-filter-${m}`}
+            className={`text-xs uppercase tracking-widest px-3 py-1.5 border font-mono transition-colors ${
+              methodFilter === m
+                ? "bg-emerald-500/10 border-emerald-500 text-emerald-400"
+                : "bg-transparent border-white/10 text-neutral-400 hover:border-white/30"
+            }`}
+          >
+            {m === "all" ? t("adminDeposits.methodAll") : t(`deposits.method.${m}`)}
           </button>
         ))}
       </div>

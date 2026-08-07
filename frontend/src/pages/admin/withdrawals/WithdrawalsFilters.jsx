@@ -33,6 +33,7 @@ export default function WithdrawalsFilters({
           <SelectItem value="approved">{t("admin.withdrawals.statusConfirmedInProgress")}</SelectItem>
           <SelectItem value="paid">{t("admin.withdrawals.statusPaidDelivered")}</SelectItem>
           <SelectItem value="rejected">{t("admin.common.rejected")}</SelectItem>
+          <SelectItem value="cancelled">{t("admin.common.cancelled")}</SelectItem>
         </SelectContent>
       </Select>
       <Select value={currencyFilter} onValueChange={onCurrencyFilterChange}>

@@ -51,6 +51,9 @@ from routes.vip_batches import router as vip_batches_router  # noqa: E402
 from routes.vip_ledger_ops import router as vip_ledger_ops_router  # noqa: E402
 from routes.deposits import router as deposits_router  # noqa: E402
 from routes.referrals import router as referrals_router  # noqa: E402
+from routes.payment_accounts import router as payment_accounts_router  # noqa: E402
+from routes.qr_poster import router as qr_poster_router  # noqa: E402
+from routes.reconciliation import router as reconciliation_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -99,7 +102,10 @@ api_router.include_router(vip_requests_router)
 api_router.include_router(vip_batches_router)
 api_router.include_router(vip_ledger_ops_router)
 api_router.include_router(deposits_router)
+api_router.include_router(payment_accounts_router)
 api_router.include_router(referrals_router)
+api_router.include_router(qr_poster_router)
+api_router.include_router(reconciliation_router)
 
 app.include_router(api_router)
 

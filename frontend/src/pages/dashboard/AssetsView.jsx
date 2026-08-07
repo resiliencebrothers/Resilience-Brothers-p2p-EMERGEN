@@ -5,6 +5,7 @@ import { API } from "@/App";
 import { Wallet, ArrowRightLeft, Calculator } from "lucide-react";
 import CurrencyIcon from "@/components/CurrencyIcon";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
+import { FlashNumber } from "@/components/FlashNumber";
 import ProfitCalculatorSection from "./ProfitCalculatorSection";
 import { useAuth } from "@/context/AuthContext";
 import { useLiveEvent } from "@/hooks/useLiveStream";
@@ -54,7 +55,9 @@ export default function AssetsView() {
           className="text-5xl sm:text-6xl font-mono tabular-nums tracking-tight font-semibold text-white relative"
           data-testid="assets-total-usdt"
         >
-          {Number(data.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+          <FlashNumber value={data.total_usdt || 0} testid="assets-total-flash">
+            {Number(data.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+          </FlashNumber>{" "}
           <span className="text-2xl text-neutral-400">USDT</span>
         </div>
         <div className="text-sm text-neutral-500 mt-2 relative">{t("assetsView.approxNote")}</div>
@@ -106,7 +109,9 @@ export default function AssetsView() {
                 <div className="micro-label text-neutral-500">{b.currency}</div>
               </div>
               <div className="font-mono text-2xl text-white mt-1" data-testid={`asset-amount-${b.currency}`}>
-                {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                <FlashNumber value={b.amount} testid={`asset-flash-${b.currency}`}>
+                  {Number(b.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                </FlashNumber>
               </div>
               {b.usdt_equivalent != null && (
                 <div className="text-[0.7rem] text-neutral-500 font-mono mt-1">

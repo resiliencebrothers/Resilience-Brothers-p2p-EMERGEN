@@ -11,7 +11,6 @@ Verifies:
    generator: transactions history, audit log, revenue reports, and
    the closing PDF.
 """
-import os
 import requests
 from pypdf import PdfReader
 from io import BytesIO
