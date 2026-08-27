@@ -29,6 +29,7 @@ from typing import Any, Dict, List
 PERMISSION_CATALOG: List[Dict[str, str]] = [
     {"code": "orders",           "category": "operations", "label": "Órdenes",              "description": "Aprobar / rechazar / gestionar órdenes P2P"},
     {"code": "withdrawals",      "category": "operations", "label": "Retiros VIP",          "description": "Aprobar retiros de saldo VIP"},
+    {"code": "deliveries",       "category": "operations", "label": "Mensajería",           "description": "Gestionar entregas de mensajería, asignar/confirmar repartos y designar mensajeros"},
     {"code": "kyc",              "category": "operations", "label": "Verificación KYC",     "description": "Revisar y aprobar verificaciones de identidad"},
     {"code": "appeals",          "category": "operations", "label": "Apelaciones",          "description": "Revisar apelaciones self-service de usuarios"},
     {"code": "profile_changes",  "category": "operations", "label": "Cambios de datos",     "description": "Aprobar cambios de teléfono/email solicitados por clientes"},

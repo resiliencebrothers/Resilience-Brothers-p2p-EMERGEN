@@ -9,7 +9,7 @@ doubles since the last alert (markers `last_alert_total_usdt` /
 on every added row of an already-big batch.
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from db_client import db
 from admin_alerts import notify_all_admins, get_vip_threshold
@@ -20,7 +20,7 @@ logger = logging.getLogger("vip_batch_alerts")
 TOTAL_MARKER = {"added": "last_alert_total_usdt", "approved": "last_alert_approved_usdt"}
 
 
-def _usdt_equiv(amount, code: str, rates: dict) -> Optional[float]:
+def _usdt_equiv(amount: Any, code: str, rates: dict) -> Optional[float]:
     try:
         val = convert_to_usdt(float(amount or 0.0), (code or "").upper(), rates)
         return float(val) if val is not None else None
@@ -78,7 +78,7 @@ def _pair_label(batch: dict) -> str:
     return batch.get("currency") or ""
 
 
-def _fmt_labels(labels) -> str:
+def _fmt_labels(labels: Any) -> str:
     return ", ".join(labels) if labels else "sin cuenta asignada"
 
 

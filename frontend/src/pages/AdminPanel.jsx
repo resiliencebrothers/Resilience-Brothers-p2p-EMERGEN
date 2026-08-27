@@ -2,7 +2,7 @@ import { NavLink, Routes, Route, Navigate, useNavigate, useLocation } from "reac
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift, Landmark } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift, Landmark, Truck } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -15,6 +15,7 @@ import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminVipBatches from "@/pages/admin/AdminVipBatches";
 import AdminProducts from "@/pages/admin/AdminProducts";
 import AdminDepositsWithdrawalsHub from "@/pages/admin/AdminDepositsWithdrawalsHub";
+import AdminDeliveries from "@/pages/admin/AdminDeliveries";
 import AdminReconciliation from "@/pages/admin/AdminReconciliation";
 import AdminAuditHub from "@/pages/admin/AdminAuditHub";
 import AdminTransactions from "@/pages/admin/AdminTransactions";
@@ -30,6 +31,7 @@ import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
+import { useAdminPendingCounts } from "@/hooks/useAdminPendingCounts";
 
 export default function AdminPanel() {
   const { user, logout } = useAuth();
@@ -52,6 +54,8 @@ export default function AdminPanel() {
   // red pill next to the "Usuarios" sidebar entry so staff notice new
   // help requests without opening the section.
   const { unread: supportUnread } = useSupportUnreadCount();
+  // iter191 — pending-matter counts per section (red sidebar badges).
+  const { counts: pendingCounts } = useAdminPendingCounts();
 
   // iter107.2 — Memoise the sidebar item tree so `useMemo` hooks that
   // depend on it (`groupIds`, `initialOpen`) don't rebuild on every
@@ -63,21 +67,36 @@ export default function AdminPanel() {
       ...(has("quick_view") ? [
         { to: "/admin/queue", icon: Inbox, label: t("sidebar.admin.queue"), id: "admin-nav-queue", highlight: true },
       ] : []),
-      ...(has("orders") ? [
+      ...(has("orders") || has("transactions") ? [
         {
           to: "/admin/orders", icon: ListChecks, label: t("sidebar.admin.orders"),
           id: "admin-nav-orders",
+          badge: pendingCounts.orders > 0 ? pendingCounts.orders : null,
           children: [
-            { to: "/admin/vip-batches", icon: Layers, label: t("sidebar.admin.vipBatches"), id: "admin-nav-vip-batches", highlight: true },
+            ...(has("orders") ? [
+              { to: "/admin/vip-batches", icon: Layers, label: t("sidebar.admin.vipBatches"), id: "admin-nav-vip-batches", highlight: true,
+                badge: pendingCounts.vip_batches > 0 ? pendingCounts.vip_batches : null },
+            ] : []),
+            // Registro de transacciones agrupado bajo Órdenes: ambos tocan
+            // el mismo tema (movimientos de dinero entrada/salida).
+            ...(has("transactions") ? [
+              { to: "/admin/transactions", icon: Receipt, label: t("sidebar.admin.transactions"), id: "admin-nav-transactions", highlight: true },
+            ] : []),
           ],
         },
       ] : []),
       ...(has("withdrawals") ? [
-        { to: "/admin/withdrawals", icon: ArrowDownToLine, label: t("sidebar.admin.withdrawals"), id: "admin-nav-withdrawals" },
+        { to: "/admin/withdrawals", icon: ArrowDownToLine, label: t("sidebar.admin.withdrawals"), id: "admin-nav-withdrawals",
+          badge: pendingCounts.withdrawals_hub > 0 ? pendingCounts.withdrawals_hub : null },
+      ] : []),
+      // iter202 — Mensajería tiene permiso dedicado (antes iba con Retiros).
+      ...(has("deliveries") ? [
+        { to: "/admin/deliveries", icon: Truck, label: t("sidebar.admin.deliveries"), id: "admin-nav-deliveries" },
       ] : []),
       // iter167 — bank statement reconciliation module (dedicated permission).
       ...(has("reconciliation") ? [
-        { to: "/admin/reconciliation", icon: Landmark, label: t("sidebar.admin.reconciliation"), id: "admin-nav-reconciliation" },
+        { to: "/admin/reconciliation", icon: Landmark, label: t("sidebar.admin.reconciliation"), id: "admin-nav-reconciliation",
+          badge: pendingCounts.reconciliation > 0 ? pendingCounts.reconciliation : null },
       ] : []),
       // iter102.1 — Monedas + Tasas agrupadas: la Rate table es una vista
       // secundaria del catálogo de monedas, no una sección independiente.
@@ -125,9 +144,6 @@ export default function AdminPanel() {
         { to: "/admin/company-funds", icon: Wallet, label: t("sidebar.admin.companyFunds"), id: "admin-nav-company-funds",
           hasSubsections: user?.role === "admin" },
       ] : []),
-      ...(has("transactions") ? [
-        { to: "/admin/transactions", icon: Receipt, label: t("sidebar.admin.transactions"), id: "admin-nav-transactions", highlight: true },
-      ] : []),
       // iter112 — Referral leaderboard + bonus config.
       ...(has("users") ? [
         { to: "/admin/referrals", icon: Gift, label: t("sidebar.admin.referrals"), id: "admin-nav-referrals" },
@@ -145,7 +161,7 @@ export default function AdminPanel() {
         },
       ] : []),
     ];
-  }, [t, isAdmin, userPerms, user?.role, supportUnread]);
+  }, [t, isAdmin, userPerms, user?.role, supportUnread, pendingCounts]);
 
   const navLinkClass = ({ isActive }) =>
     `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group relative outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
@@ -199,7 +215,7 @@ export default function AdminPanel() {
             {it.badge != null && it.badge > 0 && (
               <span
                 data-testid={`${it.id}-badge`}
-                title={`${it.badge} sin leer`}
+                title={`${it.badge} pendientes`}
                 className="min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center text-[0.65rem] font-mono font-semibold bg-[#EF4444] text-white rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse"
               >
                 {it.badge > 99 ? "99+" : it.badge}
@@ -348,6 +364,7 @@ export default function AdminPanel() {
             <Route path="orders" element={<AdminOrders />} />
             <Route path="vip-batches" element={<AdminVipBatches />} />
             <Route path="withdrawals" element={<AdminDepositsWithdrawalsHub />} />
+            <Route path="deliveries" element={<AdminDeliveries />} />
             <Route path="reconciliation" element={<AdminReconciliation />} />
             <Route path="currencies" element={<AdminCurrencies />} />
             <Route path="rates" element={<AdminRates />} />

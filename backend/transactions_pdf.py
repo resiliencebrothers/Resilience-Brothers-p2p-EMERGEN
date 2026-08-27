@@ -49,11 +49,13 @@ def _t(key: str, lang: str) -> str:
         "f_direction": ("Dirección", "Direction"),
         "f_currency": ("Moneda", "Currency"),
         "f_holder": ("Titular", "Holder"),
+        "f_client": ("Cliente", "Client"),
         "f_since": ("Desde", "From"),
         "f_until": ("Hasta", "To"),
         "f_amount": ("Monto", "Amount"),
         "all": ("todas", "all"),
         "all_holders": ("todos", "all"),
+        "all_clients": ("todos", "all"),
         "amount_range_to": ("a", "to"),
         "totals_title": ("TOTALES POR MONEDA", "TOTALS PER CURRENCY"),
         "inflows": ("Entradas", "Inflows"),
@@ -117,9 +119,11 @@ def _build_filters_paragraph(filters: dict, style: ParagraphStyle, lang: str) ->
     """Format the filter bar shown under the PDF title."""
     all_word = _t("all", lang)
     all_holders_word = _t("all_holders", lang)
+    all_clients_word = _t("all_clients", lang)
     f_dir = filters.get("direction") or all_word
     f_cur = filters.get("currency") or all_word
     f_holder = filters.get("holder") or all_holders_word
+    f_client = filters.get("client") or all_clients_word
     f_since = filters.get("since") or "—"
     f_until = filters.get("until") or "—"
     f_min = filters.get("min_amount")
@@ -132,6 +136,7 @@ def _build_filters_paragraph(filters: dict, style: ParagraphStyle, lang: str) ->
         f"{_t('filters_label', lang)} {_t('f_direction', lang)}: <font color='#FFFFFF'><b>{f_dir}</b></font> · "
         f"{_t('f_currency', lang)}: <font color='#FFFFFF'><b>{f_cur}</b></font> · "
         f"{_t('f_holder', lang)}: <font color='#FFFFFF'><b>{f_holder}</b></font> · "
+        f"{_t('f_client', lang)}: <font color='#FFFFFF'><b>{f_client}</b></font> · "
         f"{_t('f_since', lang)}: <font color='#FFFFFF'><b>{f_since}</b></font> · "
         f"{_t('f_until', lang)}: <font color='#FFFFFF'><b>{f_until}</b></font> · "
         f"{_t('f_amount', lang)}: <font color='#FFFFFF'><b>{amount_range}</b></font>",

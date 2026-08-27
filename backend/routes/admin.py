@@ -37,6 +37,7 @@ from auth_utils import (
 )
 from audit_log import log_action
 from transactions_pdf import generate_transactions_pdf
+from services.order_events import publish_order_status_sse
 
 from services.balances import (
     build_rate_lookup, convert_to_usdt,
@@ -84,9 +85,37 @@ class AdminSettings(BaseModel):
         default=None, max_length=300,
         description="iter113 — Dirección de las oficinas de la empresa mostrada a clientes que depositan efectivo ≤ umbral de mensajería.",
     )
+    cash_provinces: Optional[List[str]] = Field(
+        default=None,
+        description="iter192 — Provincias con disponibilidad de entrega de efectivo. None = todas disponibles.",
+    )
     referral_bonus_pct: Optional[float] = Field(
         default=None, ge=0, le=100,
         description="iter112 — % de la ganancia de la primera orden del referido que se acredita al referidor (USDT). Default 10.",
+    )
+    courier_rate_usdt_per_km: Optional[float] = Field(
+        default=None, ge=0, le=1000,
+        description="iter198 — Tarifa de mensajería (USDT por km) para retiros en efectivo. 0 = sin cobro.",
+    )
+    courier_free_min_usdt: Optional[float] = Field(
+        default=None, ge=0,
+        description="iter198 — Umbral en USDT equivalente a partir del cual la mensajería es gratis. Default 1000.",
+    )
+    courier_min_fee_usdt: Optional[float] = Field(
+        default=None, ge=0, le=1000,
+        description="iter198 — Tarifa mínima de mensajería (USDT). Default 2.00 (cubre los primeros 4 km).",
+    )
+    courier_share_pct: Optional[float] = Field(
+        default=None, ge=0, le=100,
+        description="iter199 — % de la tarifa de mensajería que gana el mensajero. Default 80.",
+    )
+    office_latitude: Optional[float] = Field(
+        default=None, ge=-90, le=90,
+        description="iter198 — Latitud de la oficina Resilience Brothers (origen fijo de las entregas).",
+    )
+    office_longitude: Optional[float] = Field(
+        default=None, ge=-180, le=180,
+        description="iter198 — Longitud de la oficina Resilience Brothers.",
     )
     totp_code: Optional[str] = Field(default=None, max_length=11,
                                        description="Código 2FA requerido")
@@ -168,6 +197,29 @@ def _orders_admin_query(actor: Dict[str, Any], status: Optional[str],
             _merge_or_clause(q, {"$or": [{"from_code": {"$in": allowed}},
                                          {"to_code": {"$in": allowed}}]})
     return q
+
+
+@router.get("/admin/pending-counts")
+async def admin_pending_counts(request: Request) -> Any:
+    """iter191 — red sidebar badges: pending matters per admin section so
+    staff notice queued work (e.g. withdrawal requests) without opening it."""
+    await require_staff(request)
+    wd = await db.withdrawals.count_documents({"status": "pending"})
+    dep = await db.deposits.count_documents({"status": "pending"})
+    cap = await db.capital_requests.count_documents({"status": "pending"})
+    vip_items = await db.vip_batch_items.count_documents({"status": "pending"})
+    orders = await db.orders.count_documents(
+        {"status": {"$in": ["pending", "requires_double_approval"]}})
+    recon = await db.bank_transactions.count_documents({"status": "manual_review"})
+    return {
+        "withdrawals": wd,
+        "deposits": dep,
+        "capital_requests": cap,
+        "withdrawals_hub": wd + dep + cap,
+        "vip_batches": vip_items,
+        "orders": orders,
+        "reconciliation": recon,
+    }
 
 
 @router.get("/admin/orders")
@@ -262,36 +314,6 @@ def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: s
             )
 
 
-async def _publish_order_status_sse(order_id: str, updated: dict,
-                                   new_status: str, prev_status: str) -> None:
-    """Fan-out `order_status_changed` + `balance_updated` to owner + admins.
-    Isolated in a try/except so a live-bus hiccup can't fail the HTTP write."""
-    try:
-        from services.live_bus import publish as live_publish
-        target_uid = updated.get("user_id") if isinstance(updated, dict) else None
-        status_payload = {
-            "order_id": order_id,
-            "status": new_status,
-            "prev_status": prev_status,
-            "from_code": updated.get("from_code"),
-            "to_code": updated.get("to_code"),
-            "amount_from": updated.get("amount_from"),
-            "amount_to": updated.get("amount_to"),
-        }
-        if target_uid:
-            await live_publish("order_status_changed", status_payload, user_id=target_uid)
-            await live_publish("balance_updated", {"reason": "order", "order_id": order_id},
-                               user_id=target_uid)
-            await live_publish("ledger_changed",
-                               {"reason": "order", "order_id": order_id,
-                                "user_id": target_uid},
-                               roles=("admin", "employee"))
-        await live_publish("order_status_changed", status_payload,
-                           roles=("admin", "employee"))
-    except Exception as e:
-        logger.error(f"Order SSE publish failed: {e}")
-
-
 @router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "orders")
@@ -314,7 +336,7 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     await run_post_status_side_effects(updated, new_status, prev_status)
 
-    await _publish_order_status_sse(order_id, updated, new_status, prev_status)
+    await publish_order_status_sse(order_id, updated, new_status, prev_status)
 
     await log_action(
         db, actor, f"order.{new_status}", "order", order_id,
@@ -336,6 +358,40 @@ async def all_redemptions(request: Request) -> Any:
     return docs
 
 
+async def _assert_redemption_courier_ready(r: dict) -> None:
+    """iter205 — mismo candado que retiros cash: un canje del mercado no se
+    marca 'entregado' sin tarifa resuelta y sin que el mensajero haya
+    realizado la entrega (delivered/confirmed)."""
+    from services.courier_fee import quote_courier_fee
+    cq = await quote_courier_fee("USD", float(r.get("total_usd") or 0.0))
+    if not cq["enabled"]:
+        return
+    fee_charged = float(r.get("courier_fee_usdt") or 0) > 0
+    if not cq["free"] and r.get("courier_fee_status") != "free" and not fee_charged:
+        raise HTTPException(
+            status_code=409,
+            detail=("Mensajería sin cobrar: cobra el costo de la entrega de "
+                    "este canje antes de marcarlo como entregado."))
+    job = await db.deliveries.find_one(
+        {"kind": "redemption", "ref_id": r["id"],
+         "status": {"$ne": "cancelled"}}, {"_id": 0})
+    if not job:
+        raise HTTPException(
+            status_code=409,
+            detail=("No existe trabajo de mensajería para este canje. Créalo "
+                    "en la sección Mensajería y espera a que el mensajero "
+                    "confirme la entrega."))
+    if job.get("status") not in ("delivered", "confirmed"):
+        if not job.get("courier_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Ningún mensajero ha tomado esta entrega todavía.")
+        raise HTTPException(
+            status_code=409,
+            detail=(f"El mensajero {job.get('courier_name') or ''} aún no "
+                    "marcó esta entrega como realizada."))
+
+
 @router.put("/admin/redemptions/{rid}/status")
 async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "orders")
@@ -346,13 +402,25 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     r = await db.redemptions.find_one({"id": rid}, {"_id": 0})
     if not r:
         raise HTTPException(status_code=404, detail="No encontrado")
+    if new_status == "delivered" and r["status"] != "delivered":
+        await _assert_redemption_courier_ready(r)
     if new_status == "rejected" and r["status"] != "rejected":
+        # iter198 — any charged courier fee is refunded with the product total.
+        refund = r["total_usd"] + float(r.get("courier_fee_usd") or 0.0)
         await db.users.update_one(
-            {"user_id": r["user_id"]}, {"$inc": {"vip_balance_usd": r["total_usd"]}}
+            {"user_id": r["user_id"]}, {"$inc": {"vip_balance_usd": refund}}
         )
         await db.products.update_one(
             {"id": r["product_id"]}, {"$inc": {"stock": r["quantity"]}}
         )
+        # iter205 — el canje rechazado cancela su trabajo de mensajería.
+        try:
+            from services.deliveries import cancel_active_delivery
+            await cancel_active_delivery("redemption", rid,
+                                         actor_id=actor.get("user_id"),
+                                         note="canje rechazado")
+        except Exception as e:
+            logger.error(f"delivery cancel failed: {e}")
     await db.redemptions.update_one(
         {"id": rid}, {"$set": {"status": new_status, "admin_note": note}}
     )
@@ -373,6 +441,117 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
                 "admin_note": note,
             },
         )
+    return updated
+
+
+async def _apply_courier_fee_balance_delta(r: dict, delta: float) -> None:
+    """Charge (delta>0) or refund (delta<0) the fee difference in USD."""
+    if delta > 0:
+        owner = await db.users.find_one({"user_id": r["user_id"]}, {"_id": 0})
+        from services.balances import get_user_balance, decrement_balance
+        bal = get_user_balance(owner or {}, "USD")
+        if bal < delta:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Saldo insuficiente del cliente ({round(bal, 2)} USD) "
+                        f"para cubrir la mensajería ({delta} USD)."))
+        await decrement_balance(r["user_id"], "USD", delta)
+    elif delta < 0:
+        await db.users.update_one({"user_id": r["user_id"]},
+                                  {"$inc": {"vip_balances.USD": -delta}})
+
+
+async def _notify_redemption_courier_fee(r: dict, rid: str, km: float,
+                                         fee_usdt: float, fee_usd: float,
+                                         delta: float) -> None:
+    try:
+        from routes.notifications import _insert_notification
+        if fee_usdt > 0:
+            title = "Costo de mensajería aplicado"
+            msg = (f"Se descontó {fee_usd} USD (≈ {fee_usdt} USDT · {km} km) de tu "
+                   f"saldo por la entrega de tu canje «{r.get('product_name', '')}».")
+        else:
+            title = "Cobro de mensajería anulado"
+            msg = (f"Se devolvió {abs(delta)} USD a tu saldo: el cobro de mensajería "
+                   f"de tu canje «{r.get('product_name', '')}» fue anulado.")
+        await _insert_notification(recipient_user_id=r["user_id"], type="courier_fee",
+                                   title=title, message=msg,
+                                   data={"redemption_id": rid, "km": km,
+                                         "fee_usdt": fee_usdt})
+    except Exception as e:
+        logger.error(f"redemption courier fee notification failed: {e}")
+
+
+async def _load_redemption_for_fee(rid: str) -> dict:
+    """Fetch + guards del canje antes de cobrar mensajería."""
+    r = await db.redemptions.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    if r.get("status") == "rejected":
+        raise HTTPException(status_code=409,
+                            detail="Canje rechazado — no se puede cobrar mensajería.")
+    return r
+
+
+async def _price_redemption_fee(payload: dict, r: dict) -> tuple:
+    """Cálculo de la tarifa: por municipio fijo o por km.
+    Returns (km, fee_usdt, fee_usd, muni_name, quote)."""
+    from services.courier_fee import (
+        parse_km_payload, price_charge_or_raise,
+        price_charge_municipality_or_raise,
+    )
+    total = float(r.get("total_usd") or 0.0)
+    muni_key = (payload.get("municipality") or "").strip()
+    if muni_key:
+        # iter211 — cobro por tarifa fija de municipio (mapa falló).
+        q, fee_usdt, fee_usd, muni = await price_charge_municipality_or_raise(
+            muni_key, "USD", total, op_label="Este canje")
+        return 0.0, fee_usdt, fee_usd, muni["municipality"], q
+    km = parse_km_payload(payload)
+    q, fee_usdt, fee_usd = await price_charge_or_raise(
+        km, "USD", total, op_label="Este canje")
+    return km, fee_usdt, fee_usd, None, q
+
+
+@router.post("/admin/redemptions/{rid}/courier-fee")
+async def set_redemption_courier_fee(rid: str, payload: dict, request: Request) -> Any:
+    """iter198 — charge (or update/annul with km=0) the courier fee of a
+    marketplace delivery. Same engine as cash withdrawals: MAX(min, km×rate)
+    in USDT, converted to USD and deducted from the client's balance."""
+    actor = await require_permission(request, "orders")
+    await _enforce_totp_step_up(actor, payload.get("totp_code"),
+                                 action_label="cobro de mensajería del mercado")
+    r = await _load_redemption_for_fee(rid)
+    km, fee_usdt, fee_usd, muni_name, q = await _price_redemption_fee(payload, r)
+    prev_fee = float(r.get("courier_fee_usd") or 0.0)
+    delta = round(fee_usd - prev_fee, 2)
+    await _apply_courier_fee_balance_delta(r, delta)
+    await db.redemptions.update_one({"id": rid}, {"$set": {
+        "courier_km": km,
+        "courier_fee_usdt": fee_usdt,
+        "courier_fee_usd": fee_usd,
+        "courier_municipality": muni_name,
+        "courier_fee_status": "charged" if fee_usdt > 0 else "manual_review",
+        "courier_rate_snapshot": q["rate_usdt_per_km"],
+        "courier_min_fee_snapshot": q["min_fee_usdt"],
+    }})
+    updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
+    # iter199 — keep the courier delivery job in sync with this charge.
+    try:
+        from services.deliveries import upsert_delivery_for_charge
+        await upsert_delivery_for_charge("redemption", updated or r, km=km,
+                                         fee_usdt=fee_usdt,
+                                         actor_id=actor.get("user_id"))
+    except Exception as e:
+        logger.error(f"delivery sync failed: {e}")
+    await log_action(
+        db, actor, "redemption.courier_fee", "redemption", rid,
+        summary=f"Mensajería {km} km → {fee_usdt} USDT ({fee_usd} USD) en canje {rid[:8]}",
+        details={"km": km, "fee_usdt": fee_usdt, "fee_usd": fee_usd,
+                 "prev_fee_usd": prev_fee, "delta": delta,
+                 "user_id": r.get("user_id")},
+    )
+    await _notify_redemption_courier_fee(r, rid, km, fee_usdt, fee_usd, delta)
     return updated
 
 
@@ -497,6 +676,12 @@ async def get_admin_settings(request: Request) -> Any:
             "auto_send_monthly_audit": True,
             "auto_send_monthly_vip_ledger": True,
             "referral_bonus_pct": 10.0,
+            "courier_rate_usdt_per_km": 0.5,
+            "courier_free_min_usdt": 1000.0,
+            "courier_min_fee_usdt": 2.0,
+            "courier_share_pct": 80.0,
+            "office_latitude": None,
+            "office_longitude": None,
         }
     # Missing / non-False → treated as enabled (matches scheduler.py opt-out semantics)
     raw_flag = doc.get("auto_send_monthly_audit")
@@ -507,23 +692,45 @@ async def get_admin_settings(request: Request) -> Any:
         "defensive_margin_pct": doc.get("defensive_margin_pct"),
         "ops_notifications_email": doc.get("ops_notifications_email"),
         "office_address": doc.get("office_address"),
+        "cash_provinces": doc.get("cash_provinces"),
         "auto_send_monthly_audit": raw_flag is not False,
         "auto_send_monthly_vip_ledger": raw_vip_flag is not False,
         "referral_bonus_pct": float(raw_pct) if raw_pct is not None else 10.0,
+        "courier_rate_usdt_per_km": float(doc.get("courier_rate_usdt_per_km")
+                                          if doc.get("courier_rate_usdt_per_km") is not None else 0.5),
+        "courier_free_min_usdt": float(doc.get("courier_free_min_usdt")
+                                       if doc.get("courier_free_min_usdt") is not None else 1000.0),
+        "courier_min_fee_usdt": float(doc.get("courier_min_fee_usdt")
+                                      if doc.get("courier_min_fee_usdt") is not None else 2.0),
+        "courier_share_pct": float(doc.get("courier_share_pct")
+                                   if doc.get("courier_share_pct") is not None else 80.0),
+        "office_latitude": doc.get("office_latitude"),
+        "office_longitude": doc.get("office_longitude"),
     }
+
+
+async def _validate_settings_payload(data: dict) -> dict:
+    """Normalización + validaciones ligeras del payload de settings."""
+    if "ops_notifications_email" in data:
+        ops_email = (data.get("ops_notifications_email") or "").strip() or None
+        if ops_email and ("@" not in ops_email or " " in ops_email):
+            raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
+        data["ops_notifications_email"] = ops_email
+    if "cash_provinces" in data and data["cash_provinces"] is not None:
+        from routes.orders import CUBA_PROVINCES
+        bad = [p for p in data["cash_provinces"] if p not in CUBA_PROVINCES]
+        if bad:
+            raise HTTPException(status_code=400,
+                                detail=f"Provincias no válidas: {', '.join(bad)}")
+    return data
 
 
 @router.put("/admin/settings")
 async def update_admin_settings(payload: AdminSettings, request: Request) -> Any:
     actor = await require_admin(request)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar configuración")
-    data = payload.model_dump(exclude={"totp_code"}, exclude_unset=True)
-    # Normalise empty string → None and validate light email shape
-    if "ops_notifications_email" in data:
-        ops_email = (data.get("ops_notifications_email") or "").strip() or None
-        if ops_email and ("@" not in ops_email or " " in ops_email):
-            raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
-        data["ops_notifications_email"] = ops_email
+    data = await _validate_settings_payload(
+        payload.model_dump(exclude={"totp_code"}, exclude_unset=True))
     data["id"] = "global"
     await db.settings.update_one({"id": "global"}, {"$set": data}, upsert=True)
     await log_action(db, actor, "settings.update", "settings", "global",
@@ -561,6 +768,7 @@ class TxnFilters:
         until: Optional[str] = None,
         min_amount: Optional[float] = None,
         max_amount: Optional[float] = None,
+        client: Optional[str] = None,
     ):
         _validate_txn_filters(direction, min_amount, max_amount)
         self.direction = direction
@@ -570,11 +778,13 @@ class TxnFilters:
         self.until = until
         self.min_amount = min_amount
         self.max_amount = max_amount
+        self.client = client
 
     async def build_items(self) -> list:
         return await build_transactions(
             self.direction, self.currency, self.holder,
             self.since, self.until, self.min_amount, self.max_amount,
+            client=self.client,
         )
 
     def as_dict(self) -> dict:
@@ -586,6 +796,7 @@ class TxnFilters:
             "until": self.until,
             "min_amount": self.min_amount,
             "max_amount": self.max_amount,
+            "client": self.client,
         }
 
 

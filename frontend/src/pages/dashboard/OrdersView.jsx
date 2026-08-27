@@ -164,6 +164,19 @@ export default function OrdersView() {
               <Row label={t("orders.delivery")} value={selected.delivery_method} />
               <Row label={t("orders.details")} value={selected.delivery_details || "—"} />
               <Row label={t("orders.holder")} value={selected.sender_name} />
+              {selected.payment_reference && (
+                <Row
+                  label={t("orders.paymentRef")}
+                  value={
+                    <CopyableText
+                      value={selected.payment_reference}
+                      label={t("orders.paymentRef")}
+                      toastMessage={t("exchange.refCopied")}
+                      testid="my-order-payment-ref-copy"
+                    />
+                  }
+                />
+              )}
               <Row label={t("orders.colStatus")} value={statusLabel(selected.status)} />
               {selected.admin_note && <Row label={t("orders.adminNote")} value={selected.admin_note} />}
             </div>

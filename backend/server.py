@@ -36,6 +36,7 @@ from routes.admin_withdrawals import router as admin_withdrawals_router  # noqa:
 from routes.admin_users import router as admin_users_router  # noqa: E402
 from routes.admin_audit import router as admin_audit_router  # noqa: E402
 from routes.admin_company_funds import router as admin_company_funds_router  # noqa: E402
+from routes.company_fund_accounts import router as company_fund_accounts_router  # noqa: E402
 from routes.admin_profitability import router as admin_profitability_router  # noqa: E402
 from routes.admin_revenue import router as admin_revenue_router  # noqa: E402
 from routes.files import router as files_router  # noqa: E402
@@ -48,12 +49,17 @@ from routes.live import router as live_router  # noqa: E402
 from routes.support import router as support_router  # noqa: E402
 from routes.vip_requests import router as vip_requests_router  # noqa: E402
 from routes.vip_batches import router as vip_batches_router  # noqa: E402
+from routes.deliveries import router as deliveries_router  # noqa: E402
+from routes.delivery_chat import router as delivery_chat_router  # noqa: E402
+from routes.municipality_rates import router as municipality_rates_router  # noqa: E402
 from routes.vip_ledger_ops import router as vip_ledger_ops_router  # noqa: E402
 from routes.deposits import router as deposits_router  # noqa: E402
 from routes.referrals import router as referrals_router  # noqa: E402
 from routes.payment_accounts import router as payment_accounts_router  # noqa: E402
 from routes.qr_poster import router as qr_poster_router  # noqa: E402
+from routes.crypto_addresses import router as crypto_addresses_router  # noqa: E402
 from routes.reconciliation import router as reconciliation_router  # noqa: E402
+from routes.ops_report import router as ops_report_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -88,6 +94,7 @@ api_router.include_router(admin_withdrawals_router)
 api_router.include_router(admin_users_router)
 api_router.include_router(admin_audit_router)
 api_router.include_router(admin_company_funds_router)
+api_router.include_router(company_fund_accounts_router)
 api_router.include_router(admin_profitability_router)
 api_router.include_router(admin_revenue_router)
 api_router.include_router(files_router)
@@ -100,12 +107,17 @@ api_router.include_router(live_router)
 api_router.include_router(support_router)
 api_router.include_router(vip_requests_router)
 api_router.include_router(vip_batches_router)
+api_router.include_router(deliveries_router)
+api_router.include_router(delivery_chat_router)
+api_router.include_router(municipality_rates_router)
 api_router.include_router(vip_ledger_ops_router)
 api_router.include_router(deposits_router)
 api_router.include_router(payment_accounts_router)
 api_router.include_router(referrals_router)
 api_router.include_router(qr_poster_router)
+api_router.include_router(crypto_addresses_router)
 api_router.include_router(reconciliation_router)
+api_router.include_router(ops_report_router)
 
 app.include_router(api_router)
 
@@ -138,6 +150,20 @@ async def start_background_jobs() -> None:
     from services.security_events import ensure_indexes as security_events_indexes
     from services.security_alerts import ensure_indexes as security_alerts_indexes
     from services.cloudflare_blocks import ensure_indexes as cloudflare_blocks_indexes
+
+    # iter205 — sin coordenadas de oficina TODAS las cotizaciones de
+    # mensajería caen a revisión manual: avisar fuerte en el arranque.
+    try:
+        _s = await db.settings.find_one(
+            {"id": "global"},
+            {"_id": 0, "office_latitude": 1, "office_longitude": 1})
+        if not _s or _s.get("office_latitude") is None or _s.get("office_longitude") is None:
+            logging.getLogger("courier").warning(
+                "[courier] office_latitude/office_longitude SIN CONFIGURAR — "
+                "las cotizaciones de mensajería caerán a revisión manual. "
+                "Configúralas en Panel Admin → Resumen.")
+    except Exception:
+        pass
 
     # iter55.3 + iter55.7 — one-shot idempotent migration: strip whitespace
     # (and uppercase) currency codes across ALL collections that store them so

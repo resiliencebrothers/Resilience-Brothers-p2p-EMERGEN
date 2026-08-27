@@ -57,7 +57,11 @@ from services.vip_ledger_reporting import (
     collect_ledger_movements as _collect_ledger_movements,
     DEFAULT_RANGE_DAYS,  # noqa: F401  (kept for backwards compat)
 )
-from routes.vip_batches import _ensure_ledger, _increment_ledger, _serialize
+from services.vip_batch_ops import (
+    ensure_ledger as _ensure_ledger,
+    increment_ledger as _increment_ledger,
+    serialize_doc as _serialize,
+)
 from vip_ledger_pdf import generate_vip_ledger_pdf
 from email_service import notify_vip_ledger_statement, VipLedgerEmailContext
 
@@ -183,6 +187,22 @@ async def _notify_vip(kind: str, doc: dict, approved: bool, admin_note: str = ""
         )
     except Exception as e:  # noqa: BLE001
         logger.error(f"[vip_ledger_ops] vip notify failed: {e}")
+    # iter197 — email mirror so the decision reaches the VIP even when they
+    # aren't logged in. Best-effort: an email outage never breaks the flow.
+    try:
+        target = await db.users.find_one(
+            {"user_id": doc["vip_user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+        )
+        if target and target.get("email"):
+            from email_service import (notify_capital_deposit_decision,
+                                       notify_settlement_decision)
+            if kind == "capital_deposit":
+                notify_capital_deposit_decision(doc, target, approved, admin_note)
+            else:
+                notify_settlement_decision(doc, target, approved, admin_note)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[vip_ledger_ops] vip email failed: {e}")
 
 
 # ============================================================

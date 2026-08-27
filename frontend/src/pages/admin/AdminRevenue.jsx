@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { toast } from "sonner";
-import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers, Percent } from "lucide-react";
+import { TrendingUp, AlertCircle, Banknote, Users, Boxes, Coins, BarChart3, Layers, Percent, Truck } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
@@ -187,6 +187,17 @@ export default function AdminRevenue() {
           unit="USDT"
           hint={t("admin.revenue.conversions", { n: data.conversion_fees_count || 0 })}
           testid="revenue-usdt-fees"
+        />
+        <BigStat
+          icon={Truck}
+          label={t("admin.revenue.courierProfit")}
+          value={fmt(data.courier_platform_usdt)}
+          unit="USDT"
+          hint={t("admin.revenue.courierDeliveries", {
+            n: data.courier_deliveries_count || 0,
+            paid: fmt(data.courier_couriers_usdt),
+          })}
+          testid="revenue-courier-platform"
         />
         <BigStat icon={Users} label={t("admin.revenue.p2pVolume")} value={fmt(data.total_volume_usdt)} unit="USDT" />
       </div>

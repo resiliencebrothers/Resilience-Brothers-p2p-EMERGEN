@@ -11,8 +11,9 @@ import { Switch } from "@/components/ui/switch";
 const NUMBER_FIELDS = [
   "auto_match_score", "manual_review_score", "minimum_score_difference",
   "date_window_days", "amount_tolerance_pct", "max_auto_confirmation_amount",
+  "surname_match_threshold",
 ];
-const SWITCH_FIELDS = ["auto_match_enabled", "require_exact_amount", "enable_ocr"];
+const SWITCH_FIELDS = ["auto_match_enabled", "require_exact_amount", "require_account_match", "enable_ocr"];
 
 export default function ConfigTab() {
   const { t } = useTranslation();

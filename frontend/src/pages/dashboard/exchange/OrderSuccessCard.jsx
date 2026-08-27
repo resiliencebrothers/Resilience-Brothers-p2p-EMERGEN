@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2 } from "lucide-react";
+import CopyableText from "@/components/CopyableText";
 
 /**
  * Order-confirmation card shown after a successful `POST /api/orders`.
@@ -35,6 +36,20 @@ export default function OrderSuccessCard({ success, onNewOrder }) {
           </div>
         )}
       </div>
+      {success.payment_reference && (
+        <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-4 mb-6 text-left" data-testid="order-payment-ref">
+          <div className="micro-label text-neutral-500 mb-1">{t("exchange.paymentRefLabel")}</div>
+          <div className="text-lg text-[#A78BFA]">
+            <CopyableText
+              value={success.payment_reference}
+              label={t("exchange.paymentRefLabel")}
+              toastMessage={t("exchange.refCopied")}
+              testid="order-payment-ref-copy"
+            />
+          </div>
+          <p className="text-xs text-neutral-500 mt-2">{t("exchange.paymentRefHint")}</p>
+        </div>
+      )}
       <Button
         data-testid="new-order-btn"
         onClick={onNewOrder}

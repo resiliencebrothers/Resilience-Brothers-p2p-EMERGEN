@@ -104,6 +104,8 @@ export function LiveStreamProvider({ children, enabled = true }) {
       "vip_batch_item_decision",
       "daily_autoclose",
       "ledger_changed",
+      // iter210 — chat cliente ↔ mensajero en vivo.
+      "delivery_chat_message",
     ].forEach((t) => es.addEventListener(t, forward(t)));
 
     es.addEventListener("error", () => {

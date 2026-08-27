@@ -4,6 +4,7 @@ import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { API } from "@/App";
+import CopyableText from "@/components/CopyableText";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -784,7 +785,19 @@ function BatchDetailDialog({ batch, onClose, onChanged }) {
               )}
               {items.map((it) => (
                 <tr key={it.id} className="border-b border-white/5" data-testid={`item-row-${it.id}`}>
-                  <td className={`px-3 py-2 text-white ${it.card_number ? "font-mono whitespace-nowrap" : ""}`}>{it.card_number || it.holder_name}</td>
+                  <td className={`px-3 py-2 text-white ${it.card_number ? "font-mono whitespace-nowrap" : ""}`}>
+                    {it.card_number || it.holder_name}
+                    {it.payment_reference && (
+                      <div className="text-[0.65rem] text-neutral-500 mt-0.5 font-normal" data-testid={`item-ref-${it.id}`}>
+                        <CopyableText
+                          value={it.payment_reference}
+                          label={t("vipBatches.itemRef")}
+                          toastMessage={t("vipBatches.refCopied")}
+                          testid={`item-ref-copy-${it.id}`}
+                        />
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 font-mono text-white text-right whitespace-nowrap">
                     {Number(it.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     <span className="text-[0.6rem] text-neutral-500 ml-1">{it.from_code || it.currency}</span>

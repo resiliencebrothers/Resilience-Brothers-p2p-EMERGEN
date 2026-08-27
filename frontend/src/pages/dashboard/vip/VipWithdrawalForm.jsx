@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { CRYPTO_NETWORKS, validateCryptoAddress } from "@/services/cryptoValidators";
+import { CRYPTO_NETWORKS, validateCryptoAddress, detectAddressFamily } from "@/services/cryptoValidators";
+import { CryptoAddressField } from "./AddressTools";
 import { getDeliveryValidator } from "@/services/delivery_validators";
+import CourierQuotePicker from "@/components/CourierQuotePicker";
 import { toast } from "sonner";
 import { ArrowDownToLine, ShieldCheck, Lock } from "lucide-react";
 
@@ -42,12 +44,34 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
   const [cashReceiverName, setCashReceiverName] = useState("");
   const [cashReceiverPhone, setCashReceiverPhone] = useState("");
   const [cashReceiverAddress, setCashReceiverAddress] = useState("");
-  const [cashReceiverId, setCashReceiverId] = useState(""); // opcional (Cuba: carné)
-  const [beneficiaryName, setBeneficiaryName] = useState("");
+  const [cashReceiverId, setCashReceiverId] = useState("");
+  // iter192 — cash delivery province (availability controlled by admin).
+  const [cashProvince, setCashProvince] = useState("");
+  const [provinces, setProvinces] = useState([]);
+
+  useEffect(() => {
+    if (method !== "cash" || provinces.length) return;
+    axios.get(`${API}/vip/cash-provinces`, { withCredentials: true })
+      .then((r) => setProvinces(r.data?.provinces || []))
+      .catch(() => setProvinces([]));
+  }, [method, provinces.length]); // opcional (Cuba: carné)
   const [totpCode, setTotpCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [cryptoNetwork, setCryptoNetwork] = useState("TRC20");
   const [methodsMap, setMethodsMap] = useState(null);
+  // iter198 — courier fee quote for cash withdrawals (per-km pricing +
+  // free-above-threshold badge).
+  const [courierQuote, setCourierQuote] = useState(null);
+  const [deliveryCoords, setDeliveryCoords] = useState(null);
+  // iter205 — resultado del cálculo de ruta (obligatorio para enviar) y
+  // modalidad: entrega a domicilio (mensajería) o recogida en oficina.
+  const [routeQuote, setRouteQuote] = useState(null);
+  const [cashDeliveryMode, setCashDeliveryMode] = useState("courier");
+
+  useEffect(() => {
+    setRouteQuote(null);
+    setDeliveryCoords(null);
+  }, [cashReceiverAddress, cashDeliveryMode, currency]);
 
   // Fetch allowed delivery methods for every balance currency so we can
   // filter the dropdown down to the ones compatible with `method`.
@@ -79,6 +103,21 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
 
   const selBal = (balances.balances || []).find((b) => b.currency === currency);
 
+  useEffect(() => {
+    if (method !== "cash" || !currency) { setCourierQuote(null); return undefined; }
+    const amt = parseFloat(amount) || 0;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      axios.get(`${API}/vip/courier-fee-quote`, {
+        params: { currency, amount: amt },
+        withCredentials: true,
+      })
+        .then((r) => { if (!cancelled) setCourierQuote(r.data); })
+        .catch(() => { if (!cancelled) setCourierQuote(null); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [method, currency, amount]);
+
   const cryptoAddressMatch = useMemo(() => {
     if (method !== "crypto") return null;
     if (!details || !details.trim()) return null;
@@ -100,19 +139,35 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
 
   const composedCashDetails = useMemo(() => {
     if (method !== "cash") return "";
-    const lines = [
-      `Nombre: ${cashReceiverName.trim()}`,
-      `Celular: ${cashReceiverPhone.trim()}`,
-      `Dirección: ${cashReceiverAddress.trim()}`,
-    ];
+    const lines = cashDeliveryMode === "office_pickup"
+      ? [
+          "Modalidad: Recogida en oficina",
+          `Nombre: ${cashReceiverName.trim()}`,
+          `Celular: ${cashReceiverPhone.trim()}`,
+        ]
+      : [
+          `Provincia: ${cashProvince}`,
+          `Nombre: ${cashReceiverName.trim()}`,
+          `Celular: ${cashReceiverPhone.trim()}`,
+          `Dirección: ${cashReceiverAddress.trim()}`,
+        ];
     if (cashReceiverId.trim()) lines.push(`ID / Carné: ${cashReceiverId.trim()}`);
     return lines.join("\n");
-  }, [method, cashReceiverName, cashReceiverPhone, cashReceiverAddress, cashReceiverId]);
+  }, [method, cashDeliveryMode, cashProvince, cashReceiverName, cashReceiverPhone, cashReceiverAddress, cashReceiverId]);
+
+  // iter184 — typing/scanning an address auto-selects the compatible network.
+  const handleAddressChange = (val) => {
+    setDetails(val);
+    const fam = detectAddressFamily(val);
+    if (fam === "tron") setCryptoNetwork("TRC20");
+    else if (fam === "evm") setCryptoNetwork("BEP20");
+  };
 
   const resetForm = () => {
-    setAmount(""); setDetails(""); setBeneficiaryName(""); setTotpCode("");
+    setAmount(""); setDetails(""); setTotpCode("");
     setCashReceiverName(""); setCashReceiverPhone("");
-    setCashReceiverAddress(""); setCashReceiverId("");
+    setCashReceiverAddress(""); setCashReceiverId(""); setCashProvince("");
+    setDeliveryCoords(null); setRouteQuote(null); setCashDeliveryMode("courier");
   };
 
   const validate = (amt) => {
@@ -121,14 +176,22 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
       return t("withdraw.insufficientBalance");
     }
     if (method === "cash") {
+      const pickup = cashDeliveryMode === "office_pickup";
+      if (!pickup && !cashProvince) {
+        return t("withdraw.errProvince");
+      }
       if (!cashReceiverName.trim() || cashReceiverName.trim().length < 3) {
         return t("withdraw.errReceiverName");
       }
       if (!cashReceiverPhone.trim() || cashReceiverPhone.trim().length < 6) {
         return t("withdraw.errReceiverPhone");
       }
-      if (!cashReceiverAddress.trim() || cashReceiverAddress.trim().length < 5) {
+      if (!pickup && (!cashReceiverAddress.trim() || cashReceiverAddress.trim().length < 5)) {
         return t("withdraw.errReceiverAddress");
+      }
+      // iter205 — el costo de mensajería DEBE calcularse antes de enviar.
+      if (!pickup && courierQuote?.enabled && !courierQuote?.free && !routeQuote) {
+        return t("withdraw.errCourierQuoteRequired");
       }
     } else if (!details) {
       return t("withdraw.errDetailsRequired");
@@ -141,9 +204,6 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
     }
     if (method === "transfer" && transferValidator && transferFeedback && !transferFeedback.ok) {
       return transferFeedback.feedback.replace(/^⚠\s*/, "");
-    }
-    if (!beneficiaryName || beneficiaryName.trim().length < 2) {
-      return t("withdraw.errBeneficiaryName");
     }
     if (!totpCode || totpCode.length < 6) {
       return t("withdraw.err2FA");
@@ -162,7 +222,14 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
         currency,
         method,
         details: method === "cash" ? composedCashDetails : details,
-        beneficiary_name: beneficiaryName.trim(),
+        beneficiary_name: method === "cash" ? cashReceiverName.trim() : "",
+        ...(method === "cash" ? { province: cashProvince, cash_delivery_mode: cashDeliveryMode } : {}),
+        ...(method === "cash" && cashDeliveryMode === "courier" && deliveryCoords
+          ? { delivery_latitude: deliveryCoords.lat, delivery_longitude: deliveryCoords.lon }
+          : {}),
+        ...(method === "cash" && cashDeliveryMode === "courier" && routeQuote?.municipality
+          ? { courier_municipality: routeQuote.municipality }
+          : {}),
         crypto_network: method === "crypto" ? cryptoNetwork : null,
         totp_code: totpCode.trim(),
       }, { withCredentials: true });
@@ -187,6 +254,39 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
   };
 
   const noCurrencies = methodsMap !== null && currencyOptions.length === 0;
+
+  const amountBlock = (
+    <div>
+      <Label className="micro-label text-neutral-500">{t("withdraw.amountLabel")}</Label>
+      <Input data-testid="withdraw-amount" type="number" value={amount}
+        onChange={e => setAmount(e.target.value)}
+        className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
+      {selBal && (
+        <div className="flex items-center justify-between text-xs mt-2">
+          <span className="text-neutral-500">
+            {t("withdraw.availableLabel")}:{" "}
+            <span className="text-white font-mono" data-testid="withdraw-available">
+              {Number(selBal.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
+            </span>
+          </span>
+          <button
+            type="button"
+            data-testid="withdraw-max-btn"
+            onClick={() => setAmount(String(selBal.amount || 0))}
+            className="text-[#8B5CF6] hover:text-[#A78BFA] font-semibold uppercase tracking-widest text-[0.65rem]"
+          >
+            {t("withdraw.allBtn")}
+          </button>
+        </div>
+      )}
+      {Number(selBal?.frozen) > 0 && (
+        <div className="flex items-center gap-1.5 text-[0.65rem] text-amber-400 mt-1" data-testid="withdraw-frozen-hint">
+          <Lock className="w-3 h-3" />
+          {t("withdraw.frozenLabel")}: {Number(selBal.frozen).toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="tactile-card p-6">
@@ -229,98 +329,172 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
             </Select>
           </FormField>
 
-          <div>
-            <Label className="micro-label text-neutral-500">{t("withdraw.amountLabel")}</Label>
-            <Input data-testid="withdraw-amount" type="number" value={amount}
-              onChange={e => setAmount(e.target.value)}
-              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
-            {selBal && (
-              <div className="flex items-center justify-between text-xs mt-2">
-                <span className="text-neutral-500">
-                  {t("withdraw.availableLabel")}:{" "}
-                  <span className="text-white font-mono" data-testid="withdraw-available">
-                    {Number(selBal.amount || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  data-testid="withdraw-max-btn"
-                  onClick={() => setAmount(String(selBal.amount || 0))}
-                  className="text-[#8B5CF6] hover:text-[#A78BFA] font-semibold uppercase tracking-widest text-[0.65rem]"
-                >
-                  {t("withdraw.allBtn")}
-                </button>
+          {method === "crypto" ? (
+            <>
+              <CryptoAddressField
+                currency={currency}
+                details={details}
+                onChange={handleAddressChange}
+                activeNetwork={activeNetwork}
+                cryptoAddressMatch={cryptoAddressMatch}
+                cryptoNetwork={cryptoNetwork}
+                onPickSaved={(a) => { setDetails(a.address); setCryptoNetwork(a.network); }}
+              />
+
+              <div data-testid="crypto-network-block">
+                <Label className="micro-label text-neutral-500">
+                  {t("withdraw.networkLabel")} <span className="text-[#8B5CF6]">*</span>
+                </Label>
+                <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
+                  <SelectTrigger data-testid="withdraw-crypto-network"
+                    className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
+                    <SelectValue placeholder={t("withdraw.selectNetwork")} />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+                    {CRYPTO_NETWORKS.map((n) => (
+                      <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[0.65rem] text-neutral-500 mt-1">
+                  {cryptoAddressMatch === true
+                    ? t("withdraw.networkAutoDetected")
+                    : t("withdraw.chooseCorrectNetwork")}
+                </p>
               </div>
-            )}
-            {Number(selBal?.frozen) > 0 && (
-              <div className="flex items-center gap-1.5 text-[0.65rem] text-amber-400 mt-1" data-testid="withdraw-frozen-hint">
-                <Lock className="w-3 h-3" />
-                {t("withdraw.frozenLabel")}: {Number(selBal.frozen).toLocaleString(undefined, { maximumFractionDigits: 4 })} {currency}
-              </div>
-            )}
-          </div>
 
-          {method === "cash" && (
-            <p className="text-[0.65rem] text-[#8B5CF6]">
-              {t("withdraw.cashProgressNote")}
-            </p>
-          )}
-
-          {method === "crypto" && (
-            <div data-testid="crypto-network-block">
-              <Label className="micro-label text-neutral-500">
-                {t("withdraw.networkLabel")} <span className="text-[#8B5CF6]">*</span>
-              </Label>
-              <Select value={cryptoNetwork} onValueChange={setCryptoNetwork}>
-                <SelectTrigger data-testid="withdraw-crypto-network"
-                  className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
-                  <SelectValue placeholder={t("withdraw.selectNetwork")} />
-                </SelectTrigger>
-                <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                  {CRYPTO_NETWORKS.map((n) => (
-                    <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[0.65rem] text-neutral-500 mt-1">
-                {t("withdraw.chooseCorrectNetwork")}
-              </p>
-            </div>
-          )}
-
-          {method === "cash" ? (
-            <CashReceiverFields
-              name={cashReceiverName} setName={setCashReceiverName}
-              phone={cashReceiverPhone} setPhone={setCashReceiverPhone}
-              address={cashReceiverAddress} setAddress={setCashReceiverAddress}
-              id={cashReceiverId} setId={setCashReceiverId}
-            />
+              {amountBlock}
+            </>
           ) : (
-            <NonCashDetailsField
-              method={method} details={details} setDetails={setDetails}
-              activeNetwork={activeNetwork}
-              cryptoAddressMatch={cryptoAddressMatch}
-              transferValidator={transferValidator}
-              transferFeedback={transferFeedback}
-            />
-          )}
+            <>
+              {amountBlock}
 
-          <div>
-            <Label className="micro-label text-neutral-500">
-              {t("withdraw.beneficiaryName2")} <span className="text-[#8B5CF6]">*</span>
-            </Label>
-            <Input
-              data-testid="withdraw-beneficiary"
-              value={beneficiaryName}
-              onChange={(e) => setBeneficiaryName(e.target.value)}
-              placeholder={t("withdraw.cashReceiverNamePh")}
-              className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12"
-              required
-            />
-            <p className="text-[0.65rem] text-neutral-600 mt-1">
-              {t("withdraw.beneficiaryHint")}
-            </p>
-          </div>
+              {method === "cash" && (
+                <p className="text-[0.65rem] text-[#8B5CF6]">
+                  {t("withdraw.cashProgressNote")}
+                </p>
+              )}
+
+              {method === "cash" && (
+                <div data-testid="cash-delivery-mode">
+                  <Label className="micro-label text-neutral-500">{t("withdraw.deliveryModeLabel")}</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <button
+                      type="button"
+                      data-testid="cash-mode-courier"
+                      onClick={() => setCashDeliveryMode("courier")}
+                      className={`px-3 py-2.5 border text-xs font-medium transition-colors text-left ${
+                        cashDeliveryMode === "courier"
+                          ? "border-[#8B5CF6] bg-[#8B5CF6]/10 text-[#A78BFA]"
+                          : "border-white/10 text-neutral-400 hover:border-white/30"
+                      }`}
+                    >
+                      {t("withdraw.modeCourier")}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="cash-mode-pickup"
+                      onClick={() => setCashDeliveryMode("office_pickup")}
+                      className={`px-3 py-2.5 border text-xs font-medium transition-colors text-left ${
+                        cashDeliveryMode === "office_pickup"
+                          ? "border-[#22C55E] bg-[#22C55E]/10 text-[#22C55E]"
+                          : "border-white/10 text-neutral-400 hover:border-white/30"
+                      }`}
+                    >
+                      {t("withdraw.modePickup")}
+                    </button>
+                  </div>
+                  {cashDeliveryMode === "office_pickup" && (
+                    <p className="text-[0.65rem] text-[#22C55E]/90 mt-1.5" data-testid="cash-pickup-hint">
+                      {t("withdraw.modePickupHint")}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {method === "cash" && cashDeliveryMode === "courier" && courierQuote?.enabled && (
+                courierQuote.free ? (
+                  <p
+                    className="text-[0.7rem] text-[#22C55E] border border-[#22C55E]/30 bg-[#22C55E]/5 px-3 py-2 leading-relaxed"
+                    data-testid="withdraw-courier-free"
+                  >
+                    {t("withdraw.courierFreeBadge", { min: courierQuote.free_min_usdt })}
+                  </p>
+                ) : (
+                  <p
+                    className="text-[0.7rem] text-neutral-400 border border-white/10 bg-white/[0.02] px-3 py-2 leading-relaxed"
+                    data-testid="withdraw-courier-fee-note"
+                  >
+                    {t("withdraw.courierFeeNote", {
+                      rate: courierQuote.rate_usdt_per_km,
+                      minFee: courierQuote.min_fee_usdt,
+                      min: courierQuote.free_min_usdt,
+                    })}
+                  </p>
+                )
+              )}
+
+              {method === "cash" ? (
+                <>
+                  {cashDeliveryMode === "courier" && (
+                  <div data-testid="cash-province-block">
+                    <Label className="micro-label text-neutral-500">
+                      {t("withdraw.cashProvinceLabel")} <span className="text-[#8B5CF6]">*</span>
+                    </Label>
+                    <Select value={cashProvince} onValueChange={setCashProvince}>
+                      <SelectTrigger data-testid="withdraw-cash-province"
+                        className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12">
+                        <SelectValue placeholder={t("withdraw.cashProvincePh")} />
+                      </SelectTrigger>
+                      <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-72">
+                        {provinces.map((p) => (
+                          <SelectItem key={p.name} value={p.name} disabled={!p.available}>
+                            {p.name}{!p.available ? ` — ${t("withdraw.provinceUnavailable")}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[0.65rem] text-neutral-600 mt-1">
+                      {t("withdraw.cashProvinceHint")}
+                    </p>
+                  </div>
+                  )}
+                  <CashReceiverFields
+                    name={cashReceiverName} setName={setCashReceiverName}
+                    phone={cashReceiverPhone} setPhone={setCashReceiverPhone}
+                    address={cashReceiverAddress} setAddress={setCashReceiverAddress}
+                    id={cashReceiverId} setId={setCashReceiverId}
+                    showAddress={cashDeliveryMode === "courier"}
+                  />
+                  {cashDeliveryMode === "courier" && courierQuote?.enabled && !courierQuote?.free && (
+                    <>
+                      <CourierQuotePicker
+                        currency={currency}
+                        amount={parseFloat(amount) || 0}
+                        addressText={cashReceiverAddress}
+                        province={cashProvince}
+                        onCoords={setDeliveryCoords}
+                        onQuote={setRouteQuote}
+                      />
+                      {!routeQuote && (
+                        <p className="text-[0.65rem] text-amber-400" data-testid="courier-quote-required-hint">
+                          {t("withdraw.courierQuoteRequiredHint")}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                <NonCashDetailsField
+                  method={method} details={details} setDetails={setDetails}
+                  activeNetwork={activeNetwork}
+                  cryptoAddressMatch={cryptoAddressMatch}
+                  transferValidator={transferValidator}
+                  transferFeedback={transferFeedback}
+                />
+              )}
+            </>
+          )}
 
           <TotpField totpCode={totpCode} setTotpCode={setTotpCode} />
 
@@ -345,7 +519,7 @@ function FormField({ label, children }) {
 }
 
 
-function CashReceiverFields({ name, setName, phone, setPhone, address, setAddress, id, setId }) {
+function CashReceiverFields({ name, setName, phone, setPhone, address, setAddress, id, setId, showAddress = true }) {
   const { t } = useTranslation();
   return (
     <div className="space-y-3" data-testid="cash-receiver-block">
@@ -376,6 +550,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
           required
         />
       </div>
+      {showAddress && (
       <div>
         <Label className="micro-label text-neutral-500">
           {t("withdraw.cashReceiverAddressLabel")} <span className="text-[#8B5CF6]">*</span>
@@ -390,6 +565,7 @@ function CashReceiverFields({ name, setName, phone, setPhone, address, setAddres
           required
         />
       </div>
+      )}
       <div>
         <Label className="micro-label text-neutral-500">
           {t("withdraw.cashReceiverIdLabel")}{" "}
@@ -439,7 +615,7 @@ function NonCashDetailsField({ method, details, setDetails, activeNetwork, crypt
         placeholder={
           method === "crypto"
             ? activeNetwork.addressPlaceholder
-            : (transferValidator?.example || t("withdraw.detailsPhTransfer"))
+            : t("withdraw.detailsPhTransfer")
         }
         className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 font-mono"
       />

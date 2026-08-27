@@ -1,0 +1,53 @@
+{
+  "summary": "iter205 candados de mensajería — Frontend UI (VipWithdrawalForm cash) + Backend regression (transfer/crypto/redemption). All 10/10 backend tests PASS (7 iter205 locks + 3 new regression). Frontend E2E: all 6 requested cash-withdrawal UI flows verified (courier vs pickup mode toggle, mandatory quote hint, calc button → km+cost result, submit blocked without quote, pickup mode hides address/province + shows waiver hint). Found one preview-env configuration gap that was blocking iter205 backend tests until fixed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "settings.global (preview DB)",
+        "issue": "settings.global did NOT have office_latitude/office_longitude set — the review request stated they were 'ya seteado' but they were missing. This caused every 'courier' mode withdrawal with coordinates to fall back to courier_fee_status='manual_review' (reason: office_not_configured), making 2/7 iter205 lock tests fail. FIXED in this iteration by upserting office_latitude=23.1136 office_longitude=-82.3666 into settings.global. Main agent should ensure the seed/migration for iter198 courier config re-runs on env spin-up so this can't regress."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter205_regression.py",
+    "/app/backend/tests/test_iter205_cash_courier_locks.py",
+    "/app/test_reports/pytest/iter205_all.xml"
+  ],
+  "action_items": [
+    "Ensure office_latitude/office_longitude are seeded in settings.global on every env bootstrap (or add a startup migration) — was missing in the preview DB despite the review-request claiming otherwise. Applied fix here but it will regress on reset.",
+    "Optional: consider adding a startup log warning when courier config is enabled but office coords are None — silent 'manual_review' fallback is easy to miss."
+  ],
+  "critical_code_review_comments": [
+    "validate() correctly gates the courier-quote requirement BEFORE the TOTP check (VipWithdrawalForm.jsx:193-195), so users see the actionable 'calcular mensajería' toast without having to enter TOTP first — good UX.",
+    "CourierQuotePicker.jsx correctly calls onQuote(null) on every re-search (line 24) so the parent's routeQuote is invalidated and the submit-block re-engages — good.",
+    "useEffect at VipWithdrawalForm.jsx:71-74 resets routeQuote/deliveryCoords whenever address/mode/currency change — prevents stale quotes leaking through a mode switch. Good defensive coding.",
+    "The composedCashDetails for office_pickup omits Provincia/Dirección (lines 143-147) — matches backend expectation of 'Modalidad: Recogida en oficina' prefix used by _assert_cash_courier_ready to short-circuit the lock. Consistent contract front↔back."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter205_regression.py (NEW — 3 regression tests)",
+    "MongoDB: settings.global +office_latitude/office_longitude (env config fix)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all 6 requested UI flows verified)"},
+  "test_credentials": "Cookies session_token=test_session_admin_X / test_session_vip_X (also work as Bearer). TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP.",
+  "seed_data_creation": "During run: test products/redemptions/withdrawals — all cleaned up in test teardowns. VIP CUP balance was set to 20000 for test; VIP vip_balance_usd is now 1977.8 (was 2000 before regression test; the redemption test deducted $20 product + ~$2.2 courier fee, then delivered — this is the expected end-state after test flows).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter205 candados fully validated end-to-end. Backend: 7 locks (test_iter205_cash_courier_locks.py) + 3 regression (test_iter205_regression.py). Frontend: cash-delivery-mode selector works, courier mode enforces route quote via CourierQuotePicker (calc btn hits /vip/geo-search + /vip/courier-route-quote), submit blocked with toast 'Tap Calculate courier fee...' when quote missing, pickup mode hides province+address and shows waiver hint. IMPORTANT: preview DB was missing settings.global.office_latitude/office_longitude — upserted to 23.1136 / -82.3666 (Havana office). If iter198+ tests fail with 'manual_review' + 'office_not_configured', re-apply this fix.",
+  "verified_flows": [
+    "/dashboard/vip → vip-action-buttons[1] (Retirar) → panel-withdraw opens",
+    "method-option-cash → cash-delivery-mode selector renders with cash-mode-courier + cash-mode-pickup",
+    "Courier mode + CUP + 100 CUP + La Habana + Hotel habana libre → courier-quote-required-hint visible",
+    "Submit without calc → toast 'Tap Calculate courier fee to know the delivery cost before requesting the withdrawal' + form stays open (no withdrawal created)",
+    "courier-quote-calc-btn → Nominatim ~2s → single/multi results → courier-quote-result shows km=4.25 + cost=2.13 USDT ≈ 809.4 CUP → hint disappears",
+    "cash-mode-pickup → cash-province-block hidden, cash-receiver-address hidden, cash-pickup-hint visible",
+    "REGRESSION: POST /api/vip/withdraw method=transfer USD 25 → no courier fields, no delivery job, paid requires proof (400 without) then 200 with proof",
+    "REGRESSION: POST /api/vip/withdraw method=crypto USDT 15 TRC20 → no courier fields, no delivery job, paid requires tx_hash (400 without) then 200 with valid hash — 'mensajero' never appears in error paths",
+    "REGRESSION: POST /api/vip/redeem no coords → manual_review; PUT /admin/redemptions/{rid}/status delivered → 409 'sin cobrar'; POST courier-fee km=3 → 200 delivery created; delivered → 409 mensajero; mark delivery=delivered in DB → 200"
+  ]
+}

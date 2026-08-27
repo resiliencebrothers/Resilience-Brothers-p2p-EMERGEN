@@ -31,6 +31,7 @@ export default function TotpPromptDialog({
   onConfirm,
   onCancel,
   busy = false,
+  children = null,
 }) {
   const navigate = useNavigate();
   const [code, setCode] = useState("");
@@ -63,6 +64,7 @@ export default function TotpPromptDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          {children}
           <div>
             <Label className="micro-label text-[#8B5CF6]">Código 2FA</Label>
             <Input

@@ -270,6 +270,16 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
     }
     await db.deposits.insert_one(dict(doc))
     doc.pop("_id", None)
+    # iter208 — For cash + courier-pickup deposits, spawn a delivery job
+    # so the courier can accept the pickup and staff can only CONFIRM the
+    # deposit once the courier marks the pickup as delivered.
+    if method == "cash" and cash_mode == "courier":
+        try:
+            from services.deliveries import ensure_delivery_job
+            await ensure_delivery_job("deposit", doc, km=0.0, fee_usdt=0.0,
+                                       actor_id=user["user_id"])
+        except Exception as e:
+            logger.error(f"[deposits] delivery job creation failed: {e}")
     await log_action(
         db=db, actor=user, action="deposit.create",
         entity_type="deposit", entity_id=doc["id"],
@@ -277,6 +287,19 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
                  "cash_mode": cash_mode},
     )
     await _notify_staff_new_deposit(doc)
+    # iter196 — email the client confirming the deposit request landed in
+    # the review queue ("en proceso"). Wrapped so Resend outages never
+    # break the create flow.
+    try:
+        from email_service import notify_deposit_received
+        client_row = await db.users.find_one(
+            {"user_id": user["user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+        )
+        if client_row and client_row.get("email"):
+            notify_deposit_received(doc, client_row)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[deposits] client received-email failed: {e}")
     try:
         from services.live_bus import publish as live_publish
         await live_publish("deposit_created", {"id": doc["id"], "user_name": doc["user_name"],
@@ -316,6 +339,26 @@ async def admin_list_deposits(request: Request, status: Optional[str] = None,
         rx = {"$regex": re.escape(user_q.strip()), "$options": "i"}
         q["$or"] = [{"user_name": rx}, {"user_email": rx}]
     rows = await db.deposits.find(q, {"_id": 0}).sort("created_at", -1).to_list(min(max(1, limit), 500))
+    # iter208 — attach courier pickup status so the frontend can disable
+    # "Confirmar" until the courier confirms the pickup for cash-courier deposits.
+    cash_ids = [d["id"] for d in rows
+                if d.get("method") == "cash"
+                and d.get("cash_mode") == "courier"
+                and d.get("status") == "pending"]
+    if cash_ids:
+        jobs = await db.deliveries.find(
+            {"kind": "deposit", "ref_id": {"$in": cash_ids},
+             "status": {"$ne": "cancelled"}},
+            {"_id": 0, "ref_id": 1, "status": 1, "courier_id": 1,
+             "courier_name": 1},
+        ).to_list(len(cash_ids))
+        by_ref = {j["ref_id"]: j for j in jobs}
+        for d in rows:
+            if d["id"] in by_ref:
+                j = by_ref[d["id"]]
+                d["courier_delivery_status"] = j.get("status")
+                d["courier_delivery_courier_name"] = j.get("courier_name") or ""
+                d["courier_delivery_assigned"] = bool(j.get("courier_id"))
     pending = await db.deposits.count_documents({"status": "pending"})
     return {"items": rows, "pending": pending}
 
@@ -343,6 +386,45 @@ async def admin_confirm_deposit(dep_id: str, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
+    # iter208 — For cash+courier deposits: only allow confirmation once the
+    # courier has picked up the money. The delivery job must exist and be
+    # in a "delivered" / "confirmed" state.
+    if doc.get("method") == "cash" and doc.get("cash_mode") == "courier":
+        job = await db.deliveries.find_one(
+            {"kind": "deposit", "ref_id": dep_id,
+             "status": {"$ne": "cancelled"}}, {"_id": 0})
+        if not job:
+            raise HTTPException(
+                status_code=409,
+                detail=("No hay trabajo de mensajería para esta recogida. "
+                        "Créalo en la sección Mensajería antes de confirmar."))
+        if job.get("status") not in ("delivered", "confirmed"):
+            if not job.get("courier_id"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=("Ningún mensajero ha tomado la recogida todavía. "
+                            "Asigna un mensajero o espera a que uno la acepte."))
+            raise HTTPException(
+                status_code=409,
+                detail=(f"El mensajero {job.get('courier_name') or ''} aún no "
+                        "confirmó haber recogido el dinero. Espera su "
+                        "confirmación antes de aprobar el depósito."))
+    return await _do_confirm_deposit(doc, staff)
+
+
+async def confirm_deposit_from_delivery(dep_id: str, staff: dict) -> Any:
+    """iter209b — Al confirmar la recogida en Mensajería, el depósito cash
+    vinculado se confirma automáticamente (acredita el saldo al cliente)."""
+    doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
+    if not doc or doc["status"] != "pending":
+        return None
+    return await _do_confirm_deposit(doc, staff)
+
+
+async def _do_confirm_deposit(doc: dict, staff: dict) -> Any:
+    """Núcleo de la confirmación (acredita saldo + notifica). Compartido por
+    el endpoint y la sincronización automática desde mensajería (iter209b)."""
+    dep_id = doc["id"]
     now = iso(now_utc())
     # Idempotency: flip status first so a double-click can't double-credit.
     res = await db.deposits.update_one(
@@ -364,6 +446,19 @@ async def admin_confirm_deposit(dep_id: str, request: Request) -> Any:
                  "currency": doc["currency"]},
     )
     await _notify_client_decision(fresh, approved=True)
+    # iter196 — success email "Depósito exitoso" mirroring the in-app +
+    # push confirmation. Wrapped so email outages never fail the confirm
+    # flow (funds are already credited at this point).
+    try:
+        from email_service import notify_deposit_confirmed
+        client_row = await db.users.find_one(
+            {"user_id": doc["user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+        )
+        if client_row and client_row.get("email"):
+            notify_deposit_confirmed(fresh, client_row)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[deposits] client confirmed-email failed: {e}")
     try:
         from services.live_bus import publish as live_publish
         await live_publish("balance_updated", {"reason": "deposit", "deposit_id": dep_id},
@@ -399,4 +494,16 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
         details={"user_id": doc["user_id"], "note": payload.admin_note.strip()},
     )
     await _notify_client_decision(fresh, approved=False, admin_note=payload.admin_note.strip())
+    # iter197 — rejection email mirroring the confirm one. Best-effort.
+    try:
+        from email_service import notify_deposit_rejected
+        client_row = await db.users.find_one(
+            {"user_id": doc["user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+        )
+        if client_row and client_row.get("email"):
+            notify_deposit_rejected(fresh, client_row,
+                                    admin_note=payload.admin_note.strip())
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[deposits] client rejected-email failed: {e}")
     return fresh

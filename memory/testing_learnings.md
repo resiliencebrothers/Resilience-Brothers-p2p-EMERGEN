@@ -43,3 +43,8 @@ vez) que SIEMPRE pasan en aislamiento. Causas identificadas (01/08/2026):
   requiere: BD saneada + limpiar `ledger_email_events` + tolerar flakes de
   ventana TOTP. Ante fallo en corrida completa: SIEMPRE re-correr el módulo
   aislado antes de asumir regresión.
+
+## iter200 — Full-suite (1554 tests) vs suites aisladas
+- Correr `pytest tests/` completo produce ~38 fallos por INTERFERENCIA entre archivos (estado compartido en Mongo: settings globales, usuarios de prueba mutados). TODOS pasan aislados. NO son regresiones — triar siempre re-ejecutando el archivo solo antes de tocar código.
+- El full run SÍ vale la pena tras refactors grandes: detectó un decorador de ruta perdido (PUT /admin/orders/{id}/status) que las suites objetivo no cubrían.
+- Al extraer una función que está justo debajo de un decorador @router, verificar SIEMPRE que el decorador quede pegado a la función correcta (grep "@router" ±2 líneas tras el edit).

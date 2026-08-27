@@ -64,7 +64,13 @@ from services.rate_tiers import effective_rates, normalize_tiers
 from services.payment_accounts import (
     get_active_accounts, pick_account, min_required as pa_min_required,
 )
+from services.payment_reference import generate_payment_reference
 from services.vip_batch_alerts import dispatch_vip_batch_alerts
+from services.vip_batch_ops import (
+    serialize_doc, ensure_ledger, refresh_batch_totals,
+    notify_vip_item_decision, staff_pair_allowed, apply_item_decision,
+)
+from services.reconciliation_matcher import schedule_rematch
 
 logger = logging.getLogger("vip_batches")
 
@@ -114,69 +120,6 @@ class RejectPayload(BaseModel):
 # Helpers
 # ============================================================
 
-def _serialize(doc: dict) -> dict:
-    d = dict(doc)
-    d.pop("_id", None)
-    return d
-
-
-async def _ensure_ledger(vip_user_id: str) -> dict:
-    doc = await db.vip_ledger.find_one({"vip_user_id": vip_user_id}, {"_id": 0})
-    if doc:
-        return doc
-    fresh = {
-        "vip_user_id": vip_user_id,
-        "positive_usdt": 0.0,
-        "negative_usdt": 0.0,
-        "updated_at": iso(now_utc()),
-    }
-    await db.vip_ledger.insert_one(dict(fresh))
-    return fresh
-
-
-async def _increment_ledger(vip_user_id: str, direction: str, delta_usdt: float) -> None:
-    field = "positive_usdt" if direction == "credit" else "negative_usdt"
-    await db.vip_ledger.update_one(
-        {"vip_user_id": vip_user_id},
-        {"$inc": {field: float(delta_usdt)},
-         "$set": {"updated_at": iso(now_utc())}},
-        upsert=True,
-    )
-
-
-async def _refresh_batch_totals(batch_id: str) -> None:
-    """Recompute the summary counters on the parent batch."""
-    pipeline = [
-        {"$match": {"batch_id": batch_id}},
-        {"$group": {
-            "_id": "$status",
-            "count": {"$sum": 1},
-            "amount": {"$sum": "$amount"},
-        }},
-    ]
-    rows = await db.vip_batch_items.aggregate(pipeline).to_list(10)
-    counts = {"pending": 0, "approved": 0, "rejected": 0}
-    amount_pending = 0.0
-    amount_approved = 0.0
-    for r in rows:
-        counts[r["_id"]] = r["count"]
-        if r["_id"] == "pending":
-            amount_pending = r["amount"]
-        if r["_id"] == "approved":
-            amount_approved = r["amount"]
-    await db.vip_batches.update_one(
-        {"id": batch_id},
-        {"$set": {
-            "items_pending": counts["pending"],
-            "items_approved": counts["approved"],
-            "items_rejected": counts["rejected"],
-            "amount_pending": round(amount_pending, 2),
-            "amount_approved": round(amount_approved, 2),
-            "updated_at": iso(now_utc()),
-        }},
-    )
-
-
 async def _notify_staff_new_batch(batch: dict) -> None:
     try:
         from routes.notifications import _insert_notification
@@ -205,35 +148,6 @@ async def _notify_staff_new_batch(batch: dict) -> None:
             )
         except Exception as e:  # noqa: BLE001
             logger.error(f"[vip_batches] notify {r['user_id']} failed: {e}")
-
-
-async def _notify_vip_item_decision(item: dict, approved: bool, admin_note: str = "") -> None:
-    try:
-        from routes.notifications import _insert_notification
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[vip_batches] notif import failed: {e}")
-        return
-    if approved:
-        title = "Orden VIP aprobada"
-        if item.get("to_code"):
-            credited = item.get("amount_to") or 0
-            message = (f"{item['holder_name']} · {item['amount']} {item.get('from_code', '')} confirmada — "
-                       f"se acreditaron {credited} {item['to_code']} a tu saldo.")
-        else:
-            message = f"{item['holder_name']} · {item['amount']} {item['currency']} confirmada."
-    else:
-        title = "Orden VIP rechazada"
-        message = admin_note or f"{item['holder_name']} · {item['amount']} {item['currency']} rechazada."
-    try:
-        await _insert_notification(
-            recipient_user_id=item["vip_user_id"],
-            type="vip_batch_item_decision",
-            title=title,
-            message=message,
-            data={"item_id": item["id"], "batch_id": item["batch_id"]},
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[vip_batches] vip notify failed: {e}")
 
 
 def _require_vip(user: dict) -> None:
@@ -290,34 +204,6 @@ async def _allowed_batch_pairs() -> list:
     return items
 
 
-async def _current_pair_rates(from_code: str, to_code: str,
-                              amount: Optional[float] = None) -> tuple:
-    """Return (rate_vip, real_rate) for the pair — 0.0 when missing.
-    iter143 — when `amount` is given and the rate row has amount `tiers`,
-    the matching tier overrides the base rates."""
-    doc = await db.rates.find_one(
-        {"from_code": from_code, "to_code": to_code}, {"_id": 0},
-    )
-    if not doc:
-        return (0.0, 0.0)
-    eff = effective_rates(doc, amount)
-    return (eff["rate_vip"], eff["real_rate"] or 0.0)
-
-
-def _staff_pair_allowed(staff: dict, item: dict) -> bool:
-    """iter113 — per-pair staff RBAC. Admin always passes; employees with an
-    empty/unset `allowed_batch_pairs` keep full access (backward compat);
-    scoped employees can only work items whose pair is in their list."""
-    if staff.get("role") == "admin":
-        return True
-    allowed = staff.get("allowed_batch_pairs") or []
-    if not allowed:
-        return True
-    if not item.get("to_code"):
-        return False  # legacy non-pair items reserved to unscoped staff/admin
-    return f"{item.get('from_code')}->{item.get('to_code')}" in allowed
-
-
 def _requires_cup_card(cur: dict | None) -> bool:  # noqa: ARG001
     """iter161 — ALWAYS False. Business rule changed (owner, Ago 2026): batch
     items credit the client's PLATFORM BALANCE when confirmed; the payout card
@@ -343,7 +229,7 @@ def _normalize_cup_card(raw: Optional[str]) -> Optional[str]:
 async def get_vip_balance(request: Request) -> Any:
     user = await require_user(request)
     _require_vip(user)
-    ledger = await _ensure_ledger(user["user_id"])
+    ledger = await ensure_ledger(user["user_id"])
     return {
         "positive_usdt": round(ledger.get("positive_usdt", 0.0), 2),
         "negative_usdt": round(ledger.get("negative_usdt", 0.0), 2),
@@ -440,7 +326,7 @@ async def create_vip_batch(payload: VipBatchCreate, request: Request) -> Any:
         "vip_email": user.get("email", ""),
         "vip_name": user.get("name", ""),
         "direction": "pair" if pair else payload.direction,
-        "currency": fc if pair else payload.currency.strip().upper(),
+        "currency": fc if pair else (payload.currency or "").strip().upper(),
         "from_code": fc or None,
         "to_code": tc or None,
         "rate_vip": pair["rate_vip"] if pair else None,
@@ -464,7 +350,7 @@ async def create_vip_batch(payload: VipBatchCreate, request: Request) -> Any:
                  "pair": f"{fc}->{tc}" if pair else None},
     )
     await _notify_staff_new_batch(doc)
-    return _serialize(doc)
+    return serialize_doc(doc)
 
 
 @router.post("/vip/batches/{batch_id}/items")
@@ -535,7 +421,7 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
             )
         holder = " ".join((it.holder_name or "").split())
         if requires_card:
-            holder = holder or card
+            holder = holder or (card or "")
         # iter161 — the FULL NAME (first + last) of the account holder who
         # SENDS the transfer is mandatory so staff can match incoming payments.
         if len([w for w in holder.split(" ") if len(w) >= 2]) < 2:
@@ -561,6 +447,7 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
             "payment_account_label": (account or {}).get("label"),
             "payment_account_details": (account or {}).get("account_details"),
             "payment_account_network": (account or {}).get("network"),
+            "payment_reference": generate_payment_reference(),
             "status": "pending",
             "admin_note": None,
             "balance_delta_usdt": None,
@@ -571,10 +458,12 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
             "reviewed_by": None,
         })
     await db.vip_batch_items.insert_many([dict(d) for d in docs])
-    await _refresh_batch_totals(batch_id)
+    await refresh_batch_totals(batch_id)
     # iter148 — massive-inflow threshold alerts (item + cumulative batch total)
     await dispatch_vip_batch_alerts(batch_id, docs, "added")
-    return {"added": len(docs), "items": [_serialize(d) for d in docs]}
+    # iter174 — match the new items against already-imported bank movements.
+    schedule_rematch(batch.get("from_code") or batch.get("currency"))
+    return {"added": len(docs), "items": [serialize_doc(d) for d in docs]}
 
 
 @router.get("/vip/batches")
@@ -586,7 +475,7 @@ async def list_vip_batches(request: Request, status: Optional[str] = None,
     if status in ("open", "closed"):
         q["status"] = status
     cursor = db.vip_batches.find(q, {"_id": 0}).sort("created_at", -1).limit(min(max(1, limit), 200))
-    return {"items": [_serialize(d) async for d in cursor]}
+    return {"items": [serialize_doc(d) async for d in cursor]}
 
 
 @router.get("/vip/batch-stats")
@@ -629,7 +518,7 @@ async def get_vip_batch(batch_id: str, request: Request) -> Any:
     items = await db.vip_batch_items.find(
         {"batch_id": batch_id}, {"_id": 0},
     ).sort("created_at", 1).to_list(MAX_ITEMS_PER_BATCH + 1)
-    return {"batch": _serialize(batch), "items": [_serialize(it) for it in items]}
+    return {"batch": serialize_doc(batch), "items": [serialize_doc(it) for it in items]}
 
 
 @router.post("/vip/batches/{batch_id}/close")
@@ -645,7 +534,7 @@ async def close_vip_batch(batch_id: str, request: Request) -> Any:
         {"id": batch_id},
         {"$set": {"status": "closed", "closed_at": iso(now_utc()), "updated_at": iso(now_utc())}},
     )
-    return _serialize({**batch, "status": "closed", "closed_at": iso(now_utc())})
+    return serialize_doc({**batch, "status": "closed", "closed_at": iso(now_utc())})
 
 
 # ============================================================
@@ -675,27 +564,54 @@ async def admin_vip_batches_pending_count(request: Request) -> Any:
 async def admin_list_vip_batches(request: Request, status: Optional[str] = None,
                                   direction: Optional[str] = None,
                                   pair: Optional[str] = None,
+                                  q: Optional[str] = None,
+                                  date_from: Optional[str] = None,
+                                  date_to: Optional[str] = None,
                                   limit: int = 200) -> Any:
     """Return the flat item queue (what the admin approves one-by-one),
     enriched with parent batch metadata for context. iter113 — employees with
     a non-empty `allowed_batch_pairs` only see items for their pairs.
     Ago 2026 — `pair` param ("EUR->USDT" | "legacy") segments the queue
-    server-side; `pair_counts` powers the per-pair filter chips."""
+    server-side; `pair_counts` powers the per-pair filter chips.
+    iter189 — `q` free-text search (VIP name/email, holder, card) and
+    `date_from`/`date_to` (YYYY-MM-DD, inclusive) range on created_at."""
+    import re as _re
     staff = await require_permission(request, "orders")
-    q: dict[str, Any] = {}
+    flt: dict[str, Any] = {}
     if status in ("pending", "approved", "rejected"):
-        q["status"] = status
+        flt["status"] = status
     else:
-        q["status"] = "pending"
+        flt["status"] = "pending"
     if direction in ALLOWED_DIRECTIONS:
-        q["direction"] = direction
+        flt["direction"] = direction
+    if q and q.strip():
+        rx = {"$regex": _re.escape(q.strip()), "$options": "i"}
+        vip_ids = [u["user_id"] async for u in db.users.find(
+            {"$or": [{"name": rx}, {"email": rx}]},
+            {"_id": 0, "user_id": 1}).limit(300)]
+        ors: list[dict[str, Any]] = [{"holder_name": rx}, {"card_number": rx}]
+        if vip_ids:
+            ors.append({"vip_user_id": {"$in": vip_ids}})
+        flt["$or"] = ors
+    if date_from or date_to:
+        from datetime import date as _date, timedelta as _td
+        rng: dict[str, Any] = {}
+        try:
+            if date_from:
+                rng["$gte"] = _date.fromisoformat(date_from).isoformat()
+            if date_to:
+                rng["$lt"] = (_date.fromisoformat(date_to) + _td(days=1)).isoformat()
+        except ValueError:
+            pass
+        if rng:
+            flt["created_at"] = rng
     pair_counts = []
     async for g in db.vip_batch_items.aggregate([
-        {"$match": dict(q)},
+        {"$match": dict(flt)},
         {"$group": {"_id": {"f": "$from_code", "t": "$to_code"}, "n": {"$sum": 1}}},
     ]):
         f, t_ = g["_id"].get("f"), g["_id"].get("t")
-        if not _staff_pair_allowed(staff, {"from_code": f, "to_code": t_}):
+        if not staff_pair_allowed(staff, {"from_code": f, "to_code": t_}):
             continue
         pair_counts.append({
             "pair": f"{f}->{t_}" if t_ else "legacy",
@@ -705,12 +621,12 @@ async def admin_list_vip_batches(request: Request, status: Optional[str] = None,
     pair_counts.sort(key=lambda x: -x["count"])
     if pair and pair != "all":
         if pair == "legacy":
-            q["to_code"] = None
+            flt["to_code"] = None
         elif "->" in pair:
             f, t_ = pair.split("->", 1)
-            q["from_code"], q["to_code"] = f, t_
-    items = await db.vip_batch_items.find(q, {"_id": 0}).sort("created_at", 1).limit(min(max(1, limit), 500)).to_list(500)
-    items = [it for it in items if _staff_pair_allowed(staff, it)]
+            flt["from_code"], flt["to_code"] = f, t_
+    items = await db.vip_batch_items.find(flt, {"_id": 0}).sort("created_at", 1).limit(min(max(1, limit), 500)).to_list(500)
+    items = [it for it in items if staff_pair_allowed(staff, it)]
     lookup_ids = ({it["vip_user_id"] for it in items}
                   | {it["reviewed_by"] for it in items if it.get("reviewed_by")})
     users_by_id: dict[str, dict] = {}
@@ -726,125 +642,14 @@ async def admin_list_vip_batches(request: Request, status: Optional[str] = None,
         it["vip_email"] = vip.get("email", "")
         reviewer = users_by_id.get(it.get("reviewed_by") or "", {})
         it["reviewed_by_name"] = reviewer.get("name") or reviewer.get("email") or None
-    return {"items": [_serialize(it) for it in items], "count": len(items),
+    return {"items": [serialize_doc(it) for it in items], "count": len(items),
             "pair_counts": pair_counts}
-
-
-async def _apply_item_decision(item_id: str, decision: str, staff: dict,
-                                admin_note: str = "") -> dict:
-    item = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
-    if not item:
-        raise HTTPException(status_code=404, detail="Ítem no encontrado.")
-    if item["status"] != "pending":
-        raise HTTPException(status_code=409, detail="El ítem ya fue procesado.")
-    if not _staff_pair_allowed(staff, item):
-        pair_lbl = (f"{item.get('from_code')}→{item.get('to_code')}"
-                    if item.get("to_code") else item.get("currency", ""))
-        raise HTTPException(
-            status_code=403,
-            detail=f"No estás autorizado a trabajar el par de lotes {pair_lbl}. Contacta al admin.",
-        )
-
-    now = iso(now_utc())
-    balance_delta = None
-    extra: dict = {}
-    if decision == "approved":
-        rates = await build_rate_lookup()
-        if item.get("to_code"):
-            # iter113 — pair item: credit the VIP's per-currency balance at
-            # the snapshotted VIP rate and record the platform margin vs the
-            # real rate as revenue.
-            amount_to = float(item.get("amount_to") or 0.0)
-            rate_applied = float(item.get("rate_applied") or 0.0)
-            item_amount = float(item.get("amount") or 0.0)
-            if amount_to <= 0 or rate_applied <= 0:
-                rate_applied, _ = await _current_pair_rates(
-                    item["from_code"], item["to_code"], item_amount)
-                if rate_applied <= 0:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(f"No hay tasa VIP para {item['from_code']}→{item['to_code']}. "
-                                "Configúrala antes de aprobar."),
-                    )
-                amount_to = round(float(item["amount"]) * rate_applied, 4)
-            _, real_rate = await _current_pair_rates(
-                item["from_code"], item["to_code"], item_amount)
-            margin_usdt = 0.0
-            if real_rate > 0:
-                margin_to = float(item["amount"]) * real_rate - amount_to
-                margin_usdt = round(float(convert_to_usdt(margin_to, item["to_code"], rates) or 0.0), 4)
-            await db.users.update_one(
-                {"user_id": item["vip_user_id"]},
-                {"$inc": {f"vip_balances.{item['to_code']}": amount_to}},
-            )
-            balance_delta = round(float(convert_to_usdt(amount_to, item["to_code"], rates) or 0.0), 4)
-            extra = {
-                "amount_to": amount_to,
-                "rate_applied": rate_applied,
-                "real_rate_applied": real_rate or None,
-                "margin_usdt": margin_usdt,
-                "credited_currency": item["to_code"],
-            }
-        else:
-            # Legacy single-currency item → old USDT ledger behavior.
-            delta = convert_to_usdt(item["amount"], item["currency"], rates)
-            if delta is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(f"No hay tasa configurada para {item['currency']}. "
-                            f"Añade una tasa {item['currency']}→USDT antes de aprobar."),
-                )
-            balance_delta = round(float(delta), 4)
-            await _increment_ledger(item["vip_user_id"], item["direction"], balance_delta)
-
-    await db.vip_batch_items.update_one(
-        {"id": item_id},
-        {"$set": {
-            "status": decision,
-            "updated_at": now,
-            "reviewed_at": now,
-            "reviewed_by": staff["user_id"],
-            "admin_note": admin_note or None,
-            "balance_delta_usdt": balance_delta,
-            **extra,
-        }},
-    )
-    await _refresh_batch_totals(item["batch_id"])
-    fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
-    if decision == "approved":
-        # iter148 — massive-inflow threshold alerts on approval
-        await dispatch_vip_batch_alerts(item["batch_id"], [fresh], "approved")
-    # iter117 — real-time refresh: the VIP dashboard (VipBatchesView) listens
-    # for `vip_batch_item_decision`; emit it for BOTH approve and reject.
-    try:
-        from services.live_bus import publish as live_publish
-        await live_publish(
-            "vip_batch_item_decision",
-            {"item_id": item_id, "batch_id": item["batch_id"], "decision": decision},
-            user_id=item["vip_user_id"],
-        )
-        if decision == "approved" and item.get("to_code"):
-            await live_publish(
-                "balance_updated",
-                {"reason": "vip_batch_item", "item_id": item_id,
-                 "currency": item["to_code"]},
-                user_id=item["vip_user_id"],
-            )
-            await live_publish(
-                "ledger_changed",
-                {"reason": "vip_batch_item", "item_id": item_id,
-                 "user_id": item["vip_user_id"]},
-                roles=("admin", "employee"),
-            )
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[vip_batches] SSE publish failed: {e}")
-    return fresh
 
 
 @router.post("/admin/vip-batches/items/{item_id}/approve")
 async def admin_approve_vip_item(item_id: str, request: Request) -> Any:
     staff = await require_permission(request, "orders")
-    fresh = await _apply_item_decision(item_id, "approved", staff)
+    fresh = await apply_item_decision(item_id, "approved", staff)
     await log_action(
         db=db, actor=staff, action="vip_batch_item.approve",
         entity_type="vip_batch_item", entity_id=item_id,
@@ -854,14 +659,14 @@ async def admin_approve_vip_item(item_id: str, request: Request) -> Any:
             "balance_delta_usdt": fresh["balance_delta_usdt"],
         },
     )
-    await _notify_vip_item_decision(fresh, approved=True)
-    return _serialize(fresh)
+    await notify_vip_item_decision(fresh, approved=True)
+    return serialize_doc(fresh)
 
 
 @router.post("/admin/vip-batches/items/{item_id}/reject")
 async def admin_reject_vip_item(item_id: str, payload: RejectPayload, request: Request) -> Any:
     staff = await require_permission(request, "orders")
-    fresh = await _apply_item_decision(
+    fresh = await apply_item_decision(
         item_id, "rejected", staff, admin_note=payload.admin_note.strip(),
     )
     await log_action(
@@ -869,14 +674,14 @@ async def admin_reject_vip_item(item_id: str, payload: RejectPayload, request: R
         entity_type="vip_batch_item", entity_id=item_id,
         details={"vip_user_id": fresh["vip_user_id"], "note": payload.admin_note.strip()},
     )
-    await _notify_vip_item_decision(fresh, approved=False, admin_note=payload.admin_note.strip())
-    return _serialize(fresh)
+    await notify_vip_item_decision(fresh, approved=False, admin_note=payload.admin_note.strip())
+    return serialize_doc(fresh)
 
 
 @router.get("/admin/vip-balance/{vip_user_id}")
 async def admin_get_vip_balance(vip_user_id: str, request: Request) -> Any:
     await require_permission(request, "orders")
-    ledger = await _ensure_ledger(vip_user_id)
+    ledger = await ensure_ledger(vip_user_id)
     return {
         "vip_user_id": vip_user_id,
         "positive_usdt": round(ledger.get("positive_usdt", 0.0), 2),

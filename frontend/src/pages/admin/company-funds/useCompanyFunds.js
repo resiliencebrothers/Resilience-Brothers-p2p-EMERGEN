@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { handleTotpError } from "@/components/TotpPromptDialog";
+import { UNASSIGNED } from "@/components/FundAccountSelect";
 import { useLiveRefresh } from "@/hooks/useLiveStream";
 
 // iter159 — company funds move whenever balances/orders/withdrawals change.
@@ -50,6 +51,9 @@ export function useCompanyFunds() {
   const [form, setForm] = useState(emptyForm);
   const [pendingSubmit, setPendingSubmit] = useState(false);
   const [pendingStatus, setPendingStatus] = useState(null);
+  // iter194 — optional "paid from account" attribution when marking a
+  // company withdrawal as paid (feeds the per-account fund breakdown).
+  const [paidFromAccount, setPaidFromAccount] = useState(UNASSIGNED);
   // iter88 — Client-side filters for the Fund withdrawals table.
   const [statusFilter, setStatusFilter] = useState("all");
   const [beneficiaryQuery, setBeneficiaryQuery] = useState("");
@@ -115,22 +119,32 @@ export function useCompanyFunds() {
     }
   }, [form, load, navigate, t]);
 
+  const requestStatus = useCallback((p) => {
+    setPaidFromAccount(UNASSIGNED);
+    setPendingStatus(p);
+  }, []);
+
   const confirmStatusWithTotp = useCallback(async (code) => {
     try {
+      const body = { status: pendingStatus.status, totp_code: code };
+      if (pendingStatus.status === "paid" && paidFromAccount !== UNASSIGNED) {
+        body.paid_from_account_id = paidFromAccount;
+      }
       await axios.put(
         `${API}/admin/company-withdrawals/${pendingStatus.id}/status`,
-        { status: pendingStatus.status, totp_code: code },
+        body,
         { withCredentials: true },
       );
       toast.success(t("admin.companyFunds.toastStatus"));
       setPendingStatus(null);
+      setPaidFromAccount(UNASSIGNED);
       load();
     } catch (e) {
       if (!handleTotpError(e, navigate)) {
         toast.error(e.response?.data?.detail || t("admin.common.genericError"));
       }
     }
-  }, [pendingStatus, navigate, load, t]);
+  }, [pendingStatus, paidFromAccount, navigate, load, t]);
 
   const scopeCurrencies = user?.allowed_currencies || [];
   const fundCurrencies = funds.map((f) => f.currency);
@@ -164,6 +178,7 @@ export function useCompanyFunds() {
     closingOpen, setClosingOpen,
     form, setForm,
     pendingSubmit, pendingStatus, setPendingStatus,
+    requestStatus, paidFromAccount, setPaidFromAccount,
     createCurrencies, adjustmentCurrencies,
     load, handleInvoiceUpload, submitCreate, confirmStatusWithTotp,
   };

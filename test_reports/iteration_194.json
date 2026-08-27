@@ -1,0 +1,15 @@
+{
+  "summary": "Iter194 Company Funds per-account breakdown — full frontend verification passed. Backend regression /app/backend/tests/test_iter194_fund_accounts.py 10/10 passed. Frontend: breakdown dialog opens on USD card (2 payment accounts at 0 + Sin asignar 16,546.78 = Total 16,546.78). Created custom account via Nueva cuenta -> appears with balance 0. Transferred 5 USD Sin asignar -> new custom account with TOTP prompt (valid TOTP accepted) -> unassigned decreased to 16,541.78, new account shows 5, transfers-history shows 'Sin asignar -> Zelle E2E ... 5', toast 'Transferencia registrada' shown. Total conserved. Adjustment dialog: adj-account NOT visible before currency select, appears after selecting USD. Profit 'Rentabilidad total' dialog opens (regression OK). /admin/withdrawals Gestionar -> WithdrawalDialog renders 'De qué cuenta sale el dinero' select with 5 options. Company withdrawal Pagado button -> TOTP prompt dialog renders cw-paid-from-account select. All data-testids match spec.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter194_fund_accounts.py"],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "session_token=test_session_admin_X (admin), TOTP via tests/conftest.make_admin_totp()",
+  "seed_data_creation": "Created 2 custom fund_accounts named 'Zelle E2E <timestamp>' during test; cleaned up post-test (0 fund_accounts remain matching pattern). One transfer record (5 USD Sin asignar -> custom account) left in fund_account_transfers as artifact from the transfer test; balance impact is negligible since destination account was deleted (5 USD effectively remains unassigned again).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter194 fully verified E2E. Use wait_until='domcontentloaded' (SSE keeps networkidle blocked). Radix Selects require .click(force=True) then get_by_role('option'). TOTP via: cd /app/backend && PYTHONPATH=/app/backend python3 -c \"from dotenv import load_dotenv; load_dotenv(); from tests.conftest import make_admin_totp; print(make_admin_totp())\"."
+}

@@ -43,12 +43,14 @@ class TestRequiredFields:
         )
         assert r.status_code == 422
 
-    def test_withdrawal_create_rejects_missing_beneficiary(self):
+    def test_withdrawal_create_requires_totp_step_up(self):
+        """iter191 dropped beneficiary_name as a required field — the first
+        gate for an unauthenticated-2FA request is now the TOTP step-up."""
         r = requests.post(
             f"{BASE_URL}/api/vip/withdraw", headers=_h(VIP),
             json={"amount_usd": 1, "method": "transfer", "details": "Zelle: cliente@test.com"},
         )
-        assert r.status_code == 422
+        assert r.status_code == 401
 
 
 # ---------- Access control ----------

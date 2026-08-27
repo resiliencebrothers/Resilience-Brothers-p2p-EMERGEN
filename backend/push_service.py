@@ -235,3 +235,18 @@ def build_deposit_decision_payload(doc: dict, approved: bool,
         "tag": f"deposit-{doc.get('id', 'x')}",
         "url": f"{APP_URL}/dashboard/vip" if APP_URL else "/dashboard/vip",
     }
+
+
+
+def build_generic_admin_alert_payload(*, title: str, body: str, url: str,
+                                       tag: str = "admin-alert") -> dict:
+    """iter196 — reusable payload for one-off admin alerts (e.g. email
+    bounce streaks) that don't warrant their own i18n key."""
+    return {
+        "title": title,
+        "body": body[:140],
+        "icon": "/icons/icon-192.png",
+        "badge": "/icons/icon-192.png",
+        "tag": tag,
+        "url": f"{APP_URL}{url}" if (APP_URL and url.startswith("/")) else url,
+    }

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import { UNASSIGNED } from "@/components/FundAccountSelect";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import { toast } from "sonner";
 import WithdrawalsFilters from "./withdrawals/WithdrawalsFilters";
@@ -41,12 +42,19 @@ export default function AdminWithdrawals() {
   const [note, setNote] = useState("");
   const [payoutProof, setPayoutProof] = useState("");
   const [payoutHash, setPayoutHash] = useState("");
+  const [paidFromAccount, setPaidFromAccount] = useState(UNASSIGNED);
   const [pendingStatus, setPendingStatus] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [currencyFilter, setCurrencyFilter] = useState("all");
   const [currencies, setCurrencies] = useState([]);
   const [userInput, setUserInput] = useState("");
   const [userQuery, setUserQuery] = useState("");
+  // iter198 — courier fee per km for cash withdrawals.
+  const [courierKm, setCourierKm] = useState("");
+  const [courierMuni, setCourierMuni] = useState("");
+  const [pendingCourier, setPendingCourier] = useState(false);
+  // iter198 — courier fee for marketplace redemptions ({id, km} or null).
+  const [pendingRedFee, setPendingRedFee] = useState(null);
 
   useEffect(() => {
     const id = setTimeout(() => setUserQuery(userInput.trim()), 300);
@@ -78,6 +86,14 @@ export default function AdminWithdrawals() {
     setNote(w.admin_note || "");
     setPayoutProof(w.payout_proof_image || "");
     setPayoutHash(w.payout_tx_hash || "");
+    setPaidFromAccount(w.paid_from_account_id || UNASSIGNED);
+    setCourierKm(
+      Number(w.courier_km || 0) > 0
+        ? String(w.courier_km)
+        : Number(w.courier_quote_km || 0) > 0
+          ? String(w.courier_quote_km)
+          : ""
+    );
   };
 
   const handleProofUpload = (e) => {
@@ -94,10 +110,11 @@ export default function AdminWithdrawals() {
       const body = { status: pendingStatus, admin_note: note, totp_code: code };
       if (payoutProof && payoutProof !== open.payout_proof_image) body.payout_proof_image = payoutProof;
       if (payoutHash && payoutHash !== open.payout_tx_hash) body.payout_tx_hash = payoutHash;
+      if (pendingStatus === "paid" && paidFromAccount !== UNASSIGNED) body.paid_from_account_id = paidFromAccount;
       await axios.put(`${API}/admin/withdrawals/${open.id}/status`, body, { withCredentials: true });
       toast.success(t("admin.withdrawals.toastUpdated"));
       setPendingStatus(null); setOpen(null); setNote("");
-      setPayoutProof(""); setPayoutHash("");
+      setPayoutProof(""); setPayoutHash(""); setPaidFromAccount(UNASSIGNED);
       load();
     } catch (e) {
       if (!handleTotpError(e, navigate)) toast.error(e.response?.data?.detail || t("admin.withdrawals.toastGenericError"));
@@ -114,6 +131,59 @@ export default function AdminWithdrawals() {
       return;
     }
     setPendingStatus(status);
+  };
+
+  const confirmCourierWithTotp = async (code) => {
+    try {
+      // iter211 — si el staff eligió municipio, se cobra su tarifa fija.
+      const body = courierMuni
+        ? { municipality: courierMuni, totp_code: code }
+        : { km: parseFloat(courierKm || "0") || 0, totp_code: code };
+      const r = await axios.post(
+        `${API}/admin/withdrawals/${open.id}/courier-fee`,
+        body,
+        { withCredentials: true },
+      );
+      toast.success(t("admin.withdrawals.courier.toastApplied"));
+      setPendingCourier(false);
+      setCourierMuni("");
+      setOpen(r.data);
+      load();
+    } catch (e) {
+      if (!handleTotpError(e, navigate)) {
+        const d = e.response?.data?.detail;
+        toast.error(typeof d === "string" ? d : d?.message || t("admin.withdrawals.toastGenericError"));
+      }
+    }
+  };
+
+  const confirmRedFeeWithTotp = async (code) => {
+    try {
+      await axios.post(
+        `${API}/admin/redemptions/${pendingRedFee.id}/courier-fee`,
+        { km: pendingRedFee.km, totp_code: code },
+        { withCredentials: true },
+      );
+      toast.success(t("admin.withdrawals.courier.toastApplied"));
+      setPendingRedFee(null);
+      load();
+    } catch (e) {
+      if (!handleTotpError(e, navigate)) {
+        const d = e.response?.data?.detail;
+        toast.error(typeof d === "string" ? d : d?.message || t("admin.withdrawals.toastGenericError"));
+      }
+    }
+  };
+
+  const createDelivery = async (kind, refId) => {
+    try {
+      await axios.post(`${API}/admin/deliveries`, { kind, ref_id: refId },
+        { withCredentials: true });
+      toast.success(t("admin.withdrawals.deliveryCreated"));
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : "Error");
+    }
   };
 
   const updateRedemption = async (id, status) => {
@@ -147,7 +217,12 @@ export default function AdminWithdrawals() {
 
       <div>
         <h2 className="font-display text-xl mb-3">{t("admin.withdrawals.sectionRedemptions")}</h2>
-        <RedemptionsTable redemptions={redemptions} onUpdateStatus={updateRedemption} />
+        <RedemptionsTable
+          redemptions={redemptions}
+          onUpdateStatus={updateRedemption}
+          onSetCourierFee={(id, km) => setPendingRedFee({ id, km })}
+          onCreateDelivery={(r) => createDelivery("redemption", r.id)}
+        />
       </div>
 
       <WithdrawalDialog
@@ -159,9 +234,17 @@ export default function AdminWithdrawals() {
         onPayoutProofChange={setPayoutProof}
         payoutHash={payoutHash}
         onPayoutHashChange={setPayoutHash}
+        paidFromAccount={paidFromAccount}
+        onPaidFromAccountChange={setPaidFromAccount}
         statusLabel={statusLabel}
         onProofUpload={handleProofUpload}
         onAskChange={askChange}
+        courierKm={courierKm}
+        onCourierKmChange={setCourierKm}
+        courierMuni={courierMuni}
+        onCourierMuniChange={setCourierMuni}
+        onApplyCourier={() => setPendingCourier(true)}
+        onCreateDelivery={createDelivery}
       />
 
       <TotpPromptDialog
@@ -170,6 +253,22 @@ export default function AdminWithdrawals() {
         description={t("admin.withdrawals.totpDescription")}
         onConfirm={confirmWithTotp}
         onCancel={() => setPendingStatus(null)}
+      />
+
+      <TotpPromptDialog
+        open={pendingCourier}
+        title={t("admin.withdrawals.courier.totpTitle")}
+        description={t("admin.withdrawals.totpDescription")}
+        onConfirm={confirmCourierWithTotp}
+        onCancel={() => setPendingCourier(false)}
+      />
+
+      <TotpPromptDialog
+        open={!!pendingRedFee}
+        title={t("admin.withdrawals.courier.totpTitle")}
+        description={t("admin.withdrawals.totpDescription")}
+        onConfirm={confirmRedFeeWithTotp}
+        onCancel={() => setPendingRedFee(null)}
       />
     </div>
   );

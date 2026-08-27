@@ -5,7 +5,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
 import { API } from "@/App";
-import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins } from "lucide-react";
+import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -15,6 +15,7 @@ import VipCapitalRequestsView from "@/pages/dashboard/VipCapitalRequestsView";
 import VipBatchesView from "@/pages/dashboard/VipBatchesView";
 import AssetsView from "@/pages/dashboard/AssetsView";
 import MarketplaceView from "@/pages/dashboard/MarketplaceView";
+import CourierPanel from "@/pages/dashboard/CourierPanel";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
@@ -81,6 +82,9 @@ export default function Dashboard() {
       { to: "/dashboard/vip", icon: Star, label: t("sidebar.client.vip"), id: "nav-vip" },
       { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
       { to: "/dashboard/referrals", icon: Gift, label: t("sidebar.client.referrals"), id: "nav-referrals" },
+    ] : []),
+    ...(user?.is_courier ? [
+      { to: "/dashboard/deliveries", icon: Bike, label: t("sidebar.client.deliveries"), id: "nav-deliveries" },
     ] : []),
     { to: "/dashboard/support", icon: HelpCircle, label: t("sidebar.client.support"), id: "nav-support" },
   ];
@@ -264,6 +268,7 @@ export default function Dashboard() {
             <Route path="capital-requests" element={<VipCapitalRequestsView />} />
             <Route path="batches" element={<VipBatchesView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
+            <Route path="deliveries" element={<CourierPanel />} />
             <Route path="referrals" element={<ReferralsView />} />
             <Route path="support" element={<SupportView />} />
           </Routes>

@@ -12,9 +12,9 @@ const STATUS_STYLES = {
 export default function WithdrawalsTable({ items, statusLabel, onManage }) {
   const { t } = useTranslation();
   return (
-    <div className="tactile-card overflow-x-auto">
+    <div className="tactile-card overflow-x-auto overflow-y-auto max-h-[70vh]" data-testid="admin-withdrawals-scroll">
       <table className="w-full text-sm min-w-[720px]">
-        <thead className="border-b border-white/10 bg-[#0a0a0a]">
+        <thead className="border-b border-white/10 bg-[#0a0a0a] sticky top-0 z-10">
           <tr className="text-left">
             <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colUser")}</th>
             <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.withdrawals.colAmount")}</th>

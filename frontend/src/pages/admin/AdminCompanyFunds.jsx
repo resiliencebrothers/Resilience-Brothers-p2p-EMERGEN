@@ -7,14 +7,17 @@
  *
  * Behaviour is byte-identical to the pre-refactor 346-line version.
  */
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
+import FundAccountSelect from "@/components/FundAccountSelect";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import AdjustmentDialog from "./company-funds/AdjustmentDialog";
 import AdjustmentsHistoryDialog from "./company-funds/AdjustmentsHistoryDialog";
+import CashBoxDenominationsDialog from "./company-funds/CashBoxDenominationsDialog";
 import FundCards from "@/pages/admin/company-funds/FundCards";
 import BatchesTodayCard from "@/pages/admin/company-funds/BatchesTodayCard";
 import TotalUsdtCard from "@/pages/admin/company-funds/TotalUsdtCard";
@@ -28,6 +31,7 @@ export default function AdminCompanyFunds() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const cf = useCompanyFunds();
+  const [cashBoxOpen, setCashBoxOpen] = useState(false);
 
   return (
     <div data-testid="admin-company-funds" className="space-y-8">
@@ -65,10 +69,11 @@ export default function AdminCompanyFunds() {
         setBeneficiaryQuery={cf.setBeneficiaryQuery}
         onOpenAdjustmentsHistory={() => cf.setOpenAdjustmentsHistory(true)}
         onOpenAdjustment={() => cf.setOpenAdjustment(true)}
+        onOpenCashBox={() => setCashBoxOpen(true)}
         onOpenCreate={() => cf.setOpenCreate(true)}
         onOpenExport={() => cf.setExportOpen(true)}
         onOpenClosingPdf={() => cf.setClosingOpen(true)}
-        onRequestStatus={cf.setPendingStatus}
+        onRequestStatus={cf.requestStatus}
       />
 
       <ExportCsvDialog
@@ -98,6 +103,11 @@ export default function AdminCompanyFunds() {
         items={cf.adjustments}
       />
 
+      <CashBoxDenominationsDialog
+        open={cashBoxOpen}
+        onOpenChange={setCashBoxOpen}
+      />
+
       <AdjustmentDialog
         open={cf.openAdjustment}
         onOpenChange={cf.setOpenAdjustment}
@@ -117,7 +127,19 @@ export default function AdminCompanyFunds() {
           else cf.confirmStatusWithTotp(code);
         }}
         onCancel={() => cf.setPendingStatus(null)}
-      />
+      >
+        {cf.pendingStatus?.status === "paid" && cf.pendingStatus?.currency && (
+          <FundAccountSelect
+            currency={cf.pendingStatus.currency}
+            value={cf.paidFromAccount}
+            onChange={cf.setPaidFromAccount}
+            label={t("admin.companyFunds.paidFromAccount")}
+            unassignedLabel={t("admin.companyFunds.unassigned")}
+            testId="cw-paid-from-account"
+            autoMode
+          />
+        )}
+      </TotpPromptDialog>
     </div>
   );
 }

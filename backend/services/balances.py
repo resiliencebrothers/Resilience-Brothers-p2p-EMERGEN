@@ -19,7 +19,8 @@ from db_client import db
 async def build_rate_lookup() -> dict:
     """Return rate lookup dict { (from,to): rate_normal } for conversion."""
     docs = await db.rates.find({}, {"_id": 0}).to_list(1000)
-    return {(d["from_code"], d["to_code"]): float(d["rate_normal"]) for d in docs}
+    return {(d["from_code"], d["to_code"]): float(d["rate_normal"])
+            for d in docs if d.get("rate_normal") is not None}
 
 
 def _convert_direct(amount: float, code: str, rates: dict) -> Optional[float]:

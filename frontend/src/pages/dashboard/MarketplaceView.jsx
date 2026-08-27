@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Boxes, Package } from "lucide-react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
+import CourierQuotePicker from "@/components/CourierQuotePicker";
 import { extractDetailMessage } from "@/utils/apiErrors";
 
 export default function MarketplaceView() {
@@ -23,6 +24,9 @@ export default function MarketplaceView() {
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState([]);
+  // iter198 — courier fee for marketplace deliveries.
+  const [deliveryCoords, setDeliveryCoords] = useState(null);
+  const [courierQuote, setCourierQuote] = useState(null);
   // iter50 — multi-currency VIP balance moved into the shared
   // <BalanceConverterCard /> component which fetches its own state.
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
@@ -44,9 +48,20 @@ export default function MarketplaceView() {
     if (!addr) return toast.error(t("marketplace.addressRequired"));
     setBusy(true);
     try {
-      await axios.post(`${API}/vip/redeem`, { product_id: open.id, quantity: qty, delivery_address: addr }, { withCredentials: true });
+      await axios.post(`${API}/vip/redeem`, {
+        product_id: open.id,
+        quantity: qty,
+        delivery_address: addr,
+        ...(deliveryCoords
+          ? { delivery_latitude: deliveryCoords.lat, delivery_longitude: deliveryCoords.lon }
+          : {}),
+        ...(courierQuote?.municipality
+          ? { courier_municipality: courierQuote.municipality }
+          : {}),
+      }, { withCredentials: true });
       toast.success(t("marketplace.successPending"));
       setOpen(null); setQty(1); setAddr("");
+      setDeliveryCoords(null); setCourierQuote(null);
       await refresh();
       const p = await axios.get(`${API}/products`); setProducts(p.data);
       const h = await axios.get(`${API}/vip/redemptions/mine`, { withCredentials: true }); setHistory(h.data);
@@ -117,23 +132,35 @@ export default function MarketplaceView() {
       <div>
         <h2 className="font-display text-xl mb-4">{t("marketplace.myRedemptions")}</h2>
         <div className="tactile-card overflow-x-auto">
-          <table className="w-full text-sm min-w-[560px]">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="border-b border-white/10 bg-[#0a0a0a]">
               <tr className="text-left">
                 <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnProduct")}</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnQty")}</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnTotal")}</th>
+                <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.colCourier")}</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnStatus")}</th>
                 <th className="px-4 py-3 micro-label text-neutral-500">{t("marketplace.columnDate")}</th>
               </tr>
             </thead>
             <tbody>
-              {history.length === 0 && <tr><td colSpan="5" className="text-center text-neutral-500 py-8">Sin canjes.</td></tr>}
+              {history.length === 0 && <tr><td colSpan="6" className="text-center text-neutral-500 py-8">Sin canjes.</td></tr>}
               {history.map(h => (
                 <tr key={h.id} className="border-b border-white/5">
                   <td className="px-4 py-3">{h.product_name}</td>
                   <td className="px-4 py-3 font-mono">{h.quantity}</td>
                   <td className="px-4 py-3 font-mono text-[#8B5CF6]">${h.total_usd}</td>
+                  <td className="px-4 py-3 text-xs" data-testid={`redemption-courier-${h.id}`}>
+                    {h.courier_fee_status === "free" ? (
+                      <span className="text-[#22C55E]">{t("marketplace.courierFree")}</span>
+                    ) : Number(h.courier_fee_usd) > 0 ? (
+                      <span className="font-mono text-amber-300">-${h.courier_fee_usd}</span>
+                    ) : h.courier_fee_status === "manual_review" ? (
+                      <span className="text-neutral-500">{t("marketplace.courierPending")}</span>
+                    ) : (
+                      <span className="text-neutral-600">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3"><span className="text-xs uppercase tracking-wider">{h.status}</span></td>
                   <td className="px-4 py-3 text-xs text-neutral-500">{new Date(h.created_at).toLocaleDateString()}</td>
                 </tr>
@@ -143,7 +170,7 @@ export default function MarketplaceView() {
         </div>
       </div>
 
-      <Dialog open={!!open} onOpenChange={() => setOpen(null)}>
+      <Dialog open={!!open} onOpenChange={() => { setOpen(null); setDeliveryCoords(null); setCourierQuote(null); }}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">{t("marketplace.redeem")}: {open?.name}</DialogTitle>
@@ -157,9 +184,29 @@ export default function MarketplaceView() {
               <Label className="micro-label text-neutral-500">{t("marketplace.redeemAddressLabel")}</Label>
               <Textarea data-testid="redeem-addr" value={addr} onChange={e => setAddr(e.target.value)} rows={3} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10" />
             </div>
-            <div className="border border-white/10 p-3 font-mono text-sm flex justify-between">
-              <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
-              <span className="text-[#8B5CF6]">${(open?.price_usd * qty || 0).toFixed(2)}</span>
+            <CourierQuotePicker
+              currency="USD"
+              amount={(open?.price_usd || 0) * qty}
+              addressText={addr}
+              onCoords={setDeliveryCoords}
+              onQuote={setCourierQuote}
+            />
+            <div className="border border-white/10 p-3 font-mono text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
+                <span className="text-[#8B5CF6]">${(open?.price_usd * qty || 0).toFixed(2)}</span>
+              </div>
+              {courierQuote && !courierQuote.free && !courierQuote.requires_manual_review && Number(courierQuote.fee_currency_amount) > 0 && (
+                <div className="flex justify-between text-xs" data-testid="redeem-courier-fee-line">
+                  <span className="text-neutral-500">{t("marketplace.courierFeeLine")}:</span>
+                  <span className="text-amber-300">+${Number(courierQuote.fee_currency_amount).toFixed(2)}</span>
+                </div>
+              )}
+              {courierQuote?.requires_manual_review && (
+                <p className="text-[0.65rem] text-amber-400 font-sans" data-testid="redeem-courier-manual-note">
+                  {t("marketplace.courierManualNote")}
+                </p>
+              )}
             </div>
             <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
               {busy ? t("marketplace.processing") : t("marketplace.confirmRedeem")}

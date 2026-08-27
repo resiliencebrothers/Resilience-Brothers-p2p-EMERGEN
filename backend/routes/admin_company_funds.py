@@ -23,11 +23,10 @@ from services.proof_upload import maybe_upload_proof
 router = APIRouter(tags=["Admin"])
 
 
-def _norm_code(c: Any) -> Optional[str]:
-    """iter55.7 — Normalise a currency code by stripping whitespace and
-    upper-casing. Returns None for empty/non-string inputs so callers can
-    skip corrupted rows without polluting aggregations."""
-    return c.strip().upper() if isinstance(c, str) and c.strip() else None
+from services.currency_utils import norm_code as _norm_code  # noqa: F401 — re-exported for sibling route modules
+from services.company_funds_common import (
+    assert_can_manage_company_funds, actor_currency_scope,
+)
 
 
 class CompanyFundAdjustment(BaseModel):
@@ -53,6 +52,14 @@ class CompanyFundAdjustment(BaseModel):
     source_name: str = Field(..., min_length=2, description="Persona, banco o wallet")
     source_account: str = Field(default="", description="Cuenta bancaria, dirección wallet, o vacío para cash")
     note: str = ""
+    # iter194 — optional internal account (payment account or custom fund
+    # account) this movement physically entered/left. Feeds the per-account
+    # breakdown of the fund card.
+    account_id: str = ""
+    account_label: str = ""
+    # iter213 — desglose de billetes para efectivo (formato Excel del
+    # operador): {"1000": 3, "500": 2, ...}. Solo method="cash".
+    denominations: Optional[Dict[str, int]] = None
     actor_id: str
     actor_email: str
     actor_name: str
@@ -67,27 +74,108 @@ class CompanyFundAdjustmentCreate(BaseModel):
     source_name: str = Field(..., min_length=2, max_length=200)
     source_account: str = Field(default="", max_length=200)
     note: str = Field(default="", max_length=500)
+    account_id: Optional[str] = Field(None, max_length=100)
+    denominations: Optional[Dict[str, int]] = None
     totp_code: Optional[str] = Field(None, max_length=11)
 
 
-async def _assert_can_manage_company_funds(actor: dict) -> None:
-    """iter54 — Admin always allowed; employees need can_manage_company_funds=True
-    OR (iter55.16) the `company_funds` permission code in allowed_permissions."""
-    if actor.get("role") == "admin":
-        return
+# iter213 — denominaciones válidas por moneda (billetes en circulación).
+CASH_DENOMINATIONS: Dict[str, List[int]] = {
+    "CUP": [1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
+    "USD": [100, 50, 20, 10, 5, 2, 1],
+}
+
+
+def _validate_denominations(currency: str, raw: Dict[str, int],
+                            amount: float) -> Dict[str, int]:
+    """Valida el desglose de billetes y que su total coincida con el monto."""
+    valid = CASH_DENOMINATIONS.get(currency)
+    clean: Dict[str, int] = {}
+    total = 0.0
+    for k, v in (raw or {}).items():
+        try:
+            denom = int(float(k))
+            qty = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400,
+                                detail=f"Denominación o cantidad inválida: {k}={v}")
+        if qty < 0:
+            raise HTTPException(status_code=400,
+                                detail="Las cantidades de billetes no pueden ser negativas.")
+        if qty == 0:
+            continue
+        if valid and denom not in valid:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Billete de {denom} no existe en {currency}. "
+                        f"Válidos: {', '.join(str(d) for d in valid)}"))
+        if not valid and denom <= 0:
+            raise HTTPException(status_code=400,
+                                detail=f"Denominación inválida: {denom}")
+        clean[str(denom)] = clean.get(str(denom), 0) + qty
+        total += denom * qty
+    if not clean:
+        raise HTTPException(status_code=400,
+                            detail="Indica al menos un billete en el desglose.")
+    if abs(total - amount) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"El desglose de billetes suma {total:,.2f} {currency} "
+                    f"pero el monto es {amount:,.2f} {currency}. Deben coincidir."))
+    return clean
+
+
+async def _validate_adjustment_currency(actor: dict, raw: str) -> str:
+    """Scope del empleado + existencia en el catálogo. Devuelve el código."""
+    currency = raw.upper().strip()
     if actor.get("role") == "employee":
-        perms = actor.get("allowed_permissions") or []
-        if not perms or "company_funds" in perms:
-            return
-        if actor.get("can_manage_company_funds"):
-            return
-    raise HTTPException(
-        status_code=403,
-        detail=(
-            "No tienes permiso para gestionar los fondos de la empresa. "
-            "Pídeselo a un administrador."
-        ),
-    )
+        allowed = actor.get("allowed_currencies") or []
+        if allowed and currency not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail=f"No estás autorizado a mover fondos en {currency}",
+            )
+    # Lenient lookup so legacy rows with trailing whitespace still resolve.
+    from routes.market import _find_currency_lenient
+    if not await _find_currency_lenient(currency):
+        active = [c["code"].strip().upper() async for c in db.currencies.find(
+            {"is_active": True}, {"_id": 0, "code": 1}
+        )]
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Moneda «{currency}» no disponible en el catálogo. "
+                f"Válidas: {', '.join(sorted(set(active)))}"
+            ),
+        )
+    return currency
+
+
+async def _resolve_adjustment_account(payload: "CompanyFundAdjustmentCreate",
+                                      currency: str) -> tuple:
+    """iter194/195 — atribución de cuenta: explícita, o la caja si es cash."""
+    account_id = (payload.account_id or "").strip()
+    if account_id:
+        from routes.company_fund_accounts import resolve_fund_account
+        acc = await resolve_fund_account(account_id)
+        if not acc:
+            raise HTTPException(status_code=400, detail="Cuenta no encontrada")
+        if acc["currency"] and acc["currency"] != currency:
+            raise HTTPException(
+                status_code=400,
+                detail=f"La cuenta «{acc['label']}» es de {acc['currency']}, no de {currency}",
+            )
+        return account_id, acc["label"]
+    if payload.method == "cash":
+        from routes.company_fund_accounts import get_or_create_cash_box
+        box = await get_or_create_cash_box(currency)
+        return box["id"], box["label"]
+    return "", ""
+
+
+async def _assert_can_manage_company_funds(actor: dict) -> None:
+    """Compat: delega en services.company_funds_common (code review)."""
+    await assert_can_manage_company_funds(actor)
 
 
 class CompanyWithdrawal(BaseModel):
@@ -433,10 +521,8 @@ def _build_fund_row(c: str, src: Dict[str, Dict[str, float]],
 
 
 def _actor_currency_scope(actor: Dict[str, Any]) -> Optional[List[str]]:
-    """Employee `allowed_currencies` restriction (None = unrestricted)."""
-    if actor.get("role") != "employee":
-        return None
-    return actor.get("allowed_currencies") or None
+    """Compat: delega en services.company_funds_common (code review)."""
+    return actor_currency_scope(actor)
 
 
 @router.get("/admin/company-funds")
@@ -576,7 +662,7 @@ def _balance_rows_usdt(balances: Dict[str, float], fx: dict,
             total_u += usdt
         rows.append({"currency": c, "amount": round(a, 4),
                      "usdt": round(usdt, 2) if usdt is not None else None})
-    rows.sort(key=lambda r: -(r["usdt"] or 0.0))
+    rows.sort(key=lambda r: -float(r.get("usdt") or 0.0))  # type: ignore[arg-type]
     return rows, total_u
 
 
@@ -647,25 +733,27 @@ async def _collect_owe_us() -> tuple[list, float]:
     return owe_us, total
 
 
+def _day_window(date: Optional[str]) -> tuple:
+    """(day, next_day) en formato YYYY-MM-DD; `date` opcional (default hoy UTC)."""
+    from datetime import datetime, timedelta
+    if date:
+        try:
+            d0 = datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="fecha inválida (YYYY-MM-DD)")
+        return date, (d0 + timedelta(days=1)).strftime("%Y-%m-%d")
+    now = now_utc()
+    return now.strftime("%Y-%m-%d"), (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
+
 @router.get("/admin/company-funds/batches-today")
 async def company_funds_batches_today(request: Request, date: Optional[str] = None) -> Any:
     """Daily VIP batch summary for the company-funds stats: how many batches
     closed on the given day (manual + auto) and the volume approved that day
     in USDT. `date` (YYYY-MM-DD) is optional — defaults to today (UTC)."""
     await require_permission(request, "company_funds")
-    from datetime import datetime, timedelta
     from services.balances import build_rate_lookup, convert_to_usdt
-    if date:
-        try:
-            d0 = datetime.strptime(date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="fecha inválida (YYYY-MM-DD)")
-        day = date
-        next_day = (d0 + timedelta(days=1)).strftime("%Y-%m-%d")
-    else:
-        now = now_utc()
-        day = now.strftime("%Y-%m-%d")
-        next_day = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    day, next_day = _day_window(date)
     win = {"$gte": day, "$lt": next_day}
 
     closed = await db.vip_batches.find(
@@ -692,33 +780,8 @@ async def company_funds_batches_today(request: Request, date: Optional[str] = No
     }
 
 
-@router.get("/admin/company-funds/batches-today/detail")
-async def company_funds_batches_today_detail(request: Request, date: Optional[str] = None) -> Any:
-    """Drill-down for the 'Lotes del día' card: the exact closed batches and
-    approved orders of the given day (default today, UTC)."""
-    await require_permission(request, "company_funds")
-    from datetime import datetime, timedelta
-    from services.balances import build_rate_lookup, convert_to_usdt
-    if date:
-        try:
-            d0 = datetime.strptime(date, "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="fecha inválida (YYYY-MM-DD)")
-        day = date
-        next_day = (d0 + timedelta(days=1)).strftime("%Y-%m-%d")
-    else:
-        now = now_utc()
-        day = now.strftime("%Y-%m-%d")
-        next_day = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-    win = {"$gte": day, "$lt": next_day}
-
-    batches = await db.vip_batches.find(
-        {"status": "closed", "closed_at": win}, {"_id": 0},
-    ).sort("closed_at", 1).to_list(5000)
-    orders = await db.vip_batch_items.find(
-        {"status": "approved", "reviewed_at": win}, {"_id": 0},
-    ).sort("reviewed_at", 1).to_list(50000)
-
+async def _vip_display_names(batches: List[dict], orders: List[dict]) -> Dict[str, str]:
+    """{vip_user_id: nombre o email} para todas las filas del día."""
     vip_ids = [v for v in {b.get("vip_user_id") for b in batches}
                | {o.get("vip_user_id") for o in orders} if v]
     names: Dict[str, str] = {}
@@ -726,15 +789,19 @@ async def company_funds_batches_today_detail(request: Request, date: Optional[st
         async for u in db.users.find({"user_id": {"$in": vip_ids}},
                                      {"_id": 0, "user_id": 1, "name": 1, "email": 1}):
             names[u["user_id"]] = u.get("name") or u.get("email") or "—"
+    return names
 
-    def _pair(doc: dict) -> str:
-        if doc.get("to_code"):
-            return f"{doc.get('from_code')}→{doc.get('to_code')}"
-        return doc.get("currency") or "—"
 
-    batch_rows = [{
+def _doc_pair(doc: dict) -> str:
+    if doc.get("to_code"):
+        return f"{doc.get('from_code')}→{doc.get('to_code')}"
+    return doc.get("currency") or "—"
+
+
+def _batch_summary_rows(batches: List[dict], names: Dict[str, str]) -> List[dict]:
+    return [{
         "id": b["id"],
-        "pair": _pair(b),
+        "pair": _doc_pair(b),
         "vip_name": names.get(b.get("vip_user_id"), "—"),
         "auto_closed": bool(b.get("auto_closed")),
         "closed_at": b.get("closed_at"),
@@ -745,26 +812,49 @@ async def company_funds_batches_today_detail(request: Request, date: Optional[st
         "from_code": b.get("from_code") or b.get("currency"),
     } for b in batches]
 
+
+async def _order_detail_rows(orders: List[dict],
+                             names: Dict[str, str]) -> tuple:
+    """(rows, volumen aprobado del día convertido a USDT)."""
+    from services.balances import build_rate_lookup, convert_to_usdt
     fx = await build_rate_lookup()
-    order_rows = []
-    volume = 0.0
+    rows, volume = [], 0.0
     for o in orders:
         code = _norm_code(o.get("from_code") or o.get("currency")) or "USDT"
         volume += convert_to_usdt(float(o.get("amount") or 0.0), code, fx) or 0.0
-        order_rows.append({
+        rows.append({
             "id": o["id"],
             "reviewed_at": o.get("reviewed_at"),
             "vip_name": names.get(o.get("vip_user_id"), "—"),
             "holder": o.get("card_number") or o.get("holder_name") or "—",
-            "pair": _pair(o),
+            "pair": _doc_pair(o),
             "amount": o.get("amount"),
             "from_code": o.get("from_code") or o.get("currency"),
             "amount_to": o.get("amount_to"),
             "to_code": o.get("to_code"),
         })
+    return rows, volume
 
-    return {"date": day, "batches": batch_rows, "orders": order_rows,
-            "volume_usdt": round(volume, 2)}
+
+@router.get("/admin/company-funds/batches-today/detail")
+async def company_funds_batches_today_detail(request: Request, date: Optional[str] = None) -> Any:
+    """Drill-down for the 'Lotes del día' card: the exact closed batches and
+    approved orders of the given day (default today, UTC)."""
+    await require_permission(request, "company_funds")
+    day, next_day = _day_window(date)
+    win = {"$gte": day, "$lt": next_day}
+
+    batches = await db.vip_batches.find(
+        {"status": "closed", "closed_at": win}, {"_id": 0},
+    ).sort("closed_at", 1).to_list(5000)
+    orders = await db.vip_batch_items.find(
+        {"status": "approved", "reviewed_at": win}, {"_id": 0},
+    ).sort("reviewed_at", 1).to_list(50000)
+
+    names = await _vip_display_names(batches, orders)
+    order_rows, volume = await _order_detail_rows(orders, names)
+    return {"date": day, "batches": _batch_summary_rows(batches, names),
+            "orders": order_rows, "volume_usdt": round(volume, 2)}
 
 
 async def _profit_detail_rate_lookup(
@@ -872,7 +962,7 @@ def _build_profit_batch_rows(
             "reviewed_at": it.get("reviewed_at") or it.get("created_at"),
             "pair": f"{it['from_code']}→{it['to_code']}",
             "from_code": it["from_code"], "to_code": it["to_code"],
-            "vip_name": names.get(it.get("vip_user_id"), "—"),
+            "vip_name": names.get(it.get("vip_user_id") or "", "—"),
             "holder": it.get("card_number") or it.get("holder_name") or "—",
             "amount": amount,
             "amount_to": float(it.get("amount_to") or 0.0),
@@ -999,6 +1089,24 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     note = payload.get("note")
     if note is not None:
         update_doc["admin_note"] = note
+    # iter194/195 — "paid from account": explicit choice wins; otherwise
+    # auto-attribute when the currency has exactly one active account.
+    if new_status == "paid":
+        from routes.company_fund_accounts import (
+            resolve_fund_account, auto_paid_from_account,
+        )
+        acc_id = (payload.get("paid_from_account_id") or "").strip()
+        if acc_id:
+            acc = await resolve_fund_account(acc_id)
+            if not acc:
+                raise HTTPException(status_code=400, detail="Cuenta de origen no encontrada")
+            update_doc["paid_from_account_id"] = acc_id
+            update_doc["paid_from_account_label"] = acc["label"]
+        else:
+            acc = await auto_paid_from_account(cw.get("currency"))
+            if acc:
+                update_doc["paid_from_account_id"] = acc["id"]
+                update_doc["paid_from_account_label"] = acc["label"]
     await db.company_withdrawals.update_one({"id": cwid}, {"$set": update_doc})
     await log_action(db, actor, "company_withdrawal.status", "company_withdrawal", cwid,
                      summary=f"Retiro fondo {cw['currency']} {cw['amount']} → {new_status}",
@@ -1024,33 +1132,21 @@ async def create_company_fund_adjustment(
     await _assert_can_manage_company_funds(actor)
     await _enforce_totp_step_up(actor, payload.totp_code)
 
-    currency = payload.currency.upper().strip()
-    # Employees scope: can only touch their allowed_currencies
-    if actor.get("role") == "employee":
-        allowed = actor.get("allowed_currencies") or []
-        if allowed and currency not in allowed:
-            raise HTTPException(
-                status_code=403,
-                detail=f"No estás autorizado a mover fondos en {currency}",
-            )
+    currency = await _validate_adjustment_currency(actor, payload.currency)
+    account_id, account_label = await _resolve_adjustment_account(payload, currency)
 
-    # Validate the currency exists in the catalog — use lenient lookup so
-    # legacy rows with trailing whitespace (e.g. "CUP ") still resolve.
-    from routes.market import _find_currency_lenient
-    cur_doc = await _find_currency_lenient(currency)
-    if not cur_doc:
-        # Provide the operator the actual list of active currencies so the UI
-        # dropdown mismatch is obvious.
-        active = [c["code"].strip().upper() async for c in db.currencies.find(
-            {"is_active": True}, {"_id": 0, "code": 1}
-        )]
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Moneda «{currency}» no disponible en el catálogo. "
-                f"Válidas: {', '.join(sorted(set(active)))}"
-            ),
-        )
+    # iter213 — desglose de billetes: obligatorio para efectivo CUP/USD
+    # (formato del Excel de control físico), validado contra el monto.
+    denominations = None
+    if payload.method == "cash":
+        if payload.denominations:
+            denominations = _validate_denominations(
+                currency, payload.denominations, payload.amount)
+        elif currency in CASH_DENOMINATIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Para efectivo en {currency} debes indicar el "
+                        "desglose de billetes por denominación."))
 
     adjustment = CompanyFundAdjustment(
         adjustment_type=payload.adjustment_type,
@@ -1060,6 +1156,9 @@ async def create_company_fund_adjustment(
         source_name=payload.source_name.strip(),
         source_account=payload.source_account.strip(),
         note=payload.note.strip(),
+        account_id=account_id,
+        account_label=account_label,
+        denominations=denominations,
         actor_id=actor["user_id"],
         actor_email=actor.get("email", ""),
         actor_name=actor.get("name", ""),
@@ -1082,9 +1181,50 @@ async def create_company_fund_adjustment(
             "method": payload.method,
             "source_name": payload.source_name,
             "source_account": payload.source_account,
+            "denominations": denominations,
         },
     )
     return doc
+
+
+@router.get("/admin/company-funds/cash-denominations")
+async def cash_denominations_summary(request: Request) -> Any:
+    """iter213 — Control físico de caja por denominación (formato Excel):
+    cantidad actual de billetes = Σ entradas − Σ salidas de los ajustes
+    manuales en efectivo con desglose registrado."""
+    actor = await require_permission(request, "company_funds")
+    scope = _actor_currency_scope(actor)
+    counts: Dict[str, Dict[int, int]] = {}
+    async for a in db.company_fund_adjustments.find(
+        {"method": "cash", "denominations": {"$nin": [None, {}]}},
+        {"_id": 0, "currency": 1, "adjustment_type": 1, "denominations": 1},
+    ):
+        code = _norm_code(a.get("currency"))
+        if not code or (scope and code not in scope):
+            continue
+        sign = 1 if a.get("adjustment_type") == "inflow" else -1
+        bucket = counts.setdefault(code, {})
+        for k, v in (a.get("denominations") or {}).items():
+            try:
+                denom, qty = int(float(k)), int(v)
+            except (TypeError, ValueError):
+                continue
+            bucket[denom] = bucket.get(denom, 0) + sign * qty
+    rows = []
+    for code in sorted(counts):
+        denom_order = CASH_DENOMINATIONS.get(
+            code, sorted(counts[code], reverse=True))
+        items = [{"denomination": d,
+                  "count": counts[code].get(d, 0),
+                  "value": round(d * counts[code].get(d, 0), 2)}
+                 for d in denom_order]
+        rows.append({
+            "currency": code,
+            "denominations": items,
+            "total_value": round(sum(x["value"] for x in items), 2),
+            "total_bills": sum(x["count"] for x in items),
+        })
+    return rows
 
 
 @router.get("/admin/company-funds/adjustments")
@@ -1166,6 +1306,18 @@ def _csv_currency_filter(actor: dict, currency: Optional[str]) -> "Callable[[Any
     return _ok
 
 
+def _fmt_denominations(denoms: Optional[Dict[str, int]]) -> str:
+    """{'1000': 3, '500': 2} → '3×1000 · 2×500' (mayor a menor)."""
+    if not denoms:
+        return ""
+    try:
+        pairs = sorted(((int(float(k)), int(v)) for k, v in denoms.items()),
+                       key=lambda x: -x[0])
+    except (TypeError, ValueError):
+        return ""
+    return " · ".join(f"{q}×{d}" for d, q in pairs if q)
+
+
 def _adjustment_csv_row(a: dict) -> List[str]:
     """Manual adjustment → CSV row (inflow = +, outflow = -)."""
     amt = float(a.get("amount") or 0.0)
@@ -1183,6 +1335,7 @@ def _adjustment_csv_row(a: dict) -> List[str]:
         "completed",
         a.get("actor_name", ""),
         a.get("id", ""),
+        _fmt_denominations(a.get("denominations")),
     ]
 
 
@@ -1204,6 +1357,7 @@ def _company_withdrawal_csv_row(w: dict) -> List[str]:
         status,
         w.get("authorized_by_name", ""),
         w.get("id", ""),
+        "",  # denominations N/A
     ]
 
 
@@ -1244,7 +1398,7 @@ async def export_company_funds_csv(
     writer.writerow([
         "created_at", "movement_kind", "direction", "currency",
         "amount", "party", "method", "concept_or_note", "status",
-        "authorized_by", "id",
+        "authorized_by", "id", "denominations",
     ])
     for row in rows:
         writer.writerow(row)

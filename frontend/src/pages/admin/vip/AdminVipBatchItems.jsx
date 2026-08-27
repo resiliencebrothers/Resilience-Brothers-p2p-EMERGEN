@@ -4,10 +4,11 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowUpCircle, ArrowDownCircle, ArrowRightLeft, Check, X as XIcon, Clock, Eye } from "lucide-react";
+import { ArrowUpCircle, ArrowDownCircle, ArrowRightLeft, Check, X as XIcon, Clock, Eye, Search } from "lucide-react";
 import { useLiveRefresh } from "@/hooks/useLiveStream";
 import { TopScrollTable } from "@/components/TopScrollTable";
 import CopyableText from "@/components/CopyableText";
@@ -32,6 +33,16 @@ export default function AdminVipBatchItems({ onChanged }) {
   const [viewing, setViewing] = useState(null);
   const [pairFilter, setPairFilter] = useState("all");
   const [pairCounts, setPairCounts] = useState([]);
+  // iter189 — search by VIP name/email, holder or card + created date range.
+  const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  useEffect(() => {
+    const id = setTimeout(() => setSearchDebounced(search), 400);
+    return () => clearTimeout(id);
+  }, [search]);
   // iter171 — abort in-flight request when a newer one starts so stale
   // responses can never overwrite fresh data or leave `loading=true`.
   const abortRef = useRef(null);
@@ -50,6 +61,9 @@ export default function AdminVipBatchItems({ onChanged }) {
           status: statusFilter,
           limit: 300,
           ...(pairFilter !== "all" ? { pair: pairFilter } : {}),
+          ...(searchDebounced.trim() ? { q: searchDebounced.trim() } : {}),
+          ...(dateFrom ? { date_from: dateFrom } : {}),
+          ...(dateTo ? { date_to: dateTo } : {}),
         },
         withCredentials: true,
         signal: controller.signal,
@@ -68,7 +82,7 @@ export default function AdminVipBatchItems({ onChanged }) {
         abortRef.current = null;
       }
     }
-  }, [statusFilter, pairFilter, t, onChanged]);
+  }, [statusFilter, pairFilter, searchDebounced, dateFrom, dateTo, t, onChanged]);
 
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(load, LIVE_EVENTS);
@@ -107,6 +121,49 @@ export default function AdminVipBatchItems({ onChanged }) {
             {t(`adminVipBatches.filter.${s}`)}
           </button>
         ))}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap" data-testid="vip-batches-search-row">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Input
+            data-testid="vip-batches-search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("adminVipBatches.searchPh")}
+            className="rounded-none bg-[#0a0a0a] border-white/10 h-9 pl-9 text-sm"
+          />
+        </div>
+        <label className="flex items-center gap-1.5 text-[0.65rem] uppercase tracking-widest text-neutral-500">
+          {t("adminVipBatches.dateFrom")}
+          <input
+            type="date"
+            data-testid="vip-batches-date-from"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="bg-[#0a0a0a] border border-white/10 text-neutral-300 text-xs px-2 py-1.5 font-mono [color-scheme:dark]"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-[0.65rem] uppercase tracking-widest text-neutral-500">
+          {t("adminVipBatches.dateTo")}
+          <input
+            type="date"
+            data-testid="vip-batches-date-to"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="bg-[#0a0a0a] border border-white/10 text-neutral-300 text-xs px-2 py-1.5 font-mono [color-scheme:dark]"
+          />
+        </label>
+        {(search || dateFrom || dateTo) && (
+          <button
+            type="button"
+            data-testid="vip-batches-clear-filters"
+            onClick={() => { setSearch(""); setDateFrom(""); setDateTo(""); }}
+            className="text-[0.65rem] uppercase tracking-widest text-[#8B5CF6] hover:text-[#A78BFA] font-semibold"
+          >
+            {t("adminVipBatches.clearFilters")}
+          </button>
+        )}
       </div>
 
       <PairFilterChips

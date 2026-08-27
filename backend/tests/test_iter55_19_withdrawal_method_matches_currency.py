@@ -113,6 +113,7 @@ def test_cash_only_currency_accepts_cash_withdrawal():
             "amount_usd": 100,
             "currency": "USDCASH_TEST",
             "method": "cash",
+            "province": "La Habana",
             "details": "Ana López · ID 91020212345 · +5355559999",
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
@@ -249,6 +250,7 @@ def test_cash_withdrawal_rejected_when_details_too_short():
             "amount_usd": 50,
             "currency": "USDCASH_TEST",
             "method": "cash",
+            "province": "La Habana",
             "details": "Pedro",  # Too short — no ID, no phone
             "beneficiary_name": "Test",
             "totp_code": make_vip_totp(),
@@ -274,6 +276,7 @@ def test_cash_withdrawal_accepted_with_full_receiver_details():
             "amount_usd": 50,
             "currency": "USDCASH_TEST",
             "method": "cash",
+            "province": "La Habana",
             "details": "Juan Pérez López · ID 87050112345 · +5355551234",
             "beneficiary_name": "Juan Pérez López",
             "totp_code": make_vip_totp(),

@@ -3,6 +3,7 @@ Used by both server.py (legacy callers) and routes/* modules (auth, blocklist, e
 
 All helpers consume the shared `db` from db_client. No circular imports.
 """
+import os
 import re
 import json
 import base64
@@ -84,7 +85,8 @@ async def _create_session(user_id: str, response: Response, ttl_hours: int = SES
         "created_at": iso(now_utc()),
     })
     response.set_cookie(
-        key="session_token", value=session_token, httponly=True, secure=True,
+        key="session_token", value=session_token, httponly=True,
+        secure=os.environ.get("COOKIE_SECURE", "true").lower() != "false",
         samesite="none", path="/", max_age=ttl_hours * 3600,
     )
 

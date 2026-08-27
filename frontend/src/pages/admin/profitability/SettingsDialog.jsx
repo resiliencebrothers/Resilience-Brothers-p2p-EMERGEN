@@ -35,7 +35,7 @@ export default function SettingsDialog({ open, onOpenChange, currencies, setting
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md" data-testid="profit-settings-dialog">
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto" data-testid="profit-settings-dialog">
         <DialogHeader>
           <DialogTitle>{t("profitability.settings.title")}</DialogTitle>
           <DialogDescription>{t("profitability.settings.description")}</DialogDescription>

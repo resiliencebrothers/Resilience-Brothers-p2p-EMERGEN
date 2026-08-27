@@ -32,6 +32,7 @@ so every path that credits an accumulated order (P2P confirm, direct
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Optional
 
@@ -42,6 +43,7 @@ from db_client import db
 from auth_utils import require_user, require_permission, _enforce_totp_step_up, iso, now_utc
 from audit_log import log_action
 
+logger = logging.getLogger("capital_requests")
 
 router = APIRouter(tags=["Capital Requests"])
 
@@ -217,6 +219,17 @@ async def admin_approve_capital_request(req_id: str, payload: CapitalRequestAppr
                                "user_id": doc["user_id"]})
     # Return the refreshed doc
     fresh = await db.capital_requests.find_one({"id": req_id}, {"_id": 0})
+    # iter197 — email mirror of the disbursement decision. Best-effort.
+    try:
+        from email_service import notify_capital_request_decision
+        target = await db.users.find_one(
+            {"user_id": doc["user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+        )
+        if target and target.get("email"):
+            notify_capital_request_decision(fresh or doc, target, approved=True)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[capital_requests] approve email failed: {e}")
     return _serialize(fresh or {})
 
 
@@ -251,4 +264,15 @@ async def admin_reject_capital_request(req_id: str, payload: CapitalRequestRejec
                       details={"reason": payload.reject_reason,
                                "user_id": doc["user_id"]})
     fresh = await db.capital_requests.find_one({"id": req_id}, {"_id": 0})
+    # iter197 — email mirror of the rejection decision. Best-effort.
+    try:
+        from email_service import notify_capital_request_decision
+        target = await db.users.find_one(
+            {"user_id": doc["user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+        )
+        if target and target.get("email"):
+            notify_capital_request_decision(fresh or doc, target, approved=False)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[capital_requests] reject email failed: {e}")
     return _serialize(fresh or {})

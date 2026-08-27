@@ -132,9 +132,9 @@ export default function AdminDeposits({ onChanged }) {
         ))}
       </div>
 
-      <div className="tactile-card overflow-x-auto">
+      <div className="tactile-card overflow-x-auto overflow-y-auto max-h-[70vh]" data-testid="admin-deposits-scroll">
         <table className="w-full text-sm min-w-[980px]">
-          <thead className="border-b border-white/10 bg-[#0a0a0a]">
+          <thead className="border-b border-white/10 bg-[#0a0a0a] sticky top-0 z-10">
             <tr className="text-left">
               <th className="px-4 py-3 micro-label text-neutral-500">{t("adminDeposits.colClient")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("adminDeposits.colAmount")}</th>
@@ -213,22 +213,21 @@ export default function AdminDeposits({ onChanged }) {
                 <td className="px-4 py-3"><Pill status={d.status} t={t} /></td>
                 <td className="px-4 py-3">
                   {d.status === "pending" ? (
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => confirm(d.id)}
-                        data-testid={`admin-deposit-confirm-${d.id}`}
-                        className="rounded-none bg-emerald-500 hover:bg-emerald-400 text-black h-8 px-3 text-xs font-semibold"
-                      >
-                        <Check className="w-3 h-3 mr-1" /> {t("adminDeposits.confirm")}
-                      </Button>
-                      <Button
-                        onClick={() => setRejecting(d)}
-                        data-testid={`admin-deposit-reject-${d.id}`}
-                        variant="ghost"
-                        className="rounded-none border border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10 h-8 px-3 text-xs"
-                      >
-                        <XIcon className="w-3 h-3 mr-1" /> {t("adminDeposits.reject")}
-                      </Button>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex gap-2">
+                        <ConfirmDepositBtn d={d} onConfirm={() => confirm(d.id)} />
+                        <Button
+                          onClick={() => setRejecting(d)}
+                          data-testid={`admin-deposit-reject-${d.id}`}
+                          variant="ghost"
+                          className="rounded-none border border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10 h-8 px-3 text-xs"
+                        >
+                          <XIcon className="w-3 h-3 mr-1" /> {t("adminDeposits.reject")}
+                        </Button>
+                      </div>
+                      {d.method === "cash" && d.cash_mode === "courier" && (
+                        <DepositPickupHint d={d} t={t} />
+                      )}
                     </div>
                   ) : (
                     <span className="text-xs text-neutral-500">
@@ -247,6 +246,59 @@ export default function AdminDeposits({ onChanged }) {
         onClose={() => setRejecting(null)}
         onDone={() => { setRejecting(null); load(); }}
       />
+    </div>
+  );
+}
+
+
+// iter208 — bloquea "Confirmar" para depósitos CASH con recogida por mensajero
+// hasta que el mensajero marque la recogida como entregada.
+function ConfirmDepositBtn({ d, onConfirm }) {
+  const { t } = useTranslation();
+  const needsCourier = d.method === "cash" && d.cash_mode === "courier";
+  const status = d.courier_delivery_status;
+  const blocked = needsCourier && !["delivered", "confirmed"].includes(status);
+  return (
+    <Button
+      onClick={onConfirm}
+      disabled={blocked}
+      data-testid={`admin-deposit-confirm-${d.id}`}
+      className="rounded-none bg-emerald-500 hover:bg-emerald-400 text-black h-8 px-3 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      <Check className="w-3 h-3 mr-1" /> {t("adminDeposits.confirm")}
+    </Button>
+  );
+}
+
+
+function DepositPickupHint({ d, t }) {
+  const status = d.courier_delivery_status;
+  if (!status) {
+    return (
+      <div className="text-[0.65rem] text-amber-400" data-testid={`deposit-pickup-hint-${d.id}`}>
+        {t("adminDeposits.pickupLock.noJob")}
+      </div>
+    );
+  }
+  if (!d.courier_delivery_assigned) {
+    return (
+      <div className="text-[0.65rem] text-amber-400" data-testid={`deposit-pickup-hint-${d.id}`}>
+        {t("adminDeposits.pickupLock.noCourier")}
+      </div>
+    );
+  }
+  if (!["delivered", "confirmed"].includes(status)) {
+    return (
+      <div className="text-[0.65rem] text-amber-400" data-testid={`deposit-pickup-hint-${d.id}`}>
+        {t("adminDeposits.pickupLock.notDelivered", {
+          courier: d.courier_delivery_courier_name || t("adminDeposits.pickupLock.courierFallback"),
+        })}
+      </div>
+    );
+  }
+  return (
+    <div className="text-[0.65rem] text-[#22C55E]" data-testid={`deposit-pickup-hint-${d.id}`}>
+      {t("adminDeposits.pickupLock.ready")}
     </div>
   );
 }

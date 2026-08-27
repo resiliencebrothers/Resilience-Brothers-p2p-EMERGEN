@@ -72,6 +72,8 @@ class TestCreateAdjustment:
                 adjustment_type="outflow", amount=200.0,
                 method="cash", source_name="Juan Perez",
                 source_account="",  # cash: no account
+                # iter213 — cash CUP requiere desglose de billetes
+                denominations={"100": 2},
                 note="__test__ pay expense",
             ),
         )
@@ -290,6 +292,8 @@ class TestBalanceIncludesAdjustments:
             json=_make_payload(
                 adjustment_type="outflow", currency="CUP", amount=3000.0,
                 method="cash", source_name="Juan Perez", source_account="",
+                # iter213 — cash CUP requiere desglose de billetes
+                denominations={"1000": 3},
                 note="__test__ pay expense",
             ),
         )

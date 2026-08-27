@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Settings2, Coins, ShieldCheck, ShoppingBag, Phone as PhoneIcon, Shield, Layers } from "lucide-react";
+import { Settings2, Coins, ShieldCheck, ShoppingBag, Phone as PhoneIcon, Shield, Layers, Ban } from "lucide-react";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
 import { CurrencyMultiSelect } from "./CurrencyMultiSelect";
 import { PermissionMultiSelect } from "./PermissionMultiSelect";
@@ -292,8 +292,9 @@ export default function UserFunctionsDialog({
                   busy={busy}
                 />
                 <p className="text-xs text-neutral-500 mt-3 leading-relaxed">
-                  Si la lista queda vacía, el staff puede confirmar/rechazar TODOS los pares de lotes.
-                  Con pares seleccionados, solo podrá trabajar esos pares. Solo un admin puede modificarlo.
+                  Lista vacía = acceso a TODOS los pares (legacy). «Sin acceso a lotes» bloquea
+                  todos los pares para este staff. Con pares seleccionados, solo podrá trabajar
+                  esos pares. Solo un admin puede modificarlo.
                 </p>
               </div>
             )}
@@ -372,11 +373,13 @@ export default function UserFunctionsDialog({
 }
 
 
-/** iter113 — checkbox grid of VIP batch pairs for staff RBAC. */
+/** iter113 — checkbox grid of VIP batch pairs for staff RBAC.
+ *  iter202 — modo explícito "Sin acceso a lotes" (sentinel "none"). */
 function BatchPairsSelect({ selected, onSave, busy }) {
   const [catalog, setCatalog] = useState([]);
   const [pending, setPending] = useState(null);
   const list = pending ?? selected;
+  const noAccess = list.includes("none");
 
   useEffect(() => {
     axios.get(`${API}/admin/vip-batch-pairs`, { withCredentials: true })
@@ -385,18 +388,35 @@ function BatchPairsSelect({ selected, onSave, busy }) {
   }, []);
 
   const toggle = (pair) => {
-    const next = list.includes(pair) ? list.filter((p) => p !== pair) : [...list, pair];
+    // Elegir un par desactiva el modo "sin acceso".
+    const base = noAccess ? [] : list;
+    const next = base.includes(pair) ? base.filter((p) => p !== pair) : [...base, pair];
     setPending(next);
   };
 
   return (
     <div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+      <button
+        type="button"
+        onClick={() => setPending(noAccess ? [] : ["none"])}
+        data-testid="uf-batch-pairs-none"
+        className={`w-full flex items-center gap-2 text-left px-3 py-2.5 mb-3 border text-xs font-medium transition-colors ${
+          noAccess
+            ? "border-red-500 bg-red-500/10 text-red-400"
+            : "border-white/10 text-neutral-400 hover:border-red-500/50 hover:text-red-400"
+        }`}
+      >
+        <Ban className="w-3.5 h-3.5 shrink-0" />
+        {noAccess
+          ? "Sin acceso a lotes — este staff no podrá trabajar NINGÚN lote"
+          : "Sin acceso a lotes (bloquear todos los pares)"}
+      </button>
+      <div className={`grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1 ${noAccess ? "opacity-40" : ""}`}>
         {catalog.length === 0 && (
           <div className="col-span-full text-xs text-neutral-500">Sin pares configurados.</div>
         )}
         {catalog.map((p) => {
-          const on = list.includes(p.pair);
+          const on = !noAccess && list.includes(p.pair);
           return (
             <button
               key={p.pair}

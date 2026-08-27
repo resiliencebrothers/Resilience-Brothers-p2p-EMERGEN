@@ -22,6 +22,7 @@ router = APIRouter(tags=["Admin"])
 
 class UserUpdate(BaseModel):
     role: Optional[Literal["normal", "vip", "employee", "admin"]] = None
+    is_courier: Optional[bool] = None  # iter199 — courier panel access
     vip_balance_usd: Optional[float] = None
     vip_balances: Optional[Dict[str, float]] = None
     allowed_currencies: Optional[List[str]] = None
@@ -172,6 +173,14 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
                 detail=("Acceso restringido. Necesitas el permiso 'Funciones de usuario' "
                         "para modificar rol, permisos, monedas o accesos del marketplace."),
             )
+    # iter202 — designar mensajeros requiere el permiso dedicado 'Mensajería'.
+    if "is_courier" in update:
+        from services.permissions import _has_permission
+        if not _has_permission(requester, "deliveries"):
+            raise HTTPException(
+                status_code=403,
+                detail="Acceso restringido. Necesitas el permiso 'Mensajería' para designar mensajeros.",
+            )
     if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
     # iter55.16 — only admins can grant/revoke capabilities to other staff.
@@ -184,12 +193,18 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
     if "allowed_batch_pairs" in update:
         if requester.get("role") != "admin":
             raise HTTPException(status_code=403, detail="Solo un admin puede modificar los pares de lotes autorizados")
-        clean = []
-        for p in update["allowed_batch_pairs"] or []:
-            p = str(p).strip().upper().replace("→", "->")
-            if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean:
-                clean.append(p)
-        update["allowed_batch_pairs"] = clean
+        raw_pairs = [str(p).strip() for p in update["allowed_batch_pairs"] or []]
+        # iter202 — sentinel "none" = sin acceso a NINGÚN lote. La lista
+        # vacía sigue significando acceso total (compatibilidad legacy).
+        if any(p.lower() == "none" for p in raw_pairs):
+            update["allowed_batch_pairs"] = ["none"]
+        else:
+            clean = []
+            for p in raw_pairs:
+                p = p.upper().replace("→", "->")
+                if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean:
+                    clean.append(p)
+            update["allowed_batch_pairs"] = clean
     old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
@@ -234,6 +249,38 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
     return {"ok": True, "already_verified": False, "user": fresh}
 
 
+@router.get("/admin/email-health")
+async def admin_email_health(request: Request) -> Any:
+    """iter197 — one-glance diagnosis of the email subsystem for THIS server.
+    Answers 'why are no emails arriving?' directly from the admin UI:
+    is real sending enabled, is the Resend key present, and what did the
+    last 7 days of delivery attempts look like."""
+    await require_staff(request)
+    import email_service
+    week_ago = iso(now_utc() - timedelta(days=7))
+    rows = await db.email_events.aggregate([
+        {"$match": {"created_at": {"$gte": week_ago}}},
+        {"$group": {"_id": "$status", "n": {"$sum": 1}}},
+    ]).to_list(10)
+    counts = {r["_id"]: r["n"] for r in rows}
+    last = await db.email_events.find_one(
+        {}, {"_id": 0, "created_at": 1, "status": 1},
+        sort=[("created_at", -1)],
+    )
+    return {
+        "send_enabled": email_service.EMAIL_SEND_ENABLED,
+        "api_key_set": bool(email_service.resend.api_key),
+        "sender": email_service.SENDER,
+        "counts_7d": {
+            "sent": counts.get("sent", 0),
+            "failed": counts.get("failed", 0),
+            "suppressed": counts.get("suppressed", 0),
+        },
+        "last_event_at": (last or {}).get("created_at"),
+        "last_event_status": (last or {}).get("status"),
+    }
+
+
 @router.get("/admin/users/{user_id}/email-events")
 async def admin_user_email_events(user_id: str, request: Request,
                                   limit: int = 10) -> Any:
@@ -245,10 +292,49 @@ async def admin_user_email_events(user_id: str, request: Request,
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     events = await db.email_events.find(
         {"to": (target.get("email") or "").lower().strip()},
-        {"_id": 0, "subject": 1, "kind": 1, "status": 1, "error": 1,
-         "attempts": 1, "created_at": 1},
+        {"_id": 0, "id": 1, "subject": 1, "kind": 1, "status": 1, "error": 1,
+         "attempts": 1, "created_at": 1,
+         "html_body": 1},  # iter196 — presence-only signal; stripped below
     ).sort("created_at", -1).to_list(max(1, min(limit, 50)))
+    # iter196 — surface a boolean the UI can key off (`can_resend`) without
+    # shipping the full HTML body (5-20KB per row) on every list call.
+    for e in events:
+        e["can_resend"] = bool(e.pop("html_body", None))
     return {"email": target.get("email"), "events": events}
+
+
+@router.post("/admin/email-events/{event_id}/resend")
+async def admin_resend_email_event(event_id: str, request: Request) -> Any:
+    """iter196 — 1-click resend of any historical email that still has its
+    rendered HTML persisted. Staff-only. Records a new `email_events` row
+    with a `retried_from` reference so the ledger keeps the causal chain."""
+    requester = await require_staff(request)
+    ev = await db.email_events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(status_code=404, detail="Email no encontrado")
+
+    from email_service import resend_email_event
+    ok, msg = resend_email_event(ev)
+
+    # Chain the fresh row to the original so support can see the retry
+    # provenance (the new row was written by _send inside resend_email_event).
+    if ok or msg:  # a new row exists whenever resend attempted (sent | failed)
+        await db.email_events.find_one_and_update(
+            {"to": ev["to"], "subject": ev["subject"], "id": {"$ne": event_id},
+             "retried_from": {"$exists": False}},
+            {"$set": {"retried_from": event_id}},
+            sort=[("created_at", -1)],
+        )
+
+    await log_action(
+        db=db, actor=requester, action="RESEND_EMAIL",
+        entity_type="email_event", entity_id=event_id,
+        details={"to": ev.get("to"), "subject": ev.get("subject"),
+                 "ok": ok, "message": msg},
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "message": msg}
 
 
 @router.post("/admin/users/{user_id}/resend-verification")

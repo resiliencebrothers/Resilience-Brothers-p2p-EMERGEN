@@ -1,12 +1,17 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import axios from "axios";
 import { useTranslation } from "react-i18next";
+import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Banknote } from "lucide-react";
 import CopyableText from "@/components/CopyableText";
 import CashDetailsTable, { parseCashDetails } from "@/components/CashDetailsTable";
 import ExplorerLink from "@/components/ExplorerLink";
+import FundAccountSelect from "@/components/FundAccountSelect";
 import { validateCryptoHash, findNetwork } from "@/services/cryptoValidators";
 
 export default function WithdrawalDialog({
@@ -14,9 +19,12 @@ export default function WithdrawalDialog({
   note, onNoteChange,
   payoutProof, onPayoutProofChange,
   payoutHash, onPayoutHashChange,
+  paidFromAccount, onPaidFromAccountChange,
   statusLabel,
   onProofUpload,
   onAskChange,
+  courierKm, onCourierKmChange, courierMuni, onCourierMuniChange,
+  onApplyCourier, onCreateDelivery,
 }) {
   const { t } = useTranslation();
   const fileRef = useRef(null);
@@ -49,13 +57,41 @@ export default function WithdrawalDialog({
               onProofUpload={onProofUpload}
               fileRef={fileRef}
             />
+            {open.method === "cash" ? (
+              <>
+                <CourierFeeBlock
+                  w={open}
+                  courierKm={courierKm}
+                  onCourierKmChange={onCourierKmChange}
+                  courierMuni={courierMuni}
+                  onCourierMuniChange={onCourierMuniChange}
+                  onApplyCourier={onApplyCourier}
+                  onCreateDelivery={onCreateDelivery ? () => onCreateDelivery("withdrawal", open.id) : null}
+                />
+                <div
+                  className="text-[0.7rem] text-neutral-400 flex items-center gap-1.5 border border-white/10 bg-white/[0.02] px-2.5 py-2"
+                  data-testid="withdrawal-cashbox-note"
+                >
+                  <Banknote className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />
+                  <span>{t("admin.withdrawals.cashBoxNote")}</span>
+                </div>
+              </>
+            ) : (
+              <FundAccountSelect
+                currency={open.currency || "USD"}
+                value={paidFromAccount}
+                onChange={onPaidFromAccountChange}
+                label={t("admin.withdrawals.paidFromAccount")}
+                unassignedLabel={t("admin.companyFunds.unassigned")}
+                testId="withdrawal-paid-from-account"
+                autoMode
+              />
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <Button data-testid="withdrawal-approve" onClick={() => onAskChange("approved")} className="bg-[#22C55E] text-black rounded-none">
                 {open.method === "cash" ? t("admin.withdrawals.approveInProgress") : t("admin.withdrawals.approveConfirm")}
               </Button>
-              <Button data-testid="withdrawal-pay" onClick={() => onAskChange("paid")} className="bg-[#8B5CF6] text-white rounded-none">
-                {open.method === "cash" ? t("admin.withdrawals.payDelivered") : t("admin.withdrawals.payPaid")}
-              </Button>
+              <PayButton w={open} onAskChange={onAskChange} />
               <Button data-testid="withdrawal-reject" onClick={() => onAskChange("rejected")} className="bg-[#EF4444] text-white rounded-none">
                 {t("admin.withdrawals.reject")}
               </Button>
@@ -64,6 +100,191 @@ export default function WithdrawalDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// iter208 — Bloquea el botón "Entregado" en retiros CASH hasta que la
+// mensajería esté finalizada por el mensajero. El backend también valida
+// esta condición (routes/admin_withdrawals.py::_assert_cash_courier_ready)
+// pero deshabilitarlo visualmente evita clics innecesarios y mejora UX.
+function PayButton({ w, onAskChange }) {
+  const { t } = useTranslation();
+  const isCash = w.method === "cash";
+  const isOfficePickup = (w.cash_delivery_mode || "courier") === "office_pickup";
+  const deliveryStatus = w.courier_delivery_status;
+  const courierAssigned = !!w.courier_delivery_assigned;
+  const courierName = w.courier_delivery_courier_name || "";
+
+  let blocked = false;
+  let reasonKey = null;
+  let reasonVars = {};
+
+  if (isCash && !isOfficePickup && w.status !== "paid") {
+    if (!deliveryStatus) {
+      blocked = true;
+      reasonKey = "admin.withdrawals.payLock.noJob";
+    } else if (!courierAssigned) {
+      blocked = true;
+      reasonKey = "admin.withdrawals.payLock.noCourier";
+    } else if (!["delivered", "confirmed"].includes(deliveryStatus)) {
+      blocked = true;
+      reasonKey = "admin.withdrawals.payLock.notDelivered";
+      reasonVars = { courier: courierName || t("admin.withdrawals.payLock.courierFallback") };
+    }
+  }
+
+  const label = isCash ? t("admin.withdrawals.payDelivered") : t("admin.withdrawals.payPaid");
+  return (
+    <div className="flex flex-col gap-1">
+      <Button
+        data-testid="withdrawal-pay"
+        onClick={() => onAskChange("paid")}
+        disabled={blocked}
+        className="bg-[#8B5CF6] text-white rounded-none disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {label}
+      </Button>
+      {blocked && (
+        <div
+          data-testid="withdrawal-pay-lock-hint"
+          className="text-[0.65rem] text-amber-400 leading-tight"
+        >
+          {t(reasonKey, reasonVars)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function CourierFeeBlock({ w, courierKm, onCourierKmChange, courierMuni, onCourierMuniChange, onApplyCourier }) {
+  const { t } = useTranslation();
+  const [quote, setQuote] = useState(null);
+  const [munis, setMunis] = useState([]);
+
+  useEffect(() => {
+    if (!w?.id) return;
+    axios.get(`${API}/vip/courier-fee-quote`, {
+      params: { currency: w.currency || "USD", amount: w.amount_usd || 0 },
+      withCredentials: true,
+    }).then((r) => setQuote(r.data)).catch(() => setQuote(null));
+    // iter211 — tarifas fijas por municipio para cobro sin km.
+    axios.get(`${API}/courier/municipality-rates`, { withCredentials: true })
+      .then((r) => setMunis(r.data || [])).catch(() => setMunis([]));
+  }, [w?.id, w?.currency, w?.amount_usd]);
+
+  if (!quote) return null;
+  const muniRow = munis.find((m) => m.municipality === courierMuni);
+  const km = parseFloat(courierKm || "0") || 0;
+  const rawFee = courierMuni && muniRow
+    ? Number(muniRow.price_usdt || 0)
+    : km > 0
+      ? Math.max(Number(quote.min_fee_usdt || 0), km * (quote.rate_usdt_per_km || 0))
+      : 0;
+  const feeUsdt = Math.round(rawFee * 100) / 100;
+  const feeCur = quote.currency_per_usdt != null
+    ? Math.round(feeUsdt * quote.currency_per_usdt * 100) / 100
+    : null;
+  const charged = Number(w.courier_fee_usdt || 0) > 0;
+
+  return (
+    <div className="border border-white/10 p-3 space-y-2 bg-[#0a0a0a]/50" data-testid="courier-fee-block">
+      <div className="micro-label text-[#8B5CF6]">{t("admin.withdrawals.courier.title")}</div>
+      {quote.free ? (
+        <p className="text-[0.7rem] text-[#22C55E]" data-testid="courier-free-note">
+          {t("admin.withdrawals.courier.freeNote", { min: quote.free_min_usdt, eq: quote.usdt_equivalent })}
+        </p>
+      ) : !quote.enabled ? (
+        <p className="text-[0.7rem] text-amber-400" data-testid="courier-not-configured">
+          {t("admin.withdrawals.courier.notConfigured")}
+        </p>
+      ) : (
+        <>
+          {Number(w.courier_quote_km || 0) > 0 && (
+            <p className="text-[0.65rem] text-neutral-500" data-testid="courier-auto-km-hint">
+              {t("admin.withdrawals.courier.autoKmHint", { km: w.courier_quote_km })}
+            </p>
+          )}
+          {charged && (
+            <p className="text-[0.7rem] text-neutral-300" data-testid="courier-charged-note">
+              {w.courier_municipality
+                ? t("admin.withdrawals.courier.chargedMuni", {
+                    muni: w.courier_municipality,
+                    fee: w.courier_fee_usdt,
+                    feeCurrency: w.courier_fee_currency_amount,
+                    currency: w.courier_fee_currency || w.currency,
+                  })
+                : t("admin.withdrawals.courier.charged", {
+                    km: w.courier_km,
+                    fee: w.courier_fee_usdt,
+                    feeCurrency: w.courier_fee_currency_amount,
+                    currency: w.courier_fee_currency || w.currency,
+                  })}
+            </p>
+          )}
+          {/* iter211 — cobro por tarifa fija de municipio (mapa falló) */}
+          <div>
+            <label className="micro-label text-neutral-500">{t("admin.withdrawals.courier.muniLabel")}</label>
+            <Select
+              value={courierMuni || "__km__"}
+              onValueChange={(v) => onCourierMuniChange(v === "__km__" ? "" : v)}
+            >
+              <SelectTrigger
+                className="h-10 mt-1 rounded-none bg-[#0a0a0a] border-white/10 text-xs"
+                data-testid="courier-muni-select"
+              >
+                <SelectValue placeholder={t("admin.withdrawals.courier.muniByKm")} />
+              </SelectTrigger>
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white max-h-64">
+                <SelectItem value="__km__">{t("admin.withdrawals.courier.muniByKm")}</SelectItem>
+                {munis.map((m) => (
+                  <SelectItem key={m.id} value={m.municipality}>
+                    {m.municipality} — {m.price_usdt} USDT
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <label className="micro-label text-neutral-500">{t("admin.withdrawals.courier.kmLabel")}</label>
+              <Input
+                data-testid="courier-km-input"
+                type="number"
+                min="0"
+                step="0.1"
+                value={courierKm}
+                disabled={!!courierMuni}
+                onChange={(e) => onCourierKmChange(e.target.value)}
+                className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono disabled:opacity-40"
+              />
+            </div>
+            <Button
+              data-testid="courier-apply-btn"
+              onClick={onApplyCourier}
+              className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-10"
+            >
+              {charged ? t("admin.withdrawals.courier.update") : t("admin.withdrawals.courier.apply")}
+            </Button>
+          </div>
+          {courierMuni && muniRow && (
+            <p className="text-[0.7rem] text-neutral-400 font-mono" data-testid="courier-muni-fee-preview">
+              {courierMuni}: {feeUsdt} USDT
+              {feeCur != null ? ` ≈ ${feeCur} ${quote.currency}` : ""}
+            </p>
+          )}
+          {!courierMuni && km > 0 && (
+            <p className="text-[0.7rem] text-neutral-400 font-mono" data-testid="courier-fee-preview">
+              MAX({quote.min_fee_usdt} USDT, {km} km × {quote.rate_usdt_per_km} USDT/km) = {feeUsdt} USDT
+              {feeCur != null ? ` ≈ ${feeCur} ${quote.currency}` : ""}
+            </p>
+          )}
+          {charged && (
+            <p className="text-[0.65rem] text-neutral-500">{t("admin.withdrawals.courier.zeroHint")}</p>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

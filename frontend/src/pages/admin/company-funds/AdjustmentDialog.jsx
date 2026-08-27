@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
+import FundAccountSelect, { UNASSIGNED } from "@/components/FundAccountSelect";
 import { ArrowDownCircle, ArrowUpCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -16,6 +17,12 @@ const METHOD_LABELS = {
   transfer: "Transferencia bancaria",
   cash: "Efectivo",
   crypto: "Wallet cripto",
+};
+
+// iter213 — denominaciones de billetes (formato Excel de control físico).
+const CASH_DENOMS = {
+  CUP: [1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
+  USD: [100, 50, 20, 10, 5, 2, 1],
 };
 
 const emptyForm = {
@@ -26,6 +33,8 @@ const emptyForm = {
   source_name: "",
   source_account: "",
   note: "",
+  account_id: UNASSIGNED,
+  denoms: {},
 };
 
 export default function AdjustmentDialog({ open, onOpenChange, currencies, onCreated }) {
@@ -39,17 +48,40 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
     setAskTotp(false);
   };
 
+  // iter213 — desglose de billetes activo para efectivo CUP/USD.
+  const denomList = form.method === "cash" ? CASH_DENOMS[form.currency] : null;
+  const denomTotal = denomList
+    ? denomList.reduce((s, d) => s + d * (parseInt(form.denoms[d], 10) || 0), 0)
+    : 0;
+  const effectiveAmount = denomList ? denomTotal : parseFloat(form.amount);
+
+  const setDenom = (d, v) => {
+    const n = v === "" ? "" : Math.max(0, parseInt(v, 10) || 0);
+    setForm((f) => ({ ...f, denoms: { ...f.denoms, [d]: n } }));
+  };
+
   const submit = async (totpCode) => {
     setBusy(true);
     try {
+      const denominations = denomList
+        ? Object.fromEntries(
+            denomList
+              .filter((d) => (parseInt(form.denoms[d], 10) || 0) > 0)
+              .map((d) => [String(d), parseInt(form.denoms[d], 10)])
+          )
+        : null;
       const body = {
         adjustment_type: form.adjustment_type,
         currency: form.currency,
-        amount: parseFloat(form.amount),
+        amount: effectiveAmount,
         method: form.method,
         source_name: form.source_name.trim(),
         source_account: form.source_account.trim(),
         note: form.note.trim(),
+        account_id: form.account_id !== UNASSIGNED ? form.account_id : null,
+        ...(denominations && Object.keys(denominations).length > 0
+          ? { denominations }
+          : {}),
         totp_code: totpCode,
       };
       await axios.post(`${API}/admin/company-funds/adjustments`, body, { withCredentials: true });
@@ -72,8 +104,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
 
   const canContinue =
     form.currency &&
-    form.amount &&
-    parseFloat(form.amount) > 0 &&
+    (denomList ? denomTotal > 0 : form.amount && parseFloat(form.amount) > 0) &&
     form.source_name.trim().length >= 2 &&
     form.method &&
     (form.method !== "cash" ? form.source_account.trim().length > 0 : true);
@@ -161,12 +192,59 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                   type="number"
                   step="any"
                   min="0"
-                  value={form.amount}
+                  value={denomList ? (denomTotal || "") : form.amount}
+                  readOnly={!!denomList}
                   onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono"
+                  placeholder={denomList ? "Se calcula con los billetes" : ""}
+                  className={`rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono ${denomList ? "opacity-70" : ""}`}
                 />
               </div>
             </div>
+
+            {/* iter213 — desglose de billetes (formato Excel de control físico) */}
+            {denomList && (
+              <div
+                className="border border-[#22C55E]/25 bg-[#22C55E]/[0.04] p-3 space-y-2"
+                data-testid="adj-denominations-block"
+              >
+                <div className="flex items-center justify-between">
+                  <Label className="micro-label text-neutral-400">
+                    Desglose de billetes ({form.currency})
+                  </Label>
+                  <span className="text-[0.65rem] text-neutral-500">
+                    Cantidad de billetes por denominación
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {denomList.map((d) => (
+                    <div key={d}>
+                      <Label className="text-[0.65rem] text-neutral-500 font-mono">
+                        Billetes de {d}
+                      </Label>
+                      <Input
+                        data-testid={`adj-denom-${d}`}
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={form.denoms[d] ?? ""}
+                        onChange={(e) => setDenom(d, e.target.value)}
+                        placeholder="0"
+                        className="rounded-none mt-0.5 bg-[#0a0a0a] border-white/10 h-9 font-mono text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div
+                  className="flex justify-between text-xs pt-1 border-t border-white/10"
+                  data-testid="adj-denom-total"
+                >
+                  <span className="text-neutral-500">Importe calculado</span>
+                  <span className={`font-mono ${denomTotal > 0 ? "text-[#22C55E]" : "text-neutral-500"}`}>
+                    {denomTotal.toLocaleString()} {form.currency}
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div>
               <Label className="micro-label text-neutral-500">Método</Label>
@@ -190,9 +268,28 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
               </Select>
             </div>
 
+            {form.currency && form.method === "cash" && (
+              <div
+                className="text-[0.7rem] text-neutral-400 flex items-center gap-1.5 border border-white/10 bg-white/[0.02] px-2.5 py-2"
+                data-testid="adj-cashbox-note"
+              >
+                <ArrowDownCircle className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />
+                <span>Este movimiento en efectivo se registra automáticamente en la caja «Fondo Resilience».</span>
+              </div>
+            )}
+            {form.currency && form.method !== "cash" && (
+              <FundAccountSelect
+                currency={form.currency}
+                value={form.account_id}
+                onChange={(v) => setForm({ ...form, account_id: v })}
+                label="Cuenta interna (opcional)"
+                testId="adj-account"
+              />
+            )}
+
             <div>
               <Label className="micro-label text-neutral-500">
-                {isInflow ? "¿Quién aporta?" : "¿A quién / dónde va?"}
+                {isInflow ? "¿Quién aporta / entrega?" : "¿Quién retira / recibe?"}
               </Label>
               <Input
                 data-testid="adj-source-name"

@@ -54,6 +54,8 @@ class TestCurrencyCodeLenientLookup:
                 "currency": "CUP",
                 "amount": 1000,
                 "method": "cash",
+                # iter213 — cash CUP requiere desglose de billetes
+                "denominations": {"1000": 1},
                 "source_name": "Migration test",
                 "source_account": "",
                 "note": "lenient-lookup",
@@ -78,6 +80,8 @@ class TestCurrencyCodeLenientLookup:
                 "currency": "cup",  # user typed lowercase
                 "amount": 500,
                 "method": "cash",
+                # iter213 — cash CUP requiere desglose de billetes
+                "denominations": {"500": 1},
                 "source_name": "Case test",
                 "source_account": "",
                 "note": "case-insensitive",

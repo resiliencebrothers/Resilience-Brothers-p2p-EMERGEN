@@ -73,7 +73,7 @@ export default function OperationDialog({ open, onOpenChange, currencies, pctFor
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg" data-testid="op-dialog">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="op-dialog">
         <DialogHeader>
           <DialogTitle>{t("profitability.dialog.title")}</DialogTitle>
           <DialogDescription>{t("profitability.dialog.description")}</DialogDescription>

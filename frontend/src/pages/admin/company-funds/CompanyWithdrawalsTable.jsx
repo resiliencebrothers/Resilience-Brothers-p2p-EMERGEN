@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { FileImage, HandCoins, SlidersHorizontal, Plus, Download, Search, FileDown } from "lucide-react";
+import { FileImage, HandCoins, SlidersHorizontal, Plus, Download, Search, FileDown, Banknote } from "lucide-react";
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -25,7 +25,7 @@ export default function CompanyWithdrawalsTable({
   createCurrencies, currencies,
   statusFilter, setStatusFilter,
   beneficiaryQuery, setBeneficiaryQuery,
-  onOpenAdjustmentsHistory, onOpenAdjustment, onOpenCreate, onOpenExport, onOpenClosingPdf,
+  onOpenAdjustmentsHistory, onOpenAdjustment, onOpenCreate, onOpenExport, onOpenClosingPdf, onOpenCashBox,
   onRequestStatus,
   rawTotal,
 }) {
@@ -74,6 +74,14 @@ export default function CompanyWithdrawalsTable({
                 {adjustments.length}
               </span>
             )}
+          </Button>
+          <Button
+            data-testid="open-cashbox-denominations"
+            variant="outline"
+            onClick={onOpenCashBox}
+            className="rounded-none border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10"
+          >
+            <Banknote className="w-4 h-4 mr-1" /> {t("admin.companyFunds.cashBoxBtn")}
           </Button>
           <Button
             data-testid="open-adjustment-dialog"
@@ -222,21 +230,21 @@ function WithdrawalRow({ w, isAdmin, statusLabel, onRequestStatus, t }) {
             <div className="flex gap-1">
               <Button
                 size="sm"
-                onClick={() => onRequestStatus({ id: w.id, status: "approved" })}
+                onClick={() => onRequestStatus({ id: w.id, status: "approved", currency: w.currency })}
                 className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs"
               >
                 {t("admin.companyFunds.approve")}
               </Button>
               <Button
                 size="sm"
-                onClick={() => onRequestStatus({ id: w.id, status: "paid" })}
+                onClick={() => onRequestStatus({ id: w.id, status: "paid", currency: w.currency })}
                 className="bg-[#22C55E] text-black rounded-none h-7 text-xs"
               >
                 {t("admin.companyFunds.paid")}
               </Button>
               <Button
                 size="sm"
-                onClick={() => onRequestStatus({ id: w.id, status: "rejected" })}
+                onClick={() => onRequestStatus({ id: w.id, status: "rejected", currency: w.currency })}
                 className="bg-[#EF4444] text-white rounded-none h-7 text-xs"
               >
                 ×

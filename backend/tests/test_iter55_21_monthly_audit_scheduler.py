@@ -72,7 +72,7 @@ async def test_opt_out_flag_short_circuits_the_job(async_db, monkeypatch):
 
     # Set opt-out
     await async_db.settings.update_one(
-        {"_id": "global"},
+        {"id": "global"},
         {"$set": {"auto_send_monthly_audit": False}}, upsert=True,
     )
     try:
@@ -81,7 +81,7 @@ async def test_opt_out_flag_short_circuits_the_job(async_db, monkeypatch):
     finally:
         # Restore
         await async_db.settings.update_one(
-            {"_id": "global"},
+            {"id": "global"},
             {"$unset": {"auto_send_monthly_audit": ""}},
         )
 

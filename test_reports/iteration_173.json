@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only smoke of iter173 reconciliation dashboard + advanced filters + score breakdown + payment_reference display on VIP batch items and normal orders. All 6 flows PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin Reconciliation (test users had EN i18n)", "issues": ["Chip labels rendered in English ('Amount/Currency/Name/Date/Reference/Method/Total') because test-user locale is EN. Translation keys reconciliation.breakdown.* exist and switching to ES yields 'Monto/Moneda/Nombre/Fecha/Referencia/Método/Total'. Not a bug."]}
+    ]
+  },
+  "test_results_detail": {
+    "T1_dashboard": "PASS — Métricas tab renders, all requested KPIs present (recon-dash-imports-today, recon-dash-tx-today, recon-dash-auto-rate, recon-dash-avg-score, recon-dash-reconciled, recon-dash-rollbacks, recon-dash-currency-table). Period chips 7/30/90/365 all present; clicking days=7 and days=365 triggers GET /api/admin/reconciliation/dashboard?days=N and both returned HTTP 200 with expected keys.",
+    "T2_advanced_filters": "PASS — recon-adv-filters bar visible with recon-flt-q, recon-flt-date-from, recon-flt-date-to, recon-flt-amount-min, recon-flt-amount-max, recon-flt-score-min. Typing 'Jose' in q triggers debounced (400ms) GET /api/admin/reconciliation/transactions?...&q=Jose returning 200. recon-flt-clear appears when q non-empty and clears input on click.",
+    "T3_breakdown_chips": "PASS — recon-review-btn-btx_ui_test1 opens recon-candidates-dialog. recon-breakdown-chips contains all 7 chips (Amount +45, Currency +10, Name 95% +23, Date ±0d +10, Reference +0, Method +0, Total 88). Candidate line displays 'Ref RB-999888'. kind=vip_batch_item chip 'Batch Item' rendered.",
+    "T4_vip_item_ref": "PASS — /dashboard/batches shows vip-batches-view. Click on batch-row-vbatch_uitest01 opens batch-detail-dialog; item row renders data-testid='item-ref-vitem_uitest01' with 'RB-123456' text and copy button data-testid='item-ref-copy-vitem_uitest01'.",
+    "T5_order_payment_ref": "PASS — /dashboard → My Orders → click seeded row opens detail modal showing 'Referencia de pago / Payment reference' with value RB-654321 and copy button data-testid='my-order-payment-ref-copy'.",
+    "T6_regression": "PASS — Import tab and Movimientos tab still render (tabs reconciliation-tab-import + reconciliation-transactions-tab visible; no console errors during navigation)."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DashboardTab.jsx line 30: catch swallows all dashboard fetch errors — user has no feedback on 4xx/5xx; consider a toast/error state.",
+    "TransactionsTab.jsx searchOrders catch (line ~165) also swallows errors silently."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (6/6 flows)"},
+  "test_credentials": "admin cookie session_token=smoke_session_admin_jun26_recon (pre-existing). VIP/normal used temporary sessions smoke_session_vip_recon/smoke_session_normal_recon, both deleted post-run.",
+  "seed_data_creation": "Created + removed: bank_transactions.btx_ui_test1 (candidates[].breakdown + order_payment_reference RB-999888), statement_imports.imp_ui_test, vip_batches.vbatch_uitest01, vip_batch_items.vitem_uitest01 (payment_reference RB-123456), orders.order_uitest01 (user_test_normal01, payment_reference RB-654321), user_sessions x2. All cleaned after run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter173 fully verified. VIP batch items page is at /dashboard/batches — open the batch card to see item-ref inside batch-detail-dialog (not on the list). Endpoints confirmed 200: GET /api/admin/reconciliation/dashboard?days={7,30,90,365}, GET /api/admin/reconciliation/transactions?q=Jose.",
+  "rca_of_the_issue": "N/A — no failures."
+}

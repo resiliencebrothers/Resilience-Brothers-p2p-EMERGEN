@@ -21,7 +21,7 @@ def normalize_tiers(raw: Any) -> list[dict]:
         if not isinstance(t, dict):
             continue
         try:
-            mn = float(t.get("min_amount"))
+            mn = float(t.get("min_amount") or 0)
         except (TypeError, ValueError):
             continue
         if mn < 0:

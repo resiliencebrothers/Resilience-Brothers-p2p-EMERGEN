@@ -29,6 +29,7 @@ from services.balances import (
 )
 # Re-exported for existing importers (health, market, admin_revenue, ...).
 from services.order_profit import compute_order_profit  # noqa: F401
+from services.payment_reference import generate_payment_reference
 from services.referrals import maybe_award_referral_bonus
 
 
@@ -64,6 +65,9 @@ class Order(BaseModel):
     # to send funds to (resolved by amount at creation time).
     payment_account_id: str = ""
     payment_account_label: str = ""
+    # iter173 §61 — reference the client can include in the bank transfer
+    # concept; exact match in the statement = high-confidence signal (+20).
+    payment_reference: str = Field(default_factory=generate_payment_reference)
     status: Literal[
         "pending", "requires_double_approval", "approved", "rejected", "completed"
     ] = "pending"

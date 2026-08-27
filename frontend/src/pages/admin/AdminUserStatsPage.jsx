@@ -12,6 +12,7 @@ import UserStatsKpis from "./user-stats/UserStatsKpis";
 import BalanceBreakdown from "./user-stats/BalanceBreakdown";
 import CapitalDebtsSection from "./user-stats/CapitalDebtsSection";
 import AuditTrailSection from "./user-stats/AuditTrailSection";
+import EmailLedgerSection from "./user-stats/EmailLedgerSection";
 
 /**
  * iter55.32 — Admin/staff drill-down for one specific user. Reachable from
@@ -70,6 +71,7 @@ export default function AdminUserStatsPage() {
         userId={userId}
         onOpenInAudit={() => navigate(`/admin/audit?tab=by-user&user_id=${userId}`)}
       />
+      <EmailLedgerSection userId={userId} />
 
       <div className="flex gap-2 flex-wrap">
         <Button

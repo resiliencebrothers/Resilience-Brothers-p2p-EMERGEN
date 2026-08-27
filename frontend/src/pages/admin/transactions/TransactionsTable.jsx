@@ -3,9 +3,9 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 export function TransactionsTable({ items, loading, onRowClick }) {
   return (
     <div className="tactile-card overflow-hidden">
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto overflow-y-auto max-h-[70vh]" data-testid="transactions-table-scroll">
         <table className="w-full text-sm">
-          <thead className="border-b border-white/10 bg-[#0a0a0a]">
+          <thead className="sticky top-0 z-10 border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
               <th className="px-3 py-3 micro-label text-neutral-500">Fecha</th>
               <th className="px-3 py-3 micro-label text-neutral-500">Tipo</th>

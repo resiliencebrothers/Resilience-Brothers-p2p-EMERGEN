@@ -28,6 +28,34 @@ from services.orders_helpers import compute_order_profit
 router = APIRouter(tags=["Admin"])
 
 
+async def _compute_courier_revenue(days: Optional[int] = None) -> dict:
+    """iter208 — Company revenue from confirmed courier deliveries.
+
+    Aggregates `platform_share_usdt` (the 20% company cut, by default) plus
+    what was paid out to couriers (`courier_share_usdt`) and the total
+    charged (`fee_usdt`). Only `confirmed` deliveries count — those are the
+    ones where staff sealed the delivery AND the courier's USDT balance was
+    credited (see routes/deliveries.py::admin_confirm_delivery).
+    """
+    q: Dict[str, Any] = {"status": "confirmed"}
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["updated_at"] = {"$gte": cutoff}
+    rows = await db.deliveries.find(
+        q, {"_id": 0, "platform_share_usdt": 1,
+            "courier_share_usdt": 1, "fee_usdt": 1},
+    ).to_list(20000)
+    platform = sum(float(r.get("platform_share_usdt") or 0) for r in rows)
+    courier = sum(float(r.get("courier_share_usdt") or 0) for r in rows)
+    total = sum(float(r.get("fee_usdt") or 0) for r in rows)
+    return {
+        "platform_usdt": round(platform, 4),
+        "courier_usdt": round(courier, 4),
+        "total_fees_usdt": round(total, 4),
+        "count": len(rows),
+    }
+
+
 async def _compute_conversion_fees(days: Optional[int]) -> dict:
     """Sum the 0.01 USDT service fees charged on `POST /vip/convert` when
     a user converts fiat balance → USDT. Source of truth is the `audit_log`
@@ -225,6 +253,54 @@ def _finalize_pair_items(by_pair: dict) -> list:
     return items
 
 
+async def _accumulate_batch_items_by_pair(
+    days: Optional[int], rate_by_pair: dict, fx: dict, by_pair: dict,
+) -> int:
+    """iter208 — Los lotes VIP también generan ganancia por par. Aporta cada
+    `vip_batch_items` aprobado al bucket del par correspondiente para que la
+    tabla "Ganancia P2P por par" refleje TODO el volumen operado, no solo
+    la colección `orders`. Retorna cuántos items se procesaron."""
+    q: Dict[str, Any] = {
+        "status": "approved",
+        "to_code": {"$nin": [None, ""]},
+    }
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["reviewed_at"] = {"$gte": cutoff}
+    rows = await db.vip_batch_items.find(
+        q, {"_id": 0, "from_code": 1, "to_code": 1, "amount": 1,
+            "amount_to": 1, "margin_usdt": 1},
+    ).to_list(20000)
+    count = 0
+    for r in rows:
+        fc = r.get("from_code")
+        tc = r.get("to_code")
+        if not fc or not tc:
+            continue
+        rate_doc = rate_by_pair.get((fc, tc))
+        key = f"{fc}→{tc}"
+        # Reuse the same bucket shape as orders (fake object with codes).
+        bucket = by_pair.setdefault(
+            key, _new_pair_bucket({"from_code": fc, "to_code": tc}, rate_doc),
+        )
+        bucket["orders"] += 1
+        bucket["volume_from"] += float(r.get("amount") or 0.0)
+        bucket["volume_to"] += float(r.get("amount_to") or 0.0)
+        margin_usdt = float(r.get("margin_usdt") or 0.0)
+        bucket["profit_usdt"] += margin_usdt
+        # profit_to expressed in the destination currency for consistency
+        # with the orders side. For USDT-quoted pairs it's identical; for
+        # other quotes we convert USDT → to_code via the FX lookup.
+        if tc == "USDT":
+            bucket["profit_to"] += margin_usdt
+        else:
+            rate_to_usdt = fx.get(tc)
+            if rate_to_usdt and rate_to_usdt > 0:
+                bucket["profit_to"] += margin_usdt / rate_to_usdt
+        count += 1
+    return count
+
+
 @router.get("/admin/revenue")
 async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     await require_admin(request)
@@ -239,8 +315,8 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     fx = await build_rate_lookup()
 
     by_pair: dict = {}
-    by_role = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
-               "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
+    by_role: dict = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
+                     "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
     missing_rate_pairs: set = set()
     total_profit_usdt = 0.0
     total_volume_usdt = 0.0
@@ -258,6 +334,13 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
         if prof is not None:
             total_profit_usdt += prof
 
+    # iter208 — Add approved VIP batch items to by_pair so pairs traded
+    # exclusively via lotes VIP (e.g. ZELLE→CUPT, ZELLE→CUP) appear in
+    # the "Ganancia P2P por par" table with their real volume + profit.
+    batch_items_count = await _accumulate_batch_items_by_pair(
+        days, rate_by_pair, fx, by_pair,
+    )
+
     pair_items = _finalize_pair_items(by_pair)
 
     for r in by_role.values():
@@ -267,6 +350,7 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     marketplace = await _compute_marketplace_revenue(days)
     conversion_fees = await _compute_conversion_fees(days)
     vip_batches = await _compute_vip_batch_profit(days)
+    courier = await _compute_courier_revenue(days)
 
     # iter122 — VIPs operate through batches (`vip_batch_items`), not the
     # `orders` collection. Fold approved batch metrics into the "Clientes VIP"
@@ -290,12 +374,14 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
         + marketplace["total_profit_usd"]
         + conversion_fees["total_usdt"]
         + vip_batches["total_usdt"]
+        + courier["platform_usdt"]
     )
     total_volume_all = (
         total_volume_usdt
         + vip_batches.get("volume_usdt", 0.0)
         + marketplace["total_revenue_usd"]
         + conversion_fees.get("volume_usdt", 0.0)
+        + courier["total_fees_usdt"]
     )
 
     return {
@@ -306,6 +392,13 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
         "conversion_fees_count": conversion_fees["count"],
         "vip_batches_profit_usdt": vip_batches["total_usdt"],
         "vip_batches_count": vip_batches["count"],
+        # iter208 — Company revenue from confirmed courier deliveries.
+        # `courier_platform_usdt` is the empresa's share, `courier_couriers_usdt`
+        # is what was paid out to couriers (already credited to their balances).
+        "courier_platform_usdt": courier["platform_usdt"],
+        "courier_couriers_usdt": courier["courier_usdt"],
+        "courier_total_fees_usdt": courier["total_fees_usdt"],
+        "courier_deliveries_count": courier["count"],
         "total_volume_usdt": round(total_volume_usdt, 4),
         "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
         # iter157 — TOTAL company profitability: every profit source (P2P +
@@ -318,7 +411,9 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
         "by_role": by_role,
         "marketplace": marketplace,
         "missing_real_rate_pairs": sorted(missing_rate_pairs),
-        "orders_total": len(orders),
+        "orders_total": len(orders) + batch_items_count,
+        "orders_p2p_count": len(orders),
+        "batch_items_count": batch_items_count,
     }
 
 
@@ -449,15 +544,15 @@ async def admin_revenue_day_detail(request: Request, date: str) -> Any:
 
     mkt_rows, mkt_total = [], 0.0
     for r in redemptions:
-        prof = float(r.get("total_usd") or 0.0) - float(r.get("cost_usd") or 0.0)
-        mkt_total += prof
+        prof_amt = float(r.get("total_usd") or 0.0) - float(r.get("cost_usd") or 0.0)
+        mkt_total += prof_amt
         mkt_rows.append({
             "id": r["id"], "product_name": r.get("product_name") or "—",
             "user_name": r.get("user_name") or r.get("user_email") or "—",
             "quantity": r.get("quantity") or 1,
             "total_usd": float(r.get("total_usd") or 0.0),
             "cost_usd": float(r.get("cost_usd") or 0.0),
-            "profit_usdt": round(prof, 4),
+            "profit_usdt": round(prof_amt, 4),
         })
 
     vip_ids = list({it.get("vip_user_id") for it in batch_items if it.get("vip_user_id")})

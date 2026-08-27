@@ -5,11 +5,12 @@ re-fetch balances instantly); `ledger_changed` fans out to admin/staff so
 revenue stats, company funds and tables refresh without F5.
 """
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-async def emit_balance_changed(user_id: str, reason: str, **extra) -> None:
+async def emit_balance_changed(user_id: str, reason: str, **extra: Any) -> None:
     try:
         from services.live_bus import publish
         payload = {"reason": reason, "user_id": user_id, **extra}

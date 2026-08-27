@@ -118,11 +118,7 @@ def _summary_card_row(styles, cards: List[dict]) -> Table:
     return tbl
 
 
-def _funds_table(funds_rows: List[dict]) -> Table:
-    """Per-currency treasury decomposition table.
-
-    Columns: Moneda | Entradas | Órdenes Out | Retiros Cli | Retiros Emp | Ajustes± | Balance
-    """
+def _funds_table_data(funds_rows: List[dict]) -> List[list]:
     headers = [
         "Moneda", "Entradas",
         "Órdenes\n(salida)", "Retiros\nClientes",
@@ -131,7 +127,6 @@ def _funds_table(funds_rows: List[dict]) -> Table:
     data = [headers]
     for r in funds_rows:
         adj_net = float(r.get("manual_inflow", 0)) - float(r.get("manual_outflow", 0))
-        balance = float(r.get("balance", 0))
         data.append([
             r.get("currency", "—"),
             f"+{r.get('inflow', 0):,.2f}",
@@ -139,17 +134,14 @@ def _funds_table(funds_rows: List[dict]) -> Table:
             f"-{r.get('outflow_clients', 0):,.2f}",
             f"-{r.get('outflow_company', 0):,.2f}",
             f"{adj_net:+,.2f}",
-            f"{balance:+,.2f}",
+            f"{float(r.get('balance', 0)):+,.2f}",
         ])
     if len(data) == 1:
         data.append(["—"] * 7)
+    return data
 
-    tbl = Table(
-        data,
-        colWidths=[0.75 * inch, 1.15 * inch, 1.05 * inch, 1.05 * inch,
-                   1.05 * inch, 1.0 * inch, 1.15 * inch],
-        repeatRows=1,
-    )
+
+def _funds_table_style(funds_rows: List[dict]) -> TableStyle:
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), PANEL),
         ("TEXTCOLOR", (0, 0), (-1, 0), BRAND_PURPLE),
@@ -179,7 +171,21 @@ def _funds_table(funds_rows: List[dict]) -> Table:
             GREEN if float(r.get("balance", 0)) >= 0 else RED,
         ))
         style.append(("FONTNAME", (6, idx), (6, idx), "Helvetica-Bold"))
-    tbl.setStyle(TableStyle(style))
+    return TableStyle(style)
+
+
+def _funds_table(funds_rows: List[dict]) -> Table:
+    """Per-currency treasury decomposition table.
+
+    Columns: Moneda | Entradas | Órdenes Out | Retiros Cli | Retiros Emp | Ajustes± | Balance
+    """
+    tbl = Table(
+        _funds_table_data(funds_rows),
+        colWidths=[0.75 * inch, 1.15 * inch, 1.05 * inch, 1.05 * inch,
+                   1.05 * inch, 1.0 * inch, 1.15 * inch],
+        repeatRows=1,
+    )
+    tbl.setStyle(_funds_table_style(funds_rows))
     return tbl
 
 

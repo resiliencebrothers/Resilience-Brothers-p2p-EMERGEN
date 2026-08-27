@@ -21,6 +21,7 @@ export default function CopyableText({
   testid,
   className = "",
   monospace = true,
+  wrap = false,
 }) {
   const [copied, setCopied] = useState(false);
   const safeValue = (value || "").toString().trim();
@@ -57,7 +58,7 @@ export default function CopyableText({
       title={safeValue}
     >
       <span
-        className={`truncate whitespace-nowrap ${monospace ? "font-mono" : ""}`}
+        className={`${wrap ? "break-all whitespace-normal min-w-0" : "truncate whitespace-nowrap"} ${monospace ? "font-mono" : ""}`}
       >
         {safeValue}
       </span>

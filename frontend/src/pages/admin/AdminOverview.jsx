@@ -19,6 +19,15 @@ export default function AdminOverview() {
   const [defensivePct, setDefensivePct] = useState("");
   const [opsEmail, setOpsEmail] = useState("");
   const [officeAddress, setOfficeAddress] = useState("");
+  // iter198 — courier fee tariff (USDT/km) + free-above threshold.
+  const [courierRate, setCourierRate] = useState("");
+  const [courierFreeMin, setCourierFreeMin] = useState("");
+  const [courierMinFee, setCourierMinFee] = useState("");
+  const [officeLat, setOfficeLat] = useState("");
+  const [officeLon, setOfficeLon] = useState("");
+  // iter192 — provinces with cash-delivery availability (null = all).
+  const [cashProvinces, setCashProvinces] = useState(null);
+  const [allProvinces, setAllProvinces] = useState([]);
   const [autoMonthlyAudit, setAutoMonthlyAudit] = useState(true);
   const [autoMonthlyVipLedger, setAutoMonthlyVipLedger] = useState(true);
   const [savingThreshold, setSavingThreshold] = useState(false);
@@ -39,6 +48,12 @@ export default function AdminOverview() {
       setDefensivePct(set.data.defensive_margin_pct == null ? "" : String(set.data.defensive_margin_pct));
       setOpsEmail(set.data.ops_notifications_email || "");
       setOfficeAddress(set.data.office_address || "");
+      setCourierRate(String(set.data.courier_rate_usdt_per_km ?? 0.5));
+      setCourierFreeMin(String(set.data.courier_free_min_usdt ?? 1000));
+      setCourierMinFee(String(set.data.courier_min_fee_usdt ?? 2));
+      setOfficeLat(set.data.office_latitude != null ? String(set.data.office_latitude) : "");
+      setOfficeLon(set.data.office_longitude != null ? String(set.data.office_longitude) : "");
+      setCashProvinces(set.data.cash_provinces ?? null);
       setAutoMonthlyAudit(set.data.auto_send_monthly_audit !== false);
       setAutoMonthlyVipLedger(set.data.auto_send_monthly_vip_ledger !== false);
     } catch (e) {
@@ -49,6 +64,12 @@ export default function AdminOverview() {
   }, [t]);
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    axios.get(`${API}/vip/cash-provinces`, { withCredentials: true })
+      .then((r) => setAllProvinces((r.data?.provinces || []).map((p) => p.name)))
+      .catch(() => setAllProvinces([]));
+  }, []);
+
   const saveThreshold = () => {
     const v = parseFloat(threshold);
     if (!v || v < 0) return toast.error(t("adminOverview.alerts.invalidThreshold"));
@@ -57,11 +78,30 @@ export default function AdminOverview() {
     if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
       return toast.error(t("adminOverview.alerts.invalidEmail"));
     }
+    const cRate = parseFloat(courierRate);
+    const cMin = parseFloat(courierFreeMin);
+    const cMinFee = parseFloat(courierMinFee);
+    if (Number.isNaN(cRate) || cRate < 0 || Number.isNaN(cMin) || cMin < 0
+        || Number.isNaN(cMinFee) || cMinFee < 0) {
+      return toast.error(t("adminOverview.alerts.invalidCourier"));
+    }
+    const lat = officeLat.trim() === "" ? null : parseFloat(officeLat);
+    const lon = officeLon.trim() === "" ? null : parseFloat(officeLon);
+    if ((lat !== null && (Number.isNaN(lat) || lat < -90 || lat > 90))
+        || (lon !== null && (Number.isNaN(lon) || lon < -180 || lon > 180))) {
+      return toast.error(t("adminOverview.alerts.invalidOfficeCoords"));
+    }
     setPendingSettings({
       vip_threshold_usdt: v,
       defensive_margin_pct: def,
       ops_notifications_email: trimmedEmail || null,
       office_address: officeAddress.trim() || null,
+      cash_provinces: cashProvinces,
+      courier_rate_usdt_per_km: cRate,
+      courier_free_min_usdt: cMin,
+      courier_min_fee_usdt: cMinFee,
+      office_latitude: lat,
+      office_longitude: lon,
     });
   };
 
@@ -268,6 +308,126 @@ export default function AdminOverview() {
           />
           <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
             {t("adminOverview.alerts.officeAddressHint")}
+          </p>
+        </div>
+
+        {/* iter192 — provinces with cash-delivery availability */}
+        <div className="mt-6 pt-6 border-t border-white/5" data-testid="cash-provinces-block">
+          <label className="micro-label text-neutral-500 text-[0.65rem]">
+            {t("adminOverview.alerts.cashProvincesLabel")}
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2 mt-2">
+            {allProvinces.map((p) => {
+              const checked = cashProvinces === null || cashProvinces.includes(p);
+              return (
+                <label
+                  key={p}
+                  className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      const base = cashProvinces === null ? [...allProvinces] : [...cashProvinces];
+                      const next = e.target.checked
+                        ? [...new Set([...base, p])]
+                        : base.filter((x) => x !== p);
+                      setCashProvinces(next);
+                    }}
+                    data-testid={`cash-province-toggle-${p.replace(/\s+/g, "-")}`}
+                    className="accent-[#8B5CF6] w-3.5 h-3.5"
+                  />
+                  {p}
+                </label>
+              );
+            })}
+          </div>
+          <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
+            {t("adminOverview.alerts.cashProvincesHint")}
+          </p>
+        </div>
+
+        {/* iter198 — courier fee per km for cash withdrawals */}
+        <div className="mt-6 pt-6 border-t border-white/5" data-testid="courier-fee-settings-block">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="micro-label text-neutral-500 text-[0.65rem]">
+                {t("adminOverview.alerts.courierRateLabel")}
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="0.05"
+                value={courierRate}
+                onChange={(e) => setCourierRate(e.target.value)}
+                className="mt-1 rounded-none bg-black/40 border-white/10"
+                data-testid="courier-rate-input"
+              />
+            </div>
+            <div>
+              <label className="micro-label text-neutral-500 text-[0.65rem]">
+                {t("adminOverview.alerts.courierMinFeeLabel")}
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="0.5"
+                value={courierMinFee}
+                onChange={(e) => setCourierMinFee(e.target.value)}
+                className="mt-1 rounded-none bg-black/40 border-white/10"
+                data-testid="courier-min-fee-input"
+              />
+            </div>
+            <div>
+              <label className="micro-label text-neutral-500 text-[0.65rem]">
+                {t("adminOverview.alerts.courierFreeMinLabel")}
+              </label>
+              <Input
+                type="number"
+                min="0"
+                step="50"
+                value={courierFreeMin}
+                onChange={(e) => setCourierFreeMin(e.target.value)}
+                className="mt-1 rounded-none bg-black/40 border-white/10"
+                data-testid="courier-free-min-input"
+              />
+            </div>
+          </div>
+          <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
+            {t("adminOverview.alerts.courierHint")}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+            <div>
+              <label className="micro-label text-neutral-500 text-[0.65rem]">
+                {t("adminOverview.alerts.officeLatLabel")}
+              </label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={officeLat}
+                onChange={(e) => setOfficeLat(e.target.value)}
+                placeholder="23.1136"
+                className="mt-1 rounded-none bg-black/40 border-white/10 font-mono"
+                data-testid="office-lat-input"
+              />
+            </div>
+            <div>
+              <label className="micro-label text-neutral-500 text-[0.65rem]">
+                {t("adminOverview.alerts.officeLonLabel")}
+              </label>
+              <Input
+                type="number"
+                step="0.0001"
+                value={officeLon}
+                onChange={(e) => setOfficeLon(e.target.value)}
+                placeholder="-82.3666"
+                className="mt-1 rounded-none bg-black/40 border-white/10 font-mono"
+                data-testid="office-lon-input"
+              />
+            </div>
+          </div>
+          <p className="text-[0.7rem] text-neutral-500 mt-2 leading-relaxed">
+            {t("adminOverview.alerts.officeCoordsHint")}
           </p>
         </div>
 

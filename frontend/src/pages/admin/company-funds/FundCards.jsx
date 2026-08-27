@@ -11,9 +11,10 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Wallet, TrendingUp, TrendingDown, ArrowDownLeft, ArrowUpRight, AlertTriangle } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, ArrowDownLeft, ArrowUpRight, AlertTriangle, Layers } from "lucide-react";
 import ProfitSparkline from "./ProfitSparkline";
 import ProfitDetailDialog from "./ProfitDetailDialog";
+import AccountBreakdownDialog from "./AccountBreakdownDialog";
 
 const fmt2 = (n) =>
   Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -21,6 +22,7 @@ const fmt2 = (n) =>
 export default function FundCards({ funds }) {
   const { t } = useTranslation();
   const [detailCurrency, setDetailCurrency] = useState(null);
+  const [breakdownCurrency, setBreakdownCurrency] = useState(null);
   if (funds.length === 0) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" data-testid="fund-cards">
@@ -37,12 +39,22 @@ export default function FundCards({ funds }) {
         data-testid="fund-cards"
       >
         {funds.map((f) => (
-          <FundCard key={f.currency} f={f} t={t} onOpenDetail={setDetailCurrency} />
+          <FundCard
+            key={f.currency}
+            f={f}
+            t={t}
+            onOpenDetail={setDetailCurrency}
+            onOpenBreakdown={setBreakdownCurrency}
+          />
         ))}
       </div>
       <ProfitDetailDialog
         currency={detailCurrency}
         onClose={() => setDetailCurrency(null)}
+      />
+      <AccountBreakdownDialog
+        currency={breakdownCurrency}
+        onClose={() => setBreakdownCurrency(null)}
       />
     </>
   );
@@ -213,7 +225,7 @@ function OutflowsColumn({ f, t }) {
   );
 }
 
-function FundCard({ f, t, onOpenDetail }) {
+function FundCard({ f, t, onOpenDetail, onOpenBreakdown }) {
   const liability = f.client_balances ?? 0;
   const net = f.balance_available ?? f.balance;
   const positive = net >= 0;
@@ -233,8 +245,14 @@ function FundCard({ f, t, onOpenDetail }) {
         <div className={`w-1.5 h-1.5 rounded-full ${positive ? "bg-[#22C55E]" : "bg-[#EF4444]"} shadow-[0_0_8px_currentColor]`} />
       </div>
 
-      {/* Net balance */}
-      <div className="mt-3">
+      {/* Net balance — click opens per-account breakdown (iter194) */}
+      <button
+        type="button"
+        onClick={() => onOpenBreakdown(f.currency)}
+        data-testid={`fund-open-breakdown-${f.currency}`}
+        aria-label={t("admin.companyFunds.breakdownHint")}
+        className="mt-3 text-left w-full group/bal focus:outline-none focus-visible:ring-1 focus-visible:ring-[#8B5CF6]/60"
+      >
         <div className="text-[0.55rem] uppercase tracking-widest text-neutral-500">
           {t("admin.companyFunds.availableBalance")}
         </div>
@@ -254,7 +272,11 @@ function FundCard({ f, t, onOpenDetail }) {
             {t("admin.companyFunds.grossCustody")}: <span className="text-neutral-300">{fmt2(f.balance)}</span>
           </div>
         )}
-      </div>
+        <div className="text-[0.55rem] text-neutral-500 mt-1 flex items-center gap-1 group-hover/bal:text-[#8B5CF6] transition-colors">
+          <Layers className="w-2.5 h-2.5" />
+          <span>{t("admin.companyFunds.breakdownHint")}</span>
+        </div>
+      </button>
 
       {/* Profitability */}
       <ProfitBlock f={f} t={t} onOpen={onOpenDetail} />

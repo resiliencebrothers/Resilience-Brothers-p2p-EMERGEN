@@ -86,6 +86,18 @@ export default function AdjustmentsTable({ items }) {
                   {Number(a.amount).toLocaleString(undefined, {
                     maximumFractionDigits: 2,
                   })}
+                  {a.denominations && Object.keys(a.denominations).length > 0 && (
+                    <div
+                      className="text-[0.62rem] text-neutral-500 font-mono mt-0.5 whitespace-nowrap"
+                      data-testid={`adjustment-denoms-${a.id}`}
+                      title="Desglose de billetes"
+                    >
+                      {Object.entries(a.denominations)
+                        .sort((x, y) => Number(y[0]) - Number(x[0]))
+                        .map(([d, q]) => `${q}×${d}`)
+                        .join(" · ")}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-xs">
                   {METHOD_LABELS[a.method] || a.method}

@@ -167,7 +167,7 @@ class TestCsvImportFlow:
         tx_auto = db.bank_transactions.find_one(
             {"statement_import_id": imp["id"], "amount": 250.00}, {"_id": 0})
         bd = tx_auto["match_details"]["breakdown"]
-        assert bd["amount_score"] == 45 and bd["reference_score"] >= 10
+        assert bd["amount_score"] == 55 and bd["reference_score"] >= 10
 
         # §23 — dedicated audit rows exist.
         assert db.reconciliation_audit_log.count_documents(
@@ -189,8 +189,10 @@ class TestCsvImportFlow:
         today = time.strftime("%Y-%m-%d")
         o_manual = f"ord167m_{uuid.uuid4().hex[:8]}"
         _mk_order(db, o_manual, 500.00, "Carlos Ruiz Ferrer")
+        # V2: "C RUIZ" ya auto-concilia por iniciales+apellido; usamos un
+        # nombre distinto para ejercitar el flujo manual (safety-net review).
         csv_text = ("Date,Description,Amount,Sender,Reference\n"
-                    f"{today},ACH credit,500.00,C RUIZ,NOREF\n")
+                    f"{today},ACH credit,500.00,MARCOS TULIO SILVA,NOREF\n")
         r = _upload(csv_text, f"test167_{uuid.uuid4().hex[:6]}.csv")
         imp = _wait_processed(r.json()["id"])
         tx = db.bank_transactions.find_one({"statement_import_id": imp["id"]}, {"_id": 0})

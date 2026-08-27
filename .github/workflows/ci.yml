@@ -87,6 +87,9 @@ jobs:
       CORS_ORIGINS: http://localhost:8001,http://localhost:3000
       RATE_LIMIT_ENABLED: "false"
       APP_AUTO_BLOCK_ENABLED: "false"
+      # Session cookie without `Secure` so `requests` accepts it over plain
+      # HTTP (CI has no TLS; production/preview keeps Secure enforced).
+      COOKIE_SECURE: "false"
       # Google OAuth — placeholders. `/api/auth/google/*` tests skip when the
       # id/secret are missing; the flow-free tests still pass.
       GOOGLE_CLIENT_ID: ci-placeholder.apps.googleusercontent.com
@@ -126,6 +129,9 @@ jobs:
 
       - name: Seed test users
         run: python scripts/seed_test_users.py
+
+      - name: Seed test rates
+        run: python scripts/seed_test_rates.py
 
       - name: Start FastAPI (background)
         run: |

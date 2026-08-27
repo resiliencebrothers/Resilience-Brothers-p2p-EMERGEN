@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Check, X, Ban, Clock } from "lucide-react";
+import { Check, X, Ban, Clock, Bike } from "lucide-react";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import CurrencyIcon from "@/components/CurrencyIcon";
+import DeliveryTrackDialog from "@/components/DeliveryTrackDialog";
 
 const STATUS_RANK = { pending: 1, approved: 2, paid: 3 };
 
@@ -43,9 +44,9 @@ function StepDot({ state }) {
 
 function InfoRow({ label, children, testid }) {
   return (
-    <div className="flex items-start justify-between gap-4 text-sm py-1.5" data-testid={testid}>
+    <div className="flex items-start justify-between gap-3 text-sm py-1.5 min-w-0" data-testid={testid}>
       <span className="text-neutral-500 shrink-0">{label}</span>
-      <span className="text-white text-right break-all min-w-0">{children}</span>
+      <span className="text-white text-right break-all whitespace-normal min-w-0 flex-1">{children}</span>
     </div>
   );
 }
@@ -60,6 +61,7 @@ export function WithdrawalDetailDialog({ w, onClose, onChanged }) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [trackingOpen, setTrackingOpen] = useState(false);
   if (!w) return null;
 
   const rank = STATUS_RANK[w.status] || 0;
@@ -118,7 +120,7 @@ export function WithdrawalDetailDialog({ w, onClose, onChanged }) {
     <Dialog open={!!w} onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent
         data-testid="withdrawal-detail-dialog"
-        className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6"
       >
         <DialogHeader>
           <DialogTitle className="text-center">{t("withdraw.detail.title")}</DialogTitle>
@@ -176,6 +178,7 @@ export function WithdrawalDetailDialog({ w, onClose, onChanged }) {
                 <CopyableText
                   value={w.details}
                   label={w.details}
+                  wrap
                   toastMessage={t("withdraw.detail.addressCopied")}
                   testid={`withdrawal-detail-address-${w.id}`}
                 />
@@ -193,9 +196,23 @@ export function WithdrawalDetailDialog({ w, onClose, onChanged }) {
                 <CopyableText
                   value={w.payout_tx_hash}
                   label={w.payout_tx_hash}
+                  wrap
                   toastMessage={t("withdraw.detail.txidCopied")}
                   testid={`payout-hash-copy-${w.id}`}
                 />
+              </span>
+            </InfoRow>
+          )}
+          <InfoRow label={t("withdraw.detail.amountRowLabel")} testid={`withdrawal-detail-amount-row-${w.id}`}>
+            <span className="font-mono text-xs">
+              {Number(w.amount_usd).toLocaleString(undefined, { maximumFractionDigits: 4 })} {w.currency || "USD"}
+            </span>
+          </InfoRow>
+          {Number(w.courier_fee_usdt || 0) > 0 && (
+            <InfoRow label={t("withdraw.detail.courierLabel")} testid={`withdrawal-detail-courier-${w.id}`}>
+              <span className="font-mono text-xs text-amber-300">
+                -{Number(w.courier_fee_currency_amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+                {w.courier_fee_currency || w.currency} · {w.courier_km} km (≈ {w.courier_fee_usdt} USDT)
               </span>
             </InfoRow>
           )}
@@ -212,6 +229,17 @@ export function WithdrawalDetailDialog({ w, onClose, onChanged }) {
               <span className="text-xs italic text-neutral-300">{w.admin_note}</span>
             </InfoRow>
           )}
+          <InfoRow label={t("withdraw.detail.orderIdLabel")} testid={`withdrawal-detail-orderid-${w.id}`}>
+            <span className="font-mono text-xs text-neutral-300">
+              <CopyableText
+                value={w.id}
+                label={w.id}
+                wrap
+                toastMessage={t("withdraw.detail.idCopied")}
+                testid={`withdrawal-detail-orderid-copy-${w.id}`}
+              />
+            </span>
+          </InfoRow>
         </div>
 
         {(w.payout_tx_hash || w.payout_proof_image) && (
@@ -236,6 +264,25 @@ export function WithdrawalDetailDialog({ w, onClose, onChanged }) {
             )}
           </div>
         )}
+
+        {/* iter208 — botón "Seguir entrega" para retiros CASH con mensajero
+            iter209b — visible también en 'pending' (la mensajería corre en
+            paralelo mientras el retiro sigue pendiente). */}
+        {w.method === "cash" && ["pending", "approved", "paid"].includes(w.status) && (
+          <Button
+            data-testid={`open-tracking-${w.id}`}
+            onClick={() => setTrackingOpen(true)}
+            className="w-full rounded-none bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 border border-[#8B5CF6]/40 text-[#A78BFA] h-11"
+          >
+            <Bike className="w-4 h-4 mr-2" /> {t("tracker.openBtn")}
+          </Button>
+        )}
+
+        <DeliveryTrackDialog
+          refId={w.id}
+          open={trackingOpen}
+          onClose={() => setTrackingOpen(false)}
+        />
 
         {w.status === "pending" && (
           confirming ? (

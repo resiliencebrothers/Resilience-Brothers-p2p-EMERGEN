@@ -26,6 +26,8 @@ export default function AdminTransactions() {
   const [currency, setCurrency] = useState("");
   const [holder, setHolder] = useState("");
   const [holderInput, setHolderInput] = useState("");
+  const [client, setClient] = useState("");
+  const [clientInput, setClientInput] = useState("");
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
   const [minAmount, setMinAmount] = useState("");
@@ -47,10 +49,16 @@ export default function AdminTransactions() {
     return () => clearTimeout(t);
   }, [holderInput]);
 
+  // debounce client search
+  useEffect(() => {
+    const t = setTimeout(() => setClient(clientInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [clientInput]);
+
   // reset page on filter change
   useEffect(() => {
     setPage(0);
-  }, [direction, currency, holder, since, until, minAmount, maxAmount]);
+  }, [direction, currency, holder, client, since, until, minAmount, maxAmount]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,6 +67,7 @@ export default function AdminTransactions() {
       if (direction !== "all") params.direction = direction;
       if (currency) params.currency = currency;
       if (holder) params.holder = holder;
+      if (client) params.client = client;
       if (since) params.since = since;
       if (until) params.until = until;
       if (minAmount !== "") params.min_amount = minAmount;
@@ -73,7 +82,7 @@ export default function AdminTransactions() {
     } finally {
       setLoading(false);
     }
-  }, [direction, currency, holder, since, until, minAmount, maxAmount, page]);
+  }, [direction, currency, holder, client, since, until, minAmount, maxAmount, page]);
   useEffect(() => { load(); }, [load]);
 
   const downloadExport = async (kind) => {
@@ -82,6 +91,7 @@ export default function AdminTransactions() {
       if (direction !== "all") params.set("direction", direction);
       if (currency) params.set("currency", currency);
       if (holder) params.set("holder", holder);
+      if (client) params.set("client", client);
       if (since) params.set("since", since);
       if (until) params.set("until", until);
       if (minAmount !== "") params.set("min_amount", minAmount);
@@ -107,6 +117,7 @@ export default function AdminTransactions() {
     setDirection("all");
     setCurrency("");
     setHolderInput("");
+    setClientInput("");
     setSince("");
     setUntil("");
     setMinAmount("");
@@ -114,7 +125,7 @@ export default function AdminTransactions() {
   };
 
   const hasFilters =
-    direction !== "all" || currency || holderInput || since || until ||
+    direction !== "all" || currency || holderInput || clientInput || since || until ||
     minAmount !== "" || maxAmount !== "";
 
   const goToSource = (tx) => {
@@ -141,6 +152,7 @@ export default function AdminTransactions() {
         direction={direction} setDirection={setDirection}
         currency={currency} setCurrency={setCurrency}
         holderInput={holderInput} setHolderInput={setHolderInput}
+        clientInput={clientInput} setClientInput={setClientInput}
         since={since} setSince={setSince}
         until={until} setUntil={setUntil}
         minAmount={minAmount} setMinAmount={setMinAmount}

@@ -175,7 +175,7 @@ def _rows_to_transactions(headers: List[str], rows: List[List[Any]],
     txs, errors = [], 0
     for row in rows:
         try:
-            def cell(field):
+            def cell(field: str) -> Any:
                 idx = mapping.get(field)
                 return row[idx] if idx is not None and idx < len(row) else None
             date = parse_date(cell("date"), dayfirst=dayfirst)
@@ -281,7 +281,11 @@ _LLM_SYSTEM = (
     "SEPA Instant, Bizum, SPEI, PIX, Transferencia bancaria, "
     "Transferencia internacional, Cash Deposit, Bank Deposit, Otros). "
     "Dates in Spanish statements are usually day-first. If a value is "
-    "unknown use null. Never invent transactions."
+    "unknown use null. Some documents (e.g. Zelle activity registries) have "
+    "NO date column at all — in that case set transaction_date to null but "
+    "STILL extract every row. Words like ACREDITADO, RECIBIDO, DEPOSITO, "
+    "ABONO mean the money came in (direction credit). Never invent "
+    "transactions."
 )
 
 
@@ -294,12 +298,14 @@ def _parse_llm_json(raw: str) -> List[Dict]:
         raise ValueError("LLM response has no JSON array")
     items = json.loads(s[start:end + 1])
     out = []
-    for it in items:
+    for i, it in enumerate(items):
         if not isinstance(it, dict):
             continue
         amount = parse_amount(it.get("amount"))
         date = parse_date(it.get("transaction_date"))
-        if amount is None or amount <= 0 or not date:
+        # iter187 — rows without a date are valid (e.g. Zelle registries with
+        # no date column); the matcher simply skips date scoring for them.
+        if amount is None or amount <= 0:
             continue
         direction = it.get("direction")
         out.append({
@@ -314,7 +320,8 @@ def _parse_llm_json(raw: str) -> List[Dict]:
             "balance_after": parse_amount(it.get("balance_after")),
             "payment_method": it.get("payment_method") or detect_payment_method(
                 str(it.get("description") or "")),
-            "raw": {"source": "llm"},
+            "row_index": i,
+            "raw": {"source": "llm", "row": i},
         })
     return out
 
@@ -373,7 +380,11 @@ async def parse_statement(data: bytes, ext: str, dayfirst: bool,
         text = pdf_extract_text(data)
         if len(text.strip()) >= 120:
             txs = await llm_extract_from_text(text)
-            return txs, 0, "pdf_text_llm"
+            # iter186 — a PDF can contain >120 chars of boilerplate (headers,
+            # footers) while the actual rows are scanned images. If the text
+            # path yields nothing, retry with file-attachment OCR.
+            if txs:
+                return txs, 0, "pdf_text_llm"
         # scanned → file attachment OCR
         import uuid as _uuid
         tmp_path = os.path.join(tmp_dir, f"recon_{_uuid.uuid4().hex}.pdf")

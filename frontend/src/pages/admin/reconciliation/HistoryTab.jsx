@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
-import { Download, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
+import { Download, RefreshCw, RotateCcw, Loader2 } from "lucide-react";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { useLiveEvent } from "@/hooks/useLiveStream";
@@ -15,24 +16,39 @@ const STATUS_TONE = {
   failed: "text-red-400 border-red-500/40",
 };
 
-export default function HistoryTab() {
+export default function HistoryTab({ currency }) {
   const { t } = useTranslation();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
+  const [reprocessing, setReprocessing] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const params = { limit: 200 };
+      if (currency) params.currency = currency;
       const r = await axios.get(`${API}/admin/reconciliation/imports`, {
-        params: { limit: 200 }, withCredentials: true,
+        params, withCredentials: true,
       });
       setItems(r.data?.items || []);
     } catch { /* noop */ } finally { setLoading(false); }
-  }, []);
+  }, [currency]);
 
   useEffect(() => { load(); }, [load]);
   useLiveEvent("reconciliation_import", load);
+
+  const reprocess = async (imp) => {
+    setReprocessing(imp.id);
+    try {
+      await axios.post(`${API}/admin/reconciliation/imports/${imp.id}/reprocess`,
+        {}, { withCredentials: true });
+      toast.success(t("reconciliation.history.reprocessStarted"));
+      setTimeout(load, 1200);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || t("reconciliation.history.reprocessError"));
+    } finally { setReprocessing(null); }
+  };
 
   const download = async (imp) => {
     const res = await axios.get(`${API}/admin/reconciliation/imports/${imp.id}/file`, {
@@ -79,6 +95,23 @@ export default function HistoryTab() {
               <span className={`text-xs uppercase tracking-wider px-2 py-1 border font-mono ${STATUS_TONE[imp.processing_status] || ""}`}>
                 {t(`reconciliation.status.${imp.processing_status}`)}
               </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => reprocess(imp)}
+                disabled={reprocessing === imp.id
+                  || ["uploaded", "processing"].includes(imp.processing_status)}
+                data-testid={`recon-reprocess-${imp.id}`}
+                title={t("reconciliation.history.reprocess")}
+                className="rounded-none h-7 border-white/10 text-neutral-300 hover:bg-white/5"
+              >
+                {reprocessing === imp.id
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <RotateCcw className="w-3.5 h-3.5" />}
+                <span className="ml-1.5 hidden sm:inline text-xs">
+                  {t("reconciliation.history.reprocess")}
+                </span>
+              </Button>
               <Button size="sm" variant="outline" onClick={() => download(imp)}
                 data-testid={`recon-download-${imp.id}`}
                 className="rounded-none h-7 border-white/10 text-neutral-300 hover:bg-white/5">
@@ -87,6 +120,14 @@ export default function HistoryTab() {
             </div>
           </div>
           {expanded === imp.id && <ImportSummaryRow imp={imp} t={t} />}
+          {imp.notes && (
+            <p
+              className="text-xs text-amber-400 mt-2 border border-amber-500/20 bg-amber-500/5 p-2"
+              data-testid={`recon-import-notes-${imp.id}`}
+            >
+              {imp.notes}
+            </p>
+          )}
         </div>
       ))}
     </div>

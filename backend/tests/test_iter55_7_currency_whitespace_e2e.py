@@ -88,6 +88,8 @@ class TestCompanyFundsCollapsesCorruptedCodes:
                 "currency": "CUP",
                 "amount": 20000.0,
                 "method": "cash",
+                # iter213 — cash CUP requiere desglose de billetes
+                "denominations": {"1000": 20},
                 "source_name": "iter55.7 test",
                 "source_account": "",
                 "note": "collapse-test",

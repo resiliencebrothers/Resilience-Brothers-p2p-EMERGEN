@@ -7,6 +7,7 @@ export function TransactionsFilters({
   direction, setDirection,
   currency, setCurrency,
   holderInput, setHolderInput,
+  clientInput, setClientInput,
   since, setSince,
   until, setUntil,
   minAmount, setMinAmount,
@@ -62,6 +63,16 @@ export function TransactionsFilters({
             value={holderInput}
             onChange={(e) => setHolderInput(e.target.value)}
             placeholder="ej. juan pérez"
+            className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-60 font-mono text-xs"
+          />
+        </div>
+        <div>
+          <div className="micro-label text-neutral-500 mb-1">Cliente (nombre o email)</div>
+          <Input
+            data-testid="tx-client-filter"
+            value={clientInput}
+            onChange={(e) => setClientInput(e.target.value)}
+            placeholder="ej. maria@correo.com"
             className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-60 font-mono text-xs"
           />
         </div>

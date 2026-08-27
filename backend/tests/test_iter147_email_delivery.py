@@ -50,7 +50,8 @@ def test_registration_records_email_event(registered_user):
     assert len(events) == 1, events
     ev = events[0]
     assert ev["kind"] == "email_verification"
-    assert ev["status"] == "suppressed"  # preview: EMAIL_SEND_ENABLED=false
+    # env-dependent: `sent` when EMAIL_SEND_ENABLED=true, else `suppressed`
+    assert ev["status"] in ("sent", "suppressed")
     assert "Verifica" in ev["subject"] or "Verify" in ev["subject"]
 
 

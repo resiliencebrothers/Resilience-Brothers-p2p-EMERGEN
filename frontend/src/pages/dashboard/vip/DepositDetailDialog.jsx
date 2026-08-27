@@ -1,11 +1,14 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Clock, CheckCircle2, XCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Clock, CheckCircle2, XCircle, Bike } from "lucide-react";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import CurrencyIcon from "@/components/CurrencyIcon";
+import DeliveryTrackDialog from "@/components/DeliveryTrackDialog";
 
 const STATUS_BIG = {
   pending: { cls: "bg-amber-500/10 text-amber-400 border-amber-500/30", Icon: Clock },
@@ -31,6 +34,7 @@ function InfoRow({ label, children, testid }) {
  */
 export function DepositDetailDialog({ d, onClose }) {
   const { t } = useTranslation();
+  const [trackingOpen, setTrackingOpen] = useState(false);
   if (!d) return null;
   const st = STATUS_BIG[d.status] || STATUS_BIG.pending;
   const StIcon = st.Icon;
@@ -126,6 +130,24 @@ export function DepositDetailDialog({ d, onClose }) {
             )}
           </div>
         )}
+
+        {/* iter208 — botón "Seguir recogida" para depósitos cash-courier */}
+        {d.method === "cash" && d.cash_mode === "courier"
+          && d.status === "pending" && (
+          <Button
+            data-testid={`open-tracking-${d.id}`}
+            onClick={() => setTrackingOpen(true)}
+            className="w-full rounded-none bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 border border-[#8B5CF6]/40 text-[#A78BFA] h-11"
+          >
+            <Bike className="w-4 h-4 mr-2" /> {t("tracker.openBtn")}
+          </Button>
+        )}
+
+        <DeliveryTrackDialog
+          refId={d.id}
+          open={trackingOpen}
+          onClose={() => setTrackingOpen(false)}
+        />
       </DialogContent>
     </Dialog>
   );

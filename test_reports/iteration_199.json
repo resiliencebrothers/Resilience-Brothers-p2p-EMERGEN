@@ -1,0 +1,51 @@
+{
+  "summary": "iter199 Panel del Mensajero (Fase 2) frontend e2e — ALL 6 requested flows PASS after fixing one critical crash. Bug found: services/deliveries.py::_ref_display stored the entire withdrawal.details dict as delivery.address, causing React to throw 'Objects are not valid as a React child' on both /dashboard/deliveries (CourierPanel) and /admin/deliveries (AdminDeliveries) — the whole screen crashed with 'Algo salió mal'. Fixed in-place (see updated_files) and re-verified full flow.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "services/deliveries.py::_ref_display (withdrawal)",
+        "issue": "Was setting delivery.address = ref.get('details') (a dict) instead of details.get('address') (a string). Any delivery auto-created from a cash withdrawal broke both frontend pages that render {d.address}. FIXED in this iteration + migrated one existing broken doc; recommend main agent add a regression test for the withdrawal-kind branch (pytest 7/7 only covered the redemption branch).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {"endpoint": "POST /api/admin/deliveries/{id}/cancel", "issue": "Cancelling a delivery whose parent withdrawal has an active courier-fee charge does NOT refund the fee to the client (VIP was left 2660 CUP short after we cancelled a 3 USDT delivery). Consider auto-triggering courier-fee km=0 on cancel, or documenting the workflow."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter199_courier_panel.py"],
+  "action_items": [
+    "Backend fix already applied — main agent please review services/deliveries.py::_ref_display and add a pytest that exercises the withdrawal branch (kind='withdrawal') so this doesn't regress.",
+    "Consider auto-refund when admin cancels a delivery whose parent has a charged courier-fee, or document that admin must also click km=0 on the withdrawal first."
+  ],
+  "critical_code_review_comments": [
+    "services/deliveries.py::_ref_display for kind=='withdrawal' had a type mismatch storing dict-as-string (address). Now returns details['address']. Existing legacy docs must be migrated (I already migrated the single test doc).",
+    "CourierPanel and AdminDeliveries do not have Error Boundary fallback beyond the top-level app boundary — a single malformed row takes the whole page down. Consider wrapping the delivery cards/table in a smaller boundary or defensive String() coercion on d.address/d.province.",
+    "routes/deliveries.py::admin_list_couriers returns admins and employees (via role filter) even when is_courier is false — the UI relies on client-side !is_courier check to hide the 'Quitar' button, but the earnings table lists all admins/employees with 0 earned; consider filtering to only is_courier for the earnings table to reduce noise.",
+    "The client-side test for available -> claim -> mine transitions is race-free (server uses find_one_and_update with status filter) — nice implementation.",
+    "TOTP dialog data-testid is 'totp-prompt-dialog' + 'totp-prompt-input' + 'totp-prompt-confirm' (not 'totp-code-input' as the task guessed). Documenting for next iteration."
+  ],
+  "updated_files": ["/app/backend/services/deliveries.py"],
+  "success_rate": {"backend": "n/a (frontend-only per request)", "frontend": "100% (6/6 flows after fix)"},
+  "test_credentials": "Cookies smoke_session_admin_iter197 (user_test_admin01) and smoke_session_vip_iter198 (user_test_vip01, is_courier=true) still upserted. TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP.",
+  "seed_data_creation": "Two temporary test withdrawals (w_test_iter199_*) with auto-created deliveries — one full-flow (km=8, 4 USDT fee, 3.2 courier share) and one for assign+cancel (km=6, 3 USDT). Both cleaned up. VIP balances restored to exact pre-test state (USD 1000 / USDT ~0.01 / CUP 33540). is_courier=true preserved on user_test_vip01 as requested.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter199 Panel del Mensajero validated end-to-end on the frontend. Full E2E: seed cash withdrawal in Mongo -> POST /api/admin/withdrawals/{id}/courier-fee {km,totp} -> delivery auto-created 'available' -> VIP claims via /dashboard/deliveries claim-delivery-{id} (auto-switches to 'Mine' tab) -> 3x advance-delivery-{id} (Salir en camino -> He llegado -> Marcar como entregado) -> delivery-waiting-{id} banner -> admin at /admin/deliveries clicks confirm-delivery-{id}, TOTP dialog data-testid 'totp-prompt-dialog'/'totp-prompt-input'/'totp-prompt-confirm' -> status 'Confirmada' + courier gets +3.2 USDT (verified in Mongo). Assign-courier Select via [data-testid=assign-courier-{id}] works and switches to accepted. cancel-delivery-{id} works but does NOT auto-refund the withdrawal's courier-fee (see backend_issues.minor). Filters deliveries-filter-{status} all functional. Couriers tab: search 'Test Normal' returns user_test_normal01, make-courier-{id} + remove-courier-{id} both require TOTP and work. VIP appears in couriers list.",
+  "verified_flows": [
+    "VIP sidebar nav-deliveries visible; /dashboard/deliveries renders courier-panel with earned/pending/completed cards + available/mine/history tabs.",
+    "Available tab shows the auto-created delivery with 'Your share: 3.2 USDT'; claim-delivery-{id} moves it to Mine.",
+    "advance-delivery-{id} progresses accepted -> on_the_way -> arrived -> delivered; delivery-waiting-{id} banner appears in Mine.",
+    "Admin /admin/deliveries with admin-nav-deliveries sidebar; delivery-row-{id} shows status Entregada; confirm-delivery-{id} -> TOTP -> Confirmada, courier vip_balances.USDT +3.2 (verified in Mongo).",
+    "Filters deliveries-filter-available/accepted/confirmed/cancelled/all all filter correctly.",
+    "Assign-courier Select: choosing VIP Test moves status to Aceptada with courier VIP Test.",
+    "cancel-delivery-{id} moves row to Cancelada filter.",
+    "Couriers tab: VIP shown with earned '3.2 USDT'; courier-search-input 'Test Normal' + courier-search-btn returns user_test_normal01; make-courier + remove-courier both TOTP-gated and functional."
+  ],
+  "failed_flows": [],
+  "rca_of_the_issue": "Cause: In services/deliveries.py::_ref_display, the withdrawal branch used `ref.get('details') or ''` which returns the full details dict {receiver_name, receiver_id, phone, address, province} instead of just the address string. This dict was stored as delivery.address and later JSON-serialized to the frontend where React tried to render it as a child, throwing 'Objects are not valid as a React child'. The redemption branch used `ref.get('delivery_address') or ''` (correct) and pytest only tested that branch. Reproduction: create a cash withdrawal with details.address and call POST /api/admin/withdrawals/{id}/courier-fee -> query the resulting delivery -> address field is a dict. Mitigation applied: changed _ref_display to extract details.get('address') and details.get('province') defensively; existing broken docs must be migrated (one-liner script)."
+}

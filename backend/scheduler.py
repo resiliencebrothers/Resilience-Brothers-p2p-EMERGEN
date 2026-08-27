@@ -15,6 +15,8 @@ import email_service
 from revenue_report import revenue_monthly_pdf
 from services.security_alerts import run_security_alert_scan
 from services.security_selfaudit import run_and_email_security_selfaudit
+from services.ops_daily_report import run_daily_ops_fraud_report
+from services.email_bounce_alerts import dispatch_pending_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +97,7 @@ async def run_monthly_audit_email(db):
 
     # Opt-out flag lives in settings.global (single-doc collection)
     try:
-        settings = await db.settings.find_one({"_id": "global"}, {"_id": 0}) or {}
+        settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
     except Exception:
         settings = {}
     if not settings.get("auto_send_monthly_audit", True):
@@ -334,6 +336,27 @@ def start_scheduler(db, build_timeseries):
         misfire_grace_time=3600,
         coalesce=True,
     )
+    # iter176 — daily ops digest (>48h fraud/attention cases) at 08:00 Cuba.
+    _scheduler.add_job(
+        run_daily_ops_fraud_report,
+        CronTrigger(hour=8, minute=0, timezone="America/Havana"),
+        kwargs={"db": db},
+        id="daily_ops_fraud_report",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    # iter196 — every 60s dispatch queued email-bounce alerts (fanout to
+    # admins when a user racks up 3 consecutive Resend failures).
+    _scheduler.add_job(
+        dispatch_pending_alerts,
+        IntervalTrigger(seconds=60),
+        kwargs={"db": db},
+        id="email_bounce_dispatch",
+        replace_existing=True,
+        misfire_grace_time=60,
+        coalesce=True,
+    )
     _scheduler.start()
     logger.info(
         "Scheduler started: monthly_revenue_email (day 1 09:00 UTC) + "
@@ -341,7 +364,9 @@ def start_scheduler(db, build_timeseries):
         "monthly_vip_ledger_email (day 1 09:30 UTC) + "
         "monthly_security_selfaudit (day 1 09:45 UTC) + "
         "security_alert_scan (every 5m) + "
-        "daily_batch_autoclose (00:00 America/Havana)"
+        "daily_batch_autoclose (00:00 America/Havana) + "
+        "daily_ops_fraud_report (08:00 America/Havana) + "
+        "email_bounce_dispatch (every 60s)"
     )
     return _scheduler
 

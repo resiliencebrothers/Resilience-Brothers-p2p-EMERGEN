@@ -50,7 +50,7 @@ async def _scan_and_notify_pending(currency_code: str, changed_details_ids: set)
     has_accounts = bool(accounts)
     affected: dict = {}  # user_id -> {"new_ids": set, "accounts": dict}
 
-    def mark(uid: str, old_id, new_acc) -> None:
+    def mark(uid: str, old_id: Any, new_acc: Any) -> None:
         new_id = (new_acc or {}).get("id") or ""
         if not uid or not _needs_notice(old_id or "", new_id, changed_details_ids):
             return

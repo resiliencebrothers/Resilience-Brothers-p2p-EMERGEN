@@ -72,12 +72,26 @@ class Redemption(BaseModel):
     status: Literal["pending", "approved", "delivered", "rejected"] = "pending"
     admin_note: str = ""
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
+    # iter198 — courier fee (per-km) for marketplace deliveries.
+    delivery_latitude: Optional[float] = None
+    delivery_longitude: Optional[float] = None
+    courier_km: float = 0.0
+    courier_fee_usdt: float = 0.0
+    courier_fee_usd: float = 0.0
+    courier_fee_status: Literal["none", "free", "charged", "manual_review"] = "none"
+    courier_municipality: Optional[str] = None
+    courier_rate_snapshot: float = 0.0
+    courier_min_fee_snapshot: float = 0.0
 
 
 class RedemptionCreate(BaseModel):
     product_id: str
     quantity: int
     delivery_address: str = ""
+    delivery_latitude: Optional[float] = Field(None, ge=-90, le=90)
+    delivery_longitude: Optional[float] = Field(None, ge=-180, le=180)
+    # iter212 — municipio elegido por el cliente cuando el mapa falló.
+    courier_municipality: Optional[str] = Field(None, max_length=60)
 
 
 class WithdrawalRequest(BaseModel):
@@ -95,6 +109,9 @@ class WithdrawalRequest(BaseModel):
     # know which chain to release on (and audit trail is preserved). Empty
     # string for non-crypto flows.
     crypto_network: str = ""
+    # iter192 — cash deliveries record the province so ops route the courier;
+    # empty string for non-cash flows.
+    province: str = ""
     status: Literal["pending", "approved", "paid", "rejected", "cancelled"] = "pending"
     admin_note: str = ""
     payout_proof_image: str = ""
@@ -102,15 +119,46 @@ class WithdrawalRequest(BaseModel):
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 
+# iter192 — Cuba's 15 provinces + Isla de la Juventud (special municipality).
+CUBA_PROVINCES = [
+    "Pinar del Río", "Artemisa", "La Habana", "Mayabeque", "Matanzas",
+    "Cienfuegos", "Villa Clara", "Sancti Spíritus", "Ciego de Ávila",
+    "Camagüey", "Las Tunas", "Holguín", "Granma", "Santiago de Cuba",
+    "Guantánamo", "Isla de la Juventud",
+]
+
+
+async def _available_cash_provinces() -> list:
+    """Provinces with cash availability. Missing config = all available."""
+    doc = await db.settings.find_one({"id": "global"}, {"_id": 0, "cash_provinces": 1})
+    configured = (doc or {}).get("cash_provinces")
+    if configured is None:
+        return list(CUBA_PROVINCES)
+    return [p for p in configured if p in CUBA_PROVINCES]
+
+
 class WithdrawalCreate(BaseModel):
     amount_usd: float
     currency: str = "USD"
     method: Literal["transfer", "cash", "crypto"]
     details: str
-    beneficiary_name: str = Field(..., min_length=2,
+    # iter182 — optional for crypto (the on-chain address identifies the
+    # destination); required (min 2 chars) for transfer/cash, enforced in-route.
+    beneficiary_name: Optional[str] = Field(None,
                                     description="Nombre del titular de la cuenta beneficiaria")
     # iter55.19c — only required (and validated) when method == "crypto".
     crypto_network: Optional[str] = Field(None, description="Red on-chain (TRC20 / BEP20)")
+    # iter192 — required when method == "cash": delivery province (must have
+    # cash availability configured by the admin).
+    province: Optional[str] = Field(None, max_length=40)
+    # iter198 — optional delivery coordinates (picked from the OSM
+    # autocomplete). The server recomputes the road distance itself.
+    delivery_latitude: Optional[float] = Field(None, ge=-90, le=90)
+    delivery_longitude: Optional[float] = Field(None, ge=-180, le=180)
+    # iter205 — cash: entrega a domicilio (mensajería) o recogida en oficina.
+    cash_delivery_mode: Optional[Literal["courier", "office_pickup"]] = None
+    # iter212 — municipio elegido por el cliente cuando el mapa falló.
+    courier_municipality: Optional[str] = Field(None, max_length=60)
     totp_code: Optional[str] = Field(None, min_length=6, max_length=11,
                                       description="Código TOTP (6 dígitos) o código de recuperación (XXXXX-XXXXX)")
 
@@ -239,6 +287,9 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
         )
     except Exception as e:
         logger.error(f"order_created SSE publish failed: {e}")
+    # iter174 — match this order against already-imported bank movements.
+    from services.reconciliation_matcher import schedule_rematch
+    schedule_rematch(order.from_code)
     return await db.orders.find_one({"id": order.id}, {"_id": 0}) or order.model_dump()
 
 
@@ -269,8 +320,50 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
     total = product["price_usd"] * payload.quantity
     cost = float(product.get("cost_usd") or 0) * payload.quantity
-    if get_user_balance(user, "USD") < total:
-        raise HTTPException(status_code=400, detail="Saldo USD insuficiente")
+    # iter198 — courier fee for the physical delivery. Free when the redeem
+    # value reaches the USDT threshold; auto-quoted from the office when the
+    # client picked coordinates; otherwise flagged for manual staff review.
+    from services.courier_fee import quote_courier_fee, route_quote
+    cq = await quote_courier_fee("USD", total)
+    courier_km = 0.0
+    courier_fee_usdt = 0.0
+    courier_fee_usd = 0.0
+    courier_status: Literal["none", "free", "charged", "manual_review"]
+    if cq["free"]:
+        courier_status = "free"
+    elif not cq["enabled"]:
+        courier_status = "none"
+    elif payload.delivery_latitude is not None and payload.delivery_longitude is not None:
+        rq = await route_quote(payload.delivery_latitude,
+                               payload.delivery_longitude, "USD", total)
+        if rq.get("requires_manual_review") or rq.get("km") is None:
+            courier_status = "manual_review"
+        else:
+            courier_status = "charged"
+            courier_km = rq["km"]
+            courier_fee_usdt = rq["fee_usdt"]
+            courier_fee_usd = rq["fee_currency_amount"]
+    else:
+        courier_status = "manual_review"
+    # iter211 — fallback por municipio para canjes (mapa no ubicó la dirección).
+    courier_muni = None
+    if courier_status == "manual_review":
+        from services.courier_fee import municipality_fallback_quote
+        mq = await municipality_fallback_quote(
+            payload.delivery_address or "", "USD", total,
+            municipality_key=payload.courier_municipality)
+        if mq and mq.get("fee_usdt", 0) > 0:
+            courier_status = "charged"
+            courier_km = 0.0
+            courier_fee_usdt = mq["fee_usdt"]
+            courier_fee_usd = mq["fee_currency_amount"]
+            courier_muni = mq["municipality"]
+    if get_user_balance(user, "USD") < total + courier_fee_usd:
+        raise HTTPException(
+            status_code=400,
+            detail=("Saldo USD insuficiente"
+                    + (f" (incluye {courier_fee_usd} USD de mensajería)"
+                       if courier_fee_usd > 0 else "")))
     r = Redemption(
         user_id=user["user_id"],
         user_email=user["email"],
@@ -281,9 +374,28 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         total_usd=total,
         cost_usd=cost,
         delivery_address=payload.delivery_address,
+        delivery_latitude=payload.delivery_latitude,
+        delivery_longitude=payload.delivery_longitude,
+        courier_km=courier_km,
+        courier_fee_usdt=courier_fee_usdt,
+        courier_fee_usd=courier_fee_usd,
+        courier_fee_status=courier_status,
+        courier_municipality=courier_muni,
+        courier_rate_snapshot=cq["rate_usdt_per_km"],
+        courier_min_fee_snapshot=cq["min_fee_usdt"],
     )
     await db.redemptions.insert_one(r.model_dump())
-    await decrement_balance(user["user_id"], "USD", total)
+    await decrement_balance(user["user_id"], "USD", total + courier_fee_usd)
+    # iter199 — auto-charged deliveries create their courier job right away.
+    if courier_status == "charged":
+        try:
+            from services.deliveries import upsert_delivery_for_charge
+            await upsert_delivery_for_charge("redemption", r.model_dump(),
+                                             km=courier_km,
+                                             fee_usdt=courier_fee_usdt,
+                                             actor_id=user["user_id"])
+        except Exception as e:
+            logger.error(f"redeem delivery sync failed: {e}")
     await emit_balance_changed(user["user_id"], "marketplace_redeem",
                                redemption_id=r.id)
     await db.products.update_one(
@@ -314,6 +426,72 @@ async def my_redemptions(request: Request) -> Any:
 # VIP — Withdrawals (client side only)
 # ============================================================
 
+@router.get("/vip/cash-provinces")
+async def list_cash_provinces(request: Request) -> Any:
+    """iter192 — all provinces with their current cash-delivery availability
+    so the withdrawal form can disable the ones without coverage."""
+    await require_user(request)
+    available = set(await _available_cash_provinces())
+    return {"provinces": [{"name": p, "available": p in available}
+                          for p in CUBA_PROVINCES]}
+
+
+@router.get("/vip/courier-fee-quote")
+async def courier_fee_quote(request: Request, currency: str = "USD",
+                            amount: float = 0.0) -> Any:
+    """iter198 — courier pricing preview for cash withdrawals (rate per km,
+    free threshold and whether THIS amount qualifies for free delivery)."""
+    await require_user(request)
+    from services.courier_fee import quote_courier_fee
+    return await quote_courier_fee(currency, amount)
+
+
+@router.get("/vip/geo-reverse")
+async def geo_reverse(request: Request, lat: float, lon: float) -> Any:
+    """iter206 — el cliente comparte su ubicación GPS: devolvemos la
+    dirección legible para que confirme antes de cotizar la mensajería."""
+    await require_user(request)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(status_code=400, detail="Coordenadas inválidas.")
+    try:
+        from services.geo_routing import reverse_geocode
+        name = await reverse_geocode(lat, lon)
+        return {"display_name": name, "lat": lat, "lon": lon}
+    except Exception as e:
+        logger.error(f"geo_reverse failed: {e}")
+        return {"display_name": "", "lat": lat, "lon": lon}
+
+
+@router.get("/vip/geo-search")
+async def geo_search(request: Request, q: str = "", province: str = "") -> Any:
+    """iter198 — address autocomplete (OSM Nominatim, Cuba-first).
+    iter204 — fallback para direcciones cubanas ("entre X y Y", números de
+    casa) + contexto de provincia; `approximate` marca resultados de zona."""
+    await require_user(request)
+    term = (q or "").strip()
+    if len(term) < 3:
+        return {"results": []}
+    try:
+        from services.geo_routing import geocode_smart
+        data = await geocode_smart(term, province=(province or "").strip())
+        return {"results": data["results"], "approximate": data["approximate"],
+                "matched_query": data["matched_query"]}
+    except Exception as e:
+        logger.error(f"geo_search failed: {e}")
+        return {"results": [], "error": True}
+
+
+@router.get("/vip/courier-route-quote")
+async def courier_route_quote(request: Request, lat: float, lon: float,
+                              currency: str = "USD", amount: float = 0.0) -> Any:
+    """iter198 — automatic courier quote: office → destination road km + fee.
+    Falls back to `requires_manual_review` when the route can't be computed
+    (never bills straight-line distance)."""
+    await require_user(request)
+    from services.courier_fee import route_quote
+    return await route_quote(lat, lon, currency, amount)
+
+
 @router.post("/vip/withdraw")
 async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     user = await require_user(request)
@@ -327,6 +505,32 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     await assert_user_fully_verified(db, user, action_label="retirar fondos")
     await _enforce_totp_step_up(user, payload.totp_code, action_label="retiro")
     currency = payload.currency or "USD"
+    # iter191 — holder name is no longer required for ANY method (the client
+    # asked to drop it for transfers too; the account details already travel
+    # in `details`). Kept when sent (cash auto-fills the receiver name).
+    beneficiary_name = (payload.beneficiary_name or "").strip()
+    if payload.method == "crypto":
+        beneficiary_name = ""
+    # iter192 — cash deliveries only in provinces with availability.
+    # iter205 — el cliente puede elegir "recogida en oficina" (sin mensajero).
+    province = (payload.province or "").strip()
+    delivery_mode = ""
+    if payload.method == "cash":
+        delivery_mode = payload.cash_delivery_mode or "courier"
+        if delivery_mode == "office_pickup":
+            province = ""
+        else:
+            if province not in CUBA_PROVINCES:
+                raise HTTPException(status_code=400,
+                                    detail="Selecciona la provincia de entrega.")
+            available = await _available_cash_provinces()
+            if province not in available:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No hay disponibilidad de entrega de efectivo en {province} por el momento.",
+                )
+    else:
+        province = ""
     # iter55.19 — reject method↔currency mismatches (e.g. requesting a bank
     # transfer for a cash-only USD balance). Reuses the shared helper that
     # also gates order creation, so both flows stay in sync.
@@ -382,8 +586,60 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         err = validate_transfer_details(currency, payload.details)
         if err:
             raise HTTPException(status_code=422, detail=err)
-    if get_user_balance(user, currency) < payload.amount_usd:
-        raise HTTPException(status_code=400, detail=f"Saldo insuficiente en {currency}")
+    # iter205 — la mensajería se cobra al CREAR el retiro cash cuando la ruta
+    # se calculó; si el mapa falló queda "manual_review" y el staff DEBE
+    # cobrarla antes de poder marcar el retiro como entregado.
+    courier_km = 0.0
+    courier_fee_usdt = 0.0
+    courier_fee_cur = 0.0
+    courier_status = ""
+    courier_rq = None
+    if payload.method == "cash":
+        if delivery_mode == "office_pickup":
+            courier_status = "waived"
+        else:
+            from services.courier_fee import quote_courier_fee, route_quote
+            cq = await quote_courier_fee(currency, payload.amount_usd)
+            if not cq["enabled"]:
+                courier_status = "none"
+            elif cq["free"]:
+                courier_status = "free"
+            elif (payload.delivery_latitude is not None
+                    and payload.delivery_longitude is not None):
+                courier_rq = await route_quote(payload.delivery_latitude,
+                                               payload.delivery_longitude,
+                                               currency, payload.amount_usd)
+                if courier_rq.get("requires_manual_review") or courier_rq.get("km") is None:
+                    courier_status = "manual_review"
+                else:
+                    courier_status = "charged"
+                    courier_km = courier_rq["km"]
+                    courier_fee_usdt = courier_rq["fee_usdt"]
+                    courier_fee_cur = courier_rq["fee_currency_amount"]
+            else:
+                courier_status = "manual_review"
+    # iter211 — fallback por municipio: si el mapa no ubicó la dirección,
+    # detecta el municipio en el texto y cobra su tarifa fija automáticamente.
+    courier_muni = None
+    if payload.method == "cash" and courier_status == "manual_review":
+        from services.courier_fee import municipality_fallback_quote
+        mq = await municipality_fallback_quote(
+            f"{payload.details or ''} {province or ''}",
+            currency, payload.amount_usd,
+            municipality_key=payload.courier_municipality)
+        if mq and mq.get("fee_usdt", 0) > 0:
+            courier_status = "charged"
+            courier_km = 0.0
+            courier_fee_usdt = mq["fee_usdt"]
+            courier_fee_cur = mq["fee_currency_amount"]
+            courier_rq = mq
+            courier_muni = mq["municipality"]
+    if get_user_balance(user, currency) < payload.amount_usd + courier_fee_cur:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Saldo insuficiente en {currency}"
+                    + (f" (incluye {courier_fee_cur} {currency} de mensajería)"
+                       if courier_fee_cur > 0 else "")))
     w = WithdrawalRequest(
         user_id=user["user_id"],
         user_email=user["email"],
@@ -392,11 +648,61 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         currency=currency,
         method=payload.method,
         details=payload.details,
-        beneficiary_name=payload.beneficiary_name,
+        beneficiary_name=beneficiary_name,
         crypto_network=crypto_network,
+        province=province,
     )
-    await db.withdrawals.insert_one(w.model_dump())
-    await decrement_balance(user["user_id"], currency, payload.amount_usd)
+    doc = w.model_dump()
+    # iter205 — persistir modalidad + cobro de mensajería hecho al crear.
+    if payload.method == "cash":
+        doc["cash_delivery_mode"] = delivery_mode
+        doc["courier_km"] = courier_km
+        doc["courier_fee_usdt"] = courier_fee_usdt
+        doc["courier_fee_currency_amount"] = courier_fee_cur
+        doc["courier_fee_currency"] = currency
+        doc["courier_fee_status"] = courier_status
+        if courier_muni:
+            doc["courier_municipality"] = courier_muni
+        if payload.delivery_latitude is not None \
+                and payload.delivery_longitude is not None:
+            doc["delivery_latitude"] = payload.delivery_latitude
+            doc["delivery_longitude"] = payload.delivery_longitude
+        if courier_status == "charged":
+            doc["courier_fee_charged_at"] = iso(now_utc())
+            doc["courier_fee_charged_by"] = user["user_id"]
+            doc["courier_rate_snapshot"] = courier_rq["rate_usdt_per_km"]
+            doc["courier_min_fee_snapshot"] = courier_rq["min_fee_usdt"]
+    await db.withdrawals.insert_one(doc)
+    await decrement_balance(user["user_id"], currency,
+                            payload.amount_usd + courier_fee_cur)
+    # iter205 — protocolo de mensajero: las entregas a domicilio (cobradas o
+    # gratis por umbral) crean su trabajo de mensajería desde la creación.
+    if payload.method == "cash" and delivery_mode == "courier" \
+            and courier_status in ("charged", "free"):
+        try:
+            from services.deliveries import ensure_delivery_job
+            await ensure_delivery_job("withdrawal", doc, km=courier_km,
+                                      fee_usdt=courier_fee_usdt,
+                                      actor_id=user["user_id"])
+        except Exception as e:
+            logger.error(f"withdrawal delivery job failed: {e}")
+    # iter207 — mensajería SIN cobrar (mapa falló): avisar a los admins para
+    # que nadie olvide cobrarla antes de entregar.
+    if payload.method == "cash" and courier_status == "manual_review":
+        try:
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db,
+                title="⚠️ Mensajería pendiente de cobro",
+                body=(f"El retiro cash de {user['name']} ({payload.amount_usd} {currency}) "
+                      "quedó SIN costo de mensajería calculado (el mapa no encontró la "
+                      "dirección). Cóbralo con el botón 'Mensajería' — el retiro no se "
+                      "podrá marcar como entregado hasta cobrarlo."),
+                url_path="/admin/withdrawals",
+            )
+            logger.info(f"manual_review admin alert sent for withdrawal {w.id}")
+        except Exception as e:
+            logger.error(f"manual_review admin notify failed: {e}")
     await emit_balance_changed(user["user_id"], "withdrawal_created",
                                withdrawal_id=w.id, currency=currency)
     try:
@@ -435,7 +741,8 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         )
     except Exception as e:
         logger.error(f"withdrawal_created SSE publish failed: {e}")
-    return w.model_dump()
+    doc.pop("_id", None)
+    return doc
 
 
 @router.get("/vip/withdrawals/mine")
@@ -469,10 +776,19 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
         )
     currency = w.get("currency") or "USD"
     amount = float(w.get("amount_usd") or 0.0)
+    # iter198 — a courier fee charged while pending returns with the amount.
+    fee_back = float(w.get("courier_fee_currency_amount") or 0.0)
     await db.users.update_one(
         {"user_id": user["user_id"]},
-        {"$inc": {f"vip_balances.{currency}": amount}},
+        {"$inc": {f"vip_balances.{currency}": amount + fee_back}},
     )
+    # iter205 — el trabajo de mensajería activo muere con el retiro.
+    try:
+        from services.deliveries import cancel_active_delivery
+        await cancel_active_delivery("withdrawal", wid, actor_id=user["user_id"],
+                                     note="retiro cancelado por el cliente")
+    except Exception as e:
+        logger.error(f"delivery cancel failed: {e}")
     from audit_log import log_action
     await log_action(
         db, actor=user, action="withdrawal.cancelled_by_client",
@@ -558,7 +874,7 @@ async def vip_balances(request: Request) -> Any:
             "frozen": fro,
             "usdt_equivalent": round(usdt, 4) if usdt is not None else None,
         })
-    items.sort(key=lambda x: -(x["usdt_equivalent"] or 0))
+    items.sort(key=lambda x: -float(x["usdt_equivalent"] or 0))
     return {"balances": items, "total_usdt": round(total_usdt, 4),
             "frozen_total_usdt": round(frozen_total_usdt, 4)}
 

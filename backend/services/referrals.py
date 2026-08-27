@@ -115,7 +115,7 @@ async def maybe_award_referral_bonus(order: dict) -> None:
         referrer = await db.users.find_one(
             {"user_id": referrer_id}, {"_id": 0, "user_id": 1, "name": 1},
         )
-        if not referrer:
+        if not referrer or not referrer_id:
             return
 
         profit_usdt = await _compute_order_profit_usdt(order)

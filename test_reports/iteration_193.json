@@ -1,0 +1,36 @@
+{
+  "summary": "iter193 review — Backend pytest (test_iter191_pending_badges.py + test_iter192_cash_provinces.py) = 10/10 passing. Frontend mobile withdrawal detail dialog INITIALLY CRASHED with ReferenceError: wrap is not defined in CopyableText.jsx (main agent added <CopyableText wrap={true} .../> usage but forgot to destructure the `wrap` prop). After a 1-line fix (added `wrap = false` to prop destructure) the dialog renders correctly on 390px: right edge=374<=390, full ERC20 address wraps, amount+orderId rows present, copy control visible. VIP withdraw form: cash province select renders with 16 options; transfer method has NO beneficiary field; details placeholder is generic ('Bank, account number and holder', no Juan / no 9212). Admin sidebar badges render '99+' with title '2488 pendientes' (orders) and '1445 pendientes' (withdrawals); reconciliation badge correctly absent (manual_review=0). AdminOverview cash-provinces-block renders 16 checkbox toggles and toggling Pinar del Río unchecked it client-side.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CopyableText.jsx", "issue": "ReferenceError: wrap is not defined — prop `wrap` used on line 60 but not destructured in the component signature (lines 17-24). Every consumer that passed `wrap={true}` (e.g. WithdrawalDetailDialog on mobile) triggered a React ErrorBoundary and rendered 'Algo salió mal'. FIXED by testing agent (added `wrap = false` to prop destructure). MAIN AGENT: please review and keep the fix; also add a unit/render test for CopyableText with wrap prop.", "selector": "[data-testid=\"withdrawal-detail-dialog\"]", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "VIP dashboard — Daily Closing card (mobile)", "issues": ["FROM/TO date fields use browser-native date picker (mm/dd/yyyy) instead of shadcn Calendar component — inconsistent with the rest of the app"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter191_pending_badges.py",
+    "/app/backend/tests/test_iter192_cash_provinces.py"
+  ],
+  "action_items": [
+    "Verify/keep the 1-line fix in /app/frontend/src/components/CopyableText.jsx (added `wrap = false` to destructured props).",
+    "Consider adding a jest/RTL render test that mounts CopyableText with wrap={true} to catch this regression class.",
+    "Optional design polish: replace native date picker in Daily Closing (VIP dashboard) with shadcn Calendar component."
+  ],
+  "critical_code_review_comments": [
+    "CopyableText.jsx used an undeclared identifier `wrap` in JSX className — no lint/typecheck caught it because the project is plain JS. Consider adding eslint no-undef enforcement or TypeScript on shared UI primitives.",
+    "WithdrawalDetailDialog crashes were masked by the global ErrorBoundary — user just sees 'Algo salió mal'. Add Sentry/console breadcrumb before generic fallback so the bug is surfaced sooner in preview."
+  ],
+  "updated_files": [
+    "/app/frontend/src/components/CopyableText.jsx"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% after 1-line fix (dialog crashed pre-fix)"},
+  "test_credentials": "VIP session cookie smoke_session_vip_jun26b, Admin session cookie smoke_session_admin_jun26_recon (both valid).",
+  "seed_data_creation": "Inserted crypto withdrawal doc id=test_wd_iter193_f457d06b for user_test_vip01 to exercise the detail dialog; DELETED after tests. db.settings.cash_provinces confirmed None after tests (nothing to restore).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "CopyableText.jsx now correctly destructures the `wrap` prop (defaults to false). Any consumer that passes wrap={true} — including WithdrawalDetailDialog on mobile — now renders without crashing. All requested testids exist: withdraw-cash-province, method-option-cash, method-option-transfer, withdraw-details, submit-withdraw-btn, withdrawal-row-{id}, withdrawal-detail-dialog, withdrawal-detail-amount-row-{id}, withdrawal-detail-orderid-{id}, admin-nav-orders-badge, admin-nav-withdrawals-badge, cash-provinces-block, cash-province-toggle-*. Note testid names differ from spec in a couple places (submit-withdraw-btn not withdraw-submit-btn; withdraw-amount not withdraw-amount-input; withdraw-details not withdraw-details-textarea).",
+  "rca of the issue": "RCA: iter191/192 added a new `wrap` prop to CopyableText and used it in the className expression (line 60), but did not add `wrap` to the destructured prop list (lines 17-24). Result: at mount time JS evaluates a bare identifier `wrap`, throws ReferenceError, React ErrorBoundary catches it and shows the fallback UI. Reproduction: open /dashboard/vip on 390x844, open Account History → Withdrawals tab, click any withdrawal-row-* — dialog fails to render. Mitigation applied: add `wrap = false` to CopyableText prop destructure so undefined callers still get the truncate behaviour and callers passing wrap={true} get the wrap layout."
+}

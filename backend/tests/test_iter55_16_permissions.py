@@ -81,14 +81,14 @@ def test_permissions_catalog_returns_13_items():
     # iter113 — `profitability` added for the profitability calculator.
     # Baseline lifted from 18 → 19.
     # iter167 — `reconciliation` added for the bank reconciliation module.
-    # Baseline lifted from 20 → 21.
+    # Baseline lifted from 21 → 22 (iter202: deliveries/Mensajería).
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 21
+    assert len(items) == 22
     codes = {i["code"] for i in items}
     assert codes == {
-        "orders", "withdrawals", "kyc", "appeals", "products", "rates",
+        "orders", "withdrawals", "deliveries", "kyc", "appeals", "products", "rates",
         "currencies", "users", "company_funds", "blocked_contacts",
         "transactions", "quick_view", "profile_changes",
         "user_stats", "user_functions", "view_user_sensitive",

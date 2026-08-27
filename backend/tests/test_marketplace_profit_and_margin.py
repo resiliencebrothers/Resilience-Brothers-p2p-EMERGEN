@@ -203,6 +203,20 @@ class TestRevenueMarketplaceSection:
         )
         assert rr.status_code in (200, 201), rr.text
         red = rr.json()
+        # iter205 — el protocolo de mensajería exige tarifa cobrada + entrega
+        # realizada por el mensajero antes de marcar 'delivered'.
+        db.redemptions.update_one({"id": red["id"]}, {"$set": {
+            "courier_fee_status": "charged", "courier_fee_usdt": 2.0,
+            "courier_fee_usd": 2.2, "courier_km": 3.0,
+        }})
+        db.deliveries.insert_one({
+            "id": f"dl_{red['id'][:10]}", "kind": "redemption",
+            "ref_id": red["id"], "status": "delivered",
+            "courier_id": "user_test_vip01", "courier_name": "Mensajero Test",
+            "fee_usdt": 2.0, "km": 3.0, "timeline": [],
+            "created_at": "2026-06-01T00:00:00+00:00",
+            "updated_at": "2026-06-01T00:00:00+00:00",
+        })
         # Mark delivered using the documented endpoint
         upd = requests.put(
             f"{BASE_URL}/api/admin/redemptions/{red['id']}/status",

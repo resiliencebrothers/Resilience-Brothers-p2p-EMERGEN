@@ -48,6 +48,24 @@ async def all_withdrawals(request: Request,
             else:
                 q["currency"] = {"$in": allowed}
     docs = await db.withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    # iter208 — attach courier delivery status so the frontend can disable
+    # the "Entregado" button until the courier confirms the delivery.
+    cash_ids = [d["id"] for d in docs
+                if d.get("method") == "cash" and d.get("status") != "paid"]
+    if cash_ids:
+        jobs = await db.deliveries.find(
+            {"kind": "withdrawal", "ref_id": {"$in": cash_ids},
+             "status": {"$ne": "cancelled"}},
+            {"_id": 0, "ref_id": 1, "status": 1, "courier_id": 1,
+             "courier_name": 1},
+        ).to_list(len(cash_ids))
+        by_ref = {j["ref_id"]: j for j in jobs}
+        for d in docs:
+            if d["id"] in by_ref:
+                j = by_ref[d["id"]]
+                d["courier_delivery_status"] = j.get("status")
+                d["courier_delivery_courier_name"] = j.get("courier_name") or ""
+                d["courier_delivery_assigned"] = bool(j.get("courier_id"))
     return docs
 
 
@@ -75,7 +93,9 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
     """
     already_refunded = bool(withdrawal.get("balance_refunded"))
     currency = withdrawal.get("currency", "USD")
-    amount = float(withdrawal.get("amount_usd") or 0.0)
+    # iter198 — any charged courier fee travels with the refund/re-debit.
+    amount = (float(withdrawal.get("amount_usd") or 0.0)
+              + float(withdrawal.get("courier_fee_currency_amount") or 0.0))
     was_rejected = withdrawal["status"] == "rejected"
     entering_rejected = new_status == "rejected" and not was_rejected
     leaving_rejected = was_rejected and new_status != "rejected"
@@ -146,6 +166,54 @@ def _validate_paid_evidence(withdrawal: dict, update_doc: dict, new_status: str)
             )
 
 
+async def _assert_cash_courier_ready(withdrawal: dict, new_status: str) -> None:
+    """iter205 — candados anti-pérdida para retiros CASH antes de 'paid'
+    (entregado = el mensajero YA entregó el dinero al cliente):
+      1. La tarifa debe estar resuelta: cobrada, gratis por umbral, o
+         recogida en oficina (sin mensajero).
+      2. Debe existir el trabajo de mensajería y el mensajero debe haberlo
+         marcado como entregado (delivered/confirmed)."""
+    if new_status != "paid" or withdrawal["status"] == "paid" \
+            or withdrawal.get("method") != "cash":
+        return
+    if (withdrawal.get("cash_delivery_mode") or "courier") == "office_pickup":
+        return
+    from services.courier_fee import quote_courier_fee
+    cq = await quote_courier_fee((withdrawal.get("currency") or "USD").upper(),
+                                  float(withdrawal.get("amount_usd") or 0.0))
+    if not cq["enabled"]:
+        return
+    fee_charged = bool(withdrawal.get("courier_fee_charged_at")) \
+        and float(withdrawal.get("courier_fee_usdt") or 0) > 0
+    if not cq["free"] and not fee_charged:
+        raise HTTPException(
+            status_code=409,
+            detail=("Mensajería sin cobrar: usa el botón 'Mensajería' para "
+                    "cobrar el costo de la entrega antes de marcar este retiro "
+                    "como entregado."))
+    job = await db.deliveries.find_one(
+        {"kind": "withdrawal", "ref_id": withdrawal["id"],
+         "status": {"$ne": "cancelled"}}, {"_id": 0})
+    if not job:
+        raise HTTPException(
+            status_code=409,
+            detail=("No existe trabajo de mensajería para este retiro. "
+                    "Créalo en la sección Mensajería (o cobra la tarifa) y "
+                    "espera a que el mensajero confirme la entrega."))
+    if job.get("status") not in ("delivered", "confirmed"):
+        if not job.get("courier_id"):
+            raise HTTPException(
+                status_code=409,
+                detail=("Ningún mensajero ha tomado esta entrega todavía. "
+                        "Asigna un mensajero o espera a que uno la acepte y "
+                        "la marque como entregada."))
+        raise HTTPException(
+            status_code=409,
+            detail=(f"El mensajero {job.get('courier_name') or ''} aún no "
+                    "marcó esta entrega como realizada. Debe confirmarla desde "
+                    "su panel antes de marcar el retiro como entregado."))
+
+
 @router.put("/admin/withdrawals/{wid}/status")
 async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "withdrawals")
@@ -173,9 +241,47 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     await _reconcile_balance_on_status_change(w, new_status, update_doc)
     _collect_payout_evidence(payload, update_doc, w)
     _validate_paid_evidence(w, update_doc, new_status)
+    await _assert_cash_courier_ready(w, new_status)
+    # iter194/195 — "paid from account" attribution: explicit staff choice
+    # wins; otherwise auto-attribute (cash → company cash box; single active
+    # account for the currency → that account).
+    if new_status == "paid":
+        from routes.company_fund_accounts import (
+            resolve_fund_account, auto_paid_from_account,
+        )
+        acc_id = (payload.get("paid_from_account_id") or "").strip()
+        if acc_id:
+            acc = await resolve_fund_account(acc_id)
+            if not acc:
+                raise HTTPException(status_code=400, detail="Cuenta de origen no encontrada")
+            update_doc["paid_from_account_id"] = acc_id
+            update_doc["paid_from_account_label"] = acc["label"]
+        else:
+            acc = await auto_paid_from_account(w.get("currency"), w.get("method"))
+            if acc:
+                update_doc["paid_from_account_id"] = acc["id"]
+                update_doc["paid_from_account_label"] = acc["label"]
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    # iter205 — un retiro rechazado cancela su trabajo de mensajería activo.
+    if new_status == "rejected" and w["status"] != "rejected":
+        try:
+            from services.deliveries import cancel_active_delivery
+            await cancel_active_delivery("withdrawal", wid,
+                                         actor_id=actor.get("user_id"),
+                                         note="retiro rechazado")
+        except Exception as e:
+            logger.error(f"delivery cancel failed: {e}")
 
+    await _post_status_side_effects(w, updated, new_status, payload, actor, wid)
+    return updated
+
+
+async def _post_status_side_effects(w: dict, updated: dict, new_status: str,
+                                    payload: dict, actor: dict, wid: str) -> None:
+    """SSE + push/in-app + email + audit tras un cambio de estado. Compartido
+    entre el endpoint PUT /status y la sincronización automática al confirmar
+    la entrega de mensajería (iter209b)."""
     # iter97 — SSE push to the withdrawal owner so /dashboard/vip
     # reflects the new status + refreshes balance immediately.
     # iter98 — ALSO push to admin/employee broadcast subscribers so the
@@ -218,6 +324,25 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
         except Exception as e:
             logger.error(f"withdrawal {new_status} push failed: {e}")
 
+    # iter196 — email the owner at the two lifecycle checkpoints they care
+    # about: `approved` ("en proceso") and `paid` ("exitoso"). Rejections
+    # stay push+in-app only; a rejected email is intentionally not sent to
+    # avoid confusion with the refund notification already delivered above.
+    if new_status != w["status"] and new_status in ("approved", "paid"):
+        try:
+            target = await db.users.find_one(
+                {"user_id": updated.get("user_id")},
+                {"_id": 0, "email": 1, "name": 1, "preferred_language": 1},
+            )
+            if target and target.get("email"):
+                from email_service import notify_withdrawal_in_progress, notify_withdrawal_paid
+                if new_status == "approved":
+                    notify_withdrawal_in_progress(updated, target)
+                else:
+                    notify_withdrawal_paid(updated, target)
+        except Exception as e:
+            logger.error(f"withdrawal {new_status} email failed: {e}")
+
     # iter55.23 — audit trail. Without this, "quién rechazó este retiro?" is
     # unanswerable from the audit log (the endpoint used to be silent). We
     # log the actor + before/after status + amount + method + user affected
@@ -238,7 +363,146 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
                 "currency": w.get("currency"),
                 "method": w.get("method"),
                 "admin_note": payload.get("admin_note", ""),
-                "payout_tx_hash": update_doc.get("payout_tx_hash"),
+                "payout_tx_hash": updated.get("payout_tx_hash"),
             },
         )
+    return updated
+
+
+async def mark_paid_from_delivery(wid: str, actor: dict) -> Optional[dict]:
+    """iter209b — Al confirmar la entrega de mensajería (TOTP ya verificado),
+    el retiro cash vinculado se marca como 'paid' automáticamente para que
+    Depósitos y Retiros no quede en 'pendiente'. Acción de sistema: sin
+    re-chequeo de scope de moneda ni evidencia (cash no la requiere)."""
+    w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    if not w or w.get("status") in ("paid", "rejected", "cancelled"):
+        return None
+    update_doc = {
+        "status": "paid",
+        "paid_at": iso(now_utc()),
+        "admin_note": w.get("admin_note") or "Auto: entrega de mensajería confirmada",
+    }
+    from routes.company_fund_accounts import auto_paid_from_account
+    acc = await auto_paid_from_account(w.get("currency"), w.get("method"))
+    if acc:
+        update_doc["paid_from_account_id"] = acc["id"]
+        update_doc["paid_from_account_label"] = acc["label"]
+    r = await db.withdrawals.update_one(
+        {"id": wid, "status": w["status"]}, {"$set": update_doc})
+    if r.modified_count == 0:
+        return None
+    updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    await _post_status_side_effects(
+        w, updated, "paid",
+        {"admin_note": "Auto: entrega de mensajería confirmada"}, actor, wid)
+    return updated
+
+
+@router.post("/admin/withdrawals/{wid}/courier-fee")
+async def set_courier_fee(wid: str, payload: dict, request: Request) -> Any:
+    """iter198 — charge (or update/annul with km=0) the courier fee of a cash
+    withdrawal. Fee = km × rate (USDT/km from settings.global), converted to
+    the withdrawal currency and deducted from the client's balance SEPARATELY
+    from the withdrawal amount. Free above `courier_free_min_usdt`."""
+    actor = await require_permission(request, "withdrawals")
+    await _enforce_totp_step_up(actor, payload.get("totp_code"),
+                                 action_label="cobro de mensajería")
+    w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    if not w:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    if w.get("method") != "cash":
+        raise HTTPException(
+            status_code=400,
+            detail="El cobro de mensajería solo aplica a retiros en efectivo.")
+    if w.get("status") in ("rejected", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail="Este retiro está en un estado terminal — no se puede cobrar mensajería.")
+    _enforce_employee_currency_scope(actor, w.get("currency"))
+    from services.courier_fee import (
+        parse_km_payload, price_charge_or_raise,
+        price_charge_municipality_or_raise,
+    )
+    currency = (w.get("currency") or "USD").upper()
+    muni_key = (payload.get("municipality") or "").strip()
+    muni_name = None
+    if muni_key:
+        # iter211 — cobro por tarifa fija de municipio (mapa falló).
+        km = 0.0
+        q, fee_usdt, fee_cur, muni = await price_charge_municipality_or_raise(
+            muni_key, currency, float(w.get("amount_usd") or 0.0),
+            op_label="Este retiro")
+        muni_name = muni["municipality"]
+    else:
+        km = parse_km_payload(payload)
+        q, fee_usdt, fee_cur = await price_charge_or_raise(
+            km, currency, float(w.get("amount_usd") or 0.0), op_label="Este retiro")
+    prev_fee_cur = float(w.get("courier_fee_currency_amount") or 0.0)
+    delta = round(fee_cur - prev_fee_cur, 2)
+    if delta > 0:
+        owner = await db.users.find_one({"user_id": w["user_id"]},
+                                        {"_id": 0, "vip_balances": 1})
+        bal = float(((owner or {}).get("vip_balances") or {}).get(currency) or 0.0)
+        if bal < delta:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Saldo insuficiente del cliente ({bal} {currency}) "
+                        f"para cubrir la mensajería ({delta} {currency})."))
+    if delta != 0:
+        await db.users.update_one(
+            {"user_id": w["user_id"]},
+            {"$inc": {f"vip_balances.{currency}": -delta}},
+        )
+    update_doc = {
+        "courier_km": km,
+        "courier_fee_usdt": fee_usdt,
+        "courier_fee_currency_amount": fee_cur,
+        "courier_fee_currency": currency,
+        "courier_municipality": muni_name,
+        "courier_fee_charged_at": iso(now_utc()) if fee_usdt > 0 else None,
+        "courier_fee_charged_by": actor.get("user_id"),
+        "courier_rate_snapshot": q["rate_usdt_per_km"],
+        "courier_min_fee_snapshot": q["min_fee_usdt"],
+    }
+    await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
+    updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
+    # iter199 — keep the courier delivery job in sync with this charge.
+    try:
+        from services.deliveries import upsert_delivery_for_charge
+        await upsert_delivery_for_charge("withdrawal", updated or w, km=km,
+                                         fee_usdt=fee_usdt,
+                                         actor_id=actor.get("user_id"))
+    except Exception as e:
+        logger.error(f"delivery sync failed: {e}")
+    await log_action(
+        db, actor, "withdrawal.courier_fee", "withdrawal", wid,
+        summary=(f"Mensajería {km} km → {fee_usdt} USDT "
+                 f"({fee_cur} {currency}) en retiro {wid[:8]}"),
+        details={"km": km, "fee_usdt": fee_usdt, "fee_currency_amount": fee_cur,
+                 "currency": currency, "prev_fee_currency_amount": prev_fee_cur,
+                 "delta": delta, "user_id": w.get("user_id")},
+    )
+    try:
+        from routes.notifications import _insert_notification
+        if fee_usdt > 0:
+            title = "Costo de mensajería aplicado"
+            msg = (f"Se descontó {fee_cur} {currency} (≈ {fee_usdt} USDT · {km} km) "
+                   f"de tu saldo por la entrega en efectivo del retiro #{wid[:8]}.")
+        else:
+            title = "Cobro de mensajería anulado"
+            msg = (f"Se devolvió {abs(delta)} {currency} a tu saldo: el cobro de "
+                   f"mensajería del retiro #{wid[:8]} fue anulado.")
+        await _insert_notification(recipient_user_id=w["user_id"], type="courier_fee",
+                                   title=title, message=msg,
+                                   data={"withdrawal_id": wid, "km": km,
+                                         "fee_usdt": fee_usdt})
+    except Exception as e:
+        logger.error(f"courier fee notification failed: {e}")
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("balance_updated",
+                           {"reason": "courier_fee", "withdrawal_id": wid},
+                           user_id=w["user_id"])
+    except Exception:
+        pass
     return updated

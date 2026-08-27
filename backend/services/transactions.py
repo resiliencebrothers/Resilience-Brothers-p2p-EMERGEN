@@ -495,7 +495,7 @@ def _vip_batch_item_to_entrada(it: dict) -> TransactionItem:
         "from_code": it.get("from_code") or "",
         "to_code": it.get("to_code") or "",
         "amount_from": float(it.get("amount", 0.0)),
-        "amount_to": float(it.get("amount_to") if it.get("amount_to") is not None else 0.0),
+        "amount_to": float(it.get("amount_to") or 0.0),
     }
 
 
@@ -511,7 +511,7 @@ def _vip_batch_item_to_user_tx(it: dict) -> TransactionItem:
     return {
         "direction": "in",
         "currency": it.get("to_code") or it.get("currency", ""),
-        "amount": float(it.get("amount_to") if it.get("amount_to") is not None else it.get("amount", 0.0)),
+        "amount": float(it.get("amount_to") or it.get("amount") or 0.0),
         "holder_name": it.get("holder_name", ""),
         "client_name": "",
         "client_email": "",
@@ -526,7 +526,7 @@ def _vip_batch_item_to_user_tx(it: dict) -> TransactionItem:
         "from_code": it.get("from_code") or "",
         "to_code": it.get("to_code") or "",
         "amount_from": float(it.get("amount", 0.0)),
-        "amount_to": float(it.get("amount_to") if it.get("amount_to") is not None else it.get("amount", 0.0)),
+        "amount_to": float(it.get("amount_to") or 0.0),
     }
 
 
@@ -606,7 +606,8 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
                              until: Optional[str],
                              min_amount: Optional[float] = None,
                              max_amount: Optional[float] = None,
-                             user_id: Optional[str] = None) -> List[TransactionItem]:
+                             user_id: Optional[str] = None,
+                             client: Optional[str] = None) -> List[TransactionItem]:
     """Unified transaction list from approved/completed orders + approved/paid withdrawals.
 
     Each entry: {direction: 'in'|'out', currency, amount, holder_name, client_name,
@@ -659,6 +660,16 @@ async def build_transactions(direction: Optional[str], currency: Optional[str],
         items = [it for it in items if it["amount"] >= min_amount]
     if max_amount is not None:
         items = [it for it in items if it["amount"] <= max_amount]
+    if client:
+        # iter208 — Filter admin transactions by CLIENT (user of the platform).
+        # Matches substring against client_name OR client_email, case-insensitive.
+        cq = client.strip().lower()
+        if cq:
+            items = [
+                it for it in items
+                if cq in (it.get("client_name") or "").lower()
+                or cq in (it.get("client_email") or "").lower()
+            ]
     return items
 
 

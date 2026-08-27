@@ -1,0 +1,33 @@
+{
+  "summary": "iter198+iter197 frontend e2e testing. All 6 requested user flows PASS. Real OSM Nominatim + OSRM routing works from configured office (23.1136,-82.3666) to 'Calle 23 Vedado La Habana' returning 4.4 km and 2.2 USDT (min-fee floor of 2). Admin TOTP-gated courier-fee apply on cash withdrawals AND redemptions both work and refund on km=0. Settings persist through reload. email-health-ok banner shows 7-day counters.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter198_courier_fee.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/courier_fee.py implements MAX(min_fee, km*rate) with free-min override cleanly; shared by marketplace redemption and cash withdrawal paths.",
+    "Nominatim+OSRM calls are proxied through backend (orders.py geo-search + courier-route-quote) - avoids CORS and hides client IP from public OSM. Good pattern.",
+    "CourierQuotePicker UX handles all three states with correct data-testid: courier-quote-result (normal), courier-quote-free (>=1000 USDT equiv), courier-quote-manual (OSM failure fallback).",
+    "Admin apply-fee endpoints require TOTP step-up (both /api/admin/withdrawals/{id}/courier-fee and /api/admin/redemptions/{id}/courier-fee). km=0 correctly refunds previously charged fee (verified: CUP 498480 -> 500000).",
+    "Nit: AdminOverview save-threshold-btn now saves several unrelated settings groups (VIP threshold + courier + office coords + ops emails + provinces). Consider renaming or splitting per-section save buttons.",
+    "Nit: GET /api/admin/withdrawals/{id} returns 404 (route not defined). UI reads from list endpoint so unaffected, but external tools would fail on per-id lookup."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (6/6)"},
+  "test_credentials": "Session cookies smoke_session_admin_iter197 and smoke_session_vip_iter198 upserted for user_test_admin01/user_test_vip01. TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP (pyotp).",
+  "seed_data_creation": "1) Upserted the two smoke_* session tokens (kept in DB). 2) Refilled user_test_vip01 vip_balances USD=5000, CUP=500000, USDT=500. 3) Created 1 redemption (id 36569716-5969-4cb0-9abc-44ddb90897fd) $100 with courier_km=4.4/$2.42, later admin-adjusted to km=6/$3.3. 4) Cash withdrawal w_c51aabb7aec7 (10000 CUP): applied km=8 (fee 1520 CUP) then km=0 (refunded). Final: withdrawal courier_km=0/fee=0, VIP CUP restored to 500000. All seed data preserved for next iteration to reuse.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Cash withdraw path: /dashboard/vip -> action-withdraw-btn -> method-option-cash -> withdraw-currency (CUP SelectItem). CourierQuotePicker only renders below cash-receiver-address when courierQuote.enabled && !courierQuote.free. Admin: click manage-withdrawal-{id}; courier-fee-block always shown for cash rows; courier-apply-btn triggers TOTP dialog (input[placeholder*='123456']). Redemptions table is at bottom of /admin/withdrawals (scroll down) with inline redemption-courier-km-{id} + redemption-courier-apply-{id}. Both TOTP-gated. Settings save uses shared save-threshold-btn with TOTP.",
+  "verified_flows": [
+    "VIP marketplace redemption: address 'Calle 23 Vedado La Habana' -> courier-quote-calc-btn -> 4 Nominatim results -> click courier-result-0 -> OSRM 4.4 km / 2.2 USDT / 2.42 USD -> redeem-courier-fee-line '+$2.42' -> confirm-redeem -> redemption created with courier_fee_status=charged.",
+    "VIP cash withdraw notes at 5000 CUP: withdraw-courier-fee-note copy correct; at 500000 CUP: withdraw-courier-free visible; CourierQuotePicker under receiver form returns 4.4 km / 2.2 USDT ≈ 836 CUP.",
+    "Admin cash withdrawal apply: km=8 -> preview 'MAX(2, 8x0.5)=4 USDT ≈ 1520 CUP' -> TOTP -> courier-charged-note 'Cobrado: 8 km -> 4 USDT (1520 CUP)' -> VIP CUP debited 1520.",
+    "Admin km=0 refund: VIP CUP restored to 500000, block returns to blank state.",
+    "Admin redemption courier apply: km=6 -> TOTP -> DB courier_km=6, courier_fee_usd=3.3, courier_fee_usdt=3.0, status=charged.",
+    "Admin overview settings persistence: courier-rate-input 0.5 -> 0.55 (save+TOTP) -> reload keeps 0.55; restored to 0.5.",
+    "Email health banner at /admin/users/user_test_vip01/stats: email-health-ok '834 enviados · 0 fallidos · 15996 suprimidos'. Backend GET /api/admin/email-health returned send_enabled=true."
+  ],
+  "failed_flows": [],
+  "rca_of_the_issue": "n/a - no bugs found. Feature complete and behaving per spec."
+}
