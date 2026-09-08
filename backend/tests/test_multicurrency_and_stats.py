@@ -203,10 +203,10 @@ class TestCurrencyWithdrawals:
 # ===== Redemption USD merge =====
 class TestRedemptionMergedUsd:
     def test_redeem_with_only_vip_balances_usd(self):
-        # Setup: VIP has only vip_balances.USD=300 and no legacy
+        # iter254(R07) — el marketplace liquida en USDT: seed y aserciones en USDT
         me = _vip_me()
         uid = me["user_id"]
-        _set_user_balances(uid, vip_balance_usd=0.0, vip_balances={"USD": 300.0})
+        _set_user_balances(uid, vip_balance_usd=0.0, vip_balances={"USDT": 300.0})
         prods = requests.get(f"{BASE_URL}/api/products").json()
         # Pick a product with price <= 200 and stock available
         candidate = next((p for p in prods if p.get("price_usd", 9999) <= 200 and p.get("stock", 0) > 0), None)
@@ -221,8 +221,8 @@ class TestRedemptionMergedUsd:
                           json={"product_id": candidate["id"], "quantity": 1, "delivery_address": "Addr"})
         assert r.status_code == 200, r.text
         me2 = _vip_me()
-        # Legacy is 0, so decrement should hit vip_balances.USD: 300 - price
-        remaining_dict_usd = float((me2.get("vip_balances") or {}).get("USD", 0.0))
+        # iter254(R07) — el débito sale de vip_balances.USDT: 300 - price
+        remaining_dict_usd = float((me2.get("vip_balances") or {}).get("USDT", 0.0))
         assert round(remaining_dict_usd, 4) == round(300.0 - candidate["price_usd"], 4)
 
 

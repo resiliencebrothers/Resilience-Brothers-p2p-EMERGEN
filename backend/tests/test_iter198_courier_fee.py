@@ -206,8 +206,8 @@ def test_non_cash_withdrawal_rejects_courier_fee():
 def test_redemption_without_coords_is_manual_review():
     _set_courier_settings()
     pid = _mk_product(price_usd=50.0)
-    _db().users.update_one({"user_id": VIP_ID}, {"$inc": {"vip_balances.USD": 100.0}})
-    bal0 = _vip_balance("USD")
+    _db().users.update_one({"user_id": VIP_ID}, {"$inc": {"vip_balances.USDT": 100.0}})
+    bal0 = _vip_balance("USDT")
     # iter211 — la dirección NO debe contener un municipio conocido: si lo
     # contiene (ej. "Vedado") ahora se cobra la tarifa fija automáticamente.
     r = requests.post(f"{API}/vip/redeem",
@@ -219,7 +219,7 @@ def test_redemption_without_coords_is_manual_review():
     assert red["courier_fee_status"] == "manual_review"
     assert red["courier_fee_usd"] == 0.0
     assert red["courier_rate_snapshot"] == 0.5
-    assert round(bal0 - _vip_balance("USD"), 2) == 50.0  # only the product
+    assert round(bal0 - _vip_balance("USDT"), 2) == 50.0  # only the product
 
     # staff sets 8 km manually → MAX(2, 8×0.5) = 4 USDT
     r2 = requests.post(f"{API}/admin/redemptions/{red['id']}/courier-fee",
@@ -229,17 +229,17 @@ def test_redemption_without_coords_is_manual_review():
     assert upd["courier_fee_usdt"] == 4.00
     assert upd["courier_fee_usd"] > 0
     assert upd["courier_fee_status"] == "charged"
-    assert round(bal0 - _vip_balance("USD"), 2) == round(50.0 + upd["courier_fee_usd"], 2)
+    assert round(bal0 - _vip_balance("USDT"), 2) == round(50.0 + upd["courier_fee_usd"], 2)
 
     # rejection refunds product + courier fee and restores stock
     r3 = requests.put(f"{API}/admin/redemptions/{red['id']}/status",
                       json={"status": "rejected", "admin_note": "test"},
                       headers=_hdr(ADMIN_TOKEN))
     assert r3.status_code == 200, r3.text
-    assert round(_vip_balance("USD") - bal0, 2) == 0.0
+    assert round(_vip_balance("USDT") - bal0, 2) == 0.0
     _db().redemptions.delete_one({"id": red["id"]})
     _db().products.delete_one({"id": pid})
-    _db().users.update_one({"user_id": VIP_ID}, {"$inc": {"vip_balances.USD": -100.0}})
+    _db().users.update_one({"user_id": VIP_ID}, {"$inc": {"vip_balances.USDT": -100.0}})
 
 
 def test_redemption_free_threshold():
@@ -247,7 +247,7 @@ def test_redemption_free_threshold():
     # 1200 USD ≈ 1142 USDT ≥ 1000 → free courier
     pid = _mk_product(price_usd=1200.0)
     _db().users.update_one({"user_id": VIP_ID},
-                           {"$inc": {"vip_balances.USD": 1200.0}})
+                           {"$inc": {"vip_balances.USDT": 1200.0}})
     r = requests.post(f"{API}/vip/redeem",
                       json={"product_id": pid, "quantity": 1,
                             "delivery_address": "Calle 23 #456, Vedado"},
@@ -263,7 +263,7 @@ def test_redemption_free_threshold():
     requests.put(f"{API}/admin/redemptions/{red['id']}/status",
                  json={"status": "rejected"}, headers=_hdr(ADMIN_TOKEN))
     _db().users.update_one({"user_id": VIP_ID},
-                           {"$inc": {"vip_balance_usd": -1200.0}})
+                           {"$inc": {"vip_balances.USDT": -1200.0}})
     _db().redemptions.delete_one({"id": red["id"]})
     _db().products.delete_one({"id": pid})
 

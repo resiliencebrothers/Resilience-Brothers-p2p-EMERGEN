@@ -310,30 +310,47 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
     box = await _get_box_checked(box_id, user)
     if fund not in FUNDS:
         raise HTTPException(status_code=400, detail="Fondo inválido")
-    movs = await db.cash_box_movements.find(
-        {"box_id": box["id"], "fund": fund}, {"_id": 0}).to_list(20000)
+    # iter254(R11) — totales y denominaciones por AGREGACIÓN (sin cargar los
+    # movimientos en memoria ni truncar en 20k: el resumen nunca subestima).
+    base = {"box_id": box["id"], "fund": fund}
     initial = (box.get("initial") or {}).get(fund) or {}
     init_amount = float(initial.get("amount") or 0)
-    entradas = round(sum(m["amount"] for m in movs if m["type"] == "entrada"), 2)
-    salidas = round(sum(m["amount"] for m in movs if m["type"] == "salida"), 2)
+
+    tot = {r["_id"]: float(r["total"]) async for r in
+           db.cash_box_movements.aggregate([
+               {"$match": base},
+               {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}])}
+    entradas = round(tot.get("entrada", 0.0), 2)
+    salidas = round(tot.get("salida", 0.0), 2)
 
     month = datetime.now(_TZ).strftime("%Y-%m")
     start, end = _month_range_utc(month)
-    in_month = [m for m in movs if start <= m["created_at"] < end]
-    e_mes = round(sum(m["amount"] for m in in_month if m["type"] == "entrada"), 2)
-    s_mes = round(sum(m["amount"] for m in in_month if m["type"] == "salida"), 2)
+    mtot = {r["_id"]: float(r["total"]) async for r in
+            db.cash_box_movements.aggregate([
+                {"$match": {**base, "created_at": {"$gte": start, "$lt": end}}},
+                {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}])}
+    e_mes = round(mtot.get("entrada", 0.0), 2)
+    s_mes = round(mtot.get("salida", 0.0), 2)
 
     # control físico teórico por denominación (inicial ± desgloses)
     counts: Dict[str, int] = {}
     for d, q in (initial.get("denominations") or {}).items():
         counts[d] = counts.get(d, 0) + int(q)
-    for m in movs:
-        sign = 1 if m["type"] == "entrada" else -1
-        for d, q in (m.get("denominations") or {}).items():
-            counts[d] = counts.get(d, 0) + sign * int(q)
+    async for row in db.cash_box_movements.aggregate([
+        {"$match": {**base, "denominations": {"$type": "object"}}},
+        {"$project": {"type": 1,
+                      "den": {"$objectToArray": "$denominations"}}},
+        {"$unwind": "$den"},
+        {"$group": {"_id": "$den.k", "qty": {"$sum": {
+            "$cond": [{"$eq": ["$type", "entrada"]},
+                      "$den.v", {"$multiply": ["$den.v", -1]}]}}}},
+    ]):
+        d = str(row["_id"])
+        counts[d] = counts.get(d, 0) + int(row["qty"] or 0)
     denom_rows = [{"denom": d, "qty": counts.get(str(d), 0),
                    "subtotal": round(d * counts.get(str(d), 0), 2)}
                   for d in DENOMS[fund]]
+    num_movs = await db.cash_box_movements.count_documents(base)
 
     return {
         "fund": fund,
@@ -346,7 +363,7 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
         "salidas_mes": s_mes,
         "neto_mes": round(e_mes - s_mes, 2),
         "denominaciones": denom_rows,
-        "num_movimientos": len(movs),
+        "num_movimientos": num_movs,
     }
 
 

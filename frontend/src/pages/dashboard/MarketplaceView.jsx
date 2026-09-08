@@ -156,7 +156,14 @@ export default function MarketplaceView() {
             className="font-display text-2xl text-[#8B5CF6]"
             data-testid="marketplace-balance-usdt"
           >
-            {(balances.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            {(() => {
+              // iter254(R07) — el marketplace liquida en USDT: mostrar el
+              // saldo USDT gastable, no el equivalente multi-moneda.
+              const usdt = (balances.balances || []).find(
+                (b) => (b.code || b.currency) === "USDT");
+              return (usdt?.amount || 0).toLocaleString(undefined, {
+                maximumFractionDigits: 2 });
+            })()}
             <span className="text-sm text-neutral-400 ml-1">USDT</span>
           </div>
         </div>
@@ -466,7 +473,7 @@ export default function MarketplaceView() {
       </Dialog>
 
       <Dialog open={!!qrItem} onOpenChange={() => setQrItem(null)}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-sm">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-sm max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">{t("marketplace.qrTitle")}</DialogTitle>
           </DialogHeader>

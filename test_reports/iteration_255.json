@@ -1,0 +1,47 @@
+{
+  "summary": "Smoke frontend E2E R07 (marketplace USDT) + R02 (redemption reject/reactivate). R07-UI, R07-E2E, R07-insufficient PASS. R02 reject and reactivate PASS. R02 insufficient-reactivate: backend correctly returns 409 with friendly message, BUT frontend shows an 'Uncaught runtime error' overlay instead of a toast — AdminWithdrawals.updateRedemption has no try/catch and does not surface 409 errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AdminWithdrawals.jsx (updateRedemption)",
+        "issue": "PUT /api/admin/redemptions/{id}/status has no try/catch. When backend returns 409 (e.g., insufficient balance to reactivate a rejected canje, or lost race condition), React surfaces an 'Uncaught runtime error' dev overlay and no toast is shown. The friendly detail 'El cliente no tiene X USDT para reactivar este canje (ya gastó el reembolso).' is never displayed. Must wrap in try/catch and toast.error(extractDetailMessage(e)).",
+        "selector": "AdminWithdrawals.jsx L189-193",
+        "priority": "HIGH"
+      },
+      {
+        "component": "RedemptionsTable.jsx action buttons",
+        "issue": "The ✓ (approved), ⇪ (delivered), ✕ (rejected) buttons per redemption row lack data-testid (only glyph text). Makes E2E targeting fragile; recommend adding data-testid=\"redemption-status-{approved|delivered|rejected}-{id}\".",
+        "selector": "RedemptionsTable.jsx L138-142",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/marketplace_vip.png",
+    "/app/test_reports/redeem_dialog.png",
+    "/app/test_reports/insufficient.png",
+    "/app/test_reports/admin_after_reject.png",
+    "/app/test_reports/admin_reactivate.png",
+    "/app/test_reports/reactivate_409_ui.png"
+  ],
+  "action_items": [
+    "Wrap AdminWithdrawals.updateRedemption in try/catch: toast.error(extractDetailMessage(e)) so 409 (insufficient balance / race) shows a friendly toast instead of Uncaught runtime error.",
+    "Add data-testid to redemption row action buttons (approve/deliver/reject) in RedemptionsTable.jsx for stable automation."
+  ],
+  "critical_code_review_comments": [
+    "AdminWithdrawals.jsx: updateRedemption() is the only status handler without error handling; every peer function (createDelivery, markPickupReady, applyCourierFee) wraps axios in try/catch. Inconsistent + user-visible bug.",
+    "Confirmed: MarketplaceView.jsx correctly picks balances.balances[code==='USDT'].amount (R07). Prices, dialog total and equivalents all in USDT. Widget testid marketplace-balance-usdt.",
+    "Backend routes/orders.py POST /vip/redeem correctly writes settlement_currency='USDT' and debits vip_balances.USDT by total+courier_fee_usd."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "90% — 4/5 flows fully green; 1 flow (insufficient-reactivate 409 handling) shows runtime error overlay"},
+  "test_credentials": "VIP cookie session_token=smoke_session_vip_iter229 (user_test_vip01); Admin cookie session_token=smoke_session_admin_iter226 (user_test_admin01). Re-seeded at start of run.",
+  "seed_data_creation": "Set db.users.vip_balances.USDT for user_test_vip01 to 500.0 → 1.0 (insufficient test) → 500.0 (reactivation tests) → 0.0 (409 test) → 500.0 (final cleanup). Used existing product id=f973845e-01a9-4f06-a4a8-a1758931ed78 (TEST_Default_1788890979587, 100 USDT). Left one test redemption id=ab148411-6fe8-46cb-af6f-7e274fc530e1 in 'rejected' state.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "R07 marketplace (USDT settlement) verified end-to-end via UI. R02 reject+reactivate happy-path verified. Only remaining gap: friendly 409 toast on reactivation without balance (backend already emits correct 409 payload {detail: 'El cliente no tiene 103.3 USDT ...'}, needs FE try/catch).",
+  "rca of the issue": "AdminWithdrawals.jsx L189-193 defines updateRedemption without try/catch and calls toast.success unconditionally. When axios rejects (409 for R02 reactivation with insufficient balance, or 409 race), the promise rejection is unhandled → React error boundary/dev overlay surfaces. Repro: reject a redemption → drain vip_balances.{settlement_currency} to 0 → click ✓ (approved). Mitigation: wrap in try/catch, use extractDetailMessage(e) helper already used elsewhere in the same file."
+}

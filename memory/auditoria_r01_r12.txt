@@ -1,0 +1,356 @@
+﻿# Auditoría de código — Resilience Brothers P2P
+
+Versión: `e8355f042cc4e7155275feb8e13fac4b454b7cc7`, rama `main`, 8 de septiembre de 2026.
+
+**Resultado: las correcciones anteriores están presentes, pero quedan riesgos altos de integridad de saldos y estados.** Este informe contiene 12 hallazgos accionables. No se modificó el repositorio ni se realizaron operaciones contra cuentas o bases de datos reales.
+
+## Alcance y límites
+
+Se comparó la versión actual con `cdca6dc61d240ae80ae592db1b68fa9e10facfc7`; se inspeccionaron los flujos principales de saldos, retiros, canjes, acreditaciones, inventario, caja, autenticación y permisos, además de componentes de frontend y la configuración de CI. Se recuperaron los archivos actuales de backend, frontend y CI modificados, y se usó la copia anterior para los archivos sin cambios. El análisis de sintaxis de **339 archivos Python** no encontró errores.
+
+Se ejecutaron funciones originales extraídas del código con almacenamiento simulado y dependencias auxiliares sustituidas. Estas pruebas demuestran comportamientos de la lógica bajo condiciones definidas; no equivalen a pruebas HTTP integrales ni a validación con MongoDB real. No se ejecutó la suite completa: el entorno local no tiene FastAPI/pytest/MongoDB instalados y CI se detiene antes de probar el backend. No se verificaron visualmente todas las pantallas ni se auditó infraestructura, configuración efectiva de producción, dependencias por CVE o historial de operaciones. No se afirma que hayan ocurrido pérdidas reales ni que se hayan encontrado todos los bugs posibles.
+
+## Correcciones anteriores
+
+| Punto | Resultado actual |
+|---|---|
+| Retiros negativos | Corregido en `WithdrawalCreate`: `gt=0` y límite máximo. La prueba rechaza −100, 0, NaN e infinito. |
+| Descuento concurrente de un saldo | El helper incorpora saldo suficiente en el filtro del update de MongoDB. Mejora real, pero no hace atómica la operación completa con sus otros registros. |
+| Dos rechazos iguales del retiro | Hay claim condicional del reembolso. Persisten carreras entre estados distintos: R01. |
+| Acreditaciones interrumpidas | Hay marcador pendiente y proceso de recuperación. Persisten problemas de importe neto y retención de identificadores: R04–R05. |
+| Validar evidencia antes de descontar | Las comprobaciones se movieron antes de reconciliar saldo. La persistencia final sigue separada: R01 y R03. |
+| GitHub Actions | Ya existe `yarn.lock` y se añadió el índice de dependencias. Los tres jobs siguen fallando: R12. |
+
+## Hallazgos para Emergent
+
+### R01 — Alta: un retiro puede quedar aprobado y reembolsado simultáneamente
+
+**Ubicación:** [backend/routes/admin_withdrawals.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/admin_withdrawals.py), `_reconcile_balance_on_status_change` (líneas 87–160) y `update_withdrawal` (aprox. 251–324).
+
+Dos solicitudes leen el mismo retiro `pending`. La primera lo rechaza y devuelve el saldo. La segunda solicita `approved`; como su copia sigue diciendo `pending`, no entra en `leaving_rejected` y no vuelve a descontar. El update final por `id`, sin condición sobre el estado anterior, sobrescribe el rechazo con `approved`.
+
+**Evidencia:** reproducción de las funciones de reconciliación y del orden de escrituras del endpoint: retiro de 100 → `status=approved`, `balance_refunded=true`, saldo disponible +100. Son dos lecturas previas intercaladas de forma determinista, no tráfico contra el servidor.
+
+**Corrección:** definir transiciones válidas, reclamar la transición completa por estado/versión esperado y rechazar con 409 al perder la carrera. Vincular cambio de estado, débito/reembolso y recuperación. No guardar después un estado incondicional basado en una lectura antigua. Aplicar el mismo criterio a cancelación del cliente y confirmación desde mensajería.
+
+**Prueba de aceptación:** rechazo/aprobación, rechazo/pago y cancelación/aprobación simultáneos: solo una transición válida; nunca retiro pagable con saldo reembolsado disponible.
+
+### R02 — Alta: un canje rechazado puede entregarse sin volver a cobrar ni reservar stock
+
+**Ubicación:** [backend/routes/admin.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/admin.py), `update_redemption` (659–693) y `_on_redemption_rejected` (702–725).
+
+El rechazo devuelve dinero y stock. Después, el endpoint admite cambiar a `pending`, `approved` o `delivered`; no existe un débito ni nueva reserva para esa reactivación. `rejection_applied` impide repetir el reembolso, pero no impide entregar una compra ya reembolsada.
+
+**Evidencia:** función de cambio de estado y auxiliares originales ejecutados para un producto de empresa con recogida en tienda: `rejected → delivered`, saldo reembolsado 100 permanece y stock restituido 1 permanece. En recogida en tienda, el guard de mensajería retorna directamente; la ausencia de recobro también se confirma por inspección del flujo completo.
+
+**Corrección:** hacer `rejected` terminal o implementar una reactivación explícita que reserve stock y cobre de nuevo de forma recuperable antes de habilitar entrega. Asegurar que créditos a vendedor y sus reversos respeten la misma máquina de estados.
+
+**Prueba de aceptación:** después de rechazar, toda transición a entrega falla o vuelve a cobrar y reservar exactamente una vez.
+
+### R03 — Alta: débitos y movimientos pueden quedar sin operación registrada al fallar MongoDB
+
+**Ubicación:** [backend/routes/orders.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/orders.py) (496–514, 896–898 y 1348–1363); [backend/services/inventory.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/inventory.py), `record_movement` (128–163); reactivación del retiro en `admin_withdrawals.py` (121–155).
+
+El retiro descuenta antes de `withdrawals.insert_one`. El canje descuenta stock y saldo antes de `redemptions.insert_one`. La conversión hace débito de origen, comisión y crédito destino por separado. El movimiento de inventario cambia stock antes de registrar el movimiento. El reembolso recuperable no protege estas operaciones de débito.
+
+Si falla una escritura intermedia o se detiene el proceso, puede quedar saldo descontado sin retiro, stock retirado sin venta, o conversión cobrada sin acreditar destino. Capturar solo `HTTPException` no cubre errores del driver ni una caída del proceso. En reactivar retiros se cambia `balance_refunded` antes del débito; una interrupción puede dejar el flag incompatible con el dinero.
+
+**Evidencia:** inspección estática del orden de efectos. No se realizó inyección integral contra MongoDB.
+
+**Corrección:** para conversión, agrupar los campos de saldo y la comisión en una sola actualización condicional del usuario. Para operaciones entre documentos, usar transacciones sobre una topología que las soporte o un protocolo persistente de reserva/operación/compensación recuperable. Un `try/except` con devolución no basta frente a interrupciones o resultados ambiguos de red. Admitir un identificador estable del intento para evitar repetir el cobro al reintentar.
+
+**Prueba de aceptación:** interrumpir cada escritura sucesiva y reintentar; el resultado final debe ser operación completada una vez o dinero/stock íntegramente restaurados, con trazabilidad.
+
+### R04 — Alta: la recuperación de acumulaciones puede acreditar el bruto después de amortizar deuda
+
+**Ubicación:** [backend/services/balances.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/balances.py), `accumulate_vip_balance` (211–257); [backend/services/credit_recovery.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/credit_recovery.py), `apply_and_clear` y `heal_pending_credits` (49–86).
+
+El primer marcador pendiente contiene el importe bruto. Después se descuenta deuda de capital y solo entonces se actualiza el marcador con el neto. Si hay un fallo tras amortizar y antes de persistir el neto, el recuperador utiliza el bruto: el cliente conserva la deuda amortizada y recibe dinero de más. Si el recuperador alcanza una solicitud lenta, también puede leer el marcador antes de terminar la preparación del neto.
+
+**Evidencia:** funciones originales de acumulación y amortización, con almacenamiento simulado y fallo en el update del neto: entrada 100, amortización 50; tras recuperar, deuda 0 y crédito 100, cuando correspondían 50.
+
+**Corrección:** persistir un plan de amortización y acreditación con estado de preparación explícito; recuperar solo importes finales. La amortización debe ser idempotente por orden y su progreso recuperable junto con el abono.
+
+**Prueba de aceptación:** fallos antes, durante y después de amortizar; casos de amortización parcial y del 100%; el recuperador nunca debe abonar dinero ya destinado a deuda.
+
+### R05 — Alta: la protección contra créditos repetidos olvida operaciones tras 500 abonos
+
+**Ubicación:** [backend/services/balances.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/balances.py), `credit_balance_idempotent` (179–200), especialmente `$slice: -500`.
+
+El identificador de cada crédito se guarda en una lista del usuario limitada a 500 elementos. Un crédito antiguo ya aplicado vuelve a ser admisible al salir de esa lista. Para que esto afecte una operación real debe existir además un marcador o reintento antiguo todavía procesable, por ejemplo tras fallar la limpieza de un marcador.
+
+**Evidencia:** crédito original de 100 + 500 créditos distintos de 1 → saldo 600. Repetir el primer `op_id` devuelve éxito y deja 700. Reproducción con el helper original y almacenamiento simulado.
+
+**Corrección:** deduplicación duradera coherente con la vida de las operaciones recuperables. Si se usa un registro separado con índice único, vincularlo atómicamente al abono; insertar primero el identificador y luego acreditar recrearía el fallo inicial. No eliminar identificadores mientras exista posibilidad de recuperación/replay del origen.
+
+**Prueba de aceptación:** más de 500 y 1.000 créditos posteriores, marcador antiguo sin limpiar y varios recuperadores: el crédito original no se repite.
+
+### R06 — Alta: el endpoint permite intentar comprar productos inactivos o no aprobados
+
+**Ubicación:** [backend/routes/orders.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/orders.py), `redeem_product` (380–394 y 496–500); [backend/routes/vendor_products.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/vendor_products.py), creación con `approval_status='pending'`.
+
+El producto se carga solo por `id`. Se comprueba existencia, stock y que el comprador no sea el dueño, pero no `is_active` ni `approval_status`. Ocultarlo del catálogo no evita una petición directa con un identificador conocido. La reserva atómica tampoco incluye estas condiciones.
+
+**Evidencia:** un producto simulado `is_active=false`, `approval_status=rejected` supera los controles de producto y llega al chequeo de saldo. La prueba no completa un canje real; la ausencia de validación posterior se comprobó en código.
+
+**Corrección:** exigir activo y aprobado tanto al cargar como al reservar stock. Definir explícitamente el tratamiento de productos antiguos sin `approval_status`. Una retirada administrativa concurrente debe impedir nuevas reservas.
+
+**Prueba de aceptación:** productos pendientes, rechazados o inactivos devuelven error sin afectar dinero ni stock, aunque el cliente conozca su ID.
+
+### R07 — Alta: el marketplace muestra USDT pero comprueba y descuenta USD
+
+**Ubicación:** [backend/routes/orders.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/orders.py) (398–423, 456–461, 508); [backend/routes/admin.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/admin.py) (423 y 677); [frontend/src/pages/dashboard/MarketplaceView.jsx](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/frontend/src/pages/dashboard/MarketplaceView.jsx) (153–160, 246 y 437).
+
+Los precios se presentan en USDT y los productos de empresa se convierten desde moneda de tienda a USDT. Sin embargo, se exige saldo `USD` y el débito se realiza en `USD`. Reembolsos y créditos a vendedor también usan USD. El saldo total mostrado es un equivalente multimoneda, no necesariamente saldo gastable en esa cuenta.
+
+**Evidencia:** comprador simulado con 100 USDT y 0 USD, producto de 10: respuesta `Saldo USD insuficiente`. Un comprador con USD disponible pagaría desde una moneda diferente a la anunciada.
+
+**Corrección:** acordar una moneda de liquidación y aplicarla de extremo a extremo: etiqueta, saldo disponible, débito, envío, reembolso, pago al vendedor y contabilidad de fondos. Si hay conversión, debe ser explícita y atómica. No limitar el arreglo a cambiar el texto de la interfaz.
+
+**Prueba de aceptación:** usuarios con solo USDT, solo USD y saldo mixto; verificar la moneda realmente debitada, el recibo y los reversos.
+
+### R08 — Alta: dos amortizaciones concurrentes pueden descontar más deuda de la existente
+
+**Ubicación:** [backend/services/balances.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/balances.py), `_apply_capital_request_repayment` (260–333).
+
+Se lee deuda disponible y se calcula la contribución, pero se actualiza por `id` sin condicionar la deuda o versión leída. Dos órdenes pueden aplicar la misma deuda. Ejemplo de intercalado: deuda 100 y dos contribuciones de 80 calculadas desde esa lectura; ambas aplican `$inc: -80` y dejan −60. Cerca de liquidar una deuda, dos operaciones pueden además descontar al cliente contra el mismo remanente aunque el documento termine en 0.
+
+**Evidencia:** análisis estático; ejemplo de intercalado propuesto para reproducción con MongoDB real, no ejecutado como prueba integral aquí.
+
+**Corrección:** reservar contribuciones mediante actualización condicional por versión/remanente y registrar amortización por `order_id` de forma idempotente. Coordinar con R04 para que el neto abonado corresponda a la contribución efectivamente aplicada.
+
+**Prueba de aceptación:** dos acumulaciones paralelas frente a una deuda pequeña: deuda nunca negativa, amortizaciones totales no superiores a la deuda, y exceso acreditado correctamente.
+
+### R09 — Media: el dashboard de inventario sigue contando ventas rechazadas
+
+**Ubicación:** [backend/services/inventory.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/inventory.py), `build_dashboard` (470–488), frente a `build_daily_close` (180–192); [backend/routes/admin.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/admin.py), `_on_redemption_rejected` (710–722).
+
+El canje registra `venta`. Al rechazarse se añade `ajuste_pos`; el dashboard suma todas las filas `venta` y no resta ese reverso ni excluye el canje rechazado. El cierre diario sí consulta el estado de los canjes. Ambos informes pueden mostrar ingresos, unidades y ganancia diferentes para la misma operación.
+
+**Evidencia:** inspección estática de productores de movimientos y consumidores de estadísticas.
+
+**Corrección:** unificar el tratamiento de ventas anuladas y reversos con referencias al movimiento original; definir si la reversión se reconoce en la fecha de venta o de rechazo y aplicar el criterio a todos los informes.
+
+**Prueba de aceptación:** vender y rechazar un canje; verificar stock, ingresos, costo, ganancia, flujo y cierre diario, también si el rechazo ocurre otro día.
+
+### R10 — Media: inventario y cierre diario usan límites de día diferentes
+
+**Ubicación:** [backend/services/inventory.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/services/inventory.py), `_day_bounds` (29–30), `build_dashboard` (474–475), `build_daily_close` (162–171); [backend/routes/inventory.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/inventory.py) (64–68).
+
+Dashboard, movimientos y rotación construyen días UTC. El cierre diario usa `America/Havana`. Una venta del 8 de septiembre a las 22:30 en Cuba corresponde al 9 de septiembre a las 02:30 UTC: se registra en días distintos según la pantalla.
+
+**Evidencia:** diferencias explícitas de construcción de filtros en código. No se validó visualmente la interfaz.
+
+**Corrección:** reutilizar límites del día de negocio en `America/Havana`, convertidos a UTC, con inicio inclusivo y siguiente día exclusivo. No fijar un desfase constante: debe contemplarse el cambio de hora.
+
+**Prueba de aceptación:** operaciones cerca de medianoche y en cambios de horario; dashboard, lista, CSV, PDF y cierre deben coincidir.
+
+### R11 — Media: el resumen de caja omite movimientos después de 20.000
+
+**Ubicación:** [backend/routes/cash_boxes.py](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/blob/e8355f042cc4e7155275feb8e13fac4b454b7cc7/backend/routes/cash_boxes.py), `_fund_balance` (127–137) y `fund_summary` (308–350).
+
+La lista de cajas calcula saldo con una agregación de todos los movimientos. El resumen carga como máximo 20.000, sin paginación, y calcula saldo y denominaciones con ese subconjunto. Al superar el límite, dos pantallas pueden mostrar saldos distintos. También hay límites similares en informes de inventario que conviene resolver al aplicar el arreglo.
+
+**Evidencia:** análisis estático; riesgo condicionado al volumen. No se generaron 20.001 operaciones reales.
+
+**Corrección:** calcular totales mediante agregaciones completas; paginar el detalle de forma independiente. Calcular denominaciones con agregación o recorrer todas las páginas. No presentar un subconjunto como el saldo completo.
+
+**Prueba de aceptación:** 20.001 movimientos sintéticos y conciliación exacta entre lista, resumen y exportación.
+
+### R12 — Alta: CI sigue sin validar backend y falta cobertura crítica automática de las correcciones
+
+**Evidencia directa:** [ejecución 34238604974](https://github.com/resiliencebrothers/Resilience-Brothers-p2p-EMERGEN/actions/runs/34238604974), correspondiente al commit auditado.
+
+| Job | Resultado |
+|---|---|
+| Backend · pytest | Falla en instalación de dependencias; no ejecuta las pruebas. |
+| Backend · mypy | Falla en instalación de dependencias; no ejecuta mypy. |
+| Frontend · ESLint | Instala dependencias; falla por cinco reglas de diálogos y luego por configuración del comando alternativo. |
+
+El registro de pytest muestra `ResolutionImpossible` entre la dependencia directa de `litellm` y la exigida por `emergentintegrations==0.2.0`. Ambas declaran 1.80.0, pero las referencias directas difieren en el fragmento de hash. Debe resolverse una especificación compatible y verificarse desde un entorno limpio; añadir el índice privado no ha bastado.
+
+Los cinco errores de frontend son `rb-local/no-dialog-without-scroll`:
+
+| Archivo en `frontend/src/` | Línea |
+|---|---:|
+| `components/DeliveryChatDialog.jsx` | 80 |
+| `pages/admin/inventory/InventoryStoresTab.jsx` | 218 |
+| `pages/admin/products/VendorProductsSection.jsx` | 163 |
+| `pages/dashboard/CourierPanel.jsx` | 429 |
+| `pages/dashboard/MarketplaceView.jsx` | 469 |
+
+La regla detecta ausencia de límite de altura en diálogos, con riesgo de desbordamiento en pantallas pequeñas. Son fallos confirmados de lint; el desbordamiento visual no se reprodujo aquí. El fallback `npx eslint` además busca `eslint.config.*`, mientras el comando principal usa explícitamente `eslint.hooks.config.mjs`.
+
+Además, `Makefile:test-critical`, ejecutado en push/PR, no incluye las nuevas pruebas `test_iter247_negative_amounts.py`, `test_iter248_race_conditions.py`, `test_iter249_credit_recovery.py` y `test_iter250_validate_before_debit.py`. Podrían ejecutarse en el nightly completo, pero no forman parte de la barrera inmediata del cambio.
+
+**Corrección:** resolver dependencias de forma reproducible, arreglar diálogos y comando de lint sin desactivar las reglas, e incluir las regresiones monetarias nuevas en CI de cada push/PR. Añadir a esas regresiones los escenarios de R01–R08.
+
+**Prueba de aceptación:** los tres jobs pasan sobre el mismo commit; el log demuestra ejecución de las regresiones monetarias. Luego ejecutar la suite completa y el build del frontend.
+
+## Comprobaciones adicionales para despliegue
+
+Son puntos pendientes de confirmar en el entorno, no incidentes demostrados:
+
+- `captcha.py` omite verificación si no hay clave, permite omitir token si no está exigido y continúa si falla el proveedor. Verificar configuración efectiva y comportamiento deseado. No se afirma que el CAPTCHA esté desactivado en producción.
+- Las cajas de empresa permiten acceso a cualquier `admin`/`employee` mediante `_is_staff`, sin el permiso granular de fondos y sin los mismos controles adicionales de otras rutas. El propio módulo lo describe así: confirmar si es la política de negocio deseada, especialmente para empleados limitados a una moneda.
+- Verificar recuperación de todos los efectos de una operación, no solo del saldo: stock, fondos de empresa, vendedor, comisiones, mensajería y registros. Un marcador único `credit_pending` requiere especial atención si varias transiciones pueden escribirlo en el mismo documento.
+
+## Orden recomendado de corrección
+
+1. R01–R03: evitar operaciones pagables/reentregables con dinero devuelto o débitos huérfanos.
+2. R04–R05 y R08: hacer coherentes recuperación, deduplicación y deuda.
+3. R06–R07: autorización de producto y moneda real de liquidación.
+4. R12 en paralelo con las correcciones: recuperar una validación automática efectiva.
+5. R09–R11: conciliar estadísticas, fechas y totales sin truncamiento.
+
+Para cada hallazgo, Emergent debe entregar el commit, la prueba que fallaba antes y pasa después, y cualquier medida de reconciliación necesaria para datos ya existentes. No asumir que arreglar la lógica corrige por sí solo registros históricos.
+
+## Resultados de las pruebas aisladas
+
+| Escenario | Resultado observado |
+|---|---|
+| Repetir un crédito tras otros 500 | Saldo 700 en lugar de 600. |
+| Recuperar bruto después de amortizar 50 de una entrada 100 | Crédito 100 en lugar de 50. Amortización original ejecutada; fallo simulado al guardar el neto. |
+| Rechazo/aprobación con dos lecturas de `pending` | Retiro aprobado, flag de reembolso activo y saldo +100. |
+| Reactivar canje rechazado | Estado entregado con saldo 100 devuelto y stock 1 sin reservar. Auxiliares originales para producto de empresa con recogida en tienda. |
+| Producto inactivo/rechazado y comprador con solo USDT | Supera controles de producto; rechaza después por saldo USD insuficiente. |
+| Modelo de retiro: −100, 0, NaN e infinito | Los cuatro valores son rechazados. |
+
+Las pruebas usan un simulador mínimo de las operaciones de documento necesarias. Las carreras se fijan mediante el orden de lecturas/escrituras. Deben trasladarse a pruebas con MongoDB y endpoints reales en una base de datos de pruebas aislada antes de dar por cerrado cada hallazgo.
+
+## Anexo: reproducción aislada para Emergent
+
+Guardar este bloque como `audit_checks.py` fuera del repositorio y ejecutar `python audit_checks.py /ruta/al/backend` con Python y Pydantic 2. Lee funciones del código, sustituye la base de datos en memoria y no importa el servidor ni carga credenciales. No escribe en el proyecto. El simulador cubre únicamente las operaciones usadas en estos casos; no reemplaza una prueba integral.
+
+```python
+import ast, asyncio, copy, json, sys, types, uuid
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Any, Optional, Literal
+from pydantic import BaseModel, Field, ValidationError
+
+ROOT=Path(sys.argv[1])
+class HTTPException(Exception):
+    def __init__(self,status_code,detail): self.status_code=status_code; self.detail=detail
+def get(d,k):
+    for p in k.split('.'):
+        if not isinstance(d,dict) or p not in d: return None
+        d=d[p]
+    return d
+def put(d,k,v):
+    parts=k.split('.')
+    for p in parts[:-1]: d=d.setdefault(p,{})
+    d[parts[-1]]=v
+def match(d,q):
+    for k,v in q.items():
+        a=get(d,k)
+        if isinstance(v,dict):
+            for op,b in v.items():
+                if op=='$ne' and (a==b or isinstance(a,list) and b in a): return False
+                if op=='$exists' and (a is not None)!=b: return False
+                if op=='$gte' and (a is None or a<b): return False
+                if op=='$in' and a not in b: return False
+        elif a!=v: return False
+    return True
+class Coll:
+    def __init__(self,rows=()): self.rows=copy.deepcopy(list(rows)); self.fail=None
+    def find(self,q,*args):
+        rows=[copy.deepcopy(d) for d in self.rows if match(d,q)]
+        class Cursor:
+            def sort(self,*args):return self
+            async def to_list(self,n):return rows[:n]
+        return Cursor()
+    async def find_one(self,q,*args): return next((copy.deepcopy(d) for d in self.rows if match(d,q)),None)
+    async def update_one(self,q,u):
+        if self.fail and self.fail(q,u): raise RuntimeError('simulated database failure')
+        for d in self.rows:
+            if not match(d,q): continue
+            before=copy.deepcopy(d)
+            for k,v in u.get('$set',{}).items(): put(d,k,copy.deepcopy(v))
+            for k,v in u.get('$inc',{}).items(): put(d,k,(get(d,k) or 0)+v)
+            for k,v in u.get('$push',{}).items():
+                old=get(d,k) or []
+                put(d,k,(old+v['$each'])[v['$slice']:] if isinstance(v,dict) and '$each' in v else old+[v])
+            for k in u.get('$unset',{}): d.pop(k,None)
+            return types.SimpleNamespace(matched_count=1,modified_count=int(before!=d))
+        return types.SimpleNamespace(matched_count=0,modified_count=0)
+class DB:
+    def __init__(self,**cols): self.__dict__.update(cols)
+    def __getitem__(self,k): return getattr(self,k)
+def load(path,names,env):
+    tree=ast.parse((ROOT/path).read_text())
+    nodes=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)) and n.name in names]
+    for n in nodes: n.decorator_list=[]
+    exec(compile(ast.Module(body=nodes,type_ignores=[]),str(ROOT/path),'exec'),env)
+async def noop(*a,**kw): pass
+def env(db): return dict(db=db,HTTPException=HTTPException,datetime=datetime,timezone=timezone,Optional=Optional,Any=Any,Request=object,BaseModel=BaseModel,Field=Field,Literal=Literal,uuid=uuid,iso=lambda x:x.isoformat(),now_utc=lambda:datetime.now(timezone.utc))
+def recovery(e):
+    load('services/balances.py',['credit_balance_idempotent','accumulate_vip_balance'],e)
+    load('services/credit_recovery.py',['pending_marker','apply_and_clear'],e)
+    m=types.ModuleType('services.credit_recovery')
+    m.pending_marker=e['pending_marker'];m.apply_and_clear=e['apply_and_clear']
+    sys.modules['services']=types.ModuleType('services');sys.modules['services.credit_recovery']=m
+async def main():
+    results=[]
+    db=DB(users=Coll([{'user_id':'u','vip_balances':{'USDT':0}}])); e=env(db);recovery(e)
+    await e['credit_balance_idempotent']('u','USDT',100,'original')
+    for i in range(500): await e['credit_balance_idempotent']('u','USDT',1,f'other-{i}')
+    replay=await e['credit_balance_idempotent']('u','USDT',100,'original')
+    assert replay and get(db.users.rows[0],'vip_balances.USDT')==700
+    results.append({'case':'credit replay after 500 newer credits','expected':600,'actual':700})
+
+    db=DB(users=Coll([{'user_id':'u','vip_balances':{'USDT':0}}]),orders=Coll([{'id':'o'}]),capital_requests=Coll([{'id':'debt','user_id':'u','status':'disbursed','currency_code':'USDT','discount_pct':50,'debt_remaining':50}]));e=env(db);recovery(e)
+    load('services/balances.py',['_apply_capital_request_repayment'],e)
+    db.orders.fail=lambda q,u:'credit_pending.amount' in u.get('$set',{})
+    try: await e['accumulate_vip_balance']({'id':'o','user_id':'u','to_code':'USDT','amount_to':100})
+    except RuntimeError: pass
+    marker=copy.deepcopy(db.orders.rows[0]['credit_pending']);db.orders.fail=None
+    await e['apply_and_clear']('orders','o',marker)
+    assert db.capital_requests.rows[0]['debt_remaining']==0 and get(db.users.rows[0],'vip_balances.USDT')==100
+    results.append({'case':'recovery after repayment before net marker persistence','expected_credit':50,'actual_credit':100,'debt_remaining':0,'repayment_helper':'original function executed'})
+
+    w={'id':'w','user_id':'u','currency':'USDT','amount_usd':100,'status':'pending'}
+    db=DB(users=Coll([{'user_id':'u','vip_balances':{'USDT':0}}]),withdrawals=Coll([w]));e=env(db);recovery(e)
+    load('routes/admin_withdrawals.py',['_reconcile_balance_on_status_change'],e)
+    await e['_reconcile_balance_on_status_change'](copy.deepcopy(w),'rejected',{})
+    await db.withdrawals.update_one({'id':'w'},{'$set':{'status':'rejected'}})
+    await e['_reconcile_balance_on_status_change'](copy.deepcopy(w),'approved',{})
+    await db.withdrawals.update_one({'id':'w'},{'$set':{'status':'approved'}})
+    assert db.withdrawals.rows[0]['balance_refunded'] and db.withdrawals.rows[0]['status']=='approved'
+    results.append({'case':'concurrent reject and approve using prior pending reads','status':'approved','refunded':True,'available_balance':get(db.users.rows[0],'vip_balances.USDT')})
+
+    r={'id':'r','user_id':'u','product_id':'p','status':'rejected','rejection_applied':True,'total_usd':100,'fulfillment':'store_pickup'}
+    db=DB(redemptions=Coll([r]),users=Coll([{'user_id':'u','vip_balance_usd':100}]),products=Coll([{'id':'p','stock':1}]))
+    e=env(db)
+    async def actor(*args):return {'user_id':'admin','role':'admin'}
+    e.update(require_permission=actor,_log_redemption_status_change=noop)
+    load('routes/admin.py',['update_redemption','_on_redemption_delivered','_assert_redemption_courier_ready','_credit_vendor_for_redemption','_record_vendor_commission_inflow'],e)
+    got=await e['update_redemption']('r',{'status':'delivered'},None)
+    assert got['status']=='delivered' and db.users.rows[0]['vip_balance_usd']==100 and db.products.rows[0]['stock']==1
+    results.append({'case':'rejected redemption reactivated as delivered','status':got['status'],'refunded_balance_still_available':100,'stock_still_restored':1,'delivery_side_effects':'original helpers; company product store pickup'})
+
+    db=DB(products=Coll([{'id':'p','owner_id':'vendor','price_usd':10,'stock':1,'is_active':False,'approval_status':'rejected'}]))
+    e=env(db)
+    async def user(*args):return {'user_id':'buyer','role':'vip','vip_balances':{'USDT':100,'USD':0}}
+    async def quote(*args):return {'free':False,'enabled':False,'rate_usdt_per_km':0,'min_fee_usdt':0}
+    fee_module=types.ModuleType('services.courier_fee');fee_module.quote_courier_fee=quote;fee_module.route_quote=noop
+    sys.modules['services.courier_fee']=fee_module
+    e.update(require_user=user,assert_account_active=noop,assert_user_fully_verified=noop,RedemptionCreate=object,get_user_balance=lambda u,c:u['vip_balances'].get(c,0))
+    load('routes/orders.py',['redeem_product'],e)
+    try:await e['redeem_product'](types.SimpleNamespace(product_id='p',quantity=1,fulfillment='courier'),None)
+    except HTTPException as ex:
+        assert ex.detail=='Saldo USD insuficiente'
+        results.append({'case':'inactive rejected product reaches balance check; USDT funds not used','response':ex.detail,'USDT':100,'USD':0})
+
+    e=env(DB());load('routes/orders.py',['WithdrawalCreate'],e)
+    rejected=[]
+    for a in [-100,0,float('nan'),float('inf')]:
+        try:e['WithdrawalCreate'](amount_usd=a,method='transfer',details='test')
+        except ValidationError:rejected.append(str(a))
+    assert len(rejected)==4
+    results.append({'case':'previous withdrawal validation fix','rejected_values':rejected,'status':'verified'})
+    print(json.dumps(results,indent=2))
+asyncio.run(main())
+
+```
+

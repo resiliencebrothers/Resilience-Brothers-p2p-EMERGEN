@@ -253,16 +253,23 @@ class TestRedemptions:
         assert r.status_code == 403
 
     def test_vip_redeem_and_reject_refunds(self):
-        # Ensure VIP has enough balance: top up via admin update
-        # First find cheap product
+        # iter254(R07) — el marketplace liquida en USDT: seed y lecturas en
+        # vip_balances.USDT directamente en Mongo.
+        import os as _os
+        from pymongo import MongoClient as _MC
+        _mdb = _MC(_os.environ["MONGO_URL"])[_os.environ["DB_NAME"]]
+
+        def _usdt(uid):
+            u = _mdb.users.find_one({"user_id": uid}, {"_id": 0, "vip_balances": 1})
+            return float((u.get("vip_balances") or {}).get("USDT") or 0.0)
+
         prods = requests.get(f"{BASE_URL}/api/products").json()
         cheap = min([p for p in prods if p.get("stock", 0) > 0],
                     key=lambda p: p["price_usd"])
-        # Top up VIP balance via admin
         me = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()
         new_bal = cheap["price_usd"] + 100
-        requests.put(f"{BASE_URL}/api/admin/users/{me['user_id']}",
-                     headers=_h(ADMIN_TOKEN), json={"vip_balance_usd": new_bal, "totp_code": make_admin_totp()})
+        _mdb.users.update_one({"user_id": me["user_id"]},
+                              {"$set": {"vip_balances.USDT": new_bal}})
         stock_before = cheap["stock"]
         r = requests.post(f"{BASE_URL}/api/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": cheap["id"], "quantity": 1, "delivery_address": "Addr"})
@@ -272,8 +279,8 @@ class TestRedemptions:
         prods2 = requests.get(f"{BASE_URL}/api/products").json()
         cheap2 = next(p for p in prods2 if p["id"] == cheap["id"])
         assert cheap2["stock"] == stock_before - 1
-        # Balance decreased
-        bal2 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        # Balance decreased (USDT)
+        bal2 = _usdt(me["user_id"])
         assert round(new_bal - bal2, 4) == cheap["price_usd"]
         # Reject
         r2 = requests.put(f"{BASE_URL}/api/admin/redemptions/{rid}/status",
@@ -282,7 +289,7 @@ class TestRedemptions:
         prods3 = requests.get(f"{BASE_URL}/api/products").json()
         cheap3 = next(p for p in prods3 if p["id"] == cheap["id"])
         assert cheap3["stock"] == stock_before  # refunded
-        bal3 = requests.get(f"{BASE_URL}/api/auth/me", headers=_h(VIP_TOKEN)).json()["vip_balance_usd"]
+        bal3 = _usdt(me["user_id"])
         assert round(bal3 - bal2, 4) == cheap["price_usd"]
 
 

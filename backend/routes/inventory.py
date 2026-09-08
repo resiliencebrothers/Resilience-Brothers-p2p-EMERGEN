@@ -16,6 +16,7 @@ from db_client import db
 from auth_utils import require_permission, now_utc, iso
 from audit_log import log_action
 from services.inventory import (record_movement, record_price_change,
+                                _day_bounds,
                                 build_control_rows, build_dashboard,
                                 build_rotation)
 from services.proof_upload import maybe_upload_proof
@@ -63,9 +64,9 @@ async def list_movements(request: Request, product_id: Optional[str] = None,
         q["type"] = type
     created: dict = {}
     if start:
-        created["$gte"] = f"{start}T00:00:00+00:00"
+        created["$gte"] = _day_bounds(start)[0]
     if end:
-        created["$lte"] = f"{end}T23:59:59.999999+00:00"
+        created["$lt"] = _day_bounds(end)[1]
     if created:
         q["created_at"] = created
     limit = max(1, min(int(limit), 500))
@@ -341,9 +342,9 @@ async def _movement_rows(product_id: Optional[str], type: Optional[str],
         q["type"] = type
     created: dict = {}
     if start:
-        created["$gte"] = f"{start}T00:00:00+00:00"
+        created["$gte"] = _day_bounds(start)[0]
     if end:
-        created["$lte"] = f"{end}T23:59:59.999999+00:00"
+        created["$lt"] = _day_bounds(end)[1]
     if created:
         q["created_at"] = created
     return await db.inventory_movements.find(q, {"_id": 0}) \

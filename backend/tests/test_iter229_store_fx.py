@@ -124,7 +124,7 @@ class TestStoreFx:
     def test_redeem_charges_usdt_and_fund_inflow_usdt(self):
         db = _db()
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": 5000.0}})
+                            {"$set": {"vip_balances.USDT": 5000.0, "vip_balance_usd": 0.0}})
         p = _create_product(price_usd=800.0, cost_usd=500.0, stock=10)
         r = requests.post(f"{API}/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": p["id"], "quantity": 2,
@@ -139,7 +139,7 @@ class TestStoreFx:
         assert red["cost_usd"] == 2.5              # 1000 / 400
         # saldo bajó exactamente el monto USDT
         u = db.users.find_one({"user_id": "user_test_vip01"})
-        assert u["vip_balance_usd"] == 4996.0
+        assert round(float(u["vip_balances"]["USDT"]), 2) == 4996.0
         # fondo: entrada USDT
         adj = db.company_fund_adjustments.find_one(
             {"ref_id": red["id"], "adjustment_type": "inflow"}, {"_id": 0})
@@ -154,7 +154,7 @@ class TestStoreFx:
                           headers=_h(ADMIN_TOKEN), json={"status": "rejected"})
         assert rr.status_code == 200, rr.text
         u = db.users.find_one({"user_id": "user_test_vip01"})
-        assert u["vip_balance_usd"] == 5000.0
+        assert round(float(u["vip_balances"]["USDT"]), 2) == 5000.0
         out = db.company_fund_adjustments.find_one(
             {"ref_id": red["id"], "adjustment_type": "outflow"}, {"_id": 0})
         assert out and out["currency"] == "USDT" and out["amount"] == 4.0
@@ -202,7 +202,7 @@ class TestStoreFx:
     def test_marketplace_venta_does_not_double_count_store_fund(self):
         db = _db()
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": 5000.0}})
+                            {"$set": {"vip_balances.USDT": 5000.0, "vip_balance_usd": 0.0}})
         p = _create_product(price_usd=400.0, stock=5)
         r = requests.post(f"{API}/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": p["id"], "quantity": 1,

@@ -187,9 +187,14 @@ export default function AdminWithdrawals() {
   };
 
   const updateRedemption = async (id, status) => {
-    await axios.put(`${API}/admin/redemptions/${id}/status`, { status }, { withCredentials: true });
-    toast.success(t("admin.withdrawals.toastRedemption"));
-    load();
+    try {
+      await axios.put(`${API}/admin/redemptions/${id}/status`, { status }, { withCredentials: true });
+      toast.success(t("admin.withdrawals.toastRedemption"));
+      load();
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : (d?.message || "Error"));
+    }
   };
 
   // iter236 — avisa al cliente que su pedido está listo en la tienda.

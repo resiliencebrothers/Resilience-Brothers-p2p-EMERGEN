@@ -281,10 +281,12 @@ async def run_credit_recovery():
     """iter249 — completa acreditaciones que quedaron a medias (crash entre el
     claim y el abono). Idempotente por op_id; nunca duplica."""
     try:
-        from services.credit_recovery import heal_pending_credits
+        from services.credit_recovery import (heal_pending_credits,
+                                              heal_initializing_ops)
         n = await heal_pending_credits()
+        n += await heal_initializing_ops()
         if n:
-            logger.warning("[credit-recovery] %s acreditaciones pendientes sanadas", n)
+            logger.warning("[credit-recovery] %s operaciones pendientes sanadas", n)
     except Exception as e:
         logger.error(f"[credit-recovery] failed: {e}")
 

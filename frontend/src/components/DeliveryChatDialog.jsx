@@ -77,7 +77,7 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
     <Dialog open={!!open} onOpenChange={(o) => !o && onClose?.()}>
       <DialogContent
         data-testid="delivery-chat-dialog"
-        className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white rounded-none max-w-md p-0 gap-0"
+        className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white rounded-none max-w-md p-0 gap-0 max-h-[85vh] overflow-hidden"
       >
         <DialogHeader className="px-4 pt-4 pb-3 border-b border-white/5">
           <DialogTitle className="flex items-center gap-2 text-base">

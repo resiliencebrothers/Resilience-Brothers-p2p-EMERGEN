@@ -426,7 +426,7 @@ export default function CourierPanel({ embedded = false }) {
       <Dialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)}>
         <DialogContent
           data-testid="reject-reservation-dialog"
-          className="bg-[#0c0c0c] border border-[#EF4444]/30 text-white rounded-none max-w-md"
+          className="bg-[#0c0c0c] border border-[#EF4444]/30 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
         >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-[#EF4444]">

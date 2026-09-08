@@ -160,7 +160,7 @@ export default function VendorProductsSection() {
       </div>
 
       <Dialog open={!!rejecting} onOpenChange={() => setRejecting(null)}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{t("vendorProducts.rejectTitle")}: {rejecting?.name}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>

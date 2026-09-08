@@ -170,23 +170,115 @@ async def decrement_balance(user_id: str, code: str, amount: float) -> None:
         )
 
 
+async def _ops_log(op_id: str, user_id: str, code: str, amount: float,
+                   kind: str) -> None:
+    """iter254(R05) — registro DURADERO de operaciones aplicadas (índice único
+    por op_id): aunque el op salga del registro embebido del usuario (cap
+    2000), este log lo sigue recordando y bloquea cualquier replay."""
+    global _OPS_LOG_READY
+    try:
+        if not _OPS_LOG_READY:
+            await db.credit_ops.create_index("op_id", unique=True)
+            _OPS_LOG_READY = True
+        await db.credit_ops.insert_one({
+            "op_id": op_id, "user_id": user_id, "code": code,
+            "amount": round(float(amount), 8), "kind": kind,
+            "at": datetime.now(timezone.utc).isoformat()})
+    except Exception:
+        pass
+
+
+_OPS_LOG_READY = False
+
+
+def _registry_push(op_id: str) -> dict:
+    return {"applied_credit_ops": {"$each": [op_id], "$slice": -2000}}
+
+
 async def credit_balance_idempotent(user_id: str, code: str, amount: float,
                                     op_id: str, legacy_usd: bool = False) -> bool:
     """Acreditación EXACTAMENTE-UNA-VEZ por op_id (iter249). El $inc y el
     registro del op_id ocurren en UNA operación atómica sobre el doc del
     usuario: un reintento (o el healer de credit_recovery) nunca duplica el
-    abono. `legacy_usd=True` acredita al campo histórico vip_balance_usd."""
+    abono. `legacy_usd=True` acredita al campo histórico vip_balance_usd.
+    iter254(R05): dedupe duradero vía colección credit_ops (índice único)."""
     amount = float(amount)
     if amount <= 0:
+        return False
+    if await db.credit_ops.find_one({"op_id": op_id}, {"_id": 1}):
         return False
     field = "vip_balance_usd" if (legacy_usd and code == "USD") \
         else f"vip_balances.{code}"
     res = await db.users.update_one(
         {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
-        {"$inc": {field: amount},
-         "$push": {"applied_credit_ops": {"$each": [op_id], "$slice": -500}}},
+        {"$inc": {field: amount}, "$push": _registry_push(op_id)},
     )
+    if res.modified_count:
+        await _ops_log(op_id, user_id, code, amount, "credit")
     return res.modified_count > 0
+
+
+async def debit_balance_idempotent(user_id: str, code: str, amount: float,
+                                   op_id: str) -> str:
+    """iter254(R03) — débito atómico, condicional e IDEMPOTENTE por op_id.
+
+    Devuelve 'applied' | 'duplicate' | 'insufficient'. El guard de saldo, el
+    $inc y el registro del op_id ocurren en UNA operación sobre el doc del
+    usuario, así el protocolo reserva/operación/activación puede saber con
+    certeza (por el op_id) si un intento interrumpido llegó a cobrar o no.
+    Para USD drena primero el campo legacy (vip_balance_usd)."""
+    amount = float(amount)
+    if amount <= 0:
+        return "applied"
+    if await db.credit_ops.find_one({"op_id": op_id}, {"_id": 1}):
+        return "duplicate"
+    guard = amount - 1e-6
+    if code == "USD":
+        res = await db.users.update_one(
+            {"user_id": user_id, "applied_credit_ops": {"$ne": op_id},
+             "$expr": {"$gte": [
+                 {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
+                           {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                 guard]}},
+            [
+                {"$set": {"_legacy_take": {
+                    "$min": [{"$ifNull": ["$vip_balance_usd", 0.0]}, amount]}}},
+                {"$set": {
+                    "vip_balance_usd": {"$subtract": [
+                        {"$ifNull": ["$vip_balance_usd", 0.0]}, "$_legacy_take"]},
+                    "vip_balances.USD": {"$subtract": [
+                        {"$ifNull": ["$vip_balances.USD", 0.0]},
+                        {"$subtract": [amount, "$_legacy_take"]}]},
+                    "applied_credit_ops": {"$slice": [
+                        {"$concatArrays": [
+                            {"$ifNull": ["$applied_credit_ops", []]}, [op_id]]},
+                        -2000]},
+                }},
+                {"$unset": "_legacy_take"},
+            ],
+        )
+    else:
+        res = await db.users.update_one(
+            {"user_id": user_id, "applied_credit_ops": {"$ne": op_id},
+             f"vip_balances.{code}": {"$gte": guard}},
+            {"$inc": {f"vip_balances.{code}": -amount},
+             "$push": _registry_push(op_id)},
+        )
+    if res.matched_count:
+        await _ops_log(op_id, user_id, code, amount, "debit")
+        return "applied"
+    if await db.users.find_one({"user_id": user_id, "applied_credit_ops": op_id},
+                               {"_id": 1}):
+        return "duplicate"
+    return "insufficient"
+
+
+async def op_was_applied(user_id: str, op_id: str) -> bool:
+    """¿Este op_id llegó a aplicarse? (registro embebido O log duradero)."""
+    if await db.users.find_one({"user_id": user_id, "applied_credit_ops": op_id},
+                               {"_id": 1}):
+        return True
+    return bool(await db.credit_ops.find_one({"op_id": op_id}, {"_id": 1}))
 
 
 async def accumulate_vip_balance(order: dict) -> bool:
@@ -200,16 +292,14 @@ async def accumulate_vip_balance(order: dict) -> bool:
     (`approved` OR `completed`, including a direct pending→completed jump
     from the admin's "Completar" button) credits exactly once.
 
-    iter249 — la intención de abono (`credit_pending`) se escribe en el MISMO
-    update atómico que reclama `accumulated_at`, y el abono usa op_id
-    idempotente. Si el proceso muere entre el claim y el abono, el healer
-    (services/credit_recovery) completa la acreditación: no se pierde dinero
-    y el reintento no queda bloqueado.
+    iter254(R04) — el marker nace SIN preparar (prepared=False): el healer no
+    acredita importes brutos; si hay crash antes de fijar el neto, recalcula
+    la amortización (idempotente por orden) y recién entonces abona.
     """
     from services.credit_recovery import pending_marker, apply_and_clear
     gross = float(order["amount_to"])
     marker = pending_marker(order["user_id"], order["to_code"], gross,
-                            "order-accum")
+                            "order-accum", prepared=False)
     res = await db.orders.update_one(
         {"id": order["id"], "accumulated_at": {"$exists": False}},
         {"$set": {"accumulated_at": datetime.now(timezone.utc).isoformat(),
@@ -219,11 +309,6 @@ async def accumulate_vip_balance(order: dict) -> bool:
         # Either the order already had `accumulated_at`, or the order id
         # doesn't exist — in both cases we MUST NOT double-credit.
         return False
-    # iter55.32 — capital-request auto-discount: if this user has any active
-    # (disbursed) capital debt in the SAME currency this order accumulates
-    # into, deduct a % from the credited amount and use it to pay down the
-    # oldest debt first (FIFO). We do this BEFORE crediting the balance so
-    # the operator never sees a "money-in / money-out" ping-pong.
     net_amount = await _apply_capital_request_repayment(
         order["user_id"], order["to_code"], gross, order["id"],
     )
@@ -232,12 +317,13 @@ async def accumulate_vip_balance(order: dict) -> bool:
         await db.orders.update_one({"id": order["id"]},
                                    {"$unset": {"credit_pending": ""}})
         return True
-    if abs(net_amount - gross) > 1e-9:
-        marker["amount"] = round(float(net_amount), 8)
-        await db.orders.update_one(
-            {"id": order["id"], "credit_pending.op_id": marker["op_id"]},
-            {"$set": {"credit_pending.amount": marker["amount"]}},
-        )
+    marker["amount"] = round(float(net_amount), 8)
+    marker["prepared"] = True
+    await db.orders.update_one(
+        {"id": order["id"], "credit_pending.op_id": marker["op_id"]},
+        {"$set": {"credit_pending.amount": marker["amount"],
+                  "credit_pending.prepared": True}},
+    )
     await apply_and_clear("orders", order["id"], marker)
     return True
 
@@ -260,59 +346,81 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
       - When `debt_remaining` hits 0 → status flips to `paid_off`.
       - Repayment events are logged inside the request doc for audit.
       - If no active debt or amount <= 0, no-op returning the input amount.
+
+    iter254(R04/R08) — idempotente por orden y condicional por deuda:
+      - Cada contribución exige `debt_remaining >= contribución` y que la
+        orden NO haya contribuido ya a esa deuda, en el MISMO update: dos
+        acumulaciones concurrentes no pueden amortizar más deuda de la real.
+      - Las contribuciones previas de la misma orden (recuperación tras un
+        crash) se descuentan del presupuesto: reejecutar es seguro.
     """
     if amount <= 0:
         return amount
+    now_iso_ = datetime.now(timezone.utc).isoformat()
+    # contribuciones ya aplicadas por ESTA orden (reintento/recuperación)
+    prior = 0.0
+    prev_docs = await db.capital_requests.find(
+        {"user_id": user_id, "currency_code": currency,
+         "repayment_events.order_id": order_id},
+        {"_id": 0, "repayment_events": 1},
+    ).to_list(50)
+    for d_ in prev_docs:
+        prior += sum(float(ev.get("amount") or 0)
+                     for ev in (d_.get("repayment_events") or [])
+                     if ev.get("order_id") == order_id)
+    prior = round(prior, 6)
     active = await db.capital_requests.find(
         {"user_id": user_id, "status": "disbursed", "currency_code": currency},
         {"_id": 0},
     ).sort("disbursed_at", 1).to_list(50)
     if not active:
-        return amount
+        return round(amount - prior, 6)
 
     # Total per-order discount budget is set by the OLDEST active debt.
     oldest_pct = float(active[0].get("discount_pct") or 0.0)
-    if oldest_pct <= 0:
-        return amount
-    budget = round(amount * oldest_pct / 100.0, 4)
-    if budget <= 0:
-        return amount
-
-    now_iso_ = datetime.now(timezone.utc).isoformat()
+    budget_total = round(amount * oldest_pct / 100.0, 4)
+    budget = round(max(budget_total - prior, 0.0), 4)
+    consumed = prior
     for cr in active:
         if budget <= 0:
             break
-        debt = float(cr.get("debt_remaining") or 0.0)
-        if debt <= 0:
-            continue
-        contribution = round(min(budget, debt), 4)
-        if contribution <= 0:
-            continue
-        new_debt = round(debt - contribution, 4)
-        set_ops: dict = {"updated_at": now_iso_}
-        inc_ops: dict = {}
-        if new_debt <= 0.0001:
-            # Force debt to zero + flip to paid_off. Cannot combine $inc and
-            # $set on the same field, so we use pure $set here.
-            set_ops.update({
-                "status": "paid_off",
-                "paid_off_at": now_iso_,
-                "debt_remaining": 0.0,
-            })
-        else:
-            inc_ops["debt_remaining"] = -contribution
-        update: dict = {
-            "$set": set_ops,
-            "$push": {"repayment_events": {
-                "order_id": order_id, "amount": contribution, "at": now_iso_,
-            }},
-        }
-        if inc_ops:
-            update["$inc"] = inc_ops
-        await db.capital_requests.update_one({"id": cr["id"]}, update)
-        budget = round(budget - contribution, 6)
+        for _attempt in range(2):
+            fresh = await db.capital_requests.find_one(
+                {"id": cr["id"]},
+                {"_id": 0, "debt_remaining": 1, "status": 1,
+                 "repayment_events": 1})
+            if not fresh or fresh.get("status") != "disbursed":
+                break
+            if any(ev.get("order_id") == order_id
+                   for ev in (fresh.get("repayment_events") or [])):
+                break  # esta orden ya contribuyó a esta deuda
+            debt = float(fresh.get("debt_remaining") or 0.0)
+            contribution = round(min(budget, debt), 4)
+            if contribution <= 0:
+                break
+            res = await db.capital_requests.update_one(
+                {"id": cr["id"], "status": "disbursed",
+                 "debt_remaining": {"$gte": contribution - 1e-9},
+                 "repayment_events": {"$not": {"$elemMatch": {"order_id": order_id}}}},
+                {"$inc": {"debt_remaining": -contribution},
+                 "$set": {"updated_at": now_iso_},
+                 "$push": {"repayment_events": {
+                     "order_id": order_id, "amount": contribution,
+                     "at": now_iso_}}},
+            )
+            if res.matched_count:
+                budget = round(budget - contribution, 6)
+                consumed = round(consumed + contribution, 6)
+                # liquidada → paid_off (claim condicional al llegar a ~0)
+                await db.capital_requests.update_one(
+                    {"id": cr["id"], "status": "disbursed",
+                     "debt_remaining": {"$lte": 0.0001}},
+                    {"$set": {"status": "paid_off", "paid_off_at": now_iso_,
+                              "debt_remaining": 0.0}})
+                break
+            # perdimos una carrera: reintentar UNA vez con lectura fresca
 
-    return round(amount - round(amount * oldest_pct / 100.0, 4) + budget, 6)
+    return round(amount - consumed, 6)
 
 
 # ============================================================

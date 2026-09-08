@@ -187,4 +187,6 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Run ESLint
-        run: yarn lint || npx eslint "src/**/*.{js,jsx}"
+        # iter254(R12) — sin fallback a npx eslint (usaba una config
+        # inexistente y enmascaraba el resultado real del lint).
+        run: yarn lint

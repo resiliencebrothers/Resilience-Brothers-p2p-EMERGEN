@@ -176,7 +176,7 @@ class TestInventoryMovements:
     def test_marketplace_redeem_records_venta_movement_once(self):
         db = _db()
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": 5000.0}})
+                            {"$set": {"vip_balances.USDT": 5000.0}})
         p = _create_company_product(stock=10, price_usd=6.0, cost_usd=4.0)
         r = requests.post(f"{API}/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": p["id"], "quantity": 2,
@@ -308,7 +308,7 @@ class TestVendorCredit:
 
     def _vendor_usd_balance(self):
         u = _db().users.find_one({"user_id": "user_test_vip01"}, {"_id": 0})
-        return float((u.get("vip_balances") or {}).get("USD", 0.0))
+        return round(float((u.get("vip_balances") or {}).get("USDT", 0.0)), 2)
 
     def test_full_vendor_sale_cycle(self):
         db = _db()
@@ -319,7 +319,7 @@ class TestVendorCredit:
         assert r.status_code == 200, r.text
         # 2) El comprador (admin actuando como cliente) canjea 2 → 80 USD
         db.users.update_one({"user_id": "user_test_admin01"},
-                            {"$set": {"vip_balance_usd": 1000.0}})
+                            {"$set": {"vip_balances.USDT": 1000.0}})
         r = requests.post(f"{API}/vip/redeem", headers=_h(ADMIN_TOKEN),
                           json={"product_id": p["id"], "quantity": 2,
                                 "delivery_address": "Calle vendor #2"})
@@ -358,7 +358,7 @@ class TestVendorCredit:
         requests.post(f"{API}/admin/vendor-products/{p['id']}/approve",
                       headers=_h(ADMIN_TOKEN), json={})
         _db().users.update_one({"user_id": "user_test_vip01"},
-                               {"$set": {"vip_balance_usd": 100.0}})
+                               {"$set": {"vip_balances.USDT": 100.0}})
         r = requests.post(f"{API}/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": p["id"], "quantity": 1,
                                 "delivery_address": "x"})

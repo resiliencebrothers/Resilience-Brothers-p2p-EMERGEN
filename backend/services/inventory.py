@@ -27,7 +27,46 @@ _COMPANY_FILTER = {"$or": [{"owner_id": {"$in": [None, ""]}},
 
 
 def _day_bounds(day: str) -> tuple:
-    return f"{day}T00:00:00+00:00", f"{day}T23:59:59.999999+00:00"
+    """iter254(R10) — el 'día' del negocio es el de Cuba (America/Havana),
+    convertido a UTC. Devuelve [inicio, fin) — fin EXCLUSIVO."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta, timezone
+    tz = ZoneInfo("America/Havana")
+    d = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=tz)
+    start = d.astimezone(timezone.utc).isoformat()
+    end = (d + timedelta(days=1)).astimezone(timezone.utc).isoformat()
+    return start, end
+
+
+def movement_delta(mtype: str, quantity: int) -> int:
+    """Delta de stock que implica un movimiento (compartido con el healer)."""
+    if mtype in ("venta", "ajuste_neg"):
+        return -quantity
+    return quantity
+
+
+async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
+                                 require_available: bool = True,
+                                 extra_filter: Optional[dict] = None) -> str:
+    """iter254(R03) — cambio de stock atómico, condicional e IDEMPOTENTE por
+    op_id (registro embebido en el producto). Devuelve 'applied' | 'duplicate'
+    | 'insufficient'."""
+    filt: dict = {"id": product_id, "applied_stock_ops": {"$ne": op_id}}
+    if extra_filter:
+        filt.update(extra_filter)
+    if delta_qty < 0 and require_available:
+        filt["stock"] = {"$gte": -delta_qty}
+    res = await db.products.update_one(
+        filt,
+        {"$inc": {"stock": delta_qty},
+         "$push": {"applied_stock_ops": {"$each": [op_id], "$slice": -500}}},
+    )
+    if res.matched_count:
+        return "applied"
+    if await db.products.find_one({"id": product_id, "applied_stock_ops": op_id},
+                                  {"_id": 1}):
+        return "duplicate"
+    return "insufficient"
 
 
 async def get_low_stock_threshold() -> int:
@@ -121,16 +160,6 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
         delta = quantity
     else:  # ajuste_neg
         delta = -quantity
-    if apply_stock:
-        if delta < 0:
-            res = await db.products.update_one(
-                {"id": product["id"], "stock": {"$gte": quantity}},
-                {"$inc": {"stock": delta}})
-            if res.matched_count == 0:
-                raise HTTPException(status_code=400, detail="Stock insuficiente para este movimiento")
-        else:
-            await db.products.update_one({"id": product["id"]},
-                                         {"$inc": {"stock": delta}})
     doc = {
         "id": str(uuid.uuid4()),
         "product_id": product["id"],
@@ -150,7 +179,26 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
         "actor_email": (actor or {}).get("email", ""),
         "created_at": iso(now_utc()),
     }
-    await db.inventory_movements.insert_one({**doc})
+    # iter254(R03) — registro-primero + aplicación de stock idempotente: si el
+    # proceso muere entre el log y el stock, heal_initializing_ops completa la
+    # aplicación (op_id determinista); nunca queda un cambio de stock sin su
+    # movimiento ni un movimiento fantasma.
+    if apply_stock and delta != 0:
+        doc["needs_stock"] = True
+        doc["stock_applied"] = False
+        await db.inventory_movements.insert_one({**doc})
+        status = await apply_stock_idempotent(
+            product["id"], delta, f"invmov:{doc['id']}",
+            require_available=(delta < 0))
+        if status == "insufficient":
+            await db.inventory_movements.delete_one({"id": doc["id"]})
+            raise HTTPException(status_code=400,
+                                detail="Stock insuficiente para este movimiento")
+        await db.inventory_movements.update_one(
+            {"id": doc["id"]}, {"$set": {"stock_applied": True}})
+        doc["stock_applied"] = True
+    else:
+        await db.inventory_movements.insert_one({**doc})
     await _record_fund_flow(doc)
     await maybe_alert_low_stock(product["id"])
     return doc
@@ -339,7 +387,7 @@ async def build_control_rows() -> list:
     today = iso(now_utc())[:10]
     start, end = _day_bounds(today)
     today_agg = await db.inventory_movements.aggregate([
-        {"$match": {"type": "venta", "created_at": {"$gte": start, "$lte": end}}},
+        {"$match": {"type": "venta", "created_at": {"$gte": start, "$lt": end}}},
         {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"},
                     "revenue": {"$sum": "$total"}}}
     ]).to_list(2000)
@@ -395,7 +443,7 @@ async def build_rotation(start: str, end: str,
     ids = [p["id"] for p in products]
     sold_agg = await db.inventory_movements.aggregate([
         {"$match": {"type": "venta", "product_id": {"$in": ids},
-                    "created_at": {"$gte": s, "$lte": e}}},
+                    "created_at": {"$gte": s, "$lt": e}}},
         {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"}}},
     ]).to_list(2000)
     sold_by = {a["_id"]: int(a["qty"]) for a in sold_agg}
@@ -473,11 +521,24 @@ async def build_dashboard(start: str, end: str,
     devuelve los números de una o varias mercancías específicas."""
     s, _ = _day_bounds(start)
     _, e = _day_bounds(end)
-    match: dict = {"created_at": {"$gte": s, "$lte": e}}
+    match: dict = {"created_at": {"$gte": s, "$lt": e}}
     if product_ids:
         match["product_id"] = {"$in": product_ids}
     movs = await db.inventory_movements.find(match, {"_id": 0}).to_list(20000)
     ventas = [m for m in movs if m["type"] == "venta"]
+    # iter254(R09) — excluir ventas de canjes RECHAZADOS: el reverso ya
+    # restituyó el stock, así que ingresos/ganancia no deben contarlas.
+    red_ids = list({m.get("ref_id") for m in ventas
+                    if m.get("source") == "marketplace" and m.get("ref_id")})
+    rejected_ids: set = set()
+    if red_ids:
+        rej = await db.redemptions.find(
+            {"id": {"$in": red_ids}, "status": "rejected"},
+            {"_id": 0, "id": 1}).to_list(len(red_ids))
+        rejected_ids = {d["id"] for d in rej}
+    ventas = [m for m in ventas
+              if not (m.get("source") == "marketplace"
+                      and m.get("ref_id") in rejected_ids)]
     entradas = [m for m in movs if m["type"] == "entrada"]
     units_sold = sum(m["quantity"] for m in ventas)
     revenue = round(sum(float(m.get("total") or 0) for m in ventas), 2)
@@ -497,7 +558,7 @@ async def build_dashboard(start: str, end: str,
     vip_commission = None
     if not product_ids:
         agg = await db.redemptions.aggregate([
-            {"$match": {"vendor_credited_at": {"$gte": s, "$lte": e},
+            {"$match": {"vendor_credited_at": {"$gte": s, "$lt": e},
                         "vendor_credit_reversed_at": {"$in": [None, ""]}}},
             {"$group": {"_id": None,
                         "gross": {"$sum": "$total_usd"},

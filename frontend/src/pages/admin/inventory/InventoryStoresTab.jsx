@@ -215,7 +215,7 @@ function PickupsPanel() {
       )}
 
       <Dialog open={scanOpen} onOpenChange={openScanner}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-sm">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-sm max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">{t("inventory.stores.scanTitle")}</DialogTitle>
           </DialogHeader>

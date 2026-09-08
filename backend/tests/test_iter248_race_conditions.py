@@ -49,10 +49,12 @@ def _mk_product(price, stock):
 
 
 class _UsdSandbox:
-    """Guarda/restaura el saldo USD del VIP y limpia docs creados."""
+    """Guarda/restaura el saldo USD y USDT del VIP y limpia docs creados."""
 
     def setup_method(self, _):
         self._orig = _get_usd()
+        u = _db().users.find_one({"user_id": UID}, {"_id": 0, "vip_balances": 1})
+        self._orig_usdt = float((u.get("vip_balances") or {}).get("USDT") or 0.0)
 
     def teardown_method(self, _):
         db = _db()
@@ -60,6 +62,8 @@ class _UsdSandbox:
         db.redemptions.delete_many({"product_id": {"$regex": f"^prod_{MARK}"}})
         db.products.delete_many({"id": {"$regex": f"^prod_{MARK}"}})
         _set_usd(self._orig[0], self._orig[1])
+        db.users.update_one({"user_id": UID},
+                            {"$set": {"vip_balances.USDT": self._orig_usdt}})
 
 
 class TestWithdrawRace(_UsdSandbox):
@@ -102,29 +106,39 @@ class TestWithdrawRace(_UsdSandbox):
 
 
 class TestRedeemRace(_UsdSandbox):
+    # iter254(R07) — el marketplace liquida en USDT: la carrera se prueba
+    # sobre el saldo USDT.
     def _redeem(self, pid):
         return requests.post(f"{API}/vip/redeem", json={
             "product_id": pid, "quantity": 1, "delivery_address": "",
         }, headers=VIP_H, timeout=30)
 
+    def _set_usdt(self, amount):
+        _db().users.update_one({"user_id": UID},
+                               {"$set": {"vip_balances.USDT": float(amount)}})
+
+    def _usdt(self):
+        u = _db().users.find_one({"user_id": UID}, {"_id": 0, "vip_balances": 1})
+        return float((u.get("vip_balances") or {}).get("USDT") or 0.0)
+
     def test_concurrent_redeems_cannot_double_spend_balance(self):
-        _set_usd(60.0, 0.0)
+        self._set_usdt(60.0)
         pid = _mk_product(price=60.0, stock=10)
         with ThreadPoolExecutor(max_workers=4) as ex:
             rs = list(ex.map(lambda _: self._redeem(pid), range(4)))
         codes = [r.status_code for r in rs]
         ok = [r for r in rs if r.status_code == 200]
         assert len(ok) == 1, f"DOBLE GASTO en canje: {len(ok)} aceptados con saldo 60 ({codes})"
-        modern, legacy = _get_usd()
-        assert modern + legacy > -1e-9, f"Saldo NEGATIVO: {modern + legacy}"
-        assert abs(modern + legacy) < 1e-6
+        left = self._usdt()
+        assert left > -1e-9, f"Saldo NEGATIVO: {left}"
+        assert abs(left) < 1e-6
         p = _db().products.find_one({"id": pid}, {"_id": 0, "stock": 1})
         assert p["stock"] == 9, f"stock debió quedar 9, es {p['stock']}"
         n = _db().redemptions.count_documents({"product_id": pid})
         assert n == 1, f"debió crearse 1 canje, hay {n}"
 
     def test_concurrent_redeems_cannot_oversell_stock(self):
-        _set_usd(50.0, 0.0)
+        self._set_usdt(50.0)
         pid = _mk_product(price=1.0, stock=1)
         with ThreadPoolExecutor(max_workers=4) as ex:
             rs = list(ex.map(lambda _: self._redeem(pid), range(4)))
@@ -132,12 +146,11 @@ class TestRedeemRace(_UsdSandbox):
         assert len(ok) == 1, f"SOBREVENTA: {len(ok)} canjes con stock 1"
         p = _db().products.find_one({"id": pid}, {"_id": 0, "stock": 1})
         assert p["stock"] == 0, f"stock debió quedar 0, es {p['stock']}"
-        modern, legacy = _get_usd()
-        assert abs(modern + legacy - 49.0) < 1e-6, f"saldo debió quedar 49, es {modern + legacy}"
+        assert abs(self._usdt() - 49.0) < 1e-6, f"saldo debió quedar 49, es {self._usdt()}"
 
     def test_failed_debit_restores_stock(self):
         """Sin saldo: el stock reclamado se devuelve y no queda canje huérfano."""
-        _set_usd(0.0, 0.0)
+        self._set_usdt(0.0)
         pid = _mk_product(price=60.0, stock=5)
         r = self._redeem(pid)
         assert r.status_code in (400, 409), r.text

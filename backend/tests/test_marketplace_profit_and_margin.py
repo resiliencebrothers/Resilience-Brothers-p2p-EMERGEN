@@ -51,9 +51,10 @@ def _create_product(**overrides):
 
 
 def _ensure_vip_balance(db, min_usd=2000.0):
+    # iter254(R07) — el marketplace liquida en USDT.
     db.users.update_one(
         {"user_id": "user_test_vip01"},
-        {"$set": {"vip_balance_usd": float(min_usd) + 500}},
+        {"$set": {"vip_balances.USDT": float(min_usd) + 500}},
         upsert=False,
     )
 

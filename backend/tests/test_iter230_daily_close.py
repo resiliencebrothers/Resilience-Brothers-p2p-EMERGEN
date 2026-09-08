@@ -67,7 +67,7 @@ class TestDailyClose:
     def test_daily_close_aggregates_store_and_web(self):
         db = _db()
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": 5000.0}})
+                            {"$set": {"vip_balances.USDT": 5000.0}})
         p = _create_product()  # alta: compra 10×500 = 5000
         pid = p["id"]
         # venta física 2×800 = 1600, ganancia (800−500)×2 = 600
@@ -109,7 +109,7 @@ class TestDailyClose:
     def test_rejected_web_sale_excluded(self):
         db = _db()
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": 5000.0}})
+                            {"$set": {"vip_balances.USDT": 5000.0}})
         p = _create_product(price_usd=400.0, stock=5)
         rw = requests.post(f"{API}/vip/redeem", headers=_h(VIP_TOKEN),
                            json={"product_id": p["id"], "quantity": 1,

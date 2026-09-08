@@ -102,7 +102,7 @@ class TestAlertHooksNonBreaking:
                     key=lambda p: p["price_usd"])
         # Top up balance
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": cheap["price_usd"] + 50}})
+                            {"$set": {"vip_balances.USDT": cheap["price_usd"] + 50}})
         r = requests.post(f"{BASE_URL}/api/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": cheap["id"], "quantity": 1, "delivery_address": "Addr"})
         assert r.status_code == 200, r.text

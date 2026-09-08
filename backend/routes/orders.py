@@ -68,6 +68,9 @@ class Redemption(BaseModel):
     quantity: int
     total_usd: float
     cost_usd: float = 0.0
+    # iter254(R07) — moneda de liquidación del canje: 'USDT' para canjes
+    # nuevos (la UI muestra USDT); docs antiguos sin el campo = 'USD'.
+    settlement_currency: str = "USDT"
     delivery_address: str = ""
     status: Literal["pending", "approved", "delivered", "rejected"] = "pending"
     admin_note: str = ""
@@ -386,6 +389,13 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    # iter254(R06) — ocultar del catálogo no es autorización: nadie puede
+    # canjear productos inactivos o no aprobados aunque conozca el ID.
+    if product.get("is_active") is False:
+        raise HTTPException(status_code=400, detail="Producto no disponible")
+    if product.get("owner_id") and \
+            product.get("approval_status") not in (None, "approved"):
+        raise HTTPException(status_code=400, detail="Producto no disponible")
     if product["stock"] < payload.quantity:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
     # iter217 — un vendedor VIP no puede canjear su propio producto.
@@ -459,11 +469,13 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
                 courier_fee_usdt = mq["fee_usdt"]
                 courier_fee_usd = mq["fee_currency_amount"]
                 courier_muni = mq["municipality"]
-    if get_user_balance(user, "USD") < total + courier_fee_usd:
+    # iter254(R07) — el marketplace liquida en USDT (la UI muestra USDT): el
+    # cobro, los reembolsos y los pagos a vendedores usan el saldo USDT.
+    if get_user_balance(user, "USDT") < total + courier_fee_usd:
         raise HTTPException(
             status_code=400,
-            detail=("Saldo USD insuficiente"
-                    + (f" (incluye {courier_fee_usd} USD de mensajería)"
+            detail=("Saldo USDT insuficiente"
+                    + (f" (incluye {courier_fee_usd} USDT de mensajería)"
                        if courier_fee_usd > 0 else "")))
     r = Redemption(
         user_id=user["user_id"],
@@ -495,23 +507,45 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         store_name=(pickup_store or {}).get("name") or "",
         store_address=(pickup_store or {}).get("address") or "",
         pickup_code=(await _new_pickup_code()) if pickup_store else "",
+        settlement_currency="USDT",
     )
-    # iter248 — claim ATÓMICO de stock (guard $gte + $inc en una operación):
-    # dos canjes simultáneos no pueden sobrevender.
-    stock_res = await db.products.update_one(
-        {"id": product["id"], "stock": {"$gte": payload.quantity}},
-        {"$inc": {"stock": -payload.quantity}},
-    )
-    if stock_res.matched_count == 0:
+    # iter254(R03) — protocolo reserva/operación/activación recuperable:
+    # 1) doc en 'initializing' con los op_ids del intento; 2) reserva de stock
+    # idempotente (con condiciones R06 en el filtro); 3) cobro idempotente;
+    # 4) activación. Si el proceso muere en medio, heal_initializing_ops
+    # revierte de forma determinista (los op_ids dicen qué llegó a aplicarse).
+    from services.balances import debit_balance_idempotent
+    from services.inventory import apply_stock_idempotent
+    rdoc = r.model_dump()
+    stock_op = f"redeem-stock:{r.id}"
+    debit_op = f"redeem-debit:{r.id}"
+    rdoc.update({"status": "initializing", "init_op_id": debit_op,
+                 "stock_op_id": stock_op})
+    await db.redemptions.insert_one(rdoc)
+    stock_status = await apply_stock_idempotent(
+        product["id"], -payload.quantity, stock_op,
+        extra_filter={"is_active": {"$ne": False},
+                      "$or": [{"owner_id": {"$in": [None, ""]}},
+                              {"owner_id": {"$exists": False}},
+                              {"approval_status": "approved"}]})
+    if stock_status == "insufficient":
+        await db.redemptions.delete_one({"id": r.id, "status": "initializing"})
         raise HTTPException(status_code=400, detail="Stock insuficiente")
-    try:
-        await decrement_balance(user["user_id"], "USD", total + courier_fee_usd)
-    except HTTPException:
-        # el cobro atómico falló (carrera de saldo): devolver el stock reclamado.
-        await db.products.update_one({"id": product["id"]},
-                                     {"$inc": {"stock": payload.quantity}})
-        raise
-    await db.redemptions.insert_one(r.model_dump())
+    debit_status = await debit_balance_idempotent(
+        user["user_id"], "USDT", total + courier_fee_usd, debit_op)
+    if debit_status == "insufficient":
+        await apply_stock_idempotent(product["id"], payload.quantity,
+                                     f"{stock_op}:undo",
+                                     require_available=False)
+        await db.redemptions.delete_one({"id": r.id, "status": "initializing"})
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "INSUFFICIENT_BALANCE",
+                    "message": "Saldo USDT insuficiente"})
+    await db.redemptions.update_one(
+        {"id": r.id, "status": "initializing"},
+        {"$set": {"status": "pending"},
+         "$unset": {"init_op_id": "", "stock_op_id": ""}})
     # iter199 — auto-charged deliveries create their courier job right away.
     if courier_status == "charged":
         try:
@@ -586,7 +620,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
 async def my_redemptions(request: Request) -> Any:
     user = await require_user(request)
     docs = await db.redemptions.find(
-        {"user_id": user["user_id"]}, {"_id": 0}
+        {"user_id": user["user_id"],
+         "status": {"$nin": ["initializing", "failed_init"]}}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
     return docs
 
@@ -890,12 +925,28 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
             doc["courier_fee_charged_by"] = user["user_id"]
             doc["courier_rate_snapshot"] = courier_rq["rate_usdt_per_km"]
             doc["courier_min_fee_snapshot"] = courier_rq["min_fee_usdt"]
-    # iter248 — débito ATÓMICO antes de crear el doc: si dos retiros
-    # simultáneos compiten por el mismo saldo, solo uno gana (409 el otro)
-    # y nunca queda un retiro pendiente sin fondos congelados.
-    await decrement_balance(user["user_id"], currency,
-                            payload.amount_usd + courier_fee_cur)
+    # iter254(R03) — protocolo recuperable: doc primero en 'initializing' con
+    # el op_id del cobro; débito idempotente; activación a 'pending'. Si el
+    # proceso muere en medio, heal_initializing_ops sabe (por el op_id) si el
+    # cobro llegó a aplicarse y revierte o limpia de forma determinista.
+    from services.balances import debit_balance_idempotent
+    debit_op = f"withdraw-debit:{w.id}"
+    doc["status"] = "initializing"
+    doc["init_op_id"] = debit_op
     await db.withdrawals.insert_one(doc)
+    st = await debit_balance_idempotent(
+        user["user_id"], currency, payload.amount_usd + courier_fee_cur,
+        debit_op)
+    if st == "insufficient":
+        await db.withdrawals.delete_one({"id": w.id, "status": "initializing"})
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "INSUFFICIENT_BALANCE",
+                    "message": f"Saldo insuficiente en {currency}"})
+    await db.withdrawals.update_one(
+        {"id": w.id, "status": "initializing"},
+        {"$set": {"status": "pending"}, "$unset": {"init_op_id": ""}})
+    doc["status"] = "pending"
     # iter205 — protocolo de mensajero: las entregas a domicilio (cobradas o
     # gratis por umbral) crean su trabajo de mensajería desde la creación.
     if payload.method == "cash" and delivery_mode == "courier" \
@@ -970,7 +1021,8 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
 async def my_withdrawals(request: Request) -> Any:
     user = await require_user(request)
     docs = await db.withdrawals.find(
-        {"user_id": user["user_id"]}, {"_id": 0}
+        {"user_id": user["user_id"],
+         "status": {"$nin": ["initializing", "failed_init"]}}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
     return docs
 
@@ -1345,20 +1397,67 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     #   2. Debit `0.01` from USDT (fee). If source is USDT, this is the same
     #      currency — decrement_balance handles both calls independently.
     #   3. Credit `amount_to` to the destination currency.
-    await decrement_balance(user["user_id"], from_code, payload.amount_from)
-    try:
-        await decrement_balance(user["user_id"], "USDT", CONVERT_FEE_USDT)
-    except HTTPException:
-        # iter248 — carrera perdida en la comisión: revertir el primer débito.
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$inc": {f"vip_balances.{from_code}": payload.amount_from}},
+    # iter254(R03) — TODO el asiento (débito origen + comisión USDT + crédito
+    # destino) ocurre en UNA sola actualización condicional del doc del
+    # usuario: no pueden quedar conversiones cobradas sin acreditar, comisiones
+    # huérfanas ni carreras entre los tres movimientos.
+    fee = CONVERT_FEE_USDT
+    eps = 1e-6
+    uid = user["user_id"]
+    if from_code == "USD":
+        usd_modern = {"$subtract": [
+            {"$ifNull": ["$vip_balances.USD", 0.0]},
+            {"$subtract": [payload.amount_from, "$_legacy_take"]}]}
+        if to_code == "USD":
+            usd_modern = {"$add": [usd_modern, amount_to]}
+        set_stage: dict = {
+            "vip_balance_usd": {"$subtract": [
+                {"$ifNull": ["$vip_balance_usd", 0.0]}, "$_legacy_take"]},
+            "vip_balances.USD": usd_modern,
+            "vip_balances.USDT": {"$add": [
+                {"$ifNull": ["$vip_balances.USDT", 0.0]},
+                -fee + (amount_to if to_code == "USDT" else 0.0)]},
+        }
+        if to_code not in ("USD", "USDT"):
+            set_stage[f"vip_balances.{to_code}"] = {"$add": [
+                {"$ifNull": [f"$vip_balances.{to_code}", 0.0]}, amount_to]}
+        res = await db.users.update_one(
+            {"user_id": uid, "$expr": {"$and": [
+                {"$gte": [{"$add": [
+                    {"$ifNull": ["$vip_balances.USD", 0.0]},
+                    {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                    payload.amount_from - eps]},
+                {"$gte": [{"$ifNull": ["$vip_balances.USDT", 0.0]}, fee - eps]},
+            ]}},
+            [
+                {"$set": {"_legacy_take": {"$min": [
+                    {"$ifNull": ["$vip_balance_usd", 0.0]},
+                    payload.amount_from]}}},
+                {"$set": set_stage},
+                {"$unset": "_legacy_take"},
+            ],
         )
-        raise
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$inc": {f"vip_balances.{to_code}": amount_to}},
-    )
+    else:
+        inc: dict = {}
+        inc[f"vip_balances.{from_code}"] = \
+            inc.get(f"vip_balances.{from_code}", 0.0) - payload.amount_from
+        inc["vip_balances.USDT"] = inc.get("vip_balances.USDT", 0.0) - fee
+        inc[f"vip_balances.{to_code}"] = \
+            inc.get(f"vip_balances.{to_code}", 0.0) + amount_to
+        filt: dict = {"user_id": uid}
+        need_from = payload.amount_from + (fee if from_code == "USDT" else 0.0)
+        filt[f"vip_balances.{from_code}"] = {"$gte": need_from - eps}
+        if from_code != "USDT":
+            filt["vip_balances.USDT"] = {"$gte": fee - eps}
+        res = await db.users.update_one(
+            filt, {"$inc": {k: v for k, v in inc.items() if abs(v) > 1e-12}})
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "INSUFFICIENT_BALANCE",
+                    "message": ("Saldo insuficiente para completar la "
+                                "conversión (el saldo cambió durante la "
+                                "operación).")})
     await emit_balance_changed(user["user_id"], "convert",
                                from_code=from_code, to_code=to_code)
     # Audit

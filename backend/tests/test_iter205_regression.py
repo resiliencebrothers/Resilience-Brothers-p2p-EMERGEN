@@ -116,7 +116,8 @@ def test_redemption_delivered_blocked_without_courier():
         "price_usd": 20.0, "cost_usd": 5.0, "stock": 5, "image_url": "",
         "active": True, "created_at": "2026-01-01T00:00:00+00:00",
     })
-    _seed_balance("USD", 2000)
+    # iter254(R07) — el marketplace liquida en USDT.
+    _seed_balance("USDT", 2000)
     rid = None
     try:
         # Redemption WITHOUT coords → manual_review

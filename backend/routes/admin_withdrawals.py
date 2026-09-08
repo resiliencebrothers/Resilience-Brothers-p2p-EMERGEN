@@ -34,6 +34,10 @@ async def all_withdrawals(request: Request,
     q: Dict[str, Any] = {}
     if status:
         q["status"] = status
+    else:
+        # iter254 — los docs transitorios del protocolo de creación no son
+        # retiros reales para el panel.
+        q["status"] = {"$nin": ["initializing", "failed_init"]}
     if currency:
         q["currency"] = currency.upper()
     if user_q:
@@ -115,9 +119,18 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
         if claim.modified_count:
             await apply_and_clear("withdrawals", withdrawal["id"], marker)
     elif leaving_rejected:
+        # iter254(R03) — la intención del re-débito viaja en el claim del flag
+        # y el cobro es IDEMPOTENTE por op_id: si el proceso muere entre ambos
+        # pasos, heal_initializing_ops completa o revierte con certeza.
+        import uuid as _uuid
+        op = f"withdrawal-redebit:{withdrawal['id']}:{_uuid.uuid4().hex[:8]}"
         claim = await db.withdrawals.update_one(
             {"id": withdrawal["id"], "balance_refunded": True},
-            {"$set": {"balance_refunded": False}},
+            {"$set": {"balance_refunded": False,
+                      "redebit_pending": {
+                          "op_id": op, "amount": round(amount, 8),
+                          "currency": currency,
+                          "at": iso(now_utc())}}},
         )
         if claim.modified_count:
             # Re-débito condicional sobre vip_balances.{currency} (mismo campo
@@ -127,6 +140,7 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
             if currency == "USD":
                 filt: dict = {
                     "user_id": withdrawal["user_id"],
+                    "applied_credit_ops": {"$ne": op},
                     "$expr": {"$gte": [
                         {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
                                   {"$ifNull": ["$vip_balance_usd", 0.0]}]},
@@ -134,13 +148,18 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
                 }
             else:
                 filt = {"user_id": withdrawal["user_id"],
+                        "applied_credit_ops": {"$ne": op},
                         f"vip_balances.{currency}": {"$gte": guard}}
             res = await db.users.update_one(
-                filt, {"$inc": {f"vip_balances.{currency}": -amount}})
+                filt,
+                {"$inc": {f"vip_balances.{currency}": -amount},
+                 "$push": {"applied_credit_ops": {"$each": [op],
+                                                  "$slice": -2000}}})
             if res.matched_count == 0:
                 await db.withdrawals.update_one(
                     {"id": withdrawal["id"]},
-                    {"$set": {"balance_refunded": True}},
+                    {"$set": {"balance_refunded": True},
+                     "$unset": {"redebit_pending": ""}},
                 )
                 raise HTTPException(
                     status_code=409,
@@ -148,6 +167,9 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
                             "disponibles (gastó el reembolso); no se puede "
                             "reactivar este retiro."),
                 )
+            await db.withdrawals.update_one(
+                {"id": withdrawal["id"], "redebit_pending.op_id": op},
+                {"$unset": {"redebit_pending": ""}})
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,
@@ -271,10 +293,11 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
         )
     _assert_paid_lock(actor, w, new_status)
     _enforce_employee_currency_scope(actor, w.get("currency"))
-    update_doc = {"status": new_status, "admin_note": payload.get("admin_note", "")}
+    update_doc = {"admin_note": payload.get("admin_note", "")}
     # iter153 — per-status timestamps feed the client-facing progress timeline.
+    status_sets = {"status": new_status}
     if new_status != w["status"] and new_status in ("approved", "paid", "rejected"):
-        update_doc[f"{new_status}_at"] = iso(now_utc())
+        status_sets[f"{new_status}_at"] = iso(now_utc())
     # iter250 — TODAS las validaciones (comprobante, tx hash, mensajería,
     # cuenta de origen) corren ANTES de tocar el saldo: si algo falla, la
     # operación devuelve error sin haber descontado ni reembolsado nada.
@@ -300,10 +323,24 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
             if acc:
                 update_doc["paid_from_account_id"] = acc["id"]
                 update_doc["paid_from_account_label"] = acc["label"]
-    # iter250 — el ajuste de saldo y la persistencia del estado van juntos al
-    # final; el claim atómico interno impide procesar dos veces la misma
-    # transición.
-    await _reconcile_balance_on_status_change(w, new_status, update_doc)
+    # iter254(R01) — claim ATÓMICO de la transición de estado: dos peticiones
+    # simultáneas (p.ej. rechazo + aprobación) no pueden aplicar transiciones
+    # contradictorias; quien pierde la carrera recibe 409. El ajuste de saldo
+    # va inmediatamente después y, si resulta imposible, la transición se
+    # revierte antes de propagar el error.
+    claim = await db.withdrawals.update_one(
+        {"id": wid, "status": w["status"]}, {"$set": status_sets})
+    if claim.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El retiro cambió de estado mientras editabas; recarga la página.")
+    try:
+        await _reconcile_balance_on_status_change(w, new_status, update_doc)
+    except HTTPException:
+        await db.withdrawals.update_one(
+            {"id": wid, "status": new_status},
+            {"$set": {"status": w["status"]}})
+        raise
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     # iter205 — un retiro rechazado cancela su trabajo de mensajería activo.

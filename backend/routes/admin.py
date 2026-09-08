@@ -366,7 +366,9 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
 @router.get("/admin/redemptions")
 async def all_redemptions(request: Request) -> Any:
     await require_permission(request, "orders")
-    docs = await db.redemptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    docs = await db.redemptions.find(
+        {"status": {"$nin": ["initializing", "failed_init"]}},
+        {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 
@@ -419,8 +421,10 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
     net = round(float(r["total_usd"]) * (1 - pct / 100.0), 2)
     # iter249 — intención de abono en el MISMO claim atómico; abono idempotente
     # por op_id y healer si el proceso muere entre pasos.
+    # iter254(R07) — el vendedor cobra en la moneda de liquidación del canje.
+    settle_cur = r.get("settlement_currency") or "USD"
     from services.credit_recovery import pending_marker, apply_and_clear
-    marker = pending_marker(owner_id, "USD", net, "vendor-credit")
+    marker = pending_marker(owner_id, settle_cur, net, "vendor-credit")
     res = await db.redemptions.update_one(
         {"id": r["id"], "vendor_credited_at": {"$in": [None, ""]}},
         {"$set": {"vendor_credited_at": iso(now_utc()),
@@ -460,8 +464,9 @@ async def _reverse_vendor_credit_if_any(r: dict) -> None:
         {"$set": {"vendor_credit_reversed_at": iso(now_utc())}})
     if res.modified_count == 0:
         return
+    settle_cur = r.get("settlement_currency") or "USD"
     await db.users.update_one({"user_id": owner_id},
-                              {"$inc": {"vip_balances.USD": -net}})
+                              {"$inc": {f"vip_balances.{settle_cur}": -net}})
     try:
         from routes.notifications import _insert_notification
         await _insert_notification(
@@ -665,32 +670,136 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     r = await db.redemptions.find_one({"id": rid}, {"_id": 0})
     if not r:
         raise HTTPException(status_code=404, detail="No encontrado")
-    if new_status == "delivered" and r["status"] != "delivered":
-        await _on_redemption_delivered(r)
-    if new_status == "rejected" and r["status"] != "rejected":
-        # iter248 — claim atómico: dos PUT 'rejected' simultáneos (o un ciclo
-        # rejected→pending→rejected) reembolsan EXACTAMENTE una vez.
-        # iter249 — la intención del reembolso viaja en el mismo claim; si el
-        # proceso muere antes de acreditar, el healer lo completa.
-        from services.credit_recovery import pending_marker
-        refund = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
-        marker = pending_marker(r["user_id"], "USD", refund,
-                                "redemption-refund", legacy_usd=True)
+    if r.get("status") in ("initializing", "failed_init"):
+        raise HTTPException(status_code=409, detail="Canje no operable")
+
+    if r["status"] == "rejected" and new_status in ("pending", "approved", "delivered"):
+        # iter254(R02) — reactivación explícita: re-reserva stock y vuelve a
+        # cobrar ANTES de habilitar el nuevo estado.
+        await _reactivate_rejected_redemption(r, rid, new_status, actor)
+    elif new_status != r["status"]:
+        # iter254(R01) — validaciones primero; luego claim ATÓMICO de la
+        # transición (quien pierde la carrera recibe 409); efectos después
+        # (protegidos por sus propios claims idempotentes).
+        if new_status == "delivered":
+            await _assert_redemption_courier_ready(r)
+        sets: dict = {"status": new_status, "admin_note": note}
+        if new_status == "delivered":
+            sets["delivered_at"] = iso(now_utc())
+        if new_status == "rejected":
+            sets["rejection_flow_started"] = True
         claim = await db.redemptions.update_one(
-            {"id": rid, "status": {"$ne": "rejected"},
-             "rejection_applied": {"$ne": True}},
-            {"$set": {"rejection_applied": True, "credit_pending": marker}},
-        )
-        if claim.modified_count:
-            await _on_redemption_rejected(r, rid, actor, marker)
-    sets = {"status": new_status, "admin_note": note}
-    if new_status == "delivered" and r["status"] != "delivered":
-        sets["delivered_at"] = iso(now_utc())
-    await db.redemptions.update_one({"id": rid}, {"$set": sets})
+            {"id": rid, "status": r["status"]}, {"$set": sets})
+        if claim.matched_count == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="El canje cambió de estado mientras editabas; recarga.")
+        if new_status == "delivered":
+            await _credit_vendor_for_redemption(r)
+            await _record_vendor_commission_inflow(r)
+        if new_status == "rejected":
+            await _apply_rejection_effects(r, rid, actor)
+    else:
+        # mismo estado: ¿rechazo con efectos incompletos (crash previo)?
+        if new_status == "rejected" and r.get("rejection_flow_started") \
+                and not r.get("rejection_applied"):
+            await _apply_rejection_effects(r, rid, actor)
+        await db.redemptions.update_one({"id": rid},
+                                        {"$set": {"admin_note": note}})
     updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
     if new_status != r["status"]:
         await _log_redemption_status_change(actor, r, rid, new_status, note)
     return updated
+
+
+async def _apply_rejection_effects(r: dict, rid: str, actor: dict) -> None:
+    """Reembolso exactamente-una-vez (claim `rejection_applied` + marker) y
+    reversos. Reejecutable: si un crash dejó el rechazo a medias, volver a
+    PUT 'rejected' completa los efectos sin duplicarlos."""
+    from services.credit_recovery import pending_marker
+    settle_cur = r.get("settlement_currency") or "USD"
+    refund = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
+    marker = pending_marker(r["user_id"], settle_cur, refund,
+                            "redemption-refund",
+                            legacy_usd=(settle_cur == "USD"))
+    claim = await db.redemptions.update_one(
+        {"id": rid, "rejection_applied": {"$ne": True}},
+        {"$set": {"rejection_applied": True, "credit_pending": marker}},
+    )
+    if claim.modified_count:
+        await _on_redemption_rejected(r, rid, actor, marker)
+
+
+async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
+                                          actor: dict) -> None:
+    """iter254(R02) — reactivar un canje rechazado: reserva stock y re-cobra
+    (mismo importe reembolsado, misma moneda de liquidación) con operaciones
+    idempotentes; compensa si algún paso falla o si pierde la carrera."""
+    import uuid as _uuid
+    from services.balances import (debit_balance_idempotent,
+                                   credit_balance_idempotent)
+    from services.inventory import apply_stock_idempotent
+    if r.get("rejection_applied") is not True:
+        raise HTTPException(
+            status_code=409,
+            detail=("El rechazo anterior quedó incompleto; vuelve a marcarlo "
+                    "'rechazado' para completar el reembolso antes de reactivar."))
+    if new_status == "delivered":
+        await _assert_redemption_courier_ready(r)
+    settle_cur = r.get("settlement_currency") or "USD"
+    recharge = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
+    qty = int(r["quantity"])
+    nonce = _uuid.uuid4().hex[:8]
+    stock_op = f"reactivate-stock:{rid}:{nonce}"
+    debit_op = f"reactivate-debit:{rid}:{nonce}"
+    stock_status = await apply_stock_idempotent(
+        r["product_id"], -qty, stock_op,
+        extra_filter={"is_active": {"$ne": False}})
+    if stock_status == "insufficient":
+        raise HTTPException(status_code=409,
+                            detail="Sin stock disponible para reactivar este canje")
+    st = await debit_balance_idempotent(r["user_id"], settle_cur, recharge,
+                                        debit_op)
+    if st == "insufficient":
+        await apply_stock_idempotent(r["product_id"], qty, f"{stock_op}:undo",
+                                     require_available=False)
+        raise HTTPException(
+            status_code=409,
+            detail=(f"El cliente no tiene {recharge} {settle_cur} para "
+                    "reactivar este canje (ya gastó el reembolso)."))
+    sets: dict = {"status": new_status, "rejection_applied": False,
+                  "rejection_flow_started": False,
+                  "reactivated_at": iso(now_utc()),
+                  "reactivated_by": actor.get("user_id", "")}
+    if new_status == "delivered":
+        sets["delivered_at"] = iso(now_utc())
+    claim = await db.redemptions.update_one(
+        {"id": rid, "status": "rejected"}, {"$set": sets})
+    if claim.matched_count == 0:
+        # otra transición ganó la carrera: compensar cobro y stock.
+        await credit_balance_idempotent(r["user_id"], settle_cur, recharge,
+                                        f"{debit_op}:undo",
+                                        legacy_usd=(settle_cur == "USD"))
+        await apply_stock_idempotent(r["product_id"], qty, f"{stock_op}:undo",
+                                     require_available=False)
+        raise HTTPException(status_code=409,
+                            detail="El canje cambió de estado; recarga.")
+    # rastro de inventario coherente (producto empresa): el reverso del rechazo
+    # fue un ajuste_pos; la reactivación registra el ajuste_neg espejo.
+    product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})
+    if product and not product.get("owner_id"):
+        try:
+            from services.inventory import record_movement
+            await record_movement(
+                product=product, mtype="ajuste_neg", quantity=qty,
+                note=f"Reactivación de canje rechazado {rid[:8]}",
+                source="marketplace", ref_id=rid, actor=actor,
+                apply_stock=False)
+        except Exception as e:
+            logger.error(f"inventory reactivation log failed: {e}")
+    if new_status == "delivered":
+        await _credit_vendor_for_redemption(r)
+        await _record_vendor_commission_inflow(r)
 
 
 async def _on_redemption_delivered(r: dict) -> None:
@@ -753,20 +862,22 @@ async def _log_redemption_status_change(actor: dict, r: dict, rid: str,
 
 
 async def _apply_courier_fee_balance_delta(r: dict, delta: float) -> None:
-    """Charge (delta>0) or refund (delta<0) the fee difference in USD."""
+    """iter254(R07) — Charge (delta>0) or refund (delta<0) the fee difference
+    in the settlement currency of the redemption (USDT new / USD legacy)."""
+    cur = r.get("settlement_currency") or "USD"
     if delta > 0:
         owner = await db.users.find_one({"user_id": r["user_id"]}, {"_id": 0})
         from services.balances import get_user_balance, decrement_balance
-        bal = get_user_balance(owner or {}, "USD")
+        bal = get_user_balance(owner or {}, cur)
         if bal < delta:
             raise HTTPException(
                 status_code=400,
-                detail=(f"Saldo insuficiente del cliente ({round(bal, 2)} USD) "
-                        f"para cubrir la mensajería ({delta} USD)."))
-        await decrement_balance(r["user_id"], "USD", delta)
+                detail=(f"Saldo insuficiente del cliente ({round(bal, 2)} {cur}) "
+                        f"para cubrir la mensajería ({delta} {cur})."))
+        await decrement_balance(r["user_id"], cur, delta)
     elif delta < 0:
         await db.users.update_one({"user_id": r["user_id"]},
-                                  {"$inc": {"vip_balances.USD": -delta}})
+                                  {"$inc": {f"vip_balances.{cur}": -delta}})
 
 
 async def _notify_redemption_courier_fee(r: dict, rid: str, km: float,
@@ -774,13 +885,14 @@ async def _notify_redemption_courier_fee(r: dict, rid: str, km: float,
                                          delta: float) -> None:
     try:
         from routes.notifications import _insert_notification
+        cur = r.get("settlement_currency") or "USD"
         if fee_usdt > 0:
             title = "Costo de mensajería aplicado"
-            msg = (f"Se descontó {fee_usd} USD (≈ {fee_usdt} USDT · {km} km) de tu "
+            msg = (f"Se descontó {fee_usd} {cur} (≈ {fee_usdt} USDT · {km} km) de tu "
                    f"saldo por la entrega de tu canje «{r.get('product_name', '')}».")
         else:
             title = "Cobro de mensajería anulado"
-            msg = (f"Se devolvió {abs(delta)} USD a tu saldo: el cobro de mensajería "
+            msg = (f"Se devolvió {abs(delta)} {cur} a tu saldo: el cobro de mensajería "
                    f"de tu canje «{r.get('product_name', '')}» fue anulado.")
         await _insert_notification(recipient_user_id=r["user_id"], type="courier_fee",
                                    title=title, message=msg,

@@ -134,7 +134,7 @@ class TestFundInflows:
     def test_company_sale_enters_fund_and_reverses_on_reject(self):
         db = _db()
         db.users.update_one({"user_id": "user_test_vip01"},
-                            {"$set": {"vip_balance_usd": 5000.0}})
+                            {"$set": {"vip_balances.USDT": 5000.0}})
         p = _create_product(price_usd=10.0, stock=10)
         r = requests.post(f"{API}/vip/redeem", headers=_h(VIP_TOKEN),
                           json={"product_id": p["id"], "quantity": 3,
@@ -184,7 +184,7 @@ class TestFundInflows:
             requests.post(f"{API}/admin/vendor-products/{pid}/approve",
                           headers=_h(ADMIN_TOKEN), json={})
             db.users.update_one({"user_id": "user_test_admin01"},
-                                {"$set": {"vip_balance_usd": 1000.0}})
+                                {"$set": {"vip_balances.USDT": 1000.0}})
             r = requests.post(f"{API}/vip/redeem", headers=_h(ADMIN_TOKEN),
                               json={"product_id": pid, "quantity": 2,
                                     "delivery_address": "x"})

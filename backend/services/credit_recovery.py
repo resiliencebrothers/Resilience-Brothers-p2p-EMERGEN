@@ -33,14 +33,17 @@ PENDING_COLLECTIONS = ("orders", "deposits", "redemptions", "withdrawals",
 
 
 def pending_marker(user_id: str, code: str, amount: float, reason: str,
-                   legacy_usd: bool = False) -> dict:
-    """Intención de abono que viaja dentro del claim atómico del doc origen."""
+                   legacy_usd: bool = False, prepared: bool = True) -> dict:
+    """Intención de abono que viaja dentro del claim atómico del doc origen.
+    `prepared=False` (iter254/R04): el importe aún no es definitivo — el healer
+    NO debe acreditarlo tal cual; debe completar el cálculo primero."""
     return {
         "op_id": f"{reason}:{uuid.uuid4().hex[:12]}",
         "user_id": user_id,
         "code": code,
         "amount": round(float(amount), 8),
         "legacy_usd": bool(legacy_usd),
+        "prepared": bool(prepared),
         "at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -77,10 +80,151 @@ async def heal_pending_credits(max_age_seconds: int = 90) -> int:
                 await db[name].update_one({key: row[key]},
                                           {"$unset": {"credit_pending": ""}})
                 continue
+            # iter254(R04) — marker sin preparar: el importe bruto NO se
+            # acredita; para order-accum se recalcula la amortización
+            # (idempotente por orden) y se fija el neto antes de abonar.
+            if cp.get("prepared") is False:
+                if name == "orders" and str(cp.get("op_id", "")).startswith("order-accum"):
+                    order = await db.orders.find_one(
+                        {"id": row[key]},
+                        {"_id": 0, "id": 1, "user_id": 1, "to_code": 1})
+                    if not order:
+                        await db[name].update_one({key: row[key]},
+                                                  {"$unset": {"credit_pending": ""}})
+                        continue
+                    from services.balances import _apply_capital_request_repayment
+                    net = await _apply_capital_request_repayment(
+                        cp["user_id"], cp["code"], float(cp["amount"]),
+                        order["id"])
+                    if net <= 0:
+                        await db[name].update_one({key: row[key]},
+                                                  {"$unset": {"credit_pending": ""}})
+                        healed += 1
+                        continue
+                    cp["amount"] = round(float(net), 8)
+                    cp["prepared"] = True
+                    await db[name].update_one(
+                        {key: row[key], "credit_pending.op_id": cp["op_id"]},
+                        {"$set": {"credit_pending.amount": cp["amount"],
+                                  "credit_pending.prepared": True}})
+                else:
+                    logger.warning("credit_pending sin preparar de origen "
+                                   "desconocido: %s/%s op=%s — no se acredita",
+                                   name, row[key], cp.get("op_id"))
+                    continue
             applied = await apply_and_clear(name, row[key], cp, key_field=key)
             healed += 1
             logger.warning(
                 "credit_pending sanado: %s/%s op=%s +%s %s → %s (aplicado=%s)",
                 name, row[key], cp["op_id"], cp["amount"], cp["code"],
                 cp["user_id"], applied)
+    return healed
+
+
+async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
+    """iter254(R03) — resuelve de forma DETERMINISTA los intentos que murieron
+    a medias en el protocolo reserva/operación/activación: los op_ids del doc
+    'initializing' dicen con certeza qué efectos llegaron a aplicarse, así el
+    reaper revierte (o completa) sin duplicar ni perder dinero/stock."""
+    from services.balances import credit_balance_idempotent as _credit
+    from services.balances import op_was_applied, debit_balance_idempotent
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(seconds=max_age_seconds)).isoformat()
+    healed = 0
+
+    # --- retiros a medio crear -------------------------------------------
+    rows = await db.withdrawals.find(
+        {"status": "initializing", "created_at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "user_id": 1, "currency": 1, "init_op_id": 1,
+         "amount_usd": 1, "courier_fee_currency_amount": 1}).to_list(100)
+    for w in rows:
+        op = w.get("init_op_id") or ""
+        amount = (float(w.get("amount_usd") or 0)
+                  + float(w.get("courier_fee_currency_amount") or 0))
+        if op and await op_was_applied(w["user_id"], op):
+            await _credit(w["user_id"], w.get("currency") or "USD", amount,
+                          f"{op}:undo")
+        res = await db.withdrawals.update_one(
+            {"id": w["id"], "status": "initializing"},
+            {"$set": {"status": "failed_init"}})
+        if res.modified_count:
+            healed += 1
+            logger.warning("retiro initializing revertido: %s", w["id"])
+
+    # --- canjes a medio crear --------------------------------------------
+    rows = await db.redemptions.find(
+        {"status": "initializing", "created_at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "user_id": 1, "settlement_currency": 1,
+         "init_op_id": 1, "stock_op_id": 1, "product_id": 1, "quantity": 1,
+         "total_usd": 1, "courier_fee_usd": 1}).to_list(100)
+    for r in rows:
+        from services.inventory import apply_stock_idempotent
+        stock_op = r.get("stock_op_id") or ""
+        if stock_op:
+            st = await db.products.find_one(
+                {"id": r["product_id"], "applied_stock_ops": stock_op},
+                {"_id": 1})
+            if st:
+                await apply_stock_idempotent(r["product_id"],
+                                             int(r.get("quantity") or 0),
+                                             f"{stock_op}:undo",
+                                             require_available=False)
+        op = r.get("init_op_id") or ""
+        amount = (float(r.get("total_usd") or 0)
+                  + float(r.get("courier_fee_usd") or 0))
+        if op and await op_was_applied(r["user_id"], op):
+            await _credit(r["user_id"],
+                          r.get("settlement_currency") or "USDT", amount,
+                          f"{op}:undo")
+        res = await db.redemptions.update_one(
+            {"id": r["id"], "status": "initializing"},
+            {"$set": {"status": "failed_init"}})
+        if res.modified_count:
+            healed += 1
+            logger.warning("canje initializing revertido: %s", r["id"])
+
+    # --- movimientos de inventario sin stock aplicado ---------------------
+    rows = await db.inventory_movements.find(
+        {"needs_stock": True, "stock_applied": {"$ne": True},
+         "created_at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "product_id": 1, "type": 1, "quantity": 1}).to_list(200)
+    for m in rows:
+        from services.inventory import apply_stock_idempotent, movement_delta
+        delta = movement_delta(m.get("type") or "", int(m.get("quantity") or 0))
+        st = await apply_stock_idempotent(m["product_id"], delta,
+                                          f"invmov:{m['id']}",
+                                          require_available=(delta < 0))
+        sets = {"stock_applied": True}
+        if st == "insufficient":
+            sets["stock_apply_failed"] = True
+            logger.warning("movimiento %s: stock insuficiente al recuperar", m["id"])
+        await db.inventory_movements.update_one({"id": m["id"]},
+                                                {"$set": sets})
+        healed += 1
+
+    # --- re-débitos de reactivación de retiros a medias -------------------
+    rows = await db.withdrawals.find(
+        {"redebit_pending.at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "user_id": 1, "redebit_pending": 1}).to_list(100)
+    for w in rows:
+        rp = w.get("redebit_pending") or {}
+        op = rp.get("op_id") or ""
+        if not op:
+            await db.withdrawals.update_one({"id": w["id"]},
+                                            {"$unset": {"redebit_pending": ""}})
+            continue
+        st = await debit_balance_idempotent(w["user_id"],
+                                            rp.get("currency") or "USD",
+                                            float(rp.get("amount") or 0), op)
+        if st == "insufficient":
+            # el cliente gastó el reembolso: el retiro vuelve a 'rejected'.
+            await db.withdrawals.update_one(
+                {"id": w["id"]},
+                {"$set": {"status": "rejected", "balance_refunded": True},
+                 "$unset": {"redebit_pending": ""}})
+        else:
+            await db.withdrawals.update_one(
+                {"id": w["id"], "redebit_pending.op_id": op},
+                {"$unset": {"redebit_pending": ""}})
+        healed += 1
     return healed

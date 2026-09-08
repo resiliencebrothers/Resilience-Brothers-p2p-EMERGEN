@@ -136,9 +136,9 @@ export default function RedemptionsTable({ redemptions, onUpdateStatus, onSetCou
                     </div>
                   )}
                   <div className="flex gap-1">
-                    <Button size="sm" onClick={() => onUpdateStatus(r.id, "approved")} className="bg-[#22C55E] text-black rounded-none h-7 text-xs">✓</Button>
-                    <Button size="sm" onClick={() => onUpdateStatus(r.id, "delivered")} className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs">⇪</Button>
-                    <Button size="sm" onClick={() => onUpdateStatus(r.id, "rejected")} className="bg-[#EF4444] text-white rounded-none h-7 text-xs">✕</Button>
+                    <Button size="sm" onClick={() => onUpdateStatus(r.id, "approved")} data-testid={`redemption-status-approved-${r.id}`} className="bg-[#22C55E] text-black rounded-none h-7 text-xs">✓</Button>
+                    <Button size="sm" onClick={() => onUpdateStatus(r.id, "delivered")} data-testid={`redemption-status-delivered-${r.id}`} className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs">⇪</Button>
+                    <Button size="sm" onClick={() => onUpdateStatus(r.id, "rejected")} data-testid={`redemption-status-rejected-${r.id}`} className="bg-[#EF4444] text-white rounded-none h-7 text-xs">✕</Button>
                   </div>
                 </div>
               </td>
