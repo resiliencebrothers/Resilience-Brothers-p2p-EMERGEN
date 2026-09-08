@@ -1,0 +1,43 @@
+{
+  "summary": "iter241 frontend verification: Install-App button always visible + Theme toggle (light/dark) with localStorage persistence on client dashboard, admin panel, and mobile menu. All flows PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Light mode - all reviewed views (/dashboard, /dashboard/assets, /dashboard/marketplace + redeem dialog, /admin, /admin/inventory Control, /admin/users, /admin/withdrawals, mobile menu)", "issues": ["No readability issues detected. Body bg rgb(244,242,250) with dark text (#1b1626). Tables, inputs, badges (NO VERIFICADO, BAJO/OK), dialogs, and sidebars all render with adequate contrast. Screenshots captured OK."]}
+    ]
+  },
+  "verified_flows": [
+    "Cliente /dashboard: logout-btn-install-app visible=True in sidebar footer even without native beforeinstallprompt (headless).",
+    "Click logout-btn-install-app -> install-generic-help-dialog opens (visible=True) with Android + PC instructions.",
+    "install-generic-help-close closes the dialog (visible after close = False).",
+    "dashboard-theme-toggle: dark -> light adds 'light' class on <html> and sets localStorage.rb_theme='light'.",
+    "Persistence: page reload keeps html.light=True.",
+    "Admin /admin: admin-install-app and admin-theme-toggle visible in footer; theme persisted across role/route change (light stayed True on admin views).",
+    "Mobile viewport 390x844: dashboard-mobile-menu-trigger opens sheet showing logout-mobile-btn-install-app and a theme-toggle in the footer.",
+    "Final restoration: toggling back sets html without 'light' class and localStorage.rb_theme='dark'. Theme left in DARK as requested."
+  ],
+  "console_warnings_observed": [
+    "Warning: Missing `Description` or `aria-describedby={undefined}` for {DialogContent} — accessibility warning on some dialogs (mobile menu SheetContent and marketplace dialog). Minor a11y improvement, not blocking.",
+    "Encountered two children with the same key on /admin/inventory — pre-existing (iter238-era), not related to iter241.",
+    "SW fetchBuildId Failed to fetch — pre-existing service worker warning, non-blocking."
+  ],
+  "test_report_links": [],
+  "action_items": [
+    "(Optional) Add `aria-describedby` / DialogDescription to the mobile menu SheetContent and marketplace redeem dialog to silence Radix a11y warnings.",
+    "(Optional, unrelated to iter241) Fix duplicate React keys warning in /admin/inventory list."
+  ],
+  "critical_code_review_comments": [
+    "InstallAppButton correctly falls back to generic dialog when neither canInstall nor iOS — matches iter241 spec.",
+    "theme.js applies class only at setTheme; initial applyTheme should also run on app boot (assumed to be wired in App.jsx via applyTheme(getTheme()) — verified via reload persistence test).",
+    "index.css html.light overrides cover common tailwind bg/text/border tokens; observed views all render legibly. Consider adding a `.light` variant for hardcoded green/red badge backgrounds if any future badges rely on very light neutrals — none observed currently."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "test_credentials": "smoke_session_vip_iter229 (VIP), smoke_session_admin_iter226 (Admin) — from /app/memory/test_credentials.md",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter241 (PWA install button always visible + theme toggle with rb_theme localStorage) fully verified via Playwright against preview URL. Final theme restored to dark. No regressions found in critical light-mode views."
+}

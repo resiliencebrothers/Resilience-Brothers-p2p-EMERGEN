@@ -54,12 +54,16 @@ from routes.delivery_chat import router as delivery_chat_router  # noqa: E402
 from routes.municipality_rates import router as municipality_rates_router  # noqa: E402
 from routes.vip_ledger_ops import router as vip_ledger_ops_router  # noqa: E402
 from routes.deposits import router as deposits_router  # noqa: E402
+from routes.cash_boxes import router as cash_boxes_router  # noqa: E402
 from routes.referrals import router as referrals_router  # noqa: E402
 from routes.payment_accounts import router as payment_accounts_router  # noqa: E402
 from routes.qr_poster import router as qr_poster_router  # noqa: E402
 from routes.crypto_addresses import router as crypto_addresses_router  # noqa: E402
 from routes.reconciliation import router as reconciliation_router  # noqa: E402
 from routes.ops_report import router as ops_report_router  # noqa: E402
+from routes.inventory import router as inventory_router  # noqa: E402
+from routes.stores import router as stores_router  # noqa: E402
+from routes.vendor_products import router as vendor_products_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -112,12 +116,16 @@ api_router.include_router(delivery_chat_router)
 api_router.include_router(municipality_rates_router)
 api_router.include_router(vip_ledger_ops_router)
 api_router.include_router(deposits_router)
+api_router.include_router(cash_boxes_router)
 api_router.include_router(payment_accounts_router)
 api_router.include_router(referrals_router)
 api_router.include_router(qr_poster_router)
 api_router.include_router(crypto_addresses_router)
 api_router.include_router(reconciliation_router)
 api_router.include_router(ops_report_router)
+api_router.include_router(inventory_router)
+api_router.include_router(stores_router)
+api_router.include_router(vendor_products_router)
 
 app.include_router(api_router)
 
@@ -164,6 +172,17 @@ async def start_background_jobs() -> None:
                 "Configúralas en Panel Admin → Resumen.")
     except Exception:
         pass
+
+    # iter219 — carga idempotente del catálogo del Excel al inventario.
+    try:
+        from services.inventory_seed import (seed_excel_inventory,
+                                             activate_excel_inventory_once,
+                                             apply_excel_product_photos_once)
+        await seed_excel_inventory()
+        await activate_excel_inventory_once()
+        await apply_excel_product_photos_once()
+    except Exception as e:
+        logging.getLogger("inventory").error(f"[inventory-seed] failed: {e}")
 
     # iter55.3 + iter55.7 — one-shot idempotent migration: strip whitespace
     # (and uppercase) currency codes across ALL collections that store them so

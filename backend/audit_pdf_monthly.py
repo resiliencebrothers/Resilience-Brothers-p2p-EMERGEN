@@ -268,6 +268,67 @@ def _build_styles():
     }
 
 
+def _summary_story(kpis: Dict[str, Any], period_label: str,
+                   S: Dict[str, Any]) -> List[Any]:
+    """Página 1: cabecera + KPIs + tablas por categoría/actor/anti-fraude."""
+    return [
+        Paragraph("/ REPORTE MENSUAL", S["label"]),
+        Paragraph(f"Auditoría · {period_label}", S["h1"]),
+        Paragraph(
+            f"Total de acciones registradas en el período: "
+            f"<font color='#8B5CF6'><b>{kpis.get('total_actions', 0)}</b></font> · "
+            f"Actores distintos: <font color='#8B5CF6'><b>{kpis.get('distinct_actors', 0)}</b></font>",
+            S["sub"],
+        ),
+        _summary_strip(kpis, S),
+        Spacer(1, 12),
+        Paragraph("Acciones por categoría", S["h2"]),
+        KeepTogether(_table_by_group(kpis, S)),
+        Spacer(1, 10),
+        Paragraph("Top actores del período", S["h2"]),
+        KeepTogether(_table_top_actors(kpis, S)),
+        Spacer(1, 10),
+        Paragraph("Señales anti-fraude", S["h2"]),
+        KeepTogether(_table_anti_fraud(kpis, S)),
+        Spacer(1, 6),
+    ]
+
+
+def _detail_story(entries: List[dict], period_label: str,
+                  S: Dict[str, Any]) -> List[Any]:
+    """Página(s) de detalle cronológico."""
+    return [
+        PageBreak(),
+        Paragraph("/ DETALLE CRONOLÓGICO", S["label"]),
+        Paragraph(f"Todas las acciones · {period_label}", S["h1"]),
+        Paragraph(
+            "Filas ordenadas de la más reciente a la más antigua. "
+            "La columna <b>Perms</b> muestra el alcance efectivo del actor en el momento del evento.",
+            S["sub"],
+        ),
+        _build_detail_table(entries),
+        Spacer(1, 14),
+    ]
+
+
+def _integrity_story(entries: List[dict], period_label: str,
+                     integrity_hash: str, S: Dict[str, Any]) -> List[Any]:
+    """Pie de integridad (hash SHA-256 recalculable)."""
+    return [
+        Paragraph("Firma de integridad", S["h2"]),
+        Paragraph(
+            "Hash SHA-256 sobre la proyección canónica de todos los eventos del "
+            "período (id · timestamp · actor · acción · entidad). Recalculable en "
+            "cualquier momento desde el registro de auditoría — si difiere del valor "
+            "impreso, alguien modificó filas históricas.",
+            S["sub"],
+        ),
+        Paragraph(f"<b>Período:</b> {period_label}", S["hash"]),
+        Paragraph(f"<b>Filas incluidas:</b> {len(entries)}", S["hash"]),
+        Paragraph(f"<b>SHA-256:</b> {integrity_hash}", S["hash"]),
+    ]
+
+
 def generate_monthly_audit_pdf(entries: List[dict], period_label: str,
                                 kpis: Dict[str, Any], integrity_hash: str) -> bytes:
     """Render the monthly report PDF. Returns the file bytes."""
@@ -277,59 +338,11 @@ def generate_monthly_audit_pdf(entries: List[dict], period_label: str,
         leftMargin=24, rightMargin=24, topMargin=80, bottomMargin=44,
     )
     S = _build_styles()
-
-    story: List[Any] = []
-    story.append(Paragraph("/ REPORTE MENSUAL", S["label"]))
-    story.append(Paragraph(f"Auditoría · {period_label}", S["h1"]))
-    story.append(Paragraph(
-        f"Total de acciones registradas en el período: "
-        f"<font color='#8B5CF6'><b>{kpis.get('total_actions', 0)}</b></font> · "
-        f"Actores distintos: <font color='#8B5CF6'><b>{kpis.get('distinct_actors', 0)}</b></font>",
-        S["sub"],
-    ))
-
-    # 1. KPI strip
-    story.append(_summary_strip(kpis, S))
-    story.append(Spacer(1, 12))
-
-    # 2. Two-column: by-group + top actors
-    story.append(Paragraph("Acciones por categoría", S["h2"]))
-    story.append(KeepTogether(_table_by_group(kpis, S)))
-    story.append(Spacer(1, 10))
-
-    story.append(Paragraph("Top actores del período", S["h2"]))
-    story.append(KeepTogether(_table_top_actors(kpis, S)))
-    story.append(Spacer(1, 10))
-
-    story.append(Paragraph("Señales anti-fraude", S["h2"]))
-    story.append(KeepTogether(_table_anti_fraud(kpis, S)))
-    story.append(Spacer(1, 6))
-
-    # 3. Detailed page break
-    story.append(PageBreak())
-    story.append(Paragraph("/ DETALLE CRONOLÓGICO", S["label"]))
-    story.append(Paragraph(f"Todas las acciones · {period_label}", S["h1"]))
-    story.append(Paragraph(
-        "Filas ordenadas de la más reciente a la más antigua. "
-        "La columna <b>Perms</b> muestra el alcance efectivo del actor en el momento del evento.",
-        S["sub"],
-    ))
-    story.append(_build_detail_table(entries))
-    story.append(Spacer(1, 14))
-
-    # 4. Integrity footer (last thing before doc end)
-    story.append(Paragraph("Firma de integridad", S["h2"]))
-    story.append(Paragraph(
-        "Hash SHA-256 sobre la proyección canónica de todos los eventos del "
-        "período (id · timestamp · actor · acción · entidad). Recalculable en "
-        "cualquier momento desde el registro de auditoría — si difiere del valor "
-        "impreso, alguien modificó filas históricas.",
-        S["sub"],
-    ))
-    story.append(Paragraph(f"<b>Período:</b> {period_label}", S["hash"]))
-    story.append(Paragraph(f"<b>Filas incluidas:</b> {len(entries)}", S["hash"]))
-    story.append(Paragraph(f"<b>SHA-256:</b> {integrity_hash}", S["hash"]))
-
+    story: List[Any] = (
+        _summary_story(kpis, period_label, S)
+        + _detail_story(entries, period_label, S)
+        + _integrity_story(entries, period_label, integrity_hash, S)
+    )
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     pdf_bytes = buf.getvalue()
     buf.close()

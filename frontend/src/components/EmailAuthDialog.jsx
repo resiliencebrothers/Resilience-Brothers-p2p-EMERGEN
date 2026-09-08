@@ -13,6 +13,8 @@ import { AuthSuccessPanel } from "./auth/AuthSuccessPanel";
 import { GoogleAuthButton } from "./auth/GoogleAuthButton";
 import { AuthNotice } from "./auth/AuthNotice";
 import { AuthCredentialsFields } from "./auth/AuthCredentialsFields";
+import { Turnstile } from "@marsidev/react-turnstile";
+import { getTheme } from "@/lib/theme";
 
 const TITLES = {
   register: "Crear cuenta",
@@ -48,11 +50,23 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
   const [resending, setResending] = useState(false);
   const nameInputRef = useRef(null);
+  // iter246 — verificación "No soy un robot" (Cloudflare Turnstile).
+  const [captchaCfg, setCaptchaCfg] = useState(null);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaKey, setCaptchaKey] = useState(0);
+
+  useEffect(() => {
+    if (!open || captchaCfg !== null) return;
+    axios.get(`${API}/captcha/config`)
+      .then((r) => setCaptchaCfg(r.data))
+      .catch(() => setCaptchaCfg({ enabled: false }));
+  }, [open, captchaCfg]);
 
   const reset = () => {
     setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false);
     setName(""); setPhone(""); setRemember24h(false); setLoading(false);
     setSuccessMsg(""); setNotice(null); setMode("login");
+    setCaptchaToken(""); setCaptchaKey((k) => k + 1);
   };
 
   // When the dialog opens with a prefilled email (from the verify-email flow),
@@ -127,9 +141,10 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
         return;
       }
       const url = mode === "register" ? "/auth/register" : "/auth/login";
+      const captcha = captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {};
       const body = mode === "register"
-        ? { email: email.trim(), password, name: name.trim(), phone: phone.trim() }
-        : { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}) };
+        ? { email: email.trim(), password, name: name.trim(), phone: phone.trim(), ...captcha }
+        : { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}), ...captcha };
       const r = await axios.post(`${API}${url}`, body, { withCredentials: true });
       if (mode === "register") {
         // iter17: registration no longer logs in — must verify email first
@@ -144,6 +159,9 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard");
     } catch (err) {
       handleAuthError(err);
+      // iter246 — el token Turnstile es de un solo uso: regenerar tras fallo.
+      setCaptchaToken("");
+      setCaptchaKey((k) => k + 1);
     } finally {
       setLoading(false);
     }
@@ -226,10 +244,23 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               </label>
             )}
 
+            {captchaCfg?.enabled && mode !== "forgot" && (
+              <div className="flex justify-center" data-testid="captcha-widget">
+                <Turnstile
+                  key={captchaKey}
+                  siteKey={captchaCfg.site_key}
+                  options={{ theme: getTheme() === "light" ? "light" : "dark", language: "es" }}
+                  onSuccess={(t) => setCaptchaToken(t)}
+                  onExpire={() => setCaptchaToken("")}
+                  onError={() => setCaptchaToken("")}
+                />
+              </div>
+            )}
+
             <Button
               type="submit"
               data-testid="auth-submit"
-              disabled={loading}
+              disabled={loading || (captchaCfg?.enforced && mode !== "forgot" && !captchaToken)}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
             >
               {loading ? "..." : SUBMIT_LABELS[mode]}

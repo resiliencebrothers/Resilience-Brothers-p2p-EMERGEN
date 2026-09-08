@@ -21,73 +21,23 @@ from pydantic import BaseModel, Field
 
 from db_client import db
 from auth_utils import (
-    require_staff, require_permission,
+    require_staff, require_permission, require_admin,
     now_utc, iso,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
 )
 from audit_log import log_action
 from services.currency_utils import norm_code as _norm_code
 from services.company_funds_common import assert_can_manage_company_funds
+from services.fund_accounts import (  # noqa: F401 — re-export compat
+    CASH_BOX_NAME,
+    HAS_ACC as _HAS_ACC,
+    account_assigned_balances as _account_assigned_balances,
+    auto_paid_from_account,
+    get_or_create_cash_box,
+    resolve_fund_account,
+)
 
 router = APIRouter(tags=["Admin"])
-
-_HAS_ACC = {"$nin": [None, ""]}
-
-# iter195 — company cash box. All physical cash (CUP / USD efectivo) enters
-# and leaves this box automatically, per operator instruction.
-CASH_BOX_NAME = "Fondo Resilience"
-
-
-async def get_or_create_cash_box(currency: str) -> dict:
-    """Return {id, label} of the company cash box for `currency`, creating
-    (or reactivating) it lazily on first use."""
-    code = _norm_code(currency)
-    fa = await db.fund_accounts.find_one(
-        {"currency": code, "name": CASH_BOX_NAME}, {"_id": 0})
-    if fa:
-        if not fa.get("is_active", True):
-            await db.fund_accounts.update_one(
-                {"id": fa["id"]}, {"$set": {"is_active": True}})
-        return {"id": fa["id"], "label": fa.get("name") or fa["id"]}
-    doc = {
-        "id": f"facc_{uuid.uuid4().hex[:12]}",
-        "name": CASH_BOX_NAME,
-        "currency": code,
-        "method": "cash",
-        "note": "Caja de efectivo de la empresa (auto-creada)",
-        "is_active": True,
-        "created_at": iso(now_utc()),
-        "created_by_id": "system",
-        "created_by_name": "Sistema",
-    }
-    await db.fund_accounts.insert_one({**doc})
-    return {"id": doc["id"], "label": doc["name"]}
-
-
-async def auto_paid_from_account(
-    currency: str, method: Optional[str] = None,
-) -> Optional[dict]:
-    """iter195 — auto-attribution when staff didn't pick an account:
-    * method == "cash" → the company cash box (created lazily).
-    * exactly ONE active account for the currency → that account.
-    * otherwise → None (stays unassigned)."""
-    code = _norm_code(currency)
-    if not code:
-        return None
-    if method == "cash":
-        return await get_or_create_cash_box(code)
-    opts: List[dict] = []
-    async for pa in db.payment_accounts.find(
-        {"currency_code": code, "is_active": True},
-        {"_id": 0, "id": 1, "label": 1},
-    ):
-        opts.append({"id": pa["id"], "label": pa.get("label") or pa["id"]})
-    async for fa in db.fund_accounts.find(
-        {"currency": code, "is_active": True},
-        {"_id": 0, "id": 1, "name": 1},
-    ):
-        opts.append({"id": fa["id"], "label": fa.get("name") or fa["id"]})
-    return opts[0] if len(opts) == 1 else None
 
 
 class FundAccountCreate(BaseModel):
@@ -110,85 +60,6 @@ class FundTransferCreate(BaseModel):
     amount: float = Field(..., gt=0, le=1_000_000_000)
     note: str = Field(default="", max_length=300)
     totp_code: Optional[str] = Field(None, max_length=11)
-
-
-async def resolve_fund_account(account_id: str) -> Optional[dict]:
-    """Resolve a payment account (Cuentas de Cobro) or a custom fund account
-    into a uniform {id, label, source, method, currency, is_active} dict."""
-    if not account_id:
-        return None
-    pa = await db.payment_accounts.find_one({"id": account_id}, {"_id": 0})
-    if pa:
-        return {
-            "id": pa["id"], "label": pa.get("label") or pa["id"],
-            "source": "payment", "method": "bank",
-            "currency": _norm_code(pa.get("currency_code")),
-            "is_active": bool(pa.get("is_active", True)),
-        }
-    fa = await db.fund_accounts.find_one({"id": account_id}, {"_id": 0})
-    if fa:
-        return {
-            "id": fa["id"], "label": fa.get("name") or fa["id"],
-            "source": "custom", "method": fa.get("method") or "other",
-            "currency": _norm_code(fa.get("currency")),
-            "is_active": bool(fa.get("is_active", True)),
-        }
-    return None
-
-
-async def _account_assigned_balances(code: str) -> Dict[str, float]:
-    """Per-account signed balance for `code` across every attributed source:
-    order inflows, VIP batch inflows, tagged adjustments, transfers, and
-    paid withdrawals attributed via `paid_from_account_id`."""
-    totals: Dict[str, float] = {}
-
-    def _add(acc_id: Any, amt: float) -> None:
-        if not acc_id:
-            return
-        totals[acc_id] = totals.get(acc_id, 0.0) + amt
-
-    async for o in db.orders.find(
-        {"status": {"$in": ["approved", "completed"]}, "from_code": code,
-         "payment_account_id": _HAS_ACC},
-        {"_id": 0, "payment_account_id": 1, "amount_from": 1},
-    ):
-        _add(o["payment_account_id"], float(o.get("amount_from") or 0.0))
-
-    async for it in db.vip_batch_items.find(
-        {"status": "approved", "from_code": code,
-         "to_code": {"$nin": [None, ""]}, "payment_account_id": _HAS_ACC},
-        {"_id": 0, "payment_account_id": 1, "amount": 1},
-    ):
-        _add(it["payment_account_id"], float(it.get("amount") or 0.0))
-
-    async for a in db.company_fund_adjustments.find(
-        {"currency": code, "account_id": _HAS_ACC},
-        {"_id": 0, "account_id": 1, "amount": 1, "adjustment_type": 1},
-    ):
-        amt = float(a.get("amount") or 0.0)
-        _add(a["account_id"], amt if a.get("adjustment_type") == "inflow" else -amt)
-
-    async for tr in db.fund_account_transfers.find(
-        {"currency": code},
-        {"_id": 0, "from_account_id": 1, "to_account_id": 1, "amount": 1},
-    ):
-        amt = float(tr.get("amount") or 0.0)
-        _add(tr.get("from_account_id"), -amt)
-        _add(tr.get("to_account_id"), amt)
-
-    async for w in db.withdrawals.find(
-        {"status": "paid", "currency": code, "paid_from_account_id": _HAS_ACC},
-        {"_id": 0, "paid_from_account_id": 1, "amount_usd": 1},
-    ):
-        _add(w["paid_from_account_id"], -float(w.get("amount_usd") or 0.0))
-
-    async for cw in db.company_withdrawals.find(
-        {"status": "paid", "currency": code, "paid_from_account_id": _HAS_ACC},
-        {"_id": 0, "paid_from_account_id": 1, "amount": 1},
-    ):
-        _add(cw["paid_from_account_id"], -float(cw.get("amount") or 0.0))
-
-    return totals
 
 
 @router.get("/admin/fund-accounts/options")
@@ -239,15 +110,25 @@ async def fund_account_breakdown(currency: str, request: Request) -> Any:
             "source": "payment", "method": "bank",
             "is_active": bool(pa.get("is_active", True)),
             "balance": round(assigned.get(pa["id"], 0.0), 4),
+            "min_balance_alert": pa.get("min_balance_alert"),
+            "low_balance_alerted_at": pa.get("low_balance_alerted_at", ""),
         })
     async for fa in db.fund_accounts.find({"currency": code}, {"_id": 0}):
         seen.add(fa["id"])
-        accounts.append({
+        row = {
             "id": fa["id"], "label": fa.get("name") or fa["id"],
             "source": "custom", "method": fa.get("method") or "other",
             "is_active": bool(fa.get("is_active", True)),
             "balance": round(assigned.get(fa["id"], 0.0), 4),
-        })
+            "min_balance_alert": fa.get("min_balance_alert"),
+            "low_balance_alerted_at": fa.get("low_balance_alerted_at", ""),
+        }
+        # iter235 — último desglose de billetes de las cuentas de efectivo.
+        if row["method"] == "cash":
+            row["denoms_snapshot"] = await db.fund_account_denoms.find_one(
+                {"account_id": fa["id"]}, {"_id": 0},
+                sort=[("created_at", -1)])
+        accounts.append(row)
     for acc_id, bal in assigned.items():
         if acc_id not in seen:
             accounts.append({
@@ -269,6 +150,166 @@ async def fund_account_breakdown(currency: str, request: Request) -> Any:
         "unassigned": round(unassigned, 4),
         "transfers": transfers,
     }
+
+
+class MinBalancePayload(BaseModel):
+    min_balance: Optional[float] = Field(None, ge=0, le=1_000_000_000)
+
+
+class DenomsSnapshotPayload(BaseModel):
+    denominations: Dict[str, int]
+    note: str = Field(default="", max_length=200)
+
+
+@router.get("/admin/company-funds/accounts/{account_id}/denominations")
+async def list_account_denoms(account_id: str, request: Request) -> Any:
+    """iter235 — historial de desgloses de billetes de una cuenta de efectivo."""
+    actor = await require_permission(request, "company_funds")
+    acc = await resolve_fund_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    _enforce_employee_currency_scope(actor, acc["currency"])
+    return await db.fund_account_denoms.find(
+        {"account_id": account_id}, {"_id": 0}) \
+        .sort("created_at", -1).to_list(20)
+
+
+@router.post("/admin/company-funds/accounts/{account_id}/denominations")
+async def save_account_denoms(account_id: str, payload: DenomsSnapshotPayload,
+                              request: Request) -> Any:
+    """iter235 — registra en qué billetes está repartido el efectivo de la
+    cuenta (ej. Fondo Resilience): guarda el conteo por denominación y la
+    diferencia contra el balance del sistema (cuadrada/sobrante/faltante)."""
+    from routes.admin_company_funds import CASH_DENOMINATIONS
+
+    actor = await require_permission(request, "company_funds")
+    acc = await resolve_fund_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    code = acc["currency"]
+    _enforce_employee_currency_scope(actor, code)
+    if acc.get("method") != "cash":
+        raise HTTPException(
+            status_code=400,
+            detail="El desglose de billetes solo aplica a cuentas de efectivo")
+    valid = CASH_DENOMINATIONS.get(code)
+    if not valid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No hay denominaciones definidas para {code}")
+    clean: Dict[str, int] = {}
+    total = 0.0
+    for k, v in payload.denominations.items():
+        try:
+            denom, qty = int(float(k)), int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Desglose inválido")
+        if denom not in valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Denominación {denom} no válida para {code}")
+        if qty < 0:
+            raise HTTPException(status_code=400,
+                                detail="Las cantidades no pueden ser negativas")
+        if qty:
+            clean[str(denom)] = qty
+            total += denom * qty
+    total = round(total, 2)
+    assigned = await _account_assigned_balances(code)
+    system = round(float(assigned.get(account_id, 0.0)), 2)
+    diff = round(total - system, 2)
+    doc = {
+        "id": f"fdnm_{uuid.uuid4().hex[:12]}",
+        "account_id": account_id,
+        "account_label": acc["label"],
+        "currency": code,
+        "denominations": clean,
+        "total": total,
+        "system_balance": system,
+        "difference": diff,
+        "status": "cuadrada" if diff == 0 else ("sobrante" if diff > 0 else "faltante"),
+        "note": payload.note.strip(),
+        "created_at": iso(now_utc()),
+        "created_by_id": actor["user_id"],
+        "created_by_name": actor.get("name") or actor.get("email") or "",
+    }
+    await db.fund_account_denoms.insert_one({**doc})
+    await log_action(
+        db, actor, "company_funds.denoms_snapshot", "fund_account", account_id,
+        summary=(f"Desglose de billetes {acc['label']} ({code}): "
+                 f"{total:g} contado vs {system:g} sistema → {doc['status']}"),
+        details={"denominations": clean, "difference": diff})
+    if diff != 0:
+        await _notify_denoms_mismatch(doc, actor)
+    return doc
+
+
+async def _notify_denoms_mismatch(snap: dict, actor: dict) -> None:
+    """iter236 — Alerta Descuadre Caja: push + email + campana a los admins
+    cuando un desglose guardado no cuadra contra el balance del sistema."""
+    import logging
+    logger = logging.getLogger(__name__)
+    code = snap["currency"]
+    signo = "sobran" if snap["difference"] > 0 else "faltan"
+    title = f"Descuadre de caja: {snap['account_label']}"
+    body = (f"El conteo de billetes de «{snap['account_label']}» ({code}) "
+            f"registrado por {snap['created_by_name']} no cuadra: contado "
+            f"{snap['total']:,.2f} vs sistema {snap['system_balance']:,.2f} — "
+            f"{signo} {abs(snap['difference']):,.2f} {code}."
+            + (f" Nota: {snap['note']}" if snap.get("note") else ""))
+    try:
+        from admin_alerts import notify_all_admins
+        await notify_all_admins(db, title=title, body=body,
+                                url_path="/admin/company-funds")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"denoms mismatch push/email failed: {e}")
+    try:
+        from routes.notifications import _insert_notification
+        admins = await db.users.find({"role": "admin"},
+                                     {"_id": 0, "user_id": 1}).to_list(50)
+        for a in admins:
+            await _insert_notification(
+                recipient_user_id=a["user_id"], type="cash_count_mismatch",
+                title=title, message=body,
+                data={"account_id": snap["account_id"], "currency": code,
+                      "difference": snap["difference"],
+                      "snapshot_id": snap["id"]})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"denoms mismatch in-app notify failed: {e}")
+
+
+@router.put("/admin/company-funds/accounts/{account_id}/min-balance")
+async def set_account_min_balance(account_id: str, payload: MinBalancePayload,
+                                  request: Request) -> Any:
+    """iter224 — umbral de alerta de saldo bajo por cuenta (solo admin).
+    min_balance vacío o 0 desactiva la alerta."""
+    actor = await require_admin(request)
+    target = None
+    for coll in ("payment_accounts", "fund_accounts"):
+        doc = await db[coll].find_one({"id": account_id}, {"_id": 0})
+        if doc:
+            target = coll
+            break
+    if not target:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+    if payload.min_balance and payload.min_balance > 0:
+        await db[target].update_one(
+            {"id": account_id},
+            {"$set": {"min_balance_alert": round(float(payload.min_balance), 2)},
+             "$unset": {"low_balance_alerted_at": ""}})
+    else:
+        await db[target].update_one(
+            {"id": account_id},
+            {"$unset": {"min_balance_alert": "", "low_balance_alerted_at": ""}})
+    await log_action(
+        db, actor, "fund_account.min_balance", "fund_account", account_id,
+        summary=f"Mínimo de alerta: {payload.min_balance if payload.min_balance else 'desactivado'}")
+    from services.fund_alerts import check_low_fund_balances
+    await check_low_fund_balances()
+    updated = await db[target].find_one({"id": account_id}, {"_id": 0})
+    return {"id": account_id,
+            "min_balance_alert": updated.get("min_balance_alert"),
+            "low_balance_alerted_at": updated.get("low_balance_alerted_at", "")}
 
 
 @router.post("/admin/company-funds/accounts")

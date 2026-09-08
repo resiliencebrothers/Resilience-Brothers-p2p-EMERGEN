@@ -192,6 +192,18 @@ export default function AdminWithdrawals() {
     load();
   };
 
+  // iter236 — avisa al cliente que su pedido está listo en la tienda.
+  const markPickupReady = async (id) => {
+    try {
+      await axios.post(`${API}/admin/redemptions/${id}/pickup-ready`, {}, { withCredentials: true });
+      toast.success(t("admin.withdrawals.toastPickupReady"));
+      load();
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : "Error");
+    }
+  };
+
   return (
     <div data-testid="admin-withdrawals" className="space-y-8">
       <AdminPageHeader
@@ -222,6 +234,7 @@ export default function AdminWithdrawals() {
           onUpdateStatus={updateRedemption}
           onSetCourierFee={(id, km) => setPendingRedFee({ id, km })}
           onCreateDelivery={(r) => createDelivery("redemption", r.id)}
+          onPickupReady={markPickupReady}
         />
       </div>
 

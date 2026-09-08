@@ -301,6 +301,49 @@ async def _accumulate_batch_items_by_pair(
     return count
 
 
+async def _p2p_revenue_totals(
+    orders: list, rate_by_pair: dict, fx: dict,
+) -> tuple[dict, dict, set, float, float]:
+    """Acumula ganancia/volumen P2P por par y por rol (extraído del endpoint)."""
+    by_pair: dict = {}
+    by_role: dict = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
+                     "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
+    missing_rate_pairs: set = set()
+    total_profit_usdt = 0.0
+    total_volume_usdt = 0.0
+    for o in orders:
+        # Defensive: skip orders missing required fields (data hygiene guard).
+        fc, tc = o.get("from_code"), o.get("to_code")
+        if not fc or not tc:
+            continue
+        rate_doc = rate_by_pair.get((fc, tc))
+        vol, prof = await _accumulate_revenue_order(
+            o, rate_doc, fx, by_pair, by_role, missing_rate_pairs,
+        )
+        total_volume_usdt += vol
+        if prof is not None:
+            total_profit_usdt += prof
+    return by_pair, by_role, missing_rate_pairs, total_profit_usdt, total_volume_usdt
+
+
+def _merge_vip_batches_into_roles(by_role: dict, vip_batches: dict) -> None:
+    """iter122 — VIPs operate through batches (`vip_batch_items`), not the
+    `orders` collection. Fold approved batch metrics into the "Clientes VIP"
+    role bucket so the Revenue module reflects real VIP activity instead of
+    zeroed cards. Also expose a `batches` breakdown for the UI."""
+    by_role["vip"]["orders"] += vip_batches["count"]
+    by_role["vip"]["volume_usdt"] += vip_batches.get("volume_usdt", 0.0)
+    by_role["vip"]["profit_usdt"] += vip_batches["total_usdt"]
+    by_role["vip"]["batches"] = {
+        "orders": vip_batches["count"],
+        "volume_usdt": vip_batches.get("volume_usdt", 0.0),
+        "profit_usdt": vip_batches["total_usdt"],
+    }
+    for r in by_role.values():
+        r["profit_usdt"] = round(r["profit_usdt"], 4)
+        r["volume_usdt"] = round(r["volume_usdt"], 4)
+
+
 @router.get("/admin/revenue")
 async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     await require_admin(request)
@@ -314,25 +357,9 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
     fx = await build_rate_lookup()
 
-    by_pair: dict = {}
-    by_role: dict = {"normal": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0},
-                     "vip": {"profit_usdt": 0.0, "orders": 0, "volume_usdt": 0.0}}
-    missing_rate_pairs: set = set()
-    total_profit_usdt = 0.0
-    total_volume_usdt = 0.0
-
-    for o in orders:
-        # Defensive: skip orders missing required fields (data hygiene guard).
-        fc, tc = o.get("from_code"), o.get("to_code")
-        if not fc or not tc:
-            continue
-        rate_doc = rate_by_pair.get((fc, tc))
-        vol, prof = await _accumulate_revenue_order(
-            o, rate_doc, fx, by_pair, by_role, missing_rate_pairs,
-        )
-        total_volume_usdt += vol
-        if prof is not None:
-            total_profit_usdt += prof
+    (by_pair, by_role, missing_rate_pairs,
+     total_profit_usdt, total_volume_usdt) = await _p2p_revenue_totals(
+        orders, rate_by_pair, fx)
 
     # iter208 — Add approved VIP batch items to by_pair so pairs traded
     # exclusively via lotes VIP (e.g. ZELLE→CUPT, ZELLE→CUP) appear in
@@ -343,31 +370,12 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
 
     pair_items = _finalize_pair_items(by_pair)
 
-    for r in by_role.values():
-        r["profit_usdt"] = round(r["profit_usdt"], 4)
-        r["volume_usdt"] = round(r["volume_usdt"], 4)
-
     marketplace = await _compute_marketplace_revenue(days)
     conversion_fees = await _compute_conversion_fees(days)
     vip_batches = await _compute_vip_batch_profit(days)
     courier = await _compute_courier_revenue(days)
 
-    # iter122 — VIPs operate through batches (`vip_batch_items`), not the
-    # `orders` collection. Fold approved batch metrics into the "Clientes VIP"
-    # role bucket so the Revenue module reflects real VIP activity instead of
-    # zeroed cards. Also expose a `batches` breakdown for the UI.
-    by_role["vip"]["orders"] += vip_batches["count"]
-    by_role["vip"]["volume_usdt"] += vip_batches.get("volume_usdt", 0.0)
-    by_role["vip"]["profit_usdt"] += vip_batches["total_usdt"]
-    by_role["vip"]["batches"] = {
-        "orders": vip_batches["count"],
-        "volume_usdt": vip_batches.get("volume_usdt", 0.0),
-        "profit_usdt": vip_batches["total_usdt"],
-    }
-    # Re-round after the batch merge so displayed values stay tidy.
-    for r in by_role.values():
-        r["profit_usdt"] = round(r["profit_usdt"], 4)
-        r["volume_usdt"] = round(r["volume_usdt"], 4)
+    _merge_vip_batches_into_roles(by_role, vip_batches)
 
     grand_total_profit = (
         total_profit_usdt

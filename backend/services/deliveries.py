@@ -217,3 +217,65 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
     # iter208 — broadcast a mensajeros cuando aparece una nueva disponible.
     await _broadcast_new_delivery_to_couriers(doc)
     return doc
+
+
+async def do_confirm_delivery(d: dict, actor: dict) -> Any:
+    """Núcleo de la confirmación (payout + sello + sync). Compartido por el
+    endpoint admin (routes/deliveries) y la sincronización al marcar el
+    retiro 'Entregado' (routes/admin_withdrawals, iter215) — el TOTP ya fue
+    verificado por el caller. Movido aquí para romper el ciclo de imports
+    entre esos dos módulos de rutas."""
+    from audit_log import log_action
+
+    did = d["id"]
+    now = iso(now_utc())
+    share = float(d.get("courier_share_usdt") or 0)
+    credited = False
+    # iter249 — claim atómico del payout + intención de abono en el MISMO
+    # update: dos confirmaciones simultáneas no pueden pagar dos veces al
+    # mensajero, y si el proceso muere antes de abonar, el healer completa.
+    if share > 0 and d.get("courier_id"):
+        from services.credit_recovery import pending_marker, apply_and_clear
+        marker = pending_marker(d["courier_id"], "USDT", share, "courier-share")
+        claim = await db.deliveries.update_one(
+            {"id": did, "payout_credited": {"$ne": True}},
+            {"$set": {"payout_credited": True, "payout_credited_at": now,
+                      "credit_pending": marker}})
+        if claim.modified_count:
+            await apply_and_clear("deliveries", did, marker)
+            credited = True
+    await db.deliveries.update_one({"id": did}, {
+        "$set": {"status": "confirmed", "updated_at": now},
+        "$push": {"timeline": {"status": "confirmed", "at": now,
+                               "by": actor["user_id"]}},
+    })
+    await log_action(db, actor, "delivery.confirm", "delivery", did,
+                     summary=(f"Entrega {did[:8]} confirmada — {share} USDT "
+                              f"acreditados a {d.get('courier_name', '')}"),
+                     details={"courier_id": d.get("courier_id"),
+                              "courier_share_usdt": share, "credited": credited})
+    # iter209b — Sincronizar la operación vinculada: al confirmar la entrega,
+    # el retiro cash pasa a 'paid' y el depósito cash-courier se confirma
+    # (acredita saldo). Así Depósitos y Retiros no queda "pendiente".
+    # Vía registro de handlers para no importar routes desde services.
+    try:
+        from services.delivery_settlement import settle_linked_operation
+        await settle_linked_operation(d.get("kind") or "", d["ref_id"], actor)
+    except Exception as e:
+        logger.error(f"ref sync after delivery confirm failed: {e}")
+    if credited:
+        try:
+            from routes.notifications import _insert_notification
+            await _insert_notification(
+                recipient_user_id=d["courier_id"], type="delivery_confirmed",
+                title="Entrega confirmada — pago acreditado",
+                message=(f"Tu entrega de {d.get('client_name', '')} fue confirmada. "
+                         f"Se acreditaron {share} USDT a tu saldo."),
+                data={"delivery_id": did, "credited_usdt": share})
+            from services.live_bus import publish as live_publish
+            await live_publish("balance_updated",
+                               {"reason": "delivery_payout", "delivery_id": did},
+                               user_id=d["courier_id"])
+        except Exception as e:
+            logger.error(f"confirm notify failed: {e}")
+    return await db.deliveries.find_one({"id": did}, {"_id": 0})

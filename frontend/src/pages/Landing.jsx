@@ -7,6 +7,7 @@ import EmailAuthDialog from "@/components/EmailAuthDialog";
 import { useScrollParallax } from "@/hooks/useScrollParallax";
 import LandingHeader from "@/pages/landing/LandingHeader";
 import LandingHero from "@/pages/landing/LandingHero";
+import LandingPromoBanner from "@/pages/landing/LandingPromoBanner";
 import LandingAbout from "@/pages/landing/LandingAbout";
 import LandingServices from "@/pages/landing/LandingServices";
 import LandingVipAndCta from "@/pages/landing/LandingVipAndCta";
@@ -65,6 +66,7 @@ export default function Landing() {
     <div className="min-h-screen bg-[#14101F] text-white">
       <LandingHeader user={user} onEnter={handleEnter} onEmailAuth={handleEmailAuth} />
       <LandingHero scrollY={scrollY} onEnter={handleEnter} onEmailAuth={handleEmailAuth} />
+      <LandingPromoBanner onEmailAuth={handleEmailAuth} />
       <LandingAbout />
       <LandingServices scrollY={scrollY} />
       <LandingVipAndCta onEnter={handleEnter} onEmailAuth={handleEmailAuth} />

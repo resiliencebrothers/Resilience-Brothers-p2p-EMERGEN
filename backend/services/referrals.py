@@ -102,36 +102,50 @@ async def maybe_award_referral_bonus(order: dict) -> None:
     concurrent/repeated status transitions can never double-pay. Best-effort:
     never raises into the order flow."""
     try:
+        # iter249 — el bono se calcula ANTES del claim para poder registrar la
+        # intención de abono (`credit_pending`) en el MISMO update atómico que
+        # consume el flag; el abono es idempotente por op_id y el healer lo
+        # completa si el proceso muere entre pasos.
+        probe = await db.users.find_one(
+            {"user_id": order["user_id"],
+             "referred_by": {"$nin": [None, ""]},
+             "referral_bonus_paid": {"$ne": True}},
+            {"_id": 0, "user_id": 1, "referred_by": 1, "name": 1, "email": 1},
+        )
+        if not probe:
+            return
+        referrer_id: Optional[str] = probe.get("referred_by")
+        referrer = await db.users.find_one(
+            {"user_id": referrer_id}, {"_id": 0, "user_id": 1, "name": 1},
+        )
+        profit_usdt = await _compute_order_profit_usdt(order)
+        pct = await get_bonus_pct()
+        bonus = round(profit_usdt * pct / 100.0, 4)
+        claim_set = {"referral_bonus_paid": True,
+                     "referral_bonus_paid_at": iso(now_utc())}
+        marker = None
+        if referrer and referrer_id and bonus > 0:
+            from services.credit_recovery import pending_marker
+            marker = pending_marker(referrer_id, "USDT", bonus, "referral-bonus")
+            claim_set["credit_pending"] = marker
         referred = await db.users.find_one_and_update(
             {"user_id": order["user_id"],
              "referred_by": {"$nin": [None, ""]},
              "referral_bonus_paid": {"$ne": True}},
-            {"$set": {"referral_bonus_paid": True,
-                      "referral_bonus_paid_at": iso(now_utc())}},
+            {"$set": claim_set},
         )
         if not referred:
             return
-        referrer_id: Optional[str] = referred.get("referred_by")
-        referrer = await db.users.find_one(
-            {"user_id": referrer_id}, {"_id": 0, "user_id": 1, "name": 1},
-        )
-        if not referrer or not referrer_id:
-            return
-
-        profit_usdt = await _compute_order_profit_usdt(order)
-        pct = await get_bonus_pct()
-        bonus = round(profit_usdt * pct / 100.0, 4)
-        if bonus <= 0:
+        if not marker:
             logger.info(
                 "Referral bonus skipped (no computable profit) — order %s, referred %s",
                 order.get("id"), referred.get("user_id"),
             )
             return
 
-        await db.users.update_one(
-            {"user_id": referrer_id},
-            {"$inc": {"vip_balances.USDT": bonus}},
-        )
+        from services.credit_recovery import apply_and_clear
+        await apply_and_clear("users", referred["user_id"], marker,
+                              key_field="user_id")
         from services.live_events import emit_balance_changed
         await emit_balance_changed(referrer_id, "referral_bonus",
                                    bonus_usdt=bonus)

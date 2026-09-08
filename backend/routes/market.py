@@ -137,6 +137,14 @@ class Product(BaseModel):
     stock: int = 0
     category: str = "general"
     is_active: bool = True
+    # iter217 — marketplace multivendedor: productos de clientes VIP.
+    # owner_id vacío = producto de la empresa (entra al inventario físico).
+    owner_id: str = ""
+    owner_name: str = ""
+    approval_status: Literal["approved", "pending", "rejected"] = "approved"
+    rejection_reason: str = ""
+    # iter236 — sucursales donde está disponible (vacío = todas).
+    available_store_ids: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 
@@ -144,11 +152,13 @@ class ProductCreate(BaseModel):
     name: str
     description: str = ""
     image_url: str = ""
-    price_usd: float
-    cost_usd: float = 0.0
-    stock: int = 0
+    # iter247 — ge=0 bloquea precios/costos/stock negativos (corrupción contable).
+    price_usd: float = Field(..., ge=0, le=1_000_000_000)
+    cost_usd: float = Field(0.0, ge=0, le=1_000_000_000)
+    stock: int = Field(0, ge=0, le=1_000_000)
     category: str = "general"
     is_active: bool = True
+    available_store_ids: list[str] = Field(default_factory=list)
 
 
 # ============================================================
@@ -578,9 +588,20 @@ async def delete_rate(rate_id: str, request: Request) -> Any:
 # ============================================================
 
 @router.get("/products")
-async def list_products() -> Any:
-    return await db.products.find({"is_active": True}, {"_id": 0}) \
+async def list_products(request: Request) -> Any:
+    # iter217 — solo productos aprobados salen al marketplace (los de
+    # vendedores VIP nacen 'pending' hasta que un admin los aprueba).
+    rows = await db.products.find(
+        {"is_active": True,
+         "$or": [{"approval_status": {"$exists": False}},
+                 {"approval_status": "approved"}]}, {"_id": 0}) \
         .sort("created_at", -1).to_list(500)
+    # iter229 — precios de la tienda en CUP efectivo → USDT a la tasa vigente
+    # según el rol del que mira: VIP (mayorista) rate_vip, resto rate_normal.
+    from auth_utils import get_session_user
+    from services.marketplace_fx import augment_products_fx
+    user = await get_session_user(request)
+    return await augment_products_fx(rows, role=(user or {}).get("role"))
 
 
 def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool) -> Any:
@@ -593,6 +614,61 @@ def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_i
         raise HTTPException(status_code=403, detail="No tienes permiso para subir imágenes de productos")
 
 
+@router.get("/admin/products")
+async def admin_list_products(request: Request) -> Any:
+    """iter223 — listado para gestión: TODOS los productos de la empresa,
+    incluidos los inactivos (el endpoint público /products solo muestra
+    activos, por eso el operador no veía los importados del Excel)."""
+    await require_permission(request, "products")
+    rows = await db.products.find(
+        {"$or": [{"owner_id": {"$in": [None, ""]}},
+                 {"owner_id": {"$exists": False}}]}, {"_id": 0}) \
+        .sort("name", 1).to_list(1000)
+    from services.marketplace_fx import augment_products_fx
+    return await augment_products_fx(rows, role="vip")
+
+
+@router.post("/admin/products/{product_id}/toggle-active")
+async def toggle_product_active(product_id: str, request: Request) -> Any:
+    """iter223 — publica/oculta un producto en el marketplace con un clic."""
+    actor = await require_permission(request, "products")
+    doc = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    new_state = not bool(doc.get("is_active", True))
+    await db.products.update_one({"id": product_id},
+                                 {"$set": {"is_active": new_state}})
+    await log_action(db, actor, "product.toggle_active", "product", product_id,
+                     summary=f"{'Publicado' if new_state else 'Oculto'}: {doc.get('name', '')}")
+    try:
+        from services.live_bus import publish
+        await publish("products_changed", {"product_id": product_id})
+    except Exception as e:
+        logger.error(f"products_changed publish failed: {e}")
+    return {"id": product_id, "is_active": new_state}
+
+
+def _norm_product_name(s: str) -> str:
+    """iter226 — nombre normalizado (sin acentos/mayúsculas/espacios extra)."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", (s or "").strip().lower())
+    return " ".join("".join(c for c in s if not unicodedata.combining(c)).split())
+
+
+async def _find_duplicate_company_product(name: str) -> Any:
+    target = _norm_product_name(name)
+    if not target:
+        return None
+    rows = await db.products.find(
+        {"$or": [{"owner_id": {"$in": [None, ""]}},
+                 {"owner_id": {"$exists": False}}]},
+        {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+    for r in rows:
+        if _norm_product_name(r.get("name", "")) == target:
+            return r
+    return None
+
+
 @router.post("/admin/products")
 async def create_product(payload: ProductCreate, request: Request) -> Any:
     actor = await require_permission(request, "products")
@@ -602,8 +678,30 @@ async def create_product(payload: ProductCreate, request: Request) -> Any:
                        or (payload.cost_usd is not None and payload.cost_usd != 0),
         editing_image=bool((payload.image_url or "").strip()),
     )
+    # iter226 — evita duplicados: si la mercancía ya existe se debe registrar
+    # una Entrada para que las estadísticas se acumulen en el mismo producto.
+    dup = await _find_duplicate_company_product(payload.name)
+    if dup:
+        raise HTTPException(status_code=409, detail=(
+            f"Ya existe «{dup.get('name', '')}» en el inventario. "
+            "Regístralo como Entrada (reponer existente) para sumar unidades "
+            "y mantener sus estadísticas en el mismo producto."))
     p = Product(**payload.model_dump())
+    # iter219 — la imagen puede llegar como data URL (subida directa) → R2.
+    from services.proof_upload import maybe_upload_proof
+    p.image_url = maybe_upload_proof(p.image_url, "products") or ""
     await db.products.insert_one(p.model_dump())
+    # iter226 — el stock inicial queda auditado como Entrada en el registro.
+    if int(p.stock or 0) > 0:
+        try:
+            from services.inventory import record_movement
+            await record_movement(
+                product=p.model_dump(), mtype="entrada", quantity=int(p.stock),
+                unit_cost=float(p.cost_usd or 0),
+                note="Stock inicial al crear el producto",
+                source="alta", actor=actor, apply_stock=False)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"initial stock entrada failed: {e}")
     return p.model_dump()
 
 
@@ -619,7 +717,27 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
     )
     image_changed = (payload.image_url or "") != (existing.get("image_url") or "")
     _check_employee_product_perms(actor, editing_price=price_changed, editing_image=image_changed)
-    await db.products.update_one({"id": product_id}, {"$set": payload.model_dump()})
+    data = payload.model_dump()
+    from services.proof_upload import maybe_upload_proof
+    data["image_url"] = maybe_upload_proof(data.get("image_url"), "products") or ""
+    await db.products.update_one({"id": product_id}, {"$set": data})
+    # iter219 — auditoría de precios + alerta de stock bajo tras edición manual.
+    if not existing.get("owner_id"):
+        try:
+            from services.inventory import record_price_change, maybe_alert_low_stock
+            new_price = float(payload.price_usd or 0)
+            old_price = float(existing.get("price_usd") or 0)
+            if new_price != old_price:
+                await record_price_change(product=existing, field_label="Precio venta",
+                                          old=old_price, new=new_price, actor=actor)
+            new_cost = float(payload.cost_usd or 0)
+            old_cost = float(existing.get("cost_usd") or 0)
+            if new_cost != old_cost:
+                await record_price_change(product=existing, field_label="Costo unitario",
+                                          old=old_cost, new=new_cost, actor=actor)
+            await maybe_alert_low_stock(product_id)
+        except Exception as e:
+            logger.error(f"price audit/low stock check after edit failed: {e}")
     return await db.products.find_one({"id": product_id}, {"_id": 0})
 
 

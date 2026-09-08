@@ -34,6 +34,10 @@ class UserUpdate(BaseModel):
     can_manage_blocklist: Optional[bool] = None
     can_manage_company_funds: Optional[bool] = None  # iter54 — capital de trabajo
     account_status: Optional[Literal["active", "under_review", "blocked"]] = None
+    # iter252 — registro de plantillas aplicadas: {id: {added_perms, prev_currencies,
+    # set_currencies, currencies_changed, applied_at}} para revertir exactamente
+    # lo que cada plantilla sumó sin tocar el resto.
+    applied_templates: Optional[Dict[str, Any]] = None
     totp_code: Optional[str] = Field(None, max_length=11, description="Código 2FA requerido")
 
 
@@ -122,7 +126,7 @@ async def list_users(request: Request, q: Optional[str] = None,
             for k in ("phone", "phone_verified_at", "vip_balances",
                       "vip_balance_usd", "vip_balance_usdt",
                       "allowed_currencies", "allowed_permissions",
-                      "market_perms"):
+                      "applied_templates", "market_perms"):
                 d.pop(k, None)
     return JSONResponse(
         content=docs,
@@ -164,7 +168,8 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
     # lets an admin grant a staff member *view-only* access to the user list
     # while keeping powerful edits (like promoting to VIP) admin-only.
     FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
-                         "market_perms", "account_status", "allowed_batch_pairs"}
+                         "market_perms", "account_status", "allowed_batch_pairs",
+                         "applied_templates"}
     if any(k in update for k in FUNCTIONS_FIELDS):
         from services.permissions import _has_permission
         if not _has_permission(requester, "user_functions"):
@@ -189,6 +194,25 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
             raise HTTPException(status_code=403, detail="Solo un admin puede modificar los permisos de staff")
         from services.permissions import sanitize_permissions
         update["allowed_permissions"] = sanitize_permissions(update["allowed_permissions"])
+    # iter252 — saneado del registro de plantillas (admin-only, igual que perms).
+    if "applied_templates" in update:
+        if requester.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Solo un admin puede modificar las plantillas de staff")
+        raw = update["applied_templates"] or {}
+        if not isinstance(raw, dict) or len(raw) > 20:
+            raise HTTPException(status_code=422, detail="applied_templates inválido")
+        clean = {}
+        for tid, rec in raw.items():
+            if not isinstance(rec, dict):
+                continue
+            clean[str(tid)[:40]] = {
+                "added_perms": [str(p)[:60] for p in (rec.get("added_perms") or [])][:60],
+                "prev_currencies": [str(c)[:20] for c in (rec.get("prev_currencies") or [])][:60],
+                "set_currencies": [str(c)[:20] for c in (rec.get("set_currencies") or [])][:60],
+                "currencies_changed": bool(rec.get("currencies_changed")),
+                "applied_at": str(rec.get("applied_at") or "")[:40],
+            }
+        update["applied_templates"] = clean
     # iter113 — VIP batch pair RBAC: admin-only, normalise "FROM->TO" entries.
     if "allowed_batch_pairs" in update:
         if requester.get("role") != "admin":

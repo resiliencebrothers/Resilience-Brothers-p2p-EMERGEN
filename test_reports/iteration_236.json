@@ -1,0 +1,31 @@
+{
+  "summary": "E2E frontend verification of iter236 'Recogida en tienda física'. All critical flows PASS: (1) admin CRUD de Tiendas (create/list/edit/delete) in Inventario, (2) VIP marketplace pickup UI (fulfillment-pickup-btn, pickup-store-picker, hides redeem-addr, shows redeem-pickup-free-line), (3) validation toast when confirming pickup with 2+ stores and none selected, (4) VIP pickup redeem without address succeeds and shows 'Recogida en tienda · E2E236-A' in Mis canjes with NO courier fee, (5) Admin /admin/withdrawals shows purple pickup badge with store name+address and courier column shows 'Recogida en tienda' instead of km editor, (6) 'Listo p/ recoger' button clickable — replaced by 'Cliente avisado' + idempotent after reload; pickup_ready notification created for VIP and VIP dashboard shows 'Listo para recoger' badge, (7) delivery-flow regression (dirección textarea + confirm) still works, (8) AdminProducts edit dialog shows prod-stores-availability block with prod-store-check-{storeId} checkboxes; limiting product to Store A hides Store B in VIP checkout pickup selector.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin Products / Inventory Stores dialogs", "issues": ["Multiple DialogContent components emit React warning: Missing `Description` or `aria-describedby={undefined}` (accessibility). Non-blocking but should be addressed."]},
+      {"screen": "Admin Products list", "issues": ["Console: 'Encountered two children with the same key, TEST_X' — duplicate React keys in admin products list (likely from seeded TEST_* products with same generated key). Non-blocking cosmetic warning."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Low) Add aria-describedby/DialogDescription to DialogContent instances in InventoryStoresTab and AdminProducts to silence Radix a11y warning.",
+    "(Low) Fix duplicate React key 'TEST_X' warning in Admin products listing (use unique product.id as key)."
+  ],
+  "critical_code_review_comments": [
+    "RedemptionsTable.jsx pickup-ready-btn is only rendered while status is pending/approved AND !pickup_ready_at — correct guard for idempotency in UI; server also idempotent per playbook.",
+    "MarketplaceView.jsx correctly hides redeem-addr and courier selector when fulfillment==='pickup' and validates store selection client-side before POST /api/vip/redeem.",
+    "InventoryStoresTab.jsx uses window.confirm for delete — acceptable but not accessible; consider AlertDialog for consistency.",
+    "AdminProducts prod-stores-availability block only shows when >=2 stores exist — behavior matches spec; note that with 0 stores registered no block is shown (verified: hidden in DB with 0 stores)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (12/12 core assertions)"},
+  "test_credentials": "admin session_token=test_session_admin_X (user_test_admin01), vip session_token=test_session_vip_X (user_test_vip01, vip_balances.USD=5000, USDT=5000 set before run).",
+  "seed_data_creation": "Created 2 test stores 'E2E236-A' and 'E2E236-B' via UI (later deleted via UI). One transient pickup redemption + delivery redemption created for user_test_vip01 during the flow. All test data (stores, notifications, redemption with store_id, and product.available_store_ids reset) cleaned up post-test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter236 store-pickup frontend fully verified. Test IDs used: inventory-tab-stores, stores-tab-add-btn, store-{name,address,muni,province,phone,hours}-input, store-active-switch, store-save-btn, store-row-{id}, store-edit-{id}, store-delete-{id}, redeem-{productId}, fulfillment-delivery-btn, fulfillment-pickup-btn, pickup-store-picker, pickup-store-option-{storeId}, redeem-pickup-free-line, redeem-addr, confirm-redeem, redemption-pickup-{id}, redemption-pickup-ready-{id}, redemption-pickup-badge-{id}, redemption-pickup-fee-{id}, pickup-ready-btn-{id}, pickup-ready-done-{id}, prod-stores-availability, prod-store-check-{storeId}, edit-product-{id}, save-product-btn. Notifications endpoint returns {items:[...]} not a bare list; type='pickup_ready'. Company products have owner_id='' (empty string), not missing key.",
+  "rca of the issue": "N/A — no defects found."
+}

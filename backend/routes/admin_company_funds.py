@@ -81,9 +81,32 @@ class CompanyFundAdjustmentCreate(BaseModel):
 
 # iter213 — denominaciones válidas por moneda (billetes en circulación).
 CASH_DENOMINATIONS: Dict[str, List[int]] = {
-    "CUP": [1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
+    "CUP": [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
     "USD": [100, 50, 20, 10, 5, 2, 1],
 }
+
+
+def _parse_denomination_entry(currency: str, valid: Optional[List[int]],
+                              k: object, v: object) -> tuple[int, int]:
+    """Valida una entrada del desglose → (denominación, cantidad)."""
+    try:
+        denom = int(float(k))
+        qty = int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400,
+                            detail=f"Denominación o cantidad inválida: {k}={v}")
+    if qty < 0:
+        raise HTTPException(status_code=400,
+                            detail="Las cantidades de billetes no pueden ser negativas.")
+    if valid and denom not in valid:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Billete de {denom} no existe en {currency}. "
+                    f"Válidos: {', '.join(str(d) for d in valid)}"))
+    if not valid and denom <= 0:
+        raise HTTPException(status_code=400,
+                            detail=f"Denominación inválida: {denom}")
+    return denom, qty
 
 
 def _validate_denominations(currency: str, raw: Dict[str, int],
@@ -93,25 +116,9 @@ def _validate_denominations(currency: str, raw: Dict[str, int],
     clean: Dict[str, int] = {}
     total = 0.0
     for k, v in (raw or {}).items():
-        try:
-            denom = int(float(k))
-            qty = int(v)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400,
-                                detail=f"Denominación o cantidad inválida: {k}={v}")
-        if qty < 0:
-            raise HTTPException(status_code=400,
-                                detail="Las cantidades de billetes no pueden ser negativas.")
+        denom, qty = _parse_denomination_entry(currency, valid, k, v)
         if qty == 0:
             continue
-        if valid and denom not in valid:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"Billete de {denom} no existe en {currency}. "
-                        f"Válidos: {', '.join(str(d) for d in valid)}"))
-        if not valid and denom <= 0:
-            raise HTTPException(status_code=400,
-                                detail=f"Denominación inválida: {denom}")
         clean[str(denom)] = clean.get(str(denom), 0) + qty
         total += denom * qty
     if not clean:
@@ -156,7 +163,7 @@ async def _resolve_adjustment_account(payload: "CompanyFundAdjustmentCreate",
     """iter194/195 — atribución de cuenta: explícita, o la caja si es cash."""
     account_id = (payload.account_id or "").strip()
     if account_id:
-        from routes.company_fund_accounts import resolve_fund_account
+        from services.fund_accounts import resolve_fund_account
         acc = await resolve_fund_account(account_id)
         if not acc:
             raise HTTPException(status_code=400, detail="Cuenta no encontrada")
@@ -167,7 +174,7 @@ async def _resolve_adjustment_account(payload: "CompanyFundAdjustmentCreate",
             )
         return account_id, acc["label"]
     if payload.method == "cash":
-        from routes.company_fund_accounts import get_or_create_cash_box
+        from services.fund_accounts import get_or_create_cash_box
         box = await get_or_create_cash_box(currency)
         return box["id"], box["label"]
     return "", ""
@@ -596,27 +603,29 @@ def _row_usdt_summary(r: dict, fx: dict) -> Optional[Dict[str, float]]:
     """Convert one company-funds row to USDT. None → no rate path."""
     from services.balances import convert_to_usdt
     code = r["currency"]
-    bal = float(r.get("balance") or 0.0)
-    avail = float(r.get("balance_available") or 0.0)
-    liab = float(r.get("client_balances") or 0.0)
-    prof = float(r.get("profit_total") or 0.0)
-    inflow = sum(float(r.get(k) or 0.0) for k in
-                 ("inflow", "inflow_vip_batches", "inflow_deposits", "manual_inflow"))
-    outflow = sum(float(r.get(k) or 0.0) for k in
-                  ("outflow_orders", "outflow_clients", "outflow_company",
-                   "manual_outflow"))
+
+    def _f(*keys: str) -> float:
+        return sum(float(r.get(k) or 0.0) for k in keys)
+
+    def _conv(amount: float) -> float:
+        return convert_to_usdt(amount, code, fx) or 0.0
+
+    bal = _f("balance")
     bal_u = convert_to_usdt(bal, code, fx)
     if bal_u is None:
         return None
+    avail = _f("balance_available")
     return {
         "balance": bal,
         "available": avail,
         "balance_usdt": bal_u,
-        "available_usdt": convert_to_usdt(avail, code, fx) or 0.0,
-        "liabilities_usdt": convert_to_usdt(liab, code, fx) or 0.0,
-        "profit_usdt": convert_to_usdt(prof, code, fx) or 0.0,
-        "inflow_usdt": convert_to_usdt(inflow, code, fx) or 0.0,
-        "outflow_usdt": convert_to_usdt(outflow, code, fx) or 0.0,
+        "available_usdt": _conv(avail),
+        "liabilities_usdt": _conv(_f("client_balances")),
+        "profit_usdt": _conv(_f("profit_total")),
+        "inflow_usdt": _conv(_f("inflow", "inflow_vip_batches",
+                                "inflow_deposits", "manual_inflow")),
+        "outflow_usdt": _conv(_f("outflow_orders", "outflow_clients",
+                                 "outflow_company", "manual_outflow")),
     }
 
 
@@ -876,6 +885,24 @@ async def _profit_detail_rate_lookup(
     return {(r["from_code"], r["to_code"]): r for r in rate_docs}
 
 
+def _profit_order_row(o: dict, p: dict, amount: float,
+                      rate_by_pair: Dict[tuple, dict]) -> dict:
+    fc, tc = o.get("from_code"), o.get("to_code")
+    return {
+        "id": o["id"],
+        "reviewed_at": o.get("updated_at") or o.get("created_at"),
+        "pair": f"{fc}→{tc}",
+        "from_code": fc, "to_code": tc,
+        "user_name": o.get("user_name") or o.get("user_email") or "—",
+        "user_role": o.get("user_role") or "normal",
+        "amount_from": float(o.get("amount_from") or 0.0),
+        "amount_to": float(o.get("amount_to") or 0.0),
+        "real_rate": float((rate_by_pair.get((fc, tc)) or {}).get("real_rate") or 0.0),
+        "profit": round(amount, 4),
+        "profit_pct": p.get("pct") or 0.0,
+    }
+
+
 async def _build_profit_order_rows(
     orders_docs: List[dict], rate_by_pair: Dict[tuple, dict],
 ) -> tuple[List[dict], float]:
@@ -893,19 +920,7 @@ async def _build_profit_order_rows(
             continue
         amount = float(p.get("amount", 0) or 0)
         total += amount
-        rows.append({
-            "id": o["id"],
-            "reviewed_at": o.get("updated_at") or o.get("created_at"),
-            "pair": f"{fc}→{tc}",
-            "from_code": fc, "to_code": tc,
-            "user_name": o.get("user_name") or o.get("user_email") or "—",
-            "user_role": o.get("user_role") or "normal",
-            "amount_from": float(o.get("amount_from") or 0.0),
-            "amount_to": float(o.get("amount_to") or 0.0),
-            "real_rate": float((rate_by_pair.get((fc, tc)) or {}).get("real_rate") or 0.0),
-            "profit": round(amount, 4),
-            "profit_pct": p.get("pct") or 0.0,
-        })
+        rows.append(_profit_order_row(o, p, amount, rate_by_pair))
     return rows, total
 
 
@@ -1092,7 +1107,7 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     # iter194/195 — "paid from account": explicit choice wins; otherwise
     # auto-attribute when the currency has exactly one active account.
     if new_status == "paid":
-        from routes.company_fund_accounts import (
+        from services.fund_accounts import (
             resolve_fund_account, auto_paid_from_account,
         )
         acc_id = (payload.get("paid_from_account_id") or "").strip()
@@ -1118,6 +1133,24 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
 # iter54 — Capital-of-trabajo adjustments (manual inflows/outflows)
 # ============================================================
 
+def _resolve_cash_denominations(
+    payload: "CompanyFundAdjustmentCreate", currency: str,
+) -> Optional[dict]:
+    """iter213 — desglose de billetes: obligatorio para efectivo CUP/USD
+    (formato del Excel de control físico), validado contra el monto."""
+    if payload.method != "cash":
+        return None
+    if payload.denominations:
+        return _validate_denominations(
+            currency, payload.denominations, payload.amount)
+    if currency in CASH_DENOMINATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Para efectivo en {currency} debes indicar el "
+                    "desglose de billetes por denominación."))
+    return None
+
+
 @router.post("/admin/company-funds/adjustments")
 async def create_company_fund_adjustment(
     payload: CompanyFundAdjustmentCreate, request: Request,
@@ -1134,19 +1167,7 @@ async def create_company_fund_adjustment(
 
     currency = await _validate_adjustment_currency(actor, payload.currency)
     account_id, account_label = await _resolve_adjustment_account(payload, currency)
-
-    # iter213 — desglose de billetes: obligatorio para efectivo CUP/USD
-    # (formato del Excel de control físico), validado contra el monto.
-    denominations = None
-    if payload.method == "cash":
-        if payload.denominations:
-            denominations = _validate_denominations(
-                currency, payload.denominations, payload.amount)
-        elif currency in CASH_DENOMINATIONS:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"Para efectivo en {currency} debes indicar el "
-                        "desglose de billetes por denominación."))
+    denominations = _resolve_cash_denominations(payload, currency)
 
     adjustment = CompanyFundAdjustment(
         adjustment_type=payload.adjustment_type,
@@ -1254,34 +1275,31 @@ async def list_company_fund_adjustments(
 # iter88 — Company funds export
 # ============================================================
 
+def _parse_iso_bound(s: str, is_end: bool) -> str:
+    """ISO date/datetime → bound ISO. Fechas sin hora se expanden al día
+    completo (00:00:00 / 23:59:59). Inválido → 400."""
+    from datetime import datetime as _dt
+    s = (s or "").strip()
+    if not s:
+        return ""
+    try:
+        if "T" in s:
+            _dt.fromisoformat(s.replace("Z", "+00:00"))
+            return s
+        # Bare date → widen to full-day boundary.
+        _dt.fromisoformat(s)
+        return f"{s}T23:59:59.999999+00:00" if is_end else f"{s}T00:00:00.000000+00:00"
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Formato de fecha inválido: {s}")
+
+
 def _date_range_query(since: Optional[str], until: Optional[str]) -> Dict[str, Any]:
     """Build a Mongo `$gte/$lte` `created_at` filter from ISO date/datetime
-    strings. Dates without a time are expanded to include the whole day
-    (00:00:00 → 23:59:59). Invalid input → 400."""
-    from datetime import datetime as _dt
-    q: Dict[str, Any] = {}
-    def _parse(s: str, is_end: bool) -> str:
-        s = (s or "").strip()
-        if not s:
-            return ""
-        try:
-            if "T" in s:
-                _dt.fromisoformat(s.replace("Z", "+00:00"))
-                return s
-            # Bare date → widen to full-day boundary.
-            _dt.fromisoformat(s)
-            return f"{s}T23:59:59.999999+00:00" if is_end else f"{s}T00:00:00.000000+00:00"
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Formato de fecha inválido: {s}")
-    since_iso = _parse(since or "", is_end=False)
-    until_iso = _parse(until or "", is_end=True)
-    if since_iso and until_iso:
-        q["created_at"] = {"$gte": since_iso, "$lte": until_iso}
-    elif since_iso:
-        q["created_at"] = {"$gte": since_iso}
-    elif until_iso:
-        q["created_at"] = {"$lte": until_iso}
-    return q
+    strings (día completo para fechas sin hora)."""
+    since_iso = _parse_iso_bound(since or "", is_end=False)
+    until_iso = _parse_iso_bound(until or "", is_end=True)
+    bounds = {k: v for k, v in (("$gte", since_iso), ("$lte", until_iso)) if v}
+    return {"created_at": bounds} if bounds else {}
 
 
 def _csv_currency_filter(actor: dict, currency: Optional[str]) -> "Callable[[Any], bool]":
@@ -1474,6 +1492,15 @@ async def _compute_company_funds_range(
         "currency", "amount", since_iso, until_iso, "updated_at",
     )
     # Manual adjustments have no `updated_at`, so scope via `created_at`.
+    adj_in, adj_out = await _ranged_adjustment_totals(since_iso, until_iso)
+    return _merge_fund_rows(inflow, out_orders, out_clients,
+                            out_company, adj_in, adj_out)
+
+
+async def _ranged_adjustment_totals(
+    since_iso: str, until_iso: str,
+) -> tuple[Dict[str, float], Dict[str, float]]:
+    """Per-currency (inflow, outflow) totals of manual adjustments in range."""
     adj_in: Dict[str, float] = {}
     adj_out: Dict[str, float] = {}
     adj_query: Dict[str, Any] = {}
@@ -1491,10 +1518,17 @@ async def _compute_company_funds_range(
         amt = float(a.get("amount") or 0.0)
         if not code or amt <= 0:
             continue
-        (adj_in if a.get("adjustment_type") == "inflow" else adj_out)[code] = (
-            (adj_in if a.get("adjustment_type") == "inflow" else adj_out).get(code, 0.0) + amt
-        )
+        bucket = adj_in if a.get("adjustment_type") == "inflow" else adj_out
+        bucket[code] = bucket.get(code, 0.0) + amt
+    return adj_in, adj_out
 
+
+def _merge_fund_rows(
+    inflow: Dict[str, float], out_orders: Dict[str, float],
+    out_clients: Dict[str, float], out_company: Dict[str, float],
+    adj_in: Dict[str, float], adj_out: Dict[str, float],
+) -> List[dict]:
+    """Combine the per-source aggregates into sorted per-currency rows."""
     codes = (set(inflow) | set(out_orders) | set(out_clients)
              | set(out_company) | set(adj_in) | set(adj_out))
     rows: List[dict] = []

@@ -220,6 +220,59 @@ def _styles():
     }
 
 
+def _intro_story(st: dict, since: str, until: str, actor: dict,
+                 kpis: Dict[str, float]) -> list:
+    """Cabecera + emisor + tarjetas KPI."""
+    return [
+        Paragraph("/ CÁLCULO DE RENTABILIDAD", st["label"]),
+        Paragraph(_range_title(since, until), st["h1"]),
+        Paragraph(
+            f"Emisor: <font color='#FFFFFF'><b>{actor.get('name', '')}</b></font> · {actor.get('email', '')}<br/>"
+            "Registro de operaciones con clientes y su rentabilidad por conversión. "
+            "Documento confidencial destinado a socios y auditores de Resilience Brothers FZ-LLC.",
+            st["sub"],
+        ),
+        _summary_card_row(st["base"], [
+            {"label": "Operaciones", "value": f"{kpis.get('total', 0):,}"},
+            {"label": "Rentables", "value": f"{kpis.get('profitable', 0):,}", "color": "#22C55E"},
+            {"label": "En pérdida", "value": f"{kpis.get('loss', 0):,}", "color": "#EF4444"},
+            {"label": "Tasa de éxito", "value": f"{kpis.get('success_rate', 0):,.1f}%", "color": "#8B5CF6"},
+        ]),
+    ]
+
+
+def _body_story(st: dict, ops: List[dict], currency_rows: List[dict]) -> list:
+    """Tablas: ganancia por moneda + detalle de operaciones."""
+    return [
+        Spacer(1, 20),
+        Paragraph("GANANCIA NETA POR MONEDA DE PAGO", st["section"]),
+        _currency_summary_table(currency_rows),
+        Spacer(1, 22),
+        Paragraph("DETALLE DE OPERACIONES", st["section"]),
+        _operations_table(ops),
+    ]
+
+
+def _closing_story(st: dict, actor: dict) -> list:
+    """Nota metodológica + bloque de firma."""
+    return [
+        Spacer(1, 24),
+        Paragraph(
+            "<font color='#A3A3A3' size=7>* Ganancia neta = efectivo recuperado − costo de compra, "
+            "donde efectivo recuperado = venta × (1 + %V) ÷ (1 + %C). Los porcentajes %C/%V indican "
+            "el precio de compra y venta de la transferencia bancaria de la moneda "
+            "de pago. Este documento es CONFIDENCIAL y su distribución requiere "
+            "autorización del titular.</font>",
+            st["base"]["Normal"],
+        ),
+        Spacer(1, 20),
+        build_signature_block(
+            lang=(actor.get("preferred_language") or "es"),
+            client_name="", include_client_side=False, total_width_inches=7.0,
+        ),
+    ]
+
+
 def generate_profitability_pdf(
     since: str,
     until: str,
@@ -243,41 +296,11 @@ def generate_profitability_pdf(
         leftMargin=36, rightMargin=36, topMargin=90, bottomMargin=50,
     )
     st = _styles()
-    story: list = []
-    story.append(Paragraph("/ CÁLCULO DE RENTABILIDAD", st["label"]))
-    story.append(Paragraph(_range_title(since, until), st["h1"]))
-    story.append(Paragraph(
-        f"Emisor: <font color='#FFFFFF'><b>{actor.get('name', '')}</b></font> · {actor.get('email', '')}<br/>"
-        "Registro de operaciones con clientes y su rentabilidad por conversión. "
-        "Documento confidencial destinado a socios y auditores de Resilience Brothers FZ-LLC.",
-        st["sub"],
-    ))
-    story.append(_summary_card_row(st["base"], [
-        {"label": "Operaciones", "value": f"{kpis.get('total', 0):,}"},
-        {"label": "Rentables", "value": f"{kpis.get('profitable', 0):,}", "color": "#22C55E"},
-        {"label": "En pérdida", "value": f"{kpis.get('loss', 0):,}", "color": "#EF4444"},
-        {"label": "Tasa de éxito", "value": f"{kpis.get('success_rate', 0):,.1f}%", "color": "#8B5CF6"},
-    ]))
-    story.append(Spacer(1, 20))
-    story.append(Paragraph("GANANCIA NETA POR MONEDA DE PAGO", st["section"]))
-    story.append(_currency_summary_table(currency_rows))
-    story.append(Spacer(1, 22))
-    story.append(Paragraph("DETALLE DE OPERACIONES", st["section"]))
-    story.append(_operations_table(ops))
-    story.append(Spacer(1, 24))
-    story.append(Paragraph(
-        "<font color='#A3A3A3' size=7>* Ganancia neta = efectivo recuperado − costo de compra, "
-        "donde efectivo recuperado = venta × (1 + %V) ÷ (1 + %C). Los porcentajes %C/%V indican "
-        "el precio de compra y venta de la transferencia bancaria de la moneda "
-        "de pago. Este documento es CONFIDENCIAL y su distribución requiere "
-        "autorización del titular.</font>",
-        st["base"]["Normal"],
-    ))
-    story.append(Spacer(1, 20))
-    story.append(build_signature_block(
-        lang=(actor.get("preferred_language") or "es"),
-        client_name="", include_client_side=False, total_width_inches=7.0,
-    ))
+    story: list = (
+        _intro_story(st, since, until, actor, kpis)
+        + _body_story(st, ops, currency_rows)
+        + _closing_story(st, actor)
+    )
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)
     pdf_bytes = buf.getvalue()
     buf.close()

@@ -1,0 +1,32 @@
+{
+  "summary": "Frontend E2E tested iter217 features end-to-end via Playwright against preview URL using pre-seeded smoke_session_admin_iter217 / smoke_session_vip_iter217 cookies. All 5 requested flows PASSED: (1) Admin /admin/inventory - sidebar admin-nav-inventory present, Control tab renders 725 inventory rows with estado badges, Movements tab creates entrada movement (9->10 rows) with product+qty=3, Dashboard tab renders KPIs (kpi-revenue=5,250 kpi-profit=1,930 kpi-cogs=3,320 kpi-net-flow=5,250 kpi-units-sold=12 kpi-margin=36.76% kpi-inv-value=410,730,140) and reloads on 7d click. (2) VIP /dashboard/my-products - nav-my-products in sidebar, Publicar producto flow creates product 'TEST_iter217_797101' at 15 USDT stock 2 category iter217test with 'PENDIENTE DE APROBACIÓN' badge; edit-then-save updated price to 17 successfully. (3) Admin /admin/products vendor-products-section shows commission-input + commission-save; the pending VIP product appeared under vendor-filter-pending; Aprobar clicked -> product moved to vendor-filter-approved list. (4) VIP /dashboard/marketplace shows 500 product cards each with 'X USDT' price and '≈ 6,715 CUP · 71,400 COP · 63.75 PEN' equivalents; approved VIP product carries amber vendor badge 'VENDE VIP TEST'. (5) Admin rejected the approved product via vendor-reject dialog with reason 'TEST_iter217 reject reason'; VIP side now shows 'RECHAZADO' badge and reason text 'Motivo: TEST_iter217 reject reason' in Mis Productos.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MyProductsView", "issue": "my-products-commission-note is only rendered when items.length > 0 (conditional). On empty state (VIP with no products) the 5% commission notice is hidden - user won't see the commission rule before creating their first product. Consider showing it above the create button unconditionally.", "selector": "[data-testid='my-products-commission-note']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Movements dialog (add-movement)", "issues": ["React hydration warning: '<span> cannot be a child of <option>' inside movement-product native <select>. Likely the option renders a nested span (e.g., stock badge). Use plain text in <option>.", "Several shadcn DialogContent instances are missing DialogDescription or aria-describedby (accessibility warning) - appears on movement dialog, my-product dialog, vendor-reject dialog."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Move my-products-commission-note out of the items.length > 0 conditional so VIP users see the 5% commission rule even before creating their first product.",
+    "Fix hydration warning in InventoryMovementsTab movement-product <select>: options must not contain <span>; render label as plain text like `${name} (stock ${n})`.",
+    "Add DialogDescription (or aria-describedby={undefined} suppression is not correct) to shadcn Dialogs used in movements, my-products and vendor-reject to fix a11y warnings."
+  ],
+  "critical_code_review_comments": [
+    "InventoryDashboardTab: `useEffect(() => { load(start, end); }, [])` disables exhaustive-deps but is fine here; however if start/end props ever change externally the initial fetch would be stale — acceptable but noted.",
+    "InventoryControlTab.load() swallows errors silently (`.catch(() => {})`) making auth/permission failures invisible to users. Consider surfacing errors via toast.",
+    "MyProductsView commission note gating by items.length > 0 is a UX regression against spec ('Commission note visible')."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (per pre-existing 19/19 pytest)", "frontend": "100% of 5 requested flows pass; 1 minor UX issue + 2 a11y/hydration warnings"},
+  "test_credentials": "cookie session_token=smoke_session_admin_iter217 (admin=user_test_admin01) and session_token=smoke_session_vip_iter217 (vip=user_test_vip01), both valid until 2026-09-03.",
+  "seed_data_creation": "Created 1 VIP product 'TEST_iter217_797101' (category iter217test, 17 USDT, stock 2) owned by user_test_vip01. Ended in RECHAZADO state after flow 5. Also created 1 inventory movement (entrada qty=3) against product Aceite Vegetal (Pallet 120L) - bumped stock from 19 to 22.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The seeded smoke sessions expire 2026-09-03. Preview URL uses SSE so always use wait_until='domcontentloaded' + explicit page.wait_for_timeout after route changes (dashboard KPIs need ~3s to load, control table ~3s). Vendor products section is at the BOTTOM of /admin/products - scrollIntoView is needed. The test VIP product 'TEST_iter217_797101' is in RECHAZADO state - reuse or clean up if creating more.",
+  "rca of the issue": "No blocking issues. Only minor: (a) commission-note gated on items.length > 0 - remove the conditional; (b) <span> inside <option> in InventoryMovementsTab causes hydration warning - replace nested markup with template-string text."
+}

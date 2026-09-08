@@ -53,6 +53,11 @@ function DeliveriesTab({ navigate }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [pendingConfirm, setPendingConfirm] = useState(null);
   const [detailsRow, setDetailsRow] = useState(null);
+  // iter216 — resumen del día de TODO el equipo.
+  // iter217 — con selector de fecha para revisar jornadas pasadas.
+  const [summary, setSummary] = useState(null);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [summaryDate, setSummaryDate] = useState(todayStr);
 
   const load = useCallback(() => {
     const params = statusFilter !== "all" ? { status: statusFilter } : {};
@@ -61,6 +66,16 @@ function DeliveriesTab({ navigate }) {
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data)).catch(() => setCouriers([]));
   }, [statusFilter]);
+
+  useEffect(() => {
+    const fetchSummary = () =>
+      axios.get(`${API}/admin/deliveries/summary`, {
+        params: { date: summaryDate }, withCredentials: true,
+      }).then((r) => setSummary(r.data)).catch(() => {});
+    fetchSummary();
+    const iv = setInterval(fetchSummary, 20000);
+    return () => clearInterval(iv);
+  }, [summaryDate]);
 
   useEffect(() => {
     load();
@@ -105,6 +120,82 @@ function DeliveriesTab({ navigate }) {
 
   return (
     <div className="space-y-4">
+      {/* iter216 — Resumen del día de TODO el equipo (iter217: fecha elegible) */}
+      {summary && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="micro-label text-neutral-500">{t("admin.deliveries.summary.dateLabel")}</span>
+            <input
+              type="date"
+              value={summaryDate}
+              max={todayStr}
+              onChange={(e) => e.target.value && setSummaryDate(e.target.value)}
+              data-testid="team-summary-date"
+              className="bg-[#0a0a0a] border border-white/10 text-white text-xs px-2 h-8 rounded-none [color-scheme:dark]"
+            />
+            {summaryDate !== todayStr && (
+              <button
+                onClick={() => setSummaryDate(todayStr)}
+                data-testid="team-summary-today-btn"
+                className="text-xs text-[#8B5CF6] hover:underline"
+              >
+                {t("admin.deliveries.summary.todayBtn")}
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="team-summary-cards">
+          <div className="tactile-card p-3.5" data-testid="team-confirmed-today">
+            <div className="micro-label text-neutral-500">
+              {summaryDate === todayStr
+                ? t("admin.deliveries.summary.confirmedToday")
+                : t("admin.deliveries.summary.confirmedOn", { d: summaryDate })}
+            </div>
+            <div className="font-display text-2xl mt-1">{summary.confirmed_count}</div>
+            <div className="text-[0.65rem] text-neutral-500 mt-0.5">
+              {t("admin.deliveries.summary.totalFees", { v: summary.total_fees_usdt })}
+            </div>
+          </div>
+          <div className="tactile-card p-3.5" data-testid="team-courier-earned">
+            <div className="micro-label text-neutral-500">
+              {summaryDate === todayStr
+                ? t("admin.deliveries.summary.teamEarned")
+                : t("admin.deliveries.summary.teamEarnedOn", { d: summaryDate })}
+            </div>
+            <div className="font-display text-2xl mt-1 text-[#22C55E]">
+              {summary.courier_earned_usdt} <span className="text-sm">USDT</span>
+            </div>
+            <div className="text-[0.65rem] text-neutral-500 mt-0.5 truncate" data-testid="team-by-courier">
+              {(summary.by_courier || []).length > 0
+                ? summary.by_courier.map((c) => `${c.courier_name} ${c.count}×(${c.earned_usdt})`).join(" · ")
+                : t("admin.deliveries.summary.noneToday")}
+            </div>
+          </div>
+          <div className="tactile-card p-3.5" data-testid="team-platform-earned">
+            <div className="micro-label text-neutral-500">
+              {summaryDate === todayStr
+                ? t("admin.deliveries.summary.platformEarned")
+                : t("admin.deliveries.summary.platformEarnedOn", { d: summaryDate })}
+            </div>
+            <div className="font-display text-2xl mt-1 text-[#8B5CF6]">
+              {summary.platform_earned_usdt} <span className="text-sm">USDT</span>
+            </div>
+            <div className="text-[0.65rem] text-neutral-500 mt-0.5">
+              {t("admin.deliveries.summary.splitNote")}
+            </div>
+          </div>
+          <div className="tactile-card p-3.5" data-testid="team-active-now">
+            <div className="micro-label text-neutral-500">{t("admin.deliveries.summary.activeNow")}</div>
+            <div className="font-display text-2xl mt-1 text-amber-400">{summary.active_count}</div>
+            <div className="text-[0.65rem] text-neutral-500 mt-0.5">
+              {t("admin.deliveries.summary.activeDetail", {
+                available: summary.available_count,
+                pending: summary.delivered_pending_count,
+              })}
+            </div>
+          </div>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setStatusFilter("all")}

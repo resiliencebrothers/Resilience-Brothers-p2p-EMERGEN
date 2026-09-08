@@ -270,3 +270,123 @@ body {
   55% { color: #ef4444; text-shadow: 0 0 8px rgba(239, 68, 68, 0.35); }
   100% { }
 }
+
+/* ============================================================
+   iter241 — MODO CLARO (html.light)
+   El diseño usa colores oscuros hardcodeados (Tailwind arbitrarios),
+   así que el modo claro se aplica con overrides globales sobre las
+   clases más usadas + variables shadcn. Oscuro sigue siendo default.
+   ============================================================ */
+html.light {
+    --background: 263 45% 95%;
+    --foreground: 259 21% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 259 21% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 259 21% 14%;
+    --secondary: 263 40% 93%;
+    --secondary-foreground: 259 21% 16%;
+    --muted: 263 40% 93%;
+    --muted-foreground: 259 10% 40%;
+    --border: 266 60% 87%;
+    --input: 266 60% 87%;
+}
+html.light body { background: #F2EDFA; color: #211C2B; }
+html.light ::-webkit-scrollbar-track { background: #E8DFF8; }
+html.light ::-webkit-scrollbar-thumb { background: #C9B3EE; border: 2px solid #E8DFF8; }
+html.light * { scrollbar-color: #C9B3EE #E8DFF8; }
+html.light .tactile-card {
+    background: #ffffff;
+    border-color: #D9C8F2;
+    box-shadow: 0 4px 18px rgba(139, 61, 255, 0.10);
+}
+html.light .glass-panel {
+    background: rgba(255, 255, 255, 0.82);
+    border-color: #D9C8F2;
+}
+html.light .brand-title {
+    background: linear-gradient(180deg, #5B21B6 0%, #7A2FE6 45%, #8B3DFF 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 2px 10px rgba(139, 61, 255, 0.28));
+}
+html.light .tx-body-scroll { scrollbar-color: #C9B3EE #F2EDFA; }
+html.light .tx-body-scroll::-webkit-scrollbar-track { background: #F2EDFA; }
+html.light .tx-body-scroll::-webkit-scrollbar-thumb { background: #C9B3EE; border-color: #F2EDFA; }
+html.light .notif-scroll { scrollbar-color: #C9B3EE #ffffff; }
+html.light .notif-scroll::-webkit-scrollbar-track { background: #ffffff; }
+html.light .notif-scroll::-webkit-scrollbar-thumb { background: #C9B3EE; border-color: #ffffff; }
+
+/* Landing hero en claro: sin capa gris — blanco con degradado lila suave.
+   La imagen de partículas se invierte y atenúa como textura sutil. */
+html.light .landing-hero-bg { opacity: 0.12; filter: invert(1) hue-rotate(180deg); }
+html.light .landing-hero-overlay {
+    background: linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(244,237,254,0.9) 45%, #F2EDFA 100%) !important;
+}
+
+/* superficies oscuras hardcodeadas → claras */
+html.light [class~="bg-[#0a0a0a]"] { background-color: #ffffff !important; }
+html.light [class~="bg-[#0c0c0c]"] { background-color: #FBF9FF !important; }
+html.light [class~="bg-[#14101F]"] { background-color: #F2EDFA !important; }
+html.light [class~="bg-[#14101F]/95"] { background-color: rgba(242, 237, 250, 0.95) !important; }
+html.light [class~="bg-[#1A1730]"] { background-color: #ffffff !important; }
+html.light [class~="bg-neutral-800"] { background-color: #D9C8F2 !important; }
+html.light [class~="bg-neutral-900"] { background-color: #EDE6F9 !important; }
+
+/* textos claros → oscuros (principal #211C2B, secundario #625B70) */
+html.light [class~="text-white"] { color: #211C2B !important; }
+html.light [class~="text-neutral-100"],
+html.light [class~="text-neutral-200"] { color: #211C2B !important; }
+html.light [class~="text-neutral-300"],
+html.light [class~="text-neutral-400"] { color: #625B70 !important; }
+html.light [class~="text-neutral-500"] { color: #736C84 !important; }
+html.light [class~="text-neutral-600"] { color: #948EA6 !important; }
+html.light [class~="text-white/30"] { color: rgba(33, 28, 43, 0.3) !important; }
+html.light [class~="text-white/40"] { color: rgba(33, 28, 43, 0.4) !important; }
+html.light [class~="text-white/50"] { color: rgba(33, 28, 43, 0.5) !important; }
+html.light [class~="text-white/60"] { color: rgba(33, 28, 43, 0.6) !important; }
+html.light [class~="text-white/70"] { color: rgba(33, 28, 43, 0.7) !important; }
+html.light [class~="text-white/80"] { color: rgba(33, 28, 43, 0.8) !important; }
+html.light [class~="text-violet-300"] { color: #8B3DFF !important; }
+html.light [class~="text-emerald-400"] { color: #047857 !important; }
+html.light [class~="text-amber-400"] { color: #b45309 !important; }
+html.light [class~="text-[#FEF3C7]"] { color: #92400e !important; }
+
+/* morado de marca en claro → #8B3DFF */
+html.light [class~="text-[#8B5CF6]"] { color: #8B3DFF !important; }
+html.light [class~="bg-[#8B5CF6]"] { background-color: #8B3DFF !important; }
+html.light [class~="bg-violet-600"] { background-color: #8B3DFF !important; }
+html.light [class*="hover:bg-[#A78BFA]"]:hover,
+html.light [class*="hover:bg-violet-500"]:hover { background-color: #9C5BFF !important; }
+html.light [class~="border-[#8B5CF6]"] { border-color: #8B3DFF !important; }
+
+/* bordes (#D9C8F2 en tarjetas/paneles) */
+html.light [class~="border-white/5"] { border-color: #E8DFF8 !important; }
+html.light [class~="border-white/10"] { border-color: #D9C8F2 !important; }
+html.light [class~="border-white/15"] { border-color: #D9C8F2 !important; }
+html.light [class~="border-white/20"] { border-color: #C9B3EE !important; }
+html.light [class~="border-white/30"] { border-color: #B69CE6 !important; }
+
+/* rellenos suaves */
+html.light [class~="bg-white/5"] { background-color: rgba(139, 61, 255, 0.05) !important; }
+html.light [class~="bg-white/10"] { background-color: rgba(139, 61, 255, 0.08) !important; }
+html.light [class~="bg-black/20"] { background-color: rgba(139, 61, 255, 0.04) !important; }
+html.light [class~="bg-black/30"] { background-color: rgba(139, 61, 255, 0.05) !important; }
+html.light [class~="bg-black/40"] { background-color: rgba(139, 61, 255, 0.06) !important; }
+
+/* estados hover equivalentes */
+html.light [class*="hover:bg-white/"]:hover { background-color: rgba(139, 61, 255, 0.07) !important; }
+html.light [class*="hover:border-white/"]:hover { border-color: #A788E0 !important; }
+html.light [class*="hover:text-white"]:not([class*="hover:bg-[#"]):hover { color: #211C2B !important; }
+
+/* botones con fondo sólido conservan texto blanco (mayor especificidad) */
+html.light [class~="bg-[#8B5CF6]"][class~="text-white"],
+html.light [class~="bg-[#A78BFA]"][class~="text-white"],
+html.light [class~="bg-[#6D28D9]"][class~="text-white"],
+html.light [class~="bg-violet-600"][class~="text-white"],
+html.light [class~="bg-violet-500"][class~="text-white"],
+html.light [class~="bg-[#EF4444]"][class~="text-white"],
+html.light [class~="bg-red-500"][class~="text-white"],
+html.light [class~="bg-red-600"][class~="text-white"],
+html.light [class~="bg-emerald-500"][class~="text-white"],
+html.light [class~="bg-emerald-600"][class~="text-white"] { color: #ffffff !important; }

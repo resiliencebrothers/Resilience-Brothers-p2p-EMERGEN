@@ -4,9 +4,43 @@
 Extraído a services/ para eliminar los imports cruzados entre ambos routers
 (hallazgo del code review — acoplamiento circular vía lazy imports).
 """
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+
+from db_client import db
+from auth_utils import now_utc, iso
+
+
+async def record_auto_fund_adjustment(*, adjustment_type: str, currency: str,
+                                      amount: float, source_name: str,
+                                      note: str = "", ref_id: str = "") -> dict:
+    """iter219 — movimiento AUTOMÁTICO de capital (ventas del marketplace,
+    comisiones de vendedores VIP). Usa el mismo esquema que los ajustes
+    manuales para que `_aggregate_manual_adjustments` lo refleje directo en
+    el fondo de la empresa."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "adjustment_type": adjustment_type,
+        "currency": currency,
+        "amount": round(float(amount), 2),
+        "method": "transfer",
+        "source_name": source_name,
+        "source_account": "",
+        "note": note,
+        "account_id": "",
+        "account_label": "",
+        "denominations": None,
+        "actor_id": "system",
+        "actor_email": "sistema",
+        "actor_name": "Sistema (automático)",
+        "source": "marketplace_auto",
+        "ref_id": ref_id,
+        "created_at": iso(now_utc()),
+    }
+    await db.company_fund_adjustments.insert_one({**doc})
+    return doc
 
 
 async def assert_can_manage_company_funds(actor: dict) -> None:

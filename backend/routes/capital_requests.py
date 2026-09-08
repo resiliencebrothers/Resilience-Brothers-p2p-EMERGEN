@@ -188,16 +188,13 @@ async def admin_approve_capital_request(req_id: str, payload: CapitalRequestAppr
     amount = float(doc["amount"])
     currency = doc["currency_code"]
 
-    # Atomic: credit VIP balance + mark request as disbursed
-    await db.users.update_one(
-        {"user_id": doc["user_id"]},
-        {"$inc": {f"vip_balances.{currency}": amount}},
-    )
-    from services.live_events import emit_balance_changed
-    await emit_balance_changed(doc["user_id"], "capital_request_disbursed",
-                               request_id=req_id, currency=currency)
-    await db.capital_requests.update_one(
-        {"id": req_id},
+    # iter249 — claim atómico del estado + intención de abono en el MISMO
+    # update: dos aprobaciones simultáneas no pueden desembolsar dos veces, y
+    # si el proceso muere antes de acreditar, el healer completa el abono.
+    from services.credit_recovery import pending_marker, apply_and_clear
+    marker = pending_marker(doc["user_id"], currency, amount, "capital-disburse")
+    claim = await db.capital_requests.update_one(
+        {"id": req_id, "status": "pending"},
         {"$set": {
             "status": "disbursed",
             "reviewed_by": actor.get("user_id", ""),
@@ -208,8 +205,16 @@ async def admin_approve_capital_request(req_id: str, payload: CapitalRequestAppr
             "debt_original": amount,
             "debt_remaining": amount,
             "updated_at": now_iso,
+            "credit_pending": marker,
         }},
     )
+    if claim.modified_count == 0:
+        raise HTTPException(status_code=409,
+                            detail="Esta solicitud ya fue procesada por otro admin.")
+    await apply_and_clear("capital_requests", req_id, marker)
+    from services.live_events import emit_balance_changed
+    await emit_balance_changed(doc["user_id"], "capital_request_disbursed",
+                               request_id=req_id, currency=currency)
     await log_action(db, actor, "capital_request.approved", "capital_request", req_id,
                       summary=(f"Aprobó y desembolsó {amount} {currency} a "
                                f"{doc.get('user_email', doc['user_id'])} "

@@ -5,9 +5,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Settings2, Coins, ShieldCheck, ShoppingBag, Phone as PhoneIcon, Shield, Layers, Ban } from "lucide-react";
+import { Settings2, Coins, ShieldCheck, ShoppingBag, Phone as PhoneIcon, Shield, Layers, Ban, Wallet, Truck, Boxes } from "lucide-react";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
-import { CurrencyMultiSelect } from "./CurrencyMultiSelect";
+import { CurrencyMultiSelect, NO_CURRENCIES } from "./CurrencyMultiSelect";
 import { PermissionMultiSelect } from "./PermissionMultiSelect";
 import { MarketPermsCell } from "./MarketPermsCell";
 import { UserPhoneCell } from "./UserPhoneCell";
@@ -27,6 +27,29 @@ const ROLE_LABELS = {
   employee: "Staff Member",
   admin: "Admin",
 };
+
+// iter245 — perfiles predefinidos: permisos + monedas en un clic.
+// iter251 — las plantillas SUMAN a lo ya concedido (no reemplazan).
+const STAFF_TEMPLATES = [
+  {
+    id: "cajero", label: "Cajero", icon: Wallet,
+    perms: ["orders", "withdrawals", "company_funds", "quick_view"],
+    currencies: [],
+    desc: "Suma: órdenes, retiros VIP, fondos de caja y cola de trabajo · todas las monedas",
+  },
+  {
+    id: "mensajeria", label: "Mensajería", icon: Truck,
+    perms: ["deliveries", "quick_view"],
+    currencies: ["__NONE__"],
+    desc: "Suma: gestión de entregas y mensajeros · monedas actuales sin cambios",
+  },
+  {
+    id: "inventario", label: "Inventario", icon: Boxes,
+    perms: ["products", "quick_view"],
+    currencies: ["__NONE__"],
+    desc: "Suma: tienda física, inventario y productos · monedas actuales sin cambios",
+  },
+];
 
 /**
  * iter55.33 — Consolidates the previously-inline user functions (role,
@@ -54,6 +77,18 @@ export default function UserFunctionsDialog({
   const [pendingCurrencies, setPendingCurrencies] = useState(null);
   const [pendingPerms, setPendingPerms] = useState(null);
 
+  // iter244 — BUG FIX: al cambiar de usuario, descartar TODO estado pendiente
+  // (selecciones sin guardar, TOTP en curso). Sin esto, guardar en el usuario
+  // B aplicaba las funciones editadas para el usuario A. El padre además
+  // monta el diálogo con key={user_id} como primera línea de defensa.
+  useEffect(() => {
+    setPendingCurrencies(null);
+    setPendingPerms(null);
+    setPendingTotp(null);
+    setRejectingPhone(null);
+    setTab("role");
+  }, [user?.user_id]);
+
   // Memoise the visible tab list — the filter is trivial but running it
   // per render also drops the `perms` tab when the user is not an
   // employee. Recompute only when the role actually flips.
@@ -64,16 +99,16 @@ export default function UserFunctionsDialog({
 
   if (!user) return null;
 
-  const putUserField = async (field, value, totpCode) => {
+  const putUserFields = async (fields, totpCode, successMsg) => {
     setBusy(true);
     try {
-      const body = { [field]: value };
+      const body = { ...fields };
       if (totpCode) body.totp_code = totpCode;
       const r = await axios.put(`${API}/admin/users/${user.user_id}`, body, {
         withCredentials: true,
       });
       onUserUpdated?.(r.data);
-      toast.success("Cambio guardado.");
+      toast.success(successMsg || "Cambio guardado.");
       setPendingTotp(null);
       return true;
     } catch (e) {
@@ -81,7 +116,7 @@ export default function UserFunctionsDialog({
       const status = e.response?.status;
       // TOTP step-up required → open the prompt and stop.
       if (typeof detail === "object" && detail?.code === "TOTP_CODE_REQUIRED") {
-        setPendingTotp({ field, value });
+        setPendingTotp({ fields, successMsg });
         return false;
       }
       // Close the TOTP prompt if it was open — the retry failed for a
@@ -99,6 +134,100 @@ export default function UserFunctionsDialog({
       return false;
     } finally {
       setBusy(false);
+    }
+  };
+
+  const putUserField = (field, value, totpCode) =>
+    putUserFields({ [field]: value }, totpCode);
+
+  // iter245 — aplica un perfil predefinido (permisos + monedas) en un clic.
+  // iter251 — BUG FIX: la plantilla SUMA a lo ya concedido (incluidas las
+  // selecciones sin guardar); antes reemplazaba la lista completa y se
+  // perdían los permisos anteriores (y viceversa).
+  const applyTemplate = async (tpl) => {
+    const currentPerms = pendingPerms ?? (user.allowed_permissions || []);
+    const mergedPerms = [...new Set([...currentPerms, ...tpl.perms])];
+    const currentCurrencies = pendingCurrencies ?? (user.allowed_currencies || []);
+    let mergedCurrencies;
+    if (tpl.currencies.length === 0) {
+      // La plantilla otorga TODAS las monedas ([] = sin restricción).
+      mergedCurrencies = [];
+    } else if (tpl.currencies.includes("__NONE__")) {
+      // La plantilla no aporta monedas → conservar las actuales tal cual.
+      mergedCurrencies = currentCurrencies;
+    } else {
+      mergedCurrencies = [...new Set([
+        ...currentCurrencies.filter((c) => c !== "__NONE__"),
+        ...tpl.currencies,
+      ])];
+    }
+    const ok = await putUserFields(
+      {
+        allowed_permissions: mergedPerms,
+        allowed_currencies: mergedCurrencies,
+        // iter252 — registrar el delta exacto para poder revertirlo luego.
+        applied_templates: {
+          ...(user.applied_templates || {}),
+          [tpl.id]: {
+            added_perms: tpl.perms.filter((p) => !currentPerms.includes(p)),
+            prev_currencies: currentCurrencies,
+            set_currencies: mergedCurrencies,
+            currencies_changed:
+              JSON.stringify([...currentCurrencies].sort()) !==
+              JSON.stringify([...mergedCurrencies].sort()),
+            applied_at: new Date().toISOString(),
+          },
+        },
+      },
+      undefined,
+      `Plantilla «${tpl.label}» aplicada (permisos sumados).`,
+    );
+    if (ok) {
+      setPendingPerms(null);
+      setPendingCurrencies(null);
+    }
+  };
+
+  // iter252 — revierte EXACTAMENTE lo que la plantilla sumó: quita solo los
+  // permisos que añadió (los previos y los añadidos a mano se conservan) y
+  // restaura las monedas solo si nadie las cambió después de aplicarla.
+  const removeTemplate = async (tpl) => {
+    // iter252b — refetch fresco antes de calcular la reversión: si otro admin
+    // cambió permisos/monedas desde que se abrió el diálogo, la heurística
+    // "nadie las cambió después" usa el estado real y no un prop obsoleto.
+    let fresh = user;
+    try {
+      const fr = await axios.get(`${API}/admin/users`, {
+        params: { q: user.email, limit: 5 }, withCredentials: true,
+      });
+      fresh = (fr.data || []).find((u) => u.user_id === user.user_id) || user;
+    } catch { /* sin red: usar el prop como fallback */ }
+    const rec = fresh.applied_templates?.[tpl.id] || user.applied_templates?.[tpl.id];
+    if (!rec) return;
+    const currentPerms = pendingPerms ?? (fresh.allowed_permissions || []);
+    const added = rec.added_perms || [];
+    const newPerms = currentPerms.filter((p) => !added.includes(p));
+    const currentCurrencies = pendingCurrencies ?? (fresh.allowed_currencies || []);
+    let newCurrencies = currentCurrencies;
+    if (rec.currencies_changed &&
+        JSON.stringify([...currentCurrencies].sort()) ===
+        JSON.stringify([...(rec.set_currencies || [])].sort())) {
+      newCurrencies = rec.prev_currencies || [];
+    }
+    const remaining = { ...(fresh.applied_templates || user.applied_templates || {}) };
+    delete remaining[tpl.id];
+    const ok = await putUserFields(
+      {
+        allowed_permissions: newPerms,
+        allowed_currencies: newCurrencies,
+        applied_templates: remaining,
+      },
+      undefined,
+      `Plantilla «${tpl.label}» quitada (solo lo que sumó).`,
+    );
+    if (ok) {
+      setPendingPerms(null);
+      setPendingCurrencies(null);
     }
   };
 
@@ -241,7 +370,8 @@ export default function UserFunctionsDialog({
                     allCurrencies={currencies}
                     selected={pendingCurrencies ?? (user.allowed_currencies || [])}
                     onToggle={(code, isOn) => {
-                      const cur = pendingCurrencies ?? (user.allowed_currencies || []);
+                      const cur = (pendingCurrencies ?? (user.allowed_currencies || []))
+                        .filter((c) => c !== NO_CURRENCIES);
                       const next = isOn
                         ? [...new Set([...cur, code])]
                         : cur.filter((c) => c !== code);
@@ -249,6 +379,7 @@ export default function UserFunctionsDialog({
                     }}
                     onSave={() => saveAllowedCurrencies(pendingCurrencies ?? (user.allowed_currencies || []))}
                     onClear={() => setPendingCurrencies([])}
+                    onRestrictAll={() => setPendingCurrencies([NO_CURRENCIES])}
                   />
                 ) : (
                   <p className="text-sm text-neutral-500">
@@ -261,6 +392,55 @@ export default function UserFunctionsDialog({
 
             {tab === "perms" && user.role === "employee" && (
               <div data-testid="uf-perms-tab">
+                <div className="micro-label text-neutral-500 mb-2">Plantillas rápidas</div>
+                <div className="grid sm:grid-cols-3 gap-2 mb-5" data-testid="staff-templates">
+                  {STAFF_TEMPLATES.map((tpl) => {
+                    const Icon = tpl.icon;
+                    const applied = !!user.applied_templates?.[tpl.id];
+                    return (
+                      <div
+                        key={tpl.id}
+                        className={`border px-3 py-2.5 transition-colors group ${
+                          applied ? "border-[#8B5CF6]/50" : "border-white/10 hover:border-[#8B5CF6]/60"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => applyTemplate(tpl)}
+                          data-testid={`staff-template-${tpl.id}`}
+                          className="text-left w-full"
+                        >
+                          <span className="flex items-center gap-2 text-sm font-semibold text-white group-hover:text-[#8B5CF6]">
+                            <Icon className="w-4 h-4 text-[#8B5CF6]" /> {tpl.label}
+                            {applied && (
+                              <span
+                                data-testid={`staff-template-applied-${tpl.id}`}
+                                className="text-[0.6rem] uppercase tracking-wide text-[#8B5CF6] border border-[#8B5CF6]/40 px-1.5 py-0.5"
+                              >
+                                Aplicada
+                              </span>
+                            )}
+                          </span>
+                          <span className="block text-[0.65rem] text-neutral-500 mt-1 leading-snug">
+                            {tpl.desc}
+                          </span>
+                        </button>
+                        {applied && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => removeTemplate(tpl)}
+                            data-testid={`staff-template-remove-${tpl.id}`}
+                            className="mt-2 w-full text-[0.65rem] uppercase tracking-wide text-red-300/80 hover:text-red-300 border border-red-400/20 hover:border-red-400/50 py-1 transition-colors"
+                          >
+                            Quitar lo que sumó
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
                 <div className="micro-label text-neutral-500 mb-3">Permisos granulares</div>
                 <PermissionMultiSelect
                   userId={user.user_id}
@@ -331,7 +511,7 @@ export default function UserFunctionsDialog({
         onConfirm={(code) => {
           if (pendingTotp?.action === "verify-phone") verifyPhone(code);
           else if (pendingTotp?.action === "reject-phone") confirmRejectPhone(pendingTotp.reason, code);
-          else if (pendingTotp?.field) putUserField(pendingTotp.field, pendingTotp.value, code);
+          else if (pendingTotp?.fields) putUserFields(pendingTotp.fields, code, pendingTotp.successMsg);
         }}
         onCancel={() => setPendingTotp(null)}
         busy={busy}

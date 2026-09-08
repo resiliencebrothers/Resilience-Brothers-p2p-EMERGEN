@@ -1338,3 +1338,18 @@ Operator asks (13 Feb 2026):
 - **Tests obsoletos actualizados**: iter55_3/55_7 (ajustes cash CUP ahora exigen denominaciones iter213), iter55_21 (filtro settings), iter195 (guard de mensajería iter205 → seed con office_pickup).
 - **Declinado con justificación**: reducción de "import coupling" en server.py/orders.py (reestructura de alto riesgo y bajo beneficio en app en producción); refactor de generadores PDF principales (ya son composición lineal de helpers; el conteo de líneas del review incluye docstrings); `email_service.py` queda en backlog P1.
 - Verificación: SUITE COMPLETA backend `pytest tests/` → 1597 passed + 8 corregidos = 1605 en verde (8 skipped). PREVIEW — requiere re-deploy.
+
+## Ago 2026 — iter215: Ciclo completo mensajería ↔ transacciones (verificado)
+- **Reporte (producción)**: retiro entregado en transacciones pero flujo de mensajería desincronizado; tarjetas del panel mensajero en 0 (aclarado: son personales del usuario logueado — Darianna fue la mensajera, sus cifras van en la pestaña Mensajeros).
+- **Sync mensajero → transacciones**: cuando el mensajero marca "Entregada" (delivered) en un retiro cash, el retiro pasa a `paid` automáticamente (`mark_paid_from_delivery` desde `courier_update_status`) con push/email al cliente. El payout 80% del mensajero SIGUE esperando la confirmación admin (control TOTP).
+- **Sync admin "Entregado" → mensajería**: al marcar el retiro `paid` con el botón Entregado (TOTP ya verificado), si la entrega estaba `delivered` se confirma sola y se acredita el 80% al mensajero (`_do_confirm_delivery` extraído del endpoint confirm y reutilizado en `update_withdrawal`). Sin loops (mark_paid es no-op si ya paid).
+- Verificación: pytest nuevo `tests/test_iter215_delivery_paid_sync.py` 2/2 + regresión mensajería/retiros 32/32. PREVIEW — requiere re-deploy para producción.
+
+## Ago 2026 — iter216: Resumen del equipo en la pestaña Entregas (verificado)
+- Nuevo `GET /admin/deliveries/summary?date=` (perm deliveries): confirmadas del día + tarifas cobradas + ganancia mensajeros + ganancia plataforma + en curso ahora (disponibles/por confirmar) + desglose por mensajero.
+- 4 tarjetas encima de los filtros en la pestaña Entregas (`DeliveriesTab`): Entregas hoy (equipo), Ganancia mensajeros hoy (con desglose "Darianna 2×(6.4)"), Ganancia plataforma hoy (20%), En curso ahora. Refresco cada 20s junto a la tabla.
+- Verificación: pytest `tests/test_iter216_team_summary.py` (sumas, desglose por mensajero, filtro por fecha, permiso staff, 400 fecha inválida) + regresión iter202 → 6/6; screenshot de la pestaña con las 4 tarjetas. PREVIEW — requiere re-deploy.
+
+## Ago 2026 — iter217: Selector de fecha en el resumen del equipo (verificado)
+- Selector "Jornada" (input date, máx hoy) sobre las tarjetas del equipo en la pestaña Entregas + botón "Volver a hoy". Los títulos de las 3 tarjetas de ganancias muestran la fecha elegida ("Entregas (equipo) — 2026-08-20"); "En curso ahora" sigue siendo estado actual. Fetch del summary separado en su propio useEffect con polling 20s dependiente de la fecha (backend `?date=` ya existía de iter216).
+- Verificación: smoke E2E con seed del 2026-08-20 → tarjetas muestran 1 entrega / 5 USDT / Darianna 1×(4) / plataforma 1 USDT y botón Volver a hoy. PREVIEW — requiere re-deploy.

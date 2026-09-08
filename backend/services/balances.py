@@ -118,25 +118,75 @@ def get_user_balance(user: dict, code: str) -> float:
 
 
 async def decrement_balance(user_id: str, code: str, amount: float) -> None:
-    """Decrement a currency balance. For USD, prefer vip_balance_usd legacy field first."""
+    """Débito ATÓMICO y condicional de saldo (iter248).
+
+    El guard de saldo suficiente vive en el FILTRO del update, así el chequeo
+    y el descuento ocurren en UNA sola operación de MongoDB: dos peticiones
+    simultáneas no pueden gastar el mismo dinero ni dejar saldo negativo.
+    Lanza 409 INSUFFICIENT_BALANCE si el saldo no alcanza (los pre-chequeos de
+    los callers dan mensajes bonitos; esto es la garantía autoritativa).
+    Para USD conserva el orden legacy-primero (vip_balance_usd) vía pipeline."""
+    amount = float(amount)
+    if amount <= 0:
+        return
+    # Tolerancia de coma flotante: los saldos acumulan ruido binario (p.ej.
+    # 5.01 - 5.0 = 0.00999...); sin esto el guard rechazaría débitos legítimos
+    # que dejan el saldo en ~0. Muy por debajo del céntimo → no habilita
+    # ningún doble gasto real.
+    guard = amount - 1e-6
     if code == "USD":
-        user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-        legacy = float(user.get("vip_balance_usd") or 0.0)
-        if legacy >= amount:
-            await db.users.update_one(
-                {"user_id": user_id}, {"$inc": {"vip_balance_usd": -amount}}
-            )
-            return
-        remainder = amount - legacy
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {"vip_balance_usd": 0.0},
-             "$inc": {f"vip_balances.{code}": -remainder}},
+        res = await db.users.update_one(
+            {"user_id": user_id,
+             "$expr": {"$gte": [
+                 {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
+                           {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                 guard]}},
+            [
+                {"$set": {"_legacy_take": {
+                    "$min": [{"$ifNull": ["$vip_balance_usd", 0.0]}, amount]}}},
+                {"$set": {
+                    "vip_balance_usd": {"$subtract": [
+                        {"$ifNull": ["$vip_balance_usd", 0.0]}, "$_legacy_take"]},
+                    "vip_balances.USD": {"$subtract": [
+                        {"$ifNull": ["$vip_balances.USD", 0.0]},
+                        {"$subtract": [amount, "$_legacy_take"]}]},
+                }},
+                {"$unset": "_legacy_take"},
+            ],
         )
     else:
-        await db.users.update_one(
-            {"user_id": user_id}, {"$inc": {f"vip_balances.{code}": -amount}}
+        res = await db.users.update_one(
+            {"user_id": user_id, f"vip_balances.{code}": {"$gte": guard}},
+            {"$inc": {f"vip_balances.{code}": -amount}},
         )
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "INSUFFICIENT_BALANCE",
+                "message": (f"Saldo insuficiente en {code}: la operación fue "
+                            "rechazada para evitar un saldo negativo."),
+            },
+        )
+
+
+async def credit_balance_idempotent(user_id: str, code: str, amount: float,
+                                    op_id: str, legacy_usd: bool = False) -> bool:
+    """Acreditación EXACTAMENTE-UNA-VEZ por op_id (iter249). El $inc y el
+    registro del op_id ocurren en UNA operación atómica sobre el doc del
+    usuario: un reintento (o el healer de credit_recovery) nunca duplica el
+    abono. `legacy_usd=True` acredita al campo histórico vip_balance_usd."""
+    amount = float(amount)
+    if amount <= 0:
+        return False
+    field = "vip_balance_usd" if (legacy_usd and code == "USD") \
+        else f"vip_balances.{code}"
+    res = await db.users.update_one(
+        {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
+        {"$inc": {field: amount},
+         "$push": {"applied_credit_ops": {"$each": [op_id], "$slice": -500}}},
+    )
+    return res.modified_count > 0
 
 
 async def accumulate_vip_balance(order: dict) -> bool:
@@ -149,10 +199,21 @@ async def accumulate_vip_balance(order: dict) -> bool:
     iter51 — required so any first transition into a "money-settled" status
     (`approved` OR `completed`, including a direct pending→completed jump
     from the admin's "Completar" button) credits exactly once.
+
+    iter249 — la intención de abono (`credit_pending`) se escribe en el MISMO
+    update atómico que reclama `accumulated_at`, y el abono usa op_id
+    idempotente. Si el proceso muere entre el claim y el abono, el healer
+    (services/credit_recovery) completa la acreditación: no se pierde dinero
+    y el reintento no queda bloqueado.
     """
+    from services.credit_recovery import pending_marker, apply_and_clear
+    gross = float(order["amount_to"])
+    marker = pending_marker(order["user_id"], order["to_code"], gross,
+                            "order-accum")
     res = await db.orders.update_one(
         {"id": order["id"], "accumulated_at": {"$exists": False}},
-        {"$set": {"accumulated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"accumulated_at": datetime.now(timezone.utc).isoformat(),
+                  "credit_pending": marker}},
     )
     if res.modified_count == 0:
         # Either the order already had `accumulated_at`, or the order id
@@ -164,15 +225,20 @@ async def accumulate_vip_balance(order: dict) -> bool:
     # oldest debt first (FIFO). We do this BEFORE crediting the balance so
     # the operator never sees a "money-in / money-out" ping-pong.
     net_amount = await _apply_capital_request_repayment(
-        order["user_id"], order["to_code"], float(order["amount_to"]), order["id"],
+        order["user_id"], order["to_code"], gross, order["id"],
     )
     if net_amount <= 0:
         # 100% of the credit went to repay debt — nothing to add to balance.
+        await db.orders.update_one({"id": order["id"]},
+                                   {"$unset": {"credit_pending": ""}})
         return True
-    await db.users.update_one(
-        {"user_id": order["user_id"]},
-        {"$inc": {f"vip_balances.{order['to_code']}": net_amount}},
-    )
+    if abs(net_amount - gross) > 1e-9:
+        marker["amount"] = round(float(net_amount), 8)
+        await db.orders.update_one(
+            {"id": order["id"], "credit_pending.op_id": marker["op_id"]},
+            {"$set": {"credit_pending.amount": marker["amount"]}},
+        )
+    await apply_and_clear("orders", order["id"], marker)
     return True
 
 

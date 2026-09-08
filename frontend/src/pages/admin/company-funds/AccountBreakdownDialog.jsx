@@ -24,12 +24,20 @@ import {
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import {
   Landmark, Wallet, Banknote, CircleDollarSign, Plus, ArrowLeftRight, Layers,
+  BellRing,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "@/context/AuthContext";
 
 const UNASSIGNED = "__unassigned__";
 const fmt2 = (n) =>
   Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+// iter235 — denominaciones de efectivo (debe coincidir con el backend).
+const CASH_DENOMS = {
+  CUP: [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
+  USD: [100, 50, 20, 10, 5, 2, 1],
+};
 
 const METHOD_ICONS = {
   bank: Landmark,
@@ -82,7 +90,7 @@ export default function AccountBreakdownDialog({ currency, onClose }) {
           <div className="text-sm text-neutral-500 py-6 text-center">…</div>
         ) : (
           <div className="space-y-4">
-            <AccountList data={data} t={t} />
+            <AccountList data={data} t={t} onChanged={load} />
 
             <div className="grid grid-cols-2 gap-2">
               <Button
@@ -126,7 +134,7 @@ export default function AccountBreakdownDialog({ currency, onClose }) {
   );
 }
 
-function AccountList({ data, t }) {
+function AccountList({ data, t, onChanged }) {
   return (
     <div className="space-y-1.5">
       {data.accounts.length === 0 && Math.abs(data.unassigned) < 0.005 && (
@@ -134,7 +142,9 @@ function AccountList({ data, t }) {
           {t("admin.companyFunds.breakdownEmpty")}
         </div>
       )}
-      {data.accounts.map((a) => <AccountRow key={a.id} a={a} t={t} />)}
+      {data.accounts.map((a) => (
+        <AccountRow key={a.id} a={a} currency={data.currency} t={t} onChanged={onChanged} />
+      ))}
       <div
         className="flex items-center justify-between gap-3 px-3 py-2.5 border border-[#F59E0B]/25 bg-[#F59E0B]/5"
         data-testid="fund-unassigned-row"
@@ -164,43 +174,227 @@ function AccountList({ data, t }) {
   );
 }
 
-function AccountRow({ a, t }) {
+function AccountRow({ a, currency, t, onChanged }) {
+  // iter224 — alerta de saldo mínimo configurable por cuenta (solo admin).
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [editing, setEditing] = useState(false);
+  const [denomsOpen, setDenomsOpen] = useState(false);
+  const [minVal, setMinVal] = useState(a.min_balance_alert ? String(a.min_balance_alert) : "");
+  const [busy, setBusy] = useState(false);
   const Icon = METHOD_ICONS[a.method] || CircleDollarSign;
+  const isCash = a.method === "cash" && !!CASH_DENOMS[currency];
+  const isLow = a.min_balance_alert > 0 && a.balance < a.min_balance_alert;
   const sourceLabel = a.source === "payment"
     ? t("admin.companyFunds.sourcePayment")
     : a.source === "custom"
       ? t("admin.companyFunds.sourceCustom")
       : t("admin.companyFunds.deletedAccount");
+
+  const saveMin = async () => {
+    setBusy(true);
+    try {
+      await axios.put(
+        `${API}/admin/company-funds/accounts/${a.id}/min-balance`,
+        { min_balance: minVal === "" ? null : parseFloat(minVal) },
+        { withCredentials: true },
+      );
+      toast.success(minVal && parseFloat(minVal) > 0
+        ? t("admin.companyFunds.minBalanceSet")
+        : t("admin.companyFunds.minBalanceCleared"));
+      setEditing(false);
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || t("admin.common.genericError"));
+    } finally { setBusy(false); }
+  };
+
   return (
     <div
-      className="flex items-center justify-between gap-3 px-3 py-2.5 border border-white/10 bg-white/[0.02]"
+      className={`px-3 py-2.5 border ${isLow ? "border-[#EF4444]/40 bg-[#EF4444]/5" : "border-white/10 bg-white/[0.02]"}`}
       data-testid={`fund-account-row-${a.id}`}
     >
-      <div className="flex items-center gap-2.5 min-w-0">
-        <Icon className="w-4 h-4 text-[#8B5CF6] flex-shrink-0" />
-        <div className="min-w-0">
-          <div className="text-sm truncate">{a.label}</div>
-          <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 flex items-center gap-1.5">
-            <span>{sourceLabel}</span>
-            {!a.is_active && (
-              <span className="text-[#F59E0B]">{t("admin.companyFunds.badgeInactive")}</span>
-            )}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Icon className="w-4 h-4 text-[#8B5CF6] flex-shrink-0" />
+          <div className="min-w-0">
+            <div className="text-sm truncate">{a.label}</div>
+            <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 flex items-center gap-1.5 flex-wrap">
+              <span>{sourceLabel}</span>
+              {!a.is_active && (
+                <span className="text-[#F59E0B]">{t("admin.companyFunds.badgeInactive")}</span>
+              )}
+              {a.min_balance_alert > 0 && (
+                <span className="text-neutral-400" data-testid={`min-balance-badge-${a.id}`}>
+                  {t("admin.companyFunds.minBadge", { value: fmt2(a.min_balance_alert) })}
+                </span>
+              )}
+              {isLow && (
+                <span className="text-[#EF4444] font-bold" data-testid={`low-balance-badge-${a.id}`}>
+                  {t("admin.companyFunds.lowBadge")}
+                </span>
+              )}
+            </div>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={`font-mono tabular-nums whitespace-nowrap ${
+              isLow ? "text-[#EF4444]" : a.balance >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"
+            }`}
+            data-testid={`fund-account-balance-${a.id}`}
+          >
+            {fmt2(a.balance)}
+          </span>
+          {isCash && (
+            <button
+              onClick={() => setDenomsOpen(!denomsOpen)}
+              data-testid={`denoms-btn-${a.id}`}
+              className={`${a.denoms_snapshot ? "text-[#22C55E]" : "text-neutral-500"} hover:text-[#22C55E]`}
+              title={t("admin.companyFunds.denomsTitle")}
+            >
+              <Banknote className="w-4 h-4" />
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={() => setEditing(!editing)}
+              data-testid={`min-balance-btn-${a.id}`}
+              className={`${a.min_balance_alert > 0 ? "text-[#F59E0B]" : "text-neutral-500"} hover:text-[#F59E0B]`}
+              title={t("admin.companyFunds.minBalanceLabel")}
+            >
+              <BellRing className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
-      <span
-        className={`font-mono tabular-nums whitespace-nowrap ${
-          a.balance >= 0 ? "text-[#22C55E]" : "text-[#EF4444]"
-        }`}
-        data-testid={`fund-account-balance-${a.id}`}
-      >
-        {fmt2(a.balance)}
-      </span>
+      {isCash && a.denoms_snapshot && !denomsOpen && (
+        <p className="text-[0.6rem] text-neutral-500 mt-1 font-mono" data-testid={`denoms-summary-${a.id}`}>
+          {t("admin.companyFunds.denomsLast", {
+            date: new Date(a.denoms_snapshot.created_at).toLocaleDateString(),
+            total: fmt2(a.denoms_snapshot.total),
+          })}{" "}
+          <span className={a.denoms_snapshot.difference === 0 ? "text-[#22C55E]" : "text-[#EF4444]"}>
+            {a.denoms_snapshot.difference === 0
+              ? t("admin.companyFunds.denomsSquared")
+              : t("admin.companyFunds.denomsDiff", { diff: fmt2(a.denoms_snapshot.difference) })}
+          </span>
+        </p>
+      )}
+      {denomsOpen && (
+        <DenomsForm a={a} currency={currency} t={t}
+          onDone={() => { setDenomsOpen(false); onChanged?.(); }} />
+      )}
+      {editing && (
+        <div className="flex items-end gap-2 mt-2 pt-2 border-t border-white/5">
+          <div className="flex-1">
+            <Label className="micro-label text-neutral-500">{t("admin.companyFunds.minBalanceLabel")}</Label>
+            <Input
+              data-testid={`min-balance-input-${a.id}`}
+              type="number" step="any" min="0"
+              value={minVal}
+              onChange={(e) => setMinVal(e.target.value)}
+              placeholder={t("admin.companyFunds.minPlaceholder")}
+              className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-9 font-mono"
+            />
+          </div>
+          <Button
+            data-testid={`min-balance-save-${a.id}`}
+            size="sm" disabled={busy} onClick={saveMin}
+            className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-9"
+          >
+            {t("admin.companyFunds.minSave")}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
 
 const METHOD_KEYS = ["bank", "cash", "crypto", "other"];
+
+// iter235 — desglose de billetes de una cuenta de efectivo (ej. Fondo
+// Resilience 25M CUP): conteo por denominación vs balance del sistema.
+function DenomsForm({ a, currency, t, onDone }) {
+  const [counts, setCounts] = useState(a.denoms_snapshot?.denominations || {});
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const denoms = CASH_DENOMS[currency] || [];
+  const total = denoms.reduce((s, d) => s + d * (parseInt(counts[String(d)]) || 0), 0);
+  const diff = Math.round((total - (a.balance || 0)) * 100) / 100;
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const clean = {};
+      Object.entries(counts).forEach(([d, q]) => {
+        const n = parseInt(q);
+        if (n > 0) clean[d] = n;
+      });
+      const r = await axios.post(
+        `${API}/admin/company-funds/accounts/${a.id}/denominations`,
+        { denominations: clean, note: note.trim() },
+        { withCredentials: true },
+      );
+      toast.success(r.data.status === "cuadrada"
+        ? t("admin.companyFunds.denomsSavedSquared")
+        : t("admin.companyFunds.denomsSavedDiff", { diff: fmt2(r.data.difference), currency }));
+      onDone();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || t("admin.common.genericError"));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-2 pt-2 border-t border-white/5 space-y-2" data-testid={`denoms-form-${a.id}`}>
+      <p className="text-[0.65rem] text-neutral-400">{t("admin.companyFunds.denomsHint")}</p>
+      <div className="grid grid-cols-3 gap-1.5">
+        {denoms.map((d) => (
+          <div key={d} className="flex items-center gap-1">
+            <span className="text-[0.6rem] font-mono text-neutral-500 w-9 text-right shrink-0">{d}×</span>
+            <Input
+              data-testid={`denoms-input-${a.id}-${d}`}
+              type="number" min="0" placeholder="0"
+              value={counts[String(d)] ?? ""}
+              onChange={(e) => setCounts({ ...counts, [String(d)]: e.target.value })}
+              className="rounded-none h-8 bg-[#0a0a0a] border-white/10 font-mono text-xs px-1.5"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="border border-white/10 p-2 font-mono text-xs space-y-0.5">
+        <div className="flex justify-between">
+          <span className="text-neutral-500">{t("admin.companyFunds.denomsCounted")}:</span>
+          <span data-testid={`denoms-total-${a.id}`}>{fmt2(total)} {currency}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-neutral-500">{t("admin.companyFunds.denomsSystem")}:</span>
+          <span>{fmt2(a.balance)} {currency}</span>
+        </div>
+        <div className="flex justify-between" data-testid={`denoms-diff-${a.id}`}>
+          <span className="text-neutral-500">{t("admin.companyFunds.denomsDifference")}:</span>
+          <span className={diff === 0 ? "text-[#22C55E]" : "text-[#EF4444]"}>
+            {diff === 0 ? t("admin.companyFunds.denomsSquared") : `${diff > 0 ? "+" : ""}${fmt2(diff)}`}
+          </span>
+        </div>
+      </div>
+      <Input
+        data-testid={`denoms-note-${a.id}`}
+        value={note} maxLength={200}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder={t("admin.companyFunds.denomsNotePh")}
+        className="rounded-none bg-[#0a0a0a] border-white/10 h-9 text-xs"
+      />
+      <Button
+        data-testid={`denoms-save-${a.id}`}
+        size="sm" disabled={busy || total <= 0} onClick={save}
+        className="w-full bg-[#22C55E] hover:bg-[#16A34A] text-black rounded-none h-9"
+      >
+        {t("admin.companyFunds.denomsSave")}
+      </Button>
+    </div>
+  );
+}
 
 function CreateAccountForm({ currency, t, onDone }) {
   const [name, setName] = useState("");

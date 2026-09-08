@@ -23,9 +23,21 @@ import { useTranslation } from "react-i18next";
 import { CheckCircle2, XCircle, TrendingUp, Wallet, Inbox, ArrowDownToLine } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useLiveEvent } from "@/hooks/useLiveStream";
+import { playCashSound } from "@/utils/cashSound";
 
 const RATE_THROTTLE_MS = 30_000;
 const BALANCE_THROTTLE_MS = 10_000;
+const CASH_SOUND_THROTTLE_MS = 3_000;
+
+// iter225 — motivos de balance_updated que significan dinero ENTRANDO.
+const CASH_IN_REASONS = [
+  "capital_request_disbursed",
+  "capital_deposit_confirmed",
+  "vendor_product_sale",
+  "referral_bonus",
+  "settlement_payout",
+  "order_residue",
+];
 
 function useThrottle() {
   const lastByKeyRef = useRef({});
@@ -50,6 +62,7 @@ export default function LiveToaster() {
     if (!data?.status) return;
     const s = data.status;
     if (s === "approved" || s === "completed") {
+      if (!throttled("cash-sound", CASH_SOUND_THROTTLE_MS)) playCashSound();
       toast.success(t("liveToast.order.approved"), {
         icon: <CheckCircle2 className="w-4 h-4 text-[#22C55E]" />,
         description: t("liveToast.order.pair", { from: data.from_code, to: data.to_code }),
@@ -80,7 +93,12 @@ export default function LiveToaster() {
     }
   });
 
-  useLiveEvent("balance_updated", () => {
+  useLiveEvent("balance_updated", (data) => {
+    // iter225 — caja registradora suave cuando entra dinero al saldo.
+    if (CASH_IN_REASONS.includes(data?.reason) &&
+        !throttled("cash-sound", CASH_SOUND_THROTTLE_MS)) {
+      playCashSound();
+    }
     if (throttled("balance", BALANCE_THROTTLE_MS)) return;
     toast(t("liveToast.balance.updated"), {
       icon: <Wallet className="w-4 h-4 text-[#8B5CF6]" />,

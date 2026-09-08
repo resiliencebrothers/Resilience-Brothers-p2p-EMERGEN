@@ -221,6 +221,7 @@ export default function AdminUsers() {
       />
 
       <UserFunctionsDialog
+        key={functionsUser?.user_id || "none"}
         user={functionsUser}
         open={!!functionsUser}
         onClose={closeFunctions}

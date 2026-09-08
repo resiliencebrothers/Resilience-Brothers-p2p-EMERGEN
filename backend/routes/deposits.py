@@ -427,17 +427,20 @@ async def _do_confirm_deposit(doc: dict, staff: dict) -> Any:
     dep_id = doc["id"]
     now = iso(now_utc())
     # Idempotency: flip status first so a double-click can't double-credit.
+    # iter249 — la intención de abono viaja en el MISMO update atómico; si el
+    # proceso muere antes de acreditar, el healer (credit_recovery) completa.
+    from services.credit_recovery import pending_marker, apply_and_clear
+    marker = pending_marker(doc["user_id"], doc["currency"],
+                            float(doc["amount"]), "deposit-confirm")
     res = await db.deposits.update_one(
         {"id": dep_id, "status": "pending"},
         {"$set": {"status": "confirmed", "updated_at": now,
-                  "reviewed_at": now, "reviewed_by": staff["user_id"]}},
+                  "reviewed_at": now, "reviewed_by": staff["user_id"],
+                  "credit_pending": marker}},
     )
     if res.modified_count == 0:
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
-    await db.users.update_one(
-        {"user_id": doc["user_id"]},
-        {"$inc": {f"vip_balances.{doc['currency']}": float(doc["amount"])}},
-    )
+    await apply_and_clear("deposits", dep_id, marker)
     fresh = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="deposit.confirm",
@@ -507,3 +510,8 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
     except Exception as e:  # noqa: BLE001
         logger.error(f"[deposits] client rejected-email failed: {e}")
     return fresh
+
+
+# Registro del handler de liquidación (rompe el ciclo services → routes).
+from services.delivery_settlement import register_settlement_handler as _reg_settlement  # noqa: E402
+_reg_settlement("deposit", confirm_deposit_from_delivery)

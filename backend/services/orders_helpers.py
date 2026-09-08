@@ -79,7 +79,8 @@ class Order(BaseModel):
 class OrderCreate(BaseModel):
     from_code: str
     to_code: str
-    amount_from: float
+    # iter247 — gt=0 bloquea órdenes con importe negativo o cero.
+    amount_from: float = Field(..., gt=0, le=1_000_000_000)
     delivery_method: Literal["transfer", "cash", "crypto", "accumulate"]
     delivery_details: str = ""
     sender_name: str = Field(

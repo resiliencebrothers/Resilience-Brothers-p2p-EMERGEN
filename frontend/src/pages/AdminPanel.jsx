@@ -2,7 +2,7 @@ import { NavLink, Routes, Route, Navigate, useNavigate, useLocation } from "reac
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift, Landmark, Truck } from "lucide-react";
+import { LogOut, Coins, TrendingUp, Users, ListChecks, Package, ArrowDownToLine, ArrowLeft, Shield, ShieldAlert, Menu, Receipt, Inbox, Wallet, Ban, Activity, ChevronRight, ChevronDown, HelpCircle, Layers, Gift, Landmark, Truck, ClipboardList } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import AdminCurrencies from "@/pages/admin/AdminCurrencies";
@@ -14,6 +14,7 @@ import AdminOverviewHub from "@/pages/admin/AdminOverviewHub";
 import AdminOrders from "@/pages/admin/AdminOrders";
 import AdminVipBatches from "@/pages/admin/AdminVipBatches";
 import AdminProducts from "@/pages/admin/AdminProducts";
+import AdminInventory from "@/pages/admin/inventory/AdminInventory";
 import AdminDepositsWithdrawalsHub from "@/pages/admin/AdminDepositsWithdrawalsHub";
 import AdminDeliveries from "@/pages/admin/AdminDeliveries";
 import AdminReconciliation from "@/pages/admin/AdminReconciliation";
@@ -30,6 +31,8 @@ import AdminReferrals from "@/pages/admin/AdminReferrals";
 import PushToggle from "@/components/PushToggle";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import InstallAppButton from "@/components/InstallAppButton";
 import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
 import { useAdminPendingCounts } from "@/hooks/useAdminPendingCounts";
 
@@ -115,7 +118,11 @@ export default function AdminPanel() {
         },
       ] : []),
       ...(has("products") ? [
-        { to: "/admin/products", icon: Package, label: t("sidebar.admin.products"), id: "admin-nav-products" },
+        { to: "/admin/products", icon: Package, label: t("sidebar.admin.products"), id: "admin-nav-products",
+          children: [
+            { to: "/admin/inventory", icon: ClipboardList, label: t("sidebar.admin.inventory"), id: "admin-nav-inventory" },
+          ],
+        },
       ] : []),
       // iter102.1 — Usuarios agrupa Soporte + Bloqueos: los tres son
       // vinculantes (tickets salen de un usuario, bloqueos aplican a
@@ -290,8 +297,10 @@ export default function AdminPanel() {
             <NotificationBell />
           </div>
           <div className="mb-2"><PushToggle /></div>
+          <div className="mb-2"><InstallAppButton testid="admin-install-app" compact /></div>
           <div className="flex items-center gap-2">
             <CompactLanguageSwitcher testid="admin-lang-switcher" />
+            <ThemeToggle testid="admin-theme-toggle" />
             <button data-testid="admin-logout" onClick={logout} className="flex-1 flex items-center justify-center gap-2 text-sm text-neutral-400 hover:text-white border border-white/10 hover:border-white/30 px-3 py-2 transition-colors">
               <LogOut className="w-4 h-4" /> {t("common.logout")}
             </button>
@@ -341,6 +350,8 @@ export default function AdminPanel() {
                 <div className="text-sm font-medium truncate">{user?.name}</div>
                 <div className="micro-label text-[#8B5CF6] mb-3">{user?.role?.toUpperCase()}</div>
                 <div className="mb-2"><PushToggle /></div>
+                <div className="mb-2"><InstallAppButton testid="admin-mobile-install-app" compact /></div>
+                <div className="mb-2"><ThemeToggle testid="admin-mobile-theme-toggle" /></div>
                 <button
                   data-testid="admin-mobile-logout"
                   onClick={logout}
@@ -370,6 +381,7 @@ export default function AdminPanel() {
             <Route path="rates" element={<AdminRates />} />
             {hasPerm("payment_accounts") && <Route path="payment-accounts" element={<AdminPaymentAccounts />} />}
             <Route path="products" element={<AdminProducts />} />
+            <Route path="inventory" element={<AdminInventory />} />
             <Route path="users" element={<AdminUsersHub />} />
             <Route path="users/:userId/stats" element={<AdminUserStatsPage />} />
             <Route path="blocked-contacts" element={<AdminBlockedContacts />} />

@@ -10,10 +10,11 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import AdminPageHeader from "@/components/AdminPageHeader";
-import { Plus, Edit2, Trash2, Lock } from "lucide-react";
+import VendorProductsSection from "@/pages/admin/products/VendorProductsSection";
+import { Plus, Edit2, Trash2, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { name: "", description: "", image_url: "", price_usd: 0, cost_usd: 0, stock: 0, category: "general", is_active: true };
+const empty = { name: "", description: "", image_url: "", price_usd: 0, cost_usd: 0, stock: 0, category: "general", is_active: true, available_store_ids: [] };
 
 export default function AdminProducts() {
   const { t } = useTranslation();
@@ -27,12 +28,27 @@ export default function AdminProducts() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
+  // iter236 — sucursales para limitar disponibilidad por tienda.
+  const [stores, setStores] = useState([]);
 
   const load = async () => {
-    const r = await axios.get(`${API}/products`);
+    // iter223 — listado de gestión con TODOS los productos (incl. inactivos)
+    const r = await axios.get(`${API}/admin/products`, { withCredentials: true });
     setItems(r.data);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    axios.get(`${API}/admin/stores`, { withCredentials: true })
+      .then((r) => setStores(r.data)).catch(() => {});
+  }, []);
+
+  const toggleActive = async (p) => {
+    try {
+      await axios.post(`${API}/admin/products/${p.id}/toggle-active`, {}, { withCredentials: true });
+      toast.success(p.is_active ? t("admin.products.toastHidden") : t("admin.products.toastPublished"));
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+  };
 
   const save = async () => {
     const payload = {
@@ -40,6 +56,7 @@ export default function AdminProducts() {
       price_usd: parseFloat(form.price_usd),
       cost_usd: parseFloat(form.cost_usd) || 0,
       stock: parseInt(form.stock),
+      available_store_ids: form.available_store_ids || [],
     };
     try {
       if (editing) await axios.put(`${API}/admin/products/${editing.id}`, payload, { withCredentials: true });
@@ -79,19 +96,39 @@ export default function AdminProducts() {
           <div key={p.id} className="tactile-card overflow-hidden">
             <div className="aspect-video bg-[#0a0a0a]">{p.image_url && <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />}</div>
             <div className="p-4">
-              <div className="micro-label text-neutral-500">{p.category}</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="micro-label text-neutral-500">{p.category}</div>
+                <span className={`text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${p.is_active ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : "bg-neutral-500/10 text-neutral-400 border-neutral-500/30"}`} data-testid={`product-active-badge-${p.id}`}>
+                  {p.is_active ? t("admin.products.publishedBadge") : t("admin.products.hiddenBadge")}
+                </span>
+              </div>
               <h3 className="font-display text-lg mt-1">{p.name}</h3>
               <div className="flex items-center justify-between mt-3">
                 <div>
-                  <div className="font-display text-xl text-[#8B5CF6]">${p.price_usd}</div>
+                  <div className="font-display text-xl text-[#8B5CF6]">{p.price_usd} <span className="text-xs text-neutral-500">{p.store_currency || "USDT"}</span></div>
+                  {p.store_currency && (
+                    <div className="text-xs text-neutral-400 font-mono" data-testid={`product-usdt-equiv-${p.id}`}>
+                      {p.price_usdt != null
+                        ? t("admin.products.webPrice", { value: p.price_usdt })
+                        : t("admin.products.webPriceMissing")}
+                    </div>
+                  )}
                   <div className="text-xs text-neutral-500">{t("admin.products.stock")} {p.stock}</div>
                   {p.cost_usd > 0 && (
-                    <div className="text-xs text-[#22C55E] mt-1">{t("admin.products.margin", { value: (p.price_usd - p.cost_usd).toFixed(2) })}</div>
+                    <div className="text-xs text-[#22C55E] mt-1">{t("admin.products.margin", { value: (p.price_usd - p.cost_usd).toFixed(2), currency: p.store_currency || "USDT" })}</div>
                   )}
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setEditing(p); setForm(p); setOpen(true); }}
+                    onClick={() => toggleActive(p)}
+                    data-testid={`toggle-product-${p.id}`}
+                    className="text-neutral-400 hover:text-emerald-400"
+                    title={p.is_active ? t("admin.products.hideAction") : t("admin.products.publishAction")}
+                  >
+                    {p.is_active ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={() => { setEditing(p); setForm({ ...empty, ...p }); setOpen(true); }}
                     data-testid={`edit-product-${p.id}`}
                     className="text-neutral-400 hover:text-[#8B5CF6]"
                     title={t("admin.products.editTitleAction")}
@@ -113,6 +150,8 @@ export default function AdminProducts() {
           </div>
         ))}
       </div>
+
+      <VendorProductsSection />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
@@ -136,6 +175,23 @@ export default function AdminProducts() {
                 <p className="text-[0.65rem] text-neutral-600 mt-1">
                   {t("admin.products.imageNoPerm")}
                 </p>
+              )}
+              {canEditImage && (
+                <>
+                  <input data-testid="prod-image-file" type="file" accept="image/*"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 4 * 1024 * 1024) return toast.error(t("admin.products.imageTooBig"));
+                      const reader = new FileReader();
+                      reader.onload = () => setForm(f => ({ ...f, image_url: reader.result }));
+                      reader.readAsDataURL(file);
+                    }}
+                    className="mt-2 block w-full text-xs text-neutral-400 file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-[#8B5CF6] file:text-white file:text-xs" />
+                  {form.image_url && form.image_url.startsWith("data:") && (
+                    <img src={form.image_url} alt="preview" className="mt-2 h-20 object-cover border border-white/10" />
+                  )}
+                </>
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -177,6 +233,34 @@ export default function AdminProducts() {
             )}
             <div><Label className="micro-label text-neutral-500">{t("admin.products.stockLabel")}</Label><Input data-testid="prod-stock" type="number" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" /></div>
             <div><Label className="micro-label text-neutral-500">{t("admin.products.category")}</Label><Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
+            {stores.length > 1 && (
+              <div data-testid="prod-stores-availability">
+                <Label className="micro-label text-neutral-500">{t("admin.products.storesLabel")}</Label>
+                <p className="text-[0.65rem] text-neutral-600 mt-0.5">{t("admin.products.storesHint")}</p>
+                <div className="space-y-1.5 mt-2">
+                  {stores.map((s) => (
+                    <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        data-testid={`prod-store-check-${s.id}`}
+                        checked={(form.available_store_ids || []).includes(s.id)}
+                        onChange={(e) => {
+                          const cur = form.available_store_ids || [];
+                          setForm({
+                            ...form,
+                            available_store_ids: e.target.checked
+                              ? [...cur, s.id]
+                              : cur.filter((x) => x !== s.id),
+                          });
+                        }}
+                        className="accent-[#8B5CF6]"
+                      />
+                      {s.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-3"><Switch checked={form.is_active} onCheckedChange={v => setForm({ ...form, is_active: v })} /><span className="text-sm">{t("admin.products.active")}</span></div>
             <Button data-testid="save-product-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">{t("admin.products.save")}</Button>
           </div>

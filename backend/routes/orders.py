@@ -82,16 +82,47 @@ class Redemption(BaseModel):
     courier_municipality: Optional[str] = None
     courier_rate_snapshot: float = 0.0
     courier_min_fee_snapshot: float = 0.0
+    # iter217 — canjes de productos de vendedores VIP: snapshot del dueño y
+    # estado del pago al vendedor (se acredita al marcar 'delivered').
+    vendor_owner_id: str = ""
+    vendor_owner_name: str = ""
+    vendor_credited_at: str = ""
+    vendor_credit_net: float = 0.0
+    vendor_commission_pct: float = 0.0
+    vendor_credit_reversed_at: str = ""
+    # iter229 — entrada automática del capital de la venta al fondo empresa.
+    fund_inflow_at: str = ""
+    fund_inflow_amount: float = 0.0
+    fund_inflow_currency: str = ""
+    fund_inflow_reversed_at: str = ""
+    # iter229 — snapshot de conversión tienda física (CUP efectivo) → USDT.
+    total_store: float = 0.0
+    cost_store: float = 0.0
+    store_currency: str = ""
+    fx_rate: float = 0.0
+    # iter236 — recogida en tienda física (sin mensajería).
+    fulfillment: Literal["delivery", "store_pickup"] = "delivery"
+    store_id: str = ""
+    store_name: str = ""
+    store_address: str = ""
+    pickup_ready_at: str = ""
+    on_my_way_at: str = ""
+    # iter238 — código corto que el cliente muestra en la tienda.
+    pickup_code: str = ""
 
 
 class RedemptionCreate(BaseModel):
     product_id: str
-    quantity: int
+    # iter247 — gt=0 bloquea canjes con cantidad negativa (inflar saldo/stock).
+    quantity: int = Field(..., gt=0, le=1_000_000)
     delivery_address: str = ""
     delivery_latitude: Optional[float] = Field(None, ge=-90, le=90)
     delivery_longitude: Optional[float] = Field(None, ge=-180, le=180)
     # iter212 — municipio elegido por el cliente cuando el mapa falló.
     courier_municipality: Optional[str] = Field(None, max_length=60)
+    # iter236 — recogida en tienda física.
+    fulfillment: Literal["delivery", "store_pickup"] = "delivery"
+    store_id: Optional[str] = None
 
 
 class WithdrawalRequest(BaseModel):
@@ -138,7 +169,8 @@ async def _available_cash_provinces() -> list:
 
 
 class WithdrawalCreate(BaseModel):
-    amount_usd: float
+    # iter247 — gt=0 bloquea el exploit de retiros negativos (inflar saldo).
+    amount_usd: float = Field(..., gt=0, le=10_000_000)
     currency: str = "USD"
     method: Literal["transfer", "cash", "crypto"]
     details: str
@@ -306,6 +338,44 @@ async def my_orders(request: Request) -> Any:
 # VIP — Redemptions (client side only)
 # ============================================================
 
+PICKUP_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+async def _new_pickup_code() -> str:
+    """iter238 — código corto único (6 chars sin ambiguos) por recogida."""
+    import secrets
+    for _ in range(8):
+        code = "".join(secrets.choice(PICKUP_CODE_ALPHABET) for _ in range(6))
+        clash = await db.redemptions.find_one(
+            {"pickup_code": code, "status": {"$in": ["pending", "approved"]}},
+            {"_id": 0, "id": 1})
+        if not clash:
+            return code
+    return "".join(secrets.choice(PICKUP_CODE_ALPHABET) for _ in range(8))
+
+
+async def _load_pickup_store(store_id: Optional[str], product: dict) -> dict:
+    """iter236 — valida la sucursal elegida para recogida en tienda."""
+    if product.get("owner_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Los productos de vendedores VIP no admiten recogida en tienda")
+    if not store_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Selecciona la tienda donde recogerás tu pedido")
+    store = await db.stores.find_one({"id": store_id, "active": True}, {"_id": 0})
+    if not store:
+        raise HTTPException(status_code=404,
+                            detail="Tienda no encontrada o inactiva")
+    allowed = product.get("available_store_ids") or []
+    if allowed and store_id not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto no está disponible en esa sucursal")
+    return store
+
+
 @router.post("/vip/redeem")
 async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     user = await require_user(request)
@@ -318,46 +388,77 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     if product["stock"] < payload.quantity:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
-    total = product["price_usd"] * payload.quantity
-    cost = float(product.get("cost_usd") or 0) * payload.quantity
+    # iter217 — un vendedor VIP no puede canjear su propio producto.
+    if product.get("owner_id") and product["owner_id"] == user["user_id"]:
+        raise HTTPException(status_code=400, detail="No puedes canjear tu propio producto")
+    # iter229 — los productos de la EMPRESA tienen precios en la moneda de la
+    # tienda física (CUP efectivo); en la web se cobran en USDT a la tasa
+    # vigente. Los productos de vendedores VIP ya están en USDT.
+    store_total = 0.0
+    store_cost = 0.0
+    fx_rate = 0.0
+    store_currency = ""
+    if product.get("owner_id"):
+        total = product["price_usd"] * payload.quantity
+        cost = float(product.get("cost_usd") or 0) * payload.quantity
+    else:
+        from services.marketplace_fx import get_store_fx, to_usdt
+        fx = await get_store_fx(role=user["role"])
+        if not fx["configured"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"No hay tasa USDT→{fx['store_currency']} configurada; "
+                        "no se puede calcular el precio en USDT. Contacta al administrador."))
+        fx_rate = fx["rate"]
+        store_currency = fx["store_currency"]
+        store_total = round(float(product["price_usd"]) * payload.quantity, 2)
+        store_cost = round(float(product.get("cost_usd") or 0) * payload.quantity, 2)
+        total = to_usdt(store_total, fx_rate)
+        cost = to_usdt(store_cost, fx_rate) or 0.0
+    # iter236 — recogida en tienda: sin mensajería ni costo de envío.
+    pickup_store = None
+    if payload.fulfillment == "store_pickup":
+        pickup_store = await _load_pickup_store(payload.store_id, product)
     # iter198 — courier fee for the physical delivery. Free when the redeem
     # value reaches the USDT threshold; auto-quoted from the office when the
     # client picked coordinates; otherwise flagged for manual staff review.
-    from services.courier_fee import quote_courier_fee, route_quote
-    cq = await quote_courier_fee("USD", total)
     courier_km = 0.0
     courier_fee_usdt = 0.0
     courier_fee_usd = 0.0
-    courier_status: Literal["none", "free", "charged", "manual_review"]
-    if cq["free"]:
-        courier_status = "free"
-    elif not cq["enabled"]:
-        courier_status = "none"
-    elif payload.delivery_latitude is not None and payload.delivery_longitude is not None:
-        rq = await route_quote(payload.delivery_latitude,
-                               payload.delivery_longitude, "USD", total)
-        if rq.get("requires_manual_review") or rq.get("km") is None:
-            courier_status = "manual_review"
-        else:
-            courier_status = "charged"
-            courier_km = rq["km"]
-            courier_fee_usdt = rq["fee_usdt"]
-            courier_fee_usd = rq["fee_currency_amount"]
-    else:
-        courier_status = "manual_review"
-    # iter211 — fallback por municipio para canjes (mapa no ubicó la dirección).
+    courier_status: Literal["none", "free", "charged", "manual_review"] = "none"
     courier_muni = None
-    if courier_status == "manual_review":
-        from services.courier_fee import municipality_fallback_quote
-        mq = await municipality_fallback_quote(
-            payload.delivery_address or "", "USD", total,
-            municipality_key=payload.courier_municipality)
-        if mq and mq.get("fee_usdt", 0) > 0:
-            courier_status = "charged"
-            courier_km = 0.0
-            courier_fee_usdt = mq["fee_usdt"]
-            courier_fee_usd = mq["fee_currency_amount"]
-            courier_muni = mq["municipality"]
+    cq = {"rate_usdt_per_km": 0.0, "min_fee_usdt": 0.0}
+    if pickup_store is None:
+        from services.courier_fee import quote_courier_fee, route_quote
+        cq = await quote_courier_fee("USD", total)
+        if cq["free"]:
+            courier_status = "free"
+        elif not cq["enabled"]:
+            courier_status = "none"
+        elif payload.delivery_latitude is not None and payload.delivery_longitude is not None:
+            rq = await route_quote(payload.delivery_latitude,
+                                   payload.delivery_longitude, "USD", total)
+            if rq.get("requires_manual_review") or rq.get("km") is None:
+                courier_status = "manual_review"
+            else:
+                courier_status = "charged"
+                courier_km = rq["km"]
+                courier_fee_usdt = rq["fee_usdt"]
+                courier_fee_usd = rq["fee_currency_amount"]
+        else:
+            courier_status = "manual_review"
+        # iter211 — fallback por municipio para canjes (mapa no ubicó la dirección).
+        if courier_status == "manual_review":
+            from services.courier_fee import municipality_fallback_quote
+            mq = await municipality_fallback_quote(
+                payload.delivery_address or "", "USD", total,
+                municipality_key=payload.courier_municipality)
+            if mq and mq.get("fee_usdt", 0) > 0:
+                courier_status = "charged"
+                courier_km = 0.0
+                courier_fee_usdt = mq["fee_usdt"]
+                courier_fee_usd = mq["fee_currency_amount"]
+                courier_muni = mq["municipality"]
     if get_user_balance(user, "USD") < total + courier_fee_usd:
         raise HTTPException(
             status_code=400,
@@ -383,9 +484,34 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         courier_municipality=courier_muni,
         courier_rate_snapshot=cq["rate_usdt_per_km"],
         courier_min_fee_snapshot=cq["min_fee_usdt"],
+        vendor_owner_id=product.get("owner_id") or "",
+        vendor_owner_name=product.get("owner_name") or "",
+        total_store=store_total,
+        cost_store=store_cost,
+        store_currency=store_currency,
+        fx_rate=fx_rate,
+        fulfillment=payload.fulfillment,
+        store_id=(pickup_store or {}).get("id") or "",
+        store_name=(pickup_store or {}).get("name") or "",
+        store_address=(pickup_store or {}).get("address") or "",
+        pickup_code=(await _new_pickup_code()) if pickup_store else "",
     )
+    # iter248 — claim ATÓMICO de stock (guard $gte + $inc en una operación):
+    # dos canjes simultáneos no pueden sobrevender.
+    stock_res = await db.products.update_one(
+        {"id": product["id"], "stock": {"$gte": payload.quantity}},
+        {"$inc": {"stock": -payload.quantity}},
+    )
+    if stock_res.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Stock insuficiente")
+    try:
+        await decrement_balance(user["user_id"], "USD", total + courier_fee_usd)
+    except HTTPException:
+        # el cobro atómico falló (carrera de saldo): devolver el stock reclamado.
+        await db.products.update_one({"id": product["id"]},
+                                     {"$inc": {"stock": payload.quantity}})
+        raise
     await db.redemptions.insert_one(r.model_dump())
-    await decrement_balance(user["user_id"], "USD", total + courier_fee_usd)
     # iter199 — auto-charged deliveries create their courier job right away.
     if courier_status == "charged":
         try:
@@ -398,9 +524,52 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             logger.error(f"redeem delivery sync failed: {e}")
     await emit_balance_changed(user["user_id"], "marketplace_redeem",
                                redemption_id=r.id)
-    await db.products.update_one(
-        {"id": product["id"]}, {"$inc": {"stock": -payload.quantity}}
-    )
+    # iter217 — inventario tienda física: cada canje de un producto de la
+    # EMPRESA queda registrado como movimiento de Venta. Los productos de
+    # vendedores VIP no entran al inventario; se notifica al dueño.
+    if not product.get("owner_id"):
+        try:
+            from services.inventory import record_movement
+            await record_movement(
+                product=product, mtype="venta", quantity=payload.quantity,
+                note=f"Canje marketplace de {user['name']}",
+                source="marketplace", ref_id=r.id, actor=user,
+                apply_stock=False)
+        except Exception as e:
+            logger.error(f"inventory venta record failed: {e}")
+        # iter219/iter229 — el capital de la venta web entra al fondo de la
+        # empresa en USDT (el cliente paga en USDT); se revierte si se rechaza.
+        try:
+            from services.company_funds_common import record_auto_fund_adjustment
+            await db.redemptions.update_one(
+                {"id": r.id},
+                {"$set": {"fund_inflow_at": iso(now_utc()),
+                          "fund_inflow_amount": round(total, 2),
+                          "fund_inflow_currency": "USDT"}})
+            await record_auto_fund_adjustment(
+                adjustment_type="inflow", currency="USDT",
+                amount=round(total, 2), source_name="Marketplace tienda",
+                note=(f"Venta web: {payload.quantity}× {product['name']} = "
+                      f"{total:.2f} USDT"
+                      + (f" (≈ {store_total:g} {store_currency})"
+                         if store_currency else "")
+                      + f" (canje {r.id[:8]})"),
+                ref_id=r.id)
+        except Exception as e:
+            logger.error(f"marketplace fund inflow failed: {e}")
+    else:
+        try:
+            from routes.notifications import _insert_notification
+            await _insert_notification(
+                recipient_user_id=product["owner_id"],
+                type="vendor_product_sold",
+                title="¡Tu producto se vendió!",
+                message=(f"{user['name']} canjeó {payload.quantity}× "
+                         f"{product['name']} ({total:.2f} USDT). Se te "
+                         "acreditará al confirmarse la entrega."),
+                data={"redemption_id": r.id, "product_id": product["id"]})
+        except Exception as e:
+            logger.error(f"vendor sold notify failed: {e}")
     try:
         await notify_all_admins(
             db,
@@ -420,6 +589,55 @@ async def my_redemptions(request: Request) -> Any:
         {"user_id": user["user_id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
     return docs
+
+
+@router.post("/vip/redemptions/{rid}/on-my-way")
+async def redemption_on_my_way(rid: str, request: Request) -> Any:
+    """iter237 — el cliente avisa que va en camino a recoger su pedido.
+    Idempotente (409). Notifica a los admins (campana + push + email)."""
+    user = await require_user(request)
+    r = await db.redemptions.find_one(
+        {"id": rid, "user_id": user["user_id"]}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="Canje no encontrado")
+    if r.get("fulfillment") != "store_pickup":
+        raise HTTPException(status_code=400,
+                            detail="Este canje no es de recogida en tienda")
+    if r.get("status") != "approved" or not r.get("pickup_ready_at"):
+        raise HTTPException(
+            status_code=400,
+            detail="Tu pedido aún no está listo para recoger")
+    if r.get("on_my_way_at"):
+        raise HTTPException(status_code=409, detail="Ya avisaste que vas en camino")
+    res = await db.redemptions.update_one(
+        {"id": rid, "on_my_way_at": {"$in": [None, ""]}},
+        {"$set": {"on_my_way_at": iso(now_utc())}})
+    if res.modified_count == 0:
+        raise HTTPException(status_code=409, detail="Ya avisaste que vas en camino")
+    store_name = r.get("store_name") or "la tienda"
+    title = "Cliente en camino a la tienda"
+    body = (f"{user.get('name') or user.get('email')} va en camino a recoger "
+            f"{r['quantity']}× {r['product_name']} en {store_name}.")
+    try:
+        from admin_alerts import notify_all_admins
+        await notify_all_admins(db, title=title, body=body,
+                                url_path="/admin/inventory")
+        from routes.notifications import _insert_notification
+        admins = await db.users.find({"role": "admin"},
+                                     {"_id": 0, "user_id": 1}).to_list(50)
+        for a in admins:
+            await _insert_notification(
+                recipient_user_id=a["user_id"], type="pickup_on_my_way",
+                title=title, message=body,
+                data={"redemption_id": rid, "store_id": r.get("store_id")})
+    except Exception as e:
+        logger.error(f"on-my-way admin notify failed: {e}")
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("pickups_changed", {"redemption_id": rid})
+    except Exception as e:
+        logger.error(f"pickups_changed publish failed: {e}")
+    return await db.redemptions.find_one({"id": rid}, {"_id": 0})
 
 
 # ============================================================
@@ -672,9 +890,12 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
             doc["courier_fee_charged_by"] = user["user_id"]
             doc["courier_rate_snapshot"] = courier_rq["rate_usdt_per_km"]
             doc["courier_min_fee_snapshot"] = courier_rq["min_fee_usdt"]
-    await db.withdrawals.insert_one(doc)
+    # iter248 — débito ATÓMICO antes de crear el doc: si dos retiros
+    # simultáneos compiten por el mismo saldo, solo uno gana (409 el otro)
+    # y nunca queda un retiro pendiente sin fondos congelados.
     await decrement_balance(user["user_id"], currency,
                             payload.amount_usd + courier_fee_cur)
+    await db.withdrawals.insert_one(doc)
     # iter205 — protocolo de mensajero: las entregas a domicilio (cobradas o
     # gratis por umbral) crean su trabajo de mensajería desde la creación.
     if payload.method == "cash" and delivery_mode == "courier" \
@@ -764,24 +985,27 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     if not w or w.get("user_id") != user["user_id"]:
         raise HTTPException(status_code=404, detail="Retiro no encontrado.")
     now = iso(now_utc())
+    currency = w.get("currency") or "USD"
+    amount = float(w.get("amount_usd") or 0.0)
+    # iter198 — a courier fee charged while pending returns with the amount.
+    fee_back = float(w.get("courier_fee_currency_amount") or 0.0)
+    # iter249 — el guard balance_refunded evita el doble reembolso si un admin
+    # rechaza el retiro en paralelo; la intención de abono viaja en el mismo
+    # claim atómico y el abono es idempotente por op_id (healer ante crash).
+    from services.credit_recovery import pending_marker, apply_and_clear
+    marker = pending_marker(user["user_id"], currency, amount + fee_back,
+                            "withdrawal-cancel-refund")
     res = await db.withdrawals.update_one(
-        {"id": wid, "status": "pending"},
+        {"id": wid, "status": "pending", "balance_refunded": {"$ne": True}},
         {"$set": {"status": "cancelled", "cancelled_at": now,
-                  "balance_refunded": True}},
+                  "balance_refunded": True, "credit_pending": marker}},
     )
     if res.modified_count == 0:
         raise HTTPException(
             status_code=409,
             detail="Este retiro ya está en proceso y no puede cancelarse. Contacta a soporte.",
         )
-    currency = w.get("currency") or "USD"
-    amount = float(w.get("amount_usd") or 0.0)
-    # iter198 — a courier fee charged while pending returns with the amount.
-    fee_back = float(w.get("courier_fee_currency_amount") or 0.0)
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
-        {"$inc": {f"vip_balances.{currency}": amount + fee_back}},
-    )
+    await apply_and_clear("withdrawals", wid, marker)
     # iter205 — el trabajo de mensajería activo muere con el retiro.
     try:
         from services.deliveries import cancel_active_delivery
@@ -1122,7 +1346,15 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     #      currency — decrement_balance handles both calls independently.
     #   3. Credit `amount_to` to the destination currency.
     await decrement_balance(user["user_id"], from_code, payload.amount_from)
-    await decrement_balance(user["user_id"], "USDT", CONVERT_FEE_USDT)
+    try:
+        await decrement_balance(user["user_id"], "USDT", CONVERT_FEE_USDT)
+    except HTTPException:
+        # iter248 — carrera perdida en la comisión: revertir el primer débito.
+        await db.users.update_one(
+            {"user_id": user["user_id"]},
+            {"$inc": {f"vip_balances.{from_code}": payload.amount_from}},
+        )
+        raise
     await db.users.update_one(
         {"user_id": user["user_id"]},
         {"$inc": {f"vip_balances.{to_code}": amount_to}},
@@ -1318,7 +1550,11 @@ async def vip_convert_dust(request: Request) -> Any:
         code = d["currency"]
         amt = d["amount"]
         eq_usdt = float(d["usdt_equivalent"])
-        await decrement_balance(user["user_id"], code, amt)
+        try:
+            await decrement_balance(user["user_id"], code, amt)
+        except HTTPException:
+            # iter248 — el saldo cambió concurrentemente; saltar esta moneda.
+            continue
         await db.users.update_one(
             {"user_id": user["user_id"]},
             {"$inc": {"vip_balances.USDT": eq_usdt}},

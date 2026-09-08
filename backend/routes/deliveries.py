@@ -14,7 +14,7 @@ Admin-facing (permission `withdrawals`):
 - POST /admin/deliveries/{id}/cancel
 """
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -88,6 +88,60 @@ async def courier_deliveries(request: Request) -> Any:
             "pending_usdt": round(pending, 2),
             "completed_count": len(history),
         },
+    }
+
+
+@router.get("/admin/deliveries/summary")
+async def admin_deliveries_summary(request: Request,
+                                   date: Optional[str] = None) -> Any:
+    """iter216 — Totales de TODO el equipo para la pestaña Entregas:
+    entregas confirmadas del día, ganancias (mensajeros/plataforma), en curso
+    ahora y desglose por mensajero. `date` YYYY-MM-DD opcional (hoy UTC)."""
+    await require_permission(request, "deliveries")
+    day = (date or iso(now_utc())[:10])[:10]
+    from datetime import datetime, timedelta
+    try:
+        next_day = (datetime.strptime(day, "%Y-%m-%d")
+                    + timedelta(days=1)).strftime("%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="fecha inválida (YYYY-MM-DD)")
+    # Confirmadas del día: tras el sello final nada más toca updated_at.
+    confirmed = await db.deliveries.find(
+        {"status": "confirmed", "updated_at": {"$gte": day, "$lt": next_day}},
+        {"_id": 0, "fee_usdt": 1, "courier_share_usdt": 1,
+         "platform_share_usdt": 1, "courier_id": 1, "courier_name": 1},
+    ).to_list(2000)
+    active = await db.deliveries.aggregate([
+        {"$match": {"status": {"$in": ["available", "accepted", "on_the_way",
+                                       "arrived", "delivered"]}}},
+        {"$group": {"_id": "$status", "n": {"$sum": 1}}},
+    ]).to_list(10)
+    active_counts = {r["_id"]: r["n"] for r in active}
+    by_courier: Dict[str, dict] = {}
+    for d in confirmed:
+        key = d.get("courier_id") or "—"
+        row = by_courier.setdefault(key, {
+            "courier_name": (d.get("courier_name") or "—").split(" ")[0],
+            "count": 0, "earned_usdt": 0.0})
+        row["count"] += 1
+        row["earned_usdt"] += float(d.get("courier_share_usdt") or 0)
+    rows = sorted(by_courier.values(), key=lambda r: -r["earned_usdt"])
+    for r in rows:
+        r["earned_usdt"] = round(r["earned_usdt"], 2)
+    return {
+        "date": day,
+        "confirmed_count": len(confirmed),
+        "total_fees_usdt": round(sum(float(d.get("fee_usdt") or 0)
+                                     for d in confirmed), 2),
+        "courier_earned_usdt": round(sum(float(d.get("courier_share_usdt") or 0)
+                                         for d in confirmed), 2),
+        "platform_earned_usdt": round(sum(float(d.get("platform_share_usdt") or 0)
+                                          for d in confirmed), 2),
+        "active_count": sum(active_counts.get(s, 0) for s in
+                            ("accepted", "on_the_way", "arrived")),
+        "available_count": active_counts.get("available", 0),
+        "delivered_pending_count": active_counts.get("delivered", 0),
+        "by_courier": rows,
     }
 
 
@@ -283,6 +337,16 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
             )
         except Exception as e:
             logger.error(f"delivered admin notify failed: {e}")
+        # iter215 — el mensajero confirmó la entrega física: el retiro cash
+        # vinculado pasa a 'paid' de inmediato para que Transacciones y
+        # Depósitos y Retiros reflejen la realidad sin esperar al admin.
+        # (El 80% del mensajero sigue requiriendo la confirmación admin.)
+        if d.get("kind") == "withdrawal":
+            try:
+                from routes.admin_withdrawals import mark_paid_from_delivery
+                await mark_paid_from_delivery(d["ref_id"], me)
+            except Exception as e:
+                logger.error(f"auto-paid after courier delivered failed: {e}")
     return updated
 
 
@@ -508,53 +572,8 @@ async def admin_confirm_delivery(did: str, payload: dict, request: Request) -> A
     if d["status"] != "delivered":
         raise HTTPException(status_code=409,
                             detail="Solo se confirman entregas marcadas como entregadas")
-    now = iso(now_utc())
-    share = float(d.get("courier_share_usdt") or 0)
-    credited = False
-    if share > 0 and not d.get("payout_credited") and d.get("courier_id"):
-        await db.users.update_one({"user_id": d["courier_id"]},
-                                  {"$inc": {"vip_balances.USDT": share}})
-        credited = True
-    await db.deliveries.update_one({"id": did}, {
-        "$set": {"status": "confirmed", "payout_credited": credited or d.get("payout_credited", False),
-                 "payout_credited_at": now if credited else d.get("payout_credited_at"),
-                 "updated_at": now},
-        "$push": {"timeline": {"status": "confirmed", "at": now,
-                               "by": actor["user_id"]}},
-    })
-    await log_action(db, actor, "delivery.confirm", "delivery", did,
-                     summary=(f"Entrega {did[:8]} confirmada — {share} USDT "
-                              f"acreditados a {d.get('courier_name', '')}"),
-                     details={"courier_id": d.get("courier_id"),
-                              "courier_share_usdt": share, "credited": credited})
-    # iter209b — Sincronizar la operación vinculada: al confirmar la entrega,
-    # el retiro cash pasa a 'paid' y el depósito cash-courier se confirma
-    # (acredita saldo). Así Depósitos y Retiros no queda "pendiente".
-    try:
-        if d.get("kind") == "withdrawal":
-            from routes.admin_withdrawals import mark_paid_from_delivery
-            await mark_paid_from_delivery(d["ref_id"], actor)
-        elif d.get("kind") == "deposit":
-            from routes.deposits import confirm_deposit_from_delivery
-            await confirm_deposit_from_delivery(d["ref_id"], actor)
-    except Exception as e:
-        logger.error(f"ref sync after delivery confirm failed: {e}")
-    if credited:
-        try:
-            from routes.notifications import _insert_notification
-            await _insert_notification(
-                recipient_user_id=d["courier_id"], type="delivery_confirmed",
-                title="Entrega confirmada — pago acreditado",
-                message=(f"Tu entrega de {d.get('client_name', '')} fue confirmada. "
-                         f"Se acreditaron {share} USDT a tu saldo."),
-                data={"delivery_id": did, "credited_usdt": share})
-            from services.live_bus import publish as live_publish
-            await live_publish("balance_updated",
-                               {"reason": "delivery_payout", "delivery_id": did},
-                               user_id=d["courier_id"])
-        except Exception as e:
-            logger.error(f"confirm notify failed: {e}")
-    return await db.deliveries.find_one({"id": did}, {"_id": 0})
+    from services.deliveries import do_confirm_delivery
+    return await do_confirm_delivery(d, actor)
 
 
 @router.post("/admin/deliveries/{did}/cancel")

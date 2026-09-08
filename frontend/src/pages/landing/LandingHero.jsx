@@ -30,8 +30,8 @@ export default function LandingHero({ scrollY, onEnter, onEmailAuth }) {
 
   return (
     <section className="relative pt-24 sm:pt-32 pb-16 sm:pb-24 overflow-hidden">
-      <div className="absolute inset-0 bg-cover bg-center opacity-55 will-change-transform" style={bgStyle}></div>
-      <div className="absolute inset-0 bg-gradient-to-b from-[#14101F]/20 via-[#14101F]/55 to-[#14101F]"></div>
+      <div className="landing-hero-bg absolute inset-0 bg-cover bg-center opacity-55 will-change-transform" style={bgStyle}></div>
+      <div className="landing-hero-overlay absolute inset-0 bg-gradient-to-b from-[#14101F]/20 via-[#14101F]/55 to-[#14101F]"></div>
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 grid lg:grid-cols-12 gap-8 items-end">
         <div className="lg:col-span-8 fade-up">
           <div className="flex items-center gap-3 mb-4">

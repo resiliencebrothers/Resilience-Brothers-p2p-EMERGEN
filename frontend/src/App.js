@@ -15,6 +15,10 @@ import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
 import InstallPrompt from "@/components/InstallPrompt";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { applyTheme, getTheme } from "@/lib/theme";
+
+// iter241 — aplica el tema guardado antes del primer render.
+applyTheme(getTheme());
 import { LiveStreamProvider } from "@/hooks/useLiveStream";
 import LiveToaster from "@/components/LiveToaster";
 

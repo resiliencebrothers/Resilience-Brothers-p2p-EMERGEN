@@ -69,6 +69,18 @@ router = APIRouter(tags=["Admin"])
 class AdminSettings(BaseModel):
     vip_threshold_usdt: float = Field(default=5000.0, ge=0)
     defensive_margin_pct: Optional[float] = Field(default=None)
+    vendor_commission_pct: Optional[float] = Field(
+        default=None, ge=0, le=100,
+        description="iter217 — % de comisión de la empresa sobre ventas de productos de vendedores VIP. Default 5.",
+    )
+    low_stock_threshold: Optional[int] = Field(
+        default=None, ge=0,
+        description="iter218 — umbral de unidades para marcar 'stock bajo' y alertar a los admins. Default 5.",
+    )
+    store_currency_code: Optional[str] = Field(
+        default=None, max_length=12,
+        description="iter229 — Código de la moneda de la tienda física (CUP efectivo). Vacío = CUP.",
+    )
     ops_notifications_email: Optional[str] = Field(
         default=None, max_length=254,
         description="Bandeja única que recibe los emails operativos (nuevos órdenes, retiros, alertas). Si está vacío, cada admin recibe en su correo personal.",
@@ -362,6 +374,9 @@ async def _assert_redemption_courier_ready(r: dict) -> None:
     """iter205 — mismo candado que retiros cash: un canje del mercado no se
     marca 'entregado' sin tarifa resuelta y sin que el mensajero haya
     realizado la entrega (delivered/confirmed)."""
+    # iter236 — recogida en tienda: no hay mensajería que validar.
+    if r.get("fulfillment") == "store_pickup":
+        return
     from services.courier_fee import quote_courier_fee
     cq = await quote_courier_fee("USD", float(r.get("total_usd") or 0.0))
     if not cq["enabled"]:
@@ -392,6 +407,254 @@ async def _assert_redemption_courier_ready(r: dict) -> None:
                     "marcó esta entrega como realizada."))
 
 
+async def _credit_vendor_for_redemption(r: dict) -> None:
+    """iter217 — acredita el neto (importe − comisión) al saldo VIP del
+    vendedor la primera vez que el canje pasa a 'delivered'. Idempotente."""
+    owner_id = r.get("vendor_owner_id") or ""
+    if not owner_id:
+        return
+    settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    raw_pct = settings.get("vendor_commission_pct")
+    pct = float(raw_pct) if raw_pct is not None else 5.0
+    net = round(float(r["total_usd"]) * (1 - pct / 100.0), 2)
+    # iter249 — intención de abono en el MISMO claim atómico; abono idempotente
+    # por op_id y healer si el proceso muere entre pasos.
+    from services.credit_recovery import pending_marker, apply_and_clear
+    marker = pending_marker(owner_id, "USD", net, "vendor-credit")
+    res = await db.redemptions.update_one(
+        {"id": r["id"], "vendor_credited_at": {"$in": [None, ""]}},
+        {"$set": {"vendor_credited_at": iso(now_utc()),
+                  "vendor_credit_net": net,
+                  "vendor_commission_pct": pct,
+                  "credit_pending": marker}})
+    if res.modified_count == 0:
+        return
+    await apply_and_clear("redemptions", r["id"], marker)
+    try:
+        from services.live_events import emit_balance_changed
+        await emit_balance_changed(owner_id, "vendor_product_sale",
+                                   redemption_id=r["id"])
+    except Exception as e:
+        logger.error(f"vendor credit balance event failed: {e}")
+    try:
+        from routes.notifications import _insert_notification
+        await _insert_notification(
+            recipient_user_id=owner_id, type="vendor_credit",
+            title="Venta acreditada",
+            message=(f"Se acreditaron {net:.2f} USD a tu saldo por la venta de "
+                     f"{r['quantity']}× {r['product_name']} (comisión {pct:g}%)."),
+            data={"redemption_id": r["id"], "net": net, "commission_pct": pct})
+    except Exception as e:
+        logger.error(f"vendor credit notify failed: {e}")
+
+
+async def _reverse_vendor_credit_if_any(r: dict) -> None:
+    """iter217 — si un canje ya acreditado al vendedor se rechaza después,
+    revierte el crédito (idempotente)."""
+    owner_id = r.get("vendor_owner_id") or ""
+    net = float(r.get("vendor_credit_net") or 0)
+    if not owner_id or not r.get("vendor_credited_at") or net <= 0:
+        return
+    res = await db.redemptions.update_one(
+        {"id": r["id"], "vendor_credit_reversed_at": {"$in": [None, ""]}},
+        {"$set": {"vendor_credit_reversed_at": iso(now_utc())}})
+    if res.modified_count == 0:
+        return
+    await db.users.update_one({"user_id": owner_id},
+                              {"$inc": {"vip_balances.USD": -net}})
+    try:
+        from routes.notifications import _insert_notification
+        await _insert_notification(
+            recipient_user_id=owner_id, type="vendor_credit_reversed",
+            title="Venta revertida",
+            message=(f"El canje de {r['quantity']}× {r['product_name']} fue "
+                     f"rechazado: se debitaron {net:.2f} USD de tu saldo."),
+            data={"redemption_id": r["id"], "net": net})
+    except Exception as e:
+        logger.error(f"vendor credit reversal notify failed: {e}")
+
+
+async def _record_vendor_commission_inflow(r: dict) -> None:
+    """iter219 — la comisión de la empresa por la venta de un producto VIP
+    entra al fondo al confirmarse la entrega. Idempotente."""
+    if not (r.get("vendor_owner_id") or ""):
+        return
+    fresh = await db.redemptions.find_one({"id": r["id"]}, {"_id": 0}) or {}
+    if not fresh.get("vendor_credited_at"):
+        return
+    commission = round(float(r["total_usd"]) - float(fresh.get("vendor_credit_net") or 0), 2)
+    if commission <= 0:
+        return
+    res = await db.redemptions.update_one(
+        {"id": r["id"], "fund_inflow_at": {"$in": [None, ""]}},
+        {"$set": {"fund_inflow_at": iso(now_utc()),
+                  "fund_inflow_amount": commission,
+                  "fund_inflow_currency": "USDT"}})
+    if res.modified_count == 0:
+        return
+    try:
+        from services.company_funds_common import record_auto_fund_adjustment
+        await record_auto_fund_adjustment(
+            adjustment_type="inflow", currency="USDT", amount=commission,
+            source_name="Marketplace vendedores VIP",
+            note=(f"Comisión venta VIP: {r['quantity']}× {r['product_name']} "
+                  f"(canje {r['id'][:8]})"),
+            ref_id=r["id"])
+    except Exception as e:
+        logger.error(f"vendor commission fund inflow failed: {e}")
+
+
+async def _reverse_fund_inflow_if_any(r: dict) -> None:
+    """iter219 — si el canje se rechaza después de haber entrado capital al
+    fondo, registra la salida equivalente. Idempotente."""
+    fresh = await db.redemptions.find_one({"id": r["id"]}, {"_id": 0}) or {}
+    amt = float(fresh.get("fund_inflow_amount") or 0)
+    if not fresh.get("fund_inflow_at") or fresh.get("fund_inflow_reversed_at") or amt <= 0:
+        return
+    res = await db.redemptions.update_one(
+        {"id": r["id"], "fund_inflow_reversed_at": {"$in": [None, ""]}},
+        {"$set": {"fund_inflow_reversed_at": iso(now_utc())}})
+    if res.modified_count == 0:
+        return
+    try:
+        from services.company_funds_common import record_auto_fund_adjustment
+        await record_auto_fund_adjustment(
+            adjustment_type="outflow",
+            currency=fresh.get("fund_inflow_currency") or "USD", amount=amt,
+            source_name="Marketplace tienda",
+            note=(f"Reverso por canje rechazado: {r['quantity']}× "
+                  f"{r['product_name']} (canje {r['id'][:8]})"),
+            ref_id=r["id"])
+    except Exception as e:
+        logger.error(f"fund inflow reversal failed: {e}")
+
+
+def _fmt_pickup_code(code: str) -> str:
+    return f"{code[:3]}-{code[3:]}" if len(code) == 6 else code
+
+
+def _normalize_pickup_code(raw: str) -> str:
+    return (raw or "").strip().upper().replace("-", "").replace(" ", "")
+
+
+async def _find_pickup_by_code(raw_code: str) -> dict:
+    """iter238 — busca una recogida activa por su código corto."""
+    code = _normalize_pickup_code(raw_code)
+    if len(code) < 6:
+        raise HTTPException(status_code=400, detail="Código demasiado corto")
+    r = await db.redemptions.find_one(
+        {"pickup_code": code, "fulfillment": "store_pickup",
+         "status": {"$in": ["pending", "approved"]}}, {"_id": 0})
+    if not r:
+        raise HTTPException(
+            status_code=404,
+            detail="Código no válido o pedido ya entregado")
+    return r
+
+
+@router.get("/admin/pickups/verify")
+async def verify_pickup_code(code: str, request: Request) -> Any:
+    """iter238 — el personal teclea el código que muestra el cliente."""
+    await require_permission(request, "products")
+    r = await _find_pickup_by_code(code)
+    return {k: r.get(k) for k in
+            ("id", "user_name", "product_name", "quantity", "store_name",
+             "status", "pickup_ready_at", "on_my_way_at", "created_at")}
+
+
+@router.post("/admin/pickups/confirm")
+async def confirm_pickup_by_code(payload: dict, request: Request) -> Any:
+    """iter238 — confirma la entrega en tienda con el código del cliente."""
+    actor = await require_permission(request, "products")
+    r = await _find_pickup_by_code(payload.get("code", ""))
+    await _on_redemption_delivered(r)
+    await db.redemptions.update_one(
+        {"id": r["id"]},
+        {"$set": {"status": "delivered",
+                  "delivered_at": iso(now_utc()),
+                  "admin_note": f"Entregado en tienda con código "
+                                f"{_fmt_pickup_code(r['pickup_code'])}"}})
+    await _log_redemption_status_change(actor, r, r["id"], "delivered",
+                                        "entrega confirmada por código")
+    # iter239 — el cliente recibe confirmación inmediata de su entrega.
+    title = "¡Entrega confirmada!"
+    msg = (f"Recogiste {r['quantity']}× {r['product_name']} en "
+           f"{r.get('store_name') or 'la tienda'}. ¡Gracias por tu compra!")
+    try:
+        from routes.notifications import _insert_notification
+        await _insert_notification(
+            recipient_user_id=r["user_id"], type="pickup_delivered",
+            title=title, message=msg, data={"redemption_id": r["id"]})
+        from push_service import send_push_to_user, build_generic_admin_alert_payload
+        await send_push_to_user(db, r["user_id"], build_generic_admin_alert_payload(
+            title=title, body=msg, url="/dashboard/marketplace",
+            tag=f"pickup-done-{r['id']}"))
+    except Exception as e:
+        logger.error(f"pickup delivered notify failed: {e}")
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("pickups_changed", {"redemption_id": r["id"]})
+    except Exception as e:
+        logger.error(f"pickups_changed publish failed: {e}")
+    return await db.redemptions.find_one({"id": r["id"]}, {"_id": 0})
+
+
+@router.post("/admin/redemptions/{rid}/pickup-ready")
+async def mark_redemption_pickup_ready(rid: str, request: Request) -> Any:
+    """iter236 — avisa al cliente que su pedido está listo para recoger en la
+    tienda. Solo canjes con fulfillment=store_pickup. Idempotente (409)."""
+    actor = await require_permission(request, "orders")
+    r = await db.redemptions.find_one({"id": rid}, {"_id": 0})
+    if not r:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    if r.get("fulfillment") != "store_pickup":
+        raise HTTPException(status_code=400,
+                            detail="Este canje no es de recogida en tienda")
+    if r.get("status") not in ("pending", "approved"):
+        raise HTTPException(
+            status_code=409,
+            detail="Solo canjes pendientes o aprobados pueden marcarse listos")
+    updates = {"pickup_ready_at": iso(now_utc())}
+    if r["status"] == "pending":
+        updates["status"] = "approved"
+    res = await db.redemptions.update_one(
+        {"id": rid, "pickup_ready_at": {"$in": [None, ""]}},
+        {"$set": updates})
+    if res.modified_count == 0:
+        raise HTTPException(status_code=409,
+                            detail="Este canje ya fue marcado como listo")
+    store_name = r.get("store_name") or "la tienda"
+    store_addr = r.get("store_address") or ""
+    title = "¡Tu pedido está listo para recoger!"
+    msg = (f"Tu canje de {r['quantity']}× {r['product_name']} ya está listo "
+           f"en {store_name}" + (f" ({store_addr})" if store_addr else "")
+           + ". Preséntate con tu identificación"
+           + (f" y muestra tu código {_fmt_pickup_code(r['pickup_code'])}"
+              if r.get("pickup_code") else "") + ".")
+    try:
+        from routes.notifications import _insert_notification
+        await _insert_notification(
+            recipient_user_id=r["user_id"], type="pickup_ready",
+            title=title, message=msg,
+            data={"redemption_id": rid, "store_id": r.get("store_id")})
+        from push_service import send_push_to_user, build_generic_admin_alert_payload
+        await send_push_to_user(db, r["user_id"], build_generic_admin_alert_payload(
+            title=title, body=msg, url="/dashboard/marketplace",
+            tag=f"pickup-{rid}"))
+    except Exception as e:
+        logger.error(f"pickup ready notify failed: {e}")
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("pickups_changed", {"redemption_id": rid})
+    except Exception as e:
+        logger.error(f"pickups_changed publish failed: {e}")
+    await log_action(db, actor, "redemption.pickup_ready", "redemption", rid,
+                     summary=f"Listo para recoger en {store_name}",
+                     details={"store_id": r.get("store_id"),
+                              "user_id": r.get("user_id")})
+    return await db.redemptions.find_one({"id": rid}, {"_id": 0})
+
+
 @router.put("/admin/redemptions/{rid}/status")
 async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "orders")
@@ -403,45 +666,90 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     if not r:
         raise HTTPException(status_code=404, detail="No encontrado")
     if new_status == "delivered" and r["status"] != "delivered":
-        await _assert_redemption_courier_ready(r)
+        await _on_redemption_delivered(r)
     if new_status == "rejected" and r["status"] != "rejected":
-        # iter198 — any charged courier fee is refunded with the product total.
-        refund = r["total_usd"] + float(r.get("courier_fee_usd") or 0.0)
-        await db.users.update_one(
-            {"user_id": r["user_id"]}, {"$inc": {"vip_balance_usd": refund}}
+        # iter248 — claim atómico: dos PUT 'rejected' simultáneos (o un ciclo
+        # rejected→pending→rejected) reembolsan EXACTAMENTE una vez.
+        # iter249 — la intención del reembolso viaja en el mismo claim; si el
+        # proceso muere antes de acreditar, el healer lo completa.
+        from services.credit_recovery import pending_marker
+        refund = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
+        marker = pending_marker(r["user_id"], "USD", refund,
+                                "redemption-refund", legacy_usd=True)
+        claim = await db.redemptions.update_one(
+            {"id": rid, "status": {"$ne": "rejected"},
+             "rejection_applied": {"$ne": True}},
+            {"$set": {"rejection_applied": True, "credit_pending": marker}},
         )
-        await db.products.update_one(
-            {"id": r["product_id"]}, {"$inc": {"stock": r["quantity"]}}
-        )
-        # iter205 — el canje rechazado cancela su trabajo de mensajería.
-        try:
-            from services.deliveries import cancel_active_delivery
-            await cancel_active_delivery("redemption", rid,
-                                         actor_id=actor.get("user_id"),
-                                         note="canje rechazado")
-        except Exception as e:
-            logger.error(f"delivery cancel failed: {e}")
-    await db.redemptions.update_one(
-        {"id": rid}, {"$set": {"status": new_status, "admin_note": note}}
-    )
+        if claim.modified_count:
+            await _on_redemption_rejected(r, rid, actor, marker)
+    sets = {"status": new_status, "admin_note": note}
+    if new_status == "delivered" and r["status"] != "delivered":
+        sets["delivered_at"] = iso(now_utc())
+    await db.redemptions.update_one({"id": rid}, {"$set": sets})
     updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
-
-    # iter55.23 — audit trail so "quién rechazó este canje?" can be answered.
     if new_status != r["status"]:
-        await log_action(
-            db, actor, f"redemption.{new_status}", "redemption", rid,
-            summary=f"Canje {r.get('total_usd','?')} USD → {new_status}",
-            details={
-                "prev": r["status"],
-                "new": new_status,
-                "user_id": r.get("user_id"),
-                "product_id": r.get("product_id"),
-                "quantity": r.get("quantity"),
-                "total_usd": r.get("total_usd"),
-                "admin_note": note,
-            },
-        )
+        await _log_redemption_status_change(actor, r, rid, new_status, note)
     return updated
+
+
+async def _on_redemption_delivered(r: dict) -> None:
+    await _assert_redemption_courier_ready(r)
+    await _credit_vendor_for_redemption(r)
+    await _record_vendor_commission_inflow(r)
+
+
+async def _on_redemption_rejected(r: dict, rid: str, actor: dict,
+                                  marker: dict) -> None:
+    """Reembolso + stock + reversos (inventario, vendedor, fondo, entrega)."""
+    # iter198 — any charged courier fee is refunded with the product total.
+    # iter249 — abono idempotente por op_id (marker reclamado por el caller).
+    from services.credit_recovery import apply_and_clear
+    await apply_and_clear("redemptions", rid, marker)
+    await db.products.update_one(
+        {"id": r["product_id"]}, {"$inc": {"stock": r["quantity"]}}
+    )
+    # iter217 — reverso de inventario (producto empresa) + reverso del
+    # crédito al vendedor VIP si ya se había pagado.
+    product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})
+    if product and not product.get("owner_id"):
+        try:
+            from services.inventory import record_movement
+            await record_movement(
+                product=product, mtype="ajuste_pos", quantity=r["quantity"],
+                note=f"Reverso por canje rechazado {rid[:8]}",
+                source="marketplace", ref_id=rid, actor=actor,
+                apply_stock=False)
+        except Exception as e:
+            logger.error(f"inventory reversal failed: {e}")
+    await _reverse_vendor_credit_if_any(r)
+    await _reverse_fund_inflow_if_any(r)
+    # iter205 — el canje rechazado cancela su trabajo de mensajería.
+    try:
+        from services.deliveries import cancel_active_delivery
+        await cancel_active_delivery("redemption", rid,
+                                     actor_id=actor.get("user_id"),
+                                     note="canje rechazado")
+    except Exception as e:
+        logger.error(f"delivery cancel failed: {e}")
+
+
+async def _log_redemption_status_change(actor: dict, r: dict, rid: str,
+                                        new_status: str, note: str) -> None:
+    # iter55.23 — audit trail so "quién rechazó este canje?" can be answered.
+    await log_action(
+        db, actor, f"redemption.{new_status}", "redemption", rid,
+        summary=f"Canje {r.get('total_usd','?')} USD → {new_status}",
+        details={
+            "prev": r["status"],
+            "new": new_status,
+            "user_id": r.get("user_id"),
+            "product_id": r.get("product_id"),
+            "quantity": r.get("quantity"),
+            "total_usd": r.get("total_usd"),
+            "admin_note": note,
+        },
+    )
 
 
 async def _apply_courier_fee_balance_delta(r: dict, delta: float) -> None:
@@ -682,6 +990,9 @@ async def get_admin_settings(request: Request) -> Any:
             "courier_share_pct": 80.0,
             "office_latitude": None,
             "office_longitude": None,
+            "vendor_commission_pct": 5.0,
+            "low_stock_threshold": 5,
+            "store_currency_code": None,
         }
     # Missing / non-False → treated as enabled (matches scheduler.py opt-out semantics)
     raw_flag = doc.get("auto_send_monthly_audit")
@@ -706,22 +1017,49 @@ async def get_admin_settings(request: Request) -> Any:
                                    if doc.get("courier_share_pct") is not None else 80.0),
         "office_latitude": doc.get("office_latitude"),
         "office_longitude": doc.get("office_longitude"),
+        "vendor_commission_pct": float(doc.get("vendor_commission_pct")
+                                       if doc.get("vendor_commission_pct") is not None else 5.0),
+        "low_stock_threshold": int(doc.get("low_stock_threshold")
+                                   if doc.get("low_stock_threshold") is not None else 5),
+        "store_currency_code": doc.get("store_currency_code"),
     }
+
+
+def _validate_ops_email(data: dict) -> None:
+    if "ops_notifications_email" not in data:
+        return
+    ops_email = (data.get("ops_notifications_email") or "").strip() or None
+    if ops_email and ("@" not in ops_email or " " in ops_email):
+        raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
+    data["ops_notifications_email"] = ops_email
+
+
+def _validate_cash_provinces(data: dict) -> None:
+    if "cash_provinces" not in data or data["cash_provinces"] is None:
+        return
+    from routes.orders import CUBA_PROVINCES
+    bad = [p for p in data["cash_provinces"] if p not in CUBA_PROVINCES]
+    if bad:
+        raise HTTPException(status_code=400,
+                            detail=f"Provincias no válidas: {', '.join(bad)}")
+
+
+async def _validate_store_currency(data: dict) -> None:
+    # iter229 — conversión tienda física → web.
+    if not data.get("store_currency_code"):
+        return
+    code = data["store_currency_code"].strip().upper()
+    if not await db.currencies.find_one({"code": code}, {"_id": 1}):
+        raise HTTPException(status_code=400,
+                            detail=f"La moneda {code} no existe en el panel de Monedas")
+    data["store_currency_code"] = code
 
 
 async def _validate_settings_payload(data: dict) -> dict:
     """Normalización + validaciones ligeras del payload de settings."""
-    if "ops_notifications_email" in data:
-        ops_email = (data.get("ops_notifications_email") or "").strip() or None
-        if ops_email and ("@" not in ops_email or " " in ops_email):
-            raise HTTPException(status_code=400, detail="ops_notifications_email no tiene un formato válido")
-        data["ops_notifications_email"] = ops_email
-    if "cash_provinces" in data and data["cash_provinces"] is not None:
-        from routes.orders import CUBA_PROVINCES
-        bad = [p for p in data["cash_provinces"] if p not in CUBA_PROVINCES]
-        if bad:
-            raise HTTPException(status_code=400,
-                                detail=f"Provincias no válidas: {', '.join(bad)}")
+    _validate_ops_email(data)
+    _validate_cash_provinces(data)
+    await _validate_store_currency(data)
     return data
 
 

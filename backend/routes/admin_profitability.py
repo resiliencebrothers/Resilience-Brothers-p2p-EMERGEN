@@ -131,6 +131,45 @@ async def list_profitability_operations(
     return {"items": rows, "totals": totals}
 
 
+def _profitability_ops_query(
+    since: Optional[str], until: Optional[str], currency: Optional[str],
+) -> Dict[str, Any]:
+    query: Dict[str, Any] = {}
+    if currency:
+        query["currency"] = _norm_code(currency)
+    date_q: Dict[str, str] = {}
+    if since:
+        date_q["$gte"] = since[:10]
+    if until:
+        date_q["$lte"] = until[:10]
+    if date_q:
+        query["op_date"] = date_q
+    return query
+
+
+def _profitability_aggregates(ops: List[Dict[str, Any]]) -> tuple:
+    """(currency_rows, kpis) para el PDF de rentabilidad."""
+    by_cur: Dict[str, Dict[str, Any]] = {}
+    profitable = 0
+    for op in ops:
+        if op.get("status") == "profitable":
+            profitable += 1
+        pc = op.get("payment_currency", "?")
+        row = by_cur.setdefault(pc, {"currency": pc, "count": 0, "result_fx": 0.0, "conversion_gain": 0.0, "net_gain": 0.0})
+        row["count"] += 1
+        row["result_fx"] += op.get("result_fx") or 0
+        row["conversion_gain"] += op.get("conversion_gain") or 0
+        row["net_gain"] += op.get("net_gain") or 0
+    total = len(ops)
+    kpis = {
+        "total": total,
+        "profitable": profitable,
+        "loss": total - profitable,
+        "success_rate": (profitable / total * 100.0) if total else 0.0,
+    }
+    return sorted(by_cur.values(), key=lambda r: r["currency"]), kpis
+
+
 @router.get("/operations.pdf")
 async def export_profitability_pdf(
     request: Request,
@@ -145,46 +184,19 @@ async def export_profitability_pdf(
     from profitability_pdf import generate_profitability_pdf
 
     actor = await require_permission(request, "profitability")
-    query: Dict[str, Any] = {}
-    if currency:
-        query["currency"] = _norm_code(currency)
-    date_q: Dict[str, str] = {}
-    if since:
-        date_q["$gte"] = since[:10]
-    if until:
-        date_q["$lte"] = until[:10]
-    if date_q:
-        query["op_date"] = date_q
+    query = _profitability_ops_query(since, until, currency)
     ops = await db.profitability_operations.find(query, {"_id": 0}).sort(
         [("op_date", -1), ("created_at", -1)]
     ).to_list(2000)
 
-    by_cur: Dict[str, Dict[str, Any]] = {}
-    profitable = 0
-    for op in ops:
-        if op.get("status") == "profitable":
-            profitable += 1
-        pc = op.get("payment_currency", "?")
-        row = by_cur.setdefault(pc, {"currency": pc, "count": 0, "result_fx": 0.0, "conversion_gain": 0.0, "net_gain": 0.0})
-        row["count"] += 1
-        row["result_fx"] += op.get("result_fx") or 0
-        row["conversion_gain"] += op.get("conversion_gain") or 0
-        row["net_gain"] += op.get("net_gain") or 0
-    currency_rows = sorted(by_cur.values(), key=lambda r: r["currency"])
-    total = len(ops)
-    kpis = {
-        "total": total,
-        "profitable": profitable,
-        "loss": total - profitable,
-        "success_rate": (profitable / total * 100.0) if total else 0.0,
-    }
+    currency_rows, kpis = _profitability_aggregates(ops)
     pdf_bytes = generate_profitability_pdf(
         since=since or "", until=until or "",
         ops=ops, currency_rows=currency_rows, kpis=kpis, actor=actor,
     )
     await log_action(
         db, actor, "profitability.pdf_exported", "profitability_operation", "report",
-        summary=f"Exported profitability PDF ({since or '—'} → {until or '—'}, {total} ops)",
+        summary=f"Exported profitability PDF ({since or '—'} → {until or '—'}, {kpis['total']} ops)",
     )
     slug = f"_{since}_{until}" if since and until else (f"_{since or until}" if (since or until) else "")
     ts = now_utc().strftime("%Y%m%d_%H%M")

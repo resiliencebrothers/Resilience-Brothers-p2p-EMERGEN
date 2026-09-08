@@ -266,6 +266,29 @@ async def run_daily_batch_autoclose(db):
     return {"closed": closed, "deleted_empty": deleted}
 
 
+async def run_low_fund_balance_scan():
+    """iter224 — escaneo periódico de saldos mínimos configurados."""
+    try:
+        from services.fund_alerts import check_low_fund_balances
+        n = await check_low_fund_balances()
+        if n:
+            logger.info(f"[low-fund-scan] {n} alerta(s) de saldo bajo enviadas")
+    except Exception as e:
+        logger.error(f"[low-fund-scan] failed: {e}")
+
+
+async def run_credit_recovery():
+    """iter249 — completa acreditaciones que quedaron a medias (crash entre el
+    claim y el abono). Idempotente por op_id; nunca duplica."""
+    try:
+        from services.credit_recovery import heal_pending_credits
+        n = await heal_pending_credits()
+        if n:
+            logger.warning("[credit-recovery] %s acreditaciones pendientes sanadas", n)
+    except Exception as e:
+        logger.error(f"[credit-recovery] failed: {e}")
+
+
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
 
@@ -275,6 +298,25 @@ def start_scheduler(db, build_timeseries):
     if _scheduler and _scheduler.running:
         return _scheduler
     _scheduler = AsyncIOScheduler(timezone="UTC")
+    # iter249 — sanador de acreditaciones pendientes (cada 2 min + al arrancar)
+    _scheduler.add_job(
+        run_credit_recovery,
+        IntervalTrigger(seconds=120),
+        id="credit_recovery",
+        replace_existing=True,
+        misfire_grace_time=120,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+    # iter224 — alerta de saldo bajo en cuentas internas / caja (cada 10 min)
+    _scheduler.add_job(
+        run_low_fund_balance_scan,
+        IntervalTrigger(minutes=10),
+        id="low_fund_balance_scan",
+        replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
+    )
     _scheduler.add_job(
         run_monthly_revenue_email,
         CronTrigger(day=1, hour=9, minute=0, timezone="UTC"),

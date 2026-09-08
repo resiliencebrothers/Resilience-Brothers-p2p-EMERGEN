@@ -5,7 +5,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
 import { API } from "@/App";
-import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike } from "lucide-react";
+import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike, Store, Wallet } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -15,6 +15,7 @@ import VipCapitalRequestsView from "@/pages/dashboard/VipCapitalRequestsView";
 import VipBatchesView from "@/pages/dashboard/VipBatchesView";
 import AssetsView from "@/pages/dashboard/AssetsView";
 import MarketplaceView from "@/pages/dashboard/MarketplaceView";
+import MyProductsView from "@/pages/dashboard/MyProductsView";
 import CourierPanel from "@/pages/dashboard/CourierPanel";
 import OverviewView from "@/pages/dashboard/OverviewView";
 import MyTransactions from "@/pages/dashboard/MyTransactions";
@@ -24,9 +25,11 @@ import ProfileView from "@/pages/dashboard/ProfileView";
 import NotificationsView from "@/pages/dashboard/NotificationsView";
 import SupportView from "@/pages/dashboard/SupportView";
 import ReferralsView from "@/pages/dashboard/ReferralsView";
+import CashBoxView from "@/pages/dashboard/cashbox/CashBoxView";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import AppealDialog from "@/components/AppealDialog";
 import InstallAppButton from "@/components/InstallAppButton";
 import InstallAppHint from "@/components/InstallAppHint";
@@ -81,11 +84,15 @@ export default function Dashboard() {
       { to: "/dashboard/assets", icon: Coins, label: t("sidebar.client.assets"), id: "nav-assets" },
       { to: "/dashboard/vip", icon: Star, label: t("sidebar.client.vip"), id: "nav-vip" },
       { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
+      ...(user?.role === "vip" ? [
+        { to: "/dashboard/my-products", icon: Store, label: t("sidebar.client.myProducts"), id: "nav-my-products" },
+      ] : []),
       { to: "/dashboard/referrals", icon: Gift, label: t("sidebar.client.referrals"), id: "nav-referrals" },
     ] : []),
     ...(user?.is_courier ? [
       { to: "/dashboard/deliveries", icon: Bike, label: t("sidebar.client.deliveries"), id: "nav-deliveries" },
     ] : []),
+    { to: "/dashboard/cashbox", icon: Wallet, label: t("sidebar.client.cashbox"), id: "nav-cashbox" },
     { to: "/dashboard/support", icon: HelpCircle, label: t("sidebar.client.support"), id: "nav-support" },
   ];
 
@@ -150,6 +157,7 @@ export default function Dashboard() {
       <InstallAppButton testid={`${logoutTestid}-install-app`} compact />
       <div className="flex items-center gap-2 mt-3">
         <CompactLanguageSwitcher testid="dashboard-lang-switcher" />
+        <ThemeToggle testid="dashboard-theme-toggle" />
         <button
           data-testid={logoutTestid}
           onClick={logout}
@@ -268,8 +276,10 @@ export default function Dashboard() {
             <Route path="capital-requests" element={<VipCapitalRequestsView />} />
             <Route path="batches" element={<VipBatchesView />} />
             <Route path="marketplace" element={<MarketplaceView />} />
+            <Route path="my-products" element={<MyProductsView />} />
             <Route path="deliveries" element={<CourierPanel />} />
             <Route path="referrals" element={<ReferralsView />} />
+            <Route path="cashbox" element={<CashBoxView />} />
             <Route path="support" element={<SupportView />} />
           </Routes>
         </div>

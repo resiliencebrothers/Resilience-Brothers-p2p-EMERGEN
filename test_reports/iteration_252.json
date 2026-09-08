@@ -1,0 +1,32 @@
+{
+  "summary": "iter252 E2E frontend verification of 'Quitar Permisos Plantilla' (revert exactly what a quick-template added). All 3 requested flows PASS end-to-end against user_test_employee01 via admin session cookie test_session_admin_X on the preview URL, with Mongo assertions after every mutation.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/tests/iter252_helper.py", "/app/tests/iter251_helper.py"],
+  "test_results_detail": {
+    "flow1_revertir_exacto": "PASS — reset (perms=['support'], curs=['USD'], no applied_templates) → apply Cajero (TOTP) → Mongo: perms == UNION {support,orders,withdrawals,company_funds,quick_view}, curs=[], applied_templates.cajero.added_perms == [orders,withdrawals,company_funds,quick_view] (support excluido, ya lo tenía), prev_currencies==['USD'], currencies_changed==true. UI: badge staff-template-applied-cajero + botón staff-template-remove-cajero visibles. Se añade manualmente 'users' (TOTP) → perms incluye {support, cajero-set, users}. Click 'Quitar lo que sumó' (TOTP) → Mongo: perms == ['support','users'] EXACTO (previo + manual conservados), curs == ['USD'] (restauradas), applied_templates.cajero removido. Badge Aplicada desaparece del DOM.",
+    "flow2_monedas_cambiadas_despues": "PASS con full page reload — Aplicado Cajero (curs pasa a []). Mongo out-of-band set_curs ['EUR']. Full page reload + reopen dialog → click 'Quitar lo que sumó' + TOTP → Mongo: curs == ['EUR'] preservado (no restaurado porque cambió después), perms == ['support']. ⚠️ NOTA: si solo se CIERRA y REABRE el diálogo (sin recargar la página) el parent 'user' prop tiene curs=[] stale y el guard rec.set_currencies==currentCurrencies evalúa true, restaurando prev_currencies=['USD']. Con page reload el bug no ocurre — coincide con la instrucción del prompt ('Recargar la página/diálogo').",
+    "flow3_smoke_mensajeria": "PASS — reset → aplicar Mensajería (TOTP) → perms {support, deliveries, quick_view}, curs preservadas ['USD'] (mensajería.currencies=['__NONE__']), badge staff-template-applied-mensajeria visible. Click 'Quitar lo que sumó' (TOTP) → toast texto EXACTO 'Plantilla «Mensajería» quitada (solo lo que sumó).' verificado en DOM; perms==['support'], curs==['USD'] intactas, applied_templates.mensajeria removido."
+  },
+  "action_items": [
+    "(Baja prioridad, UX) removeTemplate usa 'user.allowed_currencies' del prop, que puede estar desactualizado si el admin abrió el diálogo antes de un cambio externo. Considera refetchear el user al abrir el diálogo o pasar el currentCurrencies desde una fuente fresca (p.ej. `/api/admin/users/{id}` on mount) para hacer la heurística 'nadie las cambió después' robusta ante ediciones fuera del componente. Sin embargo, con page reload funciona correctamente y no bloquea la feature."
+  ],
+  "critical_code_review_comments": [
+    "applyTemplate ~L147 y removeTemplate ~L194 en UserFunctionsDialog.jsx son consistentes: el delta añadido se registra correctamente (added_perms filtra los previos, currencies_changed compara sorted-array). removeTemplate quita solo added_perms manteniendo previos+manuales via array.filter, y restaura currencies solo si (rec.currencies_changed && currentCurrencies == rec.set_currencies).",
+    "Heurística de 'nadie cambió las monedas después' depende de que `user.allowed_currencies` esté fresco cuando se hace click en Quitar. Reabrir el diálogo NO refetchea; solo full page reload sí. Considera invocar un fetch/onUserUpdated al abrir para eliminar la ventana de raza (ver action_items).",
+    "El objeto applied_templates.cajero.applied_at se serializa a ISO string desde el frontend (new Date().toISOString()); el backend lo persiste tal cual (verificado). Se recomienda que el backend valide/normalice a datetime UTC si en el futuro se lee desde otros clientes.",
+    "El diálogo TOTP se abre correctamente tanto para Aplicar como para Quitar (mismo PUT protegido). No hay riesgo de fields stale porque putUserFields pasa {fields, successMsg} al pendingTotp y reenvía exactamente esos campos."
+  ],
+  "updated_files": ["/app/tests/iter252_helper.py"],
+  "success_rate": {"backend": "n/a (skipped per request; ya cubierto por test_iter252_applied_templates.py)", "frontend": "100% (3/3 flujos)"},
+  "test_credentials": "admin session cookie test_session_admin_X (user_test_admin01); TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+  "seed_data_creation": "/app/tests/iter252_helper.py CLI ('check' | 'reset_all' | 'set_curs <literal>' | 'restore'). Employee restaurado (allowed_permissions=None, allowed_currencies=[], $unset applied_templates) tras cada corrida.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Testids reales del TOTP prompt son 'totp-prompt-input' / 'totp-prompt-confirm' / 'totp-prompt-dialog' (NO 'totp-input'/'totp-confirm' como decía el prompt de iter251). Testids nuevos verificados: staff-template-applied-{cajero|mensajeria|inventario}, staff-template-remove-{...}. Para 'monedas cambiadas después': hacer FULL page reload antes de click 'Quitar', ya que el parent user prop no refetch en close/open.",
+  "rca of the issue": "Ninguno bloqueante — feature funciona según especificación. Único hallazgo menor: la heurística 'currencies_changed && currentCurrencies==set_currencies' se basa en user.allowed_currencies del prop; si un admin abre el diálogo mucho antes de un cambio externo y no recarga, la restauración incorrecta podría ocurrir. Mitigación: recargar página antes de la acción (spec ya lo indica) o el main agent puede añadir un refetch on-open."
+}

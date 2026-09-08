@@ -82,6 +82,38 @@ def _isolate_payment_account_config():
                             {"$set": {"tiers": s["tiers"]}})
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _seed_store_fx():
+    """iter229 — los productos de la EMPRESA se cobran en la web en USDT a la
+    tasa vigente USDT→moneda de la tienda. Para que los tests legacy sigan
+    siendo numéricamente idénticos (total_usd == price×qty), la sesión de
+    tests usa una moneda sintética CUPFX con tasa 1:1. Los tests de iter229
+    plantan su propia moneda/tasa con números reales."""
+    from pymongo import MongoClient
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    prev = (db.settings.find_one({"id": "global"}) or {}).get("store_currency_code")
+    db.currencies.update_one(
+        {"code": "CUPFX"},
+        {"$setOnInsert": {"id": "cur_test_cupfx", "code": "CUPFX",
+                          "name": "Test Store Cash", "type": "fiat"}},
+        upsert=True)
+    db.rates.update_one(
+        {"from_code": "USDT", "to_code": "CUPFX"},
+        {"$set": {"rate_normal": 1.0, "rate_vip": 1.0},
+         "$setOnInsert": {"id": "rate_test_usdt_cupfx"}},
+        upsert=True)
+    db.settings.update_one({"id": "global"},
+                           {"$set": {"store_currency_code": "CUPFX"}},
+                           upsert=True)
+    yield
+    if prev:
+        db.settings.update_one({"id": "global"},
+                               {"$set": {"store_currency_code": prev}})
+    else:
+        db.settings.update_one({"id": "global"},
+                               {"$unset": {"store_currency_code": ""}})
+
+
 @pytest.fixture(scope="session")
 def tokens():
     return {
@@ -130,6 +162,9 @@ def _seed_test_sessions():
                 "phone_verified": True,
                 "phone": db.users.find_one({"user_id": uid}, {"phone": 1}).get("phone") or "+5350000000",
                 "account_status": "active",
+                # los PDFs se firman en el idioma del usuario; las sesiones de
+                # navegador de smoke-tests pueden dejarlo en 'en'.
+                "preferred_language": "es",
             }},
         )
         db.kyc_verifications.update_one(
@@ -296,3 +331,39 @@ except Exception:
     # Employee user may not exist yet on some envs; ignore — individual tests
     # that need it will re-trigger via helper.
     pass
+
+
+# iter246 — Turnstile está ENFORCED en registro/login. La suite inyecta el
+# header de bypass (secreto de backend/.env) en TODAS las peticiones para no
+# tener que tocar cada test de auth. Un header explícito del test tiene
+# prioridad (setdefault), lo que permite probar el rechazo real del captcha.
+_CAPTCHA_BYPASS = os.environ.get("TURNSTILE_TEST_BYPASS", "")
+if _CAPTCHA_BYPASS:
+    import requests as _requests_mod
+
+    _orig_session_request = _requests_mod.sessions.Session.request
+
+    def _bypass_request(self, method, url, **kwargs):
+        headers = kwargs.get("headers") or {}
+        headers.setdefault("X-Captcha-Bypass", _CAPTCHA_BYPASS)
+        kwargs["headers"] = headers
+        return _orig_session_request(self, method, url, **kwargs)
+
+    _requests_mod.sessions.Session.request = _bypass_request
+
+    # iter248 — algunos tests usan httpx (no requests); mismo bypass ahí.
+    try:
+        import httpx as _httpx_mod
+
+        _orig_httpx_request = _httpx_mod.AsyncClient.request
+
+        def _bypass_httpx_request(self, method, url, **kwargs):
+            headers = kwargs.get("headers") or {}
+            if "X-Captcha-Bypass" not in headers:
+                headers = {**headers, "X-Captcha-Bypass": _CAPTCHA_BYPASS}
+            kwargs["headers"] = headers
+            return _orig_httpx_request(self, method, url, **kwargs)
+
+        _httpx_mod.AsyncClient.request = _bypass_httpx_request
+    except ImportError:
+        pass

@@ -4,11 +4,16 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown } from "lucide-react";
 
-export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle, onSave, onClear }) {
+// iter240 — centinela para "ninguna moneda" (staff sin funciones de monedas).
+export const NO_CURRENCIES = "__NONE__";
+
+export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle, onSave, onClear, onRestrictAll }) {
   const [open, setOpen] = useState(false);
   const selectedSet = new Set((selected || []).map((c) => String(c).toUpperCase()));
-  const label =
-    selectedSet.size === 0
+  const restricted = selectedSet.has(NO_CURRENCIES);
+  const label = restricted
+    ? "Ninguna (restringidas)"
+    : selectedSet.size === 0
       ? "Todas (sin restricción)"
       : selectedSet.size <= 3
         ? Array.from(selectedSet).join(", ")
@@ -23,7 +28,7 @@ export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle,
             data-testid={`open-currencies-${userId}`}
             className="rounded-none w-44 h-9 justify-between bg-[#0a0a0a] border border-white/10 hover:bg-[#1a1a1a] text-xs font-mono"
           >
-            <span className={selectedSet.size === 0 ? "text-neutral-500" : "text-white"}>
+            <span className={restricted ? "text-[#EF4444]" : selectedSet.size === 0 ? "text-neutral-500" : "text-white"}>
               {label}
             </span>
             <ChevronDown className="w-3 h-3 text-neutral-500" />
@@ -36,13 +41,24 @@ export function CurrencyMultiSelect({ userId, allCurrencies, selected, onToggle,
           <div className="px-3 py-2 micro-label text-neutral-500 border-b border-white/10">
             Selecciona monedas autorizadas
           </div>
+          <label
+            className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/5 border-b border-white/10"
+            data-testid={`restrict-all-currencies-${userId}`}
+          >
+            <Checkbox
+              checked={restricted}
+              onCheckedChange={(v) => (v ? onRestrictAll() : onClear())}
+              className="border-white/20 data-[state=checked]:bg-[#EF4444] data-[state=checked]:text-white"
+            />
+            <span className="text-sm text-[#EF4444]">Ninguna (restringir todas)</span>
+          </label>
           <div className="max-h-60 overflow-y-auto">
             {allCurrencies.length === 0 && (
               <div className="px-3 py-3 text-xs text-neutral-500">No hay monedas configuradas</div>
             )}
             {allCurrencies.map((c) => {
               const code = c.code;
-              const isOn = selectedSet.has(code);
+              const isOn = !restricted && selectedSet.has(code);
               return (
                 <label
                   key={c.id || code}

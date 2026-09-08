@@ -1,0 +1,31 @@
+{
+  "summary": "iter251 E2E frontend test for UserFunctionsDialog.applyTemplate bug fix (Spanish user report: quick templates overwrote previously-granted staff permissions). Tested all 4 requested flows end-to-end against employee.test@resilience.com via admin session cookie test_session_admin_X on the preview URL. All flows PASSED — the fix correctly performs a UNION of pending/current permissions with template permissions instead of replacing.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/tests/iter251_helper.py", "/app/tests/iter251_seed.py"],
+  "test_results_detail": {
+    "smoke_ui": "PASS - the 3 templates (Cajero, Mensajería, Inventario) are rendered under staff-templates with descriptions all starting with 'Suma:'.",
+    "toast_wording": "PASS - toast text is exactly 'Plantilla «Cajero» aplicada (permisos sumados).' (and analogous for Mensajería).",
+    "flujo_principal_cajero": "PASS - starting from allowed_permissions=['support'], allowed_currencies=['USD']; after clicking Cajero + confirming TOTP, MongoDB shows allowed_permissions == UNION {support, orders, withdrawals, company_funds, quick_view} (support preserved — bug fixed) and allowed_currencies == [] (all currencies, as cajero.currencies=[]).",
+    "flujo_viceversa_mensajeria": "PASS - starting from allowed_permissions=['orders','quick_view'], allowed_currencies=['USD','USDT']; after clicking Mensajería + TOTP, MongoDB shows allowed_permissions == {orders, quick_view, deliveries} (nothing lost) and allowed_currencies unchanged == ['USD','USDT'] (mensajería.currencies=['__NONE__'] preserves current currencies).",
+    "manual_after_template": "PASS - starting from {orders, quick_view, deliveries} (post-mensajería state), opened granular popover, toggled 'users' permission, saved with TOTP; MongoDB shows {orders, quick_view, deliveries, users} — template perms preserved plus the newly added manual one."
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "applyTemplate correctly reads pendingPerms/pendingCurrencies before falling back to user.allowed_permissions/allowed_currencies, so unsaved selections aren't lost when a template is applied. Good.",
+    "Minor: applyTemplate calls putUserFields without a TOTP code; backend returns TOTP_CODE_REQUIRED and TotpPromptDialog opens correctly. Confirmed the retry path (pendingTotp.fields) resends the merged fields — no double-merge risk since applyTemplate itself is not re-called.",
+    "Minor UX (not blocking): after a successful template apply, the parent onUserUpdated refreshes user.allowed_permissions. If admin immediately clicks a SECOND template without the parent state having propagated to props, the merge will still be correct because pendingPerms is set null on success and the next click reads user.allowed_permissions from the fresh response. Verified via re-open flow."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped as requested)", "frontend": "100% (4/4 flows)"},
+  "test_credentials": "admin session_token cookie=test_session_admin_X (user_test_admin01); TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+  "seed_data_creation": "Used /app/tests/iter251_helper.py to reset user_test_employee01.allowed_permissions/allowed_currencies before each flow and restore to (allowed_permissions=None, allowed_currencies=[]) at teardown (matches pre-test snapshot).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter251 fix verified E2E. Helper CLI /app/tests/iter251_helper.py (commands 'check' | 'reset <perms_literal> <curs_literal>') available for future re-runs. Admin preview cookie: test_session_admin_X. Route: /admin/users. Data-testids used: user-perms-btn-<uid>, user-functions-dialog, user-functions-tab-perms, uf-perms-tab, staff-template-{cajero|mensajeria|inventario}, totp-prompt-dialog/input/confirm, open-permissions-<uid>, permission-option-<uid>-<code>, save-permissions-<uid>. Employee restored to original state after test.",
+  "rca of the issue": "Original bug: applyTemplate previously called putUserFields({allowed_permissions: tpl.perms, allowed_currencies: tpl.currencies}), fully REPLACING existing values. Any prior permission (e.g. 'support') not in the template was wiped. Fix (iter251): merge pendingPerms/user.allowed_permissions with tpl.perms via new Set() union; for currencies use sentinel logic — [] means 'all' (replace), ['__NONE__'] means 'don't touch', otherwise union. Verified: 'support' preserved after Cajero; ['USD','USDT'] preserved after Mensajería."
+}

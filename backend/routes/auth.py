@@ -66,16 +66,25 @@ class AuthRegisterPayload(BaseModel):
     password: str = Field(..., min_length=8, max_length=200)
     name: str = Field(..., min_length=2, max_length=120)
     phone: str = Field(..., min_length=8, max_length=20)  # iter23 — E.164: +<countrycode><number>
+    captcha_token: Optional[str] = Field(None, max_length=2048)  # iter246 — Turnstile
 
 
 class AuthLoginPayload(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=200)
     remember_hours: Optional[int] = None  # request TTL in hours; hard-capped at 24 by policy (iter55.37)
+    captcha_token: Optional[str] = Field(None, max_length=2048)  # iter246 — Turnstile
 
 
 class AuthResendVerificationPayload(BaseModel):
     email: EmailStr
+
+
+@router.get("/captcha/config")
+async def get_captcha_config() -> Any:
+    """iter246 — configuración pública del widget Turnstile."""
+    from captcha import captcha_config
+    return captcha_config()
 
 
 class ForgotPasswordPayload(BaseModel):
@@ -363,6 +372,9 @@ def _detect_request_language(request: Request) -> str:
 @router.post("/auth/register")
 @limiter.limit("5/hour")
 async def auth_register(payload: AuthRegisterPayload, request: Request, response: Response) -> Any:
+    # iter246 — verificación "No soy un robot" (Cloudflare Turnstile).
+    from captcha import verify_captcha_token
+    await verify_captcha_token(payload.captcha_token, request)
     email = payload.email.lower().strip()
     phone = normalize_phone(payload.phone)
     # iter24 — block new registrations entirely when in defensive mode
@@ -510,6 +522,9 @@ async def auth_resend_verification(payload: AuthResendVerificationPayload, reque
 @router.post("/auth/login")
 @limiter.limit("10/minute")
 async def auth_login(payload: AuthLoginPayload, request: Request, response: Response) -> Any:
+    # iter246 — verificación "No soy un robot" (Cloudflare Turnstile).
+    from captcha import verify_captcha_token
+    await verify_captcha_token(payload.captcha_token, request)
     email = payload.email.lower().strip()
     identifier = email
     if await _too_many_failed_attempts(identifier):

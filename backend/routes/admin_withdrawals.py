@@ -89,9 +89,12 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
       - Entering 'rejected' while NOT yet refunded → credit the balance back once.
       - Leaving 'rejected' while previously refunded → re-debit (the payout is
         active again, so the funds must not sit in the balance too).
-    The flag is written into `update_doc` so it persists atomically with status.
+
+    iter248 — el claim del flag es ATÓMICO sobre el documento (filtro
+    condicional): dos PUT 'rejected' simultáneos no pueden acreditar el
+    reembolso dos veces. El re-débito usa decrement_balance (guard atómico):
+    si el cliente ya gastó el reembolso, la reactivación se rechaza con 409.
     """
-    already_refunded = bool(withdrawal.get("balance_refunded"))
     currency = withdrawal.get("currency", "USD")
     # iter198 — any charged courier fee travels with the refund/re-debit.
     amount = (float(withdrawal.get("amount_usd") or 0.0)
@@ -99,18 +102,52 @@ async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
     was_rejected = withdrawal["status"] == "rejected"
     entering_rejected = new_status == "rejected" and not was_rejected
     leaving_rejected = was_rejected and new_status != "rejected"
-    if entering_rejected and not already_refunded:
-        await db.users.update_one(
-            {"user_id": withdrawal["user_id"]},
-            {"$inc": {f"vip_balances.{currency}": amount}},
+    if entering_rejected:
+        # iter249 — la intención del reembolso viaja en el claim atómico; el
+        # abono es idempotente por op_id y el healer completa si hay crash.
+        from services.credit_recovery import pending_marker, apply_and_clear
+        marker = pending_marker(withdrawal["user_id"], currency, amount,
+                                "withdrawal-refund")
+        claim = await db.withdrawals.update_one(
+            {"id": withdrawal["id"], "balance_refunded": {"$ne": True}},
+            {"$set": {"balance_refunded": True, "credit_pending": marker}},
         )
-        update_doc["balance_refunded"] = True
-    elif leaving_rejected and already_refunded:
-        await db.users.update_one(
-            {"user_id": withdrawal["user_id"]},
-            {"$inc": {f"vip_balances.{currency}": -amount}},
+        if claim.modified_count:
+            await apply_and_clear("withdrawals", withdrawal["id"], marker)
+    elif leaving_rejected:
+        claim = await db.withdrawals.update_one(
+            {"id": withdrawal["id"], "balance_refunded": True},
+            {"$set": {"balance_refunded": False}},
         )
-        update_doc["balance_refunded"] = False
+        if claim.modified_count:
+            # Re-débito condicional sobre vip_balances.{currency} (mismo campo
+            # que recibió el reembolso), con guard atómico sobre el saldo TOTAL
+            # (para USD incluye el campo legacy) — 1e-6 tolera ruido float.
+            guard = amount - 1e-6
+            if currency == "USD":
+                filt: dict = {
+                    "user_id": withdrawal["user_id"],
+                    "$expr": {"$gte": [
+                        {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
+                                  {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                        guard]},
+                }
+            else:
+                filt = {"user_id": withdrawal["user_id"],
+                        f"vip_balances.{currency}": {"$gte": guard}}
+            res = await db.users.update_one(
+                filt, {"$inc": {f"vip_balances.{currency}": -amount}})
+            if res.matched_count == 0:
+                await db.withdrawals.update_one(
+                    {"id": withdrawal["id"]},
+                    {"$set": {"balance_refunded": True}},
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"El cliente ya no tiene {amount} {currency} "
+                            "disponibles (gastó el reembolso); no se puede "
+                            "reactivar este retiro."),
+                )
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,
@@ -238,7 +275,9 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     # iter153 — per-status timestamps feed the client-facing progress timeline.
     if new_status != w["status"] and new_status in ("approved", "paid", "rejected"):
         update_doc[f"{new_status}_at"] = iso(now_utc())
-    await _reconcile_balance_on_status_change(w, new_status, update_doc)
+    # iter250 — TODAS las validaciones (comprobante, tx hash, mensajería,
+    # cuenta de origen) corren ANTES de tocar el saldo: si algo falla, la
+    # operación devuelve error sin haber descontado ni reembolsado nada.
     _collect_payout_evidence(payload, update_doc, w)
     _validate_paid_evidence(w, update_doc, new_status)
     await _assert_cash_courier_ready(w, new_status)
@@ -246,7 +285,7 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     # wins; otherwise auto-attribute (cash → company cash box; single active
     # account for the currency → that account).
     if new_status == "paid":
-        from routes.company_fund_accounts import (
+        from services.fund_accounts import (
             resolve_fund_account, auto_paid_from_account,
         )
         acc_id = (payload.get("paid_from_account_id") or "").strip()
@@ -261,6 +300,10 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
             if acc:
                 update_doc["paid_from_account_id"] = acc["id"]
                 update_doc["paid_from_account_label"] = acc["label"]
+    # iter250 — el ajuste de saldo y la persistencia del estado van juntos al
+    # final; el claim atómico interno impide procesar dos veces la misma
+    # transición.
+    await _reconcile_balance_on_status_change(w, new_status, update_doc)
     await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     # iter205 — un retiro rechazado cancela su trabajo de mensajería activo.
@@ -274,6 +317,20 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
             logger.error(f"delivery cancel failed: {e}")
 
     await _post_status_side_effects(w, updated, new_status, payload, actor, wid)
+    # iter215 — cerrar el ciclo: si el admin marca 'Entregado' (paid) un
+    # retiro cash cuya entrega ya fue marcada 'delivered' por el mensajero,
+    # confirmar la entrega automáticamente (acredita su parte). El TOTP de
+    # esta acción ya fue verificado arriba.
+    if new_status == "paid" and w.get("method") == "cash":
+        try:
+            job = await db.deliveries.find_one(
+                {"kind": "withdrawal", "ref_id": wid, "status": "delivered"},
+                {"_id": 0})
+            if job:
+                from services.deliveries import do_confirm_delivery
+                await do_confirm_delivery(job, actor)
+        except Exception as e:
+            logger.error(f"delivery confirm after paid failed: {e}")
     return updated
 
 
@@ -382,7 +439,7 @@ async def mark_paid_from_delivery(wid: str, actor: dict) -> Optional[dict]:
         "paid_at": iso(now_utc()),
         "admin_note": w.get("admin_note") or "Auto: entrega de mensajería confirmada",
     }
-    from routes.company_fund_accounts import auto_paid_from_account
+    from services.fund_accounts import auto_paid_from_account
     acc = await auto_paid_from_account(w.get("currency"), w.get("method"))
     if acc:
         update_doc["paid_from_account_id"] = acc["id"]
@@ -448,7 +505,10 @@ async def set_courier_fee(wid: str, payload: dict, request: Request) -> Any:
                 status_code=400,
                 detail=(f"Saldo insuficiente del cliente ({bal} {currency}) "
                         f"para cubrir la mensajería ({delta} {currency})."))
-    if delta != 0:
+        # iter248 — débito atómico (guard de saldo en la misma operación).
+        from services.balances import decrement_balance
+        await decrement_balance(w["user_id"], currency, delta)
+    elif delta < 0:
         await db.users.update_one(
             {"user_id": w["user_id"]},
             {"$inc": {f"vip_balances.{currency}": -delta}},
@@ -506,3 +566,8 @@ async def set_courier_fee(wid: str, payload: dict, request: Request) -> Any:
     except Exception:
         pass
     return updated
+
+
+# Registro del handler de liquidación (rompe el ciclo services → routes).
+from services.delivery_settlement import register_settlement_handler as _reg_settlement  # noqa: E402
+_reg_settlement("withdrawal", mark_paid_from_delivery)
