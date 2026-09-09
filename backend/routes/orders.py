@@ -590,13 +590,10 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             logger.error(f"inventory venta record failed: {e}")
         # iter219/iter229 — el capital de la venta web entra al fondo de la
         # empresa en USDT (el cliente paga en USDT); se revierte si se rechaza.
+        # iter257(D08) — primero el ASIENTO (idempotente por dedupe), después
+        # la marca: un crash entre ambos ya no pierde el asiento.
         try:
             from services.company_funds_common import record_auto_fund_adjustment
-            await db.redemptions.update_one(
-                {"id": r.id},
-                {"$set": {"fund_inflow_at": iso(now_utc()),
-                          "fund_inflow_amount": round(total, 2),
-                          "fund_inflow_currency": "USDT"}})
             await record_auto_fund_adjustment(
                 adjustment_type="inflow", currency="USDT",
                 amount=round(total, 2), source_name="Marketplace tienda",
@@ -605,7 +602,13 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
                       + (f" (≈ {store_total:g} {store_currency})"
                          if store_currency else "")
                       + f" (canje {r.id[:8]})"),
-                ref_id=r.id)
+                ref_id=r.id,
+                dedupe_key=f"fund-inflow:{r.id}:c0")
+            await db.redemptions.update_one(
+                {"id": r.id},
+                {"$set": {"fund_inflow_at": iso(now_utc()),
+                          "fund_inflow_amount": round(total, 2),
+                          "fund_inflow_currency": "USDT"}})
         except Exception as e:
             logger.error(f"marketplace fund inflow failed: {e}")
     else:

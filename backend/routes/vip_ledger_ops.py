@@ -59,7 +59,6 @@ from services.vip_ledger_reporting import (
 )
 from services.vip_batch_ops import (
     ensure_ledger as _ensure_ledger,
-    increment_ledger as _increment_ledger,
     serialize_doc as _serialize,
 )
 from vip_ledger_pdf import generate_vip_ledger_pdf
@@ -300,25 +299,30 @@ async def admin_confirm_capital_deposit(dep_id: str, request: Request,
                 "duplicates": duplicates,
             })
     delta = await _amount_to_usdt(doc["amount"], doc["currency"])
-    # iter113 — capital deposits now credit the VIP's per-currency account
-    # balance (USDT) instead of the legacy ledger positive (owner decision:
-    # the ledger surplus IS account balance).
-    await db.users.update_one(
-        {"user_id": doc["vip_user_id"]},
-        {"$inc": {"vip_balances.USDT": delta}},
-    )
-    from services.live_events import emit_balance_changed
-    await emit_balance_changed(doc["vip_user_id"], "capital_deposit_confirmed",
-                               deposit_id=dep_id)
+    # iter113 — capital deposits credit the VIP's per-currency USDT balance.
+    # iter257(D02) — claim ATÓMICO pendiente→confirmado con la intención del
+    # abono (marker) en el MISMO update: dos confirmaciones simultáneas no
+    # pueden abonar dos veces, y un crash tras el claim lo completa
+    # heal_pending_credits (la colección está en PENDING_COLLECTIONS).
+    from services.credit_recovery import pending_marker, apply_and_clear
+    marker = pending_marker(doc["vip_user_id"], "USDT", delta,
+                            "capital-deposit")
     now = iso(now_utc())
-    await db.vip_capital_deposits.update_one(
-        {"id": dep_id},
+    claim = await db.vip_capital_deposits.update_one(
+        {"id": dep_id, "status": "pending"},
         {"$set": {
             "status": "confirmed", "updated_at": now,
             "reviewed_at": now, "reviewed_by": staff["user_id"],
             "balance_delta_usdt": delta,
+            "credit_pending": marker,
         }},
     )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
+    await apply_and_clear("vip_capital_deposits", dep_id, marker)
+    from services.live_events import emit_balance_changed
+    await emit_balance_changed(doc["vip_user_id"], "capital_deposit_confirmed",
+                               deposit_id=dep_id)
     fresh = await db.vip_capital_deposits.find_one({"id": dep_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="vip_capital.confirm",
@@ -371,21 +375,29 @@ def _validate_settlement_method(method: str) -> str:
     return m
 
 
-async def _apply_settlement_to_ledger(direction: str, vip_user_id: str, amount_usdt: float) -> None:
-    """iter113 — payout now decreases the VIP's account balance in USDT
-    (`vip_balances.USDT`) since the legacy positive ledger was merged into
-    the per-currency balance. Collection still decreases negative_usdt
-    (legacy debt being paid back by the VIP)."""
+async def _apply_settlement_effect(direction: str, vip_user_id: str,
+                                   amount_usdt: float, op_id: str) -> str:
+    """iter113/iter257(D03) — efecto del settlement IDEMPOTENTE por op_id.
+    payout: débito con guard atómico de saldo (helper duradero) — devuelve
+    'applied' | 'duplicate' | 'insufficient' (nunca deja saldo negativo).
+    collection: baja de la deuda legacy con registro embebido en el ledger."""
     if direction == "payout":
-        await db.users.update_one(
-            {"user_id": vip_user_id},
-            {"$inc": {"vip_balances.USDT": -float(amount_usdt)}},
-        )
-        from services.live_events import emit_balance_changed
-        await emit_balance_changed(vip_user_id, "settlement_payout",
-                                   amount_usdt=float(amount_usdt))
-    else:
-        await _increment_ledger(vip_user_id, "debit", -float(amount_usdt))
+        from services.balances import debit_balance_idempotent
+        st = await debit_balance_idempotent(vip_user_id, "USDT",
+                                            float(amount_usdt), op_id)
+        if st != "insufficient":
+            from services.live_events import emit_balance_changed
+            await emit_balance_changed(vip_user_id, "settlement_payout",
+                                       amount_usdt=float(amount_usdt))
+        return st
+    await _ensure_ledger(vip_user_id)
+    res = await db.vip_ledger.update_one(
+        {"vip_user_id": vip_user_id, "applied_ops": {"$ne": op_id}},
+        {"$inc": {"negative_usdt": -float(amount_usdt)},
+         "$set": {"updated_at": iso(now_utc())},
+         "$push": {"applied_ops": op_id}},
+    )
+    return "applied" if res.matched_count else "duplicate"
 
 
 @router.post("/vip/settlements")
@@ -475,12 +487,14 @@ async def admin_create_settlement(payload: AdminSettlementCreate, request: Reque
         raise HTTPException(status_code=422, detail="El usuario objetivo no es VIP.")
     amount_usdt = await _amount_to_usdt(payload.amount, payload.currency)
 
-    await _ensure_ledger(payload.vip_user_id)
-    await _apply_settlement_to_ledger(payload.direction, payload.vip_user_id, amount_usdt)
-
+    # iter257(D03) — primero el DOCUMENTO (con el plan del efecto), después el
+    # dinero (idempotente por op_id): un crash entre ambos lo completa el
+    # healer; sin saldo suficiente no se registra ningún pago válido.
     now = iso(now_utc())
+    sid = f"vset_{uuid.uuid4().hex[:12]}"
+    op_id = f"settlement:{sid}"
     doc = {
-        "id": f"vset_{uuid.uuid4().hex[:12]}",
+        "id": sid,
         "vip_user_id": payload.vip_user_id,
         "vip_email": target.get("email", ""),
         "vip_name": target.get("name", ""),
@@ -497,8 +511,22 @@ async def admin_create_settlement(payload: AdminSettlementCreate, request: Reque
         "updated_at": now,
         "reviewed_at": now,
         "reviewed_by": staff["user_id"],
+        "settle_pending": {"op_id": op_id, "direction": payload.direction,
+                           "amount_usdt": amount_usdt, "at": now},
     }
     await db.vip_settlements.insert_one(dict(doc))
+    st = await _apply_settlement_effect(payload.direction, payload.vip_user_id,
+                                        amount_usdt, op_id)
+    if st == "insufficient":
+        await db.vip_settlements.delete_one({"id": sid})
+        raise HTTPException(
+            status_code=409,
+            detail=(f"El VIP no tiene {amount_usdt} USDT disponibles; "
+                    "no se registró el pago."))
+    await db.vip_settlements.update_one(
+        {"id": sid, "settle_pending.op_id": op_id},
+        {"$unset": {"settle_pending": ""}})
+    doc.pop("settle_pending", None)
     await log_action(
         db=db, actor=staff, action="vip_settlement.admin_register",
         entity_type="vip_settlement", entity_id=doc["id"],
@@ -517,13 +545,37 @@ async def admin_approve_settlement(sid: str, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado.")
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este movimiento ya fue procesado.")
-    await _apply_settlement_to_ledger(doc["direction"], doc["vip_user_id"], doc["amount_usdt"])
+    # iter257(D03) — claim ATÓMICO pendiente→confirmado con el plan del efecto
+    # en el MISMO update: dos aprobaciones simultáneas no duplican; sin saldo
+    # el movimiento vuelve a pendiente; un crash lo completa el healer.
+    op_id = f"settlement:{sid}"
     now = iso(now_utc())
-    await db.vip_settlements.update_one(
-        {"id": sid},
+    claim = await db.vip_settlements.update_one(
+        {"id": sid, "status": "pending"},
         {"$set": {"status": "confirmed", "updated_at": now,
-                  "reviewed_at": now, "reviewed_by": staff["user_id"]}},
+                  "reviewed_at": now, "reviewed_by": staff["user_id"],
+                  "settle_pending": {"op_id": op_id,
+                                     "direction": doc["direction"],
+                                     "amount_usdt": doc["amount_usdt"],
+                                     "at": now}}},
     )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Este movimiento ya fue procesado.")
+    st = await _apply_settlement_effect(doc["direction"], doc["vip_user_id"],
+                                        doc["amount_usdt"], op_id)
+    if st == "insufficient":
+        await db.vip_settlements.update_one(
+            {"id": sid, "settle_pending.op_id": op_id},
+            {"$set": {"status": "pending", "updated_at": iso(now_utc())},
+             "$unset": {"settle_pending": "", "reviewed_at": "",
+                        "reviewed_by": ""}})
+        raise HTTPException(
+            status_code=409,
+            detail=(f"El VIP no tiene {doc['amount_usdt']} USDT disponibles; "
+                    "el movimiento sigue pendiente."))
+    await db.vip_settlements.update_one(
+        {"id": sid, "settle_pending.op_id": op_id},
+        {"$unset": {"settle_pending": ""}})
     fresh = await db.vip_settlements.find_one({"id": sid}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="vip_settlement.approve",

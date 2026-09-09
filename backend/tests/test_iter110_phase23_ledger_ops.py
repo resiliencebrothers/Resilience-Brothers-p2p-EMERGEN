@@ -212,6 +212,8 @@ class TestPhase3Settlements:
     async def test_vip_payout_request_flow(self):
         await _reset()
         await _ensure_rate("USDT", "USDT", 1.0)
+        # iter257(D03) — el payout exige saldo real: sembrar 500 USDT.
+        await _inc_usdt_balance(500.0)
         before = await _usdt_balance()
         try:
             async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
@@ -234,6 +236,7 @@ class TestPhase3Settlements:
             drift = (await _usdt_balance()) - before
             if abs(drift) > 1e-9:
                 await _inc_usdt_balance(-drift)
+            await _inc_usdt_balance(-500.0)  # retirar el seed iter257
             await _reset()
 
     @pytest.mark.asyncio
@@ -269,6 +272,8 @@ class TestPhase3Settlements:
     async def test_admin_unilateral_payout_decreases_positive(self):
         await _reset()
         await _ensure_rate("USDT", "USDT", 1.0)
+        # iter257(D03) — el payout exige saldo real: sembrar 250 USDT.
+        await _inc_usdt_balance(250.0)
         before = await _usdt_balance()
         try:
             async with httpx.AsyncClient(base_url=API_URL, timeout=30, transport=httpx.AsyncHTTPTransport(retries=2)) as c:
@@ -284,6 +289,7 @@ class TestPhase3Settlements:
             drift = (await _usdt_balance()) - before
             if abs(drift) > 1e-9:
                 await _inc_usdt_balance(-drift)
+            await _inc_usdt_balance(-250.0)  # retirar el seed iter257
             await _reset()
 
     @pytest.mark.asyncio

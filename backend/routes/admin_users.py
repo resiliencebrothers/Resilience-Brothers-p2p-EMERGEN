@@ -12,7 +12,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from db_client import db
-from auth_utils import require_staff, require_permission, _enforce_totp_step_up, iso, now_utc
+from auth_utils import (require_staff, require_permission,
+                        _enforce_totp_step_up, iso, now_utc,
+                        strip_credential_fields)
 from audit_log import log_action
 from services.balances import build_rate_lookup, convert_to_usdt
 
@@ -110,6 +112,10 @@ async def list_users(request: Request, q: Optional[str] = None,
     rates = await build_rate_lookup()
     kyc_map = await _fetch_effective_kyc_map([d["user_id"] for d in docs])
     for d in docs:
+        # iter257(D01) — CRÍTICO: los campos de credenciales (hashes, tokens
+        # de restablecimiento, secretos TOTP, códigos de recuperación) no
+        # salen NUNCA, ni siquiera para administradores.
+        strip_credential_fields(d)
         _enrich_user_with_usdt_total(d, rates)
         # iter106 — mirror the fallback used by /admin/users/:id/stats so the
         # list badge and the stats page stay in sync when Bug iter55.35 fixed.
@@ -237,7 +243,7 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
                      details={"changes": update,
                               "prev_role": old_user.get("role") if old_user else None,
                               "balance_edit": any(k in update for k in ("vip_balance_usd", "vip_balances"))})
-    return new_user
+    return strip_credential_fields(new_user)
 
 
 # iter55.16 — Permission catalog endpoint. Any staff can read the catalog to

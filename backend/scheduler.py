@@ -285,6 +285,13 @@ async def run_credit_recovery():
                                               heal_initializing_ops)
         n = await heal_pending_credits()
         n += await heal_initializing_ops()
+        # iter257(D06) — compactación de registros embebidos: retira solo ops
+        # con log duradero confirmado; los 'pending' se conservan como
+        # evidencia (sustituye al viejo $slice ciego).
+        from services.balances import compact_credit_registries
+        from services.inventory import compact_stock_registries
+        n += await compact_credit_registries()
+        n += await compact_stock_registries()
         if n:
             logger.warning("[credit-recovery] %s operaciones pendientes sanadas", n)
     except Exception as e:

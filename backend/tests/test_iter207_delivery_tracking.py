@@ -10,6 +10,7 @@
 import os
 import subprocess
 import uuid
+from datetime import datetime, timezone
 
 import requests
 from pymongo import MongoClient
@@ -33,6 +34,9 @@ def _db():
 def _seed_delivery(status="accepted", courier_id=None, user_id=VIP_ID,
                    with_location=False):
     did = f"test207_{uuid.uuid4().hex[:10]}"
+    # created_at fresco: el endpoint ordena desc y limita a 20; con fecha fija
+    # antigua los residuos de otros tests dejaban el seed fuera del payload.
+    now = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": did, "kind": "withdrawal", "ref_id": f"ref_{did}",
         "user_id": user_id, "client_name": "Cliente Test",
@@ -44,16 +48,16 @@ def _seed_delivery(status="accepted", courier_id=None, user_id=VIP_ID,
         "courier_id": courier_id, "courier_name": "Mensajero Test" if courier_id else None,
         "payout_credited": False, "payout_credited_at": None,
         "created_by": None,
-        "created_at": "2026-08-12T10:00:00+00:00",
-        "updated_at": "2026-08-12T10:05:00+00:00",
+        "created_at": now,
+        "updated_at": now,
         "timeline": [
-            {"status": "available", "at": "2026-08-12T10:00:00+00:00", "by": None},
-            {"status": "accepted", "at": "2026-08-12T10:05:00+00:00", "by": courier_id},
+            {"status": "available", "at": now, "by": None},
+            {"status": "accepted", "at": now, "by": courier_id},
         ],
     }
     if with_location:
         doc["courier_location"] = {"lat": HAVANA["lat"], "lon": HAVANA["lon"],
-                                   "updated_at": "2026-08-12T10:06:00+00:00"}
+                                   "updated_at": now}
     _db().deliveries.insert_one(doc)
     return did
 
@@ -134,6 +138,12 @@ def test_track_only_own_deliveries():
 def test_manual_review_withdrawal_alerts_admins():
     db = _db()
     db.users.update_one({"user_id": VIP_ID}, {"$set": {"vip_balances.CUP": 500}})
+    # Asegurar mensajería habilitada (otros tests dejan la tarifa en 0).
+    prev = (db.settings.find_one({"id": "global"},
+                                 {"courier_rate_usdt_per_km": 1}) or {}) \
+        .get("courier_rate_usdt_per_km")
+    db.settings.update_one({"id": "global"},
+                           {"$set": {"courier_rate_usdt_per_km": 0.5}})
     body = {
         "amount_usd": 100.0, "currency": "CUP", "method": "cash",
         "cash_delivery_mode": "courier", "province": "La Habana",
@@ -158,3 +168,9 @@ def test_manual_review_withdrawal_alerts_admins():
         db.deliveries.delete_many({"ref_id": wid})
         db.users.update_one({"user_id": VIP_ID},
                             {"$set": {"vip_balances.CUP": 0}})
+        if prev is None:
+            db.settings.update_one({"id": "global"},
+                                   {"$unset": {"courier_rate_usdt_per_km": ""}})
+        else:
+            db.settings.update_one({"id": "global"},
+                                   {"$set": {"courier_rate_usdt_per_km": prev}})

@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Colecciones cuyo flujo escribe markers `credit_pending`.
 PENDING_COLLECTIONS = ("orders", "deposits", "redemptions", "withdrawals",
-                       "deliveries", "capital_requests", "users")
+                       "deliveries", "capital_requests", "users",
+                       "vip_capital_deposits")
 
 
 def pending_marker(user_id: str, code: str, amount: float, reason: str,
@@ -199,7 +200,7 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         healed += 1
         logger.warning("canje initializing revertido: %s", r["id"])
 
-    # --- reactivaciones de canje a medias (S04) ----------------------------
+    # --- reactivaciones de canje a medias (S04/D04) -------------------------
     rows = await db.redemptions.find(
         {"status": "rejected", "reactivation_pending.at": {"$lt": cutoff}},
         {"_id": 0, "id": 1, "user_id": 1, "product_id": 1,
@@ -209,6 +210,17 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         stock_op = plan.get("stock_op") or ""
         debit_op = plan.get("debit_op") or ""
         cur = plan.get("currency") or "USDT"
+        # iter257(D04) — reclamar la PROPIEDAD del aborto antes de compensar:
+        # si el plan ya no está (el endpoint publicó el estado nuevo), no se
+        # toca nada. Planes ya 'aborting' viejos = abortador muerto → resumir.
+        if plan.get("state") != "aborting":
+            claim = await db.redemptions.update_one(
+                {"id": r["id"], "status": "rejected",
+                 "reactivation_pending.stock_op": stock_op,
+                 "reactivation_pending.state": {"$exists": False}},
+                {"$set": {"reactivation_pending.state": "aborting"}})
+            if claim.modified_count == 0:
+                continue
         if debit_op and await op_was_applied(r["user_id"], debit_op):
             await _credit(r["user_id"], cur, float(plan.get("amount") or 0),
                           f"{debit_op}:undo", legacy_usd=(cur == "USD"))
@@ -222,6 +234,42 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             {"$unset": {"reactivation_pending": ""}})
         healed += 1
         logger.warning("reactivación de canje revertida: %s", r["id"])
+
+    # --- settlements con efecto pendiente (D03) -----------------------------
+    rows = await db.vip_settlements.find(
+        {"status": "confirmed", "settle_pending.at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "vip_user_id": 1, "settle_pending": 1}).to_list(100)
+    for s in rows:
+        plan = s.get("settle_pending") or {}
+        op = plan.get("op_id") or ""
+        amt = float(plan.get("amount_usdt") or 0)
+        if plan.get("direction") == "payout":
+            st = await debit_balance_idempotent(s["vip_user_id"], "USDT",
+                                                amt, op)
+            if st == "insufficient":
+                await db.vip_settlements.update_one(
+                    {"id": s["id"], "settle_pending.op_id": op},
+                    {"$set": {"status": "pending"},
+                     "$unset": {"settle_pending": ""}})
+                logger.warning("settlement %s sin saldo: vuelve a pendiente",
+                               s["id"])
+                healed += 1
+                continue
+        else:
+            if not await db.vip_ledger.find_one(
+                    {"vip_user_id": s["vip_user_id"]}, {"_id": 1}):
+                await db.vip_ledger.insert_one({
+                    "vip_user_id": s["vip_user_id"], "positive_usdt": 0.0,
+                    "negative_usdt": 0.0,
+                    "updated_at": datetime.now(timezone.utc).isoformat()})
+            await db.vip_ledger.update_one(
+                {"vip_user_id": s["vip_user_id"], "applied_ops": {"$ne": op}},
+                {"$inc": {"negative_usdt": -amt}, "$push": {"applied_ops": op}})
+        await db.vip_settlements.update_one(
+            {"id": s["id"], "settle_pending.op_id": op},
+            {"$unset": {"settle_pending": ""}})
+        healed += 1
+        logger.warning("settlement %s completado por el healer", s["id"])
 
     # --- movimientos de inventario sin stock aplicado ---------------------
     rows = await db.inventory_movements.find(
@@ -250,6 +298,21 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
                 logger.error("fund flow al recuperar movimiento %s: %s",
                              m["id"], e)
         healed += 1
+
+    # --- asientos contables de inventario perdidos (D08) --------------------
+    rows = await db.inventory_movements.find(
+        {"stock_applied": True, "fund_flow_recorded": {"$ne": True},
+         "created_at": {"$lt": cutoff}, "total": {"$gt": 0},
+         "$or": [{"type": "venta", "source": "manual"},
+                 {"type": "entrada", "source": {"$in": ["manual", "alta"]}}]},
+        {"_id": 0}).to_list(100)
+    for m in rows:
+        try:
+            from services.inventory import _record_fund_flow
+            await _record_fund_flow(m)
+            healed += 1
+        except Exception as e:
+            logger.error("fund flow catchup %s: %s", m["id"], e)
 
     # --- re-débitos de reactivación de retiros a medias -------------------
     rows = await db.withdrawals.find(

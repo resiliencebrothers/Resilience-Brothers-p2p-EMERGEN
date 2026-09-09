@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from services.permissions import _has_permission
 from db_client import db
 from auth_utils import require_user, iso, now_utc
 
@@ -44,8 +45,9 @@ async def _chat_context(did: str, user: dict) -> tuple:
         kind = "client"
     elif d.get("courier_id") == uid:
         kind = "courier"
-    elif (user.get("role") == "admin"
-          or "deliveries" in (user.get("permissions") or [])):
+    elif _has_permission(user, "deliveries"):
+        # iter257(D13) — permiso canónico del staff (allowed_permissions vía
+        # el predicado central), no el campo legado `permissions`.
         kind = "staff"
     else:
         raise HTTPException(status_code=403,

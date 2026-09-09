@@ -17,6 +17,7 @@ Endpoints:
 They are imported lazily inside the two endpoints that need them to avoid
 circular imports while routes/auth.py loads.
 """
+import hashlib
 import os
 import uuid
 import logging
@@ -34,7 +35,7 @@ from db_client import db
 from auth_utils import (
     now_utc, iso,
     _hash_password, _verify_password, _DUMMY_PASSWORD_HASH,
-    _create_session, require_user,
+    _create_session, require_user, strip_credential_fields,
     _too_many_failed_attempts, _record_login_attempt,
     normalize_phone, assert_not_blocked,
     _decode_jwt_payload,
@@ -147,6 +148,8 @@ async def auth_session(payload: dict, response: Response) -> Any:
         ttl_hours=24, session_token=data["session_token"],
     )
     user_doc.pop("_id", None)
+    # iter257(D01) — nunca devolver hashes/tokens/secretos.
+    strip_credential_fields(user_doc)
     return user_doc
 
 
@@ -154,6 +157,8 @@ async def auth_session(payload: dict, response: Response) -> Any:
 async def auth_me(request: Request) -> Any:
     user = await require_user(request)
     user.pop("_id", None)
+    # iter257(D01) — el propio dueño tampoco necesita hashes/tokens/secretos.
+    strip_credential_fields(user)
     # iter55.36o — surface the full verification snapshot so the SPA renders
     # the pre-order gate banner without a second round trip. Staff always
     # returns fully_verified=True (helper short-circuits).
@@ -593,8 +598,9 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
     # iter55.37 — Session TTL is hard-capped at 24h by _create_session policy.
     ttl = payload.remember_hours if payload.remember_hours else 24
     await _create_session(user["user_id"], response, ttl_hours=ttl)
-    user.pop("password_hash", None)
-    user.pop("verification_token", None)
+    # iter257(D01) — nunca devolver hashes/tokens/secretos (antes solo se
+    # quitaban dos campos).
+    strip_credential_fields(user)
     return user
 
 
@@ -606,12 +612,16 @@ async def auth_forgot_password(payload: ForgotPasswordPayload, request: Request,
     user = await db.users.find_one({"email": email}, {"_id": 0})
     if user and user.get("password_hash"):
         token = uuid.uuid4().hex + uuid.uuid4().hex
+        # iter257(D01) — el token se guarda HASHEADO (sha256): aunque un doc
+        # de usuario se filtre, el valor útil solo viaja por el correo.
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         await db.users.update_one(
             {"user_id": user["user_id"]},
             {"$set": {
-                "password_reset_token": token,
+                "password_reset_token_hash": token_hash,
                 "password_reset_expires_at": iso(now_utc() + timedelta(hours=2)),
-            }},
+            },
+             "$unset": {"password_reset_token": ""}},
         )
         try:
             email_service.notify_password_reset(
@@ -626,19 +636,37 @@ async def auth_forgot_password(payload: ForgotPasswordPayload, request: Request,
 @router.post("/auth/reset-password")
 @limiter.limit("10/hour")
 async def auth_reset_password(payload: ResetPasswordPayload, request: Request, response: Response) -> Any:
-    user = await db.users.find_one({"password_reset_token": payload.token}, {"_id": 0})
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    user = await db.users.find_one({"password_reset_token_hash": token_hash},
+                                   {"_id": 0})
+    token_filter = {"password_reset_token_hash": token_hash}
+    if not user:
+        # tokens emitidos antes de iter257 (guardados en claro)
+        user = await db.users.find_one({"password_reset_token": payload.token},
+                                       {"_id": 0})
+        token_filter = {"password_reset_token": payload.token}
     if not user:
         raise HTTPException(status_code=400, detail="Token inválido")
     expires = user.get("password_reset_expires_at")
     if expires and expires < iso(now_utc()):
         raise HTTPException(status_code=400, detail="El enlace expiró. Solicita uno nuevo.")
-    await db.users.update_one(
-        {"user_id": user["user_id"]},
+    # iter257(D09/D10) — consumo ATÓMICO de un solo uso + revocación de TODAS
+    # las sesiones anteriores ($inc session_version en el MISMO update: las
+    # sesiones con versión vieja dejan de autenticar aunque su doc siguiera
+    # vivo; delete_many limpia después).
+    res = await db.users.update_one(
+        {"user_id": user["user_id"], **token_filter},
         {"$set": {
             "password_hash": _hash_password(payload.password),
             "email_verified": True,  # password reset via email proves ownership
         },
-         "$unset": {"password_reset_token": "", "password_reset_expires_at": ""}},
+         "$inc": {"session_version": 1},
+         "$unset": {"password_reset_token": "",
+                    "password_reset_token_hash": "",
+                    "password_reset_expires_at": ""}},
     )
+    if res.modified_count == 0:
+        raise HTTPException(status_code=400, detail="Token inválido")
+    await db.user_sessions.delete_many({"user_id": user["user_id"]})
     await _create_session(user["user_id"], response)
     return {"ok": True, "message": "Contraseña actualizada"}

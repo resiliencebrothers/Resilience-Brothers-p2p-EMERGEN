@@ -284,7 +284,9 @@ class TestEmailPasswordAuth:
         cli, db = _db()
         u = db.users.find_one({"email": TEST_EMAIL}, {"_id": 0})
         cli.close()
-        assert u.get("password_reset_token")
+        # iter257(D01) — el token vive HASHEADO; nunca en claro en el doc.
+        assert u.get("password_reset_token_hash")
+        assert not u.get("password_reset_token")
 
     def test_forgot_password_silent_for_unknown(self):
         r = requests.post(
@@ -296,9 +298,16 @@ class TestEmailPasswordAuth:
 
     def test_reset_password_updates_hash_and_verifies(self):
         _r, _user = _register()
-        requests.post(f"{BASE_URL}/api/auth/forgot-password", json={"email": TEST_EMAIL})
+        # iter257(D01) — el token solo viaja por email; el test siembra un
+        # hash conocido igual que haría el backend.
+        import hashlib as _hl
+        token = "tok_iter16_" + "a" * 40
         cli, db = _db()
-        token = db.users.find_one({"email": TEST_EMAIL})["password_reset_token"]
+        db.users.update_one(
+            {"email": TEST_EMAIL},
+            {"$set": {"password_reset_token_hash":
+                      _hl.sha256(token.encode()).hexdigest(),
+                      "password_reset_expires_at": "2030-01-01T00:00:00+00:00"}})
         cli.close()
         new_pwd = "BrandNewPwd9876"
         r = requests.post(
@@ -327,9 +336,14 @@ class TestEmailPasswordAuth:
 
     def test_reset_password_token_single_use(self):
         _r, _user = _register()
-        requests.post(f"{BASE_URL}/api/auth/forgot-password", json={"email": TEST_EMAIL})
+        import hashlib as _hl
+        token = "tok_iter16_" + "b" * 40
         cli, db = _db()
-        token = db.users.find_one({"email": TEST_EMAIL})["password_reset_token"]
+        db.users.update_one(
+            {"email": TEST_EMAIL},
+            {"$set": {"password_reset_token_hash":
+                      _hl.sha256(token.encode()).hexdigest(),
+                      "password_reset_expires_at": "2030-01-01T00:00:00+00:00"}})
         cli.close()
         first = requests.post(
             f"{BASE_URL}/api/auth/reset-password",

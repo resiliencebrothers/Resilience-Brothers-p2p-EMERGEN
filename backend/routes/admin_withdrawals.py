@@ -108,6 +108,13 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
     """
     wid = w["id"]
     currency = w.get("currency", "USD")
+    # iter257(D11) — si el retiro arrastra un reembolso pendiente (marker de
+    # un crash anterior), se LIQUIDA primero (idempotente) y se relee el doc:
+    # ninguna transición puede pisar ni perder esa obligación.
+    if w.get("credit_pending"):
+        from services.credit_recovery import apply_and_clear
+        await apply_and_clear("withdrawals", wid, w["credit_pending"])
+        w = await db.withdrawals.find_one({"id": wid}, {"_id": 0}) or w
     # iter198 — any charged courier fee travels with the refund/re-debit.
     amount = (float(w.get("amount_usd") or 0.0)
               + float(w.get("courier_fee_currency_amount") or 0.0))
@@ -140,7 +147,8 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
         import uuid as _uuid
         op = f"withdrawal-redebit:{wid}:{_uuid.uuid4().hex[:8]}"
         claim = await db.withdrawals.update_one(
-            {"id": wid, "status": "rejected", "balance_refunded": True},
+            {"id": wid, "status": "rejected", "balance_refunded": True,
+             "credit_pending": {"$exists": False}},
             {"$set": {**sets, "balance_refunded": False,
                       "redebit_pending": {
                           "op_id": op, "amount": round(amount, 8),
@@ -149,34 +157,17 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
             # rechazado legado sin reembolso registrado → sin re-débito.
             claim = await db.withdrawals.update_one(
                 {"id": wid, "status": "rejected",
-                 "balance_refunded": {"$ne": True}},
+                 "balance_refunded": {"$ne": True},
+                 "credit_pending": {"$exists": False}},
                 {"$set": sets})
             if claim.matched_count == 0:
                 _raise_withdrawal_race()
             return
-        # Re-débito condicional sobre vip_balances.{currency} (mismo campo
-        # que recibió el reembolso), con guard atómico sobre el saldo TOTAL
-        # (para USD incluye el campo legacy) — 1e-6 tolera ruido float.
-        guard = amount - 1e-6
-        if currency == "USD":
-            filt: dict = {
-                "user_id": w["user_id"],
-                "applied_credit_ops": {"$ne": op},
-                "$expr": {"$gte": [
-                    {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
-                              {"$ifNull": ["$vip_balance_usd", 0.0]}]},
-                    guard]},
-            }
-        else:
-            filt = {"user_id": w["user_id"],
-                    "applied_credit_ops": {"$ne": op},
-                    f"vip_balances.{currency}": {"$gte": guard}}
-        res = await db.users.update_one(
-            filt,
-            {"$inc": {f"vip_balances.{currency}": -amount},
-             "$push": {"applied_credit_ops": {"$each": [op],
-                                              "$slice": -2000}}})
-        if res.matched_count == 0:
+        # iter257(D11) — re-débito por el helper duradero (guard atómico de
+        # saldo + op_id idempotente + log credit_ops), no un $inc artesanal.
+        from services.balances import debit_balance_idempotent
+        st = await debit_balance_idempotent(w["user_id"], currency, amount, op)
+        if st == "insufficient":
             await db.withdrawals.update_one(
                 {"id": wid, "redebit_pending.op_id": op},
                 {"$set": {"status": "rejected", "balance_refunded": True},

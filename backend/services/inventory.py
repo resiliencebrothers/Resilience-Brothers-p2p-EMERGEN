@@ -77,8 +77,10 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
         filt["stock"] = {"$gte": -delta_qty}
     res = await db.products.update_one(
         filt,
+        # iter257(D06) — SIN $slice: un op solo sale del registro embebido
+        # cuando su log duradero está 'applied' (compact_stock_registries).
         {"$inc": {"stock": delta_qty},
-         "$push": {"applied_stock_ops": {"$each": [op_id], "$slice": -500}}},
+         "$push": {"applied_stock_ops": op_id}},
     )
     if res.matched_count:
         await _stock_ops_mark_applied(op_id)
@@ -134,6 +136,35 @@ async def stock_op_was_applied(product_id: str, op_id: str) -> bool:
         return True
     doc = await db.stock_ops.find_one({"op_id": op_id}, {"_id": 0, "state": 1})
     return bool(doc) and doc.get("state", "applied") == "applied"
+
+
+async def compact_stock_registries(threshold: int = 500,
+                                   keep: int = 400) -> int:
+    """iter257(D06) — compactación del registro embebido de ops de stock:
+    solo se retiran ops con log duradero 'applied' (o sin log — legado);
+    los 'pending' se conservan como evidencia (ver compact_credit_registries)."""
+    products = await db.products.find(
+        {f"applied_stock_ops.{threshold}": {"$exists": True}},
+        {"_id": 0, "id": 1, "applied_stock_ops": 1}).to_list(50)
+    removed = 0
+    for p in products:
+        ops = p.get("applied_stock_ops") or []
+        candidates = ops[:-keep] if keep else ops
+        if not candidates:
+            continue
+        pending = set()
+        rows = await db.stock_ops.find(
+            {"op_id": {"$in": candidates}, "state": "pending"},
+            {"_id": 0, "op_id": 1}).to_list(len(candidates))
+        for d in rows:
+            pending.add(d["op_id"])
+        removable = [o for o in candidates if o not in pending]
+        if removable:
+            await db.products.update_one(
+                {"id": p["id"]},
+                {"$pull": {"applied_stock_ops": {"$in": removable}}})
+            removed += len(removable)
+    return removed
 
 
 async def get_low_stock_threshold() -> int:
@@ -403,20 +434,22 @@ async def _record_fund_flow(mov: dict) -> None:
             note = f"Venta tienda física: {mov['quantity']}× {mov.get('product_name', '')}"
         else:
             return
-        # iter256(S10) — claim idempotente: reejecutable desde el healer sin
-        # duplicar el asiento contable.
-        claim = await db.inventory_movements.update_one(
-            {"id": mov["id"], "fund_flow_recorded": {"$ne": True}},
-            {"$set": {"fund_flow_recorded": True}})
-        if claim.modified_count == 0:
-            return
-        from services.marketplace_fx import get_store_fx
-        from services.company_funds_common import record_auto_fund_adjustment
-        fx = await get_store_fx()
-        await record_auto_fund_adjustment(
-            adjustment_type=adjustment_type, currency=fx["store_currency"],
-            amount=round(amount, 2), source_name="Inventario tienda física",
-            note=note, ref_id=mov["id"])
+        # iter257(D08) — primero el ASIENTO idempotente (dedupe por ref y por
+        # clave), después la marca: un crash entre ambos ya no pierde dinero
+        # contable, y el retry/healer no duplica.
+        already = await db.company_fund_adjustments.find_one(
+            {"ref_id": mov["id"]}, {"_id": 1})
+        if not already:
+            from services.marketplace_fx import get_store_fx
+            from services.company_funds_common import record_auto_fund_adjustment
+            fx = await get_store_fx()
+            await record_auto_fund_adjustment(
+                adjustment_type=adjustment_type, currency=fx["store_currency"],
+                amount=round(amount, 2), source_name="Inventario tienda física",
+                note=note, ref_id=mov["id"],
+                dedupe_key=f"invmov-fund:{mov['id']}")
+        await db.inventory_movements.update_one(
+            {"id": mov["id"]}, {"$set": {"fund_flow_recorded": True}})
     except Exception as e:  # noqa: BLE001
         logger.error(f"inventory fund flow failed: {e}")
 

@@ -520,9 +520,11 @@ async def change_password(payload: PasswordChangePayload, request: Request) -> A
             detail="La nueva contraseña debe ser diferente de la actual.",
         )
 
-    # 4. 2FA step-up if enabled
-    await _enforce_totp_step_up(user, payload.totp_code,
-                                action_label="cambiar contraseña")
+    # 4. 2FA step-up SOLO si está activado (iter257/D12 — coherente con la UI,
+    #    que trata el 2FA como opcional para el cambio de contraseña).
+    from auth_utils import _enforce_totp_if_enabled
+    await _enforce_totp_if_enabled(user, payload.totp_code,
+                                   action_label="cambiar contraseña")
 
     # 5. Persist new hash + timestamps
     new_hash = _hash_password(payload.new_password)

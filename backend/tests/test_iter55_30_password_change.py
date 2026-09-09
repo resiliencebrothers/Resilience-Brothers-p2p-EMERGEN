@@ -185,18 +185,18 @@ def test_change_password_too_short_rejected_by_pydantic():
 
 
 def test_change_password_requires_2fa_setup_first():
-    """User without 2FA enabled → 412 TOTP_SETUP_REQUIRED (consistent with
-    email/phone change flows in profile.py). Guides the client to
-    /dashboard/security first."""
+    """iter257(D12) — política alineada con la UI: el 2FA es OPCIONAL para el
+    cambio de contraseña. Sin 2FA activado basta la contraseña actual (200);
+    con 2FA activado se exige un código fresco (ver tests siguientes)."""
     _setup_password_user(twofa_enabled=False)
     try:
         r = requests.post(
             f"{API}/profile/password/change", headers=_pwd_hdr(),
             json={"current_password": INITIAL_PW, "new_password": "NewPassw0rd!"},
         )
-        assert r.status_code == 412, r.text
-        detail = r.json()["detail"]
-        assert detail["code"] == "TOTP_SETUP_REQUIRED"
+        assert r.status_code == 200, r.text
+        fresh = _db().users.find_one({"user_id": TEST_UID})
+        assert bcrypt.checkpw(b"NewPassw0rd!", fresh["password_hash"].encode())
     finally:
         _cleanup()
 

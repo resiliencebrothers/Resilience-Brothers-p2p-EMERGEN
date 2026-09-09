@@ -209,7 +209,11 @@ _OPS_LOG_READY = False
 
 
 def _registry_push(op_id: str) -> dict:
-    return {"applied_credit_ops": {"$each": [op_id], "$slice": -2000}}
+    # iter257(D06) — SIN $slice: un op solo sale del registro embebido cuando
+    # su log duradero está 'applied' (compact_credit_registries). Así, un log
+    # 'pending' cuyo op NO está en el registro significa con certeza que el
+    # dinero no se movió (adiós ventana de evicción).
+    return {"applied_credit_ops": op_id}
 
 
 async def credit_balance_idempotent(user_id: str, code: str, amount: float,
@@ -242,14 +246,17 @@ async def credit_balance_idempotent(user_id: str, code: str, amount: float,
 
 
 async def debit_balance_idempotent(user_id: str, code: str, amount: float,
-                                   op_id: str) -> str:
+                                   op_id: str,
+                                   allow_negative: bool = False) -> str:
     """iter254(R03) — débito atómico, condicional e IDEMPOTENTE por op_id.
 
     Devuelve 'applied' | 'duplicate' | 'insufficient'. El guard de saldo, el
     $inc y el registro del op_id ocurren en UNA operación sobre el doc del
     usuario, así el protocolo reserva/operación/activación puede saber con
     certeza (por el op_id) si un intento interrumpido llegó a cobrar o no.
-    Para USD drena primero el campo legacy (vip_balance_usd)."""
+    Para USD drena primero el campo legacy (vip_balance_usd).
+    iter257(D07) — `allow_negative=True` omite el guard de saldo (deuda
+    explícita, p.ej. reverso de un crédito a vendedor que ya gastó)."""
     amount = float(amount)
     if amount <= 0:
         return "applied"
@@ -258,33 +265,36 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
         return "duplicate"
     guard = amount - 1e-6
     if code == "USD":
+        filt: dict = {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}}
+        if not allow_negative:
+            filt["$expr"] = {"$gte": [
+                {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
+                          {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                guard]}
         res = await db.users.update_one(
-            {"user_id": user_id, "applied_credit_ops": {"$ne": op_id},
-             "$expr": {"$gte": [
-                 {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
-                           {"$ifNull": ["$vip_balance_usd", 0.0]}]},
-                 guard]}},
+            filt,
             [
                 {"$set": {"_legacy_take": {
-                    "$min": [{"$ifNull": ["$vip_balance_usd", 0.0]}, amount]}}},
+                    "$min": [{"$max": [{"$ifNull": ["$vip_balance_usd", 0.0]},
+                                       0.0]}, amount]}}},
                 {"$set": {
                     "vip_balance_usd": {"$subtract": [
                         {"$ifNull": ["$vip_balance_usd", 0.0]}, "$_legacy_take"]},
                     "vip_balances.USD": {"$subtract": [
                         {"$ifNull": ["$vip_balances.USD", 0.0]},
                         {"$subtract": [amount, "$_legacy_take"]}]},
-                    "applied_credit_ops": {"$slice": [
-                        {"$concatArrays": [
-                            {"$ifNull": ["$applied_credit_ops", []]}, [op_id]]},
-                        -2000]},
+                    "applied_credit_ops": {"$concatArrays": [
+                        {"$ifNull": ["$applied_credit_ops", []]}, [op_id]]},
                 }},
                 {"$unset": "_legacy_take"},
             ],
         )
     else:
+        filt = {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}}
+        if not allow_negative:
+            filt[f"vip_balances.{code}"] = {"$gte": guard}
         res = await db.users.update_one(
-            {"user_id": user_id, "applied_credit_ops": {"$ne": op_id},
-             f"vip_balances.{code}": {"$gte": guard}},
+            filt,
             {"$inc": {f"vip_balances.{code}": -amount},
              "$push": _registry_push(op_id)},
         )
@@ -388,15 +398,18 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
     now_iso_ = datetime.now(timezone.utc).isoformat()
     # contribuciones ya aplicadas por ESTA orden (reintento/recuperación)
     prior = 0.0
+    prior_map: dict = {}
     prev_docs = await db.capital_requests.find(
         {"user_id": user_id, "currency_code": currency,
          "repayment_events.order_id": order_id},
-        {"_id": 0, "repayment_events": 1},
+        {"_id": 0, "id": 1, "repayment_events": 1},
     ).to_list(50)
     for d_ in prev_docs:
-        prior += sum(float(ev.get("amount") or 0)
-                     for ev in (d_.get("repayment_events") or [])
-                     if ev.get("order_id") == order_id)
+        got = sum(float(ev.get("amount") or 0)
+                  for ev in (d_.get("repayment_events") or [])
+                  if ev.get("order_id") == order_id)
+        prior_map[d_.get("id")] = round(got, 6)
+        prior += got
     prior = round(prior, 6)
     active = await db.capital_requests.find(
         {"user_id": user_id, "status": "disbursed", "currency_code": currency},
@@ -423,8 +436,20 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
                  "repayment_events": 1})
             if not fresh or fresh.get("status") != "disbursed":
                 break
-            if any(ev.get("order_id") == order_id
-                   for ev in (fresh.get("repayment_events") or [])):
+            # iter257(D05) — contabilizar contribuciones de ESTA orden que
+            # aparecieron después de la lectura inicial (ejecutor concurrente
+            # o reintento): consumen presupuesto igual que las propias, así
+            # dos ejecuciones simultáneas no amortizan más del presupuesto.
+            done_now = round(sum(float(ev.get("amount") or 0)
+                                 for ev in (fresh.get("repayment_events") or [])
+                                 if ev.get("order_id") == order_id), 6)
+            known = float(prior_map.get(cr["id"], 0.0))
+            if done_now > known + 1e-9:
+                delta = round(done_now - known, 6)
+                budget = round(max(budget - delta, 0.0), 6)
+                consumed = round(consumed + delta, 6)
+                prior_map[cr["id"]] = done_now
+            if done_now > 0:
                 break  # esta orden ya contribuyó a esta deuda
             debt = float(fresh.get("debt_remaining") or 0.0)
             contribution = round(min(budget, debt), 4)
@@ -481,6 +506,39 @@ async def _load_or_create_repayment_plan(user_id: str, currency: str,
         return doc
     except Exception:
         return await db.repayment_plans.find_one(key, {"_id": 0}) or doc
+
+
+async def compact_credit_registries(threshold: int = 2000,
+                                    keep: int = 1500) -> int:
+    """iter257(D06) — compactación del registro embebido de ops de saldo.
+
+    Sustituye al viejo $slice ciego: solo se retiran ops cuyo log duradero
+    está 'applied' (o que no tienen log — legado anterior a iter254, cuyos
+    intentos están muertos). Un op con log 'pending' se CONSERVA siempre:
+    su presencia/ausencia en el registro es la evidencia que desambigua si
+    el dinero llegó a moverse."""
+    users = await db.users.find(
+        {f"applied_credit_ops.{threshold}": {"$exists": True}},
+        {"_id": 0, "user_id": 1, "applied_credit_ops": 1}).to_list(50)
+    removed = 0
+    for u in users:
+        ops = u.get("applied_credit_ops") or []
+        candidates = ops[:-keep] if keep else ops
+        if not candidates:
+            continue
+        pending = set()
+        rows = await db.credit_ops.find(
+            {"op_id": {"$in": candidates}, "state": "pending"},
+            {"_id": 0, "op_id": 1}).to_list(len(candidates))
+        for d in rows:
+            pending.add(d["op_id"])
+        removable = [o for o in candidates if o not in pending]
+        if removable:
+            await db.users.update_one(
+                {"user_id": u["user_id"]},
+                {"$pull": {"applied_credit_ops": {"$in": removable}}})
+            removed += len(removable)
+    return removed
 
 
 # ============================================================

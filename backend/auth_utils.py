@@ -61,6 +61,26 @@ _DUMMY_PASSWORD_HASH = _hash_password("timing-equalizer-not-a-real-password")
 SESSION_MAX_HOURS = 24
 
 
+# iter257(D01) — campos de credenciales que NUNCA deben salir en ninguna
+# respuesta de la API, ni siquiera para administradores.
+SENSITIVE_USER_FIELDS = (
+    "password_hash", "password_reset_token", "password_reset_token_hash",
+    "password_reset_expires_at", "totp_secret_encrypted",
+    "totp_recovery_codes", "totp_pending_secret_encrypted",
+    "verification_token", "verification_expires_at", "session_version",
+    # legacy en texto plano (docs antiguos) — nunca deben salir
+    "totp_secret", "twofa_secret", "recovery_codes", "totp_pending_secret",
+)
+
+
+def strip_credential_fields(doc: Optional[dict]) -> Optional[dict]:
+    """Elimina in-place los campos de credenciales de un doc de usuario."""
+    if doc:
+        for k in SENSITIVE_USER_FIELDS:
+            doc.pop(k, None)
+    return doc
+
+
 async def _create_session(user_id: str, response: Response, ttl_hours: int = SESSION_MAX_HOURS,
                           session_token: Optional[str] = None):
     """Issue a session_token + set cookie. Hard-capped at 24 hours by policy.
@@ -78,9 +98,15 @@ async def _create_session(user_id: str, response: Response, ttl_hours: int = SES
     if not session_token:
         session_token = uuid.uuid4().hex + uuid.uuid4().hex  # 64 chars
     expires_at = now_utc() + timedelta(hours=ttl_hours)
+    # iter257(D10) — la sesión captura la versión de credenciales del usuario:
+    # un restablecimiento de contraseña ($inc session_version) invalida al
+    # instante TODAS las sesiones anteriores.
+    owner = await db.users.find_one({"user_id": user_id},
+                                    {"_id": 0, "session_version": 1})
     await db.user_sessions.insert_one({
         "user_id": user_id,
         "session_token": session_token,
+        "session_version": int((owner or {}).get("session_version") or 0),
         "expires_at": iso(expires_at),
         "created_at": iso(now_utc()),
     })
@@ -110,6 +136,12 @@ async def get_session_user(request: Request) -> Optional[dict]:
     if expires_at < now_utc():
         return None
     user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    # iter257(D10) — sesiones emitidas antes del último restablecimiento de
+    # contraseña (versión de credenciales antigua) dejan de autenticar.
+    if user and int(sess.get("session_version") or 0) != \
+            int(user.get("session_version") or 0):
+        await db.user_sessions.delete_one({"session_token": token})
+        return None
     # Tag Sentry with the actor so errors surface user context.
     if user:
         try:
@@ -312,18 +344,30 @@ def _decode_jwt_payload(token: str) -> dict:
 async def _try_recovery_code(user: dict, submitted: str) -> bool:
     """Return True if `submitted` matched and was consumed as a recovery code.
     False means it doesn't look like a recovery code — caller should try TOTP.
-    Raises 401 only when it looks like a recovery code but fails to match."""
+    Raises 401 only when it looks like a recovery code but fails to match.
+    iter257(D09) — el consumo es ATÓMICO: se retira exactamente el hash que
+    coincidió, condicionado a que siga presente. Dos peticiones concurrentes
+    con el mismo código autorizan una sola; códigos distintos no se pisan."""
     if len(submitted) < 10 or not any(c.isalpha() for c in submitted):
         return False
-    ok, remaining = totp_service.consume_recovery_code(
-        user.get("totp_recovery_codes", []) or [], submitted,
-    )
+    codes = user.get("totp_recovery_codes", []) or []
+    ok, remaining = totp_service.consume_recovery_code(codes, submitted)
     if ok:
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$set": {"totp_recovery_codes": remaining}},
+        consumed = [h for h in codes if h not in remaining]
+        matched_hash = consumed[0] if consumed else None
+        if matched_hash:
+            res = await db.users.update_one(
+                {"user_id": user["user_id"],
+                 "totp_recovery_codes": matched_hash},
+                {"$pull": {"totp_recovery_codes": matched_hash}},
+            )
+            if res.modified_count == 1:
+                return True
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "TOTP_INVALID",
+                    "message": "Código de recuperación ya utilizado."},
         )
-        return True
     raise HTTPException(
         status_code=401,
         detail={"code": "TOTP_INVALID", "message": "Código de recuperación inválido."},
@@ -343,6 +387,16 @@ def _verify_totp_code(user: dict, submitted: str) -> None:
             status_code=401,
             detail={"code": "TOTP_INVALID", "message": "Código 2FA inválido o expirado."},
         )
+
+
+async def _enforce_totp_if_enabled(user: dict, code: Optional[str],
+                                   action_label: str = "esta acción") -> None:
+    """iter257(D12) — step-up SOLO si el usuario tiene 2FA activado (la UI
+    trata el 2FA como opcional para esta acción). Con 2FA activado exige un
+    código fresco; sin 2FA no bloquea."""
+    if not user.get("totp_enabled"):
+        return
+    await _enforce_totp_step_up(user, code, action_label=action_label)
 
 
 async def _enforce_totp_step_up(user: dict, code: Optional[str], action_label: str = "esta acción"):

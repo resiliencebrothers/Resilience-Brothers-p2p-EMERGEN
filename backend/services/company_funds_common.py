@@ -15,11 +15,15 @@ from auth_utils import now_utc, iso
 
 async def record_auto_fund_adjustment(*, adjustment_type: str, currency: str,
                                       amount: float, source_name: str,
-                                      note: str = "", ref_id: str = "") -> dict:
+                                      note: str = "", ref_id: str = "",
+                                      dedupe_key: str = "") -> dict:
     """iter219 — movimiento AUTOMÁTICO de capital (ventas del marketplace,
     comisiones de vendedores VIP). Usa el mismo esquema que los ajustes
     manuales para que `_aggregate_manual_adjustments` lo refleje directo en
-    el fondo de la empresa."""
+    el fondo de la empresa.
+    iter257(D08) — `dedupe_key` (índice único sparse) hace el asiento
+    IDEMPOTENTE: reintentos y healers pueden re-ejecutar sin duplicar."""
+    global _ADJ_DEDUPE_INDEX_READY
     doc = {
         "id": str(uuid.uuid4()),
         "adjustment_type": adjustment_type,
@@ -39,8 +43,26 @@ async def record_auto_fund_adjustment(*, adjustment_type: str, currency: str,
         "ref_id": ref_id,
         "created_at": iso(now_utc()),
     }
+    if dedupe_key:
+        if not _ADJ_DEDUPE_INDEX_READY:
+            await db.company_fund_adjustments.create_index(
+                "dedupe_key", unique=True, sparse=True)
+            _ADJ_DEDUPE_INDEX_READY = True
+        doc["dedupe_key"] = dedupe_key
+        try:
+            await db.company_fund_adjustments.insert_one({**doc})
+        except Exception:
+            existing = await db.company_fund_adjustments.find_one(
+                {"dedupe_key": dedupe_key}, {"_id": 0})
+            if existing:
+                return existing
+            raise
+        return doc
     await db.company_fund_adjustments.insert_one({**doc})
     return doc
+
+
+_ADJ_DEDUPE_INDEX_READY = False
 
 
 async def assert_can_manage_company_funds(actor: dict) -> None:

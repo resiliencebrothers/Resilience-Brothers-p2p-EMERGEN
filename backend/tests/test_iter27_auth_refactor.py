@@ -217,7 +217,9 @@ def test_forgot_password_existing_user_sets_token(verified_user):
     r = requests.post(f"{API}/auth/forgot-password", json={"email": verified_user["email"]})
     assert r.status_code == 200
     u = _mongo.users.find_one({"email": verified_user["email"]})
-    assert "password_reset_token" in u
+    # iter257(D01) — el token vive HASHEADO; nunca en claro en el doc.
+    assert "password_reset_token_hash" in u
+    assert not u.get("password_reset_token")
 
 
 def test_forgot_password_nonexistent_returns_200():
@@ -226,8 +228,15 @@ def test_forgot_password_nonexistent_returns_200():
 
 
 def test_reset_password_with_valid_token(verified_user):
-    requests.post(f"{API}/auth/forgot-password", json={"email": verified_user["email"]})
-    token = _mongo.users.find_one({"email": verified_user["email"]})["password_reset_token"]
+    # iter257(D01) — el token solo viaja por email; el test siembra un hash
+    # conocido igual que haría el backend.
+    import hashlib as _hl
+    token = "tok_iter27_" + "c" * 40
+    _mongo.users.update_one(
+        {"email": verified_user["email"]},
+        {"$set": {"password_reset_token_hash":
+                  _hl.sha256(token.encode()).hexdigest(),
+                  "password_reset_expires_at": "2030-01-01T00:00:00+00:00"}})
     r = requests.post(f"{API}/auth/reset-password", json={"token": token, "password": "BrandNewPass77!"})
     assert r.status_code == 200
     # session cookie issued
