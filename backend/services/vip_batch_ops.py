@@ -204,11 +204,14 @@ async def apply_ledger_delta_idempotent(vip_user_id: str, direction: str,
     )
 
 
-async def _claim_item_decision(item_id: str, sets: dict) -> None:
-    """iter260(E02) — transición ATÓMICA pendiente→decisión del ítem: quien
-    pierde la carrera recibe 409 (sin abonos duplicados ni pisadas)."""
-    claim = await db.vip_batch_items.update_one(
-        {"id": item_id, "status": "pending"}, {"$set": sets})
+async def _claim_item_decision(item_id: str, cycle: int, sets: dict) -> None:
+    """iter260(E02)/iter261(F05) — transición ATÓMICA pendiente→decisión del
+    ítem, condicionada TAMBIÉN al ciclo leído: una petición obsoleta (leyó el
+    ciclo anterior a un rollback) recibe 409 en vez de publicar una
+    aprobación cuyo abono ya fue consumido en el ciclo previo."""
+    filt: dict = {"id": item_id, "status": "pending",
+                  "decision_cycle": {"$in": [None, 0]} if cycle == 0 else cycle}
+    claim = await db.vip_batch_items.update_one(filt, {"$set": sets})
     if claim.matched_count == 0:
         raise HTTPException(status_code=409, detail="El ítem ya fue procesado.")
 
@@ -272,7 +275,7 @@ async def apply_item_decision(item_id: str, decision: str, staff: dict,
         "reviewed_by": staff["user_id"], "admin_note": admin_note or None,
     }
     if decision != "approved":
-        await _claim_item_decision(item_id,
+        await _claim_item_decision(item_id, cycle,
                                    {**base_sets, "balance_delta_usdt": None})
     else:
         rates = await build_rate_lookup()
@@ -283,28 +286,49 @@ async def apply_item_decision(item_id: str, decision: str, staff: dict,
                                     amount_to, "vip-batch-item")
             marker["op_id"] = op_id
             await _claim_item_decision(
-                item_id,
+                item_id, cycle,
                 {**base_sets, "balance_delta_usdt": balance_delta, **extra,
                  "credit_pending": marker})
-            await apply_and_clear("vip_batch_items", item_id, marker)
+            # iter261(F03) — a partir de aquí la decisión está COMPROMETIDA
+            # (claim + marker persistidos): un fallo posterior no debe
+            # propagarse río arriba (el healer completa el abono/limpieza);
+            # propagar haría que conciliación soltara el respaldo bancario
+            # de un abono que sí ocurrió.
+            try:
+                await apply_and_clear("vip_batch_items", item_id, marker)
+            except Exception as e:
+                logger.error("vip item %s post-commit finalize failed "
+                             "(healer will complete): %s", item_id, e)
         else:
             balance_delta = _legacy_item_delta(item, rates)
             plan = {"op_id": op_id, "direction": item["direction"],
                     "delta_usdt": balance_delta, "at": now}
             await _claim_item_decision(
-                item_id,
+                item_id, cycle,
                 {**base_sets, "balance_delta_usdt": balance_delta,
                  "ledger_pending": plan})
-            await apply_ledger_delta_idempotent(
-                item["vip_user_id"], item["direction"], balance_delta, op_id)
-            await db.vip_batch_items.update_one(
-                {"id": item_id, "ledger_pending.op_id": op_id},
-                {"$unset": {"ledger_pending": ""}})
+            try:
+                await apply_ledger_delta_idempotent(
+                    item["vip_user_id"], item["direction"], balance_delta, op_id)
+                await db.vip_batch_items.update_one(
+                    {"id": item_id, "ledger_pending.op_id": op_id},
+                    {"$unset": {"ledger_pending": ""}})
+            except Exception as e:
+                logger.error("vip item %s ledger finalize failed "
+                             "(healer will complete): %s", item_id, e)
 
-    await refresh_batch_totals(item["batch_id"])
-    fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
-    if decision == "approved":
-        # iter148 — massive-inflow threshold alerts on approval
-        await dispatch_vip_batch_alerts(item["batch_id"], [fresh], "approved")
-    await _publish_item_decision_events(item, item_id, decision)
+    # iter261(F03) — cola no-crítica: totales, alertas y eventos live jamás
+    # deben convertir una decisión ya comprometida en un error del caller.
+    fresh = None
+    try:
+        await refresh_batch_totals(item["batch_id"])
+        fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
+        if decision == "approved":
+            # iter148 — massive-inflow threshold alerts on approval
+            await dispatch_vip_batch_alerts(item["batch_id"], [fresh], "approved")
+        await _publish_item_decision_events(item, item_id, decision)
+    except Exception as e:
+        logger.error("vip item %s post-decision hooks failed: %s", item_id, e)
+    if fresh is None:
+        fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
     return fresh

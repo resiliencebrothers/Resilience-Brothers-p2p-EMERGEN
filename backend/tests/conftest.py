@@ -269,8 +269,14 @@ def _ensure_test_user_totp(user_id: str) -> str:
 
 
 def totp_code_for(secret: str) -> str:
-    """Generate a current TOTP code for the given secret."""
+    """Generate a current TOTP code for the given secret.
+    iter261 — si la ventana de 30s está a punto de expirar, esperar a la
+    siguiente: bajo carga de suite completa, el request puede tardar >2s y
+    llegar con el código ya caducado (flake TOTP_INVALID)."""
+    import time
     import pyotp
+    if 30 - (time.time() % 30) < 2:
+        time.sleep(2.2)
     return pyotp.TOTP(secret).now()
 
 

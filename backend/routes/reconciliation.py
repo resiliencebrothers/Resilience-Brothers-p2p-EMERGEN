@@ -960,7 +960,13 @@ async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
                     "reverso manualmente desde Órdenes."))
     gross = float(order.get("amount_to") or 0)
     code = order.get("to_code") or "USD"
-    op_id = f"accum-rollback:{order_id}:{tx_id}"
+    # iter261(F04) — el op del débito distingue CICLOS de acreditación: tras
+    # un rollback completo, una nueva acumulación abona con un op nuevo, y su
+    # reversión necesita también un op nuevo (accum_cycle se incrementa al
+    # finalizar cada rollback). Un retry del MISMO rollback reutiliza el op
+    # persistido en el plan.
+    cycle = int(order.get("accum_cycle") or 0)
+    op_id = f"accum-rollback:{order_id}:{tx_id}:c{cycle}"
     plan = {"op_id": op_id, "amount": round(gross, 8), "currency": code,
             "at": iso(now_utc())}
     claim = await db.orders.update_one(
@@ -989,6 +995,7 @@ async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
         {"id": order_id, "rollback_pending.op_id": op_id},
         {"$set": {"status": "pending", "updated_at": iso(now_utc()),
                   "admin_note": f"Rollback de conciliación: {reason}"},
+         "$inc": {"accum_cycle": 1},
          "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
                     "bank_transaction_id": "", "reconciliation_score": "",
                     "reconciliation": "", "accumulated_at": "",

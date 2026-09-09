@@ -635,12 +635,23 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
     try:
         fresh = await apply_item_decision(item_id, "approved", actor, admin_note=note)
     except Exception as e:
-        await db.vip_batch_items.update_one(
-            {"id": item_id},
-            {"$unset": {"reconciliation": "", "payment_confirmation_source": "",
-                        "bank_transaction_id": "", "reconciliation_score": ""}})
-        logger.error(f"reconciliation item approval failed for {item_id}: {e!r}")
-        raise RuntimeError(f"item_approval_failed: {e}")
+        # iter261(F03) — distinguir fallo PRE-COMMIT de POST-COMMIT: si el
+        # ítem ya quedó aprobado con el sello de ESTE movimiento, el abono
+        # está comprometido y el respaldo bancario NO puede liberarse. Solo
+        # un fallo previo al compromiso limpia los sellos y propaga.
+        fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0}) or {}
+        committed = (fresh.get("status") == "approved"
+                     and (fresh.get("reconciliation") or {})
+                     .get("bank_transaction_id") == tx["id"])
+        if not committed:
+            await db.vip_batch_items.update_one(
+                {"id": item_id, "status": {"$ne": "approved"}},
+                {"$unset": {"reconciliation": "", "payment_confirmation_source": "",
+                            "bank_transaction_id": "", "reconciliation_score": ""}})
+            logger.error(f"reconciliation item approval failed for {item_id}: {e!r}")
+            raise RuntimeError(f"item_approval_failed: {e}")
+        logger.error(f"post-commit failure tolerated for item {item_id} "
+                     f"(healer completes pending effects): {e!r}")
     try:
         await log_action(
             db, actor, "vip_batch_item.reconciled", "vip_batch_item", item_id,

@@ -50,11 +50,15 @@ def _bal(code, uid=UID):
 
 
 def _run(async_fn):
+    # Motor cachea su event loop en el primer uso: re-vincular por corrida.
+    from db_client import client as _motor_client
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
+        _motor_client._io_loop = None
         return loop.run_until_complete(async_fn())
     finally:
+        _motor_client._io_loop = None
         loop.close()
         asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -636,16 +640,21 @@ class TestE06RepaymentBudget(_Sandbox):
             async def loader_with_concurrent_executor(user_id, currency,
                                                       amount, order_id, active):
                 # simula que el OTRO ejecutor de la misma orden termina justo
-                # aquí: contribuye 10 a la deuda A y la deja liquidada.
+                # aquí: contribuye 10 a la deuda A (reclamando el presupuesto
+                # del plan, como exige el protocolo F02) y la deja liquidada.
                 from db_client import db as adb
+                plan = await real_loader(user_id, currency, amount,
+                                         order_id, active)
+                await adb.repayment_plans.update_one(
+                    {"order_id": order_id, "currency": currency},
+                    {"$inc": {"consumed": 10.0}})
                 await adb.capital_requests.update_one(
                     {"id": cra},
                     {"$set": {"status": "paid_off", "debt_remaining": 0.0},
                      "$push": {"repayment_events": {
                          "order_id": order_id, "amount": 10.0,
                          "at": OLD_TS}}})
-                return await real_loader(user_id, currency, amount,
-                                         order_id, active)
+                return plan
 
             bal._load_or_create_repayment_plan = loader_with_concurrent_executor
             try:

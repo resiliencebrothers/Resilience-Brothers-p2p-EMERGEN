@@ -201,13 +201,15 @@ async def _ops_log_ensure(op_id: str, user_id: str, code: str, amount: float,
                                                     {"_id": 0, "state": 1})
             if existing is None:
                 raise
-    return "applied" if existing.get("state", "applied") == "applied" \
-        else "pending"
+    return "applied" if existing.get("state", "applied") in (
+        "applied", "burned", "undone") else "pending"
 
 
 async def _ops_log_mark_applied(op_id: str) -> None:
+    # iter261(F01) — nunca pisar una decisión terminal de aborto: un op
+    # 'burned' (bloqueado sin efecto) o 'undone' (compensado) es definitivo.
     await db.credit_ops.update_one(
-        {"op_id": op_id},
+        {"op_id": op_id, "state": {"$nin": ["burned", "undone"]}},
         {"$set": {"state": "applied",
                   "applied_at": datetime.now(timezone.utc).isoformat()}})
 
@@ -319,31 +321,72 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
 
 async def burn_or_undo_debit(user_id: str, code: str, amount: float,
                              op_id: str) -> str:
-    """iter260(E08) — al abortar un plan: QUEMA el op de débito (lo sella en
-    el registro del usuario y en el log duradero SIN mover dinero) para que
-    un débito tardío aún en vuelo se vuelva 'duplicate'; si el débito ya se
-    aplicó, lo compensa con el abono ':undo' idempotente del healer.
-    El push con guard $ne y el $inc del débito compiten por el MISMO array:
-    exactamente uno gana, en cualquier orden. Devuelve 'burned' | 'undone'."""
-    res = await db.users.update_one(
-        {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
-        {"$push": _registry_push(op_id)})
-    try:
-        await db.credit_ops.update_one(
-            {"op_id": op_id},
-            {"$set": {"state": "applied", "burned": bool(res.modified_count),
-                      "applied_at": datetime.now(timezone.utc).isoformat()}},
-            upsert=True)
-    except Exception:
-        # carrera con el insert del propio débito (índice único): re-sellar.
-        await db.credit_ops.update_one(
-            {"op_id": op_id}, {"$set": {"state": "applied"}})
-    if res.modified_count:
-        return "burned"
-    if await db.users.find_one({"user_id": user_id,
-                                "applied_credit_ops": op_id}, {"_id": 1}):
+    """iter260(E08)/iter261(F01) — al abortar un plan, decide de forma
+    DURADERA y ATÓMICA entre quemar (bloquear un débito que nunca movió
+    dinero) o compensar (devolver un débito real), y esa decisión sobrevive
+    a cualquier reintento. Máquina de estados del log duradero:
+      pending/ausente → 'burned' (claim atómico; el débito tardío ve el log
+                        quemado o el op en el registro y devuelve duplicate)
+      applied         → compensar con ':undo' (idempotente) y sellar 'undone'
+      burned          → reintento de una quema previa: NUNCA compensa
+      undone          → reintento de una compensación previa: no repite
+    Devuelve 'burned' | 'undone'."""
+    for _ in range(3):
+        log = await db.credit_ops.find_one({"op_id": op_id},
+                                           {"_id": 0, "state": 1})
+        state = (log or {}).get("state")
+        if state == "undone":
+            return "undone"
+        if state == "burned":
+            # re-asegurar el bloqueo del registro (pudo fallar tras la quema)
+            await db.users.update_one(
+                {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
+                {"$push": _registry_push(op_id)})
+            return "burned"
+        if state == "applied":
+            await credit_balance_idempotent(user_id, code, amount,
+                                            f"{op_id}:undo",
+                                            legacy_usd=(code == "USD"))
+            await db.credit_ops.update_one(
+                {"op_id": op_id, "state": "applied"},
+                {"$set": {"state": "undone",
+                          "undone_at": datetime.now(timezone.utc).isoformat()}})
+            return "undone"
+        # pending o ausente → reclamar la QUEMA en el log ANTES de tocar el
+        # registro (si morimos tras esto, el reintento cae en la rama burned
+        # y el débito tardío ve 'burned' ⇒ duplicate, sin compensación falsa).
+        claimed = False
+        try:
+            res = await db.credit_ops.update_one(
+                {"op_id": op_id,
+                 "state": {"$nin": ["applied", "burned", "undone"]}},
+                {"$set": {"state": "burned", "burned": True,
+                          "user_id": user_id, "code": code,
+                          "amount": round(float(amount), 8), "kind": "debit",
+                          "applied_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=True)
+            claimed = bool(res.modified_count) or \
+                getattr(res, "upserted_id", None) is not None
+        except Exception:
+            claimed = False  # carrera con el insert del débito → re-evaluar
+        if not claimed:
+            continue  # el estado cambió bajo nuestros pies → re-leer
+        push = await db.users.update_one(
+            {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
+            {"$push": _registry_push(op_id)})
+        if push.modified_count:
+            return "burned"  # nadie movió dinero: quemado limpio
+        if not await db.users.find_one(
+                {"user_id": user_id, "applied_credit_ops": op_id}, {"_id": 1}):
+            return "burned"  # usuario inexistente — nada que compensar
+        # el op YA estaba en el registro con log no-applied ⇒ el débito real
+        # pasó su $inc pero murió antes de marcar el log → compensar.
         await credit_balance_idempotent(user_id, code, amount, f"{op_id}:undo",
                                         legacy_usd=(code == "USD"))
+        await db.credit_ops.update_one(
+            {"op_id": op_id},
+            {"$set": {"state": "undone",
+                      "undone_at": datetime.now(timezone.utc).isoformat()}})
         return "undone"
     return "burned"
 
@@ -436,18 +479,15 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
     now_iso_ = datetime.now(timezone.utc).isoformat()
     # contribuciones ya aplicadas por ESTA orden (reintento/recuperación)
     prior = 0.0
-    prior_map: dict = {}
     prev_docs = await db.capital_requests.find(
         {"user_id": user_id, "currency_code": currency,
          "repayment_events.order_id": order_id},
         {"_id": 0, "id": 1, "repayment_events": 1},
     ).to_list(50)
     for d_ in prev_docs:
-        got = sum(float(ev.get("amount") or 0)
-                  for ev in (d_.get("repayment_events") or [])
-                  if ev.get("order_id") == order_id)
-        prior_map[d_.get("id")] = round(got, 6)
-        prior += got
+        prior += sum(float(ev.get("amount") or 0)
+                     for ev in (d_.get("repayment_events") or [])
+                     if ev.get("order_id") == order_id)
     prior = round(prior, 6)
     active = await db.capital_requests.find(
         {"user_id": user_id, "status": "disbursed", "currency_code": currency},
@@ -462,39 +502,49 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
     budget_total = float(plan.get("budget_total") or 0.0)
     if not active or budget_total <= 0:
         return round(amount - prior, 6)
-    budget = round(max(budget_total - prior, 0.0), 4)
-    consumed = prior
+    key = {"order_id": order_id, "currency": currency}
+    # iter261(F02) — el LÍMITE global vive en el plan (un solo documento):
+    # cada contribución RECLAMA presupuesto con un $inc condicional atómico
+    # sobre `consumed`, así dos ejecutores con lecturas desfasadas de deudas
+    # o contribuciones jamás suman más que budget_total. Migración perezosa:
+    # planes anteriores sin `consumed` arrancan con las contribuciones ya
+    # hechas por esta orden (prior).
+    if "consumed" not in plan:
+        await db.repayment_plans.update_one(
+            {**key, "consumed": {"$exists": False}},
+            {"$set": {"consumed": prior}})
     for cr in active:
-        if budget <= 0:
-            break
-        for _attempt in range(2):
+        for _attempt in range(3):
+            plan_doc = await db.repayment_plans.find_one(
+                key, {"_id": 0, "consumed": 1}) or {}
+            remaining = round(
+                budget_total - float(plan_doc.get("consumed") or 0.0), 6)
+            if remaining <= 0:
+                break
             fresh = await db.capital_requests.find_one(
                 {"id": cr["id"]},
                 {"_id": 0, "debt_remaining": 1, "status": 1,
                  "repayment_events": 1})
             if not fresh:
                 break
-            # iter257(D05)/iter260(E06) — contabilizar contribuciones de ESTA
-            # orden que aparecieron después de la lectura inicial (ejecutor
-            # concurrente o reintento) ANTES de descartar la deuda por estado:
-            # si el otro ejecutor acaba de liquidarla (paid_off) con una
-            # contribución de esta misma orden, ese importe TAMBIÉN consume
-            # presupuesto — de lo contrario dos ejecutores amortizan de más.
-            done_now = round(sum(float(ev.get("amount") or 0)
-                                 for ev in (fresh.get("repayment_events") or [])
-                                 if ev.get("order_id") == order_id), 6)
-            known = float(prior_map.get(cr["id"], 0.0))
-            if done_now > known + 1e-9:
-                delta = round(done_now - known, 6)
-                budget = round(max(budget - delta, 0.0), 6)
-                consumed = round(consumed + delta, 6)
-                prior_map[cr["id"]] = done_now
-            if fresh.get("status") != "disbursed" or done_now > 0:
+            done_here = round(sum(float(ev.get("amount") or 0)
+                                  for ev in (fresh.get("repayment_events") or [])
+                                  if ev.get("order_id") == order_id), 6)
+            if fresh.get("status") != "disbursed" or done_here > 0:
                 break  # deuda cerrada o esta orden ya contribuyó aquí
             debt = float(fresh.get("debt_remaining") or 0.0)
-            contribution = round(min(budget, debt), 4)
+            contribution = round(min(remaining, debt), 4)
             if contribution <= 0:
                 break
+            # 1) reclamar presupuesto en el plan (atómico y global por orden)
+            claim = await db.repayment_plans.update_one(
+                {**key, "consumed": {
+                    "$lte": round(budget_total - contribution + 1e-9, 6)}},
+                {"$inc": {"consumed": contribution},
+                 "$set": {"consumed_at": now_iso_}})
+            if claim.matched_count == 0:
+                continue  # otro ejecutor consumió presupuesto: releer
+            # 2) aplicar a la deuda (condicional e idempotente por orden+deuda)
             res = await db.capital_requests.update_one(
                 {"id": cr["id"], "status": "disbursed",
                  "debt_remaining": {"$gte": contribution - 1e-9},
@@ -506,8 +556,6 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
                      "at": now_iso_}}},
             )
             if res.matched_count:
-                budget = round(budget - contribution, 6)
-                consumed = round(consumed + contribution, 6)
                 # liquidada → paid_off (claim condicional al llegar a ~0)
                 await db.capital_requests.update_one(
                     {"id": cr["id"], "status": "disbursed",
@@ -515,9 +563,37 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
                     {"$set": {"status": "paid_off", "paid_off_at": now_iso_,
                               "debt_remaining": 0.0}})
                 break
-            # perdimos una carrera: reintentar UNA vez con lectura fresca
+            # la deuda cambió bajo nuestros pies: devolver el presupuesto
+            # reclamado y reintentar con lectura fresca.
+            await db.repayment_plans.update_one(
+                key, {"$inc": {"consumed": -contribution}})
 
-    return round(amount - consumed, 6)
+    plan_final = await db.repayment_plans.find_one(
+        key, {"_id": 0, "consumed": 1, "consumed_at": 1}) or {}
+    total_consumed = round(float(plan_final.get("consumed") or 0.0), 6)
+    # Reconciliación fail-safe: un crash entre el claim y la escritura de la
+    # deuda deja `consumed` inflado (sesgo conservador: nunca se amortiza de
+    # más). Si no hay ejecutor reciente (>120s), realinear con los eventos
+    # reales para que el neto del cliente no quede penalizado para siempre.
+    events_total = round(prior, 6)
+    fresh_events = await db.capital_requests.find(
+        {"user_id": user_id, "currency_code": currency,
+         "repayment_events.order_id": order_id},
+        {"_id": 0, "repayment_events": 1}).to_list(50)
+    events_total = round(sum(float(ev.get("amount") or 0)
+                             for d_ in fresh_events
+                             for ev in (d_.get("repayment_events") or [])
+                             if ev.get("order_id") == order_id), 6)
+    if total_consumed > events_total + 1e-6:
+        stale_cutoff = (datetime.now(timezone.utc)
+                        - timedelta(seconds=120)).isoformat()
+        if (plan_final.get("consumed_at") or "") < stale_cutoff:
+            fixed = await db.repayment_plans.update_one(
+                {**key, "consumed": plan_final.get("consumed")},
+                {"$set": {"consumed": events_total}})
+            if fixed.modified_count:
+                total_consumed = events_total
+    return round(amount - min(total_consumed, budget_total), 6)
 
 
 _PLAN_INDEX_READY = False
@@ -540,6 +616,7 @@ async def _load_or_create_repayment_plan(user_id: str, currency: str,
     doc = {**key, "user_id": user_id, "gross": round(float(amount), 6),
            "pct": oldest_pct,
            "budget_total": round(float(amount) * oldest_pct / 100.0, 4),
+           "consumed": 0.0,
            "at": datetime.now(timezone.utc).isoformat()}
     try:
         await db.repayment_plans.insert_one({**doc})

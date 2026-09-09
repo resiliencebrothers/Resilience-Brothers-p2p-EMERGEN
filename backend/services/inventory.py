@@ -120,39 +120,69 @@ async def _stock_ops_ensure(op_id: str, product_id: str, delta_qty: int) -> str:
                                                    {"_id": 0, "state": 1})
             if existing is None:
                 raise
-    return "applied" if existing.get("state", "applied") == "applied" \
-        else "pending"
+    return "applied" if existing.get("state", "applied") in (
+        "applied", "burned", "undone") else "pending"
 
 
 async def _stock_ops_mark_applied(op_id: str) -> None:
+    # iter261(F01) — nunca pisar una decisión terminal de aborto.
     await db.stock_ops.update_one(
-        {"op_id": op_id},
+        {"op_id": op_id, "state": {"$nin": ["burned", "undone"]}},
         {"$set": {"state": "applied", "applied_at": iso(now_utc())}})
 
 
 async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
-    """iter260(E08) — al abortar un plan: QUEMA el op de stock (lo sella en el
-    registro del producto y en el log duradero SIN tocar stock) para que una
-    reserva tardía aún en vuelo se vuelva 'duplicate'; si la reserva ya se
-    aplicó, la repone con ':undo'. Devuelve 'burned' | 'undone'."""
-    res = await db.products.update_one(
-        {"id": product_id, "applied_stock_ops": {"$ne": op_id}},
-        {"$push": {"applied_stock_ops": op_id}})
-    try:
-        await db.stock_ops.update_one(
-            {"op_id": op_id},
-            {"$set": {"state": "applied", "burned": bool(res.modified_count),
-                      "applied_at": iso(now_utc())}},
-            upsert=True)
-    except Exception:
-        await db.stock_ops.update_one(
-            {"op_id": op_id}, {"$set": {"state": "applied"}})
-    if res.modified_count:
-        return "burned"
-    if await db.products.find_one({"id": product_id,
-                                   "applied_stock_ops": op_id}, {"_id": 1}):
+    """iter260(E08)/iter261(F01) — versión de stock de burn_or_undo_debit:
+    la decisión quemar/compensar se sella PRIMERO en el log duradero (estados
+    pending→burned | applied→undone) y sobrevive a cualquier reintento; una
+    quema jamás se confunde con una reserva real. Devuelve 'burned'|'undone'."""
+    for _ in range(3):
+        log = await db.stock_ops.find_one({"op_id": op_id},
+                                          {"_id": 0, "state": 1})
+        state = (log or {}).get("state")
+        if state == "undone":
+            return "undone"
+        if state == "burned":
+            await db.products.update_one(
+                {"id": product_id, "applied_stock_ops": {"$ne": op_id}},
+                {"$push": {"applied_stock_ops": op_id}})
+            return "burned"
+        if state == "applied":
+            await apply_stock_idempotent(product_id, int(quantity),
+                                         f"{op_id}:undo",
+                                         require_available=False)
+            await db.stock_ops.update_one(
+                {"op_id": op_id, "state": "applied"},
+                {"$set": {"state": "undone", "undone_at": iso(now_utc())}})
+            return "undone"
+        claimed = False
+        try:
+            res = await db.stock_ops.update_one(
+                {"op_id": op_id,
+                 "state": {"$nin": ["applied", "burned", "undone"]}},
+                {"$set": {"state": "burned", "burned": True,
+                          "product_id": product_id, "delta": int(quantity),
+                          "applied_at": iso(now_utc())}},
+                upsert=True)
+            claimed = bool(res.modified_count) or \
+                getattr(res, "upserted_id", None) is not None
+        except Exception:
+            claimed = False
+        if not claimed:
+            continue
+        push = await db.products.update_one(
+            {"id": product_id, "applied_stock_ops": {"$ne": op_id}},
+            {"$push": {"applied_stock_ops": op_id}})
+        if push.modified_count:
+            return "burned"
+        if not await db.products.find_one(
+                {"id": product_id, "applied_stock_ops": op_id}, {"_id": 1}):
+            return "burned"
         await apply_stock_idempotent(product_id, int(quantity),
                                      f"{op_id}:undo", require_available=False)
+        await db.stock_ops.update_one(
+            {"op_id": op_id},
+            {"$set": {"state": "undone", "undone_at": iso(now_utc())}})
         return "undone"
     return "burned"
 
