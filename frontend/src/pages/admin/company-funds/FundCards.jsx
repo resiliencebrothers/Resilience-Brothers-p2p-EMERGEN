@@ -1,20 +1,26 @@
 /**
- * iter122 — FundCards (redesigned)
+ * iter122/268 — FundCards (redesigned)
  *
  * Professional per-currency treasury cards for the "Fondo Empresa" module.
  * Each card shows:
  *  - Currency chip + wallet icon (header)
- *  - Net available balance (big) + gross custody (subtle)
+ *  - Net available balance (big) + gross custody (subtle) → per-account breakdown
  *  - Highlighted "Rentabilidad total" block (green/red) with %
- *  - Two-column breakdown of inflows (left) and outflows (right)
- *  - Amber "client balances owed" liability line, if any
+ *  - iter268: dynamic inflow/outflow tile — tap opens the per-currency
+ *    dashboard (FundDetailDialog) with the full detail
+ *  - Amber "client balances owed" tile → tap opens the same dashboard with
+ *    the per-client breakdown of what is owed
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Wallet, TrendingUp, TrendingDown, ArrowDownLeft, ArrowUpRight, AlertTriangle, Layers } from "lucide-react";
+import {
+  Wallet, TrendingUp, TrendingDown, ArrowDownLeft, ArrowUpRight,
+  AlertTriangle, Layers, ChevronRight,
+} from "lucide-react";
 import ProfitSparkline from "./ProfitSparkline";
 import ProfitDetailDialog from "./ProfitDetailDialog";
 import AccountBreakdownDialog from "./AccountBreakdownDialog";
+import FundDetailDialog from "./FundDetailDialog";
 
 const fmt2 = (n) =>
   Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -23,6 +29,7 @@ export default function FundCards({ funds }) {
   const { t } = useTranslation();
   const [detailCurrency, setDetailCurrency] = useState(null);
   const [breakdownCurrency, setBreakdownCurrency] = useState(null);
+  const [dashFund, setDashFund] = useState(null);
   if (funds.length === 0) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" data-testid="fund-cards">
@@ -45,6 +52,7 @@ export default function FundCards({ funds }) {
             t={t}
             onOpenDetail={setDetailCurrency}
             onOpenBreakdown={setBreakdownCurrency}
+            onOpenDashboard={setDashFund}
           />
         ))}
       </div>
@@ -56,27 +64,12 @@ export default function FundCards({ funds }) {
         currency={breakdownCurrency}
         onClose={() => setBreakdownCurrency(null)}
       />
+      <FundDetailDialog fund={dashFund} onClose={() => setDashFund(null)} />
     </>
   );
 }
 
 /* ------------------------------ subcomponents ------------------------------ */
-
-function KVRow({ label, value, tone = "neutral", testId }) {
-  const toneCls = {
-    neutral: "text-neutral-400",
-    positive: "text-[#22C55E]",
-    vip: "text-[#A78BFA]",
-    negative: "text-[#F87171]",
-    warn: "text-[#F59E0B]",
-  }[tone];
-  return (
-    <div className="flex items-baseline justify-between gap-2 text-[0.68rem] font-mono" data-testid={testId}>
-      <span className="text-neutral-500 truncate">{label}</span>
-      <span className={`${toneCls} tabular-nums whitespace-nowrap`}>{value}</span>
-    </div>
-  );
-}
 
 function ProfitBlock({ f, t, onOpen }) {
   const p = Number(f.profit_total || 0);
@@ -130,105 +123,12 @@ function ProfitBlock({ f, t, onOpen }) {
   );
 }
 
-function InflowsColumn({ f, t }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-1 text-[0.55rem] uppercase tracking-widest text-neutral-500 pb-1 border-b border-white/5">
-        <ArrowDownLeft className="w-3 h-3 text-[#22C55E]" />
-        <span>{t("admin.companyFunds.inflows")}</span>
-      </div>
-      <KVRow label={t("admin.companyFunds.orders")} value={fmt2(f.inflow)} tone="positive" />
-      {(f.inflow_vip_batches ?? 0) > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.vipBatchesIn")}
-          value={fmt2(f.inflow_vip_batches)}
-          tone="vip"
-          testId={`fund-vip-batches-in-${f.currency}`}
-        />
-      )}
-      {(f.inflow_deposits ?? 0) > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.depositsIn")}
-          value={fmt2(f.inflow_deposits)}
-          tone="positive"
-          testId={`fund-deposits-in-${f.currency}`}
-        />
-      )}
-      {f.manual_inflow > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.ownContribution")}
-          value={fmt2(f.manual_inflow)}
-          tone="positive"
-          testId={`fund-manual-in-${f.currency}`}
-        />
-      )}
-    </div>
-  );
-}
-
-function OutflowsColumn({ f, t }) {
-  const legacyClients =
-    f.outflow_clients_vip == null &&
-    f.outflow_clients_normal == null &&
-    (f.outflow_clients ?? 0) > 0;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-1 text-[0.55rem] uppercase tracking-widest text-neutral-500 pb-1 border-b border-white/5">
-        <ArrowUpRight className="w-3 h-3 text-[#EF4444]" />
-        <span>{t("admin.companyFunds.outflows")}</span>
-      </div>
-      {(f.outflow_orders ?? 0) > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.deliveredToClients")}
-          value={fmt2(f.outflow_orders)}
-          tone="negative"
-          testId={`fund-order-out-${f.currency}`}
-        />
-      )}
-      {(f.outflow_clients_vip ?? 0) > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.vipWithdrawals")}
-          value={fmt2(f.outflow_clients_vip)}
-          tone="negative"
-          testId={`fund-vip-out-${f.currency}`}
-        />
-      )}
-      {(f.outflow_clients_normal ?? 0) > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.normalWithdrawals")}
-          value={fmt2(f.outflow_clients_normal)}
-          tone="negative"
-          testId={`fund-normal-out-${f.currency}`}
-        />
-      )}
-      {legacyClients && (
-        <KVRow
-          label={t("admin.companyFunds.clientWithdrawals")}
-          value={fmt2(f.outflow_clients)}
-          tone="negative"
-        />
-      )}
-      <KVRow
-        label={t("admin.companyFunds.companyOutflow")}
-        value={fmt2(f.outflow_company)}
-        tone="negative"
-      />
-      {f.manual_outflow > 0 && (
-        <KVRow
-          label={t("admin.companyFunds.ownOutflow")}
-          value={fmt2(f.manual_outflow)}
-          tone="negative"
-          testId={`fund-manual-out-${f.currency}`}
-        />
-      )}
-    </div>
-  );
-}
-
-function FundCard({ f, t, onOpenDetail, onOpenBreakdown }) {
+function FundCard({ f, t, onOpenDetail, onOpenBreakdown, onOpenDashboard }) {
   const liability = f.client_balances ?? 0;
   const net = f.balance_available ?? f.balance;
   const positive = net >= 0;
+  const inTotal = (f.inflow || 0) + (f.inflow_vip_batches || 0) + (f.inflow_deposits || 0) + (f.manual_inflow || 0);
+  const outTotal = (f.outflow_orders || 0) + (f.outflow_clients || 0) + (f.outflow_company || 0) + (f.manual_outflow || 0);
   return (
     <div
       className="tactile-card p-5 flex flex-col relative overflow-hidden group hover:border-[#8B5CF6]/30 transition-colors"
@@ -281,26 +181,58 @@ function FundCard({ f, t, onOpenDetail, onOpenBreakdown }) {
       {/* Profitability */}
       <ProfitBlock f={f} t={t} onOpen={onOpenDetail} />
 
-      {/* Inflows / outflows */}
-      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2">
-        <InflowsColumn f={f} t={t} />
-        <OutflowsColumn f={f} t={t} />
-      </div>
+      {/* iter268 — dynamic inflow/outflow tile → per-currency dashboard */}
+      <button
+        type="button"
+        onClick={() => onOpenDashboard(f)}
+        data-testid={`fund-open-dashboard-${f.currency}`}
+        aria-label={t("admin.companyFunds.dashboardHint")}
+        className="mt-3 px-3 py-2 border border-white/10 bg-white/[0.02] rounded-sm block w-full text-left transition-colors cursor-pointer hover:border-[#8B5CF6]/50 focus:outline-none focus-visible:ring-1 focus-visible:ring-[#8B5CF6]/60"
+      >
+        <div className="grid grid-cols-2 gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1 text-[0.55rem] uppercase tracking-widest text-neutral-500">
+              <ArrowDownLeft className="w-3 h-3 text-[#22C55E]" />
+              <span>{t("admin.companyFunds.inflows")}</span>
+            </div>
+            <div className="font-mono text-[0.85rem] text-[#22C55E] tabular-nums mt-0.5 truncate" data-testid={`fund-in-total-${f.currency}`}>
+              {fmt2(inTotal)}
+            </div>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1 text-[0.55rem] uppercase tracking-widest text-neutral-500">
+              <ArrowUpRight className="w-3 h-3 text-[#EF4444]" />
+              <span>{t("admin.companyFunds.outflows")}</span>
+            </div>
+            <div className="font-mono text-[0.85rem] text-[#F87171] tabular-nums mt-0.5 truncate" data-testid={`fund-out-total-${f.currency}`}>
+              {fmt2(outTotal)}
+            </div>
+          </div>
+        </div>
+        <div className="text-[0.55rem] text-neutral-500 mt-1.5 flex items-center gap-1 hover:text-[#8B5CF6]">
+          <ChevronRight className="w-2.5 h-2.5" />
+          <span>{t("admin.companyFunds.dashboardHint")}</span>
+        </div>
+      </button>
 
-      {/* Liability row */}
+      {/* Liability tile — tap opens the dashboard with the per-client list */}
       {liability > 0 && (
-        <div
-          className="mt-3 px-2.5 py-1.5 border border-[#F59E0B]/25 bg-[#F59E0B]/5 rounded-sm flex items-center justify-between gap-2"
+        <button
+          type="button"
+          onClick={() => onOpenDashboard(f)}
+          className="mt-3 px-2.5 py-1.5 border border-[#F59E0B]/25 bg-[#F59E0B]/5 rounded-sm flex items-center justify-between gap-2 w-full text-left cursor-pointer transition-colors hover:border-[#F59E0B]/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-[#F59E0B]/60"
           data-testid={`fund-client-balances-${f.currency}`}
+          aria-label={t("admin.companyFunds.clientBreakdownTitle")}
         >
           <div className="flex items-center gap-1.5 text-[0.6rem] uppercase tracking-widest text-[#F59E0B]">
             <AlertTriangle className="w-3 h-3" />
             <span>{t("admin.companyFunds.clientBalancesOwed")}</span>
           </div>
-          <span className="text-[0.7rem] font-mono text-[#F59E0B] tabular-nums whitespace-nowrap">
+          <span className="text-[0.7rem] font-mono text-[#F59E0B] tabular-nums whitespace-nowrap flex items-center gap-1">
             {fmt2(liability)}
+            <ChevronRight className="w-3 h-3" />
           </span>
-        </div>
+        </button>
       )}
     </div>
   );

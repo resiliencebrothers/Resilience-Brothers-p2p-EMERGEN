@@ -567,6 +567,45 @@ def _usdt_totals_and_breakdown(
     return totals, missing, breakdown
 
 
+@router.get("/admin/company-funds/client-balances/{currency}")
+async def company_funds_client_balances_breakdown(
+        currency: str, request: Request) -> Any:
+    """iter268 — desglose por CLIENTE del pasivo «saldos clientes (por pagar)»
+    de una moneda: a quién se le debe y cuánto (custodia en vip_balances +
+    el legado vip_balance_usd fusionado en USD)."""
+    actor = await require_permission(request, "company_funds")
+    c = _norm_code(currency)
+    if not c:
+        raise HTTPException(status_code=400, detail="Moneda inválida")
+    scope = _actor_currency_scope(actor)
+    if scope is not None and c not in scope:
+        raise HTTPException(status_code=403, detail="Moneda fuera de tu alcance")
+    clients: List[dict] = []
+    total = 0.0
+    async for u in db.users.find(
+            {"role": {"$nin": ["admin", "employee"]},
+             "$or": [{"vip_balances": {"$exists": True}},
+                     {"vip_balance_usd": {"$gt": 0}}]},
+            {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1,
+             "vip_balances": 1, "vip_balance_usd": 1}):
+        amt = 0.0
+        for code, val in (u.get("vip_balances") or {}).items():
+            if _norm_code(code) == c:
+                amt += float(val or 0.0)
+        if c == "USD":
+            amt += float(u.get("vip_balance_usd") or 0.0)
+        if abs(amt) < 1e-9:
+            continue
+        total += amt
+        clients.append({"user_id": u.get("user_id") or "",
+                        "name": u.get("name") or "",
+                        "email": u.get("email") or "",
+                        "role": u.get("role") or "",
+                        "amount": round(amt, 4)})
+    clients.sort(key=lambda r: -r["amount"])
+    return {"currency": c, "total": round(total, 4), "clients": clients}
+
+
 @router.get("/admin/company-funds/total-usdt")
 async def admin_company_funds_total_usdt(request: Request) -> Any:
     """iter152 — Global treasury summary in USDT.
