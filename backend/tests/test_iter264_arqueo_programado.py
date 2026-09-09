@@ -187,8 +187,10 @@ def test_daily_request_targets_pending_company_funds():
 
 
 def test_scheduler_job_registered():
-    with open("/app/backend/scheduler.py", encoding="utf-8") as fh:
-        src = fh.read()
+    # H09 — ruta relativa al repo (la absoluta /app no existe en CI de GitHub)
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "scheduler.py") \
+        .read_text(encoding="utf-8")
     assert src.count("daily_arqueo_request") >= 2, \
         "el job daily_arqueo_request debe estar definido y registrado"
     assert 'CronTrigger(hour=20, minute=0, timezone="America/Havana")' in src, \

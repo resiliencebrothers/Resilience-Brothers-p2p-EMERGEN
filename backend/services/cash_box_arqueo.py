@@ -7,7 +7,7 @@ sobrante en una caja de empresa alerta a los admins al instante.
 """
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from db_client import db
@@ -65,15 +65,33 @@ async def notify_arqueo_discrepancy(box: Dict[str, Any],
                               "arqueo_id": arqueo.get("id")})
 
 
+async def closing_arqueo_status(
+        box_id: str, fund: str) -> tuple[Optional[Dict[str, Any]], bool]:
+    """(último arqueo de hoy o None, ¿vigente como cierre?). H04: un arqueo
+    deja de valer como cierre si después hubo movimientos; queda como
+    evidencia histórica pero se vuelve a pedir el conteo."""
+    day_start = havana_day_start_utc()
+    rows = await db.cash_box_arqueos.find(
+        {"box_id": box_id, "fund": fund, "created_at": {"$gte": day_start}},
+        {"_id": 0, "id": 1, "status": 1, "difference": 1, "created_at": 1}) \
+        .sort("created_at", -1).to_list(1)
+    if not rows:
+        return None, False
+    after = await db.cash_box_movements.count_documents(
+        {"box_id": box_id, "fund": fund,
+         "created_at": {"$gt": rows[0]["created_at"]}})
+    return rows[0], after == 0
+
+
 async def pending_arqueo_funds(box: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Fondos de la caja con actividad hoy (o balance) y sin arqueo de hoy."""
+    """Fondos de la caja con actividad hoy (o balance) y sin arqueo de CIERRE
+    vigente (H04: un conteo temprano no tapa movimientos posteriores)."""
     from routes.cash_boxes import FUNDS, _fund_balance
     day_start = havana_day_start_utc()
     pend: List[Dict[str, Any]] = []
     for fund in FUNDS:
-        if await db.cash_box_arqueos.find_one(
-                {"box_id": box["id"], "fund": fund,
-                 "created_at": {"$gte": day_start}}, {"_id": 1}):
+        _, vigente = await closing_arqueo_status(box["id"], fund)
+        if vigente:
             continue
         movs_today = await db.cash_box_movements.count_documents(
             {"box_id": box["id"], "fund": fund,

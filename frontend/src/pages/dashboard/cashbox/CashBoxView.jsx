@@ -240,6 +240,11 @@ export default function CashBoxView() {
             {/* movimientos por día */}
             <div className="lg:col-span-2 tactile-card p-4 min-w-0" data-testid="cashbox-movements">
               <p className="micro-label text-neutral-500 mb-2">{t("cashbox.movementsTitle")}</p>
+              {resumen?.sin_contrapartida?.count > 0 && (
+                <p className="text-[0.65rem] text-amber-400/80 mb-2" data-testid="cashbox-noledger-note">
+                  {t("cashbox.noLedgerNote", { count: resumen.sin_contrapartida.count })}
+                </p>
+              )}
               {movs.length === 0 ? (
                 <p className="text-sm text-neutral-500 py-6 text-center" data-testid="cashbox-movements-empty">{t("cashbox.noMovements")}</p>
               ) : (
@@ -257,13 +262,28 @@ export default function CashBoxView() {
                             {m.responsible && `${m.responsible} · `}{m.created_by_name}
                           </p>
                         </div>
-                        {m.source_adjustment_id ? (
-                          <span data-testid={`cashbox-mov-locked-${m.id}`}
-                            className="text-[0.6rem] uppercase tracking-wider text-neutral-500 border border-white/10 px-1.5 py-0.5 shrink-0">
-                            {t("cashbox.fromAdjustment")}
-                          </span>
+                        {(m.source_adjustment_id || m.source_withdrawal_id || m.source_transfer_id) ? (
+                          <>
+                            <span data-testid={`cashbox-mov-locked-${m.id}`}
+                              className="text-[0.6rem] uppercase tracking-wider text-neutral-500 border border-white/10 px-1.5 py-0.5 shrink-0">
+                              {m.source_withdrawal_id ? t("cashbox.fromWithdrawal")
+                                : m.source_transfer_id ? t("cashbox.fromTransfer")
+                                : t("cashbox.fromAdjustment")}
+                            </span>
+                            {!m.denominations && (
+                              <button data-testid={`cashbox-mov-edit-${m.id}`} title={t("cashbox.linkedDenomsOnly")}
+                                onClick={() => { setEditMov(m); setMovOpen(true); }}
+                                className="text-amber-400/80 hover:text-amber-300 p-1"><Pencil className="w-3.5 h-3.5" /></button>
+                            )}
+                          </>
                         ) : (
                           <>
+                            {m.ledger_status === "sin_contrapartida" && (
+                              <span data-testid={`cashbox-mov-noledger-${m.id}`}
+                                className="text-[0.6rem] uppercase tracking-wider text-amber-400/80 border border-amber-500/30 px-1.5 py-0.5 shrink-0">
+                                {t("cashbox.noLedgerLink")}
+                              </span>
+                            )}
                             <button data-testid={`cashbox-mov-edit-${m.id}`} onClick={() => { setEditMov(m); setMovOpen(true); }}
                               className="text-neutral-500 hover:text-white p-1"><Pencil className="w-3.5 h-3.5" /></button>
                             <button data-testid={`cashbox-mov-delete-${m.id}`} onClick={() => deleteMov(m)}
@@ -274,6 +294,11 @@ export default function CashBoxView() {
                     ))}
                   </div>
                 ))
+              )}
+              {movs.length >= 2000 && (
+                <p className="text-[0.65rem] text-neutral-500 mt-2" data-testid="cashbox-list-truncated">
+                  {t("cashbox.listTruncated")}
+                </p>
               )}
             </div>
 

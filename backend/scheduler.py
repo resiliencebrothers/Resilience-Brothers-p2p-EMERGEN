@@ -282,8 +282,8 @@ async def run_cash_box_sync():
     Efectivo «Fondo Resilience» (backfill histórico + sanación si el espejo
     inline falló). Idempotente por id determinista."""
     try:
-        from services.cash_box_sync import backfill_cash_adjustments
-        n = await backfill_cash_adjustments()
+        from services.cash_box_sync import backfill_cash_operations
+        n = await backfill_cash_operations()
         if n:
             logger.info("[cash-box-sync] %s ajuste(s) replicados en la caja", n)
     except Exception as e:

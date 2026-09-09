@@ -212,7 +212,9 @@ async def save_account_denoms(account_id: str, payload: DenomsSnapshotPayload,
             raise HTTPException(status_code=400,
                                 detail="Las cantidades no pueden ser negativas")
         if qty:
-            clean[str(denom)] = qty
+            # H05 — consolidar claves equivalentes (100 / "100.0"): nunca se
+            # pierde una cantidad ya sumada al total.
+            clean[str(denom)] = clean.get(str(denom), 0) + qty
             total += denom * qty
     total = round(total, 2)
     assigned = await _account_assigned_balances(code)
@@ -458,6 +460,18 @@ async def transfer_between_fund_accounts(
         "created_at": iso(now_utc()),
     }
     await db.fund_account_transfers.insert_one({**doc})
+    # H01 — si la transferencia entra/sale de la cuenta de caja, se refleja
+    # como entrada/salida física en la Caja de Efectivo (capital sin cambio).
+    from services.cash_box_sync import mirror_fund_transfer_to_cash_box
+    try:
+        mov_id = await mirror_fund_transfer_to_cash_box(doc)
+        if mov_id:
+            doc["cash_box_movement_id"] = mov_id
+    except Exception as exc:  # el job periódico lo sana
+        import logging
+        logging.getLogger(__name__).error(
+            "No se pudo replicar la transferencia %s en la caja: %s",
+            doc["id"], exc)
     await log_action(
         db, actor, "company_funds.account_transfer", "fund_account_transfer", doc["id"],
         summary=(

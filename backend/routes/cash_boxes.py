@@ -75,6 +75,15 @@ def _is_staff(user: dict) -> bool:
     return user.get("role") in ("admin", "employee")
 
 
+# H01 — movimientos espejados desde el Fondo de Empresa (origen contable)
+_LINK_FIELDS = ("source_adjustment_id", "source_withdrawal_id",
+                "source_transfer_id")
+
+
+def _ledger_linked(mov: dict) -> bool:
+    return any(mov.get(k) for k in _LINK_FIELDS)
+
+
 def _clean_denoms(fund: str, raw: Optional[Dict[str, int]],
                   amount: Optional[float] = None) -> Optional[Dict[str, int]]:
     """Valida el desglose: denominaciones válidas del fondo y, si se pasa
@@ -97,7 +106,9 @@ def _clean_denoms(fund: str, raw: Optional[Dict[str, int]],
             raise HTTPException(status_code=400,
                                 detail="Las cantidades no pueden ser negativas")
         if qty:
-            clean[str(denom)] = qty
+            # H05 — claves equivalentes (100 / "100.0") se CONSOLIDAN: nunca
+            # se pierde una cantidad ya sumada al total validado.
+            clean[str(denom)] = clean.get(str(denom), 0) + qty
             total += denom * qty
     if amount is not None and clean and round(total, 2) != round(float(amount), 2):
         raise HTTPException(
@@ -213,13 +224,35 @@ async def set_initial(box_id: str, payload: InitialSet, request: Request) -> Any
     user = await require_user(request)
     box = await _get_box_checked(box_id, user)
     denoms = _clean_denoms(payload.fund, payload.denominations, payload.amount)
-    await db.cash_boxes.update_one({"id": box["id"]}, {"$set": {
+    # H07 — control contable: con operativa registrada el inicial es inmutable;
+    # las correcciones van como movimientos fechados de entrada/salida.
+    has_movs = await db.cash_box_movements.count_documents(
+        {"box_id": box["id"], "fund": payload.fund})
+    has_arqueos = await db.cash_box_arqueos.count_documents(
+        {"box_id": box["id"], "fund": payload.fund})
+    if has_movs or has_arqueos:
+        raise HTTPException(
+            status_code=409,
+            detail=("El fondo ya tiene movimientos o arqueos: el saldo inicial "
+                    "no puede reescribirse. Registra una entrada/salida de "
+                    "corrección con su concepto."))
+    prev = (box.get("initial") or {}).get(payload.fund) or {}
+    ops: Dict[str, Any] = {"$set": {
         f"initial.{payload.fund}": {
             "amount": round(float(payload.amount), 2),
             "denominations": denoms,
             "set_at": iso(now_utc()),
             "set_by": user.get("name") or user.get("email") or "",
-        }}})
+        }}}
+    if prev.get("set_at"):
+        # historial auditable del valor anterior (H07)
+        ops["$push"] = {f"initial_history.{payload.fund}": {
+            "prev_amount": float(prev.get("amount") or 0),
+            "new_amount": round(float(payload.amount), 2),
+            "at": iso(now_utc()),
+            "by": user.get("name") or user.get("email") or "",
+        }}
+    await db.cash_boxes.update_one({"id": box["id"]}, ops)
     return await db.cash_boxes.find_one({"id": box["id"]}, {"_id": 0})
 
 
@@ -259,6 +292,10 @@ async def create_movement(box_id: str, payload: MovementCreate,
         "created_by_id": user["user_id"],
         "created_by_name": user.get("name") or user.get("email") or "",
     }
+    # H01 — movimiento directo en la caja del sistema: queda marcado como
+    # diferencia sin contrapartida contable, pendiente de conciliación.
+    if box.get("system_purpose") == "company_cash":
+        doc["ledger_status"] = "sin_contrapartida"
     await db.cash_box_movements.insert_one({**doc})
     return doc
 
@@ -272,11 +309,23 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
         {"id": mov_id, "box_id": box["id"]}, {"_id": 0})
     if not mov:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
-    if mov.get("source_adjustment_id"):
-        raise HTTPException(
-            status_code=409,
-            detail=("Este movimiento proviene de un ajuste de capital del "
-                    "Fondo de Empresa y no puede modificarse desde la caja."))
+    if _ledger_linked(mov):
+        # H01 — espejo del Fondo de Empresa: importe/concepto vienen del
+        # documento origen; solo se permite COMPLETAR el desglose pendiente.
+        if (payload.denominations is None or payload.amount is not None
+                or payload.concept is not None
+                or payload.responsible is not None
+                or mov.get("denominations")):
+            raise HTTPException(
+                status_code=409,
+                detail=("Este movimiento proviene del Fondo de Empresa: solo "
+                        "puede completarse su desglose de billetes pendiente."))
+        denoms = _clean_denoms(mov["fund"], payload.denominations,
+                               mov["amount"])
+        await db.cash_box_movements.update_one(
+            {"id": mov_id},
+            {"$set": {"denominations": denoms, "denoms_pending": False}})
+        return await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
     upd: Dict[str, Any] = {}
     if payload.amount is not None:
         upd["amount"] = round(float(payload.amount), 2)
@@ -304,11 +353,11 @@ async def delete_movement(box_id: str, mov_id: str, request: Request) -> Any:
         {"id": mov_id, "box_id": box["id"]}, {"_id": 0})
     if not mov:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
-    if mov.get("source_adjustment_id"):
+    if _ledger_linked(mov):
         raise HTTPException(
             status_code=409,
-            detail=("Este movimiento proviene de un ajuste de capital del "
-                    "Fondo de Empresa y no puede eliminarse desde la caja."))
+            detail=("Este movimiento proviene del Fondo de Empresa y no puede "
+                    "eliminarse desde la caja."))
     await db.cash_box_movements.delete_one({"id": mov_id, "box_id": box["id"]})
     return {"ok": True}
 
@@ -363,15 +412,26 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
                   for d in DENOMS[fund]]
     num_movs = await db.cash_box_movements.count_documents(base)
 
-    # iter264 — arqueo programado: ¿la caja pide el conteo de cierre de hoy?
-    from services.cash_box_arqueo import havana_day_start_utc
+    # iter264/H04 — el arqueo solo vale como cierre si no hubo movimientos después
+    from services.cash_box_arqueo import (closing_arqueo_status,
+                                          havana_day_start_utc)
     day_start = havana_day_start_utc()
-    arqueo_today = await db.cash_box_arqueos.find_one(
-        {**base, "created_at": {"$gte": day_start}},
-        {"_id": 0, "id": 1, "status": 1, "difference": 1, "created_at": 1})
+    last_arq, vigente = await closing_arqueo_status(box["id"], fund)
+    arqueo_today = {**last_arq, "superseded": not vigente} if last_arq else None
     movs_today = await db.cash_box_movements.count_documents(
         {**base, "created_at": {"$gte": day_start}})
     balance = round(init_amount + entradas - salidas, 2)
+
+    # H01 — movimientos directos sin contrapartida contable (a conciliar)
+    sc: Dict[str, Any] = {"count": 0, "entradas": 0.0, "salidas": 0.0}
+    async for row in db.cash_box_movements.aggregate([
+        {"$match": {**base, "ledger_status": "sin_contrapartida"}},
+        {"$group": {"_id": "$type", "total": {"$sum": "$amount"},
+                    "n": {"$sum": 1}}},
+    ]):
+        sc["count"] += int(row.get("n") or 0)
+        key = "entradas" if row["_id"] == "entrada" else "salidas"
+        sc[key] = round(float(row.get("total") or 0), 2)
 
     return {
         "fund": fund,
@@ -386,8 +446,9 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
         "denominaciones": denom_rows,
         "num_movimientos": num_movs,
         "arqueo_today": arqueo_today,
-        "needs_arqueo": arqueo_today is None and bool(
+        "needs_arqueo": (not vigente) and bool(
             movs_today or abs(balance) > 0.009),
+        "sin_contrapartida": sc,
     }
 
 
@@ -447,11 +508,14 @@ async def monthly_report(box_id: str, fund: str, month: str,
     except ValueError:
         raise HTTPException(status_code=400, detail="Mes inválido (YYYY-MM)")
     start, end = _month_range_utc(month)
-    movs = await db.cash_box_movements.find(
-        {"box_id": box["id"], "fund": fund,
-         "created_at": {"$gte": start, "$lt": end}}, {"_id": 0}).to_list(20000)
     days: Dict[str, Dict[str, float]] = {}
-    for m in movs:
+    num_movs = 0
+    # H06 — iteración por cursor: sin tope silencioso de 20.000 movimientos
+    async for m in db.cash_box_movements.find(
+            {"box_id": box["id"], "fund": fund,
+             "created_at": {"$gte": start, "$lt": end}},
+            {"_id": 0, "type": 1, "amount": 1, "created_at": 1}):
+        num_movs += 1
         local_day = datetime.fromisoformat(m["created_at"]) \
             .astimezone(_TZ).strftime("%Y-%m-%d")
         row = days.setdefault(local_day, {"entradas": 0.0, "salidas": 0.0})
@@ -468,7 +532,7 @@ async def monthly_report(box_id: str, fund: str, month: str,
         "total_entradas": round(sum(r["entradas"] for r in rows), 2),
         "total_salidas": round(sum(r["salidas"] for r in rows), 2),
         "neto": round(sum(r["neto"] for r in rows), 2),
-        "num_movimientos": len(movs),
+        "num_movimientos": num_movs,
     }
 
 
@@ -485,9 +549,6 @@ async def export_xlsx(box_id: str, fund: str, request: Request) -> Any:
     box = await _get_box_checked(box_id, user)
     if fund not in FUNDS:
         raise HTTPException(status_code=400, detail="Fondo inválido")
-    movs = await db.cash_box_movements.find(
-        {"box_id": box["id"], "fund": fund}, {"_id": 0}) \
-        .sort("created_at", 1).to_list(20000)
     initial = (box.get("initial") or {}).get(fund) or {}
 
     wb = Workbook()
@@ -503,7 +564,10 @@ async def export_xlsx(box_id: str, fund: str, request: Request) -> Any:
     for c in ws[4]:
         c.font = bold
     running = float(initial.get("amount") or 0)
-    for m in movs:
+    # H06 — iteración por cursor: el respaldo incluye TODOS los movimientos
+    async for m in db.cash_box_movements.find(
+            {"box_id": box["id"], "fund": fund}, {"_id": 0}) \
+            .sort("created_at", 1):
         running += m["amount"] if m["type"] == "entrada" else -m["amount"]
         local = datetime.fromisoformat(m["created_at"]).astimezone(_TZ)
         ws.append([local.strftime("%Y-%m-%d %H:%M"),

@@ -1049,10 +1049,20 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
     funds = await _compute_company_funds([currency])
     avail = next((f["balance"] for f in funds if f["currency"] == currency), 0.0)
-    if payload.amount > avail:
+    # H02 — reserva: los retiros aún no pagados (pending/approved) comprometen
+    # el fondo; dos solicitudes no pueden consumir el mismo dinero.
+    reserved = 0.0
+    async for r in db.company_withdrawals.find(
+            {"currency": currency, "status": {"$in": ["pending", "approved"]}},
+            {"_id": 0, "amount": 1}):
+        reserved += float(r.get("amount") or 0.0)
+    disponible = round(avail - reserved, 4)
+    if payload.amount > disponible + 1e-9:
         raise HTTPException(
             status_code=400,
-            detail=f"Fondo insuficiente en {currency}: disponible {avail:.2f}",
+            detail=(f"Fondo insuficiente en {currency}: disponible "
+                    f"{disponible:.2f} (balance {avail:.2f} − "
+                    f"{reserved:.2f} ya reservado en retiros pendientes)"),
         )
     cw = CompanyWithdrawal(
         amount=payload.amount,
@@ -1115,6 +1125,15 @@ async def _paid_from_account_fields(payload: dict, cw: dict) -> Dict[str, Any]:
     return {}
 
 
+# H02 — transiciones válidas de un retiro de empresa (paid/rejected: finales)
+_CW_TRANSITIONS: Dict[str, set] = {
+    "pending": {"approved", "paid", "rejected"},
+    "approved": {"paid", "rejected"},
+    "paid": set(),
+    "rejected": set(),
+}
+
+
 @router.put("/admin/company-withdrawals/{cwid}/status")
 async def update_company_withdrawal(cwid: str, payload: dict, request: Request) -> Any:
     """Only admin can change status (approve/pay/reject). Staff with scope creates only."""
@@ -1127,19 +1146,53 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     cw = await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
     if not cw:
         raise HTTPException(status_code=404, detail="No encontrado")
-    if cw["status"] == "paid" and new_status != "paid":
-        raise HTTPException(status_code=403, detail="Ya fue pagado, no se puede revertir")
+    if new_status == cw["status"]:
+        return cw
+    if new_status not in _CW_TRANSITIONS.get(cw["status"], set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Transición inválida: el retiro está «{cw['status']}»")
     update_doc = {"status": new_status}
     note = payload.get("note")
     if note is not None:
         update_doc["admin_note"] = note
     if new_status == "paid":
+        # H02 — el pago revalida el fondo disponible en ese momento; una
+        # salida real sin fondos debe tratarse explícitamente, no colarse.
+        funds = await _compute_company_funds([cw["currency"]])
+        avail = next((f["balance"] for f in funds
+                      if f["currency"] == cw["currency"]), 0.0)
+        if float(cw["amount"]) > avail + 1e-9:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
+                        f"pagado: disponible {avail:.2f}. Registra primero el "
+                        "capital o resuelve el descuadre explícitamente."))
         update_doc.update(await _paid_from_account_fields(payload, cw))
-    await db.company_withdrawals.update_one({"id": cwid}, {"$set": update_doc})
+        update_doc["paid_at"] = iso(now_utc())
+    # H02 — claim atómico condicionado al estado leído: un rechazo obsoleto
+    # no puede sobrescribir un pago que ganó la carrera.
+    res = await db.company_withdrawals.update_one(
+        {"id": cwid, "status": cw["status"]}, {"$set": update_doc})
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
     await log_action(db, actor, "company_withdrawal.status", "company_withdrawal", cwid,
                      summary=f"Retiro fondo {cw['currency']} {cw['amount']} → {new_status}",
                      details={"from": cw["status"], "to": new_status})
-    return await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
+    fresh = await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
+    if new_status == "paid" and fresh:
+        # H01 — pagado desde la cuenta de caja → salida física en la Caja
+        from services.cash_box_sync import mirror_company_withdrawal_to_cash_box
+        try:
+            mov_id = await mirror_company_withdrawal_to_cash_box(fresh)
+            if mov_id:
+                fresh["cash_box_movement_id"] = mov_id
+        except Exception as exc:  # el job periódico lo sana
+            logger.error("No se pudo replicar el retiro %s en la caja: %s",
+                         cwid, exc)
+    return fresh
 
 
 # ============================================================

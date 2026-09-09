@@ -1797,3 +1797,6 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 
 ## 2026-06 · iter264 — Arqueo Programado de la Caja de Efectivo (pedido usuario, verificado)
 - Job diario 20:00 America/Havana: la caja pide el arqueo de billetes de cada fondo de empresa con actividad y sin arqueo del día (push+email+campana a admins). Todo arqueo con faltante/sobrante en caja de empresa alerta a los admins al instante (cajas personales privadas). Banner «La caja pide el arqueo de hoy» en la Caja de Efectivo. Tests 4/4 + 23 regresión + test-critical 331/331. Detalle en CHANGELOG.md.
+
+## 2026-06 · iter265 — Auditoría 7 Caja/Fondos (H01–H09) aplicada y verificada
+- Paridad caja física↔contable (retiros pagados en efectivo y transferencias internas espejadas, desglose pendiente completable, movimientos directos marcados sin contrapartida), retiros con reserva + transiciones atómicas + revalidación al pagar, identidad de caja por system_purpose, arqueo temprano no tapa movimientos posteriores, consolidación de denominaciones, reportes sin tope 20k, saldo inicial inmutable con operativa, CUPE en desglose de cuentas. Tests 11/11 + suite 1899 verde. PENDIENTE decisión de negocio: usar balance_available (resta custodia de clientes) para autorizar retiros. Detalle en CHANGELOG.md.

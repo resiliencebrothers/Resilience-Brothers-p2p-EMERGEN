@@ -187,8 +187,8 @@ class TestCompanyWithdrawalStatus:
             headers=_h(ADMIN_TOKEN),
             json={"status": "rejected", "totp_code": make_admin_totp()},
         )
-        # admin trying to revert paid → 403 (already paid)
-        assert r.status_code == 403
+        # H02 (iter265) — revertir un pago es transición inválida → 409
+        assert r.status_code == 409
 
 
 class TestQueue:
