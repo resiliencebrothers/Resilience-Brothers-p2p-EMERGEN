@@ -19,11 +19,11 @@ min + arranque) completa la acreditación pendiente: nunca se pierde dinero,
 nunca se duplica, y el reintento no queda bloqueado.
 """
 import logging
-import uuid
 from datetime import datetime, timezone, timedelta
 
 from db_client import db
-from services.balances import credit_balance_idempotent
+# Re-export: los call sites históricos importan estas primitivas desde aquí.
+from services.credit_markers import pending_marker, apply_and_clear  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -31,35 +31,6 @@ logger = logging.getLogger(__name__)
 PENDING_COLLECTIONS = ("orders", "deposits", "redemptions", "withdrawals",
                        "deliveries", "capital_requests", "users",
                        "vip_capital_deposits")
-
-
-def pending_marker(user_id: str, code: str, amount: float, reason: str,
-                   legacy_usd: bool = False, prepared: bool = True) -> dict:
-    """Intención de abono que viaja dentro del claim atómico del doc origen.
-    `prepared=False` (iter254/R04): el importe aún no es definitivo — el healer
-    NO debe acreditarlo tal cual; debe completar el cálculo primero."""
-    return {
-        "op_id": f"{reason}:{uuid.uuid4().hex[:12]}",
-        "user_id": user_id,
-        "code": code,
-        "amount": round(float(amount), 8),
-        "legacy_usd": bool(legacy_usd),
-        "prepared": bool(prepared),
-        "at": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-async def apply_and_clear(coll_name: str, doc_id: str, marker: dict,
-                          key_field: str = "id") -> bool:
-    """Abona (idempotente por op_id) y limpia el marker del doc origen."""
-    ok = await credit_balance_idempotent(
-        marker["user_id"], marker["code"], float(marker["amount"]),
-        marker["op_id"], legacy_usd=bool(marker.get("legacy_usd")))
-    await db[coll_name].update_one(
-        {key_field: doc_id, "credit_pending.op_id": marker["op_id"]},
-        {"$unset": {"credit_pending": ""}},
-    )
-    return ok
 
 
 async def heal_pending_credits(max_age_seconds: int = 90) -> int:

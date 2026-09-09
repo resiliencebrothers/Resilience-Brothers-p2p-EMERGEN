@@ -231,7 +231,8 @@ def test_reset_password_with_valid_token(verified_user):
     # iter257(D01) — el token solo viaja por email; el test siembra un hash
     # conocido igual que haría el backend.
     import hashlib as _hl
-    token = "tok_iter27_" + "c" * 40
+    import secrets as _secrets
+    token = "tok_iter27_" + _secrets.token_hex(20)
     _mongo.users.update_one(
         {"email": verified_user["email"]},
         {"$set": {"password_reset_token_hash":

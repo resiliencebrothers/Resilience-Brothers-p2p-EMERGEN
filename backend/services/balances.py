@@ -335,7 +335,7 @@ async def accumulate_vip_balance(order: dict) -> bool:
     acredita importes brutos; si hay crash antes de fijar el neto, recalcula
     la amortización (idempotente por orden) y recién entonces abona.
     """
-    from services.credit_recovery import pending_marker, apply_and_clear
+    from services.credit_markers import pending_marker, apply_and_clear
     gross = float(order["amount_to"])
     marker = pending_marker(order["user_id"], order["to_code"], gross,
                             "order-accum", prepared=False)

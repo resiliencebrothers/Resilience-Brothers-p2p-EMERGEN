@@ -454,6 +454,45 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
         logger.error(f"vendor credit notify failed: {e}")
 
 
+async def _claim_vendor_reversal_plan(r: dict, settle_cur: str,
+                                      net: float) -> Optional[dict]:
+    """Devuelve el plan de débito reclamado, o None si no hay nada que hacer
+    (ya revertido y completado, o el claim lo ganó otro proceso)."""
+    fresh = await db.redemptions.find_one(
+        {"id": r["id"]},
+        {"_id": 0, "vendor_credit_reversal_pending": 1,
+         "vendor_credit_reversed_at": 1, "rejection_cycle": 1}) or {}
+    plan = fresh.get("vendor_credit_reversal_pending")
+    if plan:
+        return plan
+    if fresh.get("vendor_credit_reversed_at"):
+        return None  # ya revertido y completado
+    cycle = int(fresh.get("rejection_cycle") or 1)
+    plan = {"op_id": f"vendor-reverse:{r['id']}:c{cycle}",
+            "amount": round(net, 8), "currency": settle_cur}
+    res = await db.redemptions.update_one(
+        {"id": r["id"], "vendor_credit_reversed_at": {"$in": [None, ""]}},
+        {"$set": {"vendor_credit_reversed_at": iso(now_utc()),
+                  "vendor_credit_reversal_pending": plan}})
+    # modified_count 0 → otro proceso lo reclamó; su plan completará el débito.
+    return plan if res.modified_count else None
+
+
+async def _notify_vendor_reversal(owner_id: str, r: dict, plan: dict,
+                                  settle_cur: str, net: float) -> None:
+    try:
+        from routes.notifications import _insert_notification
+        await _insert_notification(
+            recipient_user_id=owner_id, type="vendor_credit_reversed",
+            title="Venta revertida",
+            message=(f"El canje de {r['quantity']}× {r['product_name']} fue "
+                     f"rechazado: se debitaron {net:.2f} "
+                     f"{plan.get('currency') or settle_cur} de tu saldo."),
+            data={"redemption_id": r["id"], "net": net})
+    except Exception as e:
+        logger.error(f"vendor credit reversal notify failed: {e}")
+
+
 async def _reverse_vendor_credit_if_any(r: dict) -> None:
     """iter217/iter257(D07) — reverso del crédito al vendedor con PLAN
     persistente: la marca `vendor_credit_reversed_at` viaja con el plan del
@@ -467,23 +506,9 @@ async def _reverse_vendor_credit_if_any(r: dict) -> None:
     if not owner_id or not r.get("vendor_credited_at") or net <= 0:
         return
     settle_cur = r.get("settlement_currency") or "USD"
-    fresh = await db.redemptions.find_one(
-        {"id": r["id"]},
-        {"_id": 0, "vendor_credit_reversal_pending": 1,
-         "vendor_credit_reversed_at": 1, "rejection_cycle": 1}) or {}
-    plan = fresh.get("vendor_credit_reversal_pending")
+    plan = await _claim_vendor_reversal_plan(r, settle_cur, net)
     if not plan:
-        if fresh.get("vendor_credit_reversed_at"):
-            return  # ya revertido y completado
-        cycle = int(fresh.get("rejection_cycle") or 1)
-        plan = {"op_id": f"vendor-reverse:{r['id']}:c{cycle}",
-                "amount": round(net, 8), "currency": settle_cur}
-        res = await db.redemptions.update_one(
-            {"id": r["id"], "vendor_credit_reversed_at": {"$in": [None, ""]}},
-            {"$set": {"vendor_credit_reversed_at": iso(now_utc()),
-                      "vendor_credit_reversal_pending": plan}})
-        if res.modified_count == 0:
-            return  # otro proceso lo reclamó; su plan completará el débito
+        return
     from services.balances import debit_balance_idempotent
     await debit_balance_idempotent(owner_id, plan.get("currency") or settle_cur,
                                    float(plan.get("amount") or net),
@@ -491,17 +516,7 @@ async def _reverse_vendor_credit_if_any(r: dict) -> None:
     await db.redemptions.update_one(
         {"id": r["id"], "vendor_credit_reversal_pending.op_id": plan["op_id"]},
         {"$unset": {"vendor_credit_reversal_pending": ""}})
-    try:
-        from routes.notifications import _insert_notification
-        await _insert_notification(
-            recipient_user_id=owner_id, type="vendor_credit_reversed",
-            title="Venta revertida",
-            message=(f"El canje de {r['quantity']}× {r['product_name']} fue "
-                     f"rechazado: se debitaron {net:.2f} "
-                     f"{plan.get('currency') or settle_cur} de tu saldo."),
-            data={"redemption_id": r["id"], "net": net})
-    except Exception as e:
-        logger.error(f"vendor credit reversal notify failed: {e}")
+    await _notify_vendor_reversal(owner_id, r, plan, settle_cur, net)
 
 
 async def _record_vendor_commission_inflow(r: dict) -> None:
@@ -570,6 +585,26 @@ def _fmt_pickup_code(code: str) -> str:
     return f"{code[:3]}-{code[3:]}" if len(code) == 6 else code
 
 
+async def _notify_pickup_and_publish(user_id: str, ntype: str, title: str,
+                                     msg: str, data: dict, tag: str) -> None:
+    """Campana + push al cliente y evento live para los paneles de recogidas."""
+    try:
+        from routes.notifications import _insert_notification
+        await _insert_notification(recipient_user_id=user_id, type=ntype,
+                                   title=title, message=msg, data=data)
+        from push_service import send_push_to_user, build_generic_admin_alert_payload
+        await send_push_to_user(db, user_id, build_generic_admin_alert_payload(
+            title=title, body=msg, url="/dashboard/marketplace", tag=tag))
+    except Exception as e:
+        logger.error(f"{ntype} notify failed: {e}")
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("pickups_changed",
+                           {"redemption_id": data.get("redemption_id")})
+    except Exception as e:
+        logger.error(f"pickups_changed publish failed: {e}")
+
+
 def _normalize_pickup_code(raw: str) -> str:
     return (raw or "").strip().upper().replace("-", "").replace(" ", "")
 
@@ -626,22 +661,9 @@ async def confirm_pickup_by_code(payload: dict, request: Request) -> Any:
     title = "¡Entrega confirmada!"
     msg = (f"Recogiste {r['quantity']}× {r['product_name']} en "
            f"{r.get('store_name') or 'la tienda'}. ¡Gracias por tu compra!")
-    try:
-        from routes.notifications import _insert_notification
-        await _insert_notification(
-            recipient_user_id=r["user_id"], type="pickup_delivered",
-            title=title, message=msg, data={"redemption_id": r["id"]})
-        from push_service import send_push_to_user, build_generic_admin_alert_payload
-        await send_push_to_user(db, r["user_id"], build_generic_admin_alert_payload(
-            title=title, body=msg, url="/dashboard/marketplace",
-            tag=f"pickup-done-{r['id']}"))
-    except Exception as e:
-        logger.error(f"pickup delivered notify failed: {e}")
-    try:
-        from services.live_bus import publish as live_publish
-        await live_publish("pickups_changed", {"redemption_id": r["id"]})
-    except Exception as e:
-        logger.error(f"pickups_changed publish failed: {e}")
+    await _notify_pickup_and_publish(r["user_id"], "pickup_delivered", title,
+                                     msg, {"redemption_id": r["id"]},
+                                     f"pickup-done-{r['id']}")
     return await db.redemptions.find_one({"id": r["id"]}, {"_id": 0})
 
 
@@ -677,28 +699,60 @@ async def mark_redemption_pickup_ready(rid: str, request: Request) -> Any:
            + ". Preséntate con tu identificación"
            + (f" y muestra tu código {_fmt_pickup_code(r['pickup_code'])}"
               if r.get("pickup_code") else "") + ".")
-    try:
-        from routes.notifications import _insert_notification
-        await _insert_notification(
-            recipient_user_id=r["user_id"], type="pickup_ready",
-            title=title, message=msg,
-            data={"redemption_id": rid, "store_id": r.get("store_id")})
-        from push_service import send_push_to_user, build_generic_admin_alert_payload
-        await send_push_to_user(db, r["user_id"], build_generic_admin_alert_payload(
-            title=title, body=msg, url="/dashboard/marketplace",
-            tag=f"pickup-{rid}"))
-    except Exception as e:
-        logger.error(f"pickup ready notify failed: {e}")
-    try:
-        from services.live_bus import publish as live_publish
-        await live_publish("pickups_changed", {"redemption_id": rid})
-    except Exception as e:
-        logger.error(f"pickups_changed publish failed: {e}")
+    await _notify_pickup_and_publish(
+        r["user_id"], "pickup_ready", title, msg,
+        {"redemption_id": rid, "store_id": r.get("store_id")}, f"pickup-{rid}")
     await log_action(db, actor, "redemption.pickup_ready", "redemption", rid,
                      summary=f"Listo para recoger en {store_name}",
                      details={"store_id": r.get("store_id"),
                               "user_id": r.get("user_id")})
     return await db.redemptions.find_one({"id": rid}, {"_id": 0})
+
+
+async def _transition_redemption(r: dict, rid: str, new_status: str,
+                                 note: str, actor: dict) -> None:
+    """iter254(R01) — validaciones primero; luego claim ATÓMICO de la
+    transición (quien pierde la carrera recibe 409); efectos después
+    (protegidos por sus propios claims idempotentes)."""
+    if new_status == "delivered":
+        await _assert_redemption_courier_ready(r)
+    sets: dict = {"status": new_status, "admin_note": note}
+    if new_status == "delivered":
+        sets["delivered_at"] = iso(now_utc())
+    update: dict = {"$set": sets}
+    if new_status == "rejected":
+        sets["rejection_flow_started"] = True
+        # iter256(S02) — señal explícita de efectos pendientes + ciclo de
+        # rechazo (los op_ids de stock/inventario son únicos por ciclo).
+        sets["rejection_effects_done"] = False
+        update["$inc"] = {"rejection_cycle": 1}
+    claim = await db.redemptions.update_one(
+        {"id": rid, "status": r["status"]}, update)
+    if claim.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El canje cambió de estado mientras editabas; recarga.")
+    if new_status == "delivered":
+        await _credit_vendor_for_redemption(r)
+        await _record_vendor_commission_inflow(r)
+    if new_status == "rejected":
+        await _apply_rejection_effects(r, rid, actor)
+
+
+async def _resume_redemption_effects(r: dict, rid: str, new_status: str,
+                                     note: str, actor: dict) -> None:
+    """Mismo estado: reanudar efectos incompletos (crash previo)."""
+    if new_status == "rejected" and r.get("rejection_flow_started") \
+            and (not r.get("rejection_applied")
+                 or r.get("rejection_effects_done") is False):
+        await _apply_rejection_effects(r, rid, actor)
+    if new_status == "delivered":
+        # iter256(S02) — repetir 'delivered' reanuda el pago al vendedor
+        # si el crédito quedó a medias (helpers idempotentes).
+        await _credit_vendor_for_redemption(r)
+        await _record_vendor_commission_inflow(r)
+    await db.redemptions.update_one({"id": rid},
+                                    {"$set": {"admin_note": note}})
 
 
 @router.put("/admin/redemptions/{rid}/status")
@@ -719,45 +773,9 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
         # cobrar ANTES de habilitar el nuevo estado.
         await _reactivate_rejected_redemption(r, rid, new_status, actor)
     elif new_status != r["status"]:
-        # iter254(R01) — validaciones primero; luego claim ATÓMICO de la
-        # transición (quien pierde la carrera recibe 409); efectos después
-        # (protegidos por sus propios claims idempotentes).
-        if new_status == "delivered":
-            await _assert_redemption_courier_ready(r)
-        sets: dict = {"status": new_status, "admin_note": note}
-        if new_status == "delivered":
-            sets["delivered_at"] = iso(now_utc())
-        update: dict = {"$set": sets}
-        if new_status == "rejected":
-            sets["rejection_flow_started"] = True
-            # iter256(S02) — señal explícita de efectos pendientes + ciclo de
-            # rechazo (los op_ids de stock/inventario son únicos por ciclo).
-            sets["rejection_effects_done"] = False
-            update["$inc"] = {"rejection_cycle": 1}
-        claim = await db.redemptions.update_one(
-            {"id": rid, "status": r["status"]}, update)
-        if claim.matched_count == 0:
-            raise HTTPException(
-                status_code=409,
-                detail="El canje cambió de estado mientras editabas; recarga.")
-        if new_status == "delivered":
-            await _credit_vendor_for_redemption(r)
-            await _record_vendor_commission_inflow(r)
-        if new_status == "rejected":
-            await _apply_rejection_effects(r, rid, actor)
+        await _transition_redemption(r, rid, new_status, note, actor)
     else:
-        # mismo estado: reanudar efectos incompletos (crash previo).
-        if new_status == "rejected" and r.get("rejection_flow_started") \
-                and (not r.get("rejection_applied")
-                     or r.get("rejection_effects_done") is False):
-            await _apply_rejection_effects(r, rid, actor)
-        if new_status == "delivered":
-            # iter256(S02) — repetir 'delivered' reanuda el pago al vendedor
-            # si el crédito quedó a medias (helpers idempotentes).
-            await _credit_vendor_for_redemption(r)
-            await _record_vendor_commission_inflow(r)
-        await db.redemptions.update_one({"id": rid},
-                                        {"$set": {"admin_note": note}})
+        await _resume_redemption_effects(r, rid, new_status, note, actor)
     updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
     if new_status != r["status"]:
         await _log_redemption_status_change(actor, r, rid, new_status, note)
@@ -792,18 +810,8 @@ async def _apply_rejection_effects(r: dict, rid: str, actor: dict) -> None:
         {"$set": {"rejection_effects_done": True}})
 
 
-async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
-                                          actor: dict) -> None:
-    """iter254(R02)/iter256(S04,S05) — reactivar un canje rechazado: el PLAN
-    (op_ids estables, importe, moneda, cantidad) se persiste en el doc ANTES
-    de tocar dinero/stock; un crash a mitad lo compensa heal_initializing_ops
-    y un retry REUTILIZA los mismos op_ids (nunca re-cobra). Al reactivar se
-    archiva el ciclo anterior de vendedor/fondo (si fue revertido) para que el
-    nuevo ciclo pueda liquidarse."""
-    import uuid as _uuid
-    from services.balances import (debit_balance_idempotent,
-                                   credit_balance_idempotent)
-    from services.inventory import apply_stock_idempotent
+def _assert_reactivation_allowed(r: dict) -> None:
+    """Guards: el rechazo anterior debe estar COMPLETO antes de reactivar."""
     if r.get("rejection_applied") is not True:
         raise HTTPException(
             status_code=409,
@@ -814,12 +822,12 @@ async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
             status_code=409,
             detail=("Los reversos del rechazo quedaron a medias; vuelve a "
                     "marcarlo 'rechazado' para completarlos antes de reactivar."))
-    if new_status == "delivered":
-        await _assert_redemption_courier_ready(r)
-    settle_cur = r.get("settlement_currency") or "USD"
-    recharge = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
-    qty = int(r["quantity"])
-    # 1) Plan persistente (S04): claim del intento con op_ids estables.
+
+
+async def _claim_reactivation_plan(r: dict, rid: str, new_status: str,
+                                   actor: dict, settle_cur: str) -> dict:
+    """1) Plan persistente (S04): claim del intento con op_ids estables."""
+    import uuid as _uuid
     plan = r.get("reactivation_pending")
     if plan and plan.get("state") == "aborting":
         # iter257(D04) — un abortador (healer u otro proceso) es dueño del
@@ -828,70 +836,98 @@ async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
             status_code=409,
             detail=("La reactivación anterior está siendo revertida; "
                     "espera unos segundos y reintenta."))
-    if not plan:
-        nonce = _uuid.uuid4().hex[:8]
-        plan = {"stock_op": f"reactivate-stock:{rid}:{nonce}",
-                "debit_op": f"reactivate-debit:{rid}:{nonce}",
-                "amount": round(recharge, 8), "currency": settle_cur,
-                "quantity": qty, "target": new_status,
-                "at": iso(now_utc()), "by": actor.get("user_id", "")}
-        claim0 = await db.redemptions.update_one(
-            {"id": rid, "status": "rejected",
-             "reactivation_pending": {"$exists": False}},
-            {"$set": {"reactivation_pending": plan}})
-        if claim0.matched_count == 0:
-            fresh = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or {}
-            plan = fresh.get("reactivation_pending")
-            if not plan or fresh.get("status") != "rejected" \
-                    or plan.get("state") == "aborting":
-                raise HTTPException(status_code=409,
-                                    detail="El canje cambió de estado; recarga.")
-    stock_op = plan["stock_op"]
-    debit_op = plan["debit_op"]
-    recharge = float(plan.get("amount") or recharge)
-    qty = int(plan.get("quantity") or qty)
+    if plan:
+        return plan
+    recharge = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
+    nonce = _uuid.uuid4().hex[:8]
+    plan = {"stock_op": f"reactivate-stock:{rid}:{nonce}",
+            "debit_op": f"reactivate-debit:{rid}:{nonce}",
+            "amount": round(recharge, 8), "currency": settle_cur,
+            "quantity": int(r["quantity"]), "target": new_status,
+            "at": iso(now_utc()), "by": actor.get("user_id", "")}
+    claim0 = await db.redemptions.update_one(
+        {"id": rid, "status": "rejected",
+         "reactivation_pending": {"$exists": False}},
+        {"$set": {"reactivation_pending": plan}})
+    if claim0.matched_count == 0:
+        fresh = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or {}
+        plan = fresh.get("reactivation_pending")
+        if not plan or fresh.get("status") != "rejected" \
+                or plan.get("state") == "aborting":
+            raise HTTPException(status_code=409,
+                                detail="El canje cambió de estado; recarga.")
+    return plan
 
-    async def _claim_abort() -> bool:
-        """iter257(D04) — reclama la PROPIEDAD del reverso de este intento:
-        solo quien gana este claim puede compensar. Si el plan ya no está
-        (otro proceso publicó el estado nuevo) o ya está en 'aborting', NO se
-        compensa — así un perdedor de carrera jamás deshace los efectos de un
-        ganador que sí activó el canje."""
-        res = await db.redemptions.update_one(
-            {"id": rid, "status": "rejected",
-             "reactivation_pending.stock_op": stock_op,
-             "reactivation_pending.state": {"$exists": False}},
-            {"$set": {"reactivation_pending.state": "aborting"}})
-        return res.modified_count == 1
 
-    # 2) Reserva y cobro idempotentes.
+async def _claim_reactivation_abort(rid: str, stock_op: str) -> bool:
+    """iter257(D04) — reclama la PROPIEDAD del reverso de este intento:
+    solo quien gana este claim puede compensar. Si el plan ya no está
+    (otro proceso publicó el estado nuevo) o ya está en 'aborting', NO se
+    compensa — así un perdedor de carrera jamás deshace los efectos de un
+    ganador que sí activó el canje."""
+    res = await db.redemptions.update_one(
+        {"id": rid, "status": "rejected",
+         "reactivation_pending.stock_op": stock_op,
+         "reactivation_pending.state": {"$exists": False}},
+        {"$set": {"reactivation_pending.state": "aborting"}})
+    return res.modified_count == 1
+
+
+async def _abort_reactivation(r: dict, rid: str, plan: dict, settle_cur: str,
+                              undo_stock: bool, undo_debit: bool) -> None:
+    """Compensa SOLO si somos dueños del aborto (mismos op_ids :undo del
+    healer ⇒ exactamente-una-vez) y limpia el plan."""
+    if not await _claim_reactivation_abort(rid, plan["stock_op"]):
+        return
+    from services.balances import credit_balance_idempotent
+    from services.inventory import apply_stock_idempotent
+    if undo_debit:
+        await credit_balance_idempotent(
+            r["user_id"], settle_cur, float(plan.get("amount") or 0),
+            f"{plan['debit_op']}:undo", legacy_usd=(settle_cur == "USD"))
+    if undo_stock:
+        await apply_stock_idempotent(r["product_id"],
+                                     int(plan.get("quantity") or r["quantity"]),
+                                     f"{plan['stock_op']}:undo",
+                                     require_available=False)
+    await db.redemptions.update_one(
+        {"id": rid, "reactivation_pending.stock_op": plan["stock_op"]},
+        {"$unset": {"reactivation_pending": ""}})
+
+
+async def _reserve_reactivation_funds(r: dict, rid: str, plan: dict,
+                                      settle_cur: str) -> None:
+    """2) Reserva y cobro idempotentes (compensación si pierde)."""
+    from services.balances import debit_balance_idempotent
+    from services.inventory import apply_stock_idempotent
+    qty = int(plan.get("quantity") or r["quantity"])
+    recharge = float(plan.get("amount")
+                     or (float(r["total_usd"])
+                         + float(r.get("courier_fee_usd") or 0.0)))
     stock_status = await apply_stock_idempotent(
-        r["product_id"], -qty, stock_op,
+        r["product_id"], -qty, plan["stock_op"],
         extra_filter={"is_active": {"$ne": False}})
     if stock_status == "insufficient":
-        if await _claim_abort():
-            await db.redemptions.update_one(
-                {"id": rid, "reactivation_pending.stock_op": stock_op},
-                {"$unset": {"reactivation_pending": ""}})
+        await _abort_reactivation(r, rid, plan, settle_cur,
+                                  undo_stock=False, undo_debit=False)
         raise HTTPException(status_code=409,
                             detail="Sin stock disponible para reactivar este canje")
     st = await debit_balance_idempotent(r["user_id"], settle_cur, recharge,
-                                        debit_op)
+                                        plan["debit_op"])
     if st == "insufficient":
-        if await _claim_abort():
-            await apply_stock_idempotent(r["product_id"], qty,
-                                         f"{stock_op}:undo",
-                                         require_available=False)
-            await db.redemptions.update_one(
-                {"id": rid, "reactivation_pending.stock_op": stock_op},
-                {"$unset": {"reactivation_pending": ""}})
+        await _abort_reactivation(r, rid, plan, settle_cur,
+                                  undo_stock=True, undo_debit=False)
         raise HTTPException(
             status_code=409,
             detail=(f"El cliente no tiene {recharge} {settle_cur} para "
                     "reactivar este canje (ya gastó el reembolso)."))
-    # 3) Claim final: nuevo estado + limpieza del plan + archivo del ciclo
-    #    anterior de vendedor/fondo (S05) si fue revertido.
-    product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})
+
+
+def _reactivation_final_update(r: dict, new_status: str,
+                               actor: dict) -> tuple[dict, bool]:
+    """3) Update del claim final: nuevo estado + limpieza del plan + archivo
+    del ciclo anterior de vendedor/fondo (S05) si fue revertido. Devuelve
+    (update_doc, fund_cleared)."""
     sets: dict = {"status": new_status, "rejection_applied": False,
                   "rejection_flow_started": False,
                   "reactivated_at": iso(now_utc()),
@@ -922,63 +958,86 @@ async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
     if archive:
         archive["archived_at"] = iso(now_utc())
         update["$push"] = {"settlement_cycles": archive}
+    return update, fund_cleared
+
+
+async def _record_reactivation_traces(r: dict, rid: str, plan: dict,
+                                      settle_cur: str, actor: dict,
+                                      fund_cleared: bool) -> None:
+    """4) Rastro de inventario coherente (producto empresa) + re-registro del
+    fund inflow del nuevo ciclo (S05/D08). Idempotente por claims."""
+    product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})
+    if not product or product.get("owner_id"):
+        return
+    qty = int(plan.get("quantity") or r["quantity"])
+    stock_op = plan["stock_op"]
+    # el reverso del rechazo fue un ajuste_pos; la reactivación registra el
+    # ajuste_neg espejo.
+    inv_claim = await db.redemptions.update_one(
+        {"id": rid, "reactivation_inv_op": {"$ne": stock_op}},
+        {"$set": {"reactivation_inv_op": stock_op}})
+    if inv_claim.modified_count:
+        try:
+            from services.inventory import record_movement
+            await record_movement(
+                product=product, mtype="ajuste_neg", quantity=qty,
+                note=f"Reactivación de canje rechazado {rid[:8]}",
+                source="marketplace", ref_id=rid, actor=actor,
+                apply_stock=False)
+        except Exception as e:
+            logger.error(f"inventory reactivation log failed: {e}")
+    # iter256(S05)/iter257(D08) — el pago del cliente re-entró: primero el
+    # ASIENTO del nuevo ciclo (idempotente por dedupe), después la marca.
+    if fund_cleared:
+        cyc = int(r.get("rejection_cycle") or 1)
+        try:
+            from services.company_funds_common import record_auto_fund_adjustment
+            await record_auto_fund_adjustment(
+                adjustment_type="inflow", currency=settle_cur,
+                amount=round(float(r["total_usd"]), 2),
+                source_name="Marketplace tienda",
+                note=(f"Reactivación de canje: {qty}× "
+                      f"{r.get('product_name', '')} (canje {rid[:8]})"),
+                ref_id=rid,
+                dedupe_key=f"fund-inflow:{rid}:c{cyc}")
+            await db.redemptions.update_one(
+                {"id": rid, "fund_inflow_at": {"$in": [None, ""]}},
+                {"$set": {"fund_inflow_at": iso(now_utc()),
+                          "fund_inflow_amount": round(float(r["total_usd"]), 2),
+                          "fund_inflow_currency": settle_cur}})
+        except Exception as e:
+            logger.error(f"fund inflow reactivation failed: {e}")
+
+
+async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
+                                          actor: dict) -> None:
+    """iter254(R02)/iter256(S04,S05) — reactivar un canje rechazado: el PLAN
+    (op_ids estables, importe, moneda, cantidad) se persiste en el doc ANTES
+    de tocar dinero/stock; un crash a mitad lo compensa heal_initializing_ops
+    y un retry REUTILIZA los mismos op_ids (nunca re-cobra). Al reactivar se
+    archiva el ciclo anterior de vendedor/fondo (si fue revertido) para que el
+    nuevo ciclo pueda liquidarse."""
+    _assert_reactivation_allowed(r)
+    if new_status == "delivered":
+        await _assert_redemption_courier_ready(r)
+    settle_cur = r.get("settlement_currency") or "USD"
+    plan = await _claim_reactivation_plan(r, rid, new_status, actor, settle_cur)
+    await _reserve_reactivation_funds(r, rid, plan, settle_cur)
+    update, fund_cleared = _reactivation_final_update(r, new_status, actor)
     claim = await db.redemptions.update_one(
         {"id": rid, "status": "rejected",
-         "reactivation_pending.stock_op": stock_op,
+         "reactivation_pending.stock_op": plan["stock_op"],
          "reactivation_pending.state": {"$exists": False}}, update)
     if claim.matched_count == 0:
         # iter257(D04) — compensar SOLO si somos dueños del aborto: si otro
         # proceso ya publicó el estado nuevo con este mismo plan, sus efectos
         # (cobro + reserva) respaldan un canje activo y NO deben deshacerse.
-        if await _claim_abort():
-            await credit_balance_idempotent(r["user_id"], settle_cur, recharge,
-                                            f"{debit_op}:undo",
-                                            legacy_usd=(settle_cur == "USD"))
-            await apply_stock_idempotent(r["product_id"], qty,
-                                         f"{stock_op}:undo",
-                                         require_available=False)
-            await db.redemptions.update_one(
-                {"id": rid, "reactivation_pending.stock_op": stock_op},
-                {"$unset": {"reactivation_pending": ""}})
+        await _abort_reactivation(r, rid, plan, settle_cur,
+                                  undo_stock=True, undo_debit=True)
         raise HTTPException(status_code=409,
                             detail="El canje cambió de estado; recarga.")
-    # rastro de inventario coherente (producto empresa): el reverso del rechazo
-    # fue un ajuste_pos; la reactivación registra el ajuste_neg espejo.
-    if product and not product.get("owner_id"):
-        inv_claim = await db.redemptions.update_one(
-            {"id": rid, "reactivation_inv_op": {"$ne": stock_op}},
-            {"$set": {"reactivation_inv_op": stock_op}})
-        if inv_claim.modified_count:
-            try:
-                from services.inventory import record_movement
-                await record_movement(
-                    product=product, mtype="ajuste_neg", quantity=qty,
-                    note=f"Reactivación de canje rechazado {rid[:8]}",
-                    source="marketplace", ref_id=rid, actor=actor,
-                    apply_stock=False)
-            except Exception as e:
-                logger.error(f"inventory reactivation log failed: {e}")
-        # iter256(S05)/iter257(D08) — el pago del cliente re-entró: primero el
-        # ASIENTO del nuevo ciclo (idempotente por dedupe), después la marca.
-        if fund_cleared:
-            cyc = int(r.get("rejection_cycle") or 1)
-            try:
-                from services.company_funds_common import record_auto_fund_adjustment
-                await record_auto_fund_adjustment(
-                    adjustment_type="inflow", currency=settle_cur,
-                    amount=round(float(r["total_usd"]), 2),
-                    source_name="Marketplace tienda",
-                    note=(f"Reactivación de canje: {qty}× "
-                          f"{r.get('product_name', '')} (canje {rid[:8]})"),
-                    ref_id=rid,
-                    dedupe_key=f"fund-inflow:{rid}:c{cyc}")
-                await db.redemptions.update_one(
-                    {"id": rid, "fund_inflow_at": {"$in": [None, ""]}},
-                    {"$set": {"fund_inflow_at": iso(now_utc()),
-                              "fund_inflow_amount": round(float(r["total_usd"]), 2),
-                              "fund_inflow_currency": settle_cur}})
-            except Exception as e:
-                logger.error(f"fund inflow reactivation failed: {e}")
+    await _record_reactivation_traces(r, rid, plan, settle_cur, actor,
+                                      fund_cleared)
     if new_status == "delivered":
         fresh = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or r
         await _credit_vendor_for_redemption(fresh)

@@ -5,7 +5,7 @@ tests inyecta el header X-Captcha-Bypass (conftest) con el secreto de .env;
 un header explícito incorrecto permite probar el rechazo real.
 """
 import os
-import random
+import secrets
 import uuid
 
 import pytest
@@ -41,8 +41,9 @@ class TestCaptchaOnAuth:
 
     def _register(self, token=None, headers=None):
         suffix = uuid.uuid4().hex[:8]
-        digits = "".join(random.choices("0123456789", k=7))
-        body = {"email": f"{MARK}.{suffix}@example.com", "password": "Password123!",
+        digits = "".join(secrets.choice("0123456789") for _ in range(7))
+        body = {"email": f"{MARK}.{suffix}@example.com",
+                "password": f"Pw1!{secrets.token_hex(8)}",
                 "name": "Captcha Test", "phone": f"+535{digits}"}
         if token is not None:
             body["captcha_token"] = token

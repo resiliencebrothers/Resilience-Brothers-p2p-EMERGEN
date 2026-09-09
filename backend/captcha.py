@@ -38,16 +38,58 @@ def captcha_config() -> dict:
             "enforced": enabled and turnstile_enforced()}
 
 
+def _captcha_failed() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"code": "CAPTCHA_FAILED",
+                "message": "No pudimos verificar que no eres un robot. Recarga la página e inténtalo de nuevo."})
+
+
+def _has_test_bypass(request: Request) -> bool:
+    """Bypass para la suite de tests interna (header secreto de .env, nunca
+    expuesto al cliente). Equivale a poseer acceso al servidor."""
+    bypass = (os.environ.get("TURNSTILE_TEST_BYPASS") or "").strip()
+    return bool(bypass) and request.headers.get("X-Captcha-Bypass") == bypass
+
+
+def _client_ip(request: Request) -> str | None:
+    return (request.headers.get("CF-Connecting-IP")
+            or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            or None)
+
+
+async def _siteverify(secret: str, token: str, remote_ip: str | None) -> dict | None:
+    """POST a Cloudflare siteverify. None = servicio caído (fail-open)."""
+    payload = {"secret": secret, "response": token[:2048]}
+    if remote_ip:
+        payload["remoteip"] = remote_ip
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.post(SITEVERIFY_URL, data=payload)
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Turnstile siteverify unavailable (fail-open): {e}")
+        return None
+
+
+def _check_verify_result(result: dict) -> None:
+    if not result.get("success"):
+        logger.warning(f"Turnstile rejected token: {result.get('error-codes')}")
+        raise _captcha_failed()
+    expected = (os.environ.get("TURNSTILE_EXPECTED_HOSTNAME") or "").strip()
+    if expected and result.get("hostname") != expected:
+        logger.warning(f"Turnstile hostname mismatch: {result.get('hostname')}")
+        raise _captcha_failed()
+
+
 async def verify_captcha_token(token: str | None, request: Request) -> None:
     """Valida el token contra siteverify. 400 si falta (enforced) o si
     Cloudflare lo rechaza. No-op si Turnstile no está configurado."""
     secret = turnstile_secret()
     if not secret:
         return
-    # Bypass para la suite de tests interna (header secreto de .env, nunca
-    # expuesto al cliente). Equivale a poseer acceso al servidor.
-    bypass = (os.environ.get("TURNSTILE_TEST_BYPASS") or "").strip()
-    if bypass and request.headers.get("X-Captcha-Bypass") == bypass:
+    if _has_test_bypass(request):
         return
     token = (token or "").strip()
     if not token:
@@ -57,30 +99,7 @@ async def verify_captcha_token(token: str | None, request: Request) -> None:
                 detail={"code": "CAPTCHA_REQUIRED",
                         "message": "Completa la verificación 'No soy un robot'."})
         return
-    remote_ip = (request.headers.get("CF-Connecting-IP")
-                 or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-                 or None)
-    payload = {"secret": secret, "response": token[:2048]}
-    if remote_ip:
-        payload["remoteip"] = remote_ip
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            r = await client.post(SITEVERIFY_URL, data=payload)
-            r.raise_for_status()
-            result = r.json()
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Turnstile siteverify unavailable (fail-open): {e}")
+    result = await _siteverify(secret, token, _client_ip(request))
+    if result is None:
         return
-    if not result.get("success"):
-        logger.warning(f"Turnstile rejected token: {result.get('error-codes')}")
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "CAPTCHA_FAILED",
-                    "message": "No pudimos verificar que no eres un robot. Recarga la página e inténtalo de nuevo."})
-    expected = (os.environ.get("TURNSTILE_EXPECTED_HOSTNAME") or "").strip()
-    if expected and result.get("hostname") != expected:
-        logger.warning(f"Turnstile hostname mismatch: {result.get('hostname')}")
-        raise HTTPException(
-            status_code=400,
-            detail={"code": "CAPTCHA_FAILED",
-                    "message": "No pudimos verificar que no eres un robot. Recarga la página e inténtalo de nuevo."})
+    _check_verify_result(result)

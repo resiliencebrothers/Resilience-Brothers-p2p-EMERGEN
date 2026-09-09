@@ -18,15 +18,13 @@ from auth_utils import (
 )
 from audit_log import log_action
 from services.proof_upload import maybe_upload_proof
-
-
-router = APIRouter(tags=["Admin"])
-
-
 from services.currency_utils import norm_code as _norm_code  # noqa: F401 — re-exported for sibling route modules
 from services.company_funds_common import (
     assert_can_manage_company_funds, actor_currency_scope,
 )
+
+
+router = APIRouter(tags=["Admin"])
 
 
 class CompanyFundAdjustment(BaseModel):
@@ -538,6 +536,34 @@ async def admin_company_funds(request: Request) -> Any:
     return await _compute_company_funds(_actor_currency_scope(actor))
 
 
+def _usdt_totals_and_breakdown(
+    rows: List[dict], fx: dict,
+) -> tuple[Dict[str, float], List[str], List[dict]]:
+    """Convierte cada fila por moneda a USDT y acumula los totales globales.
+    Devuelve (totales, monedas sin tasa, desglose por moneda)."""
+    totals = {k: 0.0 for k in
+              ("balance", "available", "liabilities", "inflow", "outflow", "profit")}
+    missing: List[str] = []
+    breakdown: List[dict] = []
+    for r in rows:
+        conv = _row_usdt_summary(r, fx)
+        if conv is None:
+            # No rate path — count the currency as "missing" so the operator
+            # knows the total is under-reported until they configure a rate.
+            missing.append(r["currency"])
+            continue
+        for k in totals:
+            totals[k] += conv[f"{k}_usdt"]
+        breakdown.append({
+            "currency": r["currency"],
+            "balance": round(conv["balance"], 4),
+            "balance_available": round(conv["available"], 4),
+            "balance_usdt": round(conv["balance_usdt"], 2),
+            "balance_available_usdt": round(conv["available_usdt"], 2),
+        })
+    return totals, missing, breakdown
+
+
 @router.get("/admin/company-funds/total-usdt")
 async def admin_company_funds_total_usdt(request: Request) -> Any:
     """iter152 — Global treasury summary in USDT.
@@ -564,28 +590,7 @@ async def admin_company_funds_total_usdt(request: Request) -> Any:
     from services.balances import build_rate_lookup
     rows = await _compute_company_funds(_actor_currency_scope(actor))
     fx = await build_rate_lookup()
-
-    totals = {k: 0.0 for k in
-              ("balance", "available", "liabilities", "inflow", "outflow", "profit")}
-    missing: list = []
-    breakdown: list = []
-    for r in rows:
-        conv = _row_usdt_summary(r, fx)
-        if conv is None:
-            # No rate path — count the currency as "missing" so the operator
-            # knows the total is under-reported until they configure a rate.
-            missing.append(r["currency"])
-            continue
-        for k in totals:
-            totals[k] += conv[f"{k}_usdt"]
-        breakdown.append({
-            "currency": r["currency"],
-            "balance": round(conv["balance"], 4),
-            "balance_available": round(conv["available"], 4),
-            "balance_usdt": round(conv["balance_usdt"], 2),
-            "balance_available_usdt": round(conv["available_usdt"], 2),
-        })
-
+    totals, missing, breakdown = _usdt_totals_and_breakdown(rows, fx)
     return {
         "base": "USDT",
         "total_balance_usdt": round(totals["balance"], 2),
@@ -1086,6 +1091,26 @@ async def list_company_withdrawals(request: Request,
     return docs
 
 
+async def _paid_from_account_fields(payload: dict, cw: dict) -> Dict[str, Any]:
+    """iter194/195 — "paid from account": explicit choice wins; otherwise
+    auto-attribute when the currency has exactly one active account."""
+    from services.fund_accounts import (
+        resolve_fund_account, auto_paid_from_account,
+    )
+    acc_id = (payload.get("paid_from_account_id") or "").strip()
+    if acc_id:
+        acc = await resolve_fund_account(acc_id)
+        if not acc:
+            raise HTTPException(status_code=400, detail="Cuenta de origen no encontrada")
+        return {"paid_from_account_id": acc_id,
+                "paid_from_account_label": acc["label"]}
+    acc = await auto_paid_from_account(cw.get("currency") or "")
+    if acc:
+        return {"paid_from_account_id": acc["id"],
+                "paid_from_account_label": acc["label"]}
+    return {}
+
+
 @router.put("/admin/company-withdrawals/{cwid}/status")
 async def update_company_withdrawal(cwid: str, payload: dict, request: Request) -> Any:
     """Only admin can change status (approve/pay/reject). Staff with scope creates only."""
@@ -1104,24 +1129,8 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     note = payload.get("note")
     if note is not None:
         update_doc["admin_note"] = note
-    # iter194/195 — "paid from account": explicit choice wins; otherwise
-    # auto-attribute when the currency has exactly one active account.
     if new_status == "paid":
-        from services.fund_accounts import (
-            resolve_fund_account, auto_paid_from_account,
-        )
-        acc_id = (payload.get("paid_from_account_id") or "").strip()
-        if acc_id:
-            acc = await resolve_fund_account(acc_id)
-            if not acc:
-                raise HTTPException(status_code=400, detail="Cuenta de origen no encontrada")
-            update_doc["paid_from_account_id"] = acc_id
-            update_doc["paid_from_account_label"] = acc["label"]
-        else:
-            acc = await auto_paid_from_account(cw.get("currency"))
-            if acc:
-                update_doc["paid_from_account_id"] = acc["id"]
-                update_doc["paid_from_account_label"] = acc["label"]
+        update_doc.update(await _paid_from_account_fields(payload, cw))
     await db.company_withdrawals.update_one({"id": cwid}, {"$set": update_doc})
     await log_action(db, actor, "company_withdrawal.status", "company_withdrawal", cwid,
                      summary=f"Retiro fondo {cw['currency']} {cw['amount']} → {new_status}",
@@ -1149,6 +1158,28 @@ def _resolve_cash_denominations(
             detail=(f"Para efectivo en {currency} debes indicar el "
                     "desglose de billetes por denominación."))
     return None
+
+
+async def _log_adjustment_action(actor: dict,
+                                 payload: "CompanyFundAdjustmentCreate",
+                                 doc: dict, currency: str,
+                                 denominations: Optional[dict]) -> None:
+    sign = "+" if payload.adjustment_type == "inflow" else "-"
+    await log_action(
+        db, actor, "company_funds.adjust", "company_fund_adjustment", doc["id"],
+        summary=(
+            f"{sign}{payload.amount} {currency} "
+            f"({payload.method}, {payload.adjustment_type}) desde {payload.source_name}"
+        ),
+        details={
+            "adjustment_type": payload.adjustment_type,
+            "currency": currency, "amount": payload.amount,
+            "method": payload.method,
+            "source_name": payload.source_name,
+            "source_account": payload.source_account,
+            "denominations": denominations,
+        },
+    )
 
 
 @router.post("/admin/company-funds/adjustments")
@@ -1188,23 +1219,7 @@ async def create_company_fund_adjustment(
     # insert_one mutates the input dict by adding `_id: ObjectId` — pass a copy
     # so the returned `doc` remains JSON-serialisable.
     await db.company_fund_adjustments.insert_one({**doc})
-
-    sign = "+" if payload.adjustment_type == "inflow" else "-"
-    await log_action(
-        db, actor, "company_funds.adjust", "company_fund_adjustment", doc["id"],
-        summary=(
-            f"{sign}{payload.amount} {currency} "
-            f"({payload.method}, {payload.adjustment_type}) desde {payload.source_name}"
-        ),
-        details={
-            "adjustment_type": payload.adjustment_type,
-            "currency": currency, "amount": payload.amount,
-            "method": payload.method,
-            "source_name": payload.source_name,
-            "source_account": payload.source_account,
-            "denominations": denominations,
-        },
-    )
+    await _log_adjustment_action(actor, payload, doc, currency, denominations)
     return doc
 
 
@@ -1642,6 +1657,26 @@ def _closing_filename(since: Optional[str], until: Optional[str]) -> str:
     return f"cierre_empresa{slug}_{ts}.pdf"
 
 
+async def _closing_report_data(
+    since: Optional[str], until: Optional[str],
+) -> tuple[List[dict], List[dict], dict, int]:
+    """Agrega tesorería + ingresos + KPIs del rango para el PDF de cierre."""
+    from services.balances import build_rate_lookup
+    since_iso, until_iso = _range_bounds(_date_range_query(since, until))
+    funds_rows = await _compute_company_funds_range(since_iso, until_iso)
+    orders = await db.orders.find(
+        _updated_at_range_query(since_iso, until_iso), {"_id": 0},
+    ).to_list(20000)
+    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
+    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
+    fx = await build_rate_lookup()
+    revenue_rows, total_revenue_usd, total_orders = await _closing_revenue_rows(
+        orders, rate_by_pair, fx,
+    )
+    kpis = _closing_kpis(orders, funds_rows, fx, total_orders, total_revenue_usd)
+    return funds_rows, revenue_rows, kpis, total_orders
+
+
 @router.get("/admin/company-funds/closing.pdf")
 async def export_company_closing_pdf(
     request: Request,
@@ -1663,27 +1698,11 @@ async def export_company_closing_pdf(
     from fastapi.responses import StreamingResponse
 
     from company_closing_pdf import generate_company_closing_pdf
-    from services.balances import build_rate_lookup
 
     actor = await require_permission(request, "company_funds")
-
-    since_iso, until_iso = _range_bounds(_date_range_query(since, until))
-
-    # Treasury movements per currency in-range.
-    funds_rows = await _compute_company_funds_range(since_iso, until_iso)
-
-    orders = await db.orders.find(
-        _updated_at_range_query(since_iso, until_iso), {"_id": 0},
-    ).to_list(20000)
-    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
-    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
-
-    fx = await build_rate_lookup()
-    revenue_rows, total_revenue_usd, total_orders = await _closing_revenue_rows(
-        orders, rate_by_pair, fx,
+    funds_rows, revenue_rows, kpis, total_orders = await _closing_report_data(
+        since, until,
     )
-    kpis = _closing_kpis(orders, funds_rows, fx, total_orders, total_revenue_usd)
-
     pdf_bytes = generate_company_closing_pdf(
         since=since or "", until=until or "",
         funds_rows=funds_rows, revenue_rows=revenue_rows,

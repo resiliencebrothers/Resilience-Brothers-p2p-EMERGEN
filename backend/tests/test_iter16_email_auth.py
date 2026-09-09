@@ -301,7 +301,8 @@ class TestEmailPasswordAuth:
         # iter257(D01) — el token solo viaja por email; el test siembra un
         # hash conocido igual que haría el backend.
         import hashlib as _hl
-        token = "tok_iter16_" + "a" * 40
+        import secrets as _secrets
+        token = "tok_iter16_" + _secrets.token_hex(20)
         cli, db = _db()
         db.users.update_one(
             {"email": TEST_EMAIL},
@@ -337,7 +338,8 @@ class TestEmailPasswordAuth:
     def test_reset_password_token_single_use(self):
         _r, _user = _register()
         import hashlib as _hl
-        token = "tok_iter16_" + "b" * 40
+        import secrets as _secrets
+        token = "tok_iter16_" + _secrets.token_hex(20)
         cli, db = _db()
         db.users.update_one(
             {"email": TEST_EMAIL},
