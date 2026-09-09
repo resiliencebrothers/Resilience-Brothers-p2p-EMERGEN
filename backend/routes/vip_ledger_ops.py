@@ -343,14 +343,19 @@ async def admin_reject_capital_deposit(dep_id: str, payload: RejectPayload, requ
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
     now = iso(now_utc())
-    await db.vip_capital_deposits.update_one(
-        {"id": dep_id},
+    # iter260(E03) — claim ATÓMICO pendiente→rechazado: si una confirmación
+    # concurrente ganó (y acreditó), este rechazo pierde y devuelve 409 en
+    # vez de sobrescribir el estado confirmado.
+    claim = await db.vip_capital_deposits.update_one(
+        {"id": dep_id, "status": "pending"},
         {"$set": {
             "status": "rejected", "updated_at": now, "reviewed_at": now,
             "reviewed_by": staff["user_id"],
             "admin_note": payload.admin_note.strip() or None,
         }},
     )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
     fresh = await db.vip_capital_deposits.find_one({"id": dep_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="vip_capital.reject",
@@ -595,12 +600,16 @@ async def admin_reject_settlement(sid: str, payload: RejectPayload, request: Req
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este movimiento ya fue procesado.")
     now = iso(now_utc())
-    await db.vip_settlements.update_one(
-        {"id": sid},
+    # iter260(E03) — claim atómico: un approve concurrente que ya confirmó
+    # (y aplicó el efecto) no puede ser pisado por este rechazo.
+    claim = await db.vip_settlements.update_one(
+        {"id": sid, "status": "pending"},
         {"$set": {"status": "rejected", "updated_at": now,
                   "reviewed_at": now, "reviewed_by": staff["user_id"],
                   "admin_note": payload.admin_note.strip() or None}},
     )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Este movimiento ya fue procesado.")
     fresh = await db.vip_settlements.find_one({"id": sid}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="vip_settlement.reject",

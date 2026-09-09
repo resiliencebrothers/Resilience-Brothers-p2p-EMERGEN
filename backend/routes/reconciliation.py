@@ -9,6 +9,7 @@ All endpoints gated by the dedicated `reconciliation` permission.
 """
 import logging
 import uuid
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import (APIRouter, BackgroundTasks, File, Form, HTTPException,
@@ -713,6 +714,68 @@ class ConfirmPayload(BaseModel):
     order_id: str
 
 
+async def _target_has_recon_stamp(order_id: str, tx_id: str) -> bool:
+    """¿La orden/ítem ya lleva el sello de conciliación de ESTE movimiento?"""
+    if not order_id:
+        return False
+    doc = await db.orders.find_one({"id": order_id},
+                                   {"_id": 0, "reconciliation": 1})
+    if not doc:
+        doc = await db.vip_batch_items.find_one(
+            {"id": order_id}, {"_id": 0, "reconciliation": 1})
+    return bool(doc and (doc.get("reconciliation") or {})
+                .get("bank_transaction_id") == tx_id)
+
+
+async def _claim_bank_transaction(tx: dict, tx_id: str, order_id: str,
+                                  actor: dict) -> None:
+    """iter260(E04) — reclama el USO EXCLUSIVO del movimiento bancario antes
+    de acreditar ninguna orden: dos confirmaciones dirigidas a órdenes
+    distintas ya no pueden respaldarse con el mismo cobro."""
+    new_claim = {"order_id": order_id, "at": iso(now_utc()),
+                 "by": actor["user_id"]}
+    existing = tx.get("matching_claim")
+    if existing and existing.get("order_id") == order_id:
+        return  # nuestro propio enlace a medias — reanudar
+    if existing:
+        # Reclamo de otro proceso: solo se roba si su orden nunca llegó a
+        # aprobarse con este movimiento y el reclamo ya está huérfano.
+        if await _target_has_recon_stamp(existing.get("order_id") or "", tx_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Este movimiento ya respalda otra orden (enlace en curso). Refresca la lista.")
+        stale_cutoff = iso(now_utc() - timedelta(seconds=300))
+        if (existing.get("at") or "") >= stale_cutoff:
+            raise HTTPException(
+                status_code=409,
+                detail="Otro operador está conciliando este movimiento; espera unos segundos.")
+        steal = await db.bank_transactions.update_one(
+            {"id": tx_id, "matching_claim.order_id": existing.get("order_id"),
+             "matching_claim.at": existing.get("at"),
+             "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]}},
+            {"$set": {"matching_claim": new_claim}})
+        if steal.modified_count == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Otro operador está conciliando este movimiento; espera unos segundos.")
+        return
+    claim = await db.bank_transactions.update_one(
+        {"id": tx_id,
+         "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]},
+         "matching_claim": {"$exists": False}},
+        {"$set": {"matching_claim": new_claim}})
+    if claim.modified_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Otro operador está conciliando este movimiento; reintenta en unos segundos.")
+
+
+async def _release_bank_claim(tx_id: str, order_id: str) -> None:
+    await db.bank_transactions.update_one(
+        {"id": tx_id, "matching_claim.order_id": order_id},
+        {"$unset": {"matching_claim": ""}})
+
+
 @router.post("/admin/reconciliation/transactions/{tx_id}/confirm")
 async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -> Any:
     actor = await require_permission(request, "reconciliation")
@@ -730,38 +793,49 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
         item = await db.vip_batch_items.find_one({"id": payload.order_id}, {"_id": 0})
     if not order and not item:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    if item:
-        if item["status"] != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail=f"La orden del lote ya no está pendiente (estado: {item['status']}).")
-    else:
-        if order["status"] == "requires_double_approval":
-            raise HTTPException(
-                status_code=409,
-                detail="Esta orden requiere doble aprobación de un admin. "
-                       "Apruébala desde la sección Órdenes.")
-        if order["status"] != "pending":
+    # iter260(E04) — reanudación tras crash: si la orden/ítem YA lleva el
+    # sello de ESTE movimiento (se aprobó pero el enlace bancario no se
+    # escribió), saltar validaciones de pendiente y completar solo el enlace.
+    target = item or order
+    resuming = ((target.get("reconciliation") or {})
+                .get("bank_transaction_id") == tx_id)
+    if not resuming:
+        if item:
+            if item["status"] != "pending":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"La orden del lote ya no está pendiente (estado: {item['status']}).")
+        else:
+            if order["status"] == "requires_double_approval":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Esta orden requiere doble aprobación de un admin. "
+                           "Apruébala desde la sección Órdenes.")
+            if order["status"] != "pending":
+                raise HTTPException(status_code=409,
+                                    detail=f"La orden ya no está pendiente (estado: {order['status']}).")
+        other = await db.bank_transactions.find_one(
+            {"matched_order_id": payload.order_id,
+             "status": {"$in": ["auto_matched", "manual_matched"]}}, {"_id": 0, "id": 1})
+        if other:
             raise HTTPException(status_code=409,
-                                detail=f"La orden ya no está pendiente (estado: {order['status']}).")
-    other = await db.bank_transactions.find_one(
-        {"matched_order_id": payload.order_id,
-         "status": {"$in": ["auto_matched", "manual_matched"]}}, {"_id": 0, "id": 1})
-    if other:
-        raise HTTPException(status_code=409,
-                            detail=f"La orden ya fue conciliada con el movimiento {other['id']}.")
+                                detail=f"La orden ya fue conciliada con el movimiento {other['id']}.")
+
+    await _claim_bank_transaction(tx, tx_id, payload.order_id, actor)
 
     cand = next((c for c in (tx.get("candidates") or [])
                  if c["order_id"] == payload.order_id), None)
     tx["confidence_score"] = cand["score"] if cand else tx.get("confidence_score")
     matched_kind = "vip_batch_item" if item else "order"
-    try:
-        if item:
-            await approve_batch_item_from_reconciliation(item["id"], tx, actor, auto=False)
-        else:
-            await approve_order_from_reconciliation(order, tx, actor, auto=False)
-    except RuntimeError:
-        raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
+    if not resuming:
+        try:
+            if item:
+                await approve_batch_item_from_reconciliation(item["id"], tx, actor, auto=False)
+            else:
+                await approve_order_from_reconciliation(order, tx, actor, auto=False)
+        except RuntimeError:
+            await _release_bank_claim(tx_id, payload.order_id)
+            raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
     await db.bank_transactions.update_one(
         {"id": tx_id},
         {"$set": {"status": "manual_matched", "matched_order_id": payload.order_id,
@@ -770,7 +844,8 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                   "confidence_score": cand["score"] if cand else tx.get("confidence_score"),
                   "matched_at": iso(now_utc()), "matched_by": actor["user_id"],
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
-                  "updated_at": iso(now_utc())}})
+                  "updated_at": iso(now_utc())},
+         "$unset": {"matching_claim": ""}})
     await recon_audit("MANUAL_MATCHED", actor, tx=tx, order_id=payload.order_id,
                       prev_status=tx["status"], new_status="manual_matched",
                       score=(cand or {}).get("score"),
@@ -865,6 +940,61 @@ async def restore_transaction(tx_id: str, request: Request) -> Any:
     return await db.bank_transactions.find_one({"id": tx_id}, {"_id": 0, "raw": 0})
 
 
+async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
+                                             reason: str) -> None:
+    """iter260(E05a) — una orden acumulada YA acreditó saldo: revertir ese
+    abono (débito idempotente con plan persistente) ANTES de devolverla a
+    pendiente y liberar el movimiento bancario. Si la reversión no está
+    soportada (amortizó deudas) o el cliente ya gastó el saldo, el rollback
+    se BLOQUEA explícitamente — nunca se libera el cobro dejando el abono
+    anterior activo."""
+    from services.balances import debit_balance_idempotent
+    order_id = order["id"]
+    contributed = await db.capital_requests.find_one(
+        {"repayment_events.order_id": order_id}, {"_id": 1})
+    if contributed:
+        raise HTTPException(
+            status_code=409,
+            detail=("Esta orden acumulada amortizó deudas de capital; el "
+                    "rollback automático no está soportado. Gestiona el "
+                    "reverso manualmente desde Órdenes."))
+    gross = float(order.get("amount_to") or 0)
+    code = order.get("to_code") or "USD"
+    op_id = f"accum-rollback:{order_id}:{tx_id}"
+    plan = {"op_id": op_id, "amount": round(gross, 8), "currency": code,
+            "at": iso(now_utc())}
+    claim = await db.orders.update_one(
+        {"id": order_id, "status": "approved",
+         "rollback_pending": {"$exists": False}},
+        {"$set": {"rollback_pending": plan}})
+    if claim.modified_count == 0:
+        fresh = await db.orders.find_one(
+            {"id": order_id}, {"_id": 0, "rollback_pending": 1, "status": 1})
+        pend = (fresh or {}).get("rollback_pending")
+        if not pend or (fresh or {}).get("status") != "approved":
+            raise HTTPException(status_code=409,
+                                detail="La orden cambió de estado; recarga.")
+        op_id = pend["op_id"]  # reanudar el mismo plan (idempotente)
+    st = await debit_balance_idempotent(order["user_id"], code, gross, op_id)
+    if st == "insufficient":
+        await db.orders.update_one(
+            {"id": order_id, "rollback_pending.op_id": op_id},
+            {"$unset": {"rollback_pending": ""}})
+        raise HTTPException(
+            status_code=409,
+            detail=("El cliente ya gastó el saldo acreditado por esta orden; "
+                    "el rollback dejaría un abono sin respaldo. Gestiónalo "
+                    "manualmente desde Órdenes."))
+    await db.orders.update_one(
+        {"id": order_id, "rollback_pending.op_id": op_id},
+        {"$set": {"status": "pending", "updated_at": iso(now_utc()),
+                  "admin_note": f"Rollback de conciliación: {reason}"},
+         "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
+                    "bank_transaction_id": "", "reconciliation_score": "",
+                    "reconciliation": "", "accumulated_at": "",
+                    "credit_pending": "", "rollback_pending": ""}})
+
+
 class RollbackPayload(BaseModel):
     reason: str
 
@@ -907,13 +1037,18 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
                 status_code=409,
                 detail=f"La orden avanzó a '{order['status']}' — revierte su estado "
                        f"desde Órdenes antes de hacer rollback.")
-        await db.orders.update_one(
-            {"id": order_id, "status": "approved"},
-            {"$set": {"status": "pending", "updated_at": iso(now_utc()),
-                      "admin_note": f"Rollback de conciliación: {reason}"},
-             "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
-                        "bank_transaction_id": "", "reconciliation_score": "",
-                        "reconciliation": ""}})
+        if order.get("accumulated_at"):
+            # iter260(E05a) — la orden acumulada acreditó saldo: revertirlo
+            # (o bloquear) antes de liberar el respaldo bancario.
+            await _rollback_accumulated_order_credit(order, tx_id, reason)
+        else:
+            await db.orders.update_one(
+                {"id": order_id, "status": "approved"},
+                {"$set": {"status": "pending", "updated_at": iso(now_utc()),
+                          "admin_note": f"Rollback de conciliación: {reason}"},
+                 "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
+                            "bank_transaction_id": "", "reconciliation_score": "",
+                            "reconciliation": ""}})
     new_status = "manual_review" if (tx.get("candidates") or []) else "unmatched"
     await db.bank_transactions.update_one(
         {"id": tx_id},

@@ -5,11 +5,16 @@ Pure business helpers, no HTTP layer; the only side effect is MongoDB I/O via
 the shared `db_client`.
 """
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException
 
 from db_client import db
+
+# iter260(E07) — horizonte de seguridad de la compactación: un op 'applied'
+# más joven que esto NUNCA se retira del registro embebido (un ejecutor lento
+# del mismo op podría seguir en vuelo).
+COMPACT_SAFETY_HOURS = 24
 
 
 # ============================================================
@@ -201,8 +206,10 @@ async def _ops_log_ensure(op_id: str, user_id: str, code: str, amount: float,
 
 
 async def _ops_log_mark_applied(op_id: str) -> None:
-    await db.credit_ops.update_one({"op_id": op_id},
-                                   {"$set": {"state": "applied"}})
+    await db.credit_ops.update_one(
+        {"op_id": op_id},
+        {"$set": {"state": "applied",
+                  "applied_at": datetime.now(timezone.utc).isoformat()}})
 
 
 _OPS_LOG_READY = False
@@ -308,6 +315,37 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
     # insuficiente: liberar el intento pendiente del log duradero.
     await db.credit_ops.delete_one({"op_id": op_id, "state": "pending"})
     return "insufficient"
+
+
+async def burn_or_undo_debit(user_id: str, code: str, amount: float,
+                             op_id: str) -> str:
+    """iter260(E08) — al abortar un plan: QUEMA el op de débito (lo sella en
+    el registro del usuario y en el log duradero SIN mover dinero) para que
+    un débito tardío aún en vuelo se vuelva 'duplicate'; si el débito ya se
+    aplicó, lo compensa con el abono ':undo' idempotente del healer.
+    El push con guard $ne y el $inc del débito compiten por el MISMO array:
+    exactamente uno gana, en cualquier orden. Devuelve 'burned' | 'undone'."""
+    res = await db.users.update_one(
+        {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
+        {"$push": _registry_push(op_id)})
+    try:
+        await db.credit_ops.update_one(
+            {"op_id": op_id},
+            {"$set": {"state": "applied", "burned": bool(res.modified_count),
+                      "applied_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True)
+    except Exception:
+        # carrera con el insert del propio débito (índice único): re-sellar.
+        await db.credit_ops.update_one(
+            {"op_id": op_id}, {"$set": {"state": "applied"}})
+    if res.modified_count:
+        return "burned"
+    if await db.users.find_one({"user_id": user_id,
+                                "applied_credit_ops": op_id}, {"_id": 1}):
+        await credit_balance_idempotent(user_id, code, amount, f"{op_id}:undo",
+                                        legacy_usd=(code == "USD"))
+        return "undone"
+    return "burned"
 
 
 async def op_was_applied(user_id: str, op_id: str) -> bool:
@@ -434,12 +472,14 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
                 {"id": cr["id"]},
                 {"_id": 0, "debt_remaining": 1, "status": 1,
                  "repayment_events": 1})
-            if not fresh or fresh.get("status") != "disbursed":
+            if not fresh:
                 break
-            # iter257(D05) — contabilizar contribuciones de ESTA orden que
-            # aparecieron después de la lectura inicial (ejecutor concurrente
-            # o reintento): consumen presupuesto igual que las propias, así
-            # dos ejecuciones simultáneas no amortizan más del presupuesto.
+            # iter257(D05)/iter260(E06) — contabilizar contribuciones de ESTA
+            # orden que aparecieron después de la lectura inicial (ejecutor
+            # concurrente o reintento) ANTES de descartar la deuda por estado:
+            # si el otro ejecutor acaba de liquidarla (paid_off) con una
+            # contribución de esta misma orden, ese importe TAMBIÉN consume
+            # presupuesto — de lo contrario dos ejecutores amortizan de más.
             done_now = round(sum(float(ev.get("amount") or 0)
                                  for ev in (fresh.get("repayment_events") or [])
                                  if ev.get("order_id") == order_id), 6)
@@ -449,8 +489,8 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
                 budget = round(max(budget - delta, 0.0), 6)
                 consumed = round(consumed + delta, 6)
                 prior_map[cr["id"]] = done_now
-            if done_now > 0:
-                break  # esta orden ya contribuyó a esta deuda
+            if fresh.get("status") != "disbursed" or done_now > 0:
+                break  # deuda cerrada o esta orden ya contribuyó aquí
             debt = float(fresh.get("debt_remaining") or 0.0)
             contribution = round(min(budget, debt), 4)
             if contribution <= 0:
@@ -516,7 +556,15 @@ async def compact_credit_registries(threshold: int = 2000,
     está 'applied' (o que no tienen log — legado anterior a iter254, cuyos
     intentos están muertos). Un op con log 'pending' se CONSERVA siempre:
     su presencia/ausencia en el registro es la evidencia que desambigua si
-    el dinero llegó a moverse."""
+    el dinero llegó a moverse.
+
+    iter260(E07) — además, un op 'applied' RECIENTE (< horizonte de
+    seguridad) también se conserva: un ejecutor lento del mismo op_id podría
+    seguir en vuelo con su decisión antigua, y retirar el ID le permitiría
+    re-aplicar la operación. Ningún request HTTP sobrevive 24h, así que el
+    horizonte cierra esa ventana sin transacciones multi-documento."""
+    horizon = (datetime.now(timezone.utc)
+               - timedelta(hours=COMPACT_SAFETY_HOURS)).isoformat()
     users = await db.users.find(
         {f"applied_credit_ops.{threshold}": {"$exists": True}},
         {"_id": 0, "user_id": 1, "applied_credit_ops": 1}).to_list(50)
@@ -526,13 +574,23 @@ async def compact_credit_registries(threshold: int = 2000,
         candidates = ops[:-keep] if keep else ops
         if not candidates:
             continue
-        pending = set()
         rows = await db.credit_ops.find(
-            {"op_id": {"$in": candidates}, "state": "pending"},
-            {"_id": 0, "op_id": 1}).to_list(len(candidates))
-        for d in rows:
-            pending.add(d["op_id"])
-        removable = [o for o in candidates if o not in pending]
+            {"op_id": {"$in": candidates}},
+            {"_id": 0, "op_id": 1, "state": 1, "at": 1,
+             "applied_at": 1}).to_list(len(candidates))
+        by_id = {d["op_id"]: d for d in rows}
+        removable = []
+        for op in candidates:
+            d = by_id.get(op)
+            if d is None:
+                removable.append(op)  # sin log duradero (legado muerto)
+                continue
+            if d.get("state", "applied") != "applied":
+                continue  # pending → evidencia, se conserva
+            applied_at = d.get("applied_at") or d.get("at") or ""
+            if applied_at >= horizon:
+                continue  # E07: aplicado hace poco → posible ejecutor en vuelo
+            removable.append(op)
         if removable:
             await db.users.update_one(
                 {"user_id": u["user_id"]},

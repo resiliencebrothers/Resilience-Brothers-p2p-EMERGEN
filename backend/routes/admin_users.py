@@ -257,8 +257,9 @@ async def get_permissions_catalog(request: Request) -> Any:
 
 @router.post("/admin/users/{user_id}/verify-email")
 async def admin_verify_user_email(user_id: str, request: Request) -> Any:
-    """Manually mark a user's email as verified. Requires staff role + 2FA step-up."""
-    requester = await require_staff(request)
+    """Manually mark a user's email as verified. Requires the `users`
+    permission + 2FA step-up (iter260/E01 — antes bastaba cualquier staff)."""
+    requester = await require_permission(request, "users")
     payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     await _enforce_totp_step_up(requester, payload.get("totp_code"),
                                  action_label="verificar email manualmente")
@@ -266,7 +267,9 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if target.get("email_verified"):
-        return {"ok": True, "already_verified": True, "user": target}
+        # iter260(E01) — NUNCA devolver credenciales en respuestas anidadas.
+        return {"ok": True, "already_verified": True,
+                "user": strip_credential_fields(target)}
     await db.users.update_one(
         {"user_id": user_id},
         {"$set": {"email_verified": True},
@@ -276,7 +279,8 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
     await log_action(db, requester, "user.verify_email_manual", "user", user_id,
                      summary=f"Email verificado manualmente para {target.get('email', '')}",
                      details={"email": target.get("email")})
-    return {"ok": True, "already_verified": False, "user": fresh}
+    return {"ok": True, "already_verified": False,
+            "user": strip_credential_fields(fresh)}
 
 
 @router.get("/admin/email-health")

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Colecciones cuyo flujo escribe markers `credit_pending`.
 PENDING_COLLECTIONS = ("orders", "deposits", "redemptions", "withdrawals",
                        "deliveries", "capital_requests", "users",
-                       "vip_capital_deposits")
+                       "vip_capital_deposits", "vip_batch_items")
 
 
 async def heal_pending_credits(max_age_seconds: int = 90) -> int:
@@ -174,7 +174,7 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     # --- reactivaciones de canje a medias (S04/D04) -------------------------
     rows = await db.redemptions.find(
         {"status": "rejected", "reactivation_pending.at": {"$lt": cutoff}},
-        {"_id": 0, "id": 1, "user_id": 1, "product_id": 1,
+        {"_id": 0, "id": 1, "user_id": 1, "product_id": 1, "quantity": 1,
          "reactivation_pending": 1}).to_list(100)
     for r in rows:
         plan = r.get("reactivation_pending") or {}
@@ -192,19 +192,43 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
                 {"$set": {"reactivation_pending.state": "aborting"}})
             if claim.modified_count == 0:
                 continue
-        if debit_op and await op_was_applied(r["user_id"], debit_op):
-            await _credit(r["user_id"], cur, float(plan.get("amount") or 0),
-                          f"{debit_op}:undo", legacy_usd=(cur == "USD"))
-        if stock_op and await stock_op_was_applied(r["product_id"], stock_op):
-            await apply_stock_idempotent(r["product_id"],
-                                         int(plan.get("quantity") or 0),
-                                         f"{stock_op}:undo",
-                                         require_available=False)
+        # iter260(E08) — quemar-o-compensar ATÓMICO: si el creador lento aún
+        # no aplicó el débito/reserva, la quema los vuelve 'duplicate' (jamás
+        # se aplicarán); si ya se aplicaron, se compensan. Borrar el plan ya
+        # no puede dejar un débito tardío sin reverso.
+        from services.balances import burn_or_undo_debit
+        from services.inventory import burn_or_undo_stock
+        if debit_op:
+            await burn_or_undo_debit(r["user_id"], cur,
+                                     float(plan.get("amount") or 0), debit_op)
+        if stock_op:
+            await burn_or_undo_stock(r["product_id"],
+                                     int(plan.get("quantity")
+                                         or r.get("quantity") or 0), stock_op)
         await db.redemptions.update_one(
             {"id": r["id"], "reactivation_pending.stock_op": stock_op},
             {"$unset": {"reactivation_pending": ""}})
         healed += 1
         logger.warning("reactivación de canje revertida: %s", r["id"])
+
+    # --- ítems de lote legado con efecto de ledger pendiente (E02) ----------
+    rows = await db.vip_batch_items.find(
+        {"ledger_pending.at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "vip_user_id": 1, "ledger_pending": 1}).to_list(100)
+    for it in rows:
+        lp = it.get("ledger_pending") or {}
+        op = lp.get("op_id") or ""
+        if op:
+            from services.vip_batch_ops import apply_ledger_delta_idempotent
+            await apply_ledger_delta_idempotent(
+                it["vip_user_id"], lp.get("direction") or "credit",
+                float(lp.get("delta_usdt") or 0), op)
+        await db.vip_batch_items.update_one(
+            {"id": it["id"], "ledger_pending.op_id": op},
+            {"$unset": {"ledger_pending": ""}})
+        healed += 1
+        logger.warning("ledger de ítem de lote completado por el healer: %s",
+                       it["id"])
 
     # --- settlements con efecto pendiente (D03) -----------------------------
     rows = await db.vip_settlements.find(

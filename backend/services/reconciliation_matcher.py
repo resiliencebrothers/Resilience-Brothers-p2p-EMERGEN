@@ -27,6 +27,8 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 
+from fastapi import HTTPException
+
 from db_client import db
 from auth_utils import iso, now_utc
 from audit_log import log_action
@@ -660,30 +662,58 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
 
 async def rollback_batch_item_from_reconciliation(item: Dict, tx_id: str,
                                                   actor: Dict, reason: str) -> None:
-    """iter172 §25 — revert a batch-item reconciliation: reverse the credited
-    balance and return the item to pending."""
+    """iter172 §25 / iter260(E05b) — revierte la conciliación de un ítem de
+    lote con PLAN persistente y débito IDEMPOTENTE por op_id: dos rollbacks
+    superpuestos ya no pueden descontar dos veces. Si el VIP ya gastó el
+    abono, el débito se fuerza igualmente (saldo negativo = deuda explícita,
+    misma política que el reverso de crédito a vendedores). Al volver a
+    'pending' se incrementa decision_cycle para que una futura re-aprobación
+    use op_ids nuevos."""
+    item_id = item["id"]
+    cycle = int(item.get("decision_cycle") or 0)
+    op_id = f"vitem-rollback:{item_id}:c{cycle}"
+    plan = {"op_id": op_id, "at": iso(now_utc()), "by": actor.get("user_id", "")}
+    claim = await db.vip_batch_items.update_one(
+        {"id": item_id, "status": "approved",
+         "reconciliation.bank_transaction_id": tx_id,
+         "rollback_pending": {"$exists": False}},
+        {"$set": {"rollback_pending": plan}})
+    if claim.modified_count == 0:
+        fresh = await db.vip_batch_items.find_one(
+            {"id": item_id}, {"_id": 0, "rollback_pending": 1, "status": 1})
+        pend = (fresh or {}).get("rollback_pending")
+        if not pend or (fresh or {}).get("status") != "approved":
+            raise HTTPException(
+                status_code=409,
+                detail="El ítem del lote ya fue revertido o cambió de estado.")
+        op_id = pend["op_id"]  # reanudar el mismo plan (idempotente)
     if item.get("to_code"):
         amount_to = float(item.get("amount_to") or 0.0)
         if amount_to > 0:
-            await db.users.update_one(
-                {"user_id": item["vip_user_id"]},
-                {"$inc": {f"vip_balances.{item['to_code']}": -amount_to}})
+            from services.balances import debit_balance_idempotent
+            await debit_balance_idempotent(
+                item["vip_user_id"], item["to_code"], amount_to, op_id,
+                allow_negative=True)
     else:
         delta = float(item.get("balance_delta_usdt") or 0.0)
         if delta:
             field = ("positive_usdt" if item.get("direction") == "credit"
                      else "negative_usdt")
             await db.vip_ledger.update_one(
-                {"vip_user_id": item["vip_user_id"]},
+                {"vip_user_id": item["vip_user_id"],
+                 "applied_ops": {"$ne": op_id}},
                 {"$inc": {field: -delta},
-                 "$set": {"updated_at": iso(now_utc())}})
+                 "$set": {"updated_at": iso(now_utc())},
+                 "$push": {"applied_ops": op_id}})
     await db.vip_batch_items.update_one(
-        {"id": item["id"]},
+        {"id": item_id, "rollback_pending.op_id": op_id},
         {"$set": {"status": "pending", "updated_at": iso(now_utc()),
                   "reviewed_at": None, "reviewed_by": None,
                   "balance_delta_usdt": None, "margin_usdt": None,
                   "admin_note": f"Rollback de conciliación: {reason}"},
-         "$unset": {"reconciliation": "", "payment_confirmation_source": "",
+         "$inc": {"decision_cycle": 1},
+         "$unset": {"rollback_pending": "", "reconciliation": "",
+                    "payment_confirmation_source": "",
                     "bank_transaction_id": "", "reconciliation_score": ""}})
     await refresh_batch_totals(item["batch_id"])
     try:
@@ -712,6 +742,17 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
         tx["confidence_score"] = best["score"]
         if cand_doc is None:
             raise RuntimeError("candidate order vanished from pool between rank and apply")
+        # iter260(E04) — reclamar el uso EXCLUSIVO del movimiento bancario
+        # antes de acreditar (mismo protocolo que la confirmación manual).
+        claim = await db.bank_transactions.update_one(
+            {"id": tx["id"],
+             "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]},
+             "matching_claim": {"$exists": False}},
+            {"$set": {"matching_claim": {"order_id": best["order_id"],
+                                         "at": iso(now_utc()),
+                                         "by": "system_reconciliation"}}})
+        if claim.modified_count == 0:
+            raise RuntimeError("bank transaction already claimed elsewhere")
         if cand_doc.get("kind") == "vip_batch_item":
             await approve_batch_item_from_reconciliation(
                 cand_doc["id"], tx, actor, auto=True)
@@ -720,6 +761,11 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                 cand_doc, tx, actor, auto=True)
     except RuntimeError as e:
         logger.warning(f"auto-match fallback to review for tx {tx['id']}: {e}")
+        # liberar SOLO nuestro propio reclamo fallido (si llegó a escribirse).
+        await db.bank_transactions.update_one(
+            {"id": tx["id"], "matching_claim.by": "system_reconciliation",
+             "matching_claim.order_id": best["order_id"]},
+            {"$unset": {"matching_claim": ""}})
         update["status"] = "manual_review"
         return "review"
     update.update({"status": "auto_matched",
@@ -769,7 +815,10 @@ async def _match_and_apply(tx: Dict, pool: List[Dict], cfg: Dict,
                               score=best["score"], details=best["breakdown"])
     else:
         update["status"] = "unmatched"
-    await db.bank_transactions.update_one({"id": tx["id"]}, {"$set": update})
+    final_update: Dict[str, Any] = {"$set": update}
+    if update.get("status") == "auto_matched":
+        final_update["$unset"] = {"matching_claim": ""}
+    await db.bank_transactions.update_one({"id": tx["id"]}, final_update)
     return decision
 
 
@@ -810,7 +859,10 @@ async def rematch_transactions(actor: Dict, currency: Optional[str] = None,
     items. Makes reconciliation order-independent: statements imported
     BEFORE the orders/items existed get matched as soon as this runs."""
     q: Dict[str, Any] = {"status": {"$in": ["unmatched", "manual_review"]},
-                         "direction": "credit"}
+                         "direction": "credit",
+                         # iter260(E04) — no re-evaluar movimientos con un
+                         # enlace manual en curso (reclamo activo).
+                         "matching_claim": {"$exists": False}}
     if currency:
         q["currency"] = currency.upper()
     if import_id:

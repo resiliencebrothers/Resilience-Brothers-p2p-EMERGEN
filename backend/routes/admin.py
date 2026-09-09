@@ -427,8 +427,12 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
     settle_cur = r.get("settlement_currency") or "USD"
     from services.credit_recovery import pending_marker, apply_and_clear
     marker = pending_marker(owner_id, settle_cur, net, "vendor-credit")
+    # iter260(E09) — el claim exige que el canje SIGA en 'delivered': si un
+    # rechazo concurrente ya lo movió, este crédito tardío no se aplica (y el
+    # rechazo, al no ver vendor_credited_at, no tenía nada que revertir).
     res = await db.redemptions.update_one(
-        {"id": r["id"], "vendor_credited_at": {"$in": [None, ""]}},
+        {"id": r["id"], "status": "delivered",
+         "vendor_credited_at": {"$in": [None, ""]}},
         {"$set": {"vendor_credited_at": iso(now_utc()),
                   "vendor_credit_net": net,
                   "vendor_commission_pct": pct,
@@ -873,23 +877,22 @@ async def _claim_reactivation_abort(rid: str, stock_op: str) -> bool:
     return res.modified_count == 1
 
 
-async def _abort_reactivation(r: dict, rid: str, plan: dict, settle_cur: str,
-                              undo_stock: bool, undo_debit: bool) -> None:
-    """Compensa SOLO si somos dueños del aborto (mismos op_ids :undo del
-    healer ⇒ exactamente-una-vez) y limpia el plan."""
+async def _abort_reactivation(r: dict, rid: str, plan: dict,
+                              settle_cur: str) -> None:
+    """Compensa SOLO si somos dueños del aborto. iter260(E08) — cada op del
+    plan se QUEMA o se compensa atómicamente (burn_or_undo_*): si un débito o
+    reserva tardíos siguen en vuelo, la quema los convierte en 'duplicate';
+    si ya se aplicaron, se compensan (':undo' idempotente). Así abortar nunca
+    deja una obligación huérfana."""
     if not await _claim_reactivation_abort(rid, plan["stock_op"]):
         return
-    from services.balances import credit_balance_idempotent
-    from services.inventory import apply_stock_idempotent
-    if undo_debit:
-        await credit_balance_idempotent(
-            r["user_id"], settle_cur, float(plan.get("amount") or 0),
-            f"{plan['debit_op']}:undo", legacy_usd=(settle_cur == "USD"))
-    if undo_stock:
-        await apply_stock_idempotent(r["product_id"],
-                                     int(plan.get("quantity") or r["quantity"]),
-                                     f"{plan['stock_op']}:undo",
-                                     require_available=False)
+    from services.balances import burn_or_undo_debit
+    from services.inventory import burn_or_undo_stock
+    await burn_or_undo_debit(r["user_id"], settle_cur,
+                             float(plan.get("amount") or 0), plan["debit_op"])
+    await burn_or_undo_stock(r["product_id"],
+                             int(plan.get("quantity") or r["quantity"]),
+                             plan["stock_op"])
     await db.redemptions.update_one(
         {"id": rid, "reactivation_pending.stock_op": plan["stock_op"]},
         {"$unset": {"reactivation_pending": ""}})
@@ -908,15 +911,13 @@ async def _reserve_reactivation_funds(r: dict, rid: str, plan: dict,
         r["product_id"], -qty, plan["stock_op"],
         extra_filter={"is_active": {"$ne": False}})
     if stock_status == "insufficient":
-        await _abort_reactivation(r, rid, plan, settle_cur,
-                                  undo_stock=False, undo_debit=False)
+        await _abort_reactivation(r, rid, plan, settle_cur)
         raise HTTPException(status_code=409,
                             detail="Sin stock disponible para reactivar este canje")
     st = await debit_balance_idempotent(r["user_id"], settle_cur, recharge,
                                         plan["debit_op"])
     if st == "insufficient":
-        await _abort_reactivation(r, rid, plan, settle_cur,
-                                  undo_stock=True, undo_debit=False)
+        await _abort_reactivation(r, rid, plan, settle_cur)
         raise HTTPException(
             status_code=409,
             detail=(f"El cliente no tiene {recharge} {settle_cur} para "
@@ -1032,8 +1033,7 @@ async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
         # iter257(D04) — compensar SOLO si somos dueños del aborto: si otro
         # proceso ya publicó el estado nuevo con este mismo plan, sus efectos
         # (cobro + reserva) respaldan un canje activo y NO deben deshacerse.
-        await _abort_reactivation(r, rid, plan, settle_cur,
-                                  undo_stock=True, undo_debit=True)
+        await _abort_reactivation(r, rid, plan, settle_cur)
         raise HTTPException(status_code=409,
                             detail="El canje cambió de estado; recarga.")
     await _record_reactivation_traces(r, rid, plan, settle_cur, actor,

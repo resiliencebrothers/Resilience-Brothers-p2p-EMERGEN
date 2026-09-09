@@ -484,12 +484,16 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
     now = iso(now_utc())
-    await db.deposits.update_one(
-        {"id": dep_id},
+    # iter260(E03) — claim atómico: una confirmación concurrente que ya
+    # acreditó no puede ser sobrescrita por este rechazo.
+    claim = await db.deposits.update_one(
+        {"id": dep_id, "status": "pending"},
         {"$set": {"status": "rejected", "updated_at": now, "reviewed_at": now,
                   "reviewed_by": staff["user_id"],
                   "admin_note": payload.admin_note.strip() or None}},
     )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
     fresh = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="deposit.reject",

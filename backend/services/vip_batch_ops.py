@@ -143,10 +143,10 @@ def staff_pair_allowed(staff: dict, item: dict) -> bool:
     return f"{item.get('from_code')}->{item.get('to_code')}" in allowed
 
 
-async def _approve_pair_item(item: dict, rates: dict) -> tuple:
-    """iter113 — pair item: credit the VIP's per-currency balance at the
-    snapshotted VIP rate and record the platform margin vs the real rate
-    as revenue. Returns (balance_delta_usdt, extra_fields)."""
+async def _pair_item_amounts(item: dict, rates: dict) -> tuple:
+    """iter113/iter260(E02) — SOLO calcula (no acredita): importe destino,
+    margen y campos extra del ítem por par. Lanza 422 si falta la tasa.
+    Returns (amount_to, balance_delta_usdt, extra_fields)."""
     amount_to = float(item.get("amount_to") or 0.0)
     rate_applied = float(item.get("rate_applied") or 0.0)
     item_amount = float(item.get("amount") or 0.0)
@@ -166,10 +166,6 @@ async def _approve_pair_item(item: dict, rates: dict) -> tuple:
     if real_rate > 0:
         margin_to = float(item["amount"]) * real_rate - amount_to
         margin_usdt = round(float(convert_to_usdt(margin_to, item["to_code"], rates) or 0.0), 4)
-    await db.users.update_one(
-        {"user_id": item["vip_user_id"]},
-        {"$inc": {f"vip_balances.{item['to_code']}": amount_to}},
-    )
     balance_delta = round(float(convert_to_usdt(amount_to, item["to_code"], rates) or 0.0), 4)
     extra = {
         "amount_to": amount_to,
@@ -178,11 +174,12 @@ async def _approve_pair_item(item: dict, rates: dict) -> tuple:
         "margin_usdt": margin_usdt,
         "credited_currency": item["to_code"],
     }
-    return balance_delta, extra
+    return amount_to, balance_delta, extra
 
 
-async def _approve_legacy_item(item: dict, rates: dict) -> float:
-    """Legacy single-currency item → old USDT ledger behavior."""
+def _legacy_item_delta(item: dict, rates: dict) -> float:
+    """Ítem legado de una sola moneda → delta USDT del ledger viejo (cálculo,
+    sin efectos)."""
     delta = convert_to_usdt(item["amount"], item["currency"], rates)
     if delta is None:
         raise HTTPException(
@@ -190,9 +187,30 @@ async def _approve_legacy_item(item: dict, rates: dict) -> float:
             detail=(f"No hay tasa configurada para {item['currency']}. "
                     f"Añade una tasa {item['currency']}→USDT antes de aprobar."),
         )
-    balance_delta = round(float(delta), 4)
-    await increment_ledger(item["vip_user_id"], item["direction"], balance_delta)
-    return balance_delta
+    return round(float(delta), 4)
+
+
+async def apply_ledger_delta_idempotent(vip_user_id: str, direction: str,
+                                        delta_usdt: float, op_id: str) -> None:
+    """iter260(E02) — incremento del ledger legado IDEMPOTENTE por op_id
+    (guard $ne + push en el MISMO update)."""
+    await ensure_ledger(vip_user_id)
+    field = "positive_usdt" if direction == "credit" else "negative_usdt"
+    await db.vip_ledger.update_one(
+        {"vip_user_id": vip_user_id, "applied_ops": {"$ne": op_id}},
+        {"$inc": {field: float(delta_usdt)},
+         "$set": {"updated_at": iso(now_utc())},
+         "$push": {"applied_ops": op_id}},
+    )
+
+
+async def _claim_item_decision(item_id: str, sets: dict) -> None:
+    """iter260(E02) — transición ATÓMICA pendiente→decisión del ítem: quien
+    pierde la carrera recibe 409 (sin abonos duplicados ni pisadas)."""
+    claim = await db.vip_batch_items.update_one(
+        {"id": item_id, "status": "pending"}, {"$set": sets})
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409, detail="El ítem ya fue procesado.")
 
 
 async def _publish_item_decision_events(item: dict, item_id: str,
@@ -225,6 +243,12 @@ async def _publish_item_decision_events(item: dict, item_id: str,
 
 async def apply_item_decision(item_id: str, decision: str, staff: dict,
                               admin_note: str = "") -> dict:
+    """iter260(E02) — protocolo único para TODAS las entradas (manual y
+    conciliación): primero se CALCULA, luego se RECLAMA la transición
+    pendiente→decisión con el plan del abono en el MISMO update atómico, y
+    después se acredita de forma idempotente (op_id estable por ítem/ciclo).
+    Dos aprobaciones superpuestas no pueden abonar dos veces; un crash tras
+    el claim lo completa el healer (credit_pending / ledger_pending)."""
     item = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Ítem no encontrado.")
@@ -239,27 +263,44 @@ async def apply_item_decision(item_id: str, decision: str, staff: dict,
         )
 
     now = iso(now_utc())
-    balance_delta = None
-    extra: dict = {}
-    if decision == "approved":
+    # op_id estable por ítem/ciclo: un retry reutiliza el MISMO id (no
+    # duplica); un rollback de conciliación incrementa decision_cycle.
+    cycle = int(item.get("decision_cycle") or 0)
+    op_id = f"vip-item:{item_id}:c{cycle}"
+    base_sets: dict = {
+        "status": decision, "updated_at": now, "reviewed_at": now,
+        "reviewed_by": staff["user_id"], "admin_note": admin_note or None,
+    }
+    if decision != "approved":
+        await _claim_item_decision(item_id,
+                                   {**base_sets, "balance_delta_usdt": None})
+    else:
         rates = await build_rate_lookup()
         if item.get("to_code"):
-            balance_delta, extra = await _approve_pair_item(item, rates)
+            amount_to, balance_delta, extra = await _pair_item_amounts(item, rates)
+            from services.credit_markers import pending_marker, apply_and_clear
+            marker = pending_marker(item["vip_user_id"], item["to_code"],
+                                    amount_to, "vip-batch-item")
+            marker["op_id"] = op_id
+            await _claim_item_decision(
+                item_id,
+                {**base_sets, "balance_delta_usdt": balance_delta, **extra,
+                 "credit_pending": marker})
+            await apply_and_clear("vip_batch_items", item_id, marker)
         else:
-            balance_delta = await _approve_legacy_item(item, rates)
+            balance_delta = _legacy_item_delta(item, rates)
+            plan = {"op_id": op_id, "direction": item["direction"],
+                    "delta_usdt": balance_delta, "at": now}
+            await _claim_item_decision(
+                item_id,
+                {**base_sets, "balance_delta_usdt": balance_delta,
+                 "ledger_pending": plan})
+            await apply_ledger_delta_idempotent(
+                item["vip_user_id"], item["direction"], balance_delta, op_id)
+            await db.vip_batch_items.update_one(
+                {"id": item_id, "ledger_pending.op_id": op_id},
+                {"$unset": {"ledger_pending": ""}})
 
-    await db.vip_batch_items.update_one(
-        {"id": item_id},
-        {"$set": {
-            "status": decision,
-            "updated_at": now,
-            "reviewed_at": now,
-            "reviewed_by": staff["user_id"],
-            "admin_note": admin_note or None,
-            "balance_delta_usdt": balance_delta,
-            **extra,
-        }},
-    )
     await refresh_batch_totals(item["batch_id"])
     fresh = await db.vip_batch_items.find_one({"id": item_id}, {"_id": 0})
     if decision == "approved":

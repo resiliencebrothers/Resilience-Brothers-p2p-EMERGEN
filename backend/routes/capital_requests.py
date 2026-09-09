@@ -253,8 +253,11 @@ async def admin_reject_capital_request(req_id: str, payload: CapitalRequestRejec
                             detail=f"Solo se pueden rechazar solicitudes en estado 'pending' (actual: {doc['status']}).")
 
     now_iso = iso(now_utc())
-    await db.capital_requests.update_one(
-        {"id": req_id},
+    # iter260(E03) — claim atómico: si una aprobación/desembolso concurrente
+    # ganó, este rechazo pierde (409) en vez de dejar una solicitud con
+    # dinero desembolsado en estado 'rejected' (invisible a la amortización).
+    claim = await db.capital_requests.update_one(
+        {"id": req_id, "status": "pending"},
         {"$set": {
             "status": "rejected",
             "reviewed_by": actor.get("user_id", ""),
@@ -263,6 +266,9 @@ async def admin_reject_capital_request(req_id: str, payload: CapitalRequestRejec
             "updated_at": now_iso,
         }},
     )
+    if claim.matched_count == 0:
+        raise HTTPException(status_code=409,
+                            detail="La solicitud ya fue procesada por otro operador.")
     await log_action(db, actor, "capital_request.rejected", "capital_request", req_id,
                       summary=(f"Rechazó solicitud de {doc['amount']} {doc['currency_code']} "
                                f"de {doc.get('user_email', doc['user_id'])}"),
