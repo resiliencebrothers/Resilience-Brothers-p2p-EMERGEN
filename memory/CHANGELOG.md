@@ -1382,3 +1382,7 @@ Operator asks (13 Feb 2026):
 - **H08**: CUPE añadido a CASH_DENOMS de `AccountBreakdownDialog.jsx`. **H09**: test de scheduler con ruta relativa al repo.
 - Frontend: badges por origen (Ajuste/Retiro/Transferencia), lápiz ámbar solo-desglose (MovementDialog modo `linked` con campos deshabilitados), nota sin-contrapartida, i18n es/en.
 - Tests: `test_iter265_audit_caja_fixes.py` 11/11 (añadido a test-critical, 342/342) + `test_iter15` actualizado (409 en vez de 403 al revertir pagado) + suite completa 1899/1900 (único fallo test_admin_quick_summary = flake de orden, pasa aislado) + mypy 97 + eslint + E2E desktop/móvil sin overflow.
+
+## Jun 2026 — iter266: Retiros contra el DISPONIBLE REAL (decisión del usuario, verificado)
+- `create_company_withdrawal` y el pago (`update_company_withdrawal`) ahora autorizan contra `balance_available` (balance − custodia de clientes) además de la reserva de retiros pendientes. Mensajes detallan balance, custodia y reservado.
+- Test nuevo `test_client_custody_reduces_available_fund` (balance 100 − custodia 30 → 80 rechazado, 70 pagado; custodia > balance → nada se autoriza). `test_iter265` 12/12, regresión retiros (iter15/194/195/38/storage35/263) verde (2 flakes de red de storage verificados aislados), make test-critical 343/343, mypy 97.

@@ -193,6 +193,36 @@ class TestH02WithdrawalIntegrity:
             f"pagar 80 con 30 disponibles debe dar conflicto: {r.status_code}"
         assert "insuficiente" in r.json()["detail"].lower()
 
+    def test_client_custody_reduces_available_fund(self):
+        """iter266 — el dinero en custodia de clientes NO financia retiros:
+        balance 100 con 30 en custodia → disponible real 70."""
+        db = _db()
+        _adjust({"adjustment_type": "inflow", "currency": CCY, "amount": 100,
+                 "method": "transfer", "source_name": f"{MARK} aporte"})
+        db.users.update_one({"user_id": "user_test_vip01"},
+                            {"$set": {f"vip_balances.{CCY}": 30.0}})
+        try:
+            r = _cw_create({"currency": CCY, "amount": 80,
+                            "beneficiary": f"{MARK} A", "concept": "x"})
+            assert r.status_code == 400, \
+                f"80 > 70 disponibles (custodia 30) debe rechazarse: {r.status_code}"
+            assert "custodia" in r.json()["detail"].lower(), r.json()
+            a = _cw_create({"currency": CCY, "amount": 70,
+                            "beneficiary": f"{MARK} B", "concept": "x"})
+            assert a.status_code == 200, a.text
+            r = _cw_status(a.json()["id"], {"status": "paid"})
+            assert r.status_code == 200, r.text
+            # pagar más que el disponible real también se bloquea al pagar
+            db.users.update_one({"user_id": "user_test_vip01"},
+                                {"$set": {f"vip_balances.{CCY}": 40.0}})
+            c = _cw_create({"currency": CCY, "amount": 5,
+                            "beneficiary": f"{MARK} C", "concept": "x"})
+            assert c.status_code == 400, \
+                "balance 30 − custodia 40 → disponible negativo: nada se autoriza"
+        finally:
+            db.users.update_one({"user_id": "user_test_vip01"},
+                                {"$unset": {f"vip_balances.{CCY}": ""}})
+
 
 class TestH01LedgerCashParity:
     def teardown_method(self, _):

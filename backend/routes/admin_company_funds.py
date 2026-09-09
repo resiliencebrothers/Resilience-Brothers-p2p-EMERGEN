@@ -1048,7 +1048,12 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
     _enforce_employee_currency_scope(actor, currency)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
     funds = await _compute_company_funds([currency])
-    avail = next((f["balance"] for f in funds if f["currency"] == currency), 0.0)
+    row = next((f for f in funds if f["currency"] == currency), None)
+    balance = float(row["balance"]) if row else 0.0
+    custodia = float(row["client_balances"]) if row else 0.0
+    # iter266 — disponible REAL: el dinero en custodia de clientes no es
+    # capital propio y no puede financiar retiros de empresa.
+    avail = float(row["balance_available"]) if row else 0.0
     # H02 — reserva: los retiros aún no pagados (pending/approved) comprometen
     # el fondo; dos solicitudes no pueden consumir el mismo dinero.
     reserved = 0.0
@@ -1060,8 +1065,9 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
     if payload.amount > disponible + 1e-9:
         raise HTTPException(
             status_code=400,
-            detail=(f"Fondo insuficiente en {currency}: disponible "
-                    f"{disponible:.2f} (balance {avail:.2f} − "
+            detail=(f"Fondo insuficiente en {currency}: disponible real "
+                    f"{disponible:.2f} (balance {balance:.2f} − "
+                    f"{custodia:.2f} en custodia de clientes − "
                     f"{reserved:.2f} ya reservado en retiros pendientes)"),
         )
     cw = CompanyWithdrawal(
@@ -1157,17 +1163,19 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     if note is not None:
         update_doc["admin_note"] = note
     if new_status == "paid":
-        # H02 — el pago revalida el fondo disponible en ese momento; una
-        # salida real sin fondos debe tratarse explícitamente, no colarse.
+        # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
+        # (sin custodia de clientes); una salida sin fondos debe tratarse
+        # explícitamente, no colarse.
         funds = await _compute_company_funds([cw["currency"]])
-        avail = next((f["balance"] for f in funds
+        avail = next((f["balance_available"] for f in funds
                       if f["currency"] == cw["currency"]), 0.0)
         if float(cw["amount"]) > avail + 1e-9:
             raise HTTPException(
                 status_code=409,
                 detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
-                        f"pagado: disponible {avail:.2f}. Registra primero el "
-                        "capital o resuelve el descuadre explícitamente."))
+                        f"pagado: disponible real {avail:.2f} (descontada la "
+                        "custodia de clientes). Registra primero el capital "
+                        "o resuelve el descuadre explícitamente."))
         update_doc.update(await _paid_from_account_fields(payload, cw))
         update_doc["paid_at"] = iso(now_utc())
     # H02 — claim atómico condicionado al estado leído: un rechazo obsoleto
