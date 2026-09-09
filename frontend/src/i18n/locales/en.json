@@ -4192,6 +4192,8 @@
     "arqueoSave": "Save cash count",
     "arqueoSquared": "Cash count saved: box squared",
     "arqueoDiff": "Cash count saved with a difference of {{diff}} {{fund}}",
+    "arqueoDueTitle": "Today's cash count is due",
+    "arqueoDueHint": "Count the closing bills and record them. Admins are alerted on any shortage or surplus.",
     "reportTitle": "Monthly report",
     "reportEmpty": "No movements this month.",
     "reportDay": "Day",

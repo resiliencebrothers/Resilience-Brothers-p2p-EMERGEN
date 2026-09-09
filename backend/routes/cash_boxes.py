@@ -363,10 +363,20 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
                   for d in DENOMS[fund]]
     num_movs = await db.cash_box_movements.count_documents(base)
 
+    # iter264 — arqueo programado: ¿la caja pide el conteo de cierre de hoy?
+    from services.cash_box_arqueo import havana_day_start_utc
+    day_start = havana_day_start_utc()
+    arqueo_today = await db.cash_box_arqueos.find_one(
+        {**base, "created_at": {"$gte": day_start}},
+        {"_id": 0, "id": 1, "status": 1, "difference": 1, "created_at": 1})
+    movs_today = await db.cash_box_movements.count_documents(
+        {**base, "created_at": {"$gte": day_start}})
+    balance = round(init_amount + entradas - salidas, 2)
+
     return {
         "fund": fund,
         "initial": initial,
-        "balance": round(init_amount + entradas - salidas, 2),
+        "balance": balance,
         "entradas_total": entradas,
         "salidas_total": salidas,
         "month": month,
@@ -375,6 +385,9 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
         "neto_mes": round(e_mes - s_mes, 2),
         "denominaciones": denom_rows,
         "num_movimientos": num_movs,
+        "arqueo_today": arqueo_today,
+        "needs_arqueo": arqueo_today is None and bool(
+            movs_today or abs(balance) > 0.009),
     }
 
 
@@ -413,6 +426,10 @@ async def create_arqueo(box_id: str, payload: ArqueoCreate,
         "created_by_name": user.get("name") or user.get("email") or "",
     }
     await db.cash_box_arqueos.insert_one({**doc})
+    # iter264 — faltante/sobrante en caja de empresa → alerta a los admins
+    if doc["status"] != "cuadrada":
+        from services.cash_box_arqueo import notify_arqueo_discrepancy
+        await notify_arqueo_discrepancy(box, doc)
     return doc
 
 

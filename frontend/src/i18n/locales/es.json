@@ -4192,6 +4192,8 @@
     "arqueoSave": "Guardar arqueo",
     "arqueoSquared": "Arqueo guardado: caja cuadrada",
     "arqueoDiff": "Arqueo guardado con diferencia de {{diff}} {{fund}}",
+    "arqueoDueTitle": "La caja pide el arqueo de hoy",
+    "arqueoDueHint": "Cuenta los billetes del cierre y regístralos. Si hay faltante o sobrante se avisará a los admins.",
     "reportTitle": "Reporte mensual",
     "reportEmpty": "Sin movimientos en este mes.",
     "reportDay": "Día",

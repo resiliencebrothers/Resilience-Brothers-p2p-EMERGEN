@@ -290,6 +290,18 @@ async def run_cash_box_sync():
         logger.error(f"[cash-box-sync] failed: {e}")
 
 
+async def run_daily_arqueo_request():
+    """iter264 — Arqueo Programado: al cierre del día (20:00 Cuba) la caja
+    pide el arqueo de billetes de cada fondo de empresa con actividad."""
+    try:
+        from services.cash_box_arqueo import run_daily_arqueo_request as _req
+        n = await _req()
+        if n:
+            logger.info("[arqueo-request] %s fondo(s) pendientes avisados", n)
+    except Exception as e:
+        logger.error(f"[arqueo-request] failed: {e}")
+
+
 async def run_credit_recovery():
     """iter249 — completa acreditaciones que quedaron a medias (crash entre el
     claim y el abono). Idempotente por op_id; nunca duplica."""
@@ -406,6 +418,15 @@ def start_scheduler(db, build_timeseries):
         CronTrigger(hour=0, minute=0, timezone="America/Havana"),
         kwargs={"db": db},
         id="daily_batch_autoclose",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    # iter264 — Arqueo Programado de la Caja de Efectivo (20:00 America/Havana)
+    _scheduler.add_job(
+        run_daily_arqueo_request,
+        CronTrigger(hour=20, minute=0, timezone="America/Havana"),
+        id="daily_arqueo_request",
         replace_existing=True,
         misfire_grace_time=3600,
         coalesce=True,

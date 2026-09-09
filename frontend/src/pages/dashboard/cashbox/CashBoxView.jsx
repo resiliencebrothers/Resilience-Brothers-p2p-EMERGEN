@@ -173,6 +173,21 @@ export default function CashBoxView() {
             ))}
           </div>
 
+          {/* iter264 — la caja pide el arqueo de cierre del día */}
+          {resumen?.needs_arqueo && (
+            <div className="border border-amber-500/40 bg-amber-500/[0.07] px-4 py-3 flex flex-wrap items-center gap-3" data-testid="cashbox-arqueo-banner">
+              <ClipboardCheck className="w-5 h-5 text-amber-400 shrink-0" />
+              <div className="flex-1 min-w-[200px]">
+                <p className="text-sm font-bold text-amber-300">{t("cashbox.arqueoDueTitle")}</p>
+                <p className="text-xs text-neutral-400">{t("cashbox.arqueoDueHint")}</p>
+              </div>
+              <Button data-testid="cashbox-arqueo-banner-btn" size="sm" onClick={() => setArqueoOpen(true)}
+                className="bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-none h-9">
+                {t("cashbox.arqueoTitle")}
+              </Button>
+            </div>
+          )}
+
           {/* resumen */}
           {resumen && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

@@ -1794,3 +1794,6 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 
 ## 2026-06 · iter263 — Efectivo Fondo de Empresa ↔ Caja de Efectivo (pedido usuario, verificado)
 - Los ajustes manuales de capital en efectivo (CUP/CUPE/USD, desglose de billetes obligatorio) se replican automáticamente en la caja de empresa «Fondo Resilience» de la Caja de Efectivo (movimiento con billetes, idempotente) + backfill del stock histórico al arrancar y cada 10 min. Movimientos espejados bloqueados en la caja (409). Billetes 5000/2000 CUP añadidos al modal + fix overflow móvil en CashBoxView. Tests 5/5 + 59 regresión + E2E. Detalle en CHANGELOG.md.
+
+## 2026-06 · iter264 — Arqueo Programado de la Caja de Efectivo (pedido usuario, verificado)
+- Job diario 20:00 America/Havana: la caja pide el arqueo de billetes de cada fondo de empresa con actividad y sin arqueo del día (push+email+campana a admins). Todo arqueo con faltante/sobrante en caja de empresa alerta a los admins al instante (cajas personales privadas). Banner «La caja pide el arqueo de hoy» en la Caja de Efectivo. Tests 4/4 + 23 regresión + test-critical 331/331. Detalle en CHANGELOG.md.
