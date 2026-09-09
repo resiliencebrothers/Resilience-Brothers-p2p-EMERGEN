@@ -84,92 +84,116 @@ def _assert_paid_lock(actor: dict, withdrawal: dict, new_status: str) -> None:
         )
 
 
-async def _reconcile_balance_on_status_change(withdrawal: dict, new_status: str,
-                                                update_doc: dict) -> None:
-    """SEC hardening (auditoría 28/7/2026) — idempotent balance reconciliation.
+def _raise_withdrawal_race() -> None:
+    raise HTTPException(
+        status_code=409,
+        detail="El retiro cambió de estado mientras editabas; recarga la página.")
 
-    A `balance_refunded` flag on the withdrawal makes refunds safe against any
-    status flip sequence (e.g. rejected→pending→rejected no longer double-credits):
-      - Entering 'rejected' while NOT yet refunded → credit the balance back once.
-      - Leaving 'rejected' while previously refunded → re-debit (the payout is
-        active again, so the funds must not sit in the balance too).
 
-    iter248 — el claim del flag es ATÓMICO sobre el documento (filtro
-    condicional): dos PUT 'rejected' simultáneos no pueden acreditar el
-    reembolso dos veces. El re-débito usa decrement_balance (guard atómico):
-    si el cliente ya gastó el reembolso, la reactivación se rechaza con 409.
+async def _claim_transition_with_effects(w: dict, new_status: str,
+                                         sets: dict) -> None:
+    """iter256(S01) — máquina de estados del retiro con efectos VINCULADOS.
+
+    El estado nuevo y la intención de su efecto de saldo (reembolso al entrar
+    a 'rejected'; re-débito al salir) se publican en UN único update
+    condicional sobre el estado anterior. Consecuencias:
+      - dos transiciones simultáneas nunca se pisan (el perdedor recibe 409);
+      - ninguna petición puede leer el estado nuevo sin que la intención de
+        dinero ya esté persistida (marker/plan) — se acabó el
+        "aprobado y reembolsado a la vez";
+      - un crash tras el claim deja marker/plan que completa el healer
+        (heal_pending_credits / heal_initializing_ops), nunca se pierde el
+        reembolso;
+      - el abono es idempotente por op_id (nunca se duplica).
     """
-    currency = withdrawal.get("currency", "USD")
+    wid = w["id"]
+    currency = w.get("currency", "USD")
     # iter198 — any charged courier fee travels with the refund/re-debit.
-    amount = (float(withdrawal.get("amount_usd") or 0.0)
-              + float(withdrawal.get("courier_fee_currency_amount") or 0.0))
-    was_rejected = withdrawal["status"] == "rejected"
+    amount = (float(w.get("amount_usd") or 0.0)
+              + float(w.get("courier_fee_currency_amount") or 0.0))
+    was_rejected = w["status"] == "rejected"
     entering_rejected = new_status == "rejected" and not was_rejected
     leaving_rejected = was_rejected and new_status != "rejected"
     if entering_rejected:
-        # iter249 — la intención del reembolso viaja en el claim atómico; el
-        # abono es idempotente por op_id y el healer completa si hay crash.
         from services.credit_recovery import pending_marker, apply_and_clear
-        marker = pending_marker(withdrawal["user_id"], currency, amount,
+        marker = pending_marker(w["user_id"], currency, amount,
                                 "withdrawal-refund")
         claim = await db.withdrawals.update_one(
-            {"id": withdrawal["id"], "balance_refunded": {"$ne": True}},
-            {"$set": {"balance_refunded": True, "credit_pending": marker}},
-        )
-        if claim.modified_count:
-            await apply_and_clear("withdrawals", withdrawal["id"], marker)
-    elif leaving_rejected:
-        # iter254(R03) — la intención del re-débito viaja en el claim del flag
-        # y el cobro es IDEMPOTENTE por op_id: si el proceso muere entre ambos
-        # pasos, heal_initializing_ops completa o revierte con certeza.
+            {"id": wid, "status": w["status"],
+             "balance_refunded": {"$ne": True},
+             "redebit_pending": {"$exists": False}},
+            {"$set": {**sets, "balance_refunded": True,
+                      "credit_pending": marker}})
+        if claim.matched_count == 0:
+            # ¿ya reembolsado por otra vía (p.ej. carrera con un rechazo
+            # previo cuyo re-débito no aplicó)? — transición sin dinero.
+            claim = await db.withdrawals.update_one(
+                {"id": wid, "status": w["status"], "balance_refunded": True,
+                 "redebit_pending": {"$exists": False}},
+                {"$set": sets})
+            if claim.matched_count == 0:
+                _raise_withdrawal_race()
+            return
+        await apply_and_clear("withdrawals", wid, marker)
+        return
+    if leaving_rejected:
         import uuid as _uuid
-        op = f"withdrawal-redebit:{withdrawal['id']}:{_uuid.uuid4().hex[:8]}"
+        op = f"withdrawal-redebit:{wid}:{_uuid.uuid4().hex[:8]}"
         claim = await db.withdrawals.update_one(
-            {"id": withdrawal["id"], "balance_refunded": True},
-            {"$set": {"balance_refunded": False,
+            {"id": wid, "status": "rejected", "balance_refunded": True},
+            {"$set": {**sets, "balance_refunded": False,
                       "redebit_pending": {
                           "op_id": op, "amount": round(amount, 8),
-                          "currency": currency,
-                          "at": iso(now_utc())}}},
-        )
-        if claim.modified_count:
-            # Re-débito condicional sobre vip_balances.{currency} (mismo campo
-            # que recibió el reembolso), con guard atómico sobre el saldo TOTAL
-            # (para USD incluye el campo legacy) — 1e-6 tolera ruido float.
-            guard = amount - 1e-6
-            if currency == "USD":
-                filt: dict = {
-                    "user_id": withdrawal["user_id"],
+                          "currency": currency, "at": iso(now_utc())}}})
+        if claim.matched_count == 0:
+            # rechazado legado sin reembolso registrado → sin re-débito.
+            claim = await db.withdrawals.update_one(
+                {"id": wid, "status": "rejected",
+                 "balance_refunded": {"$ne": True}},
+                {"$set": sets})
+            if claim.matched_count == 0:
+                _raise_withdrawal_race()
+            return
+        # Re-débito condicional sobre vip_balances.{currency} (mismo campo
+        # que recibió el reembolso), con guard atómico sobre el saldo TOTAL
+        # (para USD incluye el campo legacy) — 1e-6 tolera ruido float.
+        guard = amount - 1e-6
+        if currency == "USD":
+            filt: dict = {
+                "user_id": w["user_id"],
+                "applied_credit_ops": {"$ne": op},
+                "$expr": {"$gte": [
+                    {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
+                              {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                    guard]},
+            }
+        else:
+            filt = {"user_id": w["user_id"],
                     "applied_credit_ops": {"$ne": op},
-                    "$expr": {"$gte": [
-                        {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
-                                  {"$ifNull": ["$vip_balance_usd", 0.0]}]},
-                        guard]},
-                }
-            else:
-                filt = {"user_id": withdrawal["user_id"],
-                        "applied_credit_ops": {"$ne": op},
-                        f"vip_balances.{currency}": {"$gte": guard}}
-            res = await db.users.update_one(
-                filt,
-                {"$inc": {f"vip_balances.{currency}": -amount},
-                 "$push": {"applied_credit_ops": {"$each": [op],
-                                                  "$slice": -2000}}})
-            if res.matched_count == 0:
-                await db.withdrawals.update_one(
-                    {"id": withdrawal["id"]},
-                    {"$set": {"balance_refunded": True},
-                     "$unset": {"redebit_pending": ""}},
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=(f"El cliente ya no tiene {amount} {currency} "
-                            "disponibles (gastó el reembolso); no se puede "
-                            "reactivar este retiro."),
-                )
+                    f"vip_balances.{currency}": {"$gte": guard}}
+        res = await db.users.update_one(
+            filt,
+            {"$inc": {f"vip_balances.{currency}": -amount},
+             "$push": {"applied_credit_ops": {"$each": [op],
+                                              "$slice": -2000}}})
+        if res.matched_count == 0:
             await db.withdrawals.update_one(
-                {"id": withdrawal["id"], "redebit_pending.op_id": op},
-                {"$unset": {"redebit_pending": ""}})
+                {"id": wid, "redebit_pending.op_id": op},
+                {"$set": {"status": "rejected", "balance_refunded": True},
+                 "$unset": {"redebit_pending": ""}})
+            raise HTTPException(
+                status_code=409,
+                detail=(f"El cliente ya no tiene {amount} {currency} "
+                        "disponibles (gastó el reembolso); no se puede "
+                        "reactivar este retiro."))
+        await db.withdrawals.update_one(
+            {"id": wid, "redebit_pending.op_id": op},
+            {"$unset": {"redebit_pending": ""}})
+        return
+    claim = await db.withdrawals.update_one(
+        {"id": wid, "status": w["status"]}, {"$set": sets})
+    if claim.matched_count == 0:
+        _raise_withdrawal_race()
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,
@@ -291,6 +315,13 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
             status_code=409,
             detail="Este retiro fue cancelado por el cliente y no puede modificarse.",
         )
+    # iter256(S01) — los docs transitorios del protocolo de creación no son
+    # operables ni siquiera por llamada directa del personal.
+    if w["status"] in ("initializing", "failed_init"):
+        raise HTTPException(
+            status_code=409,
+            detail="Este retiro no es operable (creación incompleta o revertida).",
+        )
     _assert_paid_lock(actor, w, new_status)
     _enforce_employee_currency_scope(actor, w.get("currency"))
     update_doc = {"admin_note": payload.get("admin_note", "")}
@@ -323,25 +354,12 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
             if acc:
                 update_doc["paid_from_account_id"] = acc["id"]
                 update_doc["paid_from_account_label"] = acc["label"]
-    # iter254(R01) — claim ATÓMICO de la transición de estado: dos peticiones
-    # simultáneas (p.ej. rechazo + aprobación) no pueden aplicar transiciones
-    # contradictorias; quien pierde la carrera recibe 409. El ajuste de saldo
-    # va inmediatamente después y, si resulta imposible, la transición se
-    # revierte antes de propagar el error.
-    claim = await db.withdrawals.update_one(
-        {"id": wid, "status": w["status"]}, {"$set": status_sets})
-    if claim.matched_count == 0:
-        raise HTTPException(
-            status_code=409,
-            detail="El retiro cambió de estado mientras editabas; recarga la página.")
-    try:
-        await _reconcile_balance_on_status_change(w, new_status, update_doc)
-    except HTTPException:
-        await db.withdrawals.update_one(
-            {"id": wid, "status": new_status},
-            {"$set": {"status": w["status"]}})
-        raise
-    await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
+    # iter256(S01) — la transición de estado Y su intención de efecto de saldo
+    # (reembolso/re-débito) se reclaman en UN único update atómico; los campos
+    # de evidencia/nota viajan en el mismo claim. Quien pierde la carrera
+    # recibe 409 y un crash a mitad lo completa el healer.
+    await _claim_transition_with_effects(w, new_status,
+                                         {**status_sets, **update_doc})
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     # iter205 — un retiro rechazado cancela su trabajo de mensajería activo.
     if new_status == "rejected" and w["status"] != "rejected":
@@ -460,7 +478,6 @@ async def _post_status_side_effects(w: dict, updated: dict, new_status: str,
                 "payout_tx_hash": updated.get("payout_tx_hash"),
             },
         )
-    return updated
 
 
 async def mark_paid_from_delivery(wid: str, actor: dict) -> Optional[dict]:

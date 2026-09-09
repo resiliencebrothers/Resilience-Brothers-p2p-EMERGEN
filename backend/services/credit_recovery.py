@@ -122,53 +122,70 @@ async def heal_pending_credits(max_age_seconds: int = 90) -> int:
 
 
 async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
-    """iter254(R03) — resuelve de forma DETERMINISTA los intentos que murieron
-    a medias en el protocolo reserva/operación/activación: los op_ids del doc
-    'initializing' dicen con certeza qué efectos llegaron a aplicarse, así el
-    reaper revierte (o completa) sin duplicar ni perder dinero/stock."""
+    """iter254(R03) / iter256(S03,S04,S10) — resuelve de forma DETERMINISTA los
+    intentos que murieron a medias en el protocolo reserva/operación/activación.
+
+    Orden crítico (S03): primero se RECLAMA la propiedad del intento
+    (initializing → failed_init, update condicional); solo si el claim gana se
+    compensa. Un creador lento que pierde el claim detecta matched_count=0 al
+    activar y deshace sus propios efectos (mismos op_ids ⇒ exactamente-una-vez).
+    Los failed_init que conservan op_ids (crash a mitad de la compensación) se
+    re-compensan de forma idempotente."""
     from services.balances import credit_balance_idempotent as _credit
     from services.balances import op_was_applied, debit_balance_idempotent
+    from services.inventory import (apply_stock_idempotent, movement_delta,
+                                    stock_op_was_applied)
     cutoff = (datetime.now(timezone.utc)
               - timedelta(seconds=max_age_seconds)).isoformat()
     healed = 0
 
     # --- retiros a medio crear -------------------------------------------
     rows = await db.withdrawals.find(
-        {"status": "initializing", "created_at": {"$lt": cutoff}},
+        {"$or": [{"status": "initializing", "created_at": {"$lt": cutoff}},
+                 {"status": "failed_init", "init_op_id": {"$exists": True}}]},
         {"_id": 0, "id": 1, "user_id": 1, "currency": 1, "init_op_id": 1,
-         "amount_usd": 1, "courier_fee_currency_amount": 1}).to_list(100)
+         "amount_usd": 1, "courier_fee_currency_amount": 1,
+         "status": 1}).to_list(100)
     for w in rows:
+        if w.get("status") == "initializing":
+            claim = await db.withdrawals.update_one(
+                {"id": w["id"], "status": "initializing"},
+                {"$set": {"status": "failed_init"}})
+            if claim.modified_count == 0:
+                continue  # el creador lo activó primero: NO compensar (S03)
         op = w.get("init_op_id") or ""
         amount = (float(w.get("amount_usd") or 0)
                   + float(w.get("courier_fee_currency_amount") or 0))
         if op and await op_was_applied(w["user_id"], op):
             await _credit(w["user_id"], w.get("currency") or "USD", amount,
                           f"{op}:undo")
-        res = await db.withdrawals.update_one(
-            {"id": w["id"], "status": "initializing"},
-            {"$set": {"status": "failed_init"}})
-        if res.modified_count:
-            healed += 1
-            logger.warning("retiro initializing revertido: %s", w["id"])
+        await db.withdrawals.update_one(
+            {"id": w["id"], "status": "failed_init"},
+            {"$unset": {"init_op_id": ""}})
+        healed += 1
+        logger.warning("retiro initializing revertido: %s", w["id"])
 
     # --- canjes a medio crear --------------------------------------------
     rows = await db.redemptions.find(
-        {"status": "initializing", "created_at": {"$lt": cutoff}},
+        {"$or": [{"status": "initializing", "created_at": {"$lt": cutoff}},
+                 {"status": "failed_init", "init_op_id": {"$exists": True}},
+                 {"status": "failed_init", "stock_op_id": {"$exists": True}}]},
         {"_id": 0, "id": 1, "user_id": 1, "settlement_currency": 1,
          "init_op_id": 1, "stock_op_id": 1, "product_id": 1, "quantity": 1,
-         "total_usd": 1, "courier_fee_usd": 1}).to_list(100)
+         "total_usd": 1, "courier_fee_usd": 1, "status": 1}).to_list(100)
     for r in rows:
-        from services.inventory import apply_stock_idempotent
+        if r.get("status") == "initializing":
+            claim = await db.redemptions.update_one(
+                {"id": r["id"], "status": "initializing"},
+                {"$set": {"status": "failed_init"}})
+            if claim.modified_count == 0:
+                continue  # el creador lo activó primero: NO compensar (S03)
         stock_op = r.get("stock_op_id") or ""
-        if stock_op:
-            st = await db.products.find_one(
-                {"id": r["product_id"], "applied_stock_ops": stock_op},
-                {"_id": 1})
-            if st:
-                await apply_stock_idempotent(r["product_id"],
-                                             int(r.get("quantity") or 0),
-                                             f"{stock_op}:undo",
-                                             require_available=False)
+        if stock_op and await stock_op_was_applied(r["product_id"], stock_op):
+            await apply_stock_idempotent(r["product_id"],
+                                         int(r.get("quantity") or 0),
+                                         f"{stock_op}:undo",
+                                         require_available=False)
         op = r.get("init_op_id") or ""
         amount = (float(r.get("total_usd") or 0)
                   + float(r.get("courier_fee_usd") or 0))
@@ -176,30 +193,62 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             await _credit(r["user_id"],
                           r.get("settlement_currency") or "USDT", amount,
                           f"{op}:undo")
-        res = await db.redemptions.update_one(
-            {"id": r["id"], "status": "initializing"},
-            {"$set": {"status": "failed_init"}})
-        if res.modified_count:
-            healed += 1
-            logger.warning("canje initializing revertido: %s", r["id"])
+        await db.redemptions.update_one(
+            {"id": r["id"], "status": "failed_init"},
+            {"$unset": {"init_op_id": "", "stock_op_id": ""}})
+        healed += 1
+        logger.warning("canje initializing revertido: %s", r["id"])
+
+    # --- reactivaciones de canje a medias (S04) ----------------------------
+    rows = await db.redemptions.find(
+        {"status": "rejected", "reactivation_pending.at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "user_id": 1, "product_id": 1,
+         "reactivation_pending": 1}).to_list(100)
+    for r in rows:
+        plan = r.get("reactivation_pending") or {}
+        stock_op = plan.get("stock_op") or ""
+        debit_op = plan.get("debit_op") or ""
+        cur = plan.get("currency") or "USDT"
+        if debit_op and await op_was_applied(r["user_id"], debit_op):
+            await _credit(r["user_id"], cur, float(plan.get("amount") or 0),
+                          f"{debit_op}:undo", legacy_usd=(cur == "USD"))
+        if stock_op and await stock_op_was_applied(r["product_id"], stock_op):
+            await apply_stock_idempotent(r["product_id"],
+                                         int(plan.get("quantity") or 0),
+                                         f"{stock_op}:undo",
+                                         require_available=False)
+        await db.redemptions.update_one(
+            {"id": r["id"], "reactivation_pending.stock_op": stock_op},
+            {"$unset": {"reactivation_pending": ""}})
+        healed += 1
+        logger.warning("reactivación de canje revertida: %s", r["id"])
 
     # --- movimientos de inventario sin stock aplicado ---------------------
     rows = await db.inventory_movements.find(
         {"needs_stock": True, "stock_applied": {"$ne": True},
-         "created_at": {"$lt": cutoff}},
-        {"_id": 0, "id": 1, "product_id": 1, "type": 1, "quantity": 1}).to_list(200)
+         "stock_apply_failed": {"$ne": True},
+         "created_at": {"$lt": cutoff}}, {"_id": 0}).to_list(200)
     for m in rows:
-        from services.inventory import apply_stock_idempotent, movement_delta
         delta = movement_delta(m.get("type") or "", int(m.get("quantity") or 0))
         st = await apply_stock_idempotent(m["product_id"], delta,
                                           f"invmov:{m['id']}",
                                           require_available=(delta < 0))
-        sets = {"stock_applied": True}
         if st == "insufficient":
-            sets["stock_apply_failed"] = True
+            # iter256(S10) — fallido ≠ aplicado: no cuenta en KPIs ni cierre.
+            await db.inventory_movements.update_one(
+                {"id": m["id"]}, {"$set": {"stock_apply_failed": True}})
             logger.warning("movimiento %s: stock insuficiente al recuperar", m["id"])
-        await db.inventory_movements.update_one({"id": m["id"]},
-                                                {"$set": sets})
+        else:
+            await db.inventory_movements.update_one(
+                {"id": m["id"]}, {"$set": {"stock_applied": True}})
+            # iter256(S10) — completar también el asiento contable del fondo
+            # (idempotente por flag fund_flow_recorded).
+            try:
+                from services.inventory import _record_fund_flow
+                await _record_fund_flow(m)
+            except Exception as e:
+                logger.error("fund flow al recuperar movimiento %s: %s",
+                             m["id"], e)
         healed += 1
 
     # --- re-débitos de reactivación de retiros a medias -------------------

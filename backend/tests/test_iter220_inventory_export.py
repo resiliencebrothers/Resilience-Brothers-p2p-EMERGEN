@@ -9,7 +9,7 @@ import requests
 from openpyxl import load_workbook
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, today_havana
 
 API = f"{BASE_URL}/api"
 MARK = "ITER220TEST"
@@ -104,7 +104,7 @@ class TestCsvExport:
 class TestXlsxExport:
     def test_full_workbook(self):
         p = _create_product_with_entrada()
-        today = time.strftime("%Y-%m-%d")
+        today = today_havana()
         r = requests.get(f"{API}/admin/inventory/export.xlsx",
                          params={"start": today, "end": today},
                          headers=_h(ADMIN_TOKEN))

@@ -16,7 +16,7 @@ from db_client import db
 from auth_utils import require_permission, now_utc, iso
 from audit_log import log_action
 from services.inventory import (record_movement, record_price_change,
-                                _day_bounds,
+                                _day_bounds, today_havana,
                                 build_control_rows, build_dashboard,
                                 build_rotation)
 from services.proof_upload import maybe_upload_proof
@@ -305,7 +305,7 @@ async def inventory_dashboard(request: Request, start: Optional[str] = None,
     """iter224 — `product_ids` (separados por coma) permite analizar varias
     mercancías a la vez; `product_id` se mantiene por compatibilidad."""
     await require_permission(request, "products")
-    today = iso(now_utc())[:10]
+    today = today_havana()
     start = (start or today)[:10]
     end = (end or today)[:10]
     if start > end:
@@ -324,7 +324,7 @@ async def inventory_rotation(request: Request, start: Optional[str] = None,
     venderse (ritmo/día, días para agotarse) y en reponerse (ciclo entre
     entradas)."""
     await require_permission(request, "products")
-    today = iso(now_utc())[:10]
+    today = today_havana()
     start = (start or today)[:10]
     end = (end or today)[:10]
     if start > end:
@@ -416,7 +416,7 @@ async def export_inventory_xlsx(request: Request,
     from openpyxl.styles import Font
 
     await require_permission(request, "products")
-    today = iso(now_utc())[:10]
+    today = today_havana()
     start = (start or f"{today[:7]}-01")[:10]
     end = (end or today)[:10]
     if start > end:

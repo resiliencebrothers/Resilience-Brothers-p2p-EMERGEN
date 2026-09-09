@@ -16,6 +16,14 @@ load_dotenv(_ROOT / "backend" / ".env")
 load_dotenv(_ROOT / "frontend" / ".env")
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
+
+
+def today_havana() -> str:
+    """iter256(S11) — 'hoy' contable = fecha de Cuba (usar la fecha UTC en
+    tests de inventario falla entre las 20:00 y 00:00 de La Habana)."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    return datetime.now(ZoneInfo("America/Havana")).strftime("%Y-%m-%d")
 assert BASE_URL, "REACT_APP_BACKEND_URL must be set in frontend/.env"
 
 # Default fixture tokens — seeded into user_sessions by the testing harness.

@@ -147,7 +147,7 @@ async def maybe_award_referral_bonus(order: dict) -> None:
         await apply_and_clear("users", referred["user_id"], marker,
                               key_field="user_id")
         from services.live_events import emit_balance_changed
-        await emit_balance_changed(referrer_id, "referral_bonus",
+        await emit_balance_changed(referrer_id or "", "referral_bonus",
                                    bonus_usdt=bonus)
         await db.referral_bonuses.insert_one({
             "id": uuid.uuid4().hex,

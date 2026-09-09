@@ -24,7 +24,7 @@ import time
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, today_havana
 
 API = f"{BASE_URL}/api"
 MARK = "ITER217TEST"
@@ -155,7 +155,7 @@ class TestInventoryMovements:
         _movement({"product_id": p["id"], "type": "entrada",
                    "quantity": 10, "unit_cost": 7.0, "note": MARK})
         _movement({"product_id": p["id"], "type": "venta", "quantity": 4, "note": MARK})
-        today = time.strftime("%Y-%m-%d")
+        today = today_havana()
         r = requests.get(f"{API}/admin/inventory/dashboard",
                          params={"start": today, "end": today},
                          headers=_h(ADMIN_TOKEN))

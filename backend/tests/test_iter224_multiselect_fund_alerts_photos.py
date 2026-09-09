@@ -10,7 +10,7 @@ import time
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, today_havana
 
 API = f"{BASE_URL}/api"
 MARK = "ITER224TEST"
@@ -73,7 +73,7 @@ class TestMultiProductDashboard:
         _venta(p1["id"], 2)   # ingresos 20
         _venta(p2["id"], 3)   # ingresos 24
         _venta(p3["id"], 4)   # ingresos 20 (excluido)
-        today = time.strftime("%Y-%m-%d")
+        today = today_havana()
         r = requests.get(f"{API}/admin/inventory/dashboard",
                          params={"start": today, "end": today,
                                  "product_ids": f"{p1['id']},{p2['id']}"},
@@ -89,7 +89,7 @@ class TestMultiProductDashboard:
     def test_single_product_id_backcompat(self):
         p = _create_product()
         _venta(p["id"], 1)
-        today = time.strftime("%Y-%m-%d")
+        today = today_havana()
         r = requests.get(f"{API}/admin/inventory/dashboard",
                          params={"start": today, "end": today,
                                  "product_id": p["id"]},

@@ -356,8 +356,8 @@ async def courier_share_location(payload: dict, request: Request) -> Any:
     TODOS sus trabajos activos para que el cliente lo siga en el mapa."""
     me = await _require_courier(request)
     try:
-        lat = float(payload.get("lat"))
-        lon = float(payload.get("lon"))
+        lat = float(str(payload.get("lat")))
+        lon = float(str(payload.get("lon")))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Coordenadas inválidas.")
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):

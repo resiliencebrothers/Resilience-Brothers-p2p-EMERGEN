@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 from pymongo import MongoClient
 
-from conftest import (BASE_URL, VIP_TOKEN, ADMIN_TOKEN, make_vip_totp,
+from conftest import (BASE_URL, VIP_TOKEN, ADMIN_TOKEN, make_vip_totp, today_havana,
                       with_totp_admin)
 
 API = f"{BASE_URL}/api"
@@ -406,7 +406,7 @@ class TestR09R10R11(_Sandbox):
         async def flow():
             from services.inventory import build_dashboard
             from datetime import datetime
-            today = datetime.utcnow().strftime("%Y-%m-%d")
+            today = today_havana()
             before = await build_dashboard(today, today, [pid])
             rej = await asyncio.to_thread(
                 requests.put, f"{API}/admin/redemptions/{rid}/status",

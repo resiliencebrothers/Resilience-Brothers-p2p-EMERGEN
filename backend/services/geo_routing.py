@@ -63,7 +63,7 @@ def _query_variants(q: str, province: str = "") -> list:
     province = (province or "").strip()
     variants = [q]
 
-    def _add(v):
+    def _add(v: str) -> None:
         v = _tidy(v or "")
         if v and len(v) >= 3 and all(v.lower() != x.lower() for x in variants):
             variants.append(v)

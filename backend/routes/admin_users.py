@@ -223,12 +223,12 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
         if any(p.lower() == "none" for p in raw_pairs):
             update["allowed_batch_pairs"] = ["none"]
         else:
-            clean = []
+            clean_pairs: list = []
             for p in raw_pairs:
                 p = p.upper().replace("→", "->")
-                if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean:
-                    clean.append(p)
-            update["allowed_batch_pairs"] = clean
+                if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean_pairs:
+                    clean_pairs.append(p)
+            update["allowed_batch_pairs"] = clean_pairs
     old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})

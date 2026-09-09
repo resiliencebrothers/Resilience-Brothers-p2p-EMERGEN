@@ -81,7 +81,7 @@ async def admin_create_rate(payload: dict, request: Request) -> Any:
     if await db.courier_municipality_rates.find_one(
             {"municipality": {"$regex": f"^{name}$", "$options": "i"}}):
         raise HTTPException(status_code=409, detail="Ese municipio ya existe.")
-    doc = {
+    doc: dict = {
         "id": f"muni_{uuid.uuid4().hex[:10]}",
         "municipality": name,
         "price_usdt": _parse_price(payload.get("price_usdt")),

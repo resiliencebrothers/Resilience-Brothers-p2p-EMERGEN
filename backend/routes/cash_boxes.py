@@ -183,7 +183,7 @@ async def create_box(payload: BoxCreate, request: Request) -> Any:
 async def update_box(box_id: str, payload: BoxUpdate, request: Request) -> Any:
     user = await require_user(request)
     box = await _get_box_checked(box_id, user)
-    upd = {}
+    upd: dict = {}
     if payload.name is not None:
         upd["name"] = payload.name.strip()
     if payload.is_active is not None:
@@ -429,11 +429,11 @@ async def monthly_report(box_id: str, fund: str, month: str,
         row = days.setdefault(local_day, {"entradas": 0.0, "salidas": 0.0})
         key = "entradas" if m["type"] == "entrada" else "salidas"
         row[key] += m["amount"]
-    rows = [{"date": d,
-             "entradas": round(v["entradas"], 2),
-             "salidas": round(v["salidas"], 2),
-             "neto": round(v["entradas"] - v["salidas"], 2)}
-            for d, v in sorted(days.items())]
+    rows: list = [{"date": d,
+                   "entradas": round(v["entradas"], 2),
+                   "salidas": round(v["salidas"], 2),
+                   "neto": round(v["entradas"] - v["salidas"], 2)}
+                  for d, v in sorted(days.items())]
     return {
         "month": month,
         "days": rows,

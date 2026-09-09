@@ -90,8 +90,8 @@ def _parse_denomination_entry(currency: str, valid: Optional[List[int]],
                               k: object, v: object) -> tuple[int, int]:
     """Valida una entrada del desglose → (denominación, cantidad)."""
     try:
-        denom = int(float(k))
-        qty = int(v)
+        denom = int(float(str(k)))
+        qty = int(float(str(v)))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400,
                             detail=f"Denominación o cantidad inválida: {k}={v}")
@@ -811,7 +811,7 @@ def _batch_summary_rows(batches: List[dict], names: Dict[str, str]) -> List[dict
     return [{
         "id": b["id"],
         "pair": _doc_pair(b),
-        "vip_name": names.get(b.get("vip_user_id"), "—"),
+        "vip_name": names.get(str(b.get("vip_user_id") or ""), "—"),
         "auto_closed": bool(b.get("auto_closed")),
         "closed_at": b.get("closed_at"),
         "items_approved": b.get("items_approved") or 0,
@@ -834,7 +834,7 @@ async def _order_detail_rows(orders: List[dict],
         rows.append({
             "id": o["id"],
             "reviewed_at": o.get("reviewed_at"),
-            "vip_name": names.get(o.get("vip_user_id"), "—"),
+            "vip_name": names.get(str(o.get("vip_user_id") or ""), "—"),
             "holder": o.get("card_number") or o.get("holder_name") or "—",
             "pair": _doc_pair(o),
             "amount": o.get("amount"),

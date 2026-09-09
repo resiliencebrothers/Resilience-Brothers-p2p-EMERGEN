@@ -5,6 +5,7 @@ estándar). Cada etiqueta: nombre, precio y código de barras (EAN-13 para
 códigos numéricos de 12/13 dígitos, Code128 para el resto).
 """
 from io import BytesIO
+from typing import Any
 
 from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import createBarcodeDrawing
@@ -20,7 +21,7 @@ MARGIN_X = (PAGE_W - COLS * LABEL_W) / 2
 MARGIN_Y = (PAGE_H - ROWS * LABEL_H) / 2
 
 
-def _barcode_drawing(code: str):
+def _barcode_drawing(code: str) -> Any:
     if code.isdigit() and len(code) in (12, 13):
         return createBarcodeDrawing("EAN13", value=code[:12],
                                     barHeight=14 * mm, humanReadable=True)

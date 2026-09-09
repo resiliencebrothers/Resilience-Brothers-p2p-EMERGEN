@@ -8,7 +8,7 @@ import time
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, today_havana
 
 API = f"{BASE_URL}/api"
 MARK = "ITER225TEST"
@@ -71,7 +71,7 @@ def test_rotation_math_single_day():
     _mov(p["id"], "venta", 5)       # stock 15
     _mov(p["id"], "entrada", 10)    # stock 25 (1ª entrada)
     _mov(p["id"], "entrada", 5)     # stock 30 (2ª entrada → ciclo calculable)
-    today = time.strftime("%Y-%m-%d")
+    today = today_havana()
     rows = {x["product_id"]: x for x in _rotation(
         start=today, end=today, product_ids=p["id"])}
     row = rows[p["id"]]
@@ -91,7 +91,7 @@ def test_rotation_math_single_day():
 def test_restock_now_when_out_of_stock():
     p = _create_product(stock=4)
     _mov(p["id"], "venta", 4)  # agotado con demanda
-    today = time.strftime("%Y-%m-%d")
+    today = today_havana()
     rows = {x["product_id"]: x for x in _rotation(
         start=today, end=today, product_ids=p["id"])}
     row = rows[p["id"]]
@@ -105,7 +105,7 @@ def test_urgent_rows_sorted_first():
     urgent = _create_product(stock=2)
     _mov(slow["id"], "venta", 9)   # más vendida pero sobra stock
     _mov(urgent["id"], "venta", 2) # agotada → 'ya'
-    today = time.strftime("%Y-%m-%d")
+    today = today_havana()
     rows = _rotation(start=today, end=today,
                      product_ids=f"{slow['id']},{urgent['id']}")
     assert rows[0]["product_id"] == urgent["id"]
@@ -114,7 +114,7 @@ def test_urgent_rows_sorted_first():
 
 def test_rotation_no_sales_fields_null():
     p = _create_product(stock=8)
-    today = time.strftime("%Y-%m-%d")
+    today = today_havana()
     rows = {x["product_id"]: x for x in _rotation(
         start=today, end=today, product_ids=p["id"])}
     row = rows[p["id"]]
@@ -131,7 +131,7 @@ def test_rotation_respects_product_filter_and_sorting():
     p2 = _create_product()
     _mov(p1["id"], "venta", 3)
     _mov(p2["id"], "venta", 7)
-    today = time.strftime("%Y-%m-%d")
+    today = today_havana()
     rows = _rotation(start=today, end=today,
                      product_ids=f"{p1['id']},{p2['id']}")
     assert [r["product_id"] for r in rows] == [p2["id"], p1["id"]]  # más vendida primero

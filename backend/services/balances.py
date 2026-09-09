@@ -170,22 +170,39 @@ async def decrement_balance(user_id: str, code: str, amount: float) -> None:
         )
 
 
-async def _ops_log(op_id: str, user_id: str, code: str, amount: float,
-                   kind: str) -> None:
-    """iter254(R05) — registro DURADERO de operaciones aplicadas (índice único
-    por op_id): aunque el op salga del registro embebido del usuario (cap
-    2000), este log lo sigue recordando y bloquea cualquier replay."""
+async def _ops_log_ensure(op_id: str, user_id: str, code: str, amount: float,
+                          kind: str) -> str:
+    """iter256(S06) — registro DURADERO insert-first (índice único por op_id).
+    El identificador se persiste ANTES de mover dinero; si Mongo falla aquí la
+    operación aborta sin tocar saldos (el marker/healer reintenta después).
+    Devuelve el estado previo: 'new' | 'pending' | 'applied'."""
     global _OPS_LOG_READY
-    try:
-        if not _OPS_LOG_READY:
-            await db.credit_ops.create_index("op_id", unique=True)
-            _OPS_LOG_READY = True
-        await db.credit_ops.insert_one({
-            "op_id": op_id, "user_id": user_id, "code": code,
-            "amount": round(float(amount), 8), "kind": kind,
-            "at": datetime.now(timezone.utc).isoformat()})
-    except Exception:
-        pass
+    if not _OPS_LOG_READY:
+        await db.credit_ops.create_index("op_id", unique=True)
+        _OPS_LOG_READY = True
+    existing = await db.credit_ops.find_one({"op_id": op_id},
+                                            {"_id": 0, "state": 1})
+    if existing is None:
+        try:
+            await db.credit_ops.insert_one({
+                "op_id": op_id, "user_id": user_id, "code": code,
+                "amount": round(float(amount), 8), "kind": kind,
+                "state": "pending",
+                "at": datetime.now(timezone.utc).isoformat()})
+            return "new"
+        except Exception:
+            # carrera con otro insert del mismo op_id (índice único)
+            existing = await db.credit_ops.find_one({"op_id": op_id},
+                                                    {"_id": 0, "state": 1})
+            if existing is None:
+                raise
+    return "applied" if existing.get("state", "applied") == "applied" \
+        else "pending"
+
+
+async def _ops_log_mark_applied(op_id: str) -> None:
+    await db.credit_ops.update_one({"op_id": op_id},
+                                   {"$set": {"state": "applied"}})
 
 
 _OPS_LOG_READY = False
@@ -205,7 +222,8 @@ async def credit_balance_idempotent(user_id: str, code: str, amount: float,
     amount = float(amount)
     if amount <= 0:
         return False
-    if await db.credit_ops.find_one({"op_id": op_id}, {"_id": 1}):
+    state = await _ops_log_ensure(op_id, user_id, code, amount, "credit")
+    if state == "applied":
         return False
     field = "vip_balance_usd" if (legacy_usd and code == "USD") \
         else f"vip_balances.{code}"
@@ -214,8 +232,13 @@ async def credit_balance_idempotent(user_id: str, code: str, amount: float,
         {"$inc": {field: amount}, "$push": _registry_push(op_id)},
     )
     if res.modified_count:
-        await _ops_log(op_id, user_id, code, amount, "credit")
-    return res.modified_count > 0
+        await _ops_log_mark_applied(op_id)
+        return True
+    if await db.users.find_one({"user_id": user_id, "applied_credit_ops": op_id},
+                               {"_id": 1}):
+        # iter256(S06) — aplicado antes con log a medias: reparar el log.
+        await _ops_log_mark_applied(op_id)
+    return False
 
 
 async def debit_balance_idempotent(user_id: str, code: str, amount: float,
@@ -230,7 +253,8 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
     amount = float(amount)
     if amount <= 0:
         return "applied"
-    if await db.credit_ops.find_one({"op_id": op_id}, {"_id": 1}):
+    state = await _ops_log_ensure(op_id, user_id, code, amount, "debit")
+    if state == "applied":
         return "duplicate"
     guard = amount - 1e-6
     if code == "USD":
@@ -265,20 +289,25 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
              "$push": _registry_push(op_id)},
         )
     if res.matched_count:
-        await _ops_log(op_id, user_id, code, amount, "debit")
+        await _ops_log_mark_applied(op_id)
         return "applied"
     if await db.users.find_one({"user_id": user_id, "applied_credit_ops": op_id},
                                {"_id": 1}):
+        await _ops_log_mark_applied(op_id)
         return "duplicate"
+    # insuficiente: liberar el intento pendiente del log duradero.
+    await db.credit_ops.delete_one({"op_id": op_id, "state": "pending"})
     return "insufficient"
 
 
 async def op_was_applied(user_id: str, op_id: str) -> bool:
-    """¿Este op_id llegó a aplicarse? (registro embebido O log duradero)."""
+    """¿Este op_id llegó a aplicarse? (registro embebido O log duradero en
+    estado 'applied' — un log 'pending' NO prueba que el dinero se movió)."""
     if await db.users.find_one({"user_id": user_id, "applied_credit_ops": op_id},
                                {"_id": 1}):
         return True
-    return bool(await db.credit_ops.find_one({"op_id": op_id}, {"_id": 1}))
+    doc = await db.credit_ops.find_one({"op_id": op_id}, {"_id": 0, "state": 1})
+    return bool(doc) and doc.get("state", "applied") == "applied"
 
 
 async def accumulate_vip_balance(order: dict) -> bool:
@@ -373,12 +402,15 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
         {"user_id": user_id, "status": "disbursed", "currency_code": currency},
         {"_id": 0},
     ).sort("disbursed_at", 1).to_list(50)
-    if not active:
+    # iter256(S08) — presupuesto ESTABLE por orden: se persiste al primer
+    # cálculo (repayment_plans, índice único orden+moneda). Todo retry o
+    # recuperación reutiliza el MISMO presupuesto aunque las deudas activas
+    # (y sus porcentajes) hayan cambiado — el neto de una orden nunca varía.
+    plan = await _load_or_create_repayment_plan(user_id, currency, amount,
+                                                order_id, active)
+    budget_total = float(plan.get("budget_total") or 0.0)
+    if not active or budget_total <= 0:
         return round(amount - prior, 6)
-
-    # Total per-order discount budget is set by the OLDEST active debt.
-    oldest_pct = float(active[0].get("discount_pct") or 0.0)
-    budget_total = round(amount * oldest_pct / 100.0, 4)
     budget = round(max(budget_total - prior, 0.0), 4)
     consumed = prior
     for cr in active:
@@ -421,6 +453,34 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
             # perdimos una carrera: reintentar UNA vez con lectura fresca
 
     return round(amount - consumed, 6)
+
+
+_PLAN_INDEX_READY = False
+
+
+async def _load_or_create_repayment_plan(user_id: str, currency: str,
+                                         amount: float, order_id: str,
+                                         active: list) -> dict:
+    """iter256(S08) — plan de amortización por orden (insert-first, único)."""
+    global _PLAN_INDEX_READY
+    if not _PLAN_INDEX_READY:
+        await db.repayment_plans.create_index(
+            [("order_id", 1), ("currency", 1)], unique=True)
+        _PLAN_INDEX_READY = True
+    key = {"order_id": order_id, "currency": currency}
+    plan = await db.repayment_plans.find_one(key, {"_id": 0})
+    if plan:
+        return plan
+    oldest_pct = float(active[0].get("discount_pct") or 0.0) if active else 0.0
+    doc = {**key, "user_id": user_id, "gross": round(float(amount), 6),
+           "pct": oldest_pct,
+           "budget_total": round(float(amount) * oldest_pct / 100.0, 4),
+           "at": datetime.now(timezone.utc).isoformat()}
+    try:
+        await db.repayment_plans.insert_one({**doc})
+        return doc
+    except Exception:
+        return await db.repayment_plans.find_one(key, {"_id": 0}) or doc
 
 
 # ============================================================

@@ -25,3 +25,8 @@
 Ejecutar la suite completa muta la DB de test (KYC, rates, orders). Tras un run
 completo, tests individuales pueden fallar por estado sucio: re-verificar en
 aislamiento antes de asumir regresión.
+
+## iter256 — nuevos aprendizajes
+- Flake de fecha: tests de inventario/dashboard que calculan "hoy" con time.strftime/datetime.utcnow fallan entre 20:00 y 00:00 de Cuba (UTC ya cambió de día). Usar `from tests.conftest import today_havana`.
+- Motor + _run(loop nuevo): NO llamar `_run` dos veces en el mismo test (pool ligado al primer loop ⇒ "Event loop is closed"). Consolidar todo en UNA corrutina y hacer las mutaciones intermedias con pymongo síncrono dentro de ella.
+- Semántica S05: reactivar un canje re-registra el fund inflow del nuevo ciclo; los tests de asientos contables deben esperar pares inflow/outflow POR CICLO (no 2 asientos totales).

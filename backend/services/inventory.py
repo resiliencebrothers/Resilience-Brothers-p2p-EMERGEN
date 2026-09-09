@@ -38,6 +38,22 @@ def _day_bounds(day: str) -> tuple:
     return start, end
 
 
+def today_havana() -> str:
+    """iter256(S11) — el 'hoy' del negocio es la fecha de Cuba, no la UTC
+    (a las 22:30 de Cuba la fecha UTC ya es la del día siguiente)."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+    return datetime.now(ZoneInfo("America/Havana")).strftime("%Y-%m-%d")
+
+
+async def _rejected_marketplace_refs() -> set:
+    """iter256(S11) — ids de canjes RECHAZADOS: sus movimientos de venta (y
+    sus reversos) no deben contar en control/rotación/dashboard."""
+    rows = await db.redemptions.find({"status": "rejected"},
+                                     {"_id": 0, "id": 1}).to_list(100000)
+    return {d["id"] for d in rows}
+
+
 def movement_delta(mtype: str, quantity: int) -> int:
     """Delta de stock que implica un movimiento (compartido con el healer)."""
     if mtype in ("venta", "ajuste_neg"):
@@ -49,8 +65,11 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
                                  require_available: bool = True,
                                  extra_filter: Optional[dict] = None) -> str:
     """iter254(R03) — cambio de stock atómico, condicional e IDEMPOTENTE por
-    op_id (registro embebido en el producto). Devuelve 'applied' | 'duplicate'
-    | 'insufficient'."""
+    op_id (registro embebido en el producto + log duradero iter256/S07).
+    Devuelve 'applied' | 'duplicate' | 'insufficient'."""
+    state = await _stock_ops_ensure(op_id, product_id, delta_qty)
+    if state == "applied":
+        return "duplicate"
     filt: dict = {"id": product_id, "applied_stock_ops": {"$ne": op_id}}
     if extra_filter:
         filt.update(extra_filter)
@@ -62,11 +81,59 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
          "$push": {"applied_stock_ops": {"$each": [op_id], "$slice": -500}}},
     )
     if res.matched_count:
+        await _stock_ops_mark_applied(op_id)
         return "applied"
     if await db.products.find_one({"id": product_id, "applied_stock_ops": op_id},
                                   {"_id": 1}):
+        await _stock_ops_mark_applied(op_id)
         return "duplicate"
+    # insuficiente: liberar el intento pendiente del log duradero.
+    await db.stock_ops.delete_one({"op_id": op_id, "state": "pending"})
     return "insufficient"
+
+
+_STOCK_OPS_READY = False
+
+
+async def _stock_ops_ensure(op_id: str, product_id: str, delta_qty: int) -> str:
+    """iter256(S07) — log duradero insert-first de operaciones de stock (índice
+    único por op_id): aunque el op salga del registro embebido del producto
+    (cap 500), este log bloquea cualquier replay. Si Mongo falla aquí, el
+    stock NO se toca. Devuelve 'new' | 'pending' | 'applied'."""
+    global _STOCK_OPS_READY
+    if not _STOCK_OPS_READY:
+        await db.stock_ops.create_index("op_id", unique=True)
+        _STOCK_OPS_READY = True
+    existing = await db.stock_ops.find_one({"op_id": op_id},
+                                           {"_id": 0, "state": 1})
+    if existing is None:
+        try:
+            await db.stock_ops.insert_one({
+                "op_id": op_id, "product_id": product_id,
+                "delta": int(delta_qty), "state": "pending",
+                "at": iso(now_utc())})
+            return "new"
+        except Exception:
+            existing = await db.stock_ops.find_one({"op_id": op_id},
+                                                   {"_id": 0, "state": 1})
+            if existing is None:
+                raise
+    return "applied" if existing.get("state", "applied") == "applied" \
+        else "pending"
+
+
+async def _stock_ops_mark_applied(op_id: str) -> None:
+    await db.stock_ops.update_one({"op_id": op_id},
+                                  {"$set": {"state": "applied"}})
+
+
+async def stock_op_was_applied(product_id: str, op_id: str) -> bool:
+    """¿Este op de stock llegó a aplicarse? (embebido O log duradero)."""
+    if await db.products.find_one({"id": product_id, "applied_stock_ops": op_id},
+                                  {"_id": 1}):
+        return True
+    doc = await db.stock_ops.find_one({"op_id": op_id}, {"_id": 0, "state": 1})
+    return bool(doc) and doc.get("state", "applied") == "applied"
 
 
 async def get_low_stock_threshold() -> int:
@@ -220,8 +287,10 @@ async def build_daily_close(date_str: str) -> dict:
     movs = await db.inventory_movements.find(
         {"created_at": {"$gte": start, "$lt": end}}, {"_id": 0}).to_list(20000)
 
-    fis_v = [m for m in movs if m["type"] == "venta" and m.get("source") == "manual"]
-    web_v = [m for m in movs if m["type"] == "venta" and m.get("source") == "marketplace"]
+    fis_v = [m for m in movs if m["type"] == "venta" and m.get("source") == "manual"
+             and not m.get("stock_apply_failed")]
+    web_v = [m for m in movs if m["type"] == "venta" and m.get("source") == "marketplace"
+             and not m.get("stock_apply_failed")]
     compras = [m for m in movs if m["type"] == "entrada"
                and m.get("source") in ("manual", "alta")]
 
@@ -235,13 +304,13 @@ async def build_daily_close(date_str: str) -> dict:
     web_usdt = round(sum(float(rmap.get(m.get("ref_id"), {}).get("total_usd") or 0)
                          for m in web_ok), 2)
 
-    def _tot(rows, field="total"):
+    def _tot(rows: list, field: str = "total") -> float:
         return round(sum(float(r.get(field) or 0) for r in rows), 2)
 
-    def _units(rows):
+    def _units(rows: list) -> int:
         return sum(int(r.get("quantity") or 0) for r in rows)
 
-    productos = {}
+    productos: dict = {}
     for m in fis_v:
         e = productos.setdefault(m["product_id"], {
             "product_id": m["product_id"], "name": m.get("product_name", ""),
@@ -257,7 +326,7 @@ async def build_daily_close(date_str: str) -> dict:
         e["total"] = round(e["total"] + float(m.get("total") or 0), 2)
         e["ganancia"] = round(e["ganancia"] + float(m.get("profit") or 0), 2)
 
-    compras_det = {}
+    compras_det: dict = {}
     for m in compras:
         e = compras_det.setdefault(m["product_id"], {
             "product_id": m["product_id"], "name": m.get("product_name", ""),
@@ -334,6 +403,13 @@ async def _record_fund_flow(mov: dict) -> None:
             note = f"Venta tienda física: {mov['quantity']}× {mov.get('product_name', '')}"
         else:
             return
+        # iter256(S10) — claim idempotente: reejecutable desde el healer sin
+        # duplicar el asiento contable.
+        claim = await db.inventory_movements.update_one(
+            {"id": mov["id"], "fund_flow_recorded": {"$ne": True}},
+            {"$set": {"fund_flow_recorded": True}})
+        if claim.modified_count == 0:
+            return
         from services.marketplace_fx import get_store_fx
         from services.company_funds_common import record_auto_fund_adjustment
         fx = await get_store_fx()
@@ -377,17 +453,25 @@ async def build_control_rows() -> list:
     """Tabla 'Control Inventario' en tiempo real (una fila por producto)."""
     products = await db.products.find(_COMPANY_FILTER, {"_id": 0}).to_list(1000)
     threshold = await get_low_stock_threshold()
+    # iter256(S11) — mismo criterio de venta efectiva que el dashboard:
+    # excluir canjes rechazados (y sus reversos) y movimientos fallidos.
+    refs = await _rejected_marketplace_refs()
+    ok_match = {"stock_apply_failed": {"$ne": True},
+                "$or": [{"source": {"$ne": "marketplace"}},
+                        {"ref_id": {"$nin": list(refs)}}]}
     agg = await db.inventory_movements.aggregate([
+        {"$match": ok_match},
         {"$group": {"_id": {"p": "$product_id", "t": "$type"},
                     "qty": {"$sum": "$quantity"}}}
     ]).to_list(5000)
     by_product: dict = {}
     for a in agg:
         by_product.setdefault(a["_id"]["p"], {})[a["_id"]["t"]] = a["qty"]
-    today = iso(now_utc())[:10]
+    today = today_havana()
     start, end = _day_bounds(today)
     today_agg = await db.inventory_movements.aggregate([
-        {"$match": {"type": "venta", "created_at": {"$gte": start, "$lt": end}}},
+        {"$match": {"type": "venta",
+                    "created_at": {"$gte": start, "$lt": end}, **ok_match}},
         {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"},
                     "revenue": {"$sum": "$total"}}}
     ]).to_list(2000)
@@ -441,9 +525,14 @@ async def build_rotation(start: str, end: str,
         prod_filter = {"id": {"$in": product_ids}}
     products = await db.products.find(prod_filter, {"_id": 0}).to_list(1000)
     ids = [p["id"] for p in products]
+    # iter256(S11) — excluir canjes rechazados y movimientos fallidos.
+    refs = await _rejected_marketplace_refs()
     sold_agg = await db.inventory_movements.aggregate([
         {"$match": {"type": "venta", "product_id": {"$in": ids},
-                    "created_at": {"$gte": s, "$lt": e}}},
+                    "created_at": {"$gte": s, "$lt": e},
+                    "stock_apply_failed": {"$ne": True},
+                    "$or": [{"source": {"$ne": "marketplace"}},
+                            {"ref_id": {"$nin": list(refs)}}]}},
         {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"}}},
     ]).to_list(2000)
     sold_by = {a["_id"]: int(a["qty"]) for a in sold_agg}
@@ -525,7 +614,10 @@ async def build_dashboard(start: str, end: str,
     if product_ids:
         match["product_id"] = {"$in": product_ids}
     movs = await db.inventory_movements.find(match, {"_id": 0}).to_list(20000)
-    ventas = [m for m in movs if m["type"] == "venta"]
+    # iter256(S10) — un movimiento cuyo stock NO llegó a aplicarse (fallo en
+    # la recuperación) no cuenta como venta efectiva.
+    ventas = [m for m in movs if m["type"] == "venta"
+              and not m.get("stock_apply_failed")]
     # iter254(R09) — excluir ventas de canjes RECHAZADOS: el reverso ya
     # restituyó el stock, así que ingresos/ganancia no deben contarlas.
     red_ids = list({m.get("ref_id") for m in ventas

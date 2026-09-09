@@ -16,7 +16,7 @@ import time
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN
+from tests.conftest import BASE_URL, ADMIN_TOKEN, VIP_TOKEN, today_havana
 
 API = f"{BASE_URL}/api"
 MARK = "ITER219TEST"
@@ -158,12 +158,25 @@ class TestFundInflows:
         assert len(adjs) == 2
         out = [a for a in adjs if a["adjustment_type"] == "outflow"]
         assert len(out) == 1 and out[0]["amount"] == 30.0
-        # repetir rechazo no duplica el reverso
-        requests.put(f"{API}/admin/redemptions/{red['id']}/status",
-                     headers=_h(ADMIN_TOKEN), json={"status": "pending"})
+        # iter256(S05) — reactivar (rejected→pending) re-cobra al cliente y
+        # RE-REGISTRA la entrada al fondo; el segundo rechazo la revierte.
+        # Cada ciclo queda balanceado (inflow+outflow) sin duplicados.
+        r = requests.put(f"{API}/admin/redemptions/{red['id']}/status",
+                         headers=_h(ADMIN_TOKEN), json={"status": "pending"})
+        assert r.status_code == 200, r.text
+        adjs = _fund_adjustments(red["id"])
+        assert len(adjs) == 3
+        assert len([a for a in adjs if a["adjustment_type"] == "inflow"]) == 2
+        r = requests.put(f"{API}/admin/redemptions/{red['id']}/status",
+                         headers=_h(ADMIN_TOKEN), json={"status": "rejected"})
+        assert r.status_code == 200, r.text
+        adjs = _fund_adjustments(red["id"])
+        assert len(adjs) == 4
+        assert len([a for a in adjs if a["adjustment_type"] == "outflow"]) == 2
+        # repetir el rechazo (mismo estado) no duplica nada
         requests.put(f"{API}/admin/redemptions/{red['id']}/status",
                      headers=_h(ADMIN_TOKEN), json={"status": "rejected"})
-        assert len(_fund_adjustments(red["id"])) == 2
+        assert len(_fund_adjustments(red["id"])) == 4
 
     def test_vendor_commission_enters_fund_on_delivered(self):
         db = _db()
@@ -238,7 +251,7 @@ class TestDashboardPerProduct:
                           "quantity": 5, "note": MARK}).status_code == 200
         assert _movement({"product_id": p2["id"], "type": "venta",
                           "quantity": 2, "note": MARK}).status_code == 200
-        today = time.strftime("%Y-%m-%d")
+        today = today_havana()
         r = requests.get(f"{API}/admin/inventory/dashboard",
                          params={"start": today, "end": today,
                                  "product_id": p1["id"]},

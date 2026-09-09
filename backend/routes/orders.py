@@ -440,14 +440,16 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     cq = {"rate_usdt_per_km": 0.0, "min_fee_usdt": 0.0}
     if pickup_store is None:
         from services.courier_fee import quote_courier_fee, route_quote
-        cq = await quote_courier_fee("USD", total)
+        # iter256(S09) — la tarifa se cotiza en la MONEDA DE LIQUIDACIÓN del
+        # canje (USDT): el número cobrado y el umbral gratis usan esa unidad.
+        cq = await quote_courier_fee("USDT", total)
         if cq["free"]:
             courier_status = "free"
         elif not cq["enabled"]:
             courier_status = "none"
         elif payload.delivery_latitude is not None and payload.delivery_longitude is not None:
             rq = await route_quote(payload.delivery_latitude,
-                                   payload.delivery_longitude, "USD", total)
+                                   payload.delivery_longitude, "USDT", total)
             if rq.get("requires_manual_review") or rq.get("km") is None:
                 courier_status = "manual_review"
             else:
@@ -461,7 +463,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         if courier_status == "manual_review":
             from services.courier_fee import municipality_fallback_quote
             mq = await municipality_fallback_quote(
-                payload.delivery_address or "", "USD", total,
+                payload.delivery_address or "", "USDT", total,
                 municipality_key=payload.courier_municipality)
             if mq and mq.get("fee_usdt", 0) > 0:
                 courier_status = "charged"
@@ -542,10 +544,25 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             status_code=409,
             detail={"code": "INSUFFICIENT_BALANCE",
                     "message": "Saldo USDT insuficiente"})
-    await db.redemptions.update_one(
+    act = await db.redemptions.update_one(
         {"id": r.id, "status": "initializing"},
         {"$set": {"status": "pending"},
          "$unset": {"init_op_id": "", "stock_op_id": ""}})
+    if act.matched_count == 0:
+        # iter256(S03) — el healer revirtió este intento (tardó demasiado):
+        # deshacer nuestros efectos con los MISMOS op_ids de undo del healer
+        # (idempotentes ⇒ un solo reverso total, gane quien gane la carrera).
+        from services.balances import credit_balance_idempotent
+        await credit_balance_idempotent(
+            user["user_id"], "USDT", total + courier_fee_usd,
+            f"{debit_op}:undo")
+        await apply_stock_idempotent(product["id"], payload.quantity,
+                                     f"{stock_op}:undo",
+                                     require_available=False)
+        raise HTTPException(
+            status_code=409,
+            detail=("La solicitud tardó demasiado y fue revertida por "
+                    "seguridad; tu saldo está intacto. Inténtalo de nuevo."))
     # iter199 — auto-charged deliveries create their courier job right away.
     if courier_status == "charged":
         try:
@@ -920,7 +937,7 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
                 and payload.delivery_longitude is not None:
             doc["delivery_latitude"] = payload.delivery_latitude
             doc["delivery_longitude"] = payload.delivery_longitude
-        if courier_status == "charged":
+        if courier_status == "charged" and courier_rq is not None:
             doc["courier_fee_charged_at"] = iso(now_utc())
             doc["courier_fee_charged_by"] = user["user_id"]
             doc["courier_rate_snapshot"] = courier_rq["rate_usdt_per_km"]
@@ -943,9 +960,20 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
             status_code=409,
             detail={"code": "INSUFFICIENT_BALANCE",
                     "message": f"Saldo insuficiente en {currency}"})
-    await db.withdrawals.update_one(
+    act = await db.withdrawals.update_one(
         {"id": w.id, "status": "initializing"},
         {"$set": {"status": "pending"}, "$unset": {"init_op_id": ""}})
+    if act.matched_count == 0:
+        # iter256(S03) — el healer revirtió este intento: deshacer nuestro
+        # débito (mismo op de undo que el healer ⇒ un solo reverso total).
+        from services.balances import credit_balance_idempotent
+        await credit_balance_idempotent(
+            user["user_id"], currency, payload.amount_usd + courier_fee_cur,
+            f"{debit_op}:undo")
+        raise HTTPException(
+            status_code=409,
+            detail=("La solicitud tardó demasiado y fue revertida por "
+                    "seguridad; tu saldo está intacto. Inténtalo de nuevo."))
     doc["status"] = "pending"
     # iter205 — protocolo de mensajero: las entregas a domicilio (cobradas o
     # gratis por umbral) crean su trabajo de mensajería desde la creación.
@@ -1405,7 +1433,7 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     eps = 1e-6
     uid = user["user_id"]
     if from_code == "USD":
-        usd_modern = {"$subtract": [
+        usd_modern: dict = {"$subtract": [
             {"$ifNull": ["$vip_balances.USD", 0.0]},
             {"$subtract": [payload.amount_from, "$_legacy_take"]}]}
         if to_code == "USD":
