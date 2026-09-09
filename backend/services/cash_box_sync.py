@@ -1,9 +1,8 @@
 """iter263/265 — Espejo automático: operaciones de efectivo → Caja de Efectivo.
 
-El fondo de empresa contable y la Caja de Efectivo física deben contar la
-misma historia. Este servicio replica en la caja de empresa «Fondo Resilience»
-(identidad de sistema `company_cash`, H03) cada operación contable que mueve
-efectivo físico CUP/CUPE/USD:
+servicio replica cada operación contable que mueve efectivo físico CUP/USD
+en la caja de empresa «Fondo Resilience» (identidad de sistema
+`company_cash`, H03):
   - ajustes manuales de capital en efectivo (iter263),
   - retiros de empresa PAGADOS desde la cuenta de caja (H01),
   - transferencias internas que entran/salen de la cuenta de caja (H01).
@@ -25,7 +24,9 @@ COMPANY_BOX_NAME = "Fondo Resilience"
 SYSTEM_PURPOSE = "company_cash"
 
 # moneda del ajuste → fondo de la caja (billetes físicos)
-_FUND_BY_CURRENCY = {"CUP": "CUP", "CUPE": "CUP", "USD": "USD"}
+# Regla de negocio (Jun 2026): el efectivo cubano usa UNA sola nomenclatura,
+# «CUP» — no existe un código CUPE separado.
+_FUND_BY_CURRENCY = {"CUP": "CUP", "USD": "USD"}
 
 _BOX_INDEX_READY = False
 

@@ -1386,3 +1386,8 @@ Operator asks (13 Feb 2026):
 ## Jun 2026 — iter266: Retiros contra el DISPONIBLE REAL (decisión del usuario, verificado)
 - `create_company_withdrawal` y el pago (`update_company_withdrawal`) ahora autorizan contra `balance_available` (balance − custodia de clientes) además de la reserva de retiros pendientes. Mensajes detallan balance, custodia y reservado.
 - Test nuevo `test_client_custody_reduces_available_fund` (balance 100 − custodia 30 → 80 rechazado, 70 pagado; custodia > balance → nada se autoriza). `test_iter265` 12/12, regresión retiros (iter15/194/195/38/storage35/263) verde (2 flakes de red de storage verificados aislados), make test-critical 343/343, mypy 97.
+
+## Jun 2026 — iter267: Nomenclatura única CUP (decisión del usuario sobre Auditoría 7/H08)
+- El usuario re-subió la Auditoría 7 (mismo commit c4ffe64, H01–H09 ya aplicados en iter265/266) indicando aplicar todo EXCEPTO lo relativo a CUPE: "para el CUP efectivo solo tenemos una sola nomenclatura que es simplemente CUP".
+- Eliminado el soporte CUPE añadido en iter263/265: `_FUND_BY_CURRENCY` (cash_box_sync), `CASH_DENOMINATIONS` (admin_company_funds), `CASH_DENOMS` en AdjustmentDialog.jsx y AccountBreakdownDialog.jsx (H08 descartado). Test iter263 reemplazado por `test_cup_is_the_only_cash_nomenclature` (CUPE/CUPT no mapean a billetes). NOTA: las referencias "CUPE — Peso Cubano Efectivo" en delivery_rules/orders son la convención de subtipos de monedas de entrega (módulo distinto), intactas.
+- Verificación: 24 tests módulo caja + make test-critical 343/343 + mypy 97 + eslint.

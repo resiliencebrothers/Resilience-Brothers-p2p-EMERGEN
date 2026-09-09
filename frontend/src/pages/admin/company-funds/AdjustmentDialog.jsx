@@ -20,10 +20,9 @@ const METHOD_LABELS = {
 };
 
 // iter213 — denominaciones de billetes (formato Excel de control físico).
-const CUP_BILLS = [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1];
+// Regla de negocio: el CUP efectivo usa solo la nomenclatura «CUP».
 const CASH_DENOMS = {
-  CUP: CUP_BILLS,
-  CUPE: CUP_BILLS, // iter263 — Peso Cubano Efectivo usa los mismos billetes
+  CUP: [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
   USD: [100, 50, 20, 10, 5, 2, 1],
 };
 

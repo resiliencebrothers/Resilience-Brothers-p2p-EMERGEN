@@ -80,12 +80,11 @@ class CompanyFundAdjustmentCreate(BaseModel):
 
 
 # iter213 — denominaciones válidas por moneda (billetes en circulación).
+# Regla de negocio (Jun 2026): el CUP efectivo usa solo la nomenclatura «CUP».
 CASH_DENOMINATIONS: Dict[str, List[int]] = {
     "CUP": [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
     "USD": [100, 50, 20, 10, 5, 2, 1],
 }
-# iter263 — «Peso Cubano Efectivo» usa los mismos billetes físicos que CUP.
-CASH_DENOMINATIONS["CUPE"] = CASH_DENOMINATIONS["CUP"]
 
 
 def _parse_denomination_entry(currency: str, valid: Optional[List[int]],
@@ -1285,7 +1284,7 @@ async def create_company_fund_adjustment(
     # so the returned `doc` remains JSON-serialisable.
     await db.company_fund_adjustments.insert_one({**doc})
     await _log_adjustment_action(actor, payload, doc, currency, denominations)
-    # iter263 — espejo físico: el efectivo (CUP/CUPE/USD) se replica con su
+    # iter263 — espejo físico: el efectivo (CUP/USD) se replica con su
     # desglose de billetes en la Caja de Efectivo «Fondo Resilience».
     from services.cash_box_sync import mirror_adjustment_to_cash_box
     try:

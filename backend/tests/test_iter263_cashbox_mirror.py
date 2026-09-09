@@ -7,7 +7,8 @@ Verifica:
 3. Backfill: los ajustes históricos sin espejo se replican una sola vez
    (idempotente, conserva created_at); monedas sin billetes CUP/USD no aplican.
 4. Los movimientos espejados NO se pueden editar ni borrar desde la caja (409).
-5. CUPE (Peso Cubano Efectivo) exige desglose y espeja al fondo CUP.
+5. Nomenclatura única: el efectivo cubano es solo «CUP» — ningún otro código
+   se trata como billetes CUP (decisión de negocio, Jun 2026).
 """
 import asyncio
 import os
@@ -213,28 +214,14 @@ def test_mirrored_movement_locked_in_cash_box():
         _cleanup()
 
 
-def test_cupe_requires_denominations_and_mirrors_to_cup_fund():
-    _cleanup()
-    _db().currencies.update_one(
-        {"code": "CUPE"},
-        {"$setOnInsert": {"code": "CUPE", "name": "Peso Cubano Efectivo",
-                          "type": "fiat", "is_active": True}},
-        upsert=True)
-    try:
-        r = _adjust({"adjustment_type": "inflow", "currency": "CUPE",
-                     "amount": 2000, "method": "cash", "source_name": MARK})
-        assert r.status_code == 400 and "desglose" in r.json()["detail"].lower(), \
-            "CUPE en efectivo debe exigir el desglose de billetes"
-
-        r = _adjust({"adjustment_type": "inflow", "currency": "CUPE",
-                     "amount": 2000, "method": "cash", "source_name": MARK,
-                     "denominations": {"1000": 2}})
-        assert r.status_code == 200, r.text
-        doc = r.json()
-        mov = _db().cash_box_movements.find_one(
-            {"id": doc["cash_box_movement_id"]}, {"_id": 0})
-        assert mov and mov["fund"] == "CUP", \
-            "CUPE son billetes CUP físicos — espeja al fondo CUP de la caja"
-        assert mov["denominations"] == {"1000": 2}
-    finally:
-        _cleanup()
+def test_cup_is_the_only_cash_nomenclature():
+    """Decisión de negocio: el CUP efectivo usa una sola nomenclatura («CUP»).
+    Ningún otro código se mapea a billetes CUP ni exige desglose."""
+    from services.cash_box_sync import fund_for_currency
+    from routes.admin_company_funds import CASH_DENOMINATIONS
+    assert fund_for_currency("CUP") == "CUP"
+    assert fund_for_currency("USD") == "USD"
+    assert fund_for_currency("CUPE") is None, \
+        "CUPE no existe como nomenclatura de efectivo"
+    assert fund_for_currency("CUPT") is None
+    assert set(CASH_DENOMINATIONS.keys()) == {"CUP", "USD"}
