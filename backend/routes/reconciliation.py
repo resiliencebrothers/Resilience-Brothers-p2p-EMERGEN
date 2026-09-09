@@ -793,12 +793,15 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
         item = await db.vip_batch_items.find_one({"id": payload.order_id}, {"_id": 0})
     if not order and not item:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
-    # iter260(E04) — reanudación tras crash: si la orden/ítem YA lleva el
-    # sello de ESTE movimiento (se aprobó pero el enlace bancario no se
-    # escribió), saltar validaciones de pendiente y completar solo el enlace.
+    # iter260(E04)/iter262(G04) — reanudación tras crash SOLO si la decisión
+    # quedó PERSISTIDA (sello de ESTE movimiento + estado aprobado): un sello
+    # preparado sin aprobación NO es prueba de abono — en ese caso se vuelve
+    # a ejecutar la aprobación (idempotente: el pre-stamp reconoce su propio
+    # sello y apply_item_decision reclama pendiente→aprobado).
     target = item or order
     resuming = ((target.get("reconciliation") or {})
-                .get("bank_transaction_id") == tx_id)
+                .get("bank_transaction_id") == tx_id
+                and target.get("status") == "approved")
     if not resuming:
         if item:
             if item["status"] != "pending":
@@ -968,18 +971,26 @@ async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
     cycle = int(order.get("accum_cycle") or 0)
     op_id = f"accum-rollback:{order_id}:{tx_id}:c{cycle}"
     plan = {"op_id": op_id, "amount": round(gross, 8), "currency": code,
-            "at": iso(now_utc())}
+            "cycle": cycle, "at": iso(now_utc())}
+    # iter262(G03) — el claim exige el CICLO leído y el vínculo bancario
+    # esperado: una reversión obsoleta (leyó el ciclo anterior) no puede
+    # reclamar una orden re-acreditada en un ciclo nuevo.
     claim = await db.orders.update_one(
         {"id": order_id, "status": "approved",
+         "accum_cycle": {"$in": [None, 0]} if cycle == 0 else cycle,
+         "reconciliation.bank_transaction_id": tx_id,
          "rollback_pending": {"$exists": False}},
         {"$set": {"rollback_pending": plan}})
     if claim.modified_count == 0:
         fresh = await db.orders.find_one(
-            {"id": order_id}, {"_id": 0, "rollback_pending": 1, "status": 1})
+            {"id": order_id},
+            {"_id": 0, "rollback_pending": 1, "status": 1, "accum_cycle": 1})
         pend = (fresh or {}).get("rollback_pending")
-        if not pend or (fresh or {}).get("status") != "approved":
+        if not pend or (fresh or {}).get("status") != "approved" \
+                or int((fresh or {}).get("accum_cycle") or 0) != cycle \
+                or int(pend.get("cycle") or 0) != cycle:
             raise HTTPException(status_code=409,
-                                detail="La orden cambió de estado; recarga.")
+                                detail="La orden cambió de estado o de ciclo; recarga.")
         op_id = pend["op_id"]  # reanudar el mismo plan (idempotente)
     st = await debit_balance_idempotent(order["user_id"], code, gross, op_id)
     if st == "insufficient":

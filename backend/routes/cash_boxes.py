@@ -13,7 +13,7 @@ Nota: es una herramienta de control físico independiente del Fondo de
 Empresa contable (admin_company_funds).
 """
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Literal, Optional
 from zoneinfo import ZoneInfo
 
@@ -272,6 +272,11 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
         {"id": mov_id, "box_id": box["id"]}, {"_id": 0})
     if not mov:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    if mov.get("source_adjustment_id"):
+        raise HTTPException(
+            status_code=409,
+            detail=("Este movimiento proviene de un ajuste de capital del "
+                    "Fondo de Empresa y no puede modificarse desde la caja."))
     upd: Dict[str, Any] = {}
     if payload.amount is not None:
         upd["amount"] = round(float(payload.amount), 2)
@@ -295,10 +300,16 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
 async def delete_movement(box_id: str, mov_id: str, request: Request) -> Any:
     user = await require_user(request)
     box = await _get_box_checked(box_id, user)
-    res = await db.cash_box_movements.delete_one(
-        {"id": mov_id, "box_id": box["id"]})
-    if res.deleted_count == 0:
+    mov = await db.cash_box_movements.find_one(
+        {"id": mov_id, "box_id": box["id"]}, {"_id": 0})
+    if not mov:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    if mov.get("source_adjustment_id"):
+        raise HTTPException(
+            status_code=409,
+            detail=("Este movimiento proviene de un ajuste de capital del "
+                    "Fondo de Empresa y no puede eliminarse desde la caja."))
+    await db.cash_box_movements.delete_one({"id": mov_id, "box_id": box["id"]})
     return {"ok": True}
 
 

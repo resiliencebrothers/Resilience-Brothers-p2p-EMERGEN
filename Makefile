@@ -41,6 +41,8 @@ test-critical: ## Run critical regression subset (~2 min, 190 tests) — pre-com
 		tests/test_iter257_deep_audit.py \
 		tests/test_iter260_continuation_audit.py \
 		tests/test_iter261_audit_f_fixes.py \
+		tests/test_iter262_audit_g_fixes.py \
+		tests/test_iter263_cashbox_mirror.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

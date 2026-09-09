@@ -6,6 +6,7 @@ the shared `db_client`.
 """
 from typing import Optional
 from datetime import datetime, timezone, timedelta
+import uuid
 
 from fastapi import HTTPException
 
@@ -273,8 +274,11 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
     if state == "applied":
         return "duplicate"
     guard = amount - 1e-6
+    # iter262(G01) — el guard también bloquea el TOKEN de quema (op:burn):
+    # su presencia significa "operación abortada", nunca efecto real.
+    reg_guard = {"$nin": [op_id, f"{op_id}:burn"]}
     if code == "USD":
-        filt: dict = {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}}
+        filt: dict = {"user_id": user_id, "applied_credit_ops": reg_guard}
         if not allow_negative:
             filt["$expr"] = {"$gte": [
                 {"$add": [{"$ifNull": ["$vip_balances.USD", 0.0]},
@@ -299,7 +303,7 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
             ],
         )
     else:
-        filt = {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}}
+        filt = {"user_id": user_id, "applied_credit_ops": reg_guard}
         if not allow_negative:
             filt[f"vip_balances.{code}"] = {"$gte": guard}
         res = await db.users.update_one(
@@ -310,8 +314,10 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
     if res.matched_count:
         await _ops_log_mark_applied(op_id)
         return "applied"
-    if await db.users.find_one({"user_id": user_id, "applied_credit_ops": op_id},
-                               {"_id": 1}):
+    if await db.users.find_one(
+            {"user_id": user_id,
+             "applied_credit_ops": {"$in": [op_id, f"{op_id}:burn"]}},
+            {"_id": 1}):
         await _ops_log_mark_applied(op_id)
         return "duplicate"
     # insuficiente: liberar el intento pendiente del log duradero.
@@ -321,28 +327,25 @@ async def debit_balance_idempotent(user_id: str, code: str, amount: float,
 
 async def burn_or_undo_debit(user_id: str, code: str, amount: float,
                              op_id: str) -> str:
-    """iter260(E08)/iter261(F01) — al abortar un plan, decide de forma
-    DURADERA y ATÓMICA entre quemar (bloquear un débito que nunca movió
-    dinero) o compensar (devolver un débito real), y esa decisión sobrevive
-    a cualquier reintento. Máquina de estados del log duradero:
-      pending/ausente → 'burned' (claim atómico; el débito tardío ve el log
-                        quemado o el op en el registro y devuelve duplicate)
-      applied         → compensar con ':undo' (idempotente) y sellar 'undone'
-      burned          → reintento de una quema previa: NUNCA compensa
-      undone          → reintento de una compensación previa: no repite
-    Devuelve 'burned' | 'undone'."""
+    """iter260(E08)/iter261(F01)/iter262(G01) — al abortar un plan, decide de
+    forma DURADERA entre quemar (bloquear un débito que nunca movió dinero) o
+    compensar (devolver un débito real). El bloqueo usa un TOKEN PROPIO
+    (`op:burn`) en el registro embebido — nunca el op real — así la presencia
+    del op real siempre significa efecto real y la del token siempre bloqueo:
+      pending/ausente → claim 'burned' en el log, y SIEMPRE se resuelve la
+                        evidencia después (token + búsqueda del op real)
+      applied         → compensar ':undo' (idempotente) y sellar 'undone'
+      burned          → reintento: re-resolver la evidencia (no asume nada)
+      undone          → no repetir
+    Dos recuperadores intercalados convergen: el token no puede confundirse
+    con un débito y un débito real jamás queda sin su devolución."""
+    burn_token = f"{op_id}:burn"
     for _ in range(3):
         log = await db.credit_ops.find_one({"op_id": op_id},
                                            {"_id": 0, "state": 1})
         state = (log or {}).get("state")
         if state == "undone":
             return "undone"
-        if state == "burned":
-            # re-asegurar el bloqueo del registro (pudo fallar tras la quema)
-            await db.users.update_one(
-                {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
-                {"$push": _registry_push(op_id)})
-            return "burned"
         if state == "applied":
             await credit_balance_idempotent(user_id, code, amount,
                                             f"{op_id}:undo",
@@ -352,42 +355,44 @@ async def burn_or_undo_debit(user_id: str, code: str, amount: float,
                 {"$set": {"state": "undone",
                           "undone_at": datetime.now(timezone.utc).isoformat()}})
             return "undone"
-        # pending o ausente → reclamar la QUEMA en el log ANTES de tocar el
-        # registro (si morimos tras esto, el reintento cae en la rama burned
-        # y el débito tardío ve 'burned' ⇒ duplicate, sin compensación falsa).
-        claimed = False
-        try:
-            res = await db.credit_ops.update_one(
-                {"op_id": op_id,
-                 "state": {"$nin": ["applied", "burned", "undone"]}},
-                {"$set": {"state": "burned", "burned": True,
-                          "user_id": user_id, "code": code,
-                          "amount": round(float(amount), 8), "kind": "debit",
-                          "applied_at": datetime.now(timezone.utc).isoformat()}},
-                upsert=True)
-            claimed = bool(res.modified_count) or \
-                getattr(res, "upserted_id", None) is not None
-        except Exception:
-            claimed = False  # carrera con el insert del débito → re-evaluar
-        if not claimed:
-            continue  # el estado cambió bajo nuestros pies → re-leer
-        push = await db.users.update_one(
-            {"user_id": user_id, "applied_credit_ops": {"$ne": op_id}},
-            {"$push": _registry_push(op_id)})
-        if push.modified_count:
-            return "burned"  # nadie movió dinero: quemado limpio
-        if not await db.users.find_one(
+        if state != "burned":
+            # pending o ausente → reclamar la QUEMA en el log (los débitos
+            # tardíos ven 'burned' en _ops_log_ensure ⇒ duplicate).
+            try:
+                res = await db.credit_ops.update_one(
+                    {"op_id": op_id,
+                     "state": {"$nin": ["applied", "burned", "undone"]}},
+                    {"$set": {"state": "burned", "burned": True,
+                              "user_id": user_id, "code": code,
+                              "amount": round(float(amount), 8),
+                              "kind": "debit",
+                              "applied_at": datetime.now(timezone.utc).isoformat()}},
+                    upsert=True)
+                claimed = bool(res.modified_count) or \
+                    getattr(res, "upserted_id", None) is not None
+            except Exception:
+                claimed = False  # carrera con el insert del débito
+            if not claimed:
+                continue  # el estado cambió bajo nuestros pies → re-leer
+        # log en 'burned' (nuestro o de un intento previo) → RESOLVER SIEMPRE:
+        # 1) sellar el token de bloqueo (id distinto al op real).
+        await db.users.update_one(
+            {"user_id": user_id, "applied_credit_ops": {"$ne": burn_token}},
+            {"$push": {"applied_credit_ops": burn_token}})
+        # 2) evidencia de efecto real: SOLO el op real en el registro. Un
+        #    débito posterior al token queda bloqueado por el guard $nin;
+        #    uno anterior aparece aquí y se compensa. Sin ambigüedad.
+        if await db.users.find_one(
                 {"user_id": user_id, "applied_credit_ops": op_id}, {"_id": 1}):
-            return "burned"  # usuario inexistente — nada que compensar
-        # el op YA estaba en el registro con log no-applied ⇒ el débito real
-        # pasó su $inc pero murió antes de marcar el log → compensar.
-        await credit_balance_idempotent(user_id, code, amount, f"{op_id}:undo",
-                                        legacy_usd=(code == "USD"))
-        await db.credit_ops.update_one(
-            {"op_id": op_id},
-            {"$set": {"state": "undone",
-                      "undone_at": datetime.now(timezone.utc).isoformat()}})
-        return "undone"
+            await credit_balance_idempotent(user_id, code, amount,
+                                            f"{op_id}:undo",
+                                            legacy_usd=(code == "USD"))
+            await db.credit_ops.update_one(
+                {"op_id": op_id},
+                {"$set": {"state": "undone",
+                          "undone_at": datetime.now(timezone.utc).isoformat()}})
+            return "undone"
+        return "burned"
     return "burned"
 
 
@@ -503,16 +508,17 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
     if not active or budget_total <= 0:
         return round(amount - prior, 6)
     key = {"order_id": order_id, "currency": currency}
-    # iter261(F02) — el LÍMITE global vive en el plan (un solo documento):
-    # cada contribución RECLAMA presupuesto con un $inc condicional atómico
-    # sobre `consumed`, así dos ejecutores con lecturas desfasadas de deudas
-    # o contribuciones jamás suman más que budget_total. Migración perezosa:
-    # planes anteriores sin `consumed` arrancan con las contribuciones ya
-    # hechas por esta orden (prior).
+    # iter261(F02)/iter262(G02) — el LÍMITE global vive en el plan: cada
+    # contribución reserva presupuesto con una ASIGNACIÓN RECUPERABLE
+    # (allocs[]: reserved → applied | cancelada) reclamada con un $inc
+    # condicional atómico sobre `consumed`. Migración perezosa: planes
+    # anteriores sin `consumed` arrancan con las contribuciones ya hechas.
     if "consumed" not in plan:
         await db.repayment_plans.update_one(
             {**key, "consumed": {"$exists": False}},
             {"$set": {"consumed": prior}})
+    # re-drive: completar o cancelar reservas huérfanas de intentos previos.
+    await _resolve_reserved_allocations(key, order_id)
     for cr in active:
         for _attempt in range(3):
             plan_doc = await db.repayment_plans.find_one(
@@ -536,67 +542,111 @@ async def _apply_capital_request_repayment(user_id: str, currency: str,
             contribution = round(min(remaining, debt), 4)
             if contribution <= 0:
                 break
-            # 1) reclamar presupuesto en el plan (atómico y global por orden)
+            # 1) reservar presupuesto con asignación nombrada (atómico)
+            nonce = uuid.uuid4().hex[:10]
             claim = await db.repayment_plans.update_one(
-                {**key, "consumed": {
-                    "$lte": round(budget_total - contribution + 1e-9, 6)}},
+                {**key,
+                 "consumed": {
+                     "$lte": round(budget_total - contribution + 1e-9, 6)},
+                 "allocs.debt_id": {"$ne": cr["id"]}},
                 {"$inc": {"consumed": contribution},
-                 "$set": {"consumed_at": now_iso_}})
+                 "$set": {"consumed_at": now_iso_},
+                 "$push": {"allocs": {"nonce": nonce, "debt_id": cr["id"],
+                                      "amount": contribution,
+                                      "state": "reserved",
+                                      "at": now_iso_}}})
             if claim.matched_count == 0:
-                continue  # otro ejecutor consumió presupuesto: releer
-            # 2) aplicar a la deuda (condicional e idempotente por orden+deuda)
-            res = await db.capital_requests.update_one(
-                {"id": cr["id"], "status": "disbursed",
-                 "debt_remaining": {"$gte": contribution - 1e-9},
-                 "repayment_events": {"$not": {"$elemMatch": {"order_id": order_id}}}},
-                {"$inc": {"debt_remaining": -contribution},
-                 "$set": {"updated_at": now_iso_},
-                 "$push": {"repayment_events": {
-                     "order_id": order_id, "amount": contribution,
-                     "at": now_iso_}}},
-            )
-            if res.matched_count:
-                # liquidada → paid_off (claim condicional al llegar a ~0)
-                await db.capital_requests.update_one(
-                    {"id": cr["id"], "status": "disbursed",
-                     "debt_remaining": {"$lte": 0.0001}},
-                    {"$set": {"status": "paid_off", "paid_off_at": now_iso_,
-                              "debt_remaining": 0.0}})
+                continue  # sin presupuesto o deuda ya asignada: releer
+            # 2) aplicar a la deuda; confirmar o devolver la reserva.
+            if await _apply_debt_contribution(cr["id"], order_id,
+                                              contribution, now_iso_):
+                await _confirm_allocation(key, nonce)
                 break
-            # la deuda cambió bajo nuestros pies: devolver el presupuesto
-            # reclamado y reintentar con lectura fresca.
-            await db.repayment_plans.update_one(
-                key, {"$inc": {"consumed": -contribution}})
+            await _cancel_allocation(key, nonce, contribution)
 
+    # re-drive final: resolver también reservas de ejecutores concurrentes
+    # para que el neto refleje solo amortizaciones REALES o canceladas.
+    await _resolve_reserved_allocations(key, order_id)
     plan_final = await db.repayment_plans.find_one(
-        key, {"_id": 0, "consumed": 1, "consumed_at": 1}) or {}
+        key, {"_id": 0, "consumed": 1}) or {}
     total_consumed = round(float(plan_final.get("consumed") or 0.0), 6)
-    # Reconciliación fail-safe: un crash entre el claim y la escritura de la
-    # deuda deja `consumed` inflado (sesgo conservador: nunca se amortiza de
-    # más). Si no hay ejecutor reciente (>120s), realinear con los eventos
-    # reales para que el neto del cliente no quede penalizado para siempre.
-    events_total = round(prior, 6)
-    fresh_events = await db.capital_requests.find(
-        {"user_id": user_id, "currency_code": currency,
-         "repayment_events.order_id": order_id},
-        {"_id": 0, "repayment_events": 1}).to_list(50)
-    events_total = round(sum(float(ev.get("amount") or 0)
-                             for d_ in fresh_events
-                             for ev in (d_.get("repayment_events") or [])
-                             if ev.get("order_id") == order_id), 6)
-    if total_consumed > events_total + 1e-6:
-        stale_cutoff = (datetime.now(timezone.utc)
-                        - timedelta(seconds=120)).isoformat()
-        if (plan_final.get("consumed_at") or "") < stale_cutoff:
-            fixed = await db.repayment_plans.update_one(
-                {**key, "consumed": plan_final.get("consumed")},
-                {"$set": {"consumed": events_total}})
-            if fixed.modified_count:
-                total_consumed = events_total
     return round(amount - min(total_consumed, budget_total), 6)
 
 
 _PLAN_INDEX_READY = False
+
+
+async def _apply_debt_contribution(debt_id: str, order_id: str,
+                                   contribution: float,
+                                   now_iso_: str) -> bool:
+    """Escritura idempotente de la contribución en la deuda (guard por
+    orden+deuda) + cierre paid_off condicional. True si aplicó."""
+    res = await db.capital_requests.update_one(
+        {"id": debt_id, "status": "disbursed",
+         "debt_remaining": {"$gte": contribution - 1e-9},
+         "repayment_events": {"$not": {"$elemMatch": {"order_id": order_id}}}},
+        {"$inc": {"debt_remaining": -contribution},
+         "$set": {"updated_at": now_iso_},
+         "$push": {"repayment_events": {
+             "order_id": order_id, "amount": contribution,
+             "at": now_iso_}}},
+    )
+    if not res.matched_count:
+        return False
+    await db.capital_requests.update_one(
+        {"id": debt_id, "status": "disbursed",
+         "debt_remaining": {"$lte": 0.0001}},
+        {"$set": {"status": "paid_off", "paid_off_at": now_iso_,
+                  "debt_remaining": 0.0}})
+    return True
+
+
+async def _confirm_allocation(key: dict, nonce: str) -> None:
+    await db.repayment_plans.update_one(
+        {**key, "allocs": {"$elemMatch": {"nonce": nonce,
+                                          "state": "reserved"}}},
+        {"$set": {"allocs.$.state": "applied"}})
+
+
+async def _cancel_allocation(key: dict, nonce: str, amount: float) -> None:
+    await db.repayment_plans.update_one(
+        {**key, "allocs": {"$elemMatch": {"nonce": nonce,
+                                          "state": "reserved"}}},
+        {"$inc": {"consumed": -float(amount)},
+         "$pull": {"allocs": {"nonce": nonce}}})
+
+
+async def _resolve_reserved_allocations(key: dict, order_id: str) -> None:
+    """iter262(G02) — re-drive de reservas de presupuesto: toda asignación
+    'reserved' se COMPLETA (escribe la deuda con el guard idempotente y pasa
+    a 'applied') o se CANCELA (devuelve el presupuesto), según la evidencia
+    de la propia deuda. Sin ventanas temporales: un crash entre la reserva y
+    la escritura de la deuda ya no puede dejar el contador `consumed`
+    representando una amortización que nunca ocurrió."""
+    plan = await db.repayment_plans.find_one(key, {"_id": 0, "allocs": 1})
+    now_iso_ = datetime.now(timezone.utc).isoformat()
+    for alloc in (plan or {}).get("allocs") or []:
+        if alloc.get("state") != "reserved":
+            continue
+        nonce = alloc.get("nonce") or ""
+        amt = float(alloc.get("amount") or 0)
+        debt_id = alloc.get("debt_id") or ""
+        debt = await db.capital_requests.find_one(
+            {"id": debt_id},
+            {"_id": 0, "status": 1, "repayment_events": 1,
+             "debt_remaining": 1})
+        has_event = any(ev.get("order_id") == order_id
+                        for ev in ((debt or {}).get("repayment_events") or []))
+        if has_event:
+            await _confirm_allocation(key, nonce)
+            continue
+        if debt and debt.get("status") == "disbursed" \
+                and float(debt.get("debt_remaining") or 0) >= amt - 1e-9 \
+                and await _apply_debt_contribution(debt_id, order_id, amt,
+                                                   now_iso_):
+            await _confirm_allocation(key, nonce)
+        else:
+            await _cancel_allocation(key, nonce, amt)
 
 
 async def _load_or_create_repayment_plan(user_id: str, currency: str,
@@ -660,13 +710,14 @@ async def compact_credit_registries(threshold: int = 2000,
         for op in candidates:
             d = by_id.get(op)
             if d is None:
-                removable.append(op)  # sin log duradero (legado muerto)
+                removable.append(op)  # sin log duradero (legado/token muerto)
                 continue
-            if d.get("state", "applied") != "applied":
+            if d.get("state", "applied") == "pending":
                 continue  # pending → evidencia, se conserva
-            applied_at = d.get("applied_at") or d.get("at") or ""
-            if applied_at >= horizon:
-                continue  # E07: aplicado hace poco → posible ejecutor en vuelo
+            resolved_at = (d.get("undone_at") or d.get("applied_at")
+                           or d.get("at") or "")
+            if resolved_at >= horizon:
+                continue  # E07: resuelto hace poco → posible ejecutor en vuelo
             removable.append(op)
         if removable:
             await db.users.update_one(

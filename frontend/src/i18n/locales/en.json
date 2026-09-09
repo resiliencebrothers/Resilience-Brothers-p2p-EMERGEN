@@ -4176,6 +4176,7 @@
     "noMovements": "No movements in this fund yet. Record the first inflow or outflow.",
     "billCounterTitle": "Physical control per denomination",
     "billCounterHint": "Computed from the opening balance plus each movement's breakdown.",
+    "fromAdjustment": "Capital adjustment",
     "setInitial": "Opening balance",
     "initialTitle": "Opening balance",
     "initialHint": "Amount the box opens with and, optionally, the bill count.",

@@ -221,9 +221,9 @@ export default function CashBoxView() {
             </Button>
           </div>
 
-          <div className="grid lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* movimientos por día */}
-            <div className="lg:col-span-2 tactile-card p-4" data-testid="cashbox-movements">
+            <div className="lg:col-span-2 tactile-card p-4 min-w-0" data-testid="cashbox-movements">
               <p className="micro-label text-neutral-500 mb-2">{t("cashbox.movementsTitle")}</p>
               {movs.length === 0 ? (
                 <p className="text-sm text-neutral-500 py-6 text-center" data-testid="cashbox-movements-empty">{t("cashbox.noMovements")}</p>
@@ -242,10 +242,19 @@ export default function CashBoxView() {
                             {m.responsible && `${m.responsible} · `}{m.created_by_name}
                           </p>
                         </div>
-                        <button data-testid={`cashbox-mov-edit-${m.id}`} onClick={() => { setEditMov(m); setMovOpen(true); }}
-                          className="text-neutral-500 hover:text-white p-1"><Pencil className="w-3.5 h-3.5" /></button>
-                        <button data-testid={`cashbox-mov-delete-${m.id}`} onClick={() => deleteMov(m)}
-                          className="text-neutral-500 hover:text-red-400 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                        {m.source_adjustment_id ? (
+                          <span data-testid={`cashbox-mov-locked-${m.id}`}
+                            className="text-[0.6rem] uppercase tracking-wider text-neutral-500 border border-white/10 px-1.5 py-0.5 shrink-0">
+                            {t("cashbox.fromAdjustment")}
+                          </span>
+                        ) : (
+                          <>
+                            <button data-testid={`cashbox-mov-edit-${m.id}`} onClick={() => { setEditMov(m); setMovOpen(true); }}
+                              className="text-neutral-500 hover:text-white p-1"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button data-testid={`cashbox-mov-delete-${m.id}`} onClick={() => deleteMov(m)}
+                              className="text-neutral-500 hover:text-red-400 p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </>
+                        )}
                       </div>
                     ))}
                   </div>

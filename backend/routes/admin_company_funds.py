@@ -4,6 +4,7 @@ Extracted from routes/admin.py during the iter39 split. Tracks per-currency
 working capital (inflows from confirmed orders − client payouts − company
 payouts) and manages staff-initiated company withdrawals.
 """
+import logging
 import uuid
 from typing import Callable, List, Literal, Optional, Any, Dict
 
@@ -25,6 +26,7 @@ from services.company_funds_common import (
 
 
 router = APIRouter(tags=["Admin"])
+logger = logging.getLogger(__name__)
 
 
 class CompanyFundAdjustment(BaseModel):
@@ -82,6 +84,8 @@ CASH_DENOMINATIONS: Dict[str, List[int]] = {
     "CUP": [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
     "USD": [100, 50, 20, 10, 5, 2, 1],
 }
+# iter263 — «Peso Cubano Efectivo» usa los mismos billetes físicos que CUP.
+CASH_DENOMINATIONS["CUPE"] = CASH_DENOMINATIONS["CUP"]
 
 
 def _parse_denomination_entry(currency: str, valid: Optional[List[int]],
@@ -1220,6 +1224,16 @@ async def create_company_fund_adjustment(
     # so the returned `doc` remains JSON-serialisable.
     await db.company_fund_adjustments.insert_one({**doc})
     await _log_adjustment_action(actor, payload, doc, currency, denominations)
+    # iter263 — espejo físico: el efectivo (CUP/CUPE/USD) se replica con su
+    # desglose de billetes en la Caja de Efectivo «Fondo Resilience».
+    from services.cash_box_sync import mirror_adjustment_to_cash_box
+    try:
+        mov_id = await mirror_adjustment_to_cash_box(doc)
+        if mov_id:
+            doc["cash_box_movement_id"] = mov_id
+    except Exception as exc:  # nunca romper el ajuste — el job periódico lo sana
+        logger.error("No se pudo replicar el ajuste %s en la caja: %s",
+                     doc["id"], exc)
     return doc
 
 

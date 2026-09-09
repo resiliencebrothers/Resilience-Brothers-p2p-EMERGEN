@@ -277,6 +277,19 @@ async def run_low_fund_balance_scan():
         logger.error(f"[low-fund-scan] failed: {e}")
 
 
+async def run_cash_box_sync():
+    """iter263 — espejo de ajustes de capital en efectivo hacia la Caja de
+    Efectivo «Fondo Resilience» (backfill histórico + sanación si el espejo
+    inline falló). Idempotente por id determinista."""
+    try:
+        from services.cash_box_sync import backfill_cash_adjustments
+        n = await backfill_cash_adjustments()
+        if n:
+            logger.info("[cash-box-sync] %s ajuste(s) replicados en la caja", n)
+    except Exception as e:
+        logger.error(f"[cash-box-sync] failed: {e}")
+
+
 async def run_credit_recovery():
     """iter249 — completa acreditaciones que quedaron a medias (crash entre el
     claim y el abono). Idempotente por op_id; nunca duplica."""
@@ -314,6 +327,16 @@ def start_scheduler(db, build_timeseries):
         id="credit_recovery",
         replace_existing=True,
         misfire_grace_time=120,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+    # iter263 — espejo de efectivo Fondo de Empresa → Caja (al arrancar + 10 min)
+    _scheduler.add_job(
+        run_cash_box_sync,
+        IntervalTrigger(minutes=10),
+        id="cash_box_sync",
+        replace_existing=True,
+        misfire_grace_time=300,
         coalesce=True,
         next_run_time=datetime.now(timezone.utc),
     )

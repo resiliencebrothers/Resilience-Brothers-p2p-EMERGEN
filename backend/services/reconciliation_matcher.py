@@ -615,7 +615,10 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
             f"{tx.get('amount')} {tx.get('currency')})")
     res = await db.vip_batch_items.update_one(
         {"id": item_id, "status": "pending",
-         "reconciliation.bank_transaction_id": {"$exists": False}},
+         # iter262(G04) — reconocer el sello PROPIO preparado por un intento
+         # previo interrumpido: la reanudación debe poder re-aprobar.
+         "$or": [{"reconciliation.bank_transaction_id": {"$exists": False}},
+                 {"reconciliation.bank_transaction_id": tx["id"]}]},
         {"$set": {
             "payment_confirmation_source": "BANK_RECONCILIATION",
             "bank_transaction_id": tx["id"],
@@ -683,20 +686,27 @@ async def rollback_batch_item_from_reconciliation(item: Dict, tx_id: str,
     item_id = item["id"]
     cycle = int(item.get("decision_cycle") or 0)
     op_id = f"vitem-rollback:{item_id}:c{cycle}"
-    plan = {"op_id": op_id, "at": iso(now_utc()), "by": actor.get("user_id", "")}
+    plan = {"op_id": op_id, "cycle": cycle, "at": iso(now_utc()),
+            "by": actor.get("user_id", "")}
+    # iter262(G03) — el claim exige el CICLO leído: una reversión obsoleta
+    # (leyó el ciclo anterior) no puede reclamar el ciclo nuevo re-aprobado.
     claim = await db.vip_batch_items.update_one(
         {"id": item_id, "status": "approved",
+         "decision_cycle": {"$in": [None, 0]} if cycle == 0 else cycle,
          "reconciliation.bank_transaction_id": tx_id,
          "rollback_pending": {"$exists": False}},
         {"$set": {"rollback_pending": plan}})
     if claim.modified_count == 0:
         fresh = await db.vip_batch_items.find_one(
-            {"id": item_id}, {"_id": 0, "rollback_pending": 1, "status": 1})
+            {"id": item_id},
+            {"_id": 0, "rollback_pending": 1, "status": 1, "decision_cycle": 1})
         pend = (fresh or {}).get("rollback_pending")
-        if not pend or (fresh or {}).get("status") != "approved":
+        if not pend or (fresh or {}).get("status") != "approved" \
+                or int((fresh or {}).get("decision_cycle") or 0) != cycle \
+                or int(pend.get("cycle") or 0) != cycle:
             raise HTTPException(
                 status_code=409,
-                detail="El ítem del lote ya fue revertido o cambió de estado.")
+                detail="El ítem del lote ya fue revertido o cambió de ciclo.")
         op_id = pend["op_id"]  # reanudar el mismo plan (idempotente)
     if item.get("to_code"):
         amount_to = float(item.get("amount_to") or 0.0)

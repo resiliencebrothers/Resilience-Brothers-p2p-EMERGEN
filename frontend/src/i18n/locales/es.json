@@ -4176,6 +4176,7 @@
     "noMovements": "Aún no hay movimientos en este fondo. Registra la primera entrada o salida.",
     "billCounterTitle": "Control físico por denominación",
     "billCounterHint": "Calculado con el saldo inicial y los desgloses de cada movimiento.",
+    "fromAdjustment": "Ajuste de capital",
     "setInitial": "Saldo inicial",
     "initialTitle": "Saldo inicial",
     "initialHint": "Cantidad con la que abre la caja y, si quieres, el conteo de billetes.",

@@ -70,7 +70,9 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
     state = await _stock_ops_ensure(op_id, product_id, delta_qty)
     if state == "applied":
         return "duplicate"
-    filt: dict = {"id": product_id, "applied_stock_ops": {"$ne": op_id}}
+    # iter262(G01) — el guard también bloquea el TOKEN de quema (op:burn).
+    filt: dict = {"id": product_id,
+                  "applied_stock_ops": {"$nin": [op_id, f"{op_id}:burn"]}}
     if extra_filter:
         filt.update(extra_filter)
     if delta_qty < 0 and require_available:
@@ -85,8 +87,10 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
     if res.matched_count:
         await _stock_ops_mark_applied(op_id)
         return "applied"
-    if await db.products.find_one({"id": product_id, "applied_stock_ops": op_id},
-                                  {"_id": 1}):
+    if await db.products.find_one(
+            {"id": product_id,
+             "applied_stock_ops": {"$in": [op_id, f"{op_id}:burn"]}},
+            {"_id": 1}):
         await _stock_ops_mark_applied(op_id)
         return "duplicate"
     # insuficiente: liberar el intento pendiente del log duradero.
@@ -132,21 +136,17 @@ async def _stock_ops_mark_applied(op_id: str) -> None:
 
 
 async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
-    """iter260(E08)/iter261(F01) — versión de stock de burn_or_undo_debit:
-    la decisión quemar/compensar se sella PRIMERO en el log duradero (estados
-    pending→burned | applied→undone) y sobrevive a cualquier reintento; una
-    quema jamás se confunde con una reserva real. Devuelve 'burned'|'undone'."""
+    """iter260(E08)/iter261(F01)/iter262(G01) — versión de stock de
+    burn_or_undo_debit: el bloqueo usa el TOKEN `op:burn` (nunca el op real)
+    y la rama 'burned' SIEMPRE re-resuelve la evidencia — una reserva real se
+    repone exactamente una vez, una quema jamás repone. 'burned'|'undone'."""
+    burn_token = f"{op_id}:burn"
     for _ in range(3):
         log = await db.stock_ops.find_one({"op_id": op_id},
                                           {"_id": 0, "state": 1})
         state = (log or {}).get("state")
         if state == "undone":
             return "undone"
-        if state == "burned":
-            await db.products.update_one(
-                {"id": product_id, "applied_stock_ops": {"$ne": op_id}},
-                {"$push": {"applied_stock_ops": op_id}})
-            return "burned"
         if state == "applied":
             await apply_stock_idempotent(product_id, int(quantity),
                                          f"{op_id}:undo",
@@ -155,35 +155,34 @@ async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
                 {"op_id": op_id, "state": "applied"},
                 {"$set": {"state": "undone", "undone_at": iso(now_utc())}})
             return "undone"
-        claimed = False
-        try:
-            res = await db.stock_ops.update_one(
-                {"op_id": op_id,
-                 "state": {"$nin": ["applied", "burned", "undone"]}},
-                {"$set": {"state": "burned", "burned": True,
-                          "product_id": product_id, "delta": int(quantity),
-                          "applied_at": iso(now_utc())}},
-                upsert=True)
-            claimed = bool(res.modified_count) or \
-                getattr(res, "upserted_id", None) is not None
-        except Exception:
-            claimed = False
-        if not claimed:
-            continue
-        push = await db.products.update_one(
-            {"id": product_id, "applied_stock_ops": {"$ne": op_id}},
-            {"$push": {"applied_stock_ops": op_id}})
-        if push.modified_count:
-            return "burned"
-        if not await db.products.find_one(
+        if state != "burned":
+            try:
+                res = await db.stock_ops.update_one(
+                    {"op_id": op_id,
+                     "state": {"$nin": ["applied", "burned", "undone"]}},
+                    {"$set": {"state": "burned", "burned": True,
+                              "product_id": product_id, "delta": int(quantity),
+                              "applied_at": iso(now_utc())}},
+                    upsert=True)
+                claimed = bool(res.modified_count) or \
+                    getattr(res, "upserted_id", None) is not None
+            except Exception:
+                claimed = False
+            if not claimed:
+                continue
+        await db.products.update_one(
+            {"id": product_id, "applied_stock_ops": {"$ne": burn_token}},
+            {"$push": {"applied_stock_ops": burn_token}})
+        if await db.products.find_one(
                 {"id": product_id, "applied_stock_ops": op_id}, {"_id": 1}):
-            return "burned"
-        await apply_stock_idempotent(product_id, int(quantity),
-                                     f"{op_id}:undo", require_available=False)
-        await db.stock_ops.update_one(
-            {"op_id": op_id},
-            {"$set": {"state": "undone", "undone_at": iso(now_utc())}})
-        return "undone"
+            await apply_stock_idempotent(product_id, int(quantity),
+                                         f"{op_id}:undo",
+                                         require_available=False)
+            await db.stock_ops.update_one(
+                {"op_id": op_id},
+                {"$set": {"state": "undone", "undone_at": iso(now_utc())}})
+            return "undone"
+        return "burned"
     return "burned"
 
 
@@ -219,7 +218,7 @@ async def compact_stock_registries(threshold: int = 500,
         rows = await db.stock_ops.find(
             {"op_id": {"$in": candidates}},
             {"_id": 0, "op_id": 1, "state": 1, "at": 1,
-             "applied_at": 1}).to_list(len(candidates))
+             "applied_at": 1, "undone_at": 1}).to_list(len(candidates))
         by_id = {d["op_id"]: d for d in rows}
         removable = []
         for op in candidates:
@@ -227,9 +226,11 @@ async def compact_stock_registries(threshold: int = 500,
             if d is None:
                 removable.append(op)
                 continue
-            if d.get("state", "applied") != "applied":
+            if d.get("state", "applied") == "pending":
                 continue
-            if (d.get("applied_at") or d.get("at") or "") >= horizon:
+            resolved_at = (d.get("undone_at") or d.get("applied_at")
+                           or d.get("at") or "")
+            if resolved_at >= horizon:
                 continue
             removable.append(op)
         if removable:

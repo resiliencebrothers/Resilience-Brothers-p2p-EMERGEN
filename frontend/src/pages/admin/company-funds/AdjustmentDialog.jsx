@@ -20,8 +20,10 @@ const METHOD_LABELS = {
 };
 
 // iter213 — denominaciones de billetes (formato Excel de control físico).
+const CUP_BILLS = [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1];
 const CASH_DENOMS = {
-  CUP: [1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
+  CUP: CUP_BILLS,
+  CUPE: CUP_BILLS, // iter263 — Peso Cubano Efectivo usa los mismos billetes
   USD: [100, 50, 20, 10, 5, 2, 1],
 };
 
@@ -274,7 +276,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                 data-testid="adj-cashbox-note"
               >
                 <ArrowDownCircle className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />
-                <span>Este movimiento en efectivo se registra automáticamente en la caja «Fondo Resilience».</span>
+                <span>Este movimiento en efectivo se registra automáticamente, con su desglose de billetes, en la Caja de Efectivo «Fondo Resilience».</span>
               </div>
             )}
             {form.currency && form.method !== "cash" && (
