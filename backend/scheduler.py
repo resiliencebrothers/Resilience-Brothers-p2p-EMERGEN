@@ -288,6 +288,14 @@ async def run_cash_box_sync():
             logger.info("[cash-box-sync] %s ajuste(s) replicados en la caja", n)
     except Exception as e:
         logger.error(f"[cash-box-sync] failed: {e}")
+    try:
+        # V01 — presupuesto de retiros: resincroniza reservas huérfanas
+        from services.company_fund_budget import resync_budgets
+        m = await resync_budgets()
+        if m:
+            logger.warning("[fund-budget] %s presupuesto(s) resincronizados", m)
+    except Exception as e:
+        logger.error(f"[fund-budget-resync] failed: {e}")
 
 
 async def run_daily_arqueo_request():

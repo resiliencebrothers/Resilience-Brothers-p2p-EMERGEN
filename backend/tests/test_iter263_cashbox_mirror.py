@@ -182,8 +182,8 @@ def test_backfill_replicates_legacy_stock_once():
             {"source_adjustment_id": eur_id}) == 0, \
             "EUR no tiene billetes CUP/USD — no entra a la caja"
         eur = db.company_fund_adjustments.find_one({"id": eur_id}, {"_id": 0})
-        assert eur.get("cash_box_movement_id") == "", \
-            "los no aplicables se marcan para no re-escanear"
+        assert eur.get("cash_box_movement_id") == "na", \
+            "los no aplicables se marcan DEFINITIVOS para no re-escanear (V03)"
     finally:
         _cleanup()
 

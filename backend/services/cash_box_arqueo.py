@@ -68,19 +68,26 @@ async def notify_arqueo_discrepancy(box: Dict[str, Any],
 async def closing_arqueo_status(
         box_id: str, fund: str) -> tuple[Optional[Dict[str, Any]], bool]:
     """(último arqueo de hoy o None, ¿vigente como cierre?). H04: un arqueo
-    deja de valer como cierre si después hubo movimientos; queda como
-    evidencia histórica pero se vuelve a pedir el conteo."""
+    deja de valer como cierre si después hubo movimientos. V04: tampoco vale
+    si se editó/eliminó un movimiento anterior o entró un histórico
+    recuperado — la revisión del fondo (`fund_revs`) cambia con cada mutación
+    y el conteo anterior queda solo como evidencia histórica."""
     day_start = havana_day_start_utc()
     rows = await db.cash_box_arqueos.find(
         {"box_id": box_id, "fund": fund, "created_at": {"$gte": day_start}},
-        {"_id": 0, "id": 1, "status": 1, "difference": 1, "created_at": 1}) \
+        {"_id": 0, "id": 1, "status": 1, "difference": 1, "created_at": 1,
+         "fund_rev": 1}) \
         .sort("created_at", -1).to_list(1)
     if not rows:
         return None, False
     after = await db.cash_box_movements.count_documents(
         {"box_id": box_id, "fund": fund,
          "created_at": {"$gt": rows[0]["created_at"]}})
-    return rows[0], after == 0
+    box = await db.cash_boxes.find_one({"id": box_id},
+                                       {"_id": 0, "fund_revs": 1})
+    current_rev = int(((box or {}).get("fund_revs") or {}).get(fund) or 0)
+    arqueo_rev = int(rows[0].get("fund_rev") or 0)
+    return rows[0], after == 0 and arqueo_rev == current_rev
 
 
 async def pending_arqueo_funds(box: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -1,18 +1,23 @@
-"""iter263/265 — Espejo automático: operaciones de efectivo → Caja de Efectivo.
+"""iter263/265/269 — Espejo automático: operaciones de efectivo → Caja de Efectivo.
 
-servicio replica cada operación contable que mueve efectivo físico CUP/USD
-en la caja de empresa «Fondo Resilience» (identidad de sistema
-`company_cash`, H03):
+El fondo de empresa contable y la Caja de Efectivo física deben contar la
+misma historia. Este servicio replica cada operación contable que mueve
+efectivo físico CUP/USD en la caja de empresa «Fondo Resilience» (identidad
+de sistema `company_cash`, H03):
   - ajustes manuales de capital en efectivo (iter263),
-  - retiros de empresa PAGADOS desde la cuenta de caja (H01),
+  - retiros de EMPRESA pagados desde la cuenta de caja (H01),
+  - retiros de CLIENTES pagados desde la cuenta de caja (V02),
   - transferencias internas que entran/salen de la cuenta de caja (H01).
 Todo con id determinista por documento origen ($setOnInsert nunca duplica) y
-backfill del histórico. Los espejos sin desglose quedan `denoms_pending` para
-que el conteo pendiente sea visible, no efectivo inexistente.
+backfill del histórico. La cuenta contable de caja también se identifica por
+`system_purpose`, no por su nombre editable (V03). Un fallo al crear la caja
+se PROPAGA: nunca se marca un origen como replicado sin caja persistida (V05).
 """
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
+
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import iso, now_utc
@@ -22,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 COMPANY_BOX_NAME = "Fondo Resilience"
 SYSTEM_PURPOSE = "company_cash"
+NOT_APPLICABLE = "na"  # marcador definitivo: la operación no toca la caja
 
 # moneda del ajuste → fondo de la caja (billetes físicos)
 # Regla de negocio (Jun 2026): el efectivo cubano usa UNA sola nomenclatura,
@@ -52,7 +58,9 @@ async def _ensure_box_identity_index() -> None:
 
 async def get_or_create_company_cash_box() -> Dict[str, Any]:
     """Caja de empresa del sistema. H03: la identidad es `system_purpose`
-    (inmutable), no el nombre visible — renombrarla no divide el historial."""
+    (inmutable), no el nombre visible. V05: solo se devuelve una caja cuya
+    persistencia esté comprobada; cualquier otro fallo se propaga para que la
+    operación quede pendiente y el backfill la reintente."""
     await _ensure_box_identity_index()
     key = {"scope": "empresa", "system_purpose": SYSTEM_PURPOSE}
     box = await db.cash_boxes.find_one(key, {"_id": 0})
@@ -69,9 +77,11 @@ async def get_or_create_company_cash_box() -> Dict[str, Any]:
             await db.cash_boxes.update_one(
                 {"id": legacy["id"], "system_purpose": {"$exists": False}},
                 {"$set": {"system_purpose": SYSTEM_PURPOSE, "is_active": True}})
-        except Exception:  # noqa: BLE001 — carrera con otro estampador
-            pass
-        return (await db.cash_boxes.find_one(key, {"_id": 0})) or legacy
+        except DuplicateKeyError:
+            pass  # otro estampador ganó: se relee por identidad abajo
+        stamped = await db.cash_boxes.find_one(key, {"_id": 0})
+        if stamped:
+            return stamped
     doc: Dict[str, Any] = {
         "id": f"cbox_{uuid.uuid4().hex[:12]}",
         "name": COMPANY_BOX_NAME,
@@ -86,20 +96,86 @@ async def get_or_create_company_cash_box() -> Dict[str, Any]:
     }
     try:
         await db.cash_boxes.update_one(key, {"$setOnInsert": doc}, upsert=True)
-    except Exception:  # noqa: BLE001 — duplicado por carrera: ya existe
-        pass
-    return (await db.cash_boxes.find_one(key, {"_id": 0})) or doc
+    except DuplicateKeyError:
+        pass  # colisión de unicidad recuperable: otro creador ganó
+    # V05 — exigir el registro persistido; si no existe, PROPAGAR el fallo
+    box = await db.cash_boxes.find_one(key, {"_id": 0})
+    if not box:
+        raise RuntimeError(
+            "La caja de empresa no pudo persistirse; la operación queda "
+            "pendiente y se reintentará")
+    return box
+
+
+async def _bump_fund_rev(box_id: str, fund: str) -> None:
+    """V04 — revisión del fondo: cualquier mutación de movimientos invalida
+    el arqueo de cierre vigente."""
+    await db.cash_boxes.update_one(
+        {"id": box_id}, {"$inc": {f"fund_revs.{fund}": 1}})
 
 
 async def _upsert_mirror_movement(mov_id: str, doc: Dict[str, Any],
                                   source_coll: Any, source_id: str) -> str:
     """Inserta el movimiento espejo (idempotente) y marca el doc origen."""
-    await db.cash_box_movements.update_one(
+    res = await db.cash_box_movements.update_one(
         {"id": mov_id}, {"$setOnInsert": doc}, upsert=True)
+    if res.upserted_id is not None:
+        await _bump_fund_rev(str(doc.get("box_id") or ""),
+                             str(doc.get("fund") or ""))
     await source_coll.update_one(
         {"id": source_id}, {"$set": {"cash_box_movement_id": mov_id}})
     return mov_id
 
+
+# --------------------------------------------------------------------------
+# Identidad de la CUENTA contable de caja (V03): por propósito, no por nombre
+# --------------------------------------------------------------------------
+
+async def _is_company_cash_account(acc: Dict[str, Any]) -> bool:
+    """¿La cuenta es la cuenta de caja del sistema? Estampa el propósito en
+    cuentas legadas identificadas por la convención de nombre."""
+    if acc.get("system_purpose") == SYSTEM_PURPOSE:
+        return True
+    if acc.get("method") == "cash" and acc.get("name") == COMPANY_BOX_NAME:
+        await db.fund_accounts.update_one(
+            {"id": acc.get("id"), "system_purpose": {"$exists": False}},
+            {"$set": {"system_purpose": SYSTEM_PURPOSE}})
+        return True
+    return False
+
+
+async def _company_cash_account(currency: object) -> Optional[Dict[str, Any]]:
+    """Cuenta contable de caja de esa moneda, por IDENTIDAD persistente.
+    Nota (decisión de negocio abierta): otras cuentas de efectivo NO mapean a
+    la caja automática — cada una podría ser una caja física distinta."""
+    code = norm_code(currency)
+    if not code:
+        return None
+    acc = await db.fund_accounts.find_one(
+        {"system_purpose": SYSTEM_PURPOSE, "currency": code}, {"_id": 0})
+    if acc:
+        return acc
+    legacy = await db.fund_accounts.find_one(
+        {"name": COMPANY_BOX_NAME, "method": "cash", "currency": code},
+        {"_id": 0})
+    if legacy and await _is_company_cash_account(legacy):
+        return legacy
+    return None
+
+
+async def _paid_from_is_cash_box(src: Dict[str, Any]) -> bool:
+    """¿El documento se pagó desde la cuenta de caja? Resuelve por ID (estable
+    ante renombres) y comprueba la identidad."""
+    acc_id = str(src.get("paid_from_account_id") or "")
+    if not acc_id:
+        return False
+    acc = await db.fund_accounts.find_one({"id": acc_id}, {"_id": 0})
+    return bool(acc) and await _is_company_cash_account(acc)
+
+
+# --------------------------------------------------------------------------
+# Espejos por tipo de operación
+# --------------------------------------------------------------------------
 
 async def mirror_adjustment_to_cash_box(adj: Dict[str, Any]) -> Optional[str]:
     """Ajuste manual de capital en efectivo → movimiento de la caja física."""
@@ -133,18 +209,6 @@ async def mirror_adjustment_to_cash_box(adj: Dict[str, Any]) -> Optional[str]:
         mov_id, doc, db.company_fund_adjustments, aid)
 
 
-async def _company_cash_account(currency: object) -> Optional[Dict[str, Any]]:
-    """Cuenta contable «Fondo Resilience» (efectivo) de esa moneda, si existe.
-    Nota (decisión de negocio abierta): otras cuentas de efectivo NO mapean a
-    la caja automática — cada una podría ser una caja física distinta."""
-    code = norm_code(currency)
-    if not code:
-        return None
-    return await db.fund_accounts.find_one(
-        {"name": COMPANY_BOX_NAME, "method": "cash", "currency": code},
-        {"_id": 0, "id": 1, "currency": 1})
-
-
 async def mirror_company_withdrawal_to_cash_box(
         cw: Dict[str, Any]) -> Optional[str]:
     """H01 — retiro de empresa PAGADO desde la cuenta de caja → salida física."""
@@ -152,11 +216,7 @@ async def mirror_company_withdrawal_to_cash_box(
         return None
     fund = fund_for_currency(cw.get("currency"))
     cwid = str(cw.get("id") or "")
-    acc_id = str(cw.get("paid_from_account_id") or "")
-    if not fund or not cwid or not acc_id:
-        return None
-    acc = await _company_cash_account(cw.get("currency"))
-    if not acc or acc["id"] != acc_id:
+    if not fund or not cwid or not await _paid_from_is_cash_box(cw):
         return None
     box = await get_or_create_company_cash_box()
     mov_id = f"cmov_cw_{cwid.replace('-', '')[:20]}"
@@ -181,6 +241,38 @@ async def mirror_company_withdrawal_to_cash_box(
         mov_id, doc, db.company_withdrawals, cwid)
 
 
+async def mirror_client_withdrawal_to_cash_box(
+        w: Dict[str, Any]) -> Optional[str]:
+    """V02 — retiro de CLIENTE pagado desde la cuenta de caja → salida física
+    (misma magnitud que descuenta la contabilidad: `amount_usd` en la moneda
+    del retiro). El momento efectivo es `paid_at`."""
+    if (w.get("status") or "") != "paid":
+        return None
+    fund = fund_for_currency(w.get("currency"))
+    wid = str(w.get("id") or "")
+    if not fund or not wid or not await _paid_from_is_cash_box(w):
+        return None
+    box = await get_or_create_company_cash_box()
+    mov_id = f"cmov_wd_{wid.replace('-', '')[:20]}"
+    who = w.get("user_name") or w.get("user_email") or w.get("user_id") or ""
+    doc: Dict[str, Any] = {
+        "id": mov_id,
+        "box_id": box["id"],
+        "fund": fund,
+        "type": "salida",
+        "amount": round(float(w.get("amount_usd") or 0), 2),
+        "concept": f"Retiro de cliente pagado: {who}".strip()[:200],
+        "responsible": str(who)[:80],
+        "denominations": None,
+        "denoms_pending": True,
+        "created_at": w.get("paid_at") or w.get("created_at") or iso(now_utc()),
+        "created_by_id": "system",
+        "created_by_name": "Sistema (pago a cliente)",
+        "source_client_withdrawal_id": wid,
+    }
+    return await _upsert_mirror_movement(mov_id, doc, db.withdrawals, wid)
+
+
 async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
     """H01 — transferencia interna que entra/sale de la cuenta de caja →
     entrada/salida física. No altera el capital total (solo ubicación)."""
@@ -188,14 +280,17 @@ async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
     trid = str(tr.get("id") or "")
     if not fund or not trid:
         return None
-    acc = await _company_cash_account(tr.get("currency"))
-    if not acc:
-        return None
-    if tr.get("from_account_id") == acc["id"]:
-        kind = "salida"
-    elif tr.get("to_account_id") == acc["id"]:
-        kind = "entrada"
-    else:
+    kind = ""
+    for field, side_kind in (("from_account_id", "salida"),
+                             ("to_account_id", "entrada")):
+        acc_id = tr.get(field)
+        if not acc_id:
+            continue
+        acc = await db.fund_accounts.find_one({"id": acc_id}, {"_id": 0})
+        if acc and await _is_company_cash_account(acc):
+            kind = side_kind
+            break
+    if not kind:
         return None
     box = await get_or_create_company_cash_box()
     mov_id = f"cmov_tr_{trid.replace('-', '')[:20]}"
@@ -220,17 +315,89 @@ async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
         mov_id, doc, db.fund_account_transfers, trid)
 
 
-async def _backfill(coll: Any, query: Dict[str, Any], mirror: Any) -> int:
+# --------------------------------------------------------------------------
+# Backfill y reparaciones
+# --------------------------------------------------------------------------
+
+_MirrorFn = Callable[[Dict[str, Any]], Awaitable[Optional[str]]]
+
+_SOURCES: tuple = (
+    (lambda: db.company_fund_adjustments, {"method": "cash"},
+     mirror_adjustment_to_cash_box),
+    (lambda: db.company_withdrawals, {"status": "paid"},
+     mirror_company_withdrawal_to_cash_box),
+    (lambda: db.withdrawals, {"status": "paid"},
+     mirror_client_withdrawal_to_cash_box),
+    (lambda: db.fund_account_transfers, {}, mirror_fund_transfer_to_cash_box),
+)
+
+
+async def _backfill(coll: Any, query: Dict[str, Any], mirror: _MirrorFn) -> int:
     n = 0
-    query = {**query, "cash_box_movement_id": {"$exists": False}}
-    async for src in coll.find(query, {"_id": 0}):
+    q = {**query, "cash_box_movement_id": {"$exists": False}}
+    async for src in coll.find(q, {"_id": 0}):
         if await mirror(src):
             n += 1
         else:
-            # no aplica a la caja física — marcar para no re-escanear
+            # no aplica a la caja física — marcador DEFINITIVO (V03: la
+            # identidad por id/propósito hace la decisión estable)
             await coll.update_one({"id": str(src.get("id") or "")},
-                                  {"$set": {"cash_box_movement_id": ""}})
+                                  {"$set": {"cash_box_movement_id": NOT_APPLICABLE}})
     return n
+
+
+async def _repair_legacy_markers() -> int:
+    """V03 — reintenta los docs marcados con cadena vacía por versiones
+    anteriores (identidad no resuelta ≠ definitivamente ajena a caja)."""
+    n = 0
+    for coll_fn, extra_q, mirror in _SOURCES:
+        coll = coll_fn()
+        async for src in coll.find({**extra_q, "cash_box_movement_id": ""},
+                                   {"_id": 0}):
+            if await mirror(src):
+                n += 1
+            else:
+                await coll.update_one(
+                    {"id": str(src.get("id") or "")},
+                    {"$set": {"cash_box_movement_id": NOT_APPLICABLE}})
+    return n
+
+
+async def _repair_orphan_movements() -> int:
+    """V05 — re-vincula movimientos espejo cuyo box_id no existe (huérfanos de
+    la ventana del bug anterior), sin inventar saldos ni duplicar."""
+    linked_q = {"$or": [
+        {"source_adjustment_id": {"$exists": True}},
+        {"source_withdrawal_id": {"$exists": True}},
+        {"source_client_withdrawal_id": {"$exists": True}},
+        {"source_transfer_id": {"$exists": True}},
+    ]}
+    box_ids = await db.cash_box_movements.distinct("box_id", linked_q)
+    if not box_ids:
+        return 0
+    existing = set(await db.cash_boxes.distinct("id", {"id": {"$in": box_ids}}))
+    orphan = [b for b in box_ids if b not in existing]
+    if not orphan:
+        return 0
+    box = await get_or_create_company_cash_box()
+    res = await db.cash_box_movements.update_many(
+        {**linked_q, "box_id": {"$in": orphan}},
+        {"$set": {"box_id": box["id"]}})
+    for fund in ("CUP", "USD"):
+        await _bump_fund_rev(box["id"], fund)
+    if res.modified_count:
+        logger.warning("[cash-box-sync] %s movimiento(s) huérfanos re-vinculados",
+                       res.modified_count)
+    return int(res.modified_count)
+
+
+async def _stamp_cash_accounts() -> None:
+    """V03 — migración: estampa la identidad en las cuentas de caja legadas
+    (por convención de nombre) antes de que alguien las renombre."""
+    async for acc in db.fund_accounts.find(
+            {"name": COMPANY_BOX_NAME, "method": "cash",
+             "system_purpose": {"$exists": False}}, {"_id": 0}):
+        await _is_company_cash_account(acc)
 
 
 async def backfill_cash_adjustments() -> int:
@@ -240,11 +407,12 @@ async def backfill_cash_adjustments() -> int:
 
 
 async def backfill_cash_operations() -> int:
-    """Backfill completo: ajustes + retiros pagados + transferencias internas.
-    Idempotente — seguro en cada arranque y cada ciclo del scheduler."""
-    n = await backfill_cash_adjustments()
-    n += await _backfill(db.company_withdrawals, {"status": "paid"},
-                         mirror_company_withdrawal_to_cash_box)
-    n += await _backfill(db.fund_account_transfers, {},
-                         mirror_fund_transfer_to_cash_box)
+    """Backfill completo: ajustes + retiros de empresa pagados + retiros de
+    clientes pagados + transferencias internas, más reparaciones (identidad
+    de cuentas, marcadores legados y huérfanos). Idempotente."""
+    await _stamp_cash_accounts()
+    await _repair_orphan_movements()
+    n = await _repair_legacy_markers()
+    for coll_fn, extra_q, mirror in _SOURCES:
+        n += await _backfill(coll_fn(), extra_q, mirror)
     return n

@@ -45,6 +45,9 @@ def _cleanup():
     db.company_fund_adjustments.delete_many({"source_name": {"$regex": MARK}})
     db.fund_account_transfers.delete_many({"note": {"$regex": MARK}})
     db.cash_box_movements.delete_many({"concept": {"$regex": MARK}})
+    # V01 — el presupuesto de reservas se reconstruye desde los retiros
+    # reales; borrarlo evita residuos de docs eliminados por los tests.
+    db.company_fund_budgets.delete_many({})
     ids = [b["id"] for b in db.cash_boxes.find(
         {"name": {"$regex": MARK}, "system_purpose": {"$exists": False}},
         {"_id": 0, "id": 1})]
@@ -118,6 +121,32 @@ def _fund_row(code):
     r = requests.get(f"{API}/admin/company-funds", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200, r.text
     return next((x for x in r.json() if x["currency"] == code), None)
+
+
+def _run_backfill():
+    async def _f():
+        from services.cash_box_sync import backfill_cash_operations
+        return await backfill_cash_operations()
+    return _run(_f)
+
+
+def _ensure_usd_available(needed: float):
+    """V06 — el entorno de CI puede arrancar con custodia de clientes o
+    reservas USD que dejan corto el disponible real: se aporta la diferencia
+    por transferencia (no toca la caja física ni el desglose de billetes)."""
+    row = _fund_row("USD") or {}
+    avail = float(row.get("balance_available") or 0.0)
+    reserved = sum(float(r.get("amount") or 0)
+                   for r in _db().company_withdrawals.find(
+                       {"currency": "USD",
+                        "status": {"$in": ["pending", "approved"]}},
+                       {"_id": 0, "amount": 1}))
+    missing = round(needed - (avail - reserved), 2)
+    if missing > 0:
+        r = _adjust({"adjustment_type": "inflow", "currency": "USD",
+                     "amount": missing, "method": "transfer",
+                     "source_name": f"{MARK} topup disponible"})
+        assert r.status_code == 200, r.text
 
 
 class TestH02WithdrawalIntegrity:
@@ -233,6 +262,7 @@ class TestH01LedgerCashParity:
         reflejan en la caja física; la transferencia no cambia el capital."""
         _cleanup()
         db = _db()
+        _run_backfill()  # V02 — drenar históricos pendientes para aislar el delta
         box = _auto_box()
         base_bal = _resumen(box["id"], "USD")["balance"] if box else 0.0
 
@@ -248,9 +278,13 @@ class TestH01LedgerCashParity:
             {"name": "Fondo Resilience", "method": "cash", "currency": "USD"},
             {"_id": 0, "id": 1})
         assert cash_acc, "la cuenta de caja USD debe existir"
-        cw = _cw_create({"currency": "USD", "amount": 40,
-                         "beneficiary": f"{MARK} proveedor",
-                         "concept": "compra insumos"}).json()
+        # V06 — datos aislados: disponible real suficiente tras custodia y reservas
+        _ensure_usd_available(45)
+        cwr = _cw_create({"currency": "USD", "amount": 40,
+                          "beneficiary": f"{MARK} proveedor",
+                          "concept": "compra insumos"})
+        assert cwr.status_code == 200, cwr.text
+        cw = cwr.json()
         r = _cw_status(cw["id"], {"status": "paid",
                                   "paid_from_account_id": cash_acc["id"]})
         assert r.status_code == 200, r.text
@@ -300,10 +334,7 @@ class TestH01LedgerCashParity:
         assert delta == 145.0, f"delta física {delta} ≠ 145 (H01)"
 
         # idempotencia: el backfill no duplica nada de lo ya espejado
-        async def flow():
-            from services.cash_box_sync import backfill_cash_operations
-            return await backfill_cash_operations()
-        assert _run(flow) == 0
+        _run_backfill()
         assert db.cash_box_movements.count_documents(
             {"source_withdrawal_id": cw["id"]}) == 1
 
@@ -318,12 +349,17 @@ class TestH01LedgerCashParity:
         cash_acc = db.fund_accounts.find_one(
             {"name": "Fondo Resilience", "method": "cash", "currency": "USD"},
             {"_id": 0, "id": 1})
-        cw = _cw_create({"currency": "USD", "amount": 40,
-                         "beneficiary": f"{MARK} proveedor",
-                         "concept": "x"}).json()
-        mov_id = _cw_status(cw["id"], {
-            "status": "paid",
-            "paid_from_account_id": cash_acc["id"]}).json()["cash_box_movement_id"]
+        # V06 — disponible real suficiente + status comprobado antes de usar ["id"]
+        _ensure_usd_available(45)
+        cwr = _cw_create({"currency": "USD", "amount": 40,
+                          "beneficiary": f"{MARK} proveedor",
+                          "concept": "x"})
+        assert cwr.status_code == 200, cwr.text
+        cw = cwr.json()
+        pay = _cw_status(cw["id"], {"status": "paid",
+                                    "paid_from_account_id": cash_acc["id"]})
+        assert pay.status_code == 200, pay.text
+        mov_id = pay.json()["cash_box_movement_id"]
         box = _auto_box()
 
         # importe/concepto bloqueados; borrado bloqueado

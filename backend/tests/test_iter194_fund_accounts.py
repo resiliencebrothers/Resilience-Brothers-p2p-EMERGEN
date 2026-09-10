@@ -47,6 +47,7 @@ def teardown_module():
     db.fund_account_transfers.delete_many({"currency": {"$in": [CODE, CODE2]}})
     db.company_fund_adjustments.delete_many({"currency": {"$in": [CODE, CODE2]}})
     db.company_withdrawals.delete_many({"currency": {"$in": [CODE, CODE2]}})
+    db.company_fund_budgets.delete_many({"currency": {"$in": [CODE, CODE2]}})
 
 
 def _breakdown():

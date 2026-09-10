@@ -75,13 +75,20 @@ def _is_staff(user: dict) -> bool:
     return user.get("role") in ("admin", "employee")
 
 
-# H01 — movimientos espejados desde el Fondo de Empresa (origen contable)
+# H01/V02 — movimientos espejados desde el Fondo de Empresa (origen contable)
 _LINK_FIELDS = ("source_adjustment_id", "source_withdrawal_id",
-                "source_transfer_id")
+                "source_client_withdrawal_id", "source_transfer_id")
 
 
 def _ledger_linked(mov: dict) -> bool:
     return any(mov.get(k) for k in _LINK_FIELDS)
+
+
+async def _bump_fund_rev(box_id: str, fund: str) -> None:
+    """V04 — revisión del fondo: crear/editar/eliminar movimientos invalida
+    el arqueo de cierre vigente (el conteo anterior queda como histórico)."""
+    await db.cash_boxes.update_one(
+        {"id": box_id}, {"$inc": {f"fund_revs.{fund}": 1}})
 
 
 def _clean_denoms(fund: str, raw: Optional[Dict[str, int]],
@@ -297,6 +304,7 @@ async def create_movement(box_id: str, payload: MovementCreate,
     if box.get("system_purpose") == "company_cash":
         doc["ledger_status"] = "sin_contrapartida"
     await db.cash_box_movements.insert_one({**doc})
+    await _bump_fund_rev(box["id"], payload.fund)
     return doc
 
 
@@ -325,6 +333,7 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
         await db.cash_box_movements.update_one(
             {"id": mov_id},
             {"$set": {"denominations": denoms, "denoms_pending": False}})
+        await _bump_fund_rev(box["id"], mov["fund"])
         return await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
     upd: Dict[str, Any] = {}
     if payload.amount is not None:
@@ -342,6 +351,7 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
         upd["denominations"] = None
     if upd:
         await db.cash_box_movements.update_one({"id": mov_id}, {"$set": upd})
+        await _bump_fund_rev(box["id"], mov["fund"])
     return await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
 
 
@@ -359,6 +369,7 @@ async def delete_movement(box_id: str, mov_id: str, request: Request) -> Any:
             detail=("Este movimiento proviene del Fondo de Empresa y no puede "
                     "eliminarse desde la caja."))
     await db.cash_box_movements.delete_one({"id": mov_id, "box_id": box["id"]})
+    await _bump_fund_rev(box["id"], mov["fund"])
     return {"ok": True}
 
 
@@ -481,6 +492,9 @@ async def create_arqueo(box_id: str, payload: ArqueoCreate,
         "system_balance": system,
         "difference": diff,
         "status": "cuadrada" if diff == 0 else ("sobrante" if diff > 0 else "faltante"),
+        # V04 — revisión del fondo al momento del conteo: cualquier mutación
+        # posterior de movimientos deja este cierre como histórico
+        "fund_rev": int(((box.get("fund_revs") or {}).get(payload.fund)) or 0),
         "note": payload.note.strip(),
         "created_at": iso(now_utc()),
         "created_by_id": user["user_id"],

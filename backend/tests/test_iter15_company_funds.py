@@ -22,6 +22,11 @@ def _cleanup_company():
     cli[os.environ["DB_NAME"]].company_withdrawals.delete_many(
         {"beneficiary": {"$regex": "^TEST"}}
     )
+    # V01 — presupuesto de reservas: sin esto, los docs borrados dejarían una
+    # reserva huérfana que bloquearía retiros USD de suites posteriores.
+    cli[os.environ["DB_NAME"]].company_fund_budgets.delete_many(
+        {"currency": "USD"}
+    )
     cli.close()
 
 

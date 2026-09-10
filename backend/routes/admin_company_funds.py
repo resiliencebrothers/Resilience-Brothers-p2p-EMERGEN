@@ -1085,42 +1085,58 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
     currency = payload.currency.upper()
     _enforce_employee_currency_scope(actor, currency)
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
-    funds = await _compute_company_funds([currency])
-    row = next((f for f in funds if f["currency"] == currency), None)
-    balance = float(row["balance"]) if row else 0.0
-    custodia = float(row["client_balances"]) if row else 0.0
-    # iter266 — disponible REAL: el dinero en custodia de clientes no es
-    # capital propio y no puede financiar retiros de empresa.
-    avail = float(row["balance_available"]) if row else 0.0
-    # H02 — reserva: los retiros aún no pagados (pending/approved) comprometen
-    # el fondo; dos solicitudes no pueden consumir el mismo dinero.
-    reserved = 0.0
-    async for r in db.company_withdrawals.find(
-            {"currency": currency, "status": {"$in": ["pending", "approved"]}},
-            {"_id": 0, "amount": 1}):
-        reserved += float(r.get("amount") or 0.0)
-    disponible = round(avail - reserved, 4)
-    if payload.amount > disponible + 1e-9:
+    # V01 — crear y pagar contienden sobre el MISMO cerrojo por moneda: el
+    # disponible se evalúa DENTRO de la sección crítica (nunca sobre una foto
+    # vieja) y la reserva se comprueba y consume en un único update atómico
+    # contra el presupuesto compartido (services/company_fund_budget).
+    from services import company_fund_budget as fund_budget
+    lock = await fund_budget.acquire_pay_lock_wait(currency)
+    if not lock:
         raise HTTPException(
-            status_code=400,
-            detail=(f"Fondo insuficiente en {currency}: disponible real "
-                    f"{disponible:.2f} (balance {balance:.2f} − "
-                    f"{custodia:.2f} en custodia de clientes − "
-                    f"{reserved:.2f} ya reservado en retiros pendientes)"),
+            status_code=409,
+            detail=(f"Otra operación del fondo {currency} está en curso; "
+                    "inténtalo de nuevo en unos segundos."))
+    try:
+        funds = await _compute_company_funds([currency])
+        row = next((f for f in funds if f["currency"] == currency), None)
+        balance = float(row["balance"]) if row else 0.0
+        custodia = float(row["client_balances"]) if row else 0.0
+        # iter266 — disponible REAL: el dinero en custodia de clientes no es
+        # capital propio y no puede financiar retiros de empresa.
+        avail = float(row["balance_available"]) if row else 0.0
+        # H02/V01 — los retiros aún no pagados (pending/approved) comprometen
+        # el fondo; la reserva se reclama atómicamente (guard + $inc).
+        if not await fund_budget.claim_reservation(
+                currency, float(payload.amount), avail):
+            reserved = await fund_budget.current_reserved(currency)
+            disponible = round(avail - reserved, 4)
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Fondo insuficiente en {currency}: disponible real "
+                        f"{disponible:.2f} (balance {balance:.2f} − "
+                        f"{custodia:.2f} en custodia de clientes − "
+                        f"{reserved:.2f} ya reservado en retiros pendientes)"),
+            )
+    finally:
+        await fund_budget.release_pay_lock(currency, lock)
+    try:
+        cw = CompanyWithdrawal(
+            amount=payload.amount,
+            currency=currency,
+            beneficiary=payload.beneficiary,
+            authorized_by_id=actor["user_id"],
+            authorized_by_name=actor.get("name", ""),
+            authorized_by_email=actor.get("email", ""),
+            concept=payload.concept,
+            invoice_image=(maybe_upload_proof(payload.invoice_image, "company_invoices")
+                            or payload.invoice_image),
+            note=payload.note,
         )
-    cw = CompanyWithdrawal(
-        amount=payload.amount,
-        currency=currency,
-        beneficiary=payload.beneficiary,
-        authorized_by_id=actor["user_id"],
-        authorized_by_name=actor.get("name", ""),
-        authorized_by_email=actor.get("email", ""),
-        concept=payload.concept,
-        invoice_image=(maybe_upload_proof(payload.invoice_image, "company_invoices")
-                        or payload.invoice_image),
-        note=payload.note,
-    )
-    await db.company_withdrawals.insert_one(cw.model_dump())
+        await db.company_withdrawals.insert_one(cw.model_dump())
+    except Exception:
+        # V01 — la reserva reclamada nunca queda huérfana si la inserción falla
+        await fund_budget.release_reservation(currency, float(payload.amount))
+        raise
     await log_action(db, actor, "company_withdrawal.create", "company_withdrawal", cw.id,
                      summary=f"Retiro fondo {currency} {payload.amount} → {payload.beneficiary}",
                      details={"currency": currency, "amount": payload.amount,
@@ -1200,30 +1216,59 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     note = payload.get("note")
     if note is not None:
         update_doc["admin_note"] = note
+    from services import company_fund_budget as fund_budget
     if new_status == "paid":
-        # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
-        # (sin custodia de clientes); una salida sin fondos debe tratarse
-        # explícitamente, no colarse.
-        funds = await _compute_company_funds([cw["currency"]])
-        avail = next((f["balance_available"] for f in funds
-                      if f["currency"] == cw["currency"]), 0.0)
-        if float(cw["amount"]) > avail + 1e-9:
+        # V01 — cerrojo exclusivo por moneda: el disponible se evalúa DENTRO
+        # de la sección crítica; dos pagos distintos nunca validan la misma
+        # foto del fondo.
+        lock = await fund_budget.acquire_pay_lock_wait(cw["currency"])
+        if not lock:
             raise HTTPException(
                 status_code=409,
-                detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
-                        f"pagado: disponible real {avail:.2f} (descontada la "
-                        "custodia de clientes). Registra primero el capital "
-                        "o resuelve el descuadre explícitamente."))
-        update_doc.update(await _paid_from_account_fields(payload, cw))
-        update_doc["paid_at"] = iso(now_utc())
-    # H02 — claim atómico condicionado al estado leído: un rechazo obsoleto
-    # no puede sobrescribir un pago que ganó la carrera.
-    res = await db.company_withdrawals.update_one(
-        {"id": cwid, "status": cw["status"]}, {"$set": update_doc})
-    if res.matched_count == 0:
-        raise HTTPException(
-            status_code=409,
-            detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
+                detail=(f"Otra operación del fondo {cw['currency']} está en "
+                        "curso; inténtalo de nuevo en unos segundos."))
+        try:
+            # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
+            # (sin custodia de clientes); una salida sin fondos debe tratarse
+            # explícitamente, no colarse.
+            funds = await _compute_company_funds([cw["currency"]])
+            avail = next((f["balance_available"] for f in funds
+                          if f["currency"] == cw["currency"]), 0.0)
+            if float(cw["amount"]) > avail + 1e-9:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
+                            f"pagado: disponible real {avail:.2f} (descontada la "
+                            "custodia de clientes). Registra primero el capital "
+                            "o resuelve el descuadre explícitamente."))
+            update_doc.update(await _paid_from_account_fields(payload, cw))
+            update_doc["paid_at"] = iso(now_utc())
+            # H02 — claim atómico condicionado al estado leído: un rechazo
+            # obsoleto no puede sobrescribir un pago que ganó la carrera.
+            res = await db.company_withdrawals.update_one(
+                {"id": cwid, "status": cw["status"]}, {"$set": update_doc})
+            if res.matched_count == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
+            # V01 — la reserva del retiro se consume exactamente una vez al
+            # pagar (el claim de estado garantiza un único consumidor).
+            await fund_budget.release_reservation(
+                cw["currency"], float(cw["amount"]))
+        finally:
+            await fund_budget.release_pay_lock(cw["currency"], lock)
+    else:
+        # H02 — claim atómico condicionado al estado leído.
+        res = await db.company_withdrawals.update_one(
+            {"id": cwid, "status": cw["status"]}, {"$set": update_doc})
+        if res.matched_count == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
+        if new_status == "rejected":
+            # V01 — la reserva se libera exactamente una vez al rechazar.
+            await fund_budget.release_reservation(
+                cw["currency"], float(cw["amount"]))
     await log_action(db, actor, "company_withdrawal.status", "company_withdrawal", cwid,
                      summary=f"Retiro fondo {cw['currency']} {cw['amount']} → {new_status}",
                      details={"from": cw["status"], "to": new_status})

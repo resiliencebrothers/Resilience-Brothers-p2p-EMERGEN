@@ -621,10 +621,18 @@ class TestD13DeliveryChatPermission(_Sandbox):
             assert r.json().get("my_kind") == "staff"
         finally:
             sets = {}
+            unsets = {}
             if prev.get("allowed_permissions") is not None:
                 sets["allowed_permissions"] = prev["allowed_permissions"]
+            else:
+                # el campo no existía: quitarlo, no dejar el permiso añadido
+                unsets["allowed_permissions"] = ""
             if prev.get("permissions") is not None:
                 sets["permissions"] = prev["permissions"]
+            ops: dict = {}
             if sets:
-                db.users.update_one({"user_id": "user_test_employee01"},
-                                    {"$set": sets})
+                ops["$set"] = sets
+            if unsets:
+                ops["$unset"] = unsets
+            if ops:
+                db.users.update_one({"user_id": "user_test_employee01"}, ops)

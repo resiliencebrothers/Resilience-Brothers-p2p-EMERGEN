@@ -18,10 +18,19 @@ CASH_BOX_NAME = "Fondo Resilience"
 
 async def get_or_create_cash_box(currency: str) -> dict:
     """Return {id, label} of the company cash box for `currency`, creating
-    (or reactivating) it lazily on first use."""
+    (or reactivating) it lazily on first use. V03 — la identidad es
+    `system_purpose` (persistente), no el nombre editable."""
     code = _norm_code(currency)
     fa = await db.fund_accounts.find_one(
-        {"currency": code, "name": CASH_BOX_NAME}, {"_id": 0})
+        {"currency": code, "system_purpose": "company_cash"}, {"_id": 0})
+    if not fa:
+        fa = await db.fund_accounts.find_one(
+            {"currency": code, "name": CASH_BOX_NAME}, {"_id": 0})
+        if fa:
+            # migración: estampa la identidad en la cuenta legada por nombre
+            await db.fund_accounts.update_one(
+                {"id": fa["id"], "system_purpose": {"$exists": False}},
+                {"$set": {"system_purpose": "company_cash"}})
     if fa:
         if not fa.get("is_active", True):
             await db.fund_accounts.update_one(
@@ -32,6 +41,7 @@ async def get_or_create_cash_box(currency: str) -> dict:
         "name": CASH_BOX_NAME,
         "currency": code,
         "method": "cash",
+        "system_purpose": "company_cash",
         "note": "Caja de efectivo de la empresa (auto-creada)",
         "is_active": True,
         "created_at": iso(now_utc()),

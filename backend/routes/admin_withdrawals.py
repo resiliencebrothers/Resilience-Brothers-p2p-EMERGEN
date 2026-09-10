@@ -385,6 +385,18 @@ async def _post_status_side_effects(w: dict, updated: dict, new_status: str,
     """SSE + push/in-app + email + audit tras un cambio de estado. Compartido
     entre el endpoint PUT /status y la sincronización automática al confirmar
     la entrega de mensajería (iter209b)."""
+    # V02 — retiro de CLIENTE pagado desde la cuenta de caja → salida física
+    # en la Caja de Efectivo (idempotente; el backfill periódico lo sana).
+    if new_status == "paid" and isinstance(updated, dict):
+        try:
+            from services.cash_box_sync import (
+                mirror_client_withdrawal_to_cash_box,
+            )
+            mov_id = await mirror_client_withdrawal_to_cash_box(updated)
+            if mov_id:
+                updated["cash_box_movement_id"] = mov_id
+        except Exception as e:  # noqa: BLE001 — el backfill lo sana
+            logger.error(f"espejo de retiro de cliente en caja falló: {e}")
     # iter97 — SSE push to the withdrawal owner so /dashboard/vip
     # reflects the new status + refreshes balance immediately.
     # iter98 — ALSO push to admin/employee broadcast subscribers so the
