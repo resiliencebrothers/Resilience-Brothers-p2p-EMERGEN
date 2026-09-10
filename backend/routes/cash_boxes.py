@@ -22,14 +22,11 @@ from pydantic import BaseModel, Field
 
 from db_client import db
 from auth_utils import require_user, iso, now_utc
+# núcleo compartido — los servicios no importan rutas (review iter270)
+from services.cash_box_core import DENOMS, FUNDS, fund_balance as _fund_balance
 
 router = APIRouter(tags=["CashBox"])
 
-FUNDS = ("CUP", "USD")
-DENOMS: Dict[str, list] = {
-    "CUP": [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
-    "USD": [100, 50, 20, 10, 5, 2, 1],
-}
 _TZ = ZoneInfo("America/Havana")
 
 
@@ -136,17 +133,6 @@ async def _get_box_checked(box_id: str, user: dict) -> dict:
         raise HTTPException(status_code=403,
                             detail="Solo el staff maneja las cajas de empresa")
     return box
-
-
-async def _fund_balance(box: dict, fund: str) -> float:
-    initial = float(((box.get("initial") or {}).get(fund) or {}).get("amount") or 0)
-    pipe = [
-        {"$match": {"box_id": box["id"], "fund": fund}},
-        {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}},
-    ]
-    tot = {r["_id"]: float(r["total"]) async for r in
-           db.cash_box_movements.aggregate(pipe)}
-    return round(initial + tot.get("entrada", 0.0) - tot.get("salida", 0.0), 2)
 
 
 def _month_range_utc(month: str) -> tuple:

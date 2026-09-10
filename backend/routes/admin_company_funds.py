@@ -567,6 +567,40 @@ def _usdt_totals_and_breakdown(
     return totals, missing, breakdown
 
 
+def _client_owed_amount(u: dict, c: str) -> float:
+    """Cuánto se le debe al usuario en `c` (vip_balances + legado USD)."""
+    amt = 0.0
+    for code, val in (u.get("vip_balances") or {}).items():
+        if _norm_code(code) == c:
+            amt += float(val or 0.0)
+    if c == "USD":
+        amt += float(u.get("vip_balance_usd") or 0.0)
+    return amt
+
+
+async def _collect_client_balances(c: str) -> tuple:
+    """(clientes con saldo en `c` ordenados desc, total del pasivo)."""
+    clients: List[dict] = []
+    total = 0.0
+    async for u in db.users.find(
+            {"role": {"$nin": ["admin", "employee"]},
+             "$or": [{"vip_balances": {"$exists": True}},
+                     {"vip_balance_usd": {"$gt": 0}}]},
+            {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1,
+             "vip_balances": 1, "vip_balance_usd": 1}):
+        amt = _client_owed_amount(u, c)
+        if abs(amt) < 1e-9:
+            continue
+        total += amt
+        clients.append({"user_id": u.get("user_id") or "",
+                        "name": u.get("name") or "",
+                        "email": u.get("email") or "",
+                        "role": u.get("role") or "",
+                        "amount": round(amt, 4)})
+    clients.sort(key=lambda r: -r["amount"])
+    return clients, total
+
+
 @router.get("/admin/company-funds/client-balances/{currency}")
 async def company_funds_client_balances_breakdown(
         currency: str, request: Request) -> Any:
@@ -580,29 +614,7 @@ async def company_funds_client_balances_breakdown(
     scope = _actor_currency_scope(actor)
     if scope is not None and c not in scope:
         raise HTTPException(status_code=403, detail="Moneda fuera de tu alcance")
-    clients: List[dict] = []
-    total = 0.0
-    async for u in db.users.find(
-            {"role": {"$nin": ["admin", "employee"]},
-             "$or": [{"vip_balances": {"$exists": True}},
-                     {"vip_balance_usd": {"$gt": 0}}]},
-            {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1,
-             "vip_balances": 1, "vip_balance_usd": 1}):
-        amt = 0.0
-        for code, val in (u.get("vip_balances") or {}).items():
-            if _norm_code(code) == c:
-                amt += float(val or 0.0)
-        if c == "USD":
-            amt += float(u.get("vip_balance_usd") or 0.0)
-        if abs(amt) < 1e-9:
-            continue
-        total += amt
-        clients.append({"user_id": u.get("user_id") or "",
-                        "name": u.get("name") or "",
-                        "email": u.get("email") or "",
-                        "role": u.get("role") or "",
-                        "amount": round(amt, 4)})
-    clients.sort(key=lambda r: -r["amount"])
+    clients, total = await _collect_client_balances(c)
     return {"currency": c, "total": round(total, 4), "clients": clients}
 
 
@@ -1194,6 +1206,65 @@ _CW_TRANSITIONS: Dict[str, set] = {
 }
 
 
+async def _claim_cw_transition(cwid: str, prev_status: str,
+                               update_doc: Dict[str, Any]) -> None:
+    """H02 — claim atómico condicionado al estado leído: un rechazo obsoleto
+    no puede sobrescribir un pago que ganó la carrera."""
+    res = await db.company_withdrawals.update_one(
+        {"id": cwid, "status": prev_status}, {"$set": update_doc})
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
+
+
+async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
+                                  update_doc: Dict[str, Any]) -> None:
+    """V01 — pago bajo cerrojo exclusivo por moneda: el disponible se evalúa
+    DENTRO de la sección crítica; dos pagos distintos nunca validan la misma
+    foto del fondo, y la reserva se consume exactamente una vez."""
+    from services import company_fund_budget as fund_budget
+    lock = await fund_budget.acquire_pay_lock_wait(cw["currency"])
+    if not lock:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Otra operación del fondo {cw['currency']} está en "
+                    "curso; inténtalo de nuevo en unos segundos."))
+    try:
+        # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
+        # (sin custodia de clientes); una salida sin fondos debe tratarse
+        # explícitamente, no colarse.
+        funds = await _compute_company_funds([cw["currency"]])
+        avail = next((f["balance_available"] for f in funds
+                      if f["currency"] == cw["currency"]), 0.0)
+        if float(cw["amount"]) > avail + 1e-9:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
+                        f"pagado: disponible real {avail:.2f} (descontada la "
+                        "custodia de clientes). Registra primero el capital "
+                        "o resuelve el descuadre explícitamente."))
+        update_doc.update(await _paid_from_account_fields(payload, cw))
+        update_doc["paid_at"] = iso(now_utc())
+        await _claim_cw_transition(cwid, cw["status"], update_doc)
+        await fund_budget.release_reservation(
+            cw["currency"], float(cw["amount"]))
+    finally:
+        await fund_budget.release_pay_lock(cw["currency"], lock)
+
+
+async def _mirror_paid_company_withdrawal(fresh: dict, cwid: str) -> None:
+    """H01 — pagado desde la cuenta de caja → salida física en la Caja."""
+    from services.cash_box_sync import mirror_company_withdrawal_to_cash_box
+    try:
+        mov_id = await mirror_company_withdrawal_to_cash_box(fresh)
+        if mov_id:
+            fresh["cash_box_movement_id"] = mov_id
+    except Exception as exc:  # el job periódico lo sana
+        logger.error("No se pudo replicar el retiro %s en la caja: %s",
+                     cwid, exc)
+
+
 @router.put("/admin/company-withdrawals/{cwid}/status")
 async def update_company_withdrawal(cwid: str, payload: dict, request: Request) -> Any:
     """Only admin can change status (approve/pay/reject). Staff with scope creates only."""
@@ -1216,57 +1287,13 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
     note = payload.get("note")
     if note is not None:
         update_doc["admin_note"] = note
-    from services import company_fund_budget as fund_budget
     if new_status == "paid":
-        # V01 — cerrojo exclusivo por moneda: el disponible se evalúa DENTRO
-        # de la sección crítica; dos pagos distintos nunca validan la misma
-        # foto del fondo.
-        lock = await fund_budget.acquire_pay_lock_wait(cw["currency"])
-        if not lock:
-            raise HTTPException(
-                status_code=409,
-                detail=(f"Otra operación del fondo {cw['currency']} está en "
-                        "curso; inténtalo de nuevo en unos segundos."))
-        try:
-            # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
-            # (sin custodia de clientes); una salida sin fondos debe tratarse
-            # explícitamente, no colarse.
-            funds = await _compute_company_funds([cw["currency"]])
-            avail = next((f["balance_available"] for f in funds
-                          if f["currency"] == cw["currency"]), 0.0)
-            if float(cw["amount"]) > avail + 1e-9:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
-                            f"pagado: disponible real {avail:.2f} (descontada la "
-                            "custodia de clientes). Registra primero el capital "
-                            "o resuelve el descuadre explícitamente."))
-            update_doc.update(await _paid_from_account_fields(payload, cw))
-            update_doc["paid_at"] = iso(now_utc())
-            # H02 — claim atómico condicionado al estado leído: un rechazo
-            # obsoleto no puede sobrescribir un pago que ganó la carrera.
-            res = await db.company_withdrawals.update_one(
-                {"id": cwid, "status": cw["status"]}, {"$set": update_doc})
-            if res.matched_count == 0:
-                raise HTTPException(
-                    status_code=409,
-                    detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
-            # V01 — la reserva del retiro se consume exactamente una vez al
-            # pagar (el claim de estado garantiza un único consumidor).
-            await fund_budget.release_reservation(
-                cw["currency"], float(cw["amount"]))
-        finally:
-            await fund_budget.release_pay_lock(cw["currency"], lock)
+        await _pay_company_withdrawal(cwid, cw, payload, update_doc)
     else:
-        # H02 — claim atómico condicionado al estado leído.
-        res = await db.company_withdrawals.update_one(
-            {"id": cwid, "status": cw["status"]}, {"$set": update_doc})
-        if res.matched_count == 0:
-            raise HTTPException(
-                status_code=409,
-                detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
+        await _claim_cw_transition(cwid, cw["status"], update_doc)
         if new_status == "rejected":
             # V01 — la reserva se libera exactamente una vez al rechazar.
+            from services import company_fund_budget as fund_budget
             await fund_budget.release_reservation(
                 cw["currency"], float(cw["amount"]))
     await log_action(db, actor, "company_withdrawal.status", "company_withdrawal", cwid,
@@ -1274,15 +1301,7 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
                      details={"from": cw["status"], "to": new_status})
     fresh = await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
     if new_status == "paid" and fresh:
-        # H01 — pagado desde la cuenta de caja → salida física en la Caja
-        from services.cash_box_sync import mirror_company_withdrawal_to_cash_box
-        try:
-            mov_id = await mirror_company_withdrawal_to_cash_box(fresh)
-            if mov_id:
-                fresh["cash_box_movement_id"] = mov_id
-        except Exception as exc:  # el job periódico lo sana
-            logger.error("No se pudo replicar el retiro %s en la caja: %s",
-                         cwid, exc)
+        await _mirror_paid_company_withdrawal(fresh, cwid)
     return fresh
 
 

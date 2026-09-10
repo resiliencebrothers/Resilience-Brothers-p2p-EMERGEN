@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from db_client import db
+from services.cash_box_core import FUNDS, fund_balance
 
 logger = logging.getLogger(__name__)
 _TZ = ZoneInfo("America/Havana")
@@ -93,7 +94,6 @@ async def closing_arqueo_status(
 async def pending_arqueo_funds(box: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Fondos de la caja con actividad hoy (o balance) y sin arqueo de CIERRE
     vigente (H04: un conteo temprano no tapa movimientos posteriores)."""
-    from routes.cash_boxes import FUNDS, _fund_balance
     day_start = havana_day_start_utc()
     pend: List[Dict[str, Any]] = []
     for fund in FUNDS:
@@ -103,7 +103,7 @@ async def pending_arqueo_funds(box: Dict[str, Any]) -> List[Dict[str, Any]]:
         movs_today = await db.cash_box_movements.count_documents(
             {"box_id": box["id"], "fund": fund,
              "created_at": {"$gte": day_start}})
-        bal = await _fund_balance(box, fund)
+        bal = await fund_balance(box, fund)
         if movs_today or abs(bal) > 0.009:
             pend.append({"fund": fund, "balance": bal,
                          "movs_today": movs_today})

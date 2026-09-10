@@ -145,22 +145,25 @@ async def list_users(request: Request, q: Optional[str] = None,
     )
 
 
-@router.put("/admin/users/{user_id}")
-async def update_user(user_id: str, payload: UserUpdate, request: Request) -> Any:
-    requester = await require_permission(request, "users")
-    await _enforce_totp_step_up(requester, payload.totp_code, action_label="actualizar usuario")
-    update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
-    if not update:
-        raise HTTPException(status_code=400, detail="Nada para actualizar")
-    # SEC-001 (auditoría 28/7/2026) — balance & staff-capability fields are
-    # STRICTLY admin-only. A scoped employee (even with `user_functions`)
-    # must never mint spendable balance nor grant capability booleans.
-    ADMIN_ONLY_FIELDS = {
-        "vip_balance_usd", "vip_balances",
-        "can_edit_product_prices", "can_upload_product_images",
-        "can_delete_products", "can_manage_blocklist",
-        "can_manage_company_funds",
-    }
+# SEC-001 (auditoría 28/7/2026) — balance & staff-capability fields are
+# STRICTLY admin-only. A scoped employee (even with `user_functions`)
+# must never mint spendable balance nor grant capability booleans.
+ADMIN_ONLY_FIELDS = {
+    "vip_balance_usd", "vip_balances",
+    "can_edit_product_prices", "can_upload_product_images",
+    "can_delete_products", "can_manage_blocklist",
+    "can_manage_company_funds",
+}
+# iter55.33 — modifying "functions" fields requires the dedicated
+# `user_functions` permission on top of the `users` gate.
+FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
+                    "market_perms", "account_status", "allowed_batch_pairs",
+                    "applied_templates"}
+
+
+def _assert_user_update_authz(requester: dict, update: dict) -> None:
+    """Gates de autorización del PUT /admin/users/{id} (solo lanza 403)."""
+    from services.permissions import _has_permission
     touched_admin_only = sorted(ADMIN_ONLY_FIELDS & set(update))
     if touched_admin_only and requester.get("role") != "admin":
         raise HTTPException(
@@ -168,73 +171,84 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
             detail=("Solo un admin puede modificar saldos o capacidades de staff "
                     f"({', '.join(touched_admin_only)})."),
         )
-    # iter55.33 — modifying "functions" fields (role, allowed_currencies,
-    # allowed_permissions, market perms, account_status) requires the
-    # dedicated `user_functions` permission on top of the `users` gate. This
-    # lets an admin grant a staff member *view-only* access to the user list
-    # while keeping powerful edits (like promoting to VIP) admin-only.
-    FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
-                         "market_perms", "account_status", "allowed_batch_pairs",
-                         "applied_templates"}
-    if any(k in update for k in FUNCTIONS_FIELDS):
-        from services.permissions import _has_permission
-        if not _has_permission(requester, "user_functions"):
-            raise HTTPException(
-                status_code=403,
-                detail=("Acceso restringido. Necesitas el permiso 'Funciones de usuario' "
-                        "para modificar rol, permisos, monedas o accesos del marketplace."),
-            )
+    if any(k in update for k in FUNCTIONS_FIELDS) \
+            and not _has_permission(requester, "user_functions"):
+        raise HTTPException(
+            status_code=403,
+            detail=("Acceso restringido. Necesitas el permiso 'Funciones de usuario' "
+                    "para modificar rol, permisos, monedas o accesos del marketplace."),
+        )
     # iter202 — designar mensajeros requiere el permiso dedicado 'Mensajería'.
-    if "is_courier" in update:
-        from services.permissions import _has_permission
-        if not _has_permission(requester, "deliveries"):
-            raise HTTPException(
-                status_code=403,
-                detail="Acceso restringido. Necesitas el permiso 'Mensajería' para designar mensajeros.",
-            )
-    if requester.get("role") == "employee" and "role" in update and update["role"] in ("admin", "employee"):
+    if "is_courier" in update and not _has_permission(requester, "deliveries"):
+        raise HTTPException(
+            status_code=403,
+            detail="Acceso restringido. Necesitas el permiso 'Mensajería' para designar mensajeros.",
+        )
+    if requester.get("role") == "employee" and update.get("role") in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
-    # iter55.16 — only admins can grant/revoke capabilities to other staff.
+
+
+def _clean_applied_templates(raw: Any) -> dict:
+    """iter252 — saneado del registro de plantillas aplicadas."""
+    raw = raw or {}
+    if not isinstance(raw, dict) or len(raw) > 20:
+        raise HTTPException(status_code=422, detail="applied_templates inválido")
+    clean: dict = {}
+    for tid, rec in raw.items():
+        if not isinstance(rec, dict):
+            continue
+        clean[str(tid)[:40]] = {
+            "added_perms": [str(p)[:60] for p in (rec.get("added_perms") or [])][:60],
+            "prev_currencies": [str(c)[:20] for c in (rec.get("prev_currencies") or [])][:60],
+            "set_currencies": [str(c)[:20] for c in (rec.get("set_currencies") or [])][:60],
+            "currencies_changed": bool(rec.get("currencies_changed")),
+            "applied_at": str(rec.get("applied_at") or "")[:40],
+        }
+    return clean
+
+
+def _clean_batch_pairs(raw: Any) -> list:
+    """iter113/iter202 — normaliza "FROM->TO"; sentinel "none" = sin acceso."""
+    raw_pairs = [str(p).strip() for p in raw or []]
+    if any(p.lower() == "none" for p in raw_pairs):
+        return ["none"]
+    clean_pairs: list = []
+    for p in raw_pairs:
+        p = p.upper().replace("→", "->")
+        if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean_pairs:
+            clean_pairs.append(p)
+    return clean_pairs
+
+
+def _sanitize_staff_grants(requester: dict, update: dict) -> None:
+    """iter55.16/252/113 — los campos de concesiones de staff son admin-only
+    y se normalizan in-place antes de persistir."""
+    admin_only_msgs = {
+        "allowed_permissions": "Solo un admin puede modificar los permisos de staff",
+        "applied_templates": "Solo un admin puede modificar las plantillas de staff",
+        "allowed_batch_pairs": "Solo un admin puede modificar los pares de lotes autorizados",
+    }
+    for field, msg in admin_only_msgs.items():
+        if field in update and requester.get("role") != "admin":
+            raise HTTPException(status_code=403, detail=msg)
     if "allowed_permissions" in update:
-        if requester.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Solo un admin puede modificar los permisos de staff")
         from services.permissions import sanitize_permissions
         update["allowed_permissions"] = sanitize_permissions(update["allowed_permissions"])
-    # iter252 — saneado del registro de plantillas (admin-only, igual que perms).
     if "applied_templates" in update:
-        if requester.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Solo un admin puede modificar las plantillas de staff")
-        raw = update["applied_templates"] or {}
-        if not isinstance(raw, dict) or len(raw) > 20:
-            raise HTTPException(status_code=422, detail="applied_templates inválido")
-        clean = {}
-        for tid, rec in raw.items():
-            if not isinstance(rec, dict):
-                continue
-            clean[str(tid)[:40]] = {
-                "added_perms": [str(p)[:60] for p in (rec.get("added_perms") or [])][:60],
-                "prev_currencies": [str(c)[:20] for c in (rec.get("prev_currencies") or [])][:60],
-                "set_currencies": [str(c)[:20] for c in (rec.get("set_currencies") or [])][:60],
-                "currencies_changed": bool(rec.get("currencies_changed")),
-                "applied_at": str(rec.get("applied_at") or "")[:40],
-            }
-        update["applied_templates"] = clean
-    # iter113 — VIP batch pair RBAC: admin-only, normalise "FROM->TO" entries.
+        update["applied_templates"] = _clean_applied_templates(update["applied_templates"])
     if "allowed_batch_pairs" in update:
-        if requester.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Solo un admin puede modificar los pares de lotes autorizados")
-        raw_pairs = [str(p).strip() for p in update["allowed_batch_pairs"] or []]
-        # iter202 — sentinel "none" = sin acceso a NINGÚN lote. La lista
-        # vacía sigue significando acceso total (compatibilidad legacy).
-        if any(p.lower() == "none" for p in raw_pairs):
-            update["allowed_batch_pairs"] = ["none"]
-        else:
-            clean_pairs: list = []
-            for p in raw_pairs:
-                p = p.upper().replace("→", "->")
-                if re.match(r"^[A-Z0-9_]{1,16}->[A-Z0-9_]{1,16}$", p) and p not in clean_pairs:
-                    clean_pairs.append(p)
-            update["allowed_batch_pairs"] = clean_pairs
+        update["allowed_batch_pairs"] = _clean_batch_pairs(update["allowed_batch_pairs"])
+
+
+@router.put("/admin/users/{user_id}")
+async def update_user(user_id: str, payload: UserUpdate, request: Request) -> Any:
+    requester = await require_permission(request, "users")
+    await _enforce_totp_step_up(requester, payload.totp_code, action_label="actualizar usuario")
+    update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
+    if not update:
+        raise HTTPException(status_code=400, detail="Nada para actualizar")
+    _assert_user_update_authz(requester, update)
+    _sanitize_staff_grants(requester, update)
     old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})

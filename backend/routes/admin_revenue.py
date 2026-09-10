@@ -344,6 +344,60 @@ def _merge_vip_batches_into_roles(by_role: dict, vip_batches: dict) -> None:
         r["volume_usdt"] = round(r["volume_usdt"], 4)
 
 
+def _revenue_summary_payload(*, orders_count: int, batch_items_count: int,
+                             total_profit_usdt: float, total_volume_usdt: float,
+                             marketplace: dict, conversion_fees: dict,
+                             vip_batches: dict, courier: dict,
+                             pair_items: list, by_role: dict,
+                             missing_rate_pairs: set) -> dict:
+    """Ensambla la respuesta de GET /admin/revenue a partir de los agregados."""
+    grand_total_profit = (
+        total_profit_usdt
+        + marketplace["total_profit_usd"]
+        + conversion_fees["total_usdt"]
+        + vip_batches["total_usdt"]
+        + courier["platform_usdt"]
+    )
+    total_volume_all = (
+        total_volume_usdt
+        + vip_batches.get("volume_usdt", 0.0)
+        + marketplace["total_revenue_usd"]
+        + conversion_fees.get("volume_usdt", 0.0)
+        + courier["total_fees_usdt"]
+    )
+    return {
+        "total_profit_usdt": round(grand_total_profit, 4),
+        "p2p_profit_usdt": round(total_profit_usdt, 4),
+        "marketplace_profit_usdt": round(marketplace["total_profit_usd"], 4),
+        "conversion_fees_usdt": conversion_fees["total_usdt"],
+        "conversion_fees_count": conversion_fees["count"],
+        "vip_batches_profit_usdt": vip_batches["total_usdt"],
+        "vip_batches_count": vip_batches["count"],
+        # iter208 — Company revenue from confirmed courier deliveries.
+        # `courier_platform_usdt` is the empresa's share, `courier_couriers_usdt`
+        # is what was paid out to couriers (already credited to their balances).
+        "courier_platform_usdt": courier["platform_usdt"],
+        "courier_couriers_usdt": courier["courier_usdt"],
+        "courier_total_fees_usdt": courier["total_fees_usdt"],
+        "courier_deliveries_count": courier["count"],
+        "total_volume_usdt": round(total_volume_usdt, 4),
+        "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
+        # iter157 — TOTAL company profitability: every profit source (P2P +
+        # marketplace + VIP batches + conversion fees) over the total volume
+        # moved in the same window (P2P volume + VIP batch volume +
+        # marketplace revenue + converted volume). Respects the `days` filter.
+        "total_margin_pct": round((grand_total_profit / total_volume_all * 100), 3) if total_volume_all > 0 else 0.0,
+        "total_volume_all_usdt": round(total_volume_all, 4),
+        "by_pair": pair_items,
+        "by_role": by_role,
+        "marketplace": marketplace,
+        "missing_real_rate_pairs": sorted(missing_rate_pairs),
+        "orders_total": orders_count + batch_items_count,
+        "orders_p2p_count": orders_count,
+        "batch_items_count": batch_items_count,
+    }
+
+
 @router.get("/admin/revenue")
 async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
     await require_admin(request)
@@ -377,52 +431,15 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
 
     _merge_vip_batches_into_roles(by_role, vip_batches)
 
-    grand_total_profit = (
-        total_profit_usdt
-        + marketplace["total_profit_usd"]
-        + conversion_fees["total_usdt"]
-        + vip_batches["total_usdt"]
-        + courier["platform_usdt"]
+    return _revenue_summary_payload(
+        orders_count=len(orders), batch_items_count=batch_items_count,
+        total_profit_usdt=total_profit_usdt,
+        total_volume_usdt=total_volume_usdt,
+        marketplace=marketplace, conversion_fees=conversion_fees,
+        vip_batches=vip_batches, courier=courier,
+        pair_items=pair_items, by_role=by_role,
+        missing_rate_pairs=missing_rate_pairs,
     )
-    total_volume_all = (
-        total_volume_usdt
-        + vip_batches.get("volume_usdt", 0.0)
-        + marketplace["total_revenue_usd"]
-        + conversion_fees.get("volume_usdt", 0.0)
-        + courier["total_fees_usdt"]
-    )
-
-    return {
-        "total_profit_usdt": round(grand_total_profit, 4),
-        "p2p_profit_usdt": round(total_profit_usdt, 4),
-        "marketplace_profit_usdt": round(marketplace["total_profit_usd"], 4),
-        "conversion_fees_usdt": conversion_fees["total_usdt"],
-        "conversion_fees_count": conversion_fees["count"],
-        "vip_batches_profit_usdt": vip_batches["total_usdt"],
-        "vip_batches_count": vip_batches["count"],
-        # iter208 — Company revenue from confirmed courier deliveries.
-        # `courier_platform_usdt` is the empresa's share, `courier_couriers_usdt`
-        # is what was paid out to couriers (already credited to their balances).
-        "courier_platform_usdt": courier["platform_usdt"],
-        "courier_couriers_usdt": courier["courier_usdt"],
-        "courier_total_fees_usdt": courier["total_fees_usdt"],
-        "courier_deliveries_count": courier["count"],
-        "total_volume_usdt": round(total_volume_usdt, 4),
-        "profit_margin_pct": round((total_profit_usdt / total_volume_usdt * 100), 3) if total_volume_usdt > 0 else 0.0,
-        # iter157 — TOTAL company profitability: every profit source (P2P +
-        # marketplace + VIP batches + conversion fees) over the total volume
-        # moved in the same window (P2P volume + VIP batch volume +
-        # marketplace revenue + converted volume). Respects the `days` filter.
-        "total_margin_pct": round((grand_total_profit / total_volume_all * 100), 3) if total_volume_all > 0 else 0.0,
-        "total_volume_all_usdt": round(total_volume_all, 4),
-        "by_pair": pair_items,
-        "by_role": by_role,
-        "marketplace": marketplace,
-        "missing_real_rate_pairs": sorted(missing_rate_pairs),
-        "orders_total": len(orders) + batch_items_count,
-        "orders_p2p_count": len(orders),
-        "batch_items_count": batch_items_count,
-    }
 
 
 async def _fetch_conversion_fees(
@@ -503,6 +520,86 @@ async def admin_revenue_timeseries(request: Request, granularity: str = "day",
     return {"granularity": granularity, "rows": rows}
 
 
+async def _day_detail_order_rows(orders: list, rate_by_pair: dict,
+                                 fx: dict) -> tuple:
+    """Filas P2P del día + (ganancia, volumen) en USDT."""
+    rows: list = []
+    p2p_total, volume_total = 0.0, 0.0
+    for o in sorted(orders, key=lambda x: x.get("updated_at") or ""):
+        vol = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
+        prof = await compute_order_profit(o, rate_by_pair.get((o["from_code"], o["to_code"])))
+        prof_usdt = (convert_to_usdt(prof["amount"], prof["currency"], fx) or 0.0) if prof else 0.0
+        p2p_total += prof_usdt
+        volume_total += vol
+        rows.append({
+            "id": o["id"],
+            "pair": f"{o['from_code']}→{o['to_code']}",
+            "user_name": o.get("user_name") or o.get("user_email") or "—",
+            "user_role": o.get("user_role") or "",
+            "amount_from": o.get("amount_from"), "from_code": o.get("from_code"),
+            "amount_to": o.get("amount_to"), "to_code": o.get("to_code"),
+            "profit_usdt": round(prof_usdt, 4),
+        })
+    return rows, p2p_total, volume_total
+
+
+def _day_detail_marketplace_rows(redemptions: list) -> tuple:
+    rows: list = []
+    total = 0.0
+    for r in redemptions:
+        prof_amt = float(r.get("total_usd") or 0.0) - float(r.get("cost_usd") or 0.0)
+        total += prof_amt
+        rows.append({
+            "id": r["id"], "product_name": r.get("product_name") or "—",
+            "user_name": r.get("user_name") or r.get("user_email") or "—",
+            "quantity": r.get("quantity") or 1,
+            "total_usd": float(r.get("total_usd") or 0.0),
+            "cost_usd": float(r.get("cost_usd") or 0.0),
+            "profit_usdt": round(prof_amt, 4),
+        })
+    return rows, total
+
+
+async def _day_detail_vip_rows(batch_items: list) -> tuple:
+    vip_ids = list({it.get("vip_user_id") for it in batch_items if it.get("vip_user_id")})
+    vip_names: Dict[str, str] = {}
+    if vip_ids:
+        async for u in db.users.find({"user_id": {"$in": vip_ids}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}):
+            vip_names[u["user_id"]] = u.get("name") or u.get("email") or "—"
+    rows: list = []
+    total = 0.0
+    for it in batch_items:
+        m = float(it.get("margin_usdt") or 0.0)
+        total += m
+        rows.append({
+            "id": it["id"],
+            "vip_name": vip_names.get(it.get("vip_user_id"), "—"),
+            "holder": it.get("card_number") or it.get("holder_name") or "—",
+            "pair": f"{it.get('from_code')}→{it.get('to_code')}" if it.get("to_code") else (it.get("currency") or "—"),
+            "amount": it.get("amount"), "from_code": it.get("from_code") or it.get("currency"),
+            "amount_to": it.get("amount_to"), "to_code": it.get("to_code"),
+            "margin_usdt": round(m, 4),
+        })
+    return rows, total
+
+
+def _day_detail_fee_rows(fee_rows: list) -> tuple:
+    rows: list = []
+    total = 0.0
+    for row in fee_rows:
+        det = row.get("details") or {}
+        fee = float(det.get("usdt_fee") or 0.0)
+        total += fee
+        rows.append({
+            "created_at": row.get("created_at"),
+            "user": row.get("actor_name") or row.get("actor_email") or "—",
+            "pair": f"{det.get('from_code')}→{det.get('to_code')}" if det.get("to_code") else "—",
+            "amount_from": det.get("amount_from"),
+            "fee_usdt": round(fee, 4),
+        })
+    return rows, total
+
+
 @router.get("/admin/revenue/day-detail")
 async def admin_revenue_day_detail(request: Request, date: str) -> Any:
     """Breakdown of one daily bucket: the exact P2P orders, marketplace
@@ -533,67 +630,11 @@ async def admin_revenue_day_detail(request: Request, date: str) -> Any:
     rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
     fx = await build_rate_lookup()
 
-    order_rows, p2p_total, volume_total = [], 0.0, 0.0
-    for o in sorted(orders, key=lambda x: x.get("updated_at") or ""):
-        vol = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
-        prof = await compute_order_profit(o, rate_by_pair.get((o["from_code"], o["to_code"])))
-        prof_usdt = (convert_to_usdt(prof["amount"], prof["currency"], fx) or 0.0) if prof else 0.0
-        p2p_total += prof_usdt
-        volume_total += vol
-        order_rows.append({
-            "id": o["id"],
-            "pair": f"{o['from_code']}→{o['to_code']}",
-            "user_name": o.get("user_name") or o.get("user_email") or "—",
-            "user_role": o.get("user_role") or "",
-            "amount_from": o.get("amount_from"), "from_code": o.get("from_code"),
-            "amount_to": o.get("amount_to"), "to_code": o.get("to_code"),
-            "profit_usdt": round(prof_usdt, 4),
-        })
-
-    mkt_rows, mkt_total = [], 0.0
-    for r in redemptions:
-        prof_amt = float(r.get("total_usd") or 0.0) - float(r.get("cost_usd") or 0.0)
-        mkt_total += prof_amt
-        mkt_rows.append({
-            "id": r["id"], "product_name": r.get("product_name") or "—",
-            "user_name": r.get("user_name") or r.get("user_email") or "—",
-            "quantity": r.get("quantity") or 1,
-            "total_usd": float(r.get("total_usd") or 0.0),
-            "cost_usd": float(r.get("cost_usd") or 0.0),
-            "profit_usdt": round(prof_amt, 4),
-        })
-
-    vip_ids = list({it.get("vip_user_id") for it in batch_items if it.get("vip_user_id")})
-    vip_names: Dict[str, str] = {}
-    if vip_ids:
-        async for u in db.users.find({"user_id": {"$in": vip_ids}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}):
-            vip_names[u["user_id"]] = u.get("name") or u.get("email") or "—"
-    vip_rows, vip_total = [], 0.0
-    for it in batch_items:
-        m = float(it.get("margin_usdt") or 0.0)
-        vip_total += m
-        vip_rows.append({
-            "id": it["id"],
-            "vip_name": vip_names.get(it.get("vip_user_id"), "—"),
-            "holder": it.get("card_number") or it.get("holder_name") or "—",
-            "pair": f"{it.get('from_code')}→{it.get('to_code')}" if it.get("to_code") else (it.get("currency") or "—"),
-            "amount": it.get("amount"), "from_code": it.get("from_code") or it.get("currency"),
-            "amount_to": it.get("amount_to"), "to_code": it.get("to_code"),
-            "margin_usdt": round(m, 4),
-        })
-
-    fee_list, fees_total = [], 0.0
-    for row in fee_rows:
-        det = row.get("details") or {}
-        fee = float(det.get("usdt_fee") or 0.0)
-        fees_total += fee
-        fee_list.append({
-            "created_at": row.get("created_at"),
-            "user": row.get("actor_name") or row.get("actor_email") or "—",
-            "pair": f"{det.get('from_code')}→{det.get('to_code')}" if det.get("to_code") else "—",
-            "amount_from": det.get("amount_from"),
-            "fee_usdt": round(fee, 4),
-        })
+    order_rows, p2p_total, volume_total = await _day_detail_order_rows(
+        orders, rate_by_pair, fx)
+    mkt_rows, mkt_total = _day_detail_marketplace_rows(redemptions)
+    vip_rows, vip_total = await _day_detail_vip_rows(batch_items)
+    fee_list, fees_total = _day_detail_fee_rows(fee_rows)
 
     return {
         "date": date,
