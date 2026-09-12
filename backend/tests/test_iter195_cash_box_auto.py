@@ -99,16 +99,18 @@ def _mark_paid(wid, extra=None):
 
 
 def test_cash_adjustment_auto_creates_cash_box():
+    # iter271 — el método Efectivo solo existe en CUP y USD: cualquier otra
+    # moneda se rechaza en el servidor y NO crea caja.
     r = _adjust(CASH, 1000, method="cash")
-    assert r.status_code == 200, r.text
-    assert r.json()["account_label"] == "Fondo Resilience"
-    box = _db().fund_accounts.find_one({"currency": CASH, "name": "Fondo Resilience"})
-    assert box and box["method"] == "cash" and box["is_active"]
-    S["box"] = box["id"]
+    assert r.status_code == 400, r.text
+    assert "CUP y USD" in r.json()["detail"]
+    assert not _db().fund_accounts.find_one(
+        {"currency": CASH, "name": "Fondo Resilience"})
+    # el capital se registra por transferencia (queda sin asignar); la caja
+    # de la moneda se sigue creando perezosamente en el primer PAGO cash.
+    assert _adjust(CASH, 1000).status_code == 200
     data = _breakdown(CASH)
-    row = next(a for a in data["accounts"] if a["id"] == S["box"])
-    assert row["balance"] == 1000
-    assert data["unassigned"] == 0
+    assert data["unassigned"] == 1000
 
 
 def test_cash_withdrawal_paid_auto_from_cash_box():
@@ -116,11 +118,17 @@ def test_cash_withdrawal_paid_auto_from_cash_box():
     r = _mark_paid(wid)
     assert r.status_code == 200, r.text
     w = r.json()
+    box = _db().fund_accounts.find_one(
+        {"currency": CASH, "name": "Fondo Resilience"})
+    assert box and box["method"] == "cash" and box["is_active"], \
+        "el primer pago cash crea la caja perezosamente"
+    S["box"] = box["id"]
     assert w["paid_from_account_id"] == S["box"]
     assert w["paid_from_account_label"] == "Fondo Resilience"
     data = _breakdown(CASH)
     row = next(a for a in data["accounts"] if a["id"] == S["box"])
-    assert row["balance"] == 900
+    assert row["balance"] == -100
+    assert data["unassigned"] == 1000
 
 
 def test_transfer_withdrawal_single_account_auto():

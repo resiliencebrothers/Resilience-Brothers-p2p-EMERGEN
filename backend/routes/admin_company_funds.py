@@ -1357,15 +1357,20 @@ def _resolve_cash_denominations(
     (formato del Excel de control físico), validado contra el monto."""
     if payload.method != "cash":
         return None
+    # iter271 — el efectivo físico solo existe en CUP y USD: cualquier otra
+    # moneda (CUPT, MLC, cripto…) no puede registrarse con método Efectivo.
+    if currency not in CASH_DENOMINATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"El método Efectivo solo aplica a CUP y USD: "
+                    f"«{currency}» no existe en billetes físicos."))
     if payload.denominations:
         return _validate_denominations(
             currency, payload.denominations, payload.amount)
-    if currency in CASH_DENOMINATIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(f"Para efectivo en {currency} debes indicar el "
-                    "desglose de billetes por denominación."))
-    return None
+    raise HTTPException(
+        status_code=400,
+        detail=(f"Para efectivo en {currency} debes indicar el "
+                "desglose de billetes por denominación."))
 
 
 async def _log_adjustment_action(actor: dict,
@@ -1405,8 +1410,10 @@ async def create_company_fund_adjustment(
     await _enforce_totp_step_up(actor, payload.totp_code)
 
     currency = await _validate_adjustment_currency(actor, payload.currency)
-    account_id, account_label = await _resolve_adjustment_account(payload, currency)
+    # iter271 — validar el efectivo (moneda con billetes + desglose) ANTES de
+    # resolver la cuenta: un ajuste rechazado no debe crear la caja perezosa.
     denominations = _resolve_cash_denominations(payload, currency)
+    account_id, account_label = await _resolve_adjustment_account(payload, currency)
 
     adjustment = CompanyFundAdjustment(
         adjustment_type=payload.adjustment_type,

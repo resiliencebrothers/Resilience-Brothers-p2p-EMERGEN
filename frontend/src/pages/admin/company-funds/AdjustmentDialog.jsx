@@ -26,6 +26,9 @@ const CASH_DENOMS = {
   USD: [100, 50, 20, 10, 5, 2, 1],
 };
 
+// iter271 — el efectivo físico solo existe en CUP y USD.
+const isCashCurrency = (code) => Boolean(CASH_DENOMS[code]);
+
 const emptyForm = {
   adjustment_type: "inflow",
   currency: "",
@@ -51,6 +54,11 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
 
   // iter213 — desglose de billetes activo para efectivo CUP/USD.
   const denomList = form.method === "cash" ? CASH_DENOMS[form.currency] : null;
+  // iter271 — con método Efectivo solo se ofrecen las monedas con billetes.
+  const currencyOptions =
+    form.method === "cash"
+      ? currencies.filter((c) => isCashCurrency(c.code))
+      : currencies;
   const denomTotal = denomList
     ? denomList.reduce((s, d) => s + d * (parseInt(form.denoms[d], 10) || 0), 0)
     : 0;
@@ -178,7 +186,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                     <SelectValue placeholder="Selecciona" />
                   </SelectTrigger>
                   <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                    {currencies.map((c) => (
+                    {currencyOptions.map((c) => (
                       <SelectItem key={c.code} value={c.code}>
                         {c.code} · {c.name}
                       </SelectItem>
@@ -251,7 +259,18 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
               <Label className="micro-label text-neutral-500">Método</Label>
               <Select
                 value={form.method}
-                onValueChange={(v) => setForm({ ...form, method: v })}
+                onValueChange={(v) =>
+                  setForm((f) => ({
+                    ...f,
+                    method: v,
+                    // iter271 — Efectivo solo existe en CUP/USD: si la moneda
+                    // elegida no tiene billetes, se pide elegirla de nuevo.
+                    currency:
+                      v === "cash" && !isCashCurrency(f.currency)
+                        ? ""
+                        : f.currency,
+                  }))
+                }
               >
                 <SelectTrigger
                   data-testid="adj-method"
@@ -260,13 +279,28 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-                  {Object.entries(METHOD_LABELS).map(([v, label]) => (
-                    <SelectItem key={v} value={v}>
-                      {label}
-                    </SelectItem>
-                  ))}
+                  {Object.entries(METHOD_LABELS)
+                    .filter(
+                      ([v]) =>
+                        v !== "cash" ||
+                        !form.currency ||
+                        isCashCurrency(form.currency)
+                    )
+                    .map(([v, label]) => (
+                      <SelectItem key={v} value={v}>
+                        {label}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
+              {form.method === "cash" && !form.currency && (
+                <p
+                  className="text-[0.65rem] text-neutral-500 mt-1"
+                  data-testid="adj-cash-currency-hint"
+                >
+                  El efectivo físico solo existe en CUP y USD.
+                </p>
+              )}
             </div>
 
             {form.currency && form.method === "cash" && (

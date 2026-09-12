@@ -701,3 +701,32 @@ class TestN07CriticalSuite:
         section = text.split("test-critical:")[1].split("test-all:")[0]
         assert "tests/test_iter269_verificacion_caja_fixes.py" in section
         assert "tests/test_iter270_revision_flujo_caja.py" in section
+
+
+class TestCashOnlyCupUsd:
+    """iter271 — el método Efectivo solo existe en CUP y USD (pedido del
+    operador): otra moneda con method=cash se rechaza en el servidor."""
+
+    def setup_method(self, _):
+        _cleanup()
+        _seed_currency(CCY)
+
+    def teardown_method(self, _):
+        _cleanup()
+
+    def test_cash_adjustment_rejects_non_cash_currency(self):
+        r = _adjust({"adjustment_type": "inflow", "currency": CCY,
+                     "amount": 50, "method": "cash",
+                     "source_name": f"{MARK} aporte"})
+        assert r.status_code == 400, r.text
+        assert "CUP y USD" in r.json()["detail"]
+        assert _db().company_fund_adjustments.count_documents(
+            {"currency": CCY}) == 0
+
+    def test_cash_adjustment_usd_still_works(self):
+        r = _adjust({"adjustment_type": "inflow", "currency": "USD",
+                     "amount": 40, "method": "cash",
+                     "source_name": f"{MARK} aporte",
+                     "denominations": {"20": 2}})
+        assert r.status_code == 200, r.text
+        assert r.json()["account_label"] == "Fondo Resilience"
