@@ -696,8 +696,10 @@ class TestN06AccountIdentity:
 class TestN07CriticalSuite:
     def test_makefile_runs_cash_regressions_on_every_change(self):
         """N07 — las regresiones de caja (iter269 + iter270) forman parte de
-        la suite crítica que corre en cada push/PR."""
-        text = Path("/app/Makefile").read_text()
+        la suite crítica que corre en cada push/PR. M06 — la ruta del repo se
+        deriva del propio test (portable a CI, sin depender de /app)."""
+        repo_root = Path(__file__).resolve().parents[2]
+        text = (repo_root / "Makefile").read_text()
         section = text.split("test-critical:")[1].split("test-all:")[0]
         assert "tests/test_iter269_verificacion_caja_fixes.py" in section
         assert "tests/test_iter270_revision_flujo_caja.py" in section

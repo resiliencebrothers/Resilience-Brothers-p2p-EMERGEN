@@ -89,7 +89,8 @@ async def get_or_create_cash_box(currency: str) -> dict:
     fa = await db.fund_accounts.find_one(key, {"_id": 0})
     if not fa:
         legacy = await db.fund_accounts.find_one(
-            {"currency": code, "name": CASH_BOX_NAME}, {"_id": 0})
+            {"currency": code, "name": CASH_BOX_NAME,
+             "merged_into": {"$exists": False}}, {"_id": 0})
         if legacy:
             # migración: estampa la identidad en la cuenta legada por nombre
             try:
@@ -169,6 +170,15 @@ async def resolve_fund_account(account_id: str) -> Optional[dict]:
             "is_active": bool(pa.get("is_active", True)),
         }
     fa = await db.fund_accounts.find_one({"id": account_id}, {"_id": 0})
+    # M03 — un alias fusionado remite SIEMPRE a su identidad canónica: nunca
+    # vuelve a operar ni a recibir atribuciones por su id antiguo.
+    hops = 0
+    while fa and fa.get("merged_into") and hops < 3:
+        nxt = await db.fund_accounts.find_one(
+            {"id": fa["merged_into"]}, {"_id": 0})
+        if not nxt:
+            break
+        fa, hops = nxt, hops + 1
     if fa:
         return {
             "id": fa["id"], "label": fa.get("name") or fa["id"],
@@ -233,7 +243,7 @@ async def account_assigned_balances(code: str) -> Dict[str, float]:
         _add(a["account_id"], amt if a.get("adjustment_type") == "inflow" else -amt)
 
     async for tr in db.fund_account_transfers.find(
-        {"currency": code},
+        {"currency": code, "status": {"$nin": ["pending", "aborted"]}},
         {"_id": 0, "from_account_id": 1, "to_account_id": 1, "amount": 1},
     ):
         amt = float(tr.get("amount") or 0.0)

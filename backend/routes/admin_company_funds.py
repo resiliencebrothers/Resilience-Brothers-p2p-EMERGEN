@@ -1187,7 +1187,8 @@ async def _paid_from_account_fields(payload: dict, cw: dict) -> Dict[str, Any]:
     acc_id = (payload.get("paid_from_account_id") or "").strip()
     if acc_id:
         acc = await resolve_payout_account(acc_id, cw.get("currency") or "")
-        return {"paid_from_account_id": acc_id,
+        # M03 — si la cuenta era un alias fusionado, se atribuye a la canónica
+        return {"paid_from_account_id": acc["id"],
                 "paid_from_account_label": acc["label"]}
     auto_acc = await auto_paid_from_account(cw.get("currency") or "")
     if auto_acc:
@@ -1285,6 +1286,16 @@ async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
                 update_doc.pop("paid_from_account_id", None)
                 update_doc.pop("paid_from_account_label", None)
         update_doc["paid_at"] = iso(now_utc())
+        # M01 — autoridad indivisible: el permiso de gasto se escribe en el
+        # PRESUPUESTO condicionado al cerrojo vigente, justo antes de la
+        # transición. Un dueño antiguo que repuso su propio cercado tras
+        # perder el cerrojo no supera esta comprobación.
+        if not await fund_budget.assert_spend_authority(
+                cw["currency"], lock, cwid):
+            raise HTTPException(
+                status_code=409,
+                detail=("La operación perdió su turno de gasto; "
+                        "inténtalo de nuevo."))
         await _claim_cw_transition(cwid, cw["status"], update_doc, fence=lock)
         await fund_budget.release_reservation(
             cw["currency"], float(cw["amount"]))

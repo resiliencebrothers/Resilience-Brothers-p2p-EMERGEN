@@ -1812,3 +1812,7 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 
 ## 2026-06 · iter271 — Método Efectivo solo CUP/USD (pedido usuario, verificado)
 - El ajuste manual de capital con método Efectivo solo acepta CUP y USD (únicas monedas con billetes físicos): validación 400 en el servidor (antes de crear la caja perezosa) + selector de moneda filtrado y nota explicativa en el diálogo. Tests en suite crítica (iter270::TestCashOnlyCupUsd) + iter195 adaptado. Detalle en CHANGELOG.md.
+
+## 2026-06 · iter272 — Revisión Flujo de Caja (commit dd10586, M01–M06) aplicada y verificada
+- M01 autoridad de gasto indivisible en el presupuesto (un dueño con cerrojo caducado no puede re-autorizarse reponiendo su cercado → 409). M02 transferencias en dos fases pending→autoridad→confirmed: provisionales/abortadas invisibles para saldos, historial y espejos; rechazo trazable (aborted) y huérfanas abortadas por el recuperador. M03 cuentas fusionadas excluidas del estampador (sin colisiones de índice; el backfill nunca aborta) y alias resueltos a la canónica en todos los pagos. M04 espejos internos erróneos anulados con compensación trazable + arqueo invalidado (sin inventar capital, idempotente). M05 el origen de un retiro de cliente ya pagado es inmutable (409). M06 comprobaciones de suite crítica portables a CI + iter271 en test-critical.
+- Tests: `test_iter271_flujo_caja_m01_m06.py` 12/12 · test-critical **386/386** · suite completa **1940 passed / 8 skipped** (4 flakies ajenos: TOTP/geocoding, pasan aislados) · mypy limpio. Detalle en CHANGELOG.md.

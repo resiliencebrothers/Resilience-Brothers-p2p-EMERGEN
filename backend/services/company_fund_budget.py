@@ -170,11 +170,23 @@ async def acquire_pay_lock(currency: str) -> Optional[str]:
 
 
 async def holds_pay_lock(currency: str, token: str) -> bool:
-    """¿`token` sigue siendo el dueño vigente del cerrojo de gasto? (N04 —
-    verificación de cercado tras la escritura definitiva de una transferencia)."""
+    """¿`token` sigue siendo el dueño vigente del cerrojo de gasto?"""
     doc = await db.company_fund_budgets.find_one(
         {"currency": currency, "pay_lock": token}, {"_id": 1})
     return doc is not None
+
+
+async def assert_spend_authority(currency: str, token: str, ref: str) -> bool:
+    """M01 — autorización INDIVISIBLE de gasto en el recurso compartido que
+    protege el presupuesto: escribe el permiso en el documento del presupuesto
+    CONDICIONADO a seguir poseyendo el cerrojo. Un dueño antiguo no puede
+    re-autorizarse escribiendo campos en su propio retiro: si perdió el
+    cerrojo, esta escritura no coincide y el gasto debe abortarse."""
+    res = await db.company_fund_budgets.update_one(
+        {"currency": currency, "pay_lock": token},
+        {"$set": {"pay_authority": {"ref": ref, "token": token,
+                                    "at": iso(now_utc())}}})
+    return res.matched_count == 1
 
 
 async def acquire_pay_lock_wait(

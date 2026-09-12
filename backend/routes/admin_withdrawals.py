@@ -334,11 +334,24 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
             auto_paid_from_account, resolve_payout_account,
         )
         acc_id = (payload.get("paid_from_account_id") or "").strip()
-        if acc_id:
+        if str(w.get("status") or "") == "paid":
+            # M05 — el origen de un pago YA REALIZADO no puede cambiarse en
+            # silencio: la contabilidad pasaría a descontar de otra cuenta
+            # mientras el espejo físico anterior queda intacto.
+            cur_acc = str(w.get("paid_from_account_id") or "")
+            if acc_id and acc_id != cur_acc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=("El retiro ya está pagado desde otra cuenta; el "
+                            "origen no puede cambiarse. Registra una "
+                            "corrección explícita si hace falta."))
+            # re-guardado idempotente: se conserva la atribución original
+        elif acc_id:
             # N03 — la cuenta de origen debe existir, estar activa y
             # coincidir en moneda con el retiro (sin conversión implícita).
+            # M03 — un alias fusionado se atribuye a su identidad canónica.
             acc = await resolve_payout_account(acc_id, w.get("currency") or "")
-            update_doc["paid_from_account_id"] = acc_id
+            update_doc["paid_from_account_id"] = acc["id"]
             update_doc["paid_from_account_label"] = acc["label"]
         else:
             auto_acc = await auto_paid_from_account(w.get("currency"),

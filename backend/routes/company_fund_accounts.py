@@ -142,7 +142,8 @@ async def fund_account_breakdown(currency: str, request: Request) -> Any:
 
     unassigned = total - sum(a["balance"] for a in accounts)
     transfers = await db.fund_account_transfers.find(
-        {"currency": code}, {"_id": 0},
+        {"currency": code, "status": {"$nin": ["pending", "aborted"]}},
+        {"_id": 0},
     ).sort("created_at", -1).to_list(30)
 
     return {
@@ -445,11 +446,13 @@ async def transfer_between_fund_accounts(
                     "inténtalo de nuevo en unos segundos."))
     try:
         # N04 — idempotencia: repetir el identificador de operación devuelve
-        # la transferencia ya registrada, nunca la duplica.
+        # la transferencia ya registrada, nunca la duplica. Una abortada no
+        # bloquea el reintento (M02).
         op_id = (payload.operation_id or "").strip()
         if op_id:
             dup_tr = await db.fund_account_transfers.find_one(
-                {"operation_id": op_id, "currency": code}, {"_id": 0})
+                {"operation_id": op_id, "currency": code,
+                 "status": {"$nin": ["pending", "aborted"]}}, {"_id": 0})
             if dup_tr:
                 return dup_tr
 
@@ -480,16 +483,27 @@ async def transfer_between_fund_accounts(
             "actor_id": actor["user_id"],
             "actor_name": actor.get("name", ""),
             "created_at": iso(now_utc()),
+            "status": "pending",
         }
         doc["operation_id"] = op_id or doc["id"]
+        # M02 — dos fases: la transferencia nace PROVISIONAL (invisible para
+        # saldos, espejos y el recuperador) y solo se CONFIRMA tras demostrar
+        # la autoridad de gasto en el presupuesto. Un rechazo queda trazable
+        # como "aborted"; nunca se borra un documento que otro proceso pudo
+        # haber leído.
         await db.fund_account_transfers.insert_one({**doc})
-        # N01/N04 — cercado: si el cerrojo caducó y otro dueño lo tomó, esta
-        # escritura se apoyó en una foto sin vigencia → se revierte con 409.
-        if not await fund_budget.holds_pay_lock(code, lock):
-            await db.fund_account_transfers.delete_one({"id": doc["id"]})
+        if not await fund_budget.assert_spend_authority(code, lock, doc["id"]):
+            await db.fund_account_transfers.update_one(
+                {"id": doc["id"]},
+                {"$set": {"status": "aborted",
+                          "aborted_reason": "cerrojo de gasto perdido"}})
             raise HTTPException(
                 status_code=409,
                 detail="La operación perdió su turno de gasto; inténtalo de nuevo.")
+        await db.fund_account_transfers.update_one(
+            {"id": doc["id"], "status": "pending"},
+            {"$set": {"status": "confirmed"}})
+        doc["status"] = "confirmed"
     finally:
         await fund_budget.release_pay_lock(code, lock)
     # H01 — si la transferencia entra/sale de la cuenta de caja, se refleja

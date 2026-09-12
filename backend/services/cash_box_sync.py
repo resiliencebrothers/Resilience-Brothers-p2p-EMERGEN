@@ -15,6 +15,7 @@ se PROPAGA: nunca se marca un origen como replicado sin caja persistida (V05).
 """
 import logging
 import uuid
+from datetime import timedelta
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from pymongo.errors import DuplicateKeyError
@@ -114,13 +115,11 @@ async def _bump_fund_rev(box_id: str, fund: str) -> None:
         {"id": box_id}, {"$inc": {f"fund_revs.{fund}": 1}})
 
 
-async def _upsert_mirror_movement(mov_id: str, doc: Dict[str, Any],
-                                  source_coll: Any, source_id: str) -> str:
-    """Inserta el movimiento espejo (idempotente) y marca el doc origen.
-    N05 — la invalidación del arqueo (revisión del fondo) se persiste en el
-    propio movimiento (`rev_bumped`): si el incremento falla, el reintento lo
-    completa ANTES de declarar el origen sincronizado — nunca queda un cierre
-    vigente sustentado en un saldo que ya cambió."""
+async def _upsert_movement_with_rev(mov_id: str, doc: Dict[str, Any]) -> None:
+    """Inserta un movimiento (idempotente) e invalida el arqueo vigente.
+    N05 — la invalidación de la revisión se persiste en el propio movimiento
+    (`rev_bumped`): si el incremento falla, el reintento lo completa — nunca
+    queda un cierre vigente sustentado en un saldo que ya cambió."""
     await db.cash_box_movements.update_one(
         {"id": mov_id}, {"$setOnInsert": {**doc, "rev_bumped": False}},
         upsert=True)
@@ -131,6 +130,13 @@ async def _upsert_mirror_movement(mov_id: str, doc: Dict[str, Any],
                              str(mov.get("fund") or ""))
         await db.cash_box_movements.update_one(
             {"id": mov_id}, {"$set": {"rev_bumped": True}})
+
+
+async def _upsert_mirror_movement(mov_id: str, doc: Dict[str, Any],
+                                  source_coll: Any, source_id: str) -> str:
+    """Movimiento espejo + marca del doc origen. El origen solo se declara
+    sincronizado DESPUÉS de que el movimiento y su invalidación existan."""
+    await _upsert_movement_with_rev(mov_id, doc)
     await source_coll.update_one(
         {"id": source_id}, {"$set": {"cash_box_movement_id": mov_id}})
     return mov_id
@@ -146,9 +152,17 @@ async def _is_company_cash_account(acc: Dict[str, Any]) -> bool:
     if acc.get("system_purpose") == SYSTEM_PURPOSE:
         return True
     if acc.get("method") == "cash" and acc.get("name") == COMPANY_BOX_NAME:
-        await db.fund_accounts.update_one(
-            {"id": acc.get("id"), "system_purpose": {"$exists": False}},
-            {"$set": {"system_purpose": SYSTEM_PURPOSE}})
+        # M03 — un alias fusionado sigue representando la caja física (para
+        # espejos históricos) pero NUNCA recupera la identidad automática.
+        if not acc.get("merged_into"):
+            try:
+                await db.fund_accounts.update_one(
+                    {"id": acc.get("id"),
+                     "system_purpose": {"$exists": False},
+                     "merged_into": {"$exists": False}},
+                    {"$set": {"system_purpose": SYSTEM_PURPOSE}})
+            except DuplicateKeyError:
+                pass  # otra cuenta ya posee la identidad de esta moneda
         return True
     return False
 
@@ -284,7 +298,10 @@ async def mirror_client_withdrawal_to_cash_box(
 
 async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
     """H01 — transferencia interna que entra/sale de la cuenta de caja →
-    entrada/salida física. No altera el capital total (solo ubicación)."""
+    entrada/salida física. No altera el capital total (solo ubicación).
+    M02 — una transferencia provisional o abortada NUNCA se refleja."""
+    if str(tr.get("status") or "") in ("pending", "aborted"):
+        return None
     fund = fund_for_currency(tr.get("currency"))
     trid = str(tr.get("id") or "")
     if not fund or not trid:
@@ -341,7 +358,11 @@ _SOURCES: tuple = (
      mirror_company_withdrawal_to_cash_box),
     (lambda: db.withdrawals, {"status": "paid"},
      mirror_client_withdrawal_to_cash_box),
-    (lambda: db.fund_account_transfers, {}, mirror_fund_transfer_to_cash_box),
+    # M02 — las transferencias provisionales/abortadas no existen para el
+    # recuperador: solo las confirmadas (o históricas sin estado) se reflejan.
+    (lambda: db.fund_account_transfers,
+     {"status": {"$nin": ["pending", "aborted"]}},
+     mirror_fund_transfer_to_cash_box),
 )
 
 
@@ -406,11 +427,79 @@ async def _repair_orphan_movements() -> int:
 
 async def _stamp_cash_accounts() -> None:
     """V03 — migración: estampa la identidad en las cuentas de caja legadas
-    (por convención de nombre) antes de que alguien las renombre."""
+    (por convención de nombre) antes de que alguien las renombre. M03 — una
+    cuenta ya fusionada (`merged_into`) queda excluida para siempre: nunca
+    recupera la identidad automática ni colisiona con el índice único."""
     async for acc in db.fund_accounts.find(
             {"name": COMPANY_BOX_NAME, "method": "cash",
-             "system_purpose": {"$exists": False}}, {"_id": 0}):
+             "system_purpose": {"$exists": False},
+             "merged_into": {"$exists": False}}, {"_id": 0}):
         await _is_company_cash_account(acc)
+
+
+async def _abort_stale_pending_transfers() -> int:
+    """M02 — una transferencia provisional huérfana (su proceso murió antes de
+    confirmar o abortar) se aborta de forma trazable: jamás se confirma sola
+    ni vuelve a contar para saldos o espejos."""
+    cutoff = iso(now_utc() - timedelta(minutes=10))
+    res = await db.fund_account_transfers.update_many(
+        {"status": "pending", "created_at": {"$lt": cutoff}},
+        {"$set": {"status": "aborted",
+                  "aborted_reason": "huérfana: proceso interrumpido"}})
+    if res.modified_count:
+        logger.warning("[cash-box-sync] %s transferencia(s) provisionales "
+                       "huérfanas abortadas", res.modified_count)
+    return int(res.modified_count)
+
+
+async def _repair_internal_transfer_mirrors() -> int:
+    """M04 — un traslado que quedó INTERNO tras consolidar cuentas (mismo
+    origen y destino) nunca movía billetes: si una versión anterior registró
+    una salida física, se ANULA con una compensación trazable en la caja
+    (nunca con un aporte de capital) y se invalida el arqueo vigente.
+    Idempotente: repetir no añade más correcciones."""
+    n = 0
+    q = {"cash_box_movement_id": {"$nin": [None, "", NOT_APPLICABLE]},
+         "mirror_annulled_by": {"$exists": False},
+         "from_account_id": {"$nin": [None, ""]},
+         "$expr": {"$eq": ["$from_account_id", "$to_account_id"]}}
+    async for tr in db.fund_account_transfers.find(q, {"_id": 0}):
+        trid = str(tr.get("id") or "")
+        mov_id = str(tr.get("cash_box_movement_id") or "")
+        mov = await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
+        if not mov:
+            await db.fund_account_transfers.update_one(
+                {"id": trid},
+                {"$set": {"mirror_annulled_by": NOT_APPLICABLE}})
+            continue
+        annul_id = f"cmov_annul_{mov_id.replace('-', '')[:24]}"
+        doc = {
+            "id": annul_id,
+            "box_id": mov.get("box_id"),
+            "fund": mov.get("fund"),
+            "type": "entrada" if mov.get("type") == "salida" else "salida",
+            "amount": round(float(mov.get("amount") or 0), 2),
+            "concept": (f"Anulación de espejo: el traslado {trid} quedó "
+                        "interno tras consolidar cuentas y no movía "
+                        "billetes")[:200],
+            "responsible": "Sistema",
+            "denominations": None,
+            "denoms_pending": True,
+            "created_at": iso(now_utc()),
+            "created_by_id": "system",
+            "created_by_name": "Sistema",
+            "annuls_movement_id": mov_id,
+            "source_transfer_id": trid,
+        }
+        await _upsert_movement_with_rev(annul_id, doc)
+        await db.cash_box_movements.update_one(
+            {"id": mov_id}, {"$set": {"annulled_by": annul_id}})
+        await db.fund_account_transfers.update_one(
+            {"id": trid}, {"$set": {"mirror_annulled_by": annul_id}})
+        n += 1
+        logger.warning("[cash-box-sync] espejo interno %s anulado por %s",
+                       mov_id, annul_id)
+    return n
 
 
 async def backfill_cash_adjustments() -> int:
@@ -422,10 +511,13 @@ async def backfill_cash_adjustments() -> int:
 async def backfill_cash_operations() -> int:
     """Backfill completo: ajustes + retiros de empresa pagados + retiros de
     clientes pagados + transferencias internas, más reparaciones (identidad
-    de cuentas, marcadores legados, huérfanos y duplicados N06). Idempotente."""
+    de cuentas, marcadores legados, huérfanos, duplicados N06, provisionales
+    M02 y espejos internos M04). Idempotente."""
     from services.fund_accounts import consolidate_duplicate_cash_accounts
     await consolidate_duplicate_cash_accounts()
     await _stamp_cash_accounts()
+    await _abort_stale_pending_transfers()
+    await _repair_internal_transfer_mirrors()
     await _repair_orphan_movements()
     n = await _repair_legacy_markers()
     for coll_fn, extra_q, mirror in _SOURCES:
