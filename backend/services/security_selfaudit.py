@@ -32,13 +32,19 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 
 def _check_balance_capability_guard() -> tuple[str, str]:
-    """SEC-001 — balance & staff-capability fields must be admin-only."""
+    """SEC-001 — balance & staff-capability fields must be admin-only.
+    Tras el refactor de complejidad, la guardia vive en el helper
+    `_assert_user_update_authz` invocado desde `update_user`."""
     try:
         import inspect
         from routes import admin_users
-        src = inspect.getsource(admin_users.update_user)
-        required = ("ADMIN_ONLY_FIELDS", "vip_balances", "can_manage_company_funds")
-        if all(tok in src for tok in required) and 'role") != "admin"' in src:
+        required = {"vip_balances", "can_manage_company_funds"}
+        guard_src = inspect.getsource(admin_users._assert_user_update_authz)
+        wired = "_assert_user_update_authz" in inspect.getsource(
+            admin_users.update_user)
+        if required <= set(admin_users.ADMIN_ONLY_FIELDS) \
+                and "ADMIN_ONLY_FIELDS" in guard_src \
+                and 'role") != "admin"' in guard_src and wired:
             return "pass", "El endpoint PUT /admin/users bloquea saldos y capacidades para no-admins."
         return "fail", "No se encontró la guardia admin-only de saldos/capacidades en update_user."
     except Exception as e:  # noqa: BLE001

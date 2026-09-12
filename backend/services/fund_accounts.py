@@ -2,12 +2,18 @@
 routes/company_fund_accounts.py para romper el ciclo de imports con
 routes/admin_company_funds.py y routes/admin_withdrawals.py).
 """
+import logging
 import uuid
 from typing import Any, Dict, List, Optional
+
+from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import iso, now_utc
 from services.currency_utils import norm_code as _norm_code
+
+logger = logging.getLogger(__name__)
 
 HAS_ACC = {"$nin": [None, ""]}
 
@@ -15,22 +21,84 @@ HAS_ACC = {"$nin": [None, ""]}
 # and leaves this box automatically, per operator instruction.
 CASH_BOX_NAME = "Fondo Resilience"
 
+_CASH_ACC_INDEX_READY = False
+
+
+async def consolidate_duplicate_cash_accounts() -> int:
+    """N06 — funde cuentas automáticas duplicadas (mismo propósito y moneda)
+    en la más antigua, re-apuntando TODOS sus vínculos históricos: ningún
+    movimiento se pierde y un traslado entre duplicados queda neto en cero."""
+    merged = 0
+    currencies = await db.fund_accounts.distinct(
+        "currency", {"system_purpose": "company_cash"})
+    for code in currencies:
+        rows = await db.fund_accounts.find(
+            {"currency": code, "system_purpose": "company_cash"},
+            {"_id": 0}).sort("created_at", 1).to_list(50)
+        if len(rows) <= 1:
+            continue
+        canonical, dups = rows[0], rows[1:]
+        for dup in dups:
+            for coll, field in (
+                    (db.company_fund_adjustments, "account_id"),
+                    (db.fund_account_transfers, "from_account_id"),
+                    (db.fund_account_transfers, "to_account_id"),
+                    (db.withdrawals, "paid_from_account_id"),
+                    (db.company_withdrawals, "paid_from_account_id"),
+                    (db.fund_account_denoms, "account_id")):
+                await coll.update_many({field: dup["id"]},
+                                       {"$set": {field: canonical["id"]}})
+            await db.fund_accounts.update_one(
+                {"id": dup["id"]},
+                {"$set": {"is_active": False,
+                          "merged_into": canonical["id"]},
+                 "$unset": {"system_purpose": ""}})
+            merged += 1
+            logger.warning(
+                "[fund-accounts] cuenta de caja duplicada %s (%s) "
+                "consolidada en %s", dup["id"], code, canonical["id"])
+    return merged
+
+
+async def _ensure_cash_account_identity() -> None:
+    """N06 — unicidad en DB de la cuenta automática (propósito + moneda),
+    consolidando antes los duplicados históricos si existieran."""
+    global _CASH_ACC_INDEX_READY
+    if _CASH_ACC_INDEX_READY:
+        return
+    try:
+        await consolidate_duplicate_cash_accounts()
+        await db.fund_accounts.create_index(
+            [("system_purpose", 1), ("currency", 1)], unique=True,
+            partialFilterExpression={"system_purpose": {"$exists": True}})
+        _CASH_ACC_INDEX_READY = True
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"índice de identidad de cuenta de caja no disponible: {e}")
+
 
 async def get_or_create_cash_box(currency: str) -> dict:
     """Return {id, label} of the company cash box for `currency`, creating
     (or reactivating) it lazily on first use. V03 — la identidad es
-    `system_purpose` (persistente), no el nombre editable."""
+    `system_purpose` (persistente), no el nombre editable. N06 — la creación
+    es un upsert por identidad bajo índice único: dos primeras solicitudes
+    concurrentes devuelven la MISMA cuenta, nunca dos."""
     code = _norm_code(currency)
-    fa = await db.fund_accounts.find_one(
-        {"currency": code, "system_purpose": "company_cash"}, {"_id": 0})
+    await _ensure_cash_account_identity()
+    key = {"currency": code, "system_purpose": "company_cash"}
+    fa = await db.fund_accounts.find_one(key, {"_id": 0})
     if not fa:
-        fa = await db.fund_accounts.find_one(
+        legacy = await db.fund_accounts.find_one(
             {"currency": code, "name": CASH_BOX_NAME}, {"_id": 0})
-        if fa:
+        if legacy:
             # migración: estampa la identidad en la cuenta legada por nombre
-            await db.fund_accounts.update_one(
-                {"id": fa["id"], "system_purpose": {"$exists": False}},
-                {"$set": {"system_purpose": "company_cash"}})
+            try:
+                await db.fund_accounts.update_one(
+                    {"id": legacy["id"], "system_purpose": {"$exists": False}},
+                    {"$set": {"system_purpose": "company_cash"}})
+            except DuplicateKeyError:
+                pass  # otro estampador ganó: se relee por identidad abajo
+            fa = await db.fund_accounts.find_one(key, {"_id": 0})
     if fa:
         if not fa.get("is_active", True):
             await db.fund_accounts.update_one(
@@ -48,8 +116,17 @@ async def get_or_create_cash_box(currency: str) -> dict:
         "created_by_id": "system",
         "created_by_name": "Sistema",
     }
-    await db.fund_accounts.insert_one({**doc})
-    return {"id": doc["id"], "label": doc["name"]}
+    try:
+        await db.fund_accounts.update_one(key, {"$setOnInsert": doc},
+                                          upsert=True)
+    except DuplicateKeyError:
+        pass  # colisión de unicidad recuperable: otro creador ganó
+    fa = await db.fund_accounts.find_one(key, {"_id": 0})
+    if not fa:
+        raise RuntimeError(
+            "La cuenta de caja no pudo persistirse; la operación queda "
+            "pendiente y se reintentará")
+    return {"id": fa["id"], "label": fa.get("name") or fa["id"]}
 
 
 async def auto_paid_from_account(
@@ -100,6 +177,27 @@ async def resolve_fund_account(account_id: str) -> Optional[dict]:
             "is_active": bool(fa.get("is_active", True)),
         }
     return None
+
+
+async def resolve_payout_account(account_id: str, currency: str) -> dict:
+    """N03 — cuenta de ORIGEN de un pago: debe existir, estar ACTIVA y
+    coincidir en MONEDA con la operación. Nunca se convierte entre monedas
+    ni se atribuye una salida a una cuenta de otra divisa."""
+    acc = await resolve_fund_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=400,
+                            detail="Cuenta de origen no encontrada")
+    if not acc.get("is_active", True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"La cuenta «{acc['label']}» está desactivada")
+    code = _norm_code(currency)
+    if acc.get("currency") and code and acc["currency"] != code:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"La cuenta «{acc['label']}» es de {acc['currency']}, "
+                    f"no de {code}"))
+    return acc
 
 
 async def account_assigned_balances(code: str) -> Dict[str, float]:

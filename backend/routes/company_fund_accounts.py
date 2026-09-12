@@ -60,6 +60,8 @@ class FundTransferCreate(BaseModel):
     amount: float = Field(..., gt=0, le=1_000_000_000)
     note: str = Field(default="", max_length=300)
     totp_code: Optional[str] = Field(None, max_length=11)
+    # N04 — idempotencia: repetir el mismo identificador no duplica el traslado
+    operation_id: Optional[str] = Field(None, max_length=64)
 
 
 @router.get("/admin/fund-accounts/options")
@@ -431,35 +433,65 @@ async def transfer_between_fund_accounts(
                 detail=f"La cuenta destino es de {to_info['currency']}, no de {code}",
             )
 
-    assigned = await _account_assigned_balances(code)
-    if frm:
-        avail = assigned.get(frm, 0.0)
-    else:
-        from routes.admin_company_funds import _compute_company_funds
-        rows = await _compute_company_funds([code])
-        total = next((r["balance"] for r in rows if r["currency"] == code), 0.0)
-        avail = total - sum(assigned.values())
-    if payload.amount > avail + 1e-9:
-        origin = from_info["label"] if from_info else "Sin asignar"
+    # N04 — el saldo de origen se valida y consume bajo el MISMO cerrojo de
+    # gasto por moneda que usan los retiros de empresa: dos transferencias
+    # (o un pago y una transferencia) nunca validan la misma foto de la cuenta.
+    from services import company_fund_budget as fund_budget
+    lock = await fund_budget.acquire_pay_lock_wait(code)
+    if not lock:
         raise HTTPException(
-            status_code=400,
-            detail=f"Saldo insuficiente en «{origin}»: disponible {avail:.2f} {code}",
-        )
+            status_code=409,
+            detail=(f"Otra operación del fondo {code} está en curso; "
+                    "inténtalo de nuevo en unos segundos."))
+    try:
+        # N04 — idempotencia: repetir el identificador de operación devuelve
+        # la transferencia ya registrada, nunca la duplica.
+        op_id = (payload.operation_id or "").strip()
+        if op_id:
+            dup_tr = await db.fund_account_transfers.find_one(
+                {"operation_id": op_id, "currency": code}, {"_id": 0})
+            if dup_tr:
+                return dup_tr
 
-    doc = {
-        "id": str(uuid.uuid4()),
-        "currency": code,
-        "from_account_id": frm,
-        "from_label": from_info["label"] if from_info else "",
-        "to_account_id": to,
-        "to_label": to_info["label"] if to_info else "",
-        "amount": payload.amount,
-        "note": payload.note.strip(),
-        "actor_id": actor["user_id"],
-        "actor_name": actor.get("name", ""),
-        "created_at": iso(now_utc()),
-    }
-    await db.fund_account_transfers.insert_one({**doc})
+        assigned = await _account_assigned_balances(code)
+        if frm:
+            avail = assigned.get(frm, 0.0)
+        else:
+            from routes.admin_company_funds import _compute_company_funds
+            rows = await _compute_company_funds([code])
+            total = next((r["balance"] for r in rows if r["currency"] == code), 0.0)
+            avail = total - sum(assigned.values())
+        if payload.amount > avail + 1e-9:
+            origin = from_info["label"] if from_info else "Sin asignar"
+            raise HTTPException(
+                status_code=400,
+                detail=f"Saldo insuficiente en «{origin}»: disponible {avail:.2f} {code}",
+            )
+
+        doc = {
+            "id": str(uuid.uuid4()),
+            "currency": code,
+            "from_account_id": frm,
+            "from_label": from_info["label"] if from_info else "",
+            "to_account_id": to,
+            "to_label": to_info["label"] if to_info else "",
+            "amount": payload.amount,
+            "note": payload.note.strip(),
+            "actor_id": actor["user_id"],
+            "actor_name": actor.get("name", ""),
+            "created_at": iso(now_utc()),
+        }
+        doc["operation_id"] = op_id or doc["id"]
+        await db.fund_account_transfers.insert_one({**doc})
+        # N01/N04 — cercado: si el cerrojo caducó y otro dueño lo tomó, esta
+        # escritura se apoyó en una foto sin vigencia → se revierte con 409.
+        if not await fund_budget.holds_pay_lock(code, lock):
+            await db.fund_account_transfers.delete_one({"id": doc["id"]})
+            raise HTTPException(
+                status_code=409,
+                detail="La operación perdió su turno de gasto; inténtalo de nuevo.")
+    finally:
+        await fund_budget.release_pay_lock(code, lock)
     # H01 — si la transferencia entra/sale de la cuenta de caja, se refleja
     # como entrada/salida física en la Caja de Efectivo (capital sin cambio).
     from services.cash_box_sync import mirror_fund_transfer_to_cash_box

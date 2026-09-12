@@ -1179,21 +1179,20 @@ async def list_company_withdrawals(request: Request,
 
 async def _paid_from_account_fields(payload: dict, cw: dict) -> Dict[str, Any]:
     """iter194/195 — "paid from account": explicit choice wins; otherwise
-    auto-attribute when the currency has exactly one active account."""
+    auto-attribute when the currency has exactly one active account.
+    N03 — la cuenta explícita debe estar activa y coincidir en moneda."""
     from services.fund_accounts import (
-        resolve_fund_account, auto_paid_from_account,
+        resolve_payout_account, auto_paid_from_account,
     )
     acc_id = (payload.get("paid_from_account_id") or "").strip()
     if acc_id:
-        acc = await resolve_fund_account(acc_id)
-        if not acc:
-            raise HTTPException(status_code=400, detail="Cuenta de origen no encontrada")
+        acc = await resolve_payout_account(acc_id, cw.get("currency") or "")
         return {"paid_from_account_id": acc_id,
                 "paid_from_account_label": acc["label"]}
-    acc = await auto_paid_from_account(cw.get("currency") or "")
-    if acc:
-        return {"paid_from_account_id": acc["id"],
-                "paid_from_account_label": acc["label"]}
+    auto_acc = await auto_paid_from_account(cw.get("currency") or "")
+    if auto_acc:
+        return {"paid_from_account_id": auto_acc["id"],
+                "paid_from_account_label": auto_acc["label"]}
     return {}
 
 
@@ -1207,11 +1206,18 @@ _CW_TRANSITIONS: Dict[str, set] = {
 
 
 async def _claim_cw_transition(cwid: str, prev_status: str,
-                               update_doc: Dict[str, Any]) -> None:
+                               update_doc: Dict[str, Any],
+                               fence: Optional[str] = None) -> None:
     """H02 — claim atómico condicionado al estado leído: un rechazo obsoleto
-    no puede sobrescribir un pago que ganó la carrera."""
+    no puede sobrescribir un pago que ganó la carrera. N01 — con `fence`, la
+    escritura definitiva exige además el cercado vigente del cerrojo de
+    gasto: un dueño que perdió su bloqueo caducado recibe conflicto y no
+    puede completar el pago con su lectura anterior."""
+    q: Dict[str, Any] = {"id": cwid, "status": prev_status}
+    if fence is not None:
+        q["pay_fence"] = fence
     res = await db.company_withdrawals.update_one(
-        {"id": cwid, "status": prev_status}, {"$set": update_doc})
+        q, {"$set": update_doc, "$unset": {"pay_fence": ""}})
     if res.matched_count == 0:
         raise HTTPException(
             status_code=409,
@@ -1231,6 +1237,16 @@ async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
             detail=(f"Otra operación del fondo {cw['currency']} está en "
                     "curso; inténtalo de nuevo en unos segundos."))
     try:
+        # N01 — cercado persistente: este pago solo puede completar mientras
+        # su cerrojo siga vigente (el siguiente dueño del cerrojo limpia el
+        # cercado, invalidando cualquier lectura vieja en vuelo).
+        fenced = await db.company_withdrawals.update_one(
+            {"id": cwid, "status": cw["status"]},
+            {"$set": {"pay_fence": lock}})
+        if fenced.matched_count == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
         # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
         # (sin custodia de clientes); una salida sin fondos debe tratarse
         # explícitamente, no colarse.
@@ -1245,11 +1261,36 @@ async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
                         "custodia de clientes). Registra primero el capital "
                         "o resuelve el descuadre explícitamente."))
         update_doc.update(await _paid_from_account_fields(payload, cw))
+        # N02 — el dinero debe estar EN la cuenta de origen: el fondo global
+        # no autoriza pagar desde una caja/cuenta que no tiene ese saldo.
+        acc_id = update_doc.get("paid_from_account_id")
+        if acc_id:
+            explicit = bool((payload.get("paid_from_account_id") or "").strip())
+            from services.fund_accounts import account_assigned_balances
+            assigned = await account_assigned_balances(cw["currency"])
+            acc_avail = float(assigned.get(acc_id, 0.0))
+            if float(cw["amount"]) > acc_avail + 1e-9:
+                if explicit:
+                    label = update_doc.get("paid_from_account_label") or acc_id
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(f"Saldo insuficiente en la cuenta de origen "
+                                f"«{label}»: disponible {acc_avail:.2f} "
+                                f"{cw['currency']}. Traslada primero el saldo "
+                                "a esa cuenta o registra el descuadre "
+                                "explícitamente."))
+                # atribución AUTOMÁTICA sin respaldo en esa cuenta: la salida
+                # queda «Sin asignar» (el disponible global ya se validó);
+                # nunca se fuerza silenciosamente una cuenta a negativo.
+                update_doc.pop("paid_from_account_id", None)
+                update_doc.pop("paid_from_account_label", None)
         update_doc["paid_at"] = iso(now_utc())
-        await _claim_cw_transition(cwid, cw["status"], update_doc)
+        await _claim_cw_transition(cwid, cw["status"], update_doc, fence=lock)
         await fund_budget.release_reservation(
             cw["currency"], float(cw["amount"]))
     finally:
+        await db.company_withdrawals.update_one(
+            {"id": cwid, "pay_fence": lock}, {"$unset": {"pay_fence": ""}})
         await fund_budget.release_pay_lock(cw["currency"], lock)
 
 

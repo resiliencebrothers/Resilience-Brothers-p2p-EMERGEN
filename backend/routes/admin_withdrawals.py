@@ -331,20 +331,21 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     # account for the currency → that account).
     if new_status == "paid":
         from services.fund_accounts import (
-            resolve_fund_account, auto_paid_from_account,
+            auto_paid_from_account, resolve_payout_account,
         )
         acc_id = (payload.get("paid_from_account_id") or "").strip()
         if acc_id:
-            acc = await resolve_fund_account(acc_id)
-            if not acc:
-                raise HTTPException(status_code=400, detail="Cuenta de origen no encontrada")
+            # N03 — la cuenta de origen debe existir, estar activa y
+            # coincidir en moneda con el retiro (sin conversión implícita).
+            acc = await resolve_payout_account(acc_id, w.get("currency") or "")
             update_doc["paid_from_account_id"] = acc_id
             update_doc["paid_from_account_label"] = acc["label"]
         else:
-            acc = await auto_paid_from_account(w.get("currency"), w.get("method"))
-            if acc:
-                update_doc["paid_from_account_id"] = acc["id"]
-                update_doc["paid_from_account_label"] = acc["label"]
+            auto_acc = await auto_paid_from_account(w.get("currency"),
+                                                    w.get("method"))
+            if auto_acc:
+                update_doc["paid_from_account_id"] = auto_acc["id"]
+                update_doc["paid_from_account_label"] = auto_acc["label"]
     # iter256(S01) — la transición de estado Y su intención de efecto de saldo
     # (reembolso/re-débito) se reclaman en UN único update atómico; los campos
     # de evidencia/nota viajan en el mismo claim. Quien pierde la carrera

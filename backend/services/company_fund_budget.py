@@ -148,7 +148,10 @@ async def release_reservation(currency: str, amount: float) -> None:
 
 async def acquire_pay_lock(currency: str) -> Optional[str]:
     """Cerrojo exclusivo de GASTO por moneda (creación y pago contienden
-    sobre el mismo registro), con robo de cerrojos caducados."""
+    sobre el mismo registro), con robo de cerrojos caducados. N01 — al tomar
+    el cerrojo se invalida cualquier cercado (`pay_fence`) estampado por un
+    dueño anterior: un pago que perdió su bloqueo caducado ya no puede
+    completar su escritura definitiva con la lectura vieja."""
     await _ensure_budget(currency)
     token = uuid.uuid4().hex
     now = iso(now_utc())
@@ -158,7 +161,20 @@ async def acquire_pay_lock(currency: str) -> Optional[str]:
          "$or": [{"pay_lock": {"$in": [None, ""]}},
                  {"pay_locked_at": {"$lt": stale}}]},
         {"$set": {"pay_lock": token, "pay_locked_at": now, "updated_at": now}})
-    return token if res.matched_count == 1 else None
+    if res.matched_count != 1:
+        return None
+    await db.company_withdrawals.update_many(
+        {"currency": currency, "pay_fence": {"$nin": [None, ""]}},
+        {"$unset": {"pay_fence": ""}})
+    return token
+
+
+async def holds_pay_lock(currency: str, token: str) -> bool:
+    """¿`token` sigue siendo el dueño vigente del cerrojo de gasto? (N04 —
+    verificación de cercado tras la escritura definitiva de una transferencia)."""
+    doc = await db.company_fund_budgets.find_one(
+        {"currency": currency, "pay_lock": token}, {"_id": 1})
+    return doc is not None
 
 
 async def acquire_pay_lock_wait(

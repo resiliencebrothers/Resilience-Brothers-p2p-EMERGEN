@@ -351,6 +351,25 @@ class TestH01LedgerCashParity:
             {"_id": 0, "id": 1})
         # V06 — disponible real suficiente + status comprobado antes de usar ["id"]
         _ensure_usd_available(45)
+        # N02 (iter270) — el pago exige saldo EN la cuenta de origen: cubrir
+        # cualquier residuo negativo histórico de la cuenta de caja del entorno.
+        rb = requests.get(f"{API}/admin/company-funds/accounts/USD",
+                          headers=_hdr(ADMIN_TOKEN))
+        assert rb.status_code == 200, rb.text
+        acc_bal = next((float(a["balance"]) for a in rb.json()["accounts"]
+                        if a["id"] == cash_acc["id"]), 0.0)
+        missing = int(max(0.0, 40.0 - acc_bal) + 0.999)
+        if missing > 0:
+            denoms, left = {}, missing
+            for d in (100, 50, 20, 10, 5, 2, 1):
+                q, left = divmod(left, d)
+                if q:
+                    denoms[str(d)] = q
+            rr = _adjust({"adjustment_type": "inflow", "currency": "USD",
+                          "amount": missing, "method": "cash",
+                          "source_name": f"{MARK} topup cuenta",
+                          "denominations": denoms})
+            assert rr.status_code == 200, rr.text
         cwr = _cw_create({"currency": "USD", "amount": 40,
                           "beneficiary": f"{MARK} proveedor",
                           "concept": "x"})

@@ -116,12 +116,21 @@ async def _bump_fund_rev(box_id: str, fund: str) -> None:
 
 async def _upsert_mirror_movement(mov_id: str, doc: Dict[str, Any],
                                   source_coll: Any, source_id: str) -> str:
-    """Inserta el movimiento espejo (idempotente) y marca el doc origen."""
-    res = await db.cash_box_movements.update_one(
-        {"id": mov_id}, {"$setOnInsert": doc}, upsert=True)
-    if res.upserted_id is not None:
-        await _bump_fund_rev(str(doc.get("box_id") or ""),
-                             str(doc.get("fund") or ""))
+    """Inserta el movimiento espejo (idempotente) y marca el doc origen.
+    N05 — la invalidación del arqueo (revisión del fondo) se persiste en el
+    propio movimiento (`rev_bumped`): si el incremento falla, el reintento lo
+    completa ANTES de declarar el origen sincronizado — nunca queda un cierre
+    vigente sustentado en un saldo que ya cambió."""
+    await db.cash_box_movements.update_one(
+        {"id": mov_id}, {"$setOnInsert": {**doc, "rev_bumped": False}},
+        upsert=True)
+    mov = await db.cash_box_movements.find_one(
+        {"id": mov_id}, {"_id": 0, "box_id": 1, "fund": 1, "rev_bumped": 1})
+    if mov and not mov.get("rev_bumped"):
+        await _bump_fund_rev(str(mov.get("box_id") or ""),
+                             str(mov.get("fund") or ""))
+        await db.cash_box_movements.update_one(
+            {"id": mov_id}, {"$set": {"rev_bumped": True}})
     await source_coll.update_one(
         {"id": source_id}, {"$set": {"cash_box_movement_id": mov_id}})
     return mov_id
@@ -281,6 +290,7 @@ async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
     if not fund or not trid:
         return None
     kind = ""
+    sides = []
     for field, side_kind in (("from_account_id", "salida"),
                              ("to_account_id", "entrada")):
         acc_id = tr.get(field)
@@ -288,8 +298,11 @@ async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
             continue
         acc = await db.fund_accounts.find_one({"id": acc_id}, {"_id": 0})
         if acc and await _is_company_cash_account(acc):
-            kind = side_kind
-            break
+            sides.append(side_kind)
+    # N06 — si AMBOS extremos son la misma caja física, es un traslado
+    # interno: no hay salida ni entrada neta de billetes, no se refleja.
+    if len(sides) == 1:
+        kind = sides[0]
     if not kind:
         return None
     box = await get_or_create_company_cash_box()
@@ -409,7 +422,9 @@ async def backfill_cash_adjustments() -> int:
 async def backfill_cash_operations() -> int:
     """Backfill completo: ajustes + retiros de empresa pagados + retiros de
     clientes pagados + transferencias internas, más reparaciones (identidad
-    de cuentas, marcadores legados y huérfanos). Idempotente."""
+    de cuentas, marcadores legados, huérfanos y duplicados N06). Idempotente."""
+    from services.fund_accounts import consolidate_duplicate_cash_accounts
+    await consolidate_duplicate_cash_accounts()
     await _stamp_cash_accounts()
     await _repair_orphan_movements()
     n = await _repair_legacy_markers()
