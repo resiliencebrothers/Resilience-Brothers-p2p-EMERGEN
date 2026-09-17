@@ -424,6 +424,9 @@ async def transfer_between_fund_accounts(
                 status_code=400,
                 detail=f"La cuenta origen es de {from_info['currency']}, no de {code}",
             )
+        # P03 — siempre se opera y persiste la identidad CANÓNICA: un alias
+        # fusionado remite a su cuenta real y nunca vuelve a recibir saldo.
+        frm = from_info["id"]
     if to:
         to_info = await resolve_fund_account(to)
         if not to_info:
@@ -433,6 +436,11 @@ async def transfer_between_fund_accounts(
                 status_code=400,
                 detail=f"La cuenta destino es de {to_info['currency']}, no de {code}",
             )
+        to = to_info["id"]
+    if frm and to and frm == to:
+        raise HTTPException(
+            status_code=400,
+            detail="Origen y destino no pueden ser iguales")
 
     # N04 — el saldo de origen se valida y consume bajo el MISMO cerrojo de
     # gasto por moneda que usan los retiros de empresa: dos transferencias
@@ -500,9 +508,20 @@ async def transfer_between_fund_accounts(
             raise HTTPException(
                 status_code=409,
                 detail="La operación perdió su turno de gasto; inténtalo de nuevo.")
-        await db.fund_account_transfers.update_one(
+        confirmed = await db.fund_account_transfers.update_one(
             {"id": doc["id"], "status": "pending"},
             {"$set": {"status": "confirmed"}})
+        if confirmed.matched_count == 0:
+            # P02 — la transición definitiva NO ocurrió (la provisional fue
+            # revocada/abortada entre medias): se resuelve el estado
+            # persistido y jamás se declara un éxito desde la copia local.
+            persisted = await db.fund_account_transfers.find_one(
+                {"id": doc["id"]}, {"_id": 0})
+            if not persisted or persisted.get("status") != "confirmed":
+                raise HTTPException(
+                    status_code=409,
+                    detail=("La operación fue revocada antes de confirmarse; "
+                            "no se aplicó. Inténtalo de nuevo."))
         doc["status"] = "confirmed"
     finally:
         await fund_budget.release_pay_lock(code, lock)

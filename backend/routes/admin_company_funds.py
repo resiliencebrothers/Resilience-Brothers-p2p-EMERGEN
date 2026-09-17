@@ -173,7 +173,8 @@ async def _resolve_adjustment_account(payload: "CompanyFundAdjustmentCreate",
                 status_code=400,
                 detail=f"La cuenta «{acc['label']}» es de {acc['currency']}, no de {currency}",
             )
-        return account_id, acc["label"]
+        # P03 — un alias fusionado se atribuye a su identidad canónica
+        return acc["id"], acc["label"]
     if payload.method == "cash":
         from services.fund_accounts import get_or_create_cash_box
         box = await get_or_create_cash_box(currency)

@@ -452,6 +452,61 @@ async def _abort_stale_pending_transfers() -> int:
     return int(res.modified_count)
 
 
+async def _annul_transfer_mirror(tr: Dict[str, Any], reason: str) -> bool:
+    """Anula el espejo físico de una transferencia con una COMPENSACIÓN
+    trazable (nunca un aporte de capital) e invalida el arqueo vigente.
+    Idempotente por id determinista."""
+    trid = str(tr.get("id") or "")
+    mov_id = str(tr.get("cash_box_movement_id") or "")
+    mov = await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
+    if not mov:
+        await db.fund_account_transfers.update_one(
+            {"id": trid},
+            {"$set": {"mirror_annulled_by": NOT_APPLICABLE}})
+        return False
+    annul_id = f"cmov_annul_{mov_id.replace('-', '')[:24]}"
+    doc = {
+        "id": annul_id,
+        "box_id": mov.get("box_id"),
+        "fund": mov.get("fund"),
+        "type": "entrada" if mov.get("type") == "salida" else "salida",
+        "amount": round(float(mov.get("amount") or 0), 2),
+        "concept": f"Anulación de espejo: {reason}"[:200],
+        "responsible": "Sistema",
+        "denominations": None,
+        "denoms_pending": True,
+        "created_at": iso(now_utc()),
+        "created_by_id": "system",
+        "created_by_name": "Sistema",
+        "annuls_movement_id": mov_id,
+        "source_transfer_id": trid,
+    }
+    await _upsert_movement_with_rev(annul_id, doc)
+    await db.cash_box_movements.update_one(
+        {"id": mov_id}, {"$set": {"annulled_by": annul_id}})
+    await db.fund_account_transfers.update_one(
+        {"id": trid}, {"$set": {"mirror_annulled_by": annul_id}})
+    logger.warning("[cash-box-sync] espejo %s anulado por %s (%s)",
+                   mov_id, annul_id, reason[:80])
+    return True
+
+
+async def _repair_aborted_transfer_mirrors() -> int:
+    """P02 — un movimiento físico unido a una transferencia ABORTADA es una
+    salida sin operación válida: se anula con compensación trazable."""
+    n = 0
+    q = {"status": "aborted",
+         "cash_box_movement_id": {"$nin": [None, "", NOT_APPLICABLE]},
+         "mirror_annulled_by": {"$exists": False}}
+    async for tr in db.fund_account_transfers.find(q, {"_id": 0}):
+        if await _annul_transfer_mirror(
+                tr, (f"la transferencia {tr.get('id')} fue abortada y su "
+                     "movimiento físico no corresponde a una operación "
+                     "válida")):
+            n += 1
+    return n
+
+
 async def _repair_internal_transfer_mirrors() -> int:
     """M04 — un traslado que quedó INTERNO tras consolidar cuentas (mismo
     origen y destino) nunca movía billetes: si una versión anterior registró
@@ -464,41 +519,10 @@ async def _repair_internal_transfer_mirrors() -> int:
          "from_account_id": {"$nin": [None, ""]},
          "$expr": {"$eq": ["$from_account_id", "$to_account_id"]}}
     async for tr in db.fund_account_transfers.find(q, {"_id": 0}):
-        trid = str(tr.get("id") or "")
-        mov_id = str(tr.get("cash_box_movement_id") or "")
-        mov = await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
-        if not mov:
-            await db.fund_account_transfers.update_one(
-                {"id": trid},
-                {"$set": {"mirror_annulled_by": NOT_APPLICABLE}})
-            continue
-        annul_id = f"cmov_annul_{mov_id.replace('-', '')[:24]}"
-        doc = {
-            "id": annul_id,
-            "box_id": mov.get("box_id"),
-            "fund": mov.get("fund"),
-            "type": "entrada" if mov.get("type") == "salida" else "salida",
-            "amount": round(float(mov.get("amount") or 0), 2),
-            "concept": (f"Anulación de espejo: el traslado {trid} quedó "
-                        "interno tras consolidar cuentas y no movía "
-                        "billetes")[:200],
-            "responsible": "Sistema",
-            "denominations": None,
-            "denoms_pending": True,
-            "created_at": iso(now_utc()),
-            "created_by_id": "system",
-            "created_by_name": "Sistema",
-            "annuls_movement_id": mov_id,
-            "source_transfer_id": trid,
-        }
-        await _upsert_movement_with_rev(annul_id, doc)
-        await db.cash_box_movements.update_one(
-            {"id": mov_id}, {"$set": {"annulled_by": annul_id}})
-        await db.fund_account_transfers.update_one(
-            {"id": trid}, {"$set": {"mirror_annulled_by": annul_id}})
-        n += 1
-        logger.warning("[cash-box-sync] espejo interno %s anulado por %s",
-                       mov_id, annul_id)
+        if await _annul_transfer_mirror(
+                tr, (f"el traslado {tr.get('id')} quedó interno tras "
+                     "consolidar cuentas y no movía billetes")):
+            n += 1
     return n
 
 
@@ -511,12 +535,16 @@ async def backfill_cash_adjustments() -> int:
 async def backfill_cash_operations() -> int:
     """Backfill completo: ajustes + retiros de empresa pagados + retiros de
     clientes pagados + transferencias internas, más reparaciones (identidad
-    de cuentas, marcadores legados, huérfanos, duplicados N06, provisionales
-    M02 y espejos internos M04). Idempotente."""
-    from services.fund_accounts import consolidate_duplicate_cash_accounts
+    de cuentas, alias fusionados P03, marcadores legados, huérfanos,
+    duplicados N06, provisionales M02/P01 y espejos M04/P02). Idempotente."""
+    from services.fund_accounts import (
+        consolidate_duplicate_cash_accounts, repoint_merged_alias_links,
+    )
     await consolidate_duplicate_cash_accounts()
+    await repoint_merged_alias_links()
     await _stamp_cash_accounts()
     await _abort_stale_pending_transfers()
+    await _repair_aborted_transfer_mirrors()
     await _repair_internal_transfer_mirrors()
     await _repair_orphan_movements()
     n = await _repair_legacy_markers()

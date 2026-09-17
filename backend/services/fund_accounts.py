@@ -24,6 +24,35 @@ CASH_BOX_NAME = "Fondo Resilience"
 _CASH_ACC_INDEX_READY = False
 
 
+def _linked_account_fields() -> tuple:
+    """Colecciones/campos que referencian cuentas de fondo por id."""
+    return ((db.company_fund_adjustments, "account_id"),
+            (db.fund_account_transfers, "from_account_id"),
+            (db.fund_account_transfers, "to_account_id"),
+            (db.withdrawals, "paid_from_account_id"),
+            (db.company_withdrawals, "paid_from_account_id"),
+            (db.fund_account_denoms, "account_id"))
+
+
+async def repoint_merged_alias_links() -> int:
+    """P03 — re-apunta a la cuenta canónica cualquier vínculo NUEVO que haya
+    vuelto a caer en un alias fusionado (formularios abiertos antes de la
+    migración, reintentos, integraciones): el alias jamás acumula saldo."""
+    n = 0
+    async for alias in db.fund_accounts.find(
+            {"merged_into": {"$nin": [None, ""]}},
+            {"_id": 0, "id": 1, "merged_into": 1}):
+        target = str(alias["merged_into"])
+        for coll, field in _linked_account_fields():
+            res = await coll.update_many({field: alias["id"]},
+                                         {"$set": {field: target}})
+            n += int(res.modified_count)
+    if n:
+        logger.warning("[fund-accounts] %s vínculo(s) re-apuntados desde "
+                       "alias fusionados a su cuenta canónica", n)
+    return n
+
+
 async def consolidate_duplicate_cash_accounts() -> int:
     """N06 — funde cuentas automáticas duplicadas (mismo propósito y moneda)
     en la más antigua, re-apuntando TODOS sus vínculos históricos: ningún
@@ -39,13 +68,7 @@ async def consolidate_duplicate_cash_accounts() -> int:
             continue
         canonical, dups = rows[0], rows[1:]
         for dup in dups:
-            for coll, field in (
-                    (db.company_fund_adjustments, "account_id"),
-                    (db.fund_account_transfers, "from_account_id"),
-                    (db.fund_account_transfers, "to_account_id"),
-                    (db.withdrawals, "paid_from_account_id"),
-                    (db.company_withdrawals, "paid_from_account_id"),
-                    (db.fund_account_denoms, "account_id")):
+            for coll, field in _linked_account_fields():
                 await coll.update_many({field: dup["id"]},
                                        {"$set": {field: canonical["id"]}})
             await db.fund_accounts.update_one(

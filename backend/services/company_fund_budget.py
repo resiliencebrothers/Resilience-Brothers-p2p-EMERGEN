@@ -166,6 +166,14 @@ async def acquire_pay_lock(currency: str) -> Optional[str]:
     await db.company_withdrawals.update_many(
         {"currency": currency, "pay_fence": {"$nin": [None, ""]}},
         {"$unset": {"pay_fence": ""}})
+    # P01 — protocolo de revocación: el nuevo turno ABORTA toda transferencia
+    # PROVISIONAL del turno anterior. Su confirmación definitiva (que exige
+    # status=pending) ya no puede aplicar un saldo vencido: el escritor
+    # antiguo recibe conflicto, nunca una segunda salida sobre el mismo saldo.
+    await db.fund_account_transfers.update_many(
+        {"currency": currency, "status": "pending"},
+        {"$set": {"status": "aborted",
+                  "aborted_reason": "turno de gasto transferido"}})
     return token
 
 
