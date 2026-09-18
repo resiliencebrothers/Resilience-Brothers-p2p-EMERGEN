@@ -353,16 +353,17 @@ _MirrorFn = Callable[[Dict[str, Any]], Awaitable[Optional[str]]]
 
 _SOURCES: tuple = (
     (lambda: db.company_fund_adjustments, {"method": "cash"},
-     mirror_adjustment_to_cash_box),
+     mirror_adjustment_to_cash_box, ("account_id",)),
     (lambda: db.company_withdrawals, {"status": "paid"},
-     mirror_company_withdrawal_to_cash_box),
+     mirror_company_withdrawal_to_cash_box, ("paid_from_account_id",)),
     (lambda: db.withdrawals, {"status": "paid"},
-     mirror_client_withdrawal_to_cash_box),
+     mirror_client_withdrawal_to_cash_box, ("paid_from_account_id",)),
     # M02 — las transferencias provisionales/abortadas no existen para el
     # recuperador: solo las confirmadas (o históricas sin estado) se reflejan.
     (lambda: db.fund_account_transfers,
      {"status": {"$nin": ["pending", "aborted"]}},
-     mirror_fund_transfer_to_cash_box),
+     mirror_fund_transfer_to_cash_box,
+     ("from_account_id", "to_account_id")),
 )
 
 
@@ -384,7 +385,7 @@ async def _repair_legacy_markers() -> int:
     """V03 — reintenta los docs marcados con cadena vacía por versiones
     anteriores (identidad no resuelta ≠ definitivamente ajena a caja)."""
     n = 0
-    for coll_fn, extra_q, mirror in _SOURCES:
+    for coll_fn, extra_q, mirror, _fields in _SOURCES:
         coll = coll_fn()
         async for src in coll.find({**extra_q, "cash_box_movement_id": ""},
                                    {"_id": 0}):
@@ -394,6 +395,36 @@ async def _repair_legacy_markers() -> int:
                 await coll.update_one(
                     {"id": str(src.get("id") or "")},
                     {"$set": {"cash_box_movement_id": NOT_APPLICABLE}})
+    return n
+
+
+async def _reevaluate_na_markers() -> int:
+    """R01 (continuación de Q02) — un «na» histórico pudo sobrevivir a una
+    consolidación ANTERIOR que re-apuntó el vínculo a la cuenta canónica sin
+    retirar el marcador: la contabilidad incluye la operación pero la caja
+    no, y ni el recuperador normal (sin marcador) ni el reparador de legados
+    (cadena vacía) vuelven a verla. Se reevalúan SOLO los «na» cuyos
+    vínculos apuntan HOY a una cuenta de caja canónica, sin depender de que
+    aún contengan el id del alias. El espejo es idempotente (ids
+    deterministas, $setOnInsert) e invalida el arqueo vigente; un «na»
+    legítimo (moneda sin fondo físico, traslado interno) se conserva y las
+    abortadas quedan excluidas por estado: jamás se reactivan."""
+    cash_ids = await db.fund_accounts.distinct(
+        "id", {"system_purpose": SYSTEM_PURPOSE})
+    if not cash_ids:
+        return 0
+    n = 0
+    for coll_fn, extra_q, mirror, acc_fields in _SOURCES:
+        coll = coll_fn()
+        q = {**extra_q, "cash_box_movement_id": NOT_APPLICABLE,
+             "$or": [{f: {"$in": cash_ids}} for f in acc_fields]}
+        async for src in coll.find(q, {"_id": 0}):
+            if await mirror(src):
+                n += 1
+                logger.warning(
+                    "[cash-box-sync] marcador «na» residual reevaluado: la "
+                    "operación %s sí corresponde a la caja física",
+                    src.get("id"))
     return n
 
 
@@ -562,8 +593,9 @@ async def backfill_cash_operations() -> int:
     """Backfill completo: ajustes + retiros de empresa pagados + retiros de
     clientes pagados + transferencias internas, más reparaciones (identidad
     de cuentas, alias fusionados P03, marcadores legados, huérfanos,
-    duplicados N06, provisionales M02/P01, espejos M04/P02 y vínculos
-    perdidos Q01/Q02). Idempotente."""
+    duplicados N06, provisionales M02/P01, espejos M04/P02, vínculos
+    perdidos Q01/Q02 y «na» residuales de consolidaciones anteriores R01).
+    Idempotente."""
     from services.fund_accounts import (
         consolidate_duplicate_cash_accounts, repoint_merged_alias_links,
     )
@@ -576,6 +608,7 @@ async def backfill_cash_operations() -> int:
     await _repair_internal_transfer_mirrors()
     await _repair_orphan_movements()
     n = await _repair_legacy_markers()
-    for coll_fn, extra_q, mirror in _SOURCES:
+    n += await _reevaluate_na_markers()
+    for coll_fn, extra_q, mirror, _fields in _SOURCES:
         n += await _backfill(coll_fn(), extra_q, mirror)
     return n

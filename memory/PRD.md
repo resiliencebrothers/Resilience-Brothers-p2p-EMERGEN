@@ -1824,3 +1824,7 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 ## 2026-06 · iter274 — Verificación Flujo de Caja (commit 70d3eaf, Q01–Q02) aplicada y verificada
 - Q01 el recuperador re-vincula movimientos huérfanos de transferencias abortadas (búsqueda por source_transfer_id, excluyendo compensaciones) y los anula con compensación trazable. Q02 re-apuntar un vínculo a la canónica reevalúa la decisión histórica «na»: el espejo se recalcula con la identidad correcta sin duplicar. El auditor confirmó P01/P02/P03 como corregidos (22 grupos de comprobaciones favorables).
 - Tests: `test_iter273_q01_q02.py` 4/4 · test-critical **398/398** · suite completa **1956 passed / 8 skipped / 0 failed** · mypy limpio. Detalle en CHANGELOG.md.
+
+## 2026-06 · iter275 — Revisión Flujo de Caja (commit 591c886, R01) aplicada y verificada
+- R01 (continuación de Q02): los marcadores «na» que sobrevivieron a una consolidación anterior (vínculo ya re-apuntado a la canónica por 70d3eaf) ahora se reevalúan con `_reevaluate_na_markers()` en el backfill — la caja recupera el movimiento pendiente sin duplicar, invalida el arqueo y jamás reactiva abortadas. El auditor confirmó Q01 y 26 grupos de comprobaciones favorables.
+- Tests: `test_iter274_r01.py` 4/4 · script del auditor reproduce los valores esperados post-fix (cuenta 140 / caja 140 / banco 60 / 1 entrada) · test-critical **402/402** · suite completa **1960 passed / 8 skipped / 0 failed** · mypy y ruff limpios. Detalle en CHANGELOG.md.
