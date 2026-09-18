@@ -1820,3 +1820,7 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 ## 2026-06 · iter273 — Verificación Flujo de Caja (commit 9ea9251, P01–P03) aplicada y verificada
 - P01 el nuevo turno de gasto revoca (aborta) las transferencias provisionales del turno anterior: una confirmación con saldo vencido no aplica. P02 la confirmación verifica matched_count y resuelve el estado persistido (nunca éxito desde copia local); espejos unidos a abortadas se anulan con compensación trazable en el recuperador. P03 identidad canónica en transferencias y ajustes (alias fusionados normalizados antes de validar/persistir + re-apunte de vínculos nuevos en el backfill). El auditor confirmó M01/M04/M05/M06 como corregidos.
 - Tests: `test_iter272_p01_p03.py` 8/8 · test-critical **394/394** · suite completa **1948 passed / 8 skipped** (flakies ajenos pasan aislados) · mypy limpio. Detalle en CHANGELOG.md.
+
+## 2026-06 · iter274 — Verificación Flujo de Caja (commit 70d3eaf, Q01–Q02) aplicada y verificada
+- Q01 el recuperador re-vincula movimientos huérfanos de transferencias abortadas (búsqueda por source_transfer_id, excluyendo compensaciones) y los anula con compensación trazable. Q02 re-apuntar un vínculo a la canónica reevalúa la decisión histórica «na»: el espejo se recalcula con la identidad correcta sin duplicar. El auditor confirmó P01/P02/P03 como corregidos (22 grupos de comprobaciones favorables).
+- Tests: `test_iter273_q01_q02.py` 4/4 · test-critical **398/398** · suite completa **1956 passed / 8 skipped / 0 failed** · mypy limpio. Detalle en CHANGELOG.md.

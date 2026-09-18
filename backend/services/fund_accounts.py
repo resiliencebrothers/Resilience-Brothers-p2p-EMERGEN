@@ -34,6 +34,20 @@ def _linked_account_fields() -> tuple:
             (db.fund_account_denoms, "account_id"))
 
 
+async def _repoint_field(coll: Any, field: str, old_id: str,
+                         new_id: str) -> int:
+    """Re-apunta un vínculo de cuenta a la identidad canónica. Q02 — la
+    decisión histórica «no aplicable a caja» («na») se tomó con la identidad
+    ANTIGUA: se retira antes de re-apuntar para que el recuperador reevalúe
+    el espejo con la cuenta canónica (idempotente: los ids de movimiento son
+    deterministas y nunca se duplica un espejo ya existente)."""
+    await coll.update_many(
+        {field: old_id, "cash_box_movement_id": "na"},
+        {"$unset": {"cash_box_movement_id": ""}})
+    res = await coll.update_many({field: old_id}, {"$set": {field: new_id}})
+    return int(res.modified_count)
+
+
 async def repoint_merged_alias_links() -> int:
     """P03 — re-apunta a la cuenta canónica cualquier vínculo NUEVO que haya
     vuelto a caer en un alias fusionado (formularios abiertos antes de la
@@ -44,9 +58,7 @@ async def repoint_merged_alias_links() -> int:
             {"_id": 0, "id": 1, "merged_into": 1}):
         target = str(alias["merged_into"])
         for coll, field in _linked_account_fields():
-            res = await coll.update_many({field: alias["id"]},
-                                         {"$set": {field: target}})
-            n += int(res.modified_count)
+            n += await _repoint_field(coll, field, alias["id"], target)
     if n:
         logger.warning("[fund-accounts] %s vínculo(s) re-apuntados desde "
                        "alias fusionados a su cuenta canónica", n)
@@ -69,8 +81,7 @@ async def consolidate_duplicate_cash_accounts() -> int:
         canonical, dups = rows[0], rows[1:]
         for dup in dups:
             for coll, field in _linked_account_fields():
-                await coll.update_many({field: dup["id"]},
-                                       {"$set": {field: canonical["id"]}})
+                await _repoint_field(coll, field, dup["id"], canonical["id"])
             await db.fund_accounts.update_one(
                 {"id": dup["id"]},
                 {"$set": {"is_active": False,

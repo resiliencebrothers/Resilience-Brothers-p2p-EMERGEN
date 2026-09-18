@@ -491,6 +491,32 @@ async def _annul_transfer_mirror(tr: Dict[str, Any], reason: str) -> bool:
     return True
 
 
+async def _relink_aborted_transfer_movements() -> int:
+    """Q01 — recupera el vínculo inverso movimiento→transferencia cuando la
+    escritura de la referencia falló entre ambos pasos: sin él, el reparador
+    no podía ver la salida histórica de una transferencia abortada. Nunca se
+    vincula un movimiento de COMPENSACIÓN (annuls_movement_id)."""
+    n = 0
+    missing = {"$in": [None, "", NOT_APPLICABLE]}
+    q = {"status": "aborted", "cash_box_movement_id": missing,
+         "mirror_annulled_by": {"$exists": False}}
+    async for tr in db.fund_account_transfers.find(q, {"_id": 0, "id": 1}):
+        mov = await db.cash_box_movements.find_one(
+            {"source_transfer_id": tr["id"],
+             "annuls_movement_id": {"$exists": False}},
+            {"_id": 0, "id": 1})
+        if not mov:
+            continue
+        res = await db.fund_account_transfers.update_one(
+            {"id": tr["id"], "cash_box_movement_id": missing},
+            {"$set": {"cash_box_movement_id": mov["id"]}})
+        if res.modified_count:
+            n += 1
+            logger.warning("[cash-box-sync] vínculo recuperado: transferencia"
+                           " abortada %s ← movimiento %s", tr["id"], mov["id"])
+    return n
+
+
 async def _repair_aborted_transfer_mirrors() -> int:
     """P02 — un movimiento físico unido a una transferencia ABORTADA es una
     salida sin operación válida: se anula con compensación trazable."""
@@ -536,7 +562,8 @@ async def backfill_cash_operations() -> int:
     """Backfill completo: ajustes + retiros de empresa pagados + retiros de
     clientes pagados + transferencias internas, más reparaciones (identidad
     de cuentas, alias fusionados P03, marcadores legados, huérfanos,
-    duplicados N06, provisionales M02/P01 y espejos M04/P02). Idempotente."""
+    duplicados N06, provisionales M02/P01, espejos M04/P02 y vínculos
+    perdidos Q01/Q02). Idempotente."""
     from services.fund_accounts import (
         consolidate_duplicate_cash_accounts, repoint_merged_alias_links,
     )
@@ -544,6 +571,7 @@ async def backfill_cash_operations() -> int:
     await repoint_merged_alias_links()
     await _stamp_cash_accounts()
     await _abort_stale_pending_transfers()
+    await _relink_aborted_transfer_movements()
     await _repair_aborted_transfer_mirrors()
     await _repair_internal_transfer_mirrors()
     await _repair_orphan_movements()
