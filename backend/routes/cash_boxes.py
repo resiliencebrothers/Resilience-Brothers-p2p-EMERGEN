@@ -342,13 +342,36 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
                                 "autorizado distinto; corrige desde el Fondo "
                                 "de Empresa, no desde la Caja."))
                 if src and not src_denoms:
-                    await coll.update_one(
-                        {"id": src_id},
+                    # T03 — adjudicación ATÓMICA del desglose único: gana solo
+                    # quien encuentra el origen todavía vacío. Un completado
+                    # simultáneo con otra composición recibe conflicto; el
+                    # reintento del MISMO desglose es idempotente.
+                    res = await coll.update_one(
+                        {"id": src_id, "denominations": {"$in": [None, {}]}},
                         {"$set": {"denominations": denoms}})
+                    if not res.matched_count:
+                        src = await coll.find_one({"id": src_id}, {"_id": 0})
+                        if ((src or {}).get("denominations") or None) != denoms:
+                            raise HTTPException(
+                                status_code=409,
+                                detail=("Otro completado simultáneo ya fijó un "
+                                        "desglose distinto para esta operación;"
+                                        " revisa el desglose autorizado."))
                 break
-        await db.cash_box_movements.update_one(
-            {"id": mov_id},
+        # T03 — el espejo se escribe CONDICIONADO al valor adjudicado: un
+        # reintento idéntico converge y una composición incompatible se
+        # rechaza (jamás quedan origen y espejo con billetes distintos).
+        res = await db.cash_box_movements.update_one(
+            {"id": mov_id, "denominations": {"$in": [None, {}]}},
             {"$set": {"denominations": denoms, "denoms_pending": False}})
+        if not res.matched_count:
+            cur_mov = await db.cash_box_movements.find_one(
+                {"id": mov_id}, {"_id": 0, "denominations": 1})
+            if ((cur_mov or {}).get("denominations") or None) != denoms:
+                raise HTTPException(
+                    status_code=409,
+                    detail=("Otro completado simultáneo ya fijó un desglose "
+                            "distinto para este movimiento."))
         await _bump_fund_rev(box["id"], mov["fund"])
         return await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
     upd: Dict[str, Any] = {}

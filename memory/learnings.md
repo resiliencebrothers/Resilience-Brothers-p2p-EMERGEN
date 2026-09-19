@@ -14,3 +14,7 @@ NUNCA emitir múltiples search_replace/create_file al MISMO archivo dentro de un
 ## Turnstile (iter246)
 - Captcha real ENFORCED en register/login email. Tests: bypass central en tests/conftest.py (header X-Captcha-Bypass = TURNSTILE_TEST_BYPASS de backend/.env) — NO editar los 9 archivos de tests de auth.
 - Playwright/testing agent no puede pasar el captcha (por diseño): probar auth con cookies de sesión, no con login por email.
+
+## iter281
+- NUNCA relanzar `make test-all` si `execute_bash` devuelve "context deadline exceeded": el proceso nohup sobrevive y los reintentos crean instancias pytest CONCURRENTES que contaminan la DB compartida (26 falsos fallos). Verificar con `pgrep -af pytest`, matar duplicados y correr UNA sola instancia.
+- Todo relink que declare un origen sincronizado (`cash_box_movement_id`) debe completar antes la invalidación de revisión pendiente (`rev_bumped`), o rompe el contrato N05 (arqueo no invalidado).

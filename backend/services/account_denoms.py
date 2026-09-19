@@ -102,14 +102,17 @@ async def assert_bills_available(account_id: str, requested: Dict[str, int],
                                  label: str, op_label: str) -> None:
     """S04 — una salida detallada debe estar cubierta por los billetes
     CONOCIDOS de la cuenta: nunca se presenta una composición negativa como
-    válida. Con inventario totalmente vacío (histórico sin detallar) no hay
-    composición que exigir: queda como conciliación pendiente visible."""
+    válida. T04 — se distingue inventario DESCONOCIDO (jamás contado y sin
+    movimientos detallados: la excepción histórica queda como conciliación
+    pendiente visible) de inventario CONOCIDO VACÍO (existe un conteo y hoy
+    no quedan billetes): un conteo cero es información válida y bloquea el
+    gasto hasta que un depósito o nuevo conteo aporte los billetes."""
     acc = await db.fund_accounts.find_one({"id": account_id}, {"_id": 0})
     if not acc:
         return
     cur = await current_account_denoms(acc)
     inv = {int(float(k)): int(v) for k, v in cur["denominations"].items()}
-    if not inv:
+    if not inv and not cur["counted_at"]:
         return
     missing = []
     for k, q in (requested or {}).items():

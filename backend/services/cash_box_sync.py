@@ -597,6 +597,44 @@ async def _repair_internal_transfer_mirrors() -> int:
     return n
 
 
+async def _relink_adjustment_movements() -> int:
+    """T01 (continuación de S01) — recupera el vínculo inverso
+    ajuste→movimiento cuando la versión anterior escribió el espejo físico
+    pero falló antes de guardar `cash_box_movement_id` (o un backfill
+    posterior marcó el ajuste «na»): sin el vínculo, el reparador de ajustes
+    ajenos no veía el espejo y el efectivo duplicado seguía sumando en caja.
+    Nunca se vincula una COMPENSACIÓN (annuls_movement_id)."""
+    n = 0
+    missing = {"$in": [None, "", NOT_APPLICABLE]}
+    q = {"method": "cash", "cash_box_movement_id": missing,
+         "mirror_annulled_by": {"$exists": False}}
+    async for adj in db.company_fund_adjustments.find(q, {"_id": 0, "id": 1}):
+        aid = str(adj.get("id") or "")
+        if not aid:
+            continue
+        mov = await db.cash_box_movements.find_one(
+            {"source_adjustment_id": aid,
+             "annuls_movement_id": {"$exists": False}},
+            {"_id": 0, "id": 1, "box_id": 1, "fund": 1, "rev_bumped": 1})
+        if not mov:
+            continue
+        if not mov.get("rev_bumped"):
+            # N05 — completar la invalidación pendiente ANTES de declarar el
+            # origen sincronizado: el espejo pudo quedar a medias.
+            await _bump_fund_rev(str(mov.get("box_id") or ""),
+                                 str(mov.get("fund") or ""))
+            await db.cash_box_movements.update_one(
+                {"id": mov["id"]}, {"$set": {"rev_bumped": True}})
+        res = await db.company_fund_adjustments.update_one(
+            {"id": aid, "cash_box_movement_id": missing},
+            {"$set": {"cash_box_movement_id": mov["id"]}})
+        if res.modified_count:
+            n += 1
+            logger.warning("[cash-box-sync] vínculo recuperado: ajuste %s ← "
+                           "movimiento %s (T01)", aid, mov["id"])
+    return n
+
+
 async def _repair_foreign_account_adjustment_mirrors() -> int:
     """S01 — un ajuste cash atribuido a OTRA cuenta de efectivo (no la caja
     canónica) nunca debió espejarse en la Caja de Efectivo: el traslado
@@ -656,13 +694,89 @@ async def backfill_cash_adjustments() -> int:
                            mirror_adjustment_to_cash_box)
 
 
+_DENOM_LINKS: tuple = (
+    ("source_adjustment_id", lambda: db.company_fund_adjustments, "amount"),
+    ("source_withdrawal_id", lambda: db.company_withdrawals, "amount"),
+    ("source_client_withdrawal_id", lambda: db.withdrawals, "amount_usd"),
+    ("source_transfer_id", lambda: db.fund_account_transfers, "amount"),
+)
+
+
+async def _converge_operation_denoms() -> int:
+    """T02/T03 (continuación de S03) — el desglose de una operación vive en
+    dos documentos (origen contable y movimiento físico) y versiones
+    anteriores o una escritura interrumpida podían dejar solo uno:
+      * movimiento completado sin propagarlo al origen (T02) → se copia al
+        origen tras validar importe y moneda (el corte por fecha del pago
+        frente al último conteo lo aplica el propio inventario);
+      * origen adjudicado sin espejo (escritura interrumpida, T03) → el
+        espejo converge al valor autorizado;
+      * composiciones CONTRADICTORIAS → se marcan de forma trazable
+        (`denoms_conflict`), jamás se sobrescribe un desglose autorizado.
+    Se excluyen compensaciones y espejos anulados. Idempotente."""
+    n = 0
+    for field, coll_fn, amount_field in _DENOM_LINKS:
+        coll = coll_fn()
+        q = {field: {"$nin": [None, ""]},
+             "annuls_movement_id": {"$exists": False},
+             "annulled_by": {"$exists": False},
+             "$or": [{"denominations": {"$nin": [None, {}]}},
+                     {"denoms_pending": True}]}
+        async for mov in db.cash_box_movements.find(q, {"_id": 0}):
+            src_id = str(mov.get(field) or "")
+            src = await coll.find_one({"id": src_id}, {"_id": 0})
+            if not src:
+                continue
+            mov_denoms = mov.get("denominations") or None
+            src_denoms = src.get("denominations") or None
+            if mov_denoms == src_denoms:
+                continue
+            if mov_denoms and src_denoms:
+                if not mov.get("denoms_conflict"):
+                    await db.cash_box_movements.update_one(
+                        {"id": mov["id"]},
+                        {"$set": {"denoms_conflict": True}})
+                    logger.warning(
+                        "[cash-box-sync] desgloses contradictorios entre el "
+                        "movimiento %s y su origen %s: requieren resolución "
+                        "manual", mov["id"], src_id)
+                continue
+            if src_denoms:
+                res = await db.cash_box_movements.update_one(
+                    {"id": mov["id"], "denominations": {"$in": [None, {}]}},
+                    {"$set": {"denominations": src_denoms,
+                              "denoms_pending": False}})
+                if res.modified_count:
+                    await _bump_fund_rev(str(mov.get("box_id") or ""),
+                                         str(mov.get("fund") or ""))
+                    n += 1
+                continue
+            if (round(float(src.get(amount_field) or 0), 2)
+                    != round(float(mov.get("amount") or 0), 2)
+                    or fund_for_currency(src.get("currency"))
+                    != mov.get("fund")):
+                logger.warning(
+                    "[cash-box-sync] desglose del movimiento %s no se "
+                    "propaga: importe/moneda no coinciden con %s",
+                    mov["id"], src_id)
+                continue
+            res = await coll.update_one(
+                {"id": src_id, "denominations": {"$in": [None, {}]}},
+                {"$set": {"denominations": mov_denoms}})
+            if res.modified_count:
+                n += 1
+                logger.warning("[cash-box-sync] desglose completado en Caja "
+                               "propagado al origen %s (T02)", src_id)
+    return n
+
+
 async def backfill_cash_operations() -> int:
     """Backfill completo: ajustes + retiros de empresa pagados + retiros de
     clientes pagados + transferencias internas, más reparaciones (identidad
     de cuentas, alias fusionados P03, marcadores legados, huérfanos,
     duplicados N06, provisionales M02/P01, espejos M04/P02, vínculos
-    perdidos Q01/Q02 y «na» residuales de consolidaciones anteriores R01).
-    Idempotente."""
+    perdidos Q01/Q02/T01, «na» residuales de consolidaciones anteriores R01
+    y convergencia de desgloses T02/T03). Idempotente."""
     from services.fund_accounts import (
         consolidate_duplicate_cash_accounts, repoint_merged_alias_links,
     )
@@ -671,6 +785,7 @@ async def backfill_cash_operations() -> int:
     await _stamp_cash_accounts()
     await _abort_stale_pending_transfers()
     await _relink_aborted_transfer_movements()
+    await _relink_adjustment_movements()
     await _repair_aborted_transfer_mirrors()
     await _repair_internal_transfer_mirrors()
     await _repair_foreign_account_adjustment_mirrors()
@@ -679,4 +794,5 @@ async def backfill_cash_operations() -> int:
     n += await _reevaluate_na_markers()
     for coll_fn, extra_q, mirror, _fields in _SOURCES:
         n += await _backfill(coll_fn(), extra_q, mirror)
+    n += await _converge_operation_denoms()
     return n

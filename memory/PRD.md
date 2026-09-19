@@ -1854,3 +1854,10 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-06 · iter281 — Revisión Flujo de Caja (commit 072c391): pendientes T01–T04 corregidos
+- **T01** `_relink_adjustment_movements()` (cash_box_sync.py): recupera el vínculo inverso ajuste→movimiento vía `source_adjustment_id` (aun con marca «na»), completa la invalidación de revisión pendiente (contrato N05) y deja que el reparador de ajustes ajenos anule el espejo con UNA compensación idempotente.
+- **T02** `_converge_operation_denoms()` (cash_box_sync.py): converge desgloses entre origen contable y movimiento físico por vínculo de operación — movimiento→origen (completados históricos, validando importe/moneda), origen→espejo (escritura interrumpida) y marca `denoms_conflict` trazable si ambos difieren (jamás sobrescribe). Excluye compensaciones y espejos anulados. El corte pago-vs-conteo lo aplica el propio inventario.
+- **T03** ruta PUT /cashbox/boxes/{id}/movimientos/{mov} (cash_boxes.py): adjudicación ATÓMICA del desglose único (update condicionado `denominations ∈ [None,{}]` + matched_count) sobre el origen; el espejo se escribe condicionado al valor adjudicado. Reintento idéntico idempotente; incompatible → 409.
+- **T04** `assert_bills_available` (account_denoms.py): distingue inventario DESCONOCIDO (sin conteo → excepción histórica) de CONOCIDO VACÍO (`counted_at` presente → un conteo cero bloquea salidas detalladas hasta reponer).
+- Tests: `test_iter281_t01_t04.py` 9/9 · críticos 427/427 · **suite completa 2001 passed / 0 failed**. Mypy limpio en los 4 archivos tocados.
