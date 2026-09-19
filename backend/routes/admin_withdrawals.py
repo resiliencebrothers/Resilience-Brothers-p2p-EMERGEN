@@ -25,12 +25,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Admin"])
 
 
-@router.get("/admin/withdrawals")
-async def all_withdrawals(request: Request,
-                          status: Optional[str] = None,
-                          user_q: Optional[str] = None,
-                          currency: Optional[str] = None) -> Any:
-    actor = await require_permission(request, "withdrawals")
+def _withdrawals_query(actor: dict, status: Optional[str],
+                       user_q: Optional[str],
+                       currency: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Filtro del listado; None cuando el scope del empleado lo vacía."""
     q: Dict[str, Any] = {}
     if status:
         q["status"] = status
@@ -48,28 +46,45 @@ async def all_withdrawals(request: Request,
         if allowed:
             if "currency" in q:
                 if q["currency"] not in allowed:
-                    return []
+                    return None
             else:
                 q["currency"] = {"$in": allowed}
-    docs = await db.withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    # iter208 — attach courier delivery status so the frontend can disable
-    # the "Entregado" button until the courier confirms the delivery.
+    return q
+
+
+async def _attach_courier_status(docs: list) -> None:
+    """iter208 — attach courier delivery status so the frontend can disable
+    the "Entregado" button until the courier confirms the delivery."""
     cash_ids = [d["id"] for d in docs
                 if d.get("method") == "cash" and d.get("status") != "paid"]
-    if cash_ids:
-        jobs = await db.deliveries.find(
-            {"kind": "withdrawal", "ref_id": {"$in": cash_ids},
-             "status": {"$ne": "cancelled"}},
-            {"_id": 0, "ref_id": 1, "status": 1, "courier_id": 1,
-             "courier_name": 1},
-        ).to_list(len(cash_ids))
-        by_ref = {j["ref_id"]: j for j in jobs}
-        for d in docs:
-            if d["id"] in by_ref:
-                j = by_ref[d["id"]]
-                d["courier_delivery_status"] = j.get("status")
-                d["courier_delivery_courier_name"] = j.get("courier_name") or ""
-                d["courier_delivery_assigned"] = bool(j.get("courier_id"))
+    if not cash_ids:
+        return
+    jobs = await db.deliveries.find(
+        {"kind": "withdrawal", "ref_id": {"$in": cash_ids},
+         "status": {"$ne": "cancelled"}},
+        {"_id": 0, "ref_id": 1, "status": 1, "courier_id": 1,
+         "courier_name": 1},
+    ).to_list(len(cash_ids))
+    by_ref = {j["ref_id"]: j for j in jobs}
+    for d in docs:
+        if d["id"] in by_ref:
+            j = by_ref[d["id"]]
+            d["courier_delivery_status"] = j.get("status")
+            d["courier_delivery_courier_name"] = j.get("courier_name") or ""
+            d["courier_delivery_assigned"] = bool(j.get("courier_id"))
+
+
+@router.get("/admin/withdrawals")
+async def all_withdrawals(request: Request,
+                          status: Optional[str] = None,
+                          user_q: Optional[str] = None,
+                          currency: Optional[str] = None) -> Any:
+    actor = await require_permission(request, "withdrawals")
+    q = _withdrawals_query(actor, status, user_q, currency)
+    if q is None:
+        return []
+    docs = await db.withdrawals.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    await _attach_courier_status(docs)
     return docs
 
 
@@ -119,72 +134,86 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
     amount = (float(w.get("amount_usd") or 0.0)
               + float(w.get("courier_fee_currency_amount") or 0.0))
     was_rejected = w["status"] == "rejected"
-    entering_rejected = new_status == "rejected" and not was_rejected
-    leaving_rejected = was_rejected and new_status != "rejected"
-    if entering_rejected:
-        from services.credit_recovery import pending_marker, apply_and_clear
-        marker = pending_marker(w["user_id"], currency, amount,
-                                "withdrawal-refund")
-        claim = await db.withdrawals.update_one(
-            {"id": wid, "status": w["status"],
-             "balance_refunded": {"$ne": True},
-             "redebit_pending": {"$exists": False}},
-            {"$set": {**sets, "balance_refunded": True,
-                      "credit_pending": marker}})
-        if claim.matched_count == 0:
-            # ¿ya reembolsado por otra vía (p.ej. carrera con un rechazo
-            # previo cuyo re-débito no aplicó)? — transición sin dinero.
-            claim = await db.withdrawals.update_one(
-                {"id": wid, "status": w["status"], "balance_refunded": True,
-                 "redebit_pending": {"$exists": False}},
-                {"$set": sets})
-            if claim.matched_count == 0:
-                _raise_withdrawal_race()
-            return
-        await apply_and_clear("withdrawals", wid, marker)
+    if new_status == "rejected" and not was_rejected:
+        await _claim_entering_rejected(w, sets, currency, amount)
         return
-    if leaving_rejected:
-        import uuid as _uuid
-        op = f"withdrawal-redebit:{wid}:{_uuid.uuid4().hex[:8]}"
-        claim = await db.withdrawals.update_one(
-            {"id": wid, "status": "rejected", "balance_refunded": True,
-             "credit_pending": {"$exists": False}},
-            {"$set": {**sets, "balance_refunded": False,
-                      "redebit_pending": {
-                          "op_id": op, "amount": round(amount, 8),
-                          "currency": currency, "at": iso(now_utc())}}})
-        if claim.matched_count == 0:
-            # rechazado legado sin reembolso registrado → sin re-débito.
-            claim = await db.withdrawals.update_one(
-                {"id": wid, "status": "rejected",
-                 "balance_refunded": {"$ne": True},
-                 "credit_pending": {"$exists": False}},
-                {"$set": sets})
-            if claim.matched_count == 0:
-                _raise_withdrawal_race()
-            return
-        # iter257(D11) — re-débito por el helper duradero (guard atómico de
-        # saldo + op_id idempotente + log credit_ops), no un $inc artesanal.
-        from services.balances import debit_balance_idempotent
-        st = await debit_balance_idempotent(w["user_id"], currency, amount, op)
-        if st == "insufficient":
-            await db.withdrawals.update_one(
-                {"id": wid, "redebit_pending.op_id": op},
-                {"$set": {"status": "rejected", "balance_refunded": True},
-                 "$unset": {"redebit_pending": ""}})
-            raise HTTPException(
-                status_code=409,
-                detail=(f"El cliente ya no tiene {amount} {currency} "
-                        "disponibles (gastó el reembolso); no se puede "
-                        "reactivar este retiro."))
-        await db.withdrawals.update_one(
-            {"id": wid, "redebit_pending.op_id": op},
-            {"$unset": {"redebit_pending": ""}})
+    if was_rejected and new_status != "rejected":
+        await _claim_leaving_rejected(w, sets, currency, amount)
         return
     claim = await db.withdrawals.update_one(
         {"id": wid, "status": w["status"]}, {"$set": sets})
     if claim.matched_count == 0:
         _raise_withdrawal_race()
+
+
+async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
+                                   amount: float) -> None:
+    """Entrada a 'rejected' — el reembolso viaja VINCULADO al claim (marker
+    + abono idempotente); si ya estaba reembolsado, transición sin dinero."""
+    wid = w["id"]
+    from services.credit_recovery import pending_marker, apply_and_clear
+    marker = pending_marker(w["user_id"], currency, amount,
+                            "withdrawal-refund")
+    claim = await db.withdrawals.update_one(
+        {"id": wid, "status": w["status"],
+         "balance_refunded": {"$ne": True},
+         "redebit_pending": {"$exists": False}},
+        {"$set": {**sets, "balance_refunded": True,
+                  "credit_pending": marker}})
+    if claim.matched_count == 0:
+        # ¿ya reembolsado por otra vía (p.ej. carrera con un rechazo
+        # previo cuyo re-débito no aplicó)? — transición sin dinero.
+        claim = await db.withdrawals.update_one(
+            {"id": wid, "status": w["status"], "balance_refunded": True,
+             "redebit_pending": {"$exists": False}},
+            {"$set": sets})
+        if claim.matched_count == 0:
+            _raise_withdrawal_race()
+        return
+    await apply_and_clear("withdrawals", wid, marker)
+
+
+async def _claim_leaving_rejected(w: dict, sets: dict, currency: str,
+                                  amount: float) -> None:
+    """Salida de 'rejected' — re-débito VINCULADO al claim; si el cliente ya
+    gastó el reembolso, el retiro vuelve a 'rejected' con 409."""
+    wid = w["id"]
+    import uuid as _uuid
+    op = f"withdrawal-redebit:{wid}:{_uuid.uuid4().hex[:8]}"
+    claim = await db.withdrawals.update_one(
+        {"id": wid, "status": "rejected", "balance_refunded": True,
+         "credit_pending": {"$exists": False}},
+        {"$set": {**sets, "balance_refunded": False,
+                  "redebit_pending": {
+                      "op_id": op, "amount": round(amount, 8),
+                      "currency": currency, "at": iso(now_utc())}}})
+    if claim.matched_count == 0:
+        # rechazado legado sin reembolso registrado → sin re-débito.
+        claim = await db.withdrawals.update_one(
+            {"id": wid, "status": "rejected",
+             "balance_refunded": {"$ne": True},
+             "credit_pending": {"$exists": False}},
+            {"$set": sets})
+        if claim.matched_count == 0:
+            _raise_withdrawal_race()
+        return
+    # iter257(D11) — re-débito por el helper duradero (guard atómico de
+    # saldo + op_id idempotente + log credit_ops), no un $inc artesanal.
+    from services.balances import debit_balance_idempotent
+    st = await debit_balance_idempotent(w["user_id"], currency, amount, op)
+    if st == "insufficient":
+        await db.withdrawals.update_one(
+            {"id": wid, "redebit_pending.op_id": op},
+            {"$set": {"status": "rejected", "balance_refunded": True},
+             "$unset": {"redebit_pending": ""}})
+        raise HTTPException(
+            status_code=409,
+            detail=(f"El cliente ya no tiene {amount} {currency} "
+                    "disponibles (gastó el reembolso); no se puede "
+                    "reactivar este retiro."))
+    await db.withdrawals.update_one(
+        {"id": wid, "redebit_pending.op_id": op},
+        {"$unset": {"redebit_pending": ""}})
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,

@@ -26,6 +26,7 @@ export default function FundAccountSelect({
   label, unassignedLabel = "Sin asignar",
   testId = "fund-account-select",
   autoMode = false,
+  methodFilter = null,
 }) {
   const { t } = useTranslation();
   const [options, setOptions] = useState(null);
@@ -37,10 +38,16 @@ export default function FundAccountSelect({
       .get(`${API}/admin/fund-accounts/options`, {
         params: { currency }, withCredentials: true,
       })
-      .then((r) => { if (alive) setOptions(r.data || []); })
+      .then((r) => {
+        if (!alive) return;
+        const list = r.data || [];
+        setOptions(methodFilter
+          ? list.filter((o) => o.method === methodFilter)
+          : list);
+      })
       .catch(() => { if (alive) setOptions([]); });
     return () => { alive = false; };
-  }, [currency]);
+  }, [currency, methodFilter]);
 
   if (!currency || options === null) return null;
 

@@ -28,6 +28,8 @@ from auth_utils import (
 from audit_log import log_action
 from services.currency_utils import norm_code as _norm_code
 from services.company_funds_common import assert_can_manage_company_funds
+from services.account_denoms import current_account_denoms
+from services.denominations import get_cash_denominations
 from services.fund_accounts import (  # noqa: F401 — re-export compat
     CASH_BOX_NAME,
     HAS_ACC as _HAS_ACC,
@@ -62,6 +64,9 @@ class FundTransferCreate(BaseModel):
     totp_code: Optional[str] = Field(None, max_length=11)
     # N04 — idempotencia: repetir el mismo identificador no duplica el traslado
     operation_id: Optional[str] = Field(None, max_length=64)
+    # iter277 — qué billetes se mueven cuando un extremo es de efectivo:
+    # mantiene actualizado el estado canónico de billetes de las cuentas.
+    denominations: Optional[Dict[str, int]] = None
 
 
 @router.get("/admin/fund-accounts/options")
@@ -78,12 +83,14 @@ async def fund_account_options(request: Request, currency: str) -> Any:
         {"currency_code": code, "is_active": True},
         {"_id": 0, "id": 1, "label": 1},
     ):
-        rows.append({"id": pa["id"], "label": pa.get("label") or pa["id"]})
+        rows.append({"id": pa["id"], "label": pa.get("label") or pa["id"],
+                     "method": "bank"})
     async for fa in db.fund_accounts.find(
         {"currency": code, "is_active": True},
-        {"_id": 0, "id": 1, "name": 1},
+        {"_id": 0, "id": 1, "name": 1, "method": 1},
     ):
-        rows.append({"id": fa["id"], "label": fa.get("name") or fa["id"]})
+        rows.append({"id": fa["id"], "label": fa.get("name") or fa["id"],
+                     "method": fa.get("method") or "other"})
     return rows
 
 
@@ -130,6 +137,11 @@ async def fund_account_breakdown(currency: str, request: Request) -> Any:
             row["denoms_snapshot"] = await db.fund_account_denoms.find_one(
                 {"account_id": fa["id"]}, {"_id": 0},
                 sort=[("created_at", -1)])
+            # iter277 — estado ACTUAL derivado (conteo ± movimientos con
+            # desglose): es lo que precarga el formulario y alimenta la
+            # Caja física por denominación.
+            if not fa.get("merged_into"):
+                row["denoms_current"] = await current_account_denoms(fa)
         accounts.append(row)
     for acc_id, bal in assigned.items():
         if acc_id not in seen:
@@ -183,7 +195,7 @@ async def save_account_denoms(account_id: str, payload: DenomsSnapshotPayload,
     """iter235 — registra en qué billetes está repartido el efectivo de la
     cuenta (ej. Fondo Resilience): guarda el conteo por denominación y la
     diferencia contra el balance del sistema (cuadrada/sobrante/faltante)."""
-    from routes.admin_company_funds import CASH_DENOMINATIONS
+    from routes.admin_company_funds import CASH_DENOMINATIONS  # noqa: F401
 
     actor = await require_permission(request, "company_funds")
     acc = await resolve_fund_account(account_id)
@@ -195,7 +207,7 @@ async def save_account_denoms(account_id: str, payload: DenomsSnapshotPayload,
         raise HTTPException(
             status_code=400,
             detail="El desglose de billetes solo aplica a cuentas de efectivo")
-    valid = CASH_DENOMINATIONS.get(code)
+    valid = (await get_cash_denominations()).get(code)
     if not valid:
         raise HTTPException(
             status_code=400,
@@ -442,6 +454,20 @@ async def transfer_between_fund_accounts(
             status_code=400,
             detail="Origen y destino no pueden ser iguales")
 
+    # iter277 — desglose de billetes del traslado (requerido por la UI cuando
+    # un extremo es de efectivo): validado contra el monto y las
+    # denominaciones vigentes; mantiene el estado canónico de billetes.
+    denominations = None
+    if payload.denominations:
+        from routes.admin_company_funds import _validate_denominations
+        valid = (await get_cash_denominations()).get(code)
+        if not valid:
+            raise HTTPException(
+                status_code=400,
+                detail="El desglose de billetes solo aplica a CUP y USD")
+        denominations = _validate_denominations(
+            code, payload.denominations, payload.amount, valid)
+
     # N04 — el saldo de origen se valida y consume bajo el MISMO cerrojo de
     # gasto por moneda que usan los retiros de empresa: dos transferencias
     # (o un pago y una transferencia) nunca validan la misma foto de la cuenta.
@@ -488,6 +514,7 @@ async def transfer_between_fund_accounts(
             "to_label": to_info["label"] if to_info else "",
             "amount": payload.amount,
             "note": payload.note.strip(),
+            "denominations": denominations,
             "actor_id": actor["user_id"],
             "actor_name": actor.get("name", ""),
             "created_at": iso(now_utc()),

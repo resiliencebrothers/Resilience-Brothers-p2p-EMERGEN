@@ -394,6 +394,12 @@ async def _assert_redemption_courier_ready(r: dict) -> None:
     job = await db.deliveries.find_one(
         {"kind": "redemption", "ref_id": r["id"],
          "status": {"$ne": "cancelled"}}, {"_id": 0})
+    _assert_courier_job_delivered(job)
+
+
+def _assert_courier_job_delivered(job: Optional[dict]) -> None:
+    """El trabajo de mensajería debe existir y estar realizado por el
+    mensajero (delivered/confirmed) antes de marcar 'entregado'."""
     if not job:
         raise HTTPException(
             status_code=409,

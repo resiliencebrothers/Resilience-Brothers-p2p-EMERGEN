@@ -8,10 +8,12 @@ from typing import Dict
 from db_client import db
 
 FUNDS = ("CUP", "USD")
-DENOMS: Dict[str, list] = {
-    "CUP": [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
-    "USD": [100, 50, 20, 10, 5, 2, 1],
-}
+# iter277 — listas de fábrica compartidas; las vigentes (con extras del
+# admin) se obtienen de services.denominations.get_cash_denominations().
+from services.denominations import DEFAULT_CASH_DENOMINATIONS  # noqa: E402
+
+DENOMS: Dict[str, list] = {k: list(v)
+                           for k, v in DEFAULT_CASH_DENOMINATIONS.items()}
 
 
 async def fund_balance(box: dict, fund: str) -> float:

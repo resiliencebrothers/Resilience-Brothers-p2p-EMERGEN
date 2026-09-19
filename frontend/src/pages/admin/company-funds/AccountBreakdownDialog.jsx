@@ -28,17 +28,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { useCashDenoms } from "@/hooks/useCashDenoms";
 
 const UNASSIGNED = "__unassigned__";
 const fmt2 = (n) =>
   Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
-
-// iter235 — denominaciones de efectivo (debe coincidir con el backend).
-// Regla de negocio: el CUP efectivo usa solo la nomenclatura «CUP».
-const CASH_DENOMS = {
-  CUP: [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
-  USD: [100, 50, 20, 10, 5, 2, 1],
-};
 
 const METHOD_ICONS = {
   bank: Landmark,
@@ -183,8 +177,9 @@ function AccountRow({ a, currency, t, onChanged }) {
   const [denomsOpen, setDenomsOpen] = useState(false);
   const [minVal, setMinVal] = useState(a.min_balance_alert ? String(a.min_balance_alert) : "");
   const [busy, setBusy] = useState(false);
+  const cashDenoms = useCashDenoms();
   const Icon = METHOD_ICONS[a.method] || CircleDollarSign;
-  const isCash = a.method === "cash" && !!CASH_DENOMS[currency];
+  const isCash = a.method === "cash" && !!cashDenoms[currency];
   const isLow = a.min_balance_alert > 0 && a.balance < a.min_balance_alert;
   const sourceLabel = a.source === "payment"
     ? t("admin.companyFunds.sourcePayment")
@@ -269,18 +264,8 @@ function AccountRow({ a, currency, t, onChanged }) {
           )}
         </div>
       </div>
-      {isCash && a.denoms_snapshot && !denomsOpen && (
-        <p className="text-[0.6rem] text-neutral-500 mt-1 font-mono" data-testid={`denoms-summary-${a.id}`}>
-          {t("admin.companyFunds.denomsLast", {
-            date: new Date(a.denoms_snapshot.created_at).toLocaleDateString(),
-            total: fmt2(a.denoms_snapshot.total),
-          })}{" "}
-          <span className={a.denoms_snapshot.difference === 0 ? "text-[#22C55E]" : "text-[#EF4444]"}>
-            {a.denoms_snapshot.difference === 0
-              ? t("admin.companyFunds.denomsSquared")
-              : t("admin.companyFunds.denomsDiff", { diff: fmt2(a.denoms_snapshot.difference) })}
-          </span>
-        </p>
+      {isCash && (a.denoms_current || a.denoms_snapshot) && !denomsOpen && (
+        <CurrentBillsLine a={a} t={t} />
       )}
       {denomsOpen && (
         <DenomsForm a={a} currency={currency} t={t}
@@ -314,13 +299,38 @@ function AccountRow({ a, currency, t, onChanged }) {
 
 const METHOD_KEYS = ["bank", "cash", "crypto", "other"];
 
+// iter277 — línea resumen: billetes ACTUALES derivados (conteo ± movimientos
+// con desglose) comparados contra el balance del sistema.
+function CurrentBillsLine({ a, t }) {
+  const total = a.denoms_current
+    ? a.denoms_current.total
+    : a.denoms_snapshot?.total || 0;
+  const diff = Math.round((total - (a.balance || 0)) * 100) / 100;
+  return (
+    <p className="text-[0.6rem] text-neutral-500 mt-1 font-mono" data-testid={`denoms-summary-${a.id}`}>
+      {t("admin.companyFunds.denomsCurrent", { total: fmt2(total) })}{" "}
+      <span className={diff === 0 ? "text-[#22C55E]" : "text-[#EF4444]"}>
+        {diff === 0
+          ? t("admin.companyFunds.denomsSquared")
+          : t("admin.companyFunds.denomsDiff", { diff: fmt2(diff) })}
+      </span>
+    </p>
+  );
+}
+
 // iter235 — desglose de billetes de una cuenta de efectivo (ej. Fondo
 // Resilience 25M CUP): conteo por denominación vs balance del sistema.
+// iter277 — se precarga con el estado ACTUAL derivado, no con la foto vieja.
 function DenomsForm({ a, currency, t, onDone }) {
-  const [counts, setCounts] = useState(a.denoms_snapshot?.denominations || {});
+  const [counts, setCounts] = useState(
+    a.denoms_current?.denominations || a.denoms_snapshot?.denominations || {});
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const denoms = CASH_DENOMS[currency] || [];
+  const cashDenoms = useCashDenoms();
+  const denoms = [...new Set([
+    ...(cashDenoms[currency] || []),
+    ...Object.keys(counts).map((d) => parseInt(d)).filter((n) => n > 0),
+  ])].sort((x, y) => y - x);
   const total = denoms.reduce((s, d) => s + d * (parseInt(counts[String(d)]) || 0), 0);
   const diff = Math.round((total - (a.balance || 0)) * 100) / 100;
 
@@ -474,20 +484,42 @@ function TransferForm({ currency, accounts, t, onDone }) {
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [bills, setBills] = useState({});
   const [askTotp, setAskTotp] = useState(false);
   const [busy, setBusy] = useState(false);
+  const cashDenomsMap = useCashDenoms();
+
+  // iter277 — si un extremo es de efectivo, hay que decir QUÉ billetes se
+  // mueven: así el estado de billetes de cada cuenta se mantiene al día.
+  const fromAcc = accounts.find((a) => a.id === from);
+  const toAcc = accounts.find((a) => a.id === to);
+  const denomList = cashDenomsMap[currency] || [];
+  const cashInvolved =
+    denomList.length > 0 &&
+    [fromAcc, toAcc].some((a) => a && a.method === "cash");
+  const billsTotal = Object.entries(bills).reduce(
+    (s, [d, q]) => s + (parseInt(d) || 0) * (parseInt(q) || 0), 0);
+  const effectiveAmount = cashInvolved ? billsTotal : parseFloat(amount);
 
   const submit = async (code) => {
     setBusy(true);
     try {
+      const denominations = {};
+      Object.entries(bills).forEach(([d, q]) => {
+        const n = parseInt(q, 10);
+        if (n > 0) denominations[d] = n;
+      });
       await axios.post(
         `${API}/admin/company-funds/accounts/transfer`,
         {
           currency,
           from_account_id: from === UNASSIGNED ? null : from,
           to_account_id: to === UNASSIGNED ? null : to,
-          amount: parseFloat(amount),
+          amount: effectiveAmount,
           note: note.trim(),
+          ...(cashInvolved && Object.keys(denominations).length > 0
+            ? { denominations }
+            : {}),
           totp_code: code,
         },
         { withCredentials: true },
@@ -504,7 +536,7 @@ function TransferForm({ currency, accounts, t, onDone }) {
     }
   };
 
-  const canSubmit = to !== "" && from !== to && parseFloat(amount) > 0;
+  const canSubmit = to !== "" && from !== to && effectiveAmount > 0;
 
   const optionItems = (excludeId, testId) => (
     <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none" data-testid={testId}>
@@ -544,11 +576,46 @@ function TransferForm({ currency, accounts, t, onDone }) {
           type="number"
           step="any"
           min="0"
-          value={amount}
+          value={cashInvolved ? (billsTotal || "") : amount}
+          readOnly={cashInvolved}
           onChange={(e) => setAmount(e.target.value)}
-          className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono"
+          placeholder={cashInvolved ? t("admin.companyFunds.trAmountFromBills") : ""}
+          className={`rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 font-mono ${cashInvolved ? "opacity-70" : ""}`}
         />
       </div>
+      {cashInvolved && (
+        <div
+          className="border border-[#22C55E]/25 bg-[#22C55E]/[0.04] p-3 space-y-2"
+          data-testid="tr-bills-block"
+        >
+          <Label className="micro-label text-neutral-400">
+            {t("admin.companyFunds.trBills")}
+          </Label>
+          <p className="text-[0.65rem] text-neutral-500">
+            {t("admin.companyFunds.trBillsHint")}
+          </p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {denomList.map((d) => (
+              <div key={d} className="flex items-center gap-1">
+                <span className="text-[0.6rem] font-mono text-neutral-500 w-9 text-right shrink-0">{d}×</span>
+                <Input
+                  data-testid={`tr-denom-${d}`}
+                  type="number" min="0" placeholder="0"
+                  value={bills[String(d)] ?? ""}
+                  onChange={(e) => setBills({ ...bills, [String(d)]: e.target.value })}
+                  className="rounded-none h-8 bg-[#0a0a0a] border-white/10 font-mono text-xs px-1.5"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between text-xs pt-1 border-t border-white/10" data-testid="tr-bills-total">
+            <span className="text-neutral-500">{t("admin.companyFunds.denomsCounted")}:</span>
+            <span className={`font-mono ${billsTotal > 0 ? "text-[#22C55E]" : "text-neutral-500"}`}>
+              {billsTotal.toLocaleString()} {currency}
+            </span>
+          </div>
+        </div>
+      )}
       <div>
         <Label className="micro-label text-neutral-500">{t("admin.companyFunds.trNote")}</Label>
         <Input

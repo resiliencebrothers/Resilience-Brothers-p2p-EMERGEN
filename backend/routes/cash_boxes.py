@@ -88,13 +88,15 @@ async def _bump_fund_rev(box_id: str, fund: str) -> None:
         {"id": box_id}, {"$inc": {f"fund_revs.{fund}": 1}})
 
 
-def _clean_denoms(fund: str, raw: Optional[Dict[str, int]],
-                  amount: Optional[float] = None) -> Optional[Dict[str, int]]:
-    """Valida el desglose: denominaciones válidas del fondo y, si se pasa
-    `amount`, que el total del desglose coincida con el importe."""
+async def _clean_denoms(fund: str, raw: Optional[Dict[str, int]],
+                        amount: Optional[float] = None) -> Optional[Dict[str, int]]:
+    """Valida el desglose: denominaciones válidas del fondo (incluidas las
+    añadidas por el admin, iter277) y, si se pasa `amount`, que el total del
+    desglose coincida con el importe."""
     if not raw:
         return None
-    valid = DENOMS[fund]
+    from services.denominations import get_cash_denominations
+    valid = (await get_cash_denominations()).get(fund) or DENOMS[fund]
     clean: Dict[str, int] = {}
     total = 0.0
     for k, v in raw.items():
@@ -216,7 +218,7 @@ async def delete_box(box_id: str, request: Request) -> Any:
 async def set_initial(box_id: str, payload: InitialSet, request: Request) -> Any:
     user = await require_user(request)
     box = await _get_box_checked(box_id, user)
-    denoms = _clean_denoms(payload.fund, payload.denominations, payload.amount)
+    denoms = await _clean_denoms(payload.fund, payload.denominations, payload.amount)
     # H07 — control contable: con operativa registrada el inicial es inmutable;
     # las correcciones van como movimientos fechados de entrada/salida.
     has_movs = await db.cash_box_movements.count_documents(
@@ -271,7 +273,7 @@ async def create_movement(box_id: str, payload: MovementCreate,
                           request: Request) -> Any:
     user = await require_user(request)
     box = await _get_box_checked(box_id, user)
-    denoms = _clean_denoms(payload.fund, payload.denominations, payload.amount)
+    denoms = await _clean_denoms(payload.fund, payload.denominations, payload.amount)
     doc = {
         "id": f"cmov_{uuid.uuid4().hex[:12]}",
         "box_id": box["id"],
@@ -314,8 +316,8 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
                 status_code=409,
                 detail=("Este movimiento proviene del Fondo de Empresa: solo "
                         "puede completarse su desglose de billetes pendiente."))
-        denoms = _clean_denoms(mov["fund"], payload.denominations,
-                               mov["amount"])
+        denoms = await _clean_denoms(mov["fund"], payload.denominations,
+                                     mov["amount"])
         await db.cash_box_movements.update_one(
             {"id": mov_id},
             {"$set": {"denominations": denoms, "denoms_pending": False}})
@@ -329,7 +331,7 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
     if payload.responsible is not None:
         upd["responsible"] = payload.responsible.strip()
     if payload.denominations is not None:
-        upd["denominations"] = _clean_denoms(
+        upd["denominations"] = await _clean_denoms(
             mov["fund"], payload.denominations,
             upd.get("amount", mov["amount"]))
     elif payload.amount is not None and mov.get("denominations"):
@@ -404,9 +406,13 @@ async def fund_summary(box_id: str, fund: str, request: Request) -> Any:
     ]):
         d = str(row["_id"])
         counts[d] = counts.get(d, 0) + int(row["qty"] or 0)
+    from services.denominations import get_cash_denominations
+    valid_list = list((await get_cash_denominations()).get(fund) or DENOMS[fund])
+    extras = sorted({int(float(d)) for d in counts} - set(valid_list),
+                    reverse=True)
     denom_rows = [{"denom": d, "qty": counts.get(str(d), 0),
                    "subtotal": round(d * counts.get(str(d), 0), 2)}
-                  for d in DENOMS[fund]]
+                  for d in valid_list + extras]
     num_movs = await db.cash_box_movements.count_documents(base)
 
     # iter264/H04 — el arqueo solo vale como cierre si no hubo movimientos después
@@ -465,7 +471,7 @@ async def create_arqueo(box_id: str, payload: ArqueoCreate,
                         request: Request) -> Any:
     user = await require_user(request)
     box = await _get_box_checked(box_id, user)
-    counted = _clean_denoms(payload.fund, payload.counted) or {}
+    counted = await _clean_denoms(payload.fund, payload.counted) or {}
     total = round(sum(int(float(d)) * q for d, q in counted.items()), 2)
     system = await _fund_balance(box, payload.fund)
     diff = round(total - system, 2)

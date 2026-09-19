@@ -188,6 +188,19 @@ def _assert_user_update_authz(requester: dict, update: dict) -> None:
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
 
 
+def _clean_template_record(rec: Any) -> Optional[dict]:
+    """iter252 — saneado de UN registro de plantilla aplicada."""
+    if not isinstance(rec, dict):
+        return None
+    return {
+        "added_perms": [str(p)[:60] for p in (rec.get("added_perms") or [])][:60],
+        "prev_currencies": [str(c)[:20] for c in (rec.get("prev_currencies") or [])][:60],
+        "set_currencies": [str(c)[:20] for c in (rec.get("set_currencies") or [])][:60],
+        "currencies_changed": bool(rec.get("currencies_changed")),
+        "applied_at": str(rec.get("applied_at") or "")[:40],
+    }
+
+
 def _clean_applied_templates(raw: Any) -> dict:
     """iter252 — saneado del registro de plantillas aplicadas."""
     raw = raw or {}
@@ -195,15 +208,9 @@ def _clean_applied_templates(raw: Any) -> dict:
         raise HTTPException(status_code=422, detail="applied_templates inválido")
     clean: dict = {}
     for tid, rec in raw.items():
-        if not isinstance(rec, dict):
-            continue
-        clean[str(tid)[:40]] = {
-            "added_perms": [str(p)[:60] for p in (rec.get("added_perms") or [])][:60],
-            "prev_currencies": [str(c)[:20] for c in (rec.get("prev_currencies") or [])][:60],
-            "set_currencies": [str(c)[:20] for c in (rec.get("set_currencies") or [])][:60],
-            "currencies_changed": bool(rec.get("currencies_changed")),
-            "applied_at": str(rec.get("applied_at") or "")[:40],
-        }
+        cleaned = _clean_template_record(rec)
+        if cleaned is not None:
+            clean[str(tid)[:40]] = cleaned
     return clean
 
 
@@ -574,6 +581,38 @@ async def _kyc_snapshot(user_id: str, user: dict) -> Dict[str, str]:
     }
 
 
+def _user_identity_block(user: dict) -> Dict[str, Any]:
+    """Identidad del usuario para el dashboard de stats."""
+    return {
+        "user_id": user["user_id"],
+        "name": user.get("name", ""),
+        "email": user.get("email", ""),
+        "email_verified": bool(user.get("email_verified", False)),
+        "role": user.get("role", ""),
+        "account_status": user.get("account_status", "active"),
+        "phone": user.get("phone", ""),
+        "phone_verified": bool(user.get("phone_verified")),
+        "created_at": user.get("created_at", ""),
+        "twofa_enabled": bool(user.get("totp_enabled", False)),
+    }
+
+
+def _net_position_block(platform_owes_usdt: float,
+                        client_owes_usdt: float) -> Dict[str, Any]:
+    """Posición neta plataforma ⇄ cliente (positivo = la plataforma debe)."""
+    net_usdt = round(platform_owes_usdt - client_owes_usdt, 4)
+    return {
+        "platform_owes_client_usdt": round(platform_owes_usdt, 4),
+        "client_owes_platform_usdt": round(client_owes_usdt, 4),
+        "net_usdt": net_usdt,
+        "direction": (
+            "platform_owes_client" if net_usdt > 0.01
+            else "client_owes_platform" if net_usdt < -0.01
+            else "even"
+        ),
+    }
+
+
 @router.get("/admin/users/{user_id}/stats")
 async def admin_user_stats(user_id: str, request: Request) -> Any:
     """iter55.32 — aggregated per-user dashboard used by the new
@@ -606,7 +645,6 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
     balances = _effective_balances(user)
     platform_owes_usdt = _sum_usdt(balances, rates)
     client_owes_usdt = _sum_usdt(total_debt_by_currency, rates)
-    net_usdt = round(platform_owes_usdt - client_owes_usdt, 4)
 
     completed_orders = await db.orders.count_documents(
         {"user_id": user_id, "status": {"$in": ["approved", "completed"]}},
@@ -618,18 +656,7 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
     kyc = await _kyc_snapshot(user_id, user)
 
     return {
-        "user": {
-            "user_id": user["user_id"],
-            "name": user.get("name", ""),
-            "email": user.get("email", ""),
-            "email_verified": bool(user.get("email_verified", False)),
-            "role": user.get("role", ""),
-            "account_status": user.get("account_status", "active"),
-            "phone": user.get("phone", ""),
-            "phone_verified": bool(user.get("phone_verified")),
-            "created_at": user.get("created_at", ""),
-            "twofa_enabled": bool(user.get("totp_enabled", False)),
-        },
+        "user": _user_identity_block(user),
         "kyc": kyc,
         "balances": {k: round(float(v), 4) for k, v in balances.items() if float(v) != 0},
         "balance_total_usdt": user.get("vip_balance_usdt", 0.0),
@@ -648,14 +675,6 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
             "debt_by_currency": {k: round(v, 4) for k, v in total_debt_by_currency.items()},
             "total_debt_usdt": round(client_owes_usdt, 4),
         },
-        "net_position": {
-            "platform_owes_client_usdt": round(platform_owes_usdt, 4),
-            "client_owes_platform_usdt": round(client_owes_usdt, 4),
-            "net_usdt": net_usdt,
-            "direction": (
-                "platform_owes_client" if net_usdt > 0.01
-                else "client_owes_platform" if net_usdt < -0.01
-                else "even"
-            ),
-        },
+        "net_position": _net_position_block(platform_owes_usdt,
+                                            client_owes_usdt),
     }

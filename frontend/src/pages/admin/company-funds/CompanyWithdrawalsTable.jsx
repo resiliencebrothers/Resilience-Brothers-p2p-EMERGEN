@@ -1,9 +1,10 @@
 /**
- * iter87 — CompanyWithdrawalsTable
+ * iter87/iter277 — CompanyWithdrawalsTable → «Depósitos y retiros del fondo».
  *
- * The bottom-of-page section header (title + 3 action buttons) plus the
- * withdrawals table. Only admins see the row-action buttons (approve /
- * paid / reject); staff members see the read-only table.
+ * Tabla UNIFICADA: retiros del fondo (con su flujo de estados) + depósitos
+ * manuales de capital + retiros históricos hechos por ajuste (legado). El
+ * botón «Ajuste manual» desapareció: las entradas van por «Depósito» y las
+ * salidas por «Retiro», así ningún movimiento queda fuera de esta tabla.
  */
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,10 @@ import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { FileImage, HandCoins, SlidersHorizontal, Plus, Download, Search, FileDown, Banknote } from "lucide-react";
+import {
+  FileImage, Plus, Download, Search, FileDown, Banknote,
+  ArrowDownCircle,
+} from "lucide-react";
 
 const STATUS_STYLES = {
   paid: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
@@ -20,14 +24,20 @@ const STATUS_STYLES = {
   pending: "bg-neutral-700/20 text-neutral-400 border-neutral-700/40",
 };
 
+const TYPE_STYLES = {
+  withdrawal: "bg-[#8B5CF6]/10 text-[#A78BFA] border-[#8B5CF6]/30",
+  deposit: "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30",
+  adjust_out: "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/30",
+};
+
 export default function CompanyWithdrawalsTable({
-  items, adjustments, isAdmin,
+  rows, rawTotal, isAdmin,
   createCurrencies, currencies,
   statusFilter, setStatusFilter,
+  tipoFilter, setTipoFilter,
   beneficiaryQuery, setBeneficiaryQuery,
-  onOpenAdjustmentsHistory, onOpenAdjustment, onOpenCreate, onOpenExport, onOpenClosingPdf, onOpenCashBox,
+  onOpenDeposit, onOpenCreate, onOpenExport, onOpenClosingPdf, onOpenCashBox,
   onRequestStatus,
-  rawTotal,
 }) {
   const { t } = useTranslation();
   const STATUS_LABELS = {
@@ -36,7 +46,13 @@ export default function CompanyWithdrawalsTable({
     paid: t("admin.companyFunds.statusPaid"),
     rejected: t("admin.companyFunds.statusRejected"),
   };
-  const hasFilters = statusFilter !== "all" || beneficiaryQuery.trim() !== "";
+  const TYPE_LABELS = {
+    withdrawal: t("admin.companyFunds.typeWithdrawal"),
+    deposit: t("admin.companyFunds.typeDeposit"),
+    adjust_out: t("admin.companyFunds.typeAdjustOut"),
+  };
+  const hasFilters = statusFilter !== "all" || tipoFilter !== "all"
+    || beneficiaryQuery.trim() !== "";
   return (
     <>
       <div className="flex flex-wrap justify-between items-center gap-3">
@@ -59,23 +75,6 @@ export default function CompanyWithdrawalsTable({
             <FileDown className="w-4 h-4 mr-1" /> {t("admin.companyFunds.closingBtn")}
           </Button>
           <Button
-            data-testid="open-adjustments-history"
-            variant="outline"
-            onClick={onOpenAdjustmentsHistory}
-            className="rounded-none border-white/20 hover:bg-white/5"
-          >
-            <HandCoins className="w-4 h-4 mr-1" />
-            {t("admin.companyFunds.deposits")}
-            {adjustments.length > 0 && (
-              <span
-                className="ml-2 text-[0.65rem] font-mono text-[#8B5CF6] bg-[#8B5CF6]/10 px-1.5 py-0.5"
-                data-testid="adjustments-history-count"
-              >
-                {adjustments.length}
-              </span>
-            )}
-          </Button>
-          <Button
             data-testid="open-cashbox-denominations"
             variant="outline"
             onClick={onOpenCashBox}
@@ -84,13 +83,13 @@ export default function CompanyWithdrawalsTable({
             <Banknote className="w-4 h-4 mr-1" /> {t("admin.companyFunds.cashBoxBtn")}
           </Button>
           <Button
-            data-testid="open-adjustment-dialog"
+            data-testid="open-deposit-dialog"
             variant="outline"
-            onClick={onOpenAdjustment}
+            onClick={onOpenDeposit}
             disabled={currencies.length === 0}
-            className="rounded-none border-white/20 hover:bg-white/5"
+            className="rounded-none border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10"
           >
-            <SlidersHorizontal className="w-4 h-4 mr-1" /> {t("admin.companyFunds.manualAdjustment")}
+            <ArrowDownCircle className="w-4 h-4 mr-1" /> {t("admin.companyFunds.depositBtn")}
           </Button>
           <Button
             data-testid="create-company-withdrawal"
@@ -103,8 +102,26 @@ export default function CompanyWithdrawalsTable({
         </div>
       </div>
 
-      {/* iter88 — Fund withdrawals filter row (status + beneficiary). */}
+      {/* iter88/iter277 — filtros: tipo + estado + beneficiario. */}
       <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <div className="micro-label text-neutral-500 mb-1">
+            {t("admin.companyFunds.filterTipo")}
+          </div>
+          <Select value={tipoFilter} onValueChange={setTipoFilter}>
+            <SelectTrigger
+              data-testid="cw-filter-tipo"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-36"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+              <SelectItem value="all">{t("admin.companyFunds.filterAll")}</SelectItem>
+              <SelectItem value="deposits">{t("admin.companyFunds.tipoDeposits")}</SelectItem>
+              <SelectItem value="withdrawals">{t("admin.companyFunds.tipoWithdrawals")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div>
           <div className="micro-label text-neutral-500 mb-1">
             {t("admin.companyFunds.filterStatus")}
@@ -145,6 +162,7 @@ export default function CompanyWithdrawalsTable({
             type="button"
             onClick={() => {
               setStatusFilter("all");
+              setTipoFilter("all");
               setBeneficiaryQuery("");
             }}
             data-testid="cw-filter-clear"
@@ -154,14 +172,15 @@ export default function CompanyWithdrawalsTable({
           </button>
         )}
         <div className="text-xs text-neutral-500 font-mono ml-auto h-10 flex items-end pb-2">
-          {t("admin.companyFunds.showing", { n: items.length, total: rawTotal })}
+          {t("admin.companyFunds.showing", { n: rows.length, total: rawTotal })}
         </div>
       </div>
 
       <div className="tactile-card overflow-x-auto">
-        <table className="w-full text-sm min-w-[900px]">
+        <table className="w-full text-sm min-w-[980px]">
           <thead className="bg-[#0a0a0a] border-b border-white/10">
             <tr className="text-left">
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colType")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colAmount")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colCurrency")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.companyFunds.colBeneficiary")}</th>
@@ -173,20 +192,30 @@ export default function CompanyWithdrawalsTable({
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 && (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan="8" className="text-center text-neutral-500 py-8">
+                <td colSpan="9" className="text-center text-neutral-500 py-8">
                   {t("admin.companyFunds.emptyWithdrawals")}
                 </td>
               </tr>
             )}
-            {items.map((w) => (
+            {rows.map((r) => r.kind === "withdrawal" ? (
               <WithdrawalRow
-                key={w.id}
-                w={w}
+                key={r.key}
+                w={r.data}
                 isAdmin={isAdmin}
-                statusLabel={STATUS_LABELS[w.status]}
+                typeLabel={TYPE_LABELS.withdrawal}
+                statusLabel={STATUS_LABELS[r.data.status]}
                 onRequestStatus={onRequestStatus}
+                t={t}
+              />
+            ) : (
+              <AdjustmentRow
+                key={r.key}
+                a={r.data}
+                kind={r.kind}
+                isAdmin={isAdmin}
+                typeLabel={TYPE_LABELS[r.kind]}
                 t={t}
               />
             ))}
@@ -197,11 +226,16 @@ export default function CompanyWithdrawalsTable({
   );
 }
 
-function WithdrawalRow({ w, isAdmin, statusLabel, onRequestStatus, t }) {
+function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t }) {
   return (
     <tr className="border-b border-white/5" data-testid={`company-withdrawal-row-${w.id}`}>
+      <td className="px-4 py-3">
+        <span className={`text-[0.65rem] uppercase border px-2 py-1 whitespace-nowrap ${TYPE_STYLES.withdrawal}`}>
+          {typeLabel}
+        </span>
+      </td>
       <td className="px-4 py-3 font-mono text-[#8B5CF6]">
-        {Number(w.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+        −{Number(w.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </td>
       <td className="px-4 py-3 font-mono">{w.currency}</td>
       <td className="px-4 py-3 text-xs max-w-xs truncate">{w.beneficiary}</td>
@@ -230,21 +264,21 @@ function WithdrawalRow({ w, isAdmin, statusLabel, onRequestStatus, t }) {
             <div className="flex gap-1">
               <Button
                 size="sm"
-                onClick={() => onRequestStatus({ id: w.id, status: "approved", currency: w.currency })}
+                onClick={() => onRequestStatus({ id: w.id, status: "approved", currency: w.currency, amount: w.amount })}
                 className="bg-[#8B5CF6] text-white rounded-none h-7 text-xs"
               >
                 {t("admin.companyFunds.approve")}
               </Button>
               <Button
                 size="sm"
-                onClick={() => onRequestStatus({ id: w.id, status: "paid", currency: w.currency })}
+                onClick={() => onRequestStatus({ id: w.id, status: "paid", currency: w.currency, amount: w.amount })}
                 className="bg-[#22C55E] text-black rounded-none h-7 text-xs"
               >
                 {t("admin.companyFunds.paid")}
               </Button>
               <Button
                 size="sm"
-                onClick={() => onRequestStatus({ id: w.id, status: "rejected", currency: w.currency })}
+                onClick={() => onRequestStatus({ id: w.id, status: "rejected", currency: w.currency, amount: w.amount })}
                 className="bg-[#EF4444] text-white rounded-none h-7 text-xs"
               >
                 ×
@@ -253,6 +287,43 @@ function WithdrawalRow({ w, isAdmin, statusLabel, onRequestStatus, t }) {
           )}
         </td>
       )}
+    </tr>
+  );
+}
+
+// iter277 — fila de depósito / retiro-por-ajuste (solo lectura: ya afectó el
+// balance al registrarse).
+function AdjustmentRow({ a, kind, isAdmin, typeLabel, t }) {
+  const isDeposit = kind === "deposit";
+  const methodLabel = {
+    cash: t("admin.companyFunds.methodCash"),
+    transfer: t("admin.companyFunds.methodTransfer"),
+    crypto: t("admin.companyFunds.methodCrypto"),
+  }[a.method] || a.method;
+  return (
+    <tr className="border-b border-white/5" data-testid={`fund-movement-row-${a.id}`}>
+      <td className="px-4 py-3">
+        <span className={`text-[0.65rem] uppercase border px-2 py-1 whitespace-nowrap ${TYPE_STYLES[kind]}`}>
+          {typeLabel}
+        </span>
+      </td>
+      <td className={`px-4 py-3 font-mono ${isDeposit ? "text-[#22C55E]" : "text-[#F59E0B]"}`}>
+        {isDeposit ? "+" : "−"}{Number(a.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+      </td>
+      <td className="px-4 py-3 font-mono">{a.currency}</td>
+      <td className="px-4 py-3 text-xs max-w-xs truncate">{a.source_name}</td>
+      <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">
+        {[methodLabel, a.account_label || null, a.note || null]
+          .filter(Boolean).join(" · ")}
+      </td>
+      <td className="px-4 py-3 text-xs">{a.actor_name || a.actor_email}</td>
+      <td className="px-4 py-3"><span className="text-neutral-600 text-xs">—</span></td>
+      <td className="px-4 py-3">
+        <span className="text-xs uppercase border px-2 py-1 bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/30">
+          {t("admin.companyFunds.statusRecorded")}
+        </span>
+      </td>
+      {isAdmin && <td className="px-4 py-3" />}
     </tr>
   );
 }

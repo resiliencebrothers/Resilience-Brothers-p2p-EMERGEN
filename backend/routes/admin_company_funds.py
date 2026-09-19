@@ -81,10 +81,13 @@ class CompanyFundAdjustmentCreate(BaseModel):
 
 # iter213 — denominaciones válidas por moneda (billetes en circulación).
 # Regla de negocio (Jun 2026): el CUP efectivo usa solo la nomenclatura «CUP».
-CASH_DENOMINATIONS: Dict[str, List[int]] = {
-    "CUP": [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
-    "USD": [100, 50, 20, 10, 5, 2, 1],
-}
+# iter277 — las listas de fábrica viven en services.denominations y el admin
+# puede añadir denominaciones nuevas (get_cash_denominations las fusiona).
+from services.denominations import (  # noqa: E402
+    DEFAULT_CASH_DENOMINATIONS, get_cash_denominations,
+)
+
+CASH_DENOMINATIONS: Dict[str, List[int]] = DEFAULT_CASH_DENOMINATIONS
 
 
 def _parse_denomination_entry(currency: str, valid: Optional[List[int]],
@@ -111,9 +114,11 @@ def _parse_denomination_entry(currency: str, valid: Optional[List[int]],
 
 
 def _validate_denominations(currency: str, raw: Dict[str, int],
-                            amount: float) -> Dict[str, int]:
+                            amount: float,
+                            valid: Optional[List[int]] = None) -> Dict[str, int]:
     """Valida el desglose de billetes y que su total coincida con el monto."""
-    valid = CASH_DENOMINATIONS.get(currency)
+    if valid is None:
+        valid = CASH_DENOMINATIONS.get(currency)
     clean: Dict[str, int] = {}
     total = 0.0
     for k, v in (raw or {}).items():
@@ -984,6 +989,17 @@ async def _build_profit_order_rows(
     return rows, total
 
 
+def _batch_item_amounts(it: dict) -> Optional[tuple[float, float]]:
+    """(amount, applied) del ítem VIP, o None si los datos no dan margen."""
+    amount = float(it.get("amount") or 0.0)
+    applied = float(it.get("rate_applied") or 0.0)
+    if applied <= 0 and amount > 0:
+        applied = float(it.get("amount_to") or 0.0) / amount
+    if amount <= 0 or applied <= 0:
+        return None
+    return amount, applied
+
+
 def _batch_item_margin_from(
     it: dict, rate_by_pair: Dict[tuple, dict],
 ) -> Optional[tuple[float, float, float, float]]:
@@ -996,12 +1012,10 @@ def _batch_item_margin_from(
     real = float((rate_by_pair.get((fc, tc)) or {}).get("real_rate") or 0.0)
     if real <= 0:
         return None
-    amount = float(it.get("amount") or 0.0)
-    applied = float(it.get("rate_applied") or 0.0)
-    if applied <= 0 and amount > 0:
-        applied = float(it.get("amount_to") or 0.0) / amount
-    if amount <= 0 or applied <= 0:
+    amounts = _batch_item_amounts(it)
+    if amounts is None:
         return None
+    amount, applied = amounts
     return amount, applied, real, amount * (real - applied) / real
 
 
@@ -1226,6 +1240,51 @@ async def _claim_cw_transition(cwid: str, prev_status: str,
             detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
 
 
+async def _assert_available_company_funds(cw: dict) -> None:
+    """H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
+    (sin custodia de clientes); una salida sin fondos debe tratarse
+    explícitamente, no colarse."""
+    funds = await _compute_company_funds([cw["currency"]])
+    avail = next((f["balance_available"] for f in funds
+                  if f["currency"] == cw["currency"]), 0.0)
+    if float(cw["amount"]) > avail + 1e-9:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
+                    f"pagado: disponible real {avail:.2f} (descontada la "
+                    "custodia de clientes). Registra primero el capital "
+                    "o resuelve el descuadre explícitamente."))
+
+
+async def _validate_paid_from_balance(cw: dict, payload: dict,
+                                      update_doc: Dict[str, Any]) -> None:
+    """N02 — el dinero debe estar EN la cuenta de origen: el fondo global
+    no autoriza pagar desde una caja/cuenta que no tiene ese saldo."""
+    acc_id = update_doc.get("paid_from_account_id")
+    if not acc_id:
+        return
+    explicit = bool((payload.get("paid_from_account_id") or "").strip())
+    from services.fund_accounts import account_assigned_balances
+    assigned = await account_assigned_balances(cw["currency"])
+    acc_avail = float(assigned.get(acc_id, 0.0))
+    if float(cw["amount"]) <= acc_avail + 1e-9:
+        return
+    if explicit:
+        label = update_doc.get("paid_from_account_label") or acc_id
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Saldo insuficiente en la cuenta de origen "
+                    f"«{label}»: disponible {acc_avail:.2f} "
+                    f"{cw['currency']}. Traslada primero el saldo "
+                    "a esa cuenta o registra el descuadre "
+                    "explícitamente."))
+    # atribución AUTOMÁTICA sin respaldo en esa cuenta: la salida
+    # queda «Sin asignar» (el disponible global ya se validó);
+    # nunca se fuerza silenciosamente una cuenta a negativo.
+    update_doc.pop("paid_from_account_id", None)
+    update_doc.pop("paid_from_account_label", None)
+
+
 async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
                                   update_doc: Dict[str, Any]) -> None:
     """V01 — pago bajo cerrojo exclusivo por moneda: el disponible se evalúa
@@ -1249,43 +1308,20 @@ async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
             raise HTTPException(
                 status_code=409,
                 detail="El retiro cambió de estado; recarga e inténtalo de nuevo.")
-        # H02/iter266 — el pago revalida el DISPONIBLE REAL en ese momento
-        # (sin custodia de clientes); una salida sin fondos debe tratarse
-        # explícitamente, no colarse.
-        funds = await _compute_company_funds([cw["currency"]])
-        avail = next((f["balance_available"] for f in funds
-                      if f["currency"] == cw["currency"]), 0.0)
-        if float(cw["amount"]) > avail + 1e-9:
-            raise HTTPException(
-                status_code=409,
-                detail=(f"Fondo insuficiente en {cw['currency']} para marcar "
-                        f"pagado: disponible real {avail:.2f} (descontada la "
-                        "custodia de clientes). Registra primero el capital "
-                        "o resuelve el descuadre explícitamente."))
+        await _assert_available_company_funds(cw)
         update_doc.update(await _paid_from_account_fields(payload, cw))
-        # N02 — el dinero debe estar EN la cuenta de origen: el fondo global
-        # no autoriza pagar desde una caja/cuenta que no tiene ese saldo.
-        acc_id = update_doc.get("paid_from_account_id")
-        if acc_id:
-            explicit = bool((payload.get("paid_from_account_id") or "").strip())
-            from services.fund_accounts import account_assigned_balances
-            assigned = await account_assigned_balances(cw["currency"])
-            acc_avail = float(assigned.get(acc_id, 0.0))
-            if float(cw["amount"]) > acc_avail + 1e-9:
-                if explicit:
-                    label = update_doc.get("paid_from_account_label") or acc_id
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(f"Saldo insuficiente en la cuenta de origen "
-                                f"«{label}»: disponible {acc_avail:.2f} "
-                                f"{cw['currency']}. Traslada primero el saldo "
-                                "a esa cuenta o registra el descuadre "
-                                "explícitamente."))
-                # atribución AUTOMÁTICA sin respaldo en esa cuenta: la salida
-                # queda «Sin asignar» (el disponible global ya se validó);
-                # nunca se fuerza silenciosamente una cuenta a negativo.
-                update_doc.pop("paid_from_account_id", None)
-                update_doc.pop("paid_from_account_label", None)
+        await _validate_paid_from_balance(cw, payload, update_doc)
+        # iter277 — desglose de billetes del pago en efectivo: alimenta el
+        # estado canónico de billetes de la cuenta de origen.
+        raw_denoms = payload.get("denominations")
+        if raw_denoms:
+            valid = (await get_cash_denominations()).get(cw["currency"])
+            if not valid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El desglose de billetes solo aplica a CUP y USD")
+            update_doc["denominations"] = _validate_denominations(
+                cw["currency"], raw_denoms, float(cw["amount"]), valid)
         update_doc["paid_at"] = iso(now_utc())
         # M01 — autoridad indivisible: el permiso de gasto se escribe en el
         # PRESUPUESTO condicionado al cerrojo vigente, justo antes de la
@@ -1362,23 +1398,25 @@ async def update_company_withdrawal(cwid: str, payload: dict, request: Request) 
 # iter54 — Capital-of-trabajo adjustments (manual inflows/outflows)
 # ============================================================
 
-def _resolve_cash_denominations(
+async def _resolve_cash_denominations(
     payload: "CompanyFundAdjustmentCreate", currency: str,
 ) -> Optional[dict]:
     """iter213 — desglose de billetes: obligatorio para efectivo CUP/USD
     (formato del Excel de control físico), validado contra el monto."""
     if payload.method != "cash":
         return None
+    valid_map = await get_cash_denominations()
     # iter271 — el efectivo físico solo existe en CUP y USD: cualquier otra
     # moneda (CUPT, MLC, cripto…) no puede registrarse con método Efectivo.
-    if currency not in CASH_DENOMINATIONS:
+    if currency not in valid_map:
         raise HTTPException(
             status_code=400,
             detail=(f"El método Efectivo solo aplica a CUP y USD: "
                     f"«{currency}» no existe en billetes físicos."))
     if payload.denominations:
         return _validate_denominations(
-            currency, payload.denominations, payload.amount)
+            currency, payload.denominations, payload.amount,
+            valid_map[currency])
     raise HTTPException(
         status_code=400,
         detail=(f"Para efectivo en {currency} debes indicar el "
@@ -1424,7 +1462,7 @@ async def create_company_fund_adjustment(
     currency = await _validate_adjustment_currency(actor, payload.currency)
     # iter271 — validar el efectivo (moneda con billetes + desglose) ANTES de
     # resolver la cuenta: un ajuste rechazado no debe crear la caja perezosa.
-    denominations = _resolve_cash_denominations(payload, currency)
+    denominations = await _resolve_cash_denominations(payload, currency)
     account_id, account_label = await _resolve_adjustment_account(payload, currency)
 
     adjustment = CompanyFundAdjustment(
@@ -1462,35 +1500,24 @@ async def create_company_fund_adjustment(
 
 @router.get("/admin/company-funds/cash-denominations")
 async def cash_denominations_summary(request: Request) -> Any:
-    """iter213 — Control físico de caja por denominación (formato Excel):
-    cantidad actual de billetes = Σ entradas − Σ salidas de los ajustes
-    manuales en efectivo con desglose registrado."""
+    """iter213/iter277 — Caja física por denominación: billetes actuales =
+    suma del estado canónico de TODAS las cuentas de efectivo (último conteo
+    de cada cuenta ± movimientos con desglose posteriores)."""
     actor = await require_permission(request, "company_funds")
     scope = _actor_currency_scope(actor)
-    counts: Dict[str, Dict[int, int]] = {}
-    async for a in db.company_fund_adjustments.find(
-        {"method": "cash", "denominations": {"$nin": [None, {}]}},
-        {"_id": 0, "currency": 1, "adjustment_type": 1, "denominations": 1},
-    ):
-        code = _norm_code(a.get("currency"))
-        if not code or (scope and code not in scope):
-            continue
-        sign = 1 if a.get("adjustment_type") == "inflow" else -1
-        bucket = counts.setdefault(code, {})
-        for k, v in (a.get("denominations") or {}).items():
-            try:
-                denom, qty = int(float(k)), int(v)
-            except (TypeError, ValueError):
-                continue
-            bucket[denom] = bucket.get(denom, 0) + sign * qty
+    from services.account_denoms import cash_denoms_by_currency
+    counts = await cash_denoms_by_currency()
+    cfg = await get_cash_denominations()
     rows = []
     for code in sorted(counts):
-        denom_order = CASH_DENOMINATIONS.get(
-            code, sorted(counts[code], reverse=True))
+        if scope and code not in scope:
+            continue
+        denom_order = list(cfg.get(code) or [])
+        extras = sorted(set(counts[code]) - set(denom_order), reverse=True)
         items = [{"denomination": d,
                   "count": counts[code].get(d, 0),
                   "value": round(d * counts[code].get(d, 0), 2)}
-                 for d in denom_order]
+                 for d in denom_order + extras]
         rows.append({
             "currency": code,
             "denominations": items,
@@ -1498,6 +1525,43 @@ async def cash_denominations_summary(request: Request) -> Any:
             "total_bills": sum(x["count"] for x in items),
         })
     return rows
+
+
+class DenominationAdd(BaseModel):
+    currency: str = Field(..., min_length=2, max_length=10)
+    denomination: int = Field(..., gt=0, le=1_000_000)
+
+
+@router.get("/admin/company-funds/denominations-config")
+async def denominations_config(request: Request) -> Any:
+    """iter277 — listas vigentes de billetes por moneda (fábrica + extras)."""
+    from auth_utils import require_staff
+    await require_staff(request)
+    return await get_cash_denominations()
+
+
+@router.post("/admin/company-funds/denominations-config")
+async def add_denomination_config(payload: DenominationAdd,
+                                  request: Request) -> Any:
+    """iter277 — el admin añade una denominación nueva (p. ej. billete de
+    10000 CUP) que queda disponible en todos los desgloses."""
+    actor = await require_admin(request)
+    code = payload.currency.upper().strip()
+    if code not in DEFAULT_CASH_DENOMINATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Solo CUP y USD tienen billetes físicos")
+    current = (await get_cash_denominations()).get(code) or []
+    if payload.denomination in current:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El billete de {payload.denomination} ya existe en {code}")
+    from services.denominations import add_cash_denomination
+    cfg = await add_cash_denomination(code, payload.denomination)
+    await log_action(
+        db, actor, "company_funds.denomination_add", "settings", code,
+        summary=f"Nueva denominación {payload.denomination} {code}")
+    return cfg
 
 
 @router.get("/admin/company-funds/adjustments")

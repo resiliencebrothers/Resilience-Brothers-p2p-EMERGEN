@@ -1,3 +1,11 @@
+/**
+ * iter277 — Diálogo «Depósito al fondo» (antes «Ajuste manual»).
+ *
+ * Solo registra ENTRADAS de capital: los retiros del fondo se hacen por el
+ * flujo «Retiro» (company withdrawals) para que todo egreso quede en la misma
+ * tabla con su estado. Para efectivo (CUP/USD) exige el desglose de billetes
+ * y permite elegir la cuenta de efectivo destino.
+ */
 import { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -10,8 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import FundAccountSelect, { UNASSIGNED } from "@/components/FundAccountSelect";
-import { ArrowDownCircle, ArrowUpCircle } from "lucide-react";
+import { ArrowDownCircle } from "lucide-react";
 import { toast } from "sonner";
+import { useCashDenoms } from "@/hooks/useCashDenoms";
 
 const METHOD_LABELS = {
   transfer: "Transferencia bancaria",
@@ -19,18 +28,7 @@ const METHOD_LABELS = {
   crypto: "Wallet cripto",
 };
 
-// iter213 — denominaciones de billetes (formato Excel de control físico).
-// Regla de negocio: el CUP efectivo usa solo la nomenclatura «CUP».
-const CASH_DENOMS = {
-  CUP: [5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 3, 1],
-  USD: [100, 50, 20, 10, 5, 2, 1],
-};
-
-// iter271 — el efectivo físico solo existe en CUP y USD.
-const isCashCurrency = (code) => Boolean(CASH_DENOMS[code]);
-
 const emptyForm = {
-  adjustment_type: "inflow",
   currency: "",
   amount: "",
   method: "transfer",
@@ -46,15 +44,16 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
   const [form, setForm] = useState(emptyForm);
   const [askTotp, setAskTotp] = useState(false);
   const [busy, setBusy] = useState(false);
+  // iter277 — denominaciones dinámicas (incluye las añadidas por el admin).
+  const CASH_DENOMS = useCashDenoms();
+  const isCashCurrency = (code) => Boolean(CASH_DENOMS[code]);
 
   const reset = () => {
     setForm(emptyForm);
     setAskTotp(false);
   };
 
-  // iter213 — desglose de billetes activo para efectivo CUP/USD.
   const denomList = form.method === "cash" ? CASH_DENOMS[form.currency] : null;
-  // iter271 — con método Efectivo solo se ofrecen las monedas con billetes.
   const currencyOptions =
     form.method === "cash"
       ? currencies.filter((c) => isCashCurrency(c.code))
@@ -80,7 +79,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
           )
         : null;
       const body = {
-        adjustment_type: form.adjustment_type,
+        adjustment_type: "inflow",
         currency: form.currency,
         amount: effectiveAmount,
         method: form.method,
@@ -94,17 +93,13 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
         totp_code: totpCode,
       };
       await axios.post(`${API}/admin/company-funds/adjustments`, body, { withCredentials: true });
-      toast.success(
-        form.adjustment_type === "inflow"
-          ? "Entrada de capital registrada"
-          : "Salida de capital registrada"
-      );
+      toast.success("Depósito registrado");
       reset();
       onOpenChange(false);
       onCreated?.();
     } catch (e) {
       if (!handleTotpError(e, navigate)) {
-        toast.error(e.response?.data?.detail || "Error al registrar ajuste");
+        toast.error(e.response?.data?.detail || "Error al registrar el depósito");
       }
     } finally {
       setBusy(false);
@@ -117,8 +112,6 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
     form.source_name.trim().length >= 2 &&
     form.method &&
     (form.method !== "cash" ? form.source_account.trim().length > 0 : true);
-
-  const isInflow = form.adjustment_type === "inflow";
 
   return (
     <>
@@ -134,44 +127,16 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
           className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto"
         >
           <DialogHeader>
-            <DialogTitle className="font-display">
-              Ajuste manual de capital
+            <DialogTitle className="font-display flex items-center gap-2">
+              <ArrowDownCircle className="w-5 h-5 text-[#22C55E]" /> Depósito al fondo
             </DialogTitle>
             <DialogDescription className="text-neutral-500 text-xs">
-              Registra entradas propias (inyección de capital) o salidas (retiros
-              del socio). Se refleja en el balance de la empresa. 2FA requerido.
+              Registra una entrada de capital propia (inyección) al fondo de la
+              empresa. Los retiros se hacen con el botón «Retiro». 2FA requerido.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
-            {/* Type toggle */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                data-testid="adj-type-inflow"
-                onClick={() => setForm({ ...form, adjustment_type: "inflow" })}
-                className={`flex items-center justify-center gap-2 border h-11 text-sm ${
-                  isInflow
-                    ? "bg-[#22C55E]/10 border-[#22C55E] text-[#22C55E]"
-                    : "bg-[#0a0a0a] border-white/10 text-neutral-400 hover:border-white/20"
-                }`}
-              >
-                <ArrowDownCircle className="w-4 h-4" /> Entrada
-              </button>
-              <button
-                type="button"
-                data-testid="adj-type-outflow"
-                onClick={() => setForm({ ...form, adjustment_type: "outflow" })}
-                className={`flex items-center justify-center gap-2 border h-11 text-sm ${
-                  !isInflow
-                    ? "bg-[#EF4444]/10 border-[#EF4444] text-[#EF4444]"
-                    : "bg-[#0a0a0a] border-white/10 text-neutral-400 hover:border-white/20"
-                }`}
-              >
-                <ArrowUpCircle className="w-4 h-4" /> Salida
-              </button>
-            </div>
-
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label className="micro-label text-neutral-500">Moneda</Label>
@@ -263,6 +228,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
                   setForm((f) => ({
                     ...f,
                     method: v,
+                    account_id: UNASSIGNED,
                     // iter271 — Efectivo solo existe en CUP/USD: si la moneda
                     // elegida no tiene billetes, se pide elegirla de nuevo.
                     currency:
@@ -303,14 +269,18 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
               )}
             </div>
 
+            {/* iter277 — cuenta destino: para efectivo se elige la cuenta de
+                efectivo (por defecto la caja «Fondo Resilience»). */}
             {form.currency && form.method === "cash" && (
-              <div
-                className="text-[0.7rem] text-neutral-400 flex items-center gap-1.5 border border-white/10 bg-white/[0.02] px-2.5 py-2"
-                data-testid="adj-cashbox-note"
-              >
-                <ArrowDownCircle className="w-3.5 h-3.5 text-[#22C55E] flex-shrink-0" />
-                <span>Este movimiento en efectivo se registra automáticamente, con su desglose de billetes, en la Caja de Efectivo «Fondo Resilience».</span>
-              </div>
+              <FundAccountSelect
+                currency={form.currency}
+                value={form.account_id}
+                onChange={(v) => setForm({ ...form, account_id: v })}
+                label="Cuenta de efectivo (destino)"
+                unassignedLabel="Caja «Fondo Resilience» (automática)"
+                methodFilter="cash"
+                testId="adj-cash-account"
+              />
             )}
             {form.currency && form.method !== "cash" && (
               <FundAccountSelect
@@ -323,9 +293,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
             )}
 
             <div>
-              <Label className="micro-label text-neutral-500">
-                {isInflow ? "¿Quién aporta / entrega?" : "¿Quién retira / recibe?"}
-              </Label>
+              <Label className="micro-label text-neutral-500">¿Quién aporta / entrega?</Label>
               <Input
                 data-testid="adj-source-name"
                 value={form.source_name}
@@ -380,11 +348,7 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
               data-testid="adj-submit"
               disabled={!canContinue || busy}
               onClick={() => setAskTotp(true)}
-              className={`w-full rounded-none text-black ${
-                isInflow
-                  ? "bg-[#22C55E] hover:bg-[#16A34A]"
-                  : "bg-[#EF4444] hover:bg-[#DC2626] text-white"
-              }`}
+              className="w-full rounded-none text-black bg-[#22C55E] hover:bg-[#16A34A]"
             >
               Continuar (2FA)
             </Button>
@@ -394,10 +358,8 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
 
       <TotpPromptDialog
         open={askTotp}
-        title={
-          isInflow ? "Confirmar entrada de capital" : "Confirmar salida de capital"
-        }
-        description="Este movimiento se refleja en el balance de la empresa. Ingresa tu código 2FA."
+        title="Confirmar depósito al fondo"
+        description="Este depósito se refleja en el balance de la empresa. Ingresa tu código 2FA."
         busy={busy}
         onConfirm={(code) => submit(code)}
         onCancel={() => setAskTotp(false)}
