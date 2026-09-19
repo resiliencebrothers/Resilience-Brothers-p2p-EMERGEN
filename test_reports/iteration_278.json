@@ -1,0 +1,20 @@
+{
+  "summary": "Retest iter278 tras fix de iter277: FundAccountSelect autoMode single-option ahora dispara onChange automáticamente. FLUJO Pagado con UNA sola cuenta CUP verificado end-to-end: (1) al pulsar 'Pagado' aparece la nota 'Se registrará en la única cuenta: Fondo Resilience' + el bloque cw-pay-denominations-block con inputs por denominación; (2) desglose ERRÓNEO 3×100=300 con TOTP válido queda bloqueado CLIENT-SIDE con toast 'El desglose suma 300 y el retiro es 500 CUP: deben coincidir' y el retiro permanece PENDING; (3) desglose CORRECTO 5×100=500 con TOTP fresco → PUT /admin/company-withdrawals/{id}/status 200, dialog se cierra, retiro pasa a PAID con denominations={'100':5} y paid_from_account_id=facc_80351159b1ef; (4) GET /admin/company-funds/cash-denominations refleja la deducción exacta (20000 → 19995 billetes de 100 CUP). LOW-1 (dedupe monedas TEST_X en diálogo Depósito) verificado: 0 warnings React de key duplicada, solo 2 opciones distintas ('USD_TEST_XFR · USD' y 'TEST_X · Test Currency'). LOW-2 (guard ResizeObserver en index.js) verificado: 0 apariciones del overlay CRA (iframe#webpack-dev-server-client-overlay) ni texto 'Uncaught runtime errors' tras redimensionar 4 veces + abrir CashBoxDenominationsDialog. Todos los HIGH+LOW del iter277 quedan cerrados.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/test_reports/iteration_278.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FundAccountSelect.jsx L55-59 — la solución con useEffect en el propio componente es correcta y aislada; nota: si `onChange` cambia de identidad en cada render del padre el efecto se re-dispara pero el guard `value === UNASSIGNED` lo hace idempotente.",
+    "useCompanyFunds.js confirmStatusWithTotp — la validación cliente de suma de billetes usa parseInt sin base explícita; con inputs 'number' HTML es seguro, pero conviene forzar radix 10 (parseInt(q, 10)) — ya está en el código, LGTM.",
+    "AdminCompanyFunds.jsx PayCashBills — recibe `t` como prop en lugar de usar useTranslation directamente; funcional pero ligeramente inconsistente con el resto del archivo."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only retest)", "frontend": "100% (todos los ítems iter278 pasan)"},
+  "test_credentials": "Cookie session_token=test_session_admin_X ; TOTP JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+  "seed_data_creation": "Sembrados y luego eliminados: company_fund_adjustments {source_name:'Test QA respaldo', account_id:facc_80351159b1ef, method:cash, denominations:{100:20000}, amount:2_000_000 CUP}; fund_account_denoms snapshot fad_qa_11a60a45 (para respaldar el saldo cash del Fondo Resilience). Además company_withdrawals 'QA Retiro Test' 500 CUP creado por UI y llevado a PAID, y su cash_box_movement asociado. Limpieza post-test: 1 withdrawal, 1 adjustment, 1 cash_box_movement, 1 fund_account_denoms.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter277 bugs cerrados: (a) FundAccountSelect autoMode single-option auto-select OK, (b) validación cliente desglose OK, (c) deducción de billetes al pagar OK, (d) dedupe TEST_X en AdjustmentDialog OK, (e) guard RO error/CRA overlay OK. Nota práctica: el seed para probar retiros CUP debe usar una company_fund_adjustments con account_id=facc_80351159b1ef Y method='cash' Y denominations (o un fund_account_denoms snapshot con created_at ANTERIOR al adjustment) porque el backend valida el disponible POR CUENTA (N02, services.fund_accounts.account_assigned_balances). Un inflow sin account_id NO alimenta la cuenta destino.",
+  "rca of the issue": "N/A — retest de fixes previos, todos los fixes confirmados."
+}
