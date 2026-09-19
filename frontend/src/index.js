@@ -11,6 +11,13 @@ import { initSentry } from "@/sentry";
 // No-op unless REACT_APP_SENTRY_DSN is configured at build time.
 initSentry();
 
+// iter277 — el error benigno "ResizeObserver loop..." dispara el overlay de
+// CRA en dev e intercepta los clics: se silencia solo ese mensaje.
+const RO_ERR = /ResizeObserver loop (limit exceeded|completed with undelivered notifications)/;
+window.addEventListener("error", (e) => {
+  if (RO_ERR.test(e.message || "")) e.stopImmediatePropagation();
+});
+
 // Sentry ErrorBoundary is a no-op pass-through when DSN is missing.
 const RootApp = process.env.REACT_APP_SENTRY_DSN
   ? Sentry.withErrorBoundary(App, {

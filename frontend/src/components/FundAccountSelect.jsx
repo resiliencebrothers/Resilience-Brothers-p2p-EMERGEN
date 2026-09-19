@@ -49,6 +49,15 @@ export default function FundAccountSelect({
     return () => { alive = false; };
   }, [currency, methodFilter]);
 
+  // iter277 — con una sola cuenta en modo auto, la selección debe hacerse
+  // efectiva en el padre (antes solo se mostraba la nota informativa y el
+  // valor quedaba «Sin asignar»: el pago en efectivo no pedía los billetes).
+  useEffect(() => {
+    if (autoMode && options && options.length === 1 && value === UNASSIGNED) {
+      onChange(options[0].id);
+    }
+  }, [autoMode, options, value, onChange]);
+
   if (!currency || options === null) return null;
 
   if (autoMode && options.length === 0) return null;

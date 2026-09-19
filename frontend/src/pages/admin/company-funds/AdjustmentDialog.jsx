@@ -54,10 +54,17 @@ export default function AdjustmentDialog({ open, onOpenChange, currencies, onCre
   };
 
   const denomList = form.method === "cash" ? CASH_DENOMS[form.currency] : null;
-  const currencyOptions =
-    form.method === "cash"
+  const currencyOptions = [];
+  {
+    // dedupe por código: datos sucios con monedas repetidas rompían las keys
+    const seen = new Set();
+    (form.method === "cash"
       ? currencies.filter((c) => isCashCurrency(c.code))
-      : currencies;
+      : currencies
+    ).forEach((c) => {
+      if (!seen.has(c.code)) { seen.add(c.code); currencyOptions.push(c); }
+    });
+  }
   const denomTotal = denomList
     ? denomList.reduce((s, d) => s + d * (parseInt(form.denoms[d], 10) || 0), 0)
     : 0;
