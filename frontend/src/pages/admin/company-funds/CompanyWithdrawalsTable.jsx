@@ -31,7 +31,7 @@ const TYPE_STYLES = {
 };
 
 export default function CompanyWithdrawalsTable({
-  rows, rawTotal, isAdmin,
+  rows, total, page, setPage, isAdmin,
   createCurrencies, currencies,
   statusFilter, setStatusFilter,
   tipoFilter, setTipoFilter,
@@ -172,7 +172,7 @@ export default function CompanyWithdrawalsTable({
           </button>
         )}
         <div className="text-xs text-neutral-500 font-mono ml-auto h-10 flex items-end pb-2">
-          {t("admin.companyFunds.showing", { n: rows.length, total: rawTotal })}
+          {t("admin.companyFunds.showing", { n: rows.length, total })}
         </div>
       </div>
 
@@ -222,6 +222,33 @@ export default function CompanyWithdrawalsTable({
           </tbody>
         </table>
       </div>
+
+      {/* S07 — paginación del servidor: el historial completo es accesible. */}
+      {(page > 0 || rows.length < total) && (
+        <div className="flex items-center justify-end gap-2" data-testid="cw-pagination">
+          <button
+            type="button"
+            data-testid="cw-page-prev"
+            disabled={page === 0}
+            onClick={() => setPage(Math.max(0, page - 1))}
+            className="text-xs font-mono border border-white/15 px-3 py-1.5 disabled:opacity-30 disabled:cursor-default hover:border-[#8B5CF6]/60"
+          >
+            ‹
+          </button>
+          <span className="text-xs text-neutral-500 font-mono" data-testid="cw-page-indicator">
+            {page + 1} / {Math.max(1, Math.ceil(total / 50))}
+          </span>
+          <button
+            type="button"
+            data-testid="cw-page-next"
+            disabled={(page + 1) * 50 >= total}
+            onClick={() => setPage(page + 1)}
+            className="text-xs font-mono border border-white/15 px-3 py-1.5 disabled:opacity-30 disabled:cursor-default hover:border-[#8B5CF6]/60"
+          >
+            ›
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -237,7 +264,7 @@ function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t 
       <td className="px-4 py-3 font-mono text-[#8B5CF6]">
         −{Number(w.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </td>
-      <td className="px-4 py-3 font-mono">{w.currency}</td>
+      <td translate="no" className="notranslate px-4 py-3 font-mono">{w.currency}</td>
       <td className="px-4 py-3 text-xs max-w-xs truncate">{w.beneficiary}</td>
       <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">{w.concept || "—"}</td>
       <td className="px-4 py-3 text-xs">{w.authorized_by_name}</td>
@@ -310,7 +337,7 @@ function AdjustmentRow({ a, kind, isAdmin, typeLabel, t }) {
       <td className={`px-4 py-3 font-mono ${isDeposit ? "text-[#22C55E]" : "text-[#F59E0B]"}`}>
         {isDeposit ? "+" : "−"}{Number(a.amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </td>
-      <td className="px-4 py-3 font-mono">{a.currency}</td>
+      <td translate="no" className="notranslate px-4 py-3 font-mono">{a.currency}</td>
       <td className="px-4 py-3 text-xs max-w-xs truncate">{a.source_name}</td>
       <td className="px-4 py-3 text-xs text-neutral-400 max-w-xs truncate">
         {[methodLabel, a.account_label || null, a.note || null]

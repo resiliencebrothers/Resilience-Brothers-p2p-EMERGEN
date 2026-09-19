@@ -155,6 +155,34 @@ export default function SecuritySettings() {
     }
   };
 
+  const submitPasswordSet = async () => {
+    if (pwd.new.length < 8) return toast.error(t("security.password.tooShort"));
+    if (pwd.new !== pwd.confirm) return toast.error(t("security.password.mismatch"));
+    if (status?.enabled && pwd.totp.length !== 6) return toast.error(t("security.password.enterTotp"));
+    setPwdBusy(true);
+    try {
+      await axios.post(
+        `${API}/profile/password/set`,
+        {
+          new_password: pwd.new,
+          totp_code: status?.enabled ? pwd.totp : undefined,
+        },
+        { withCredentials: true },
+      );
+      toast.success(t("security.password.setUpdated"));
+      setPwd({ current: "", new: "", confirm: "", totp: "", show: pwd.show });
+      await loadStatus();
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      const msg = typeof detail === "string"
+        ? detail
+        : (detail?.message || t("security.password.updateError"));
+      toast.error(msg);
+    } finally {
+      setPwdBusy(false);
+    }
+  };
+
   if (loading) return <div className="text-neutral-500">{t("security.loading")}</div>;
 
   return (
@@ -218,6 +246,7 @@ export default function SecuritySettings() {
         setPwd={setPwd}
         busy={pwdBusy}
         onSubmit={submitPasswordChange}
+        onSetSubmit={submitPasswordSet}
       />
     </div>
   );

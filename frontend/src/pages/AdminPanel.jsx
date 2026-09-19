@@ -310,7 +310,7 @@ export default function AdminPanel() {
 
       <main className="flex-1 lg:ml-64 min-w-0 overflow-x-hidden">
         {/* Mobile top bar with hamburger menu */}
-        <div className="lg:hidden sticky top-0 z-30 glass-panel h-14 px-4 flex items-center justify-between border-b border-white/5">
+        <div className="lg:hidden sticky top-0 z-30 glass-panel h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-2">
             <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
             <span className="font-display text-sm">ADMIN</span>
@@ -330,7 +330,7 @@ export default function AdminPanel() {
             <SheetContent
               side="right"
               data-testid="admin-mobile-menu"
-              className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
+              className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] flex flex-col"
             >
               <VisuallyHidden><SheetTitle>Menú de navegación admin</SheetTitle></VisuallyHidden>
               <div className="h-16 border-b border-white/5 flex items-center px-5 shrink-0">

@@ -595,7 +595,7 @@ function Stat({ icon: Icon, label, value, sub, accent }) {
   return (
     <div className="tactile-card p-4">
       <Icon className={`w-4 h-4 mb-2 ${accent ? "text-[#8B5CF6]" : "text-neutral-500"}`} />
-      <div className="micro-label text-neutral-500 text-[0.65rem]">{label}</div>
+      <div className="micro-label text-neutral-500 text-[0.65rem] notranslate" translate="no">{label}</div>
       <div className={`font-display text-2xl mt-1 ${accent ? "text-[#8B5CF6]" : ""}`}>{value}</div>
       {sub && <div className="text-xs text-neutral-500 mt-0.5">{sub}</div>}
     </div>

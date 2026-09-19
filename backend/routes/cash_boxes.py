@@ -318,6 +318,34 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
                         "puede completarse su desglose de billetes pendiente."))
         denoms = await _clean_denoms(mov["fund"], payload.denominations,
                                      mov["amount"])
+        # S03 — desglose ÚNICO por operación: si el documento de origen ya
+        # tiene uno distinto, el completado se rechaza; si no lo tiene, se
+        # PROPAGA para que el inventario por cuenta lo vea exactamente una
+        # vez. Las compensaciones no tocan su operación de origen.
+        if not mov.get("annuls_movement_id"):
+            src_links = (
+                ("source_adjustment_id", db.company_fund_adjustments),
+                ("source_withdrawal_id", db.company_withdrawals),
+                ("source_client_withdrawal_id", db.withdrawals),
+                ("source_transfer_id", db.fund_account_transfers),
+            )
+            for field, coll in src_links:
+                src_id = str(mov.get(field) or "")
+                if not src_id:
+                    continue
+                src = await coll.find_one({"id": src_id}, {"_id": 0})
+                src_denoms = (src or {}).get("denominations") or None
+                if src_denoms and src_denoms != denoms:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=("La operación de origen ya tiene un desglose "
+                                "autorizado distinto; corrige desde el Fondo "
+                                "de Empresa, no desde la Caja."))
+                if src and not src_denoms:
+                    await coll.update_one(
+                        {"id": src_id},
+                        {"$set": {"denominations": denoms}})
+                break
         await db.cash_box_movements.update_one(
             {"id": mov_id},
             {"$set": {"denominations": denoms, "denoms_pending": False}})

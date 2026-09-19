@@ -102,6 +102,7 @@ async def get_my_profile(request: Request) -> Any:
         "created_at": doc.get("created_at", ""),
         "twofa_enabled": bool(doc.get("totp_enabled", False)),
         "auth_provider": doc.get("auth_provider", "google"),
+        "has_password": bool(doc.get("password_hash")),
         "preferred_language": doc.get("preferred_language", ""),
         "kyc_status": (kyc or {}).get("status", "not_started"),
         "pending_email_change": {
@@ -486,24 +487,17 @@ async def change_password(payload: PasswordChangePayload, request: Request) -> A
     """
     user = await require_user(request)
 
-    # 1. Only email/password users can change their password here. Google
-    #    users don't have a `password_hash` — they manage credentials in
-    #    their Google account.
-    if user.get("auth_provider") != "password":
+    # 1. Solo cuentas que YA tienen contraseña pueden cambiarla aquí. Una
+    #    cuenta creada con Google sin contraseña usa «Establecer contraseña»
+    #    (POST /profile/password/set).
+    stored_hash = user.get("password_hash")
+    if not stored_hash:
         raise HTTPException(
             status_code=403,
             detail=(
-                "Tu cuenta usa inicio de sesión con Google. "
-                "Cambia tu contraseña desde tu cuenta de Google."
+                "Tu cuenta aún no tiene contraseña. "
+                "Usa la opción «Establecer contraseña»."
             ),
-        )
-
-    stored_hash = user.get("password_hash")
-    if not stored_hash:
-        # Defensive: password-provider account without hash → data corruption.
-        raise HTTPException(
-            status_code=500,
-            detail="Estado de la cuenta inconsistente. Contacta a soporte.",
         )
 
     # 2. Verify current password
@@ -575,6 +569,86 @@ async def change_password(payload: PasswordChangePayload, request: Request) -> A
     await log_action(
         db, user, "profile.password_changed", "user", user["user_id"],
         summary="Cambió su contraseña desde el perfil",
+        details={"other_sessions_revoked": revoked.deleted_count},
+    )
+    return {
+        "ok": True,
+        "other_sessions_revoked": revoked.deleted_count,
+    }
+
+
+# ============================================================
+# iter280 — Establecer contraseña (cuentas Google sin contraseña)
+# ============================================================
+
+class PasswordSetPayload(BaseModel):
+    """Body de `POST /profile/password/set` — primera contraseña de una
+    cuenta creada con Google (sin `password_hash`). No exige contraseña
+    actual porque no existe; con 2FA activado exige un código fresco."""
+    model_config = ConfigDict(extra="ignore")
+    new_password: str = Field(..., min_length=8, max_length=200)
+    totp_code: Optional[str] = Field(default=None, max_length=11)
+
+
+@router.post("/profile/password/set")
+async def set_password(payload: PasswordSetPayload, request: Request) -> Any:
+    """Permite a un usuario registrado con Google crear su primera contraseña
+    para poder entrar también con correo+contraseña. Rechaza si ya existe una
+    (ahí aplica el flujo de cambio, que verifica la actual). Revoca las demás
+    sesiones, envía correo de seguridad y audita — igual que el cambio."""
+    user = await require_user(request)
+
+    if user.get("password_hash"):
+        raise HTTPException(
+            status_code=400,
+            detail=("Tu cuenta ya tiene contraseña. "
+                    "Usa «Cambiar contraseña» indicando la actual."),
+        )
+
+    from auth_utils import _enforce_totp_if_enabled
+    await _enforce_totp_if_enabled(user, payload.totp_code,
+                                   action_label="establecer contraseña")
+
+    new_hash = _hash_password(payload.new_password)
+    claimed = await db.users.update_one(
+        {"user_id": user["user_id"], "password_hash": {"$exists": False}},
+        {"$set": {
+            "password_hash": new_hash,
+            "password_changed_at": iso(now_utc()),
+        }},
+    )
+    if claimed.matched_count == 0:
+        # carrera: otra pestaña ya la estableció — jamás se sobreescribe
+        raise HTTPException(
+            status_code=409,
+            detail="La contraseña ya fue establecida desde otra sesión.")
+
+    current_token = request.cookies.get("session_token")
+    if not current_token:
+        auth_hdr = request.headers.get("Authorization", "")
+        if auth_hdr.lower().startswith("bearer "):
+            current_token = auth_hdr[7:].strip()
+    revoke_filter: dict[str, Any] = {"user_id": user["user_id"]}
+    if current_token:
+        revoke_filter["session_token"] = {"$ne": current_token}
+    revoked = await db.user_sessions.delete_many(revoke_filter)
+
+    try:
+        import email_service
+        email_service.notify_password_changed(
+            user["email"], user.get("name", ""),
+            lang=user.get("preferred_language") or "es",
+        )
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "notify_password_changed (set) failed for %s: %s",
+            user["user_id"], e)
+
+    from audit_log import log_action
+    await log_action(
+        db, user, "profile.password_set", "user", user["user_id"],
+        summary="Estableció su primera contraseña (cuenta Google)",
         details={"other_sessions_revoked": revoked.deleted_count},
     )
     return {

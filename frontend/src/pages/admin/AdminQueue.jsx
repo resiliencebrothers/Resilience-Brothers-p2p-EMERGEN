@@ -122,7 +122,7 @@ export default function AdminQueue() {
   const flashClass = "queue-row-flash";
 
   return (
-    <div data-testid="admin-queue" className="space-y-8">
+    <div data-testid="admin-queue" className="space-y-8 notranslate" translate="no">
       <style>{`
         @keyframes queueFlash {
           0%   { background-color: rgba(139, 92, 246, 0.28); }

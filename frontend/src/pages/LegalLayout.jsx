@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 export default function LegalLayout({ title, eyebrow, lastUpdated, children }) {
   return (
     <div className="min-h-screen bg-[#14101F] text-white" data-testid={`legal-${(eyebrow || "").toLowerCase()}`}>
-      <header className="border-b border-white/10 sticky top-0 bg-[#14101F]/95 backdrop-blur z-10">
+      <header className="border-b border-white/10 sticky top-0 bg-[#14101F]/95 backdrop-blur z-10 pt-[env(safe-area-inset-top)]">
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link to="/" className="text-xs uppercase tracking-widest text-neutral-400 hover:text-[#8B5CF6] flex items-center gap-2">
             <ArrowLeft className="w-4 h-4" /> Volver al inicio

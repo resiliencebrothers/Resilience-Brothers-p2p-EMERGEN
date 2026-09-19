@@ -11,9 +11,11 @@ contra el balance del sistema queda visible hasta el próximo conteo.
 """
 from typing import Any, Dict, Optional
 
+from fastapi import HTTPException
+
 from db_client import db
 
-_HAS_DENOMS = {"$nin": [None, {}]}
+_HAS_DENOMS: Dict[str, Any] = {"$nin": [None, {}]}
 
 
 def _apply(counts: Dict[int, int], denoms: Optional[dict], sign: int) -> None:
@@ -54,7 +56,15 @@ async def current_account_denoms(acc: dict) -> Dict[str, Any]:
                           "$or": [{"from_account_id": acc_id},
                                   {"to_account_id": acc_id}]}
     if since:
-        q2["created_at"] = {"$gt": since}
+        # S05 — el corte es el momento EFECTIVO del traslado (confirmed_at):
+        # una transferencia iniciada antes de un conteo pero confirmada
+        # después SÍ mueve billetes posteriores al conteo. Las históricas sin
+        # ese dato conservan el corte por created_at.
+        q2["$and"] = [{"$or": [
+            {"confirmed_at": {"$gt": since}},
+            {"confirmed_at": {"$exists": False},
+             "created_at": {"$gt": since}},
+        ]}]
     async for tr in db.fund_account_transfers.find(
             q2, {"_id": 0, "from_account_id": 1, "to_account_id": 1,
                  "denominations": 1}):
@@ -71,11 +81,51 @@ async def current_account_denoms(acc: dict) -> Dict[str, Any]:
             q3, {"_id": 0, "denominations": 1}):
         _apply(counts, w.get("denominations"), -1)
 
+    # S03 — los retiros de CLIENTES pagados desde la cuenta también sacan
+    # billetes: su desglose llega al pagarse o al completarse desde la Caja
+    # de Efectivo (que lo propaga al documento del retiro).
+    q4: Dict[str, Any] = {"status": "paid", "paid_from_account_id": acc_id,
+                          "denominations": _HAS_DENOMS}
+    if since:
+        q4["paid_at"] = {"$gt": since}
+    async for w in db.withdrawals.find(q4, {"_id": 0, "denominations": 1}):
+        _apply(counts, w.get("denominations"), -1)
+
     denominations = {str(d): n for d, n in
                      sorted(counts.items(), reverse=True) if n != 0}
     total = round(sum(d * n for d, n in counts.items()), 2)
     return {"denominations": denominations, "total": total,
             "counted_at": since}
+
+
+async def assert_bills_available(account_id: str, requested: Dict[str, int],
+                                 label: str, op_label: str) -> None:
+    """S04 — una salida detallada debe estar cubierta por los billetes
+    CONOCIDOS de la cuenta: nunca se presenta una composición negativa como
+    válida. Con inventario totalmente vacío (histórico sin detallar) no hay
+    composición que exigir: queda como conciliación pendiente visible."""
+    acc = await db.fund_accounts.find_one({"id": account_id}, {"_id": 0})
+    if not acc:
+        return
+    cur = await current_account_denoms(acc)
+    inv = {int(float(k)): int(v) for k, v in cur["denominations"].items()}
+    if not inv:
+        return
+    missing = []
+    for k, q in (requested or {}).items():
+        try:
+            d, need = int(float(k)), int(q)
+        except (TypeError, ValueError):
+            continue
+        have = inv.get(d, 0)
+        if need > have:
+            missing.append(f"{need}×{d} (hay {max(have, 0)})")
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"La cuenta «{label}» no tiene esos billetes para "
+                    f"{op_label}: {', '.join(missing)}. Registra primero el "
+                    "cambio físico de billetes o un nuevo conteo."))
 
 
 async def cash_denoms_by_currency() -> Dict[str, Dict[int, int]]:

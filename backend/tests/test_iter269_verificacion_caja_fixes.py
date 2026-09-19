@@ -368,7 +368,7 @@ class TestV03AccountIdentity:
         r = _adjust({"adjustment_type": "inflow", "currency": "USD",
                      "amount": 100, "method": "cash",
                      "source_name": f"{MARK} aporte",
-                     "denominations": {"100": 1}})
+                     "denominations": {"20": 5}})
         assert r.status_code == 200, r.text
         acc = _cash_account("USD")
         assert acc, "la cuenta de caja USD debe existir"
@@ -386,9 +386,11 @@ class TestV03AccountIdentity:
                               "beneficiary": f"{MARK} proveedor",
                               "concept": "x"})
             assert cwr.status_code == 200, cwr.text
+            # iter279/S02 — el pago en efectivo exige el desglose de billetes
             pay = _cw_status(cwr.json()["id"],
                              {"status": "paid",
-                              "paid_from_account_id": acc["id"]})
+                              "paid_from_account_id": acc["id"],
+                              "denominations": {"20": 2}})
             assert pay.status_code == 200, pay.text
             assert pay.json().get("cash_box_movement_id"), \
                 "la cuenta renombrada sigue reconociéndose como caja (V03)"

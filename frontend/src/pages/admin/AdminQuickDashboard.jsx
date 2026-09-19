@@ -66,7 +66,7 @@ export default function AdminQuickDashboard() {
   const liquidityNet = fundsTotalUsdt - vipTotalUsdt;
 
   return (
-    <div className="space-y-4 max-w-2xl mx-auto" data-testid="admin-quick-dashboard">
+    <div className="space-y-4 max-w-2xl mx-auto notranslate" translate="no" data-testid="admin-quick-dashboard">
       {/* Header */}
       <div className="flex items-center gap-3 mb-2">
         <Zap className="w-5 h-5 text-[#8B5CF6]" />

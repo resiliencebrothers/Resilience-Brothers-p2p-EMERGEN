@@ -218,7 +218,8 @@ def test_change_password_wrong_totp_rejected():
 
 
 def test_change_password_google_user_forbidden():
-    """Google-auth account has no password_hash → 403 with Spanish message."""
+    """iter280 — cuenta Google SIN password_hash → 403 apuntando al flujo
+    «Establecer contraseña» (antes se le negaba toda gestión de contraseña)."""
     db_ = _db()
     db_.users.update_one(
         {"user_id": TEST_UID},
@@ -246,7 +247,7 @@ def test_change_password_google_user_forbidden():
             json={"current_password": "whatever", "new_password": "AnyValidPass1!"},
         )
         assert r.status_code == 403, r.text
-        assert "google" in r.json()["detail"].lower()
+        assert "establecer" in r.json()["detail"].lower()
     finally:
         _cleanup()
 

@@ -2672,7 +2672,11 @@
       "totpInvalid": "Código 2FA inválido.",
       "updateError": "Error al cambiar la contraseña.",
       "updated": "Contraseña actualizada correctamente.",
-      "updatedWithSessions": "Contraseña actualizada. Se cerraron {{count}} sesiones adicionales."
+      "updatedWithSessions": "Contraseña actualizada. Se cerraron {{count}} sesiones adicionales.",
+      "setTitle": "Establecer contraseña",
+      "setBody": "Tu cuenta se creó con Google y aún no tiene contraseña. Crea una para poder entrar también con tu correo y contraseña. Se cerrarán tus otras sesiones activas.",
+      "setSubmit": "Establecer contraseña",
+      "setUpdated": "Contraseña establecida. Ya puedes entrar con tu correo y contraseña."
     }
   },
   "tracker": {

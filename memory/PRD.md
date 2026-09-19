@@ -1840,3 +1840,17 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 - Denominaciones configurables: CUP de fábrica incluye 2000/5000 y el admin puede añadir billetes nuevos (formulario en el diálogo Caja física) que valen en todos los desgloses y arqueos.
 - Tests: `test_iter277_denoms_sync.py` 11/11 · test-critical **413/413** · suite completa **1971 passed / 8 skipped / 0 failed** · testing agent E2E: iter277 (1 HIGH corregido: auto-selección de cuenta única en pago efectivo) → iter278 **100%**. Detalle en CHANGELOG.md.
 - PENDIENTE USUARIO: verificar en preview y redesplegar a producción (los reportes venían del dominio productivo).
+
+## 2026-06 · iter279/280 — Auditoría S01–S08, fixes PWA/traducción, contraseña para usuarios Google (sesión anterior, verificado en esta)
+- S01–S05 backend (doble conteo cajas, assert_bills_available estricto), S06/S07 frontend (cache reactiva useCashDenoms, tabla unificada paginada). PWA safe-area iPhone. Chips de moneda con translate="no". dom-translate-guard.js contra crashes de Google Translate.
+- Establecer contraseña para usuarios Google: `POST /api/profile/password/set` + UI en SecuritySettings/PasswordChangeCard. Verificado en esta sesión: `test_iter280_password_set.py` **7/7 passed**.
+
+## 2026-06 · iter281 — Fix P0: "Pendientes" → "star" (Chrome Translate) en vistas de staff
+- `translate="no"` + `notranslate` aplicados al contenedor raíz de `AdminQueue.jsx` (Mi Cola / Pendientes en tu scope) y `AdminQuickDashboard.jsx` (Vista Rápida), y a las etiquetas de los contadores Stat en `AdminOverview.jsx`.
+- Verificado con screenshot_tool (móvil 390px y desktop 1920px) con sesión employee: atributos presentes en DOM, páginas renderizan sin errores.
+- Sesión smoke nueva: `smoke_session_emp_iter281` → user_test_employee01 (TTL 2026-12-31).
+
+## Backlog priorizado (pendiente de aprobación del usuario — rechazó abordarlos en iter281)
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

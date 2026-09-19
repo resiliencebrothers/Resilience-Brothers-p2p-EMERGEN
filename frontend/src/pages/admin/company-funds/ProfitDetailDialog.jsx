@@ -58,7 +58,7 @@ export default function ProfitDetailDialog({ currency, onClose }) {
         className="bg-[#0c0c0c] border border-[#22C55E]/30 text-white rounded-none max-w-3xl max-h-[85vh] overflow-y-auto tx-body-scroll"
       >
         <DialogHeader>
-          <DialogTitle className="font-mono flex items-center gap-2">
+          <DialogTitle translate="no" className="notranslate font-mono flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#22C55E]" />
             {t("admin.companyFunds.profitDetailTitle", { currency })}
           </DialogTitle>

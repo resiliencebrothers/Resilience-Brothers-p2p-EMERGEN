@@ -48,4 +48,16 @@ i18n
     returnEmptyString: false,
   });
 
+// El atributo lang del documento debe reflejar SIEMPRE el idioma real de la
+// interfaz: con lang="en" fijo, Chrome ofrecía "traducir" la página ya en
+// español y Google Translate corrompía los códigos de moneda (CUP → "TAZA",
+// AED → "DEA") y los importes.
+const syncHtmlLang = (lng) => {
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = (lng || "es").split("-")[0];
+  }
+};
+syncHtmlLang(i18n.language);
+i18n.on("languageChanged", syncHtmlLang);
+
 export default i18n;

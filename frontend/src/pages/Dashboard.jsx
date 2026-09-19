@@ -187,7 +187,7 @@ export default function Dashboard() {
 
       <main className="flex-1 lg:ml-64 min-w-0 overflow-x-hidden">
         {/* MOBILE TOP BAR with hamburger */}
-        <div className="lg:hidden sticky top-0 z-30 glass-panel h-14 px-4 flex items-center justify-between border-b border-white/5">
+        <div className="lg:hidden sticky top-0 z-30 glass-panel h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] px-4 flex items-center justify-between border-b border-white/5">
           <div className="flex items-center gap-2">
             <img src="/branding/logo-300.png" alt="RB" className="h-8 w-8 object-contain" />
             <span className="font-display text-sm">RESILIENCE</span>
@@ -209,7 +209,7 @@ export default function Dashboard() {
             <SheetContent
               side="right"
               data-testid="dashboard-mobile-menu"
-              className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 flex flex-col"
+              className="w-72 bg-[#0c0c0c] border-l border-white/10 text-white p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] flex flex-col"
             >
               <VisuallyHidden><SheetTitle>{t("dashboard.menuNav")}</SheetTitle></VisuallyHidden>
               <div className="h-16 border-b border-white/5 flex items-center px-5 shrink-0">

@@ -83,7 +83,7 @@ export default function FundDetailDialog({ fund, onClose }) {
         className="bg-[#0c0c0c] border border-[#8B5CF6]/30 text-white rounded-none max-w-2xl max-h-[85vh] overflow-y-auto tx-body-scroll"
       >
         <DialogHeader>
-          <DialogTitle className="font-mono flex items-center gap-2">
+          <DialogTitle translate="no" className="notranslate font-mono flex items-center gap-2">
             <LayoutDashboard className="w-4 h-4 text-[#8B5CF6]" />
             {t("admin.companyFunds.fundDashTitle", { currency: f.currency })}
           </DialogTitle>

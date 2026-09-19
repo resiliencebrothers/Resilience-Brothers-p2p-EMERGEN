@@ -201,13 +201,22 @@ async def _paid_from_is_cash_box(src: Dict[str, Any]) -> bool:
 # --------------------------------------------------------------------------
 
 async def mirror_adjustment_to_cash_box(adj: Dict[str, Any]) -> Optional[str]:
-    """Ajuste manual de capital en efectivo → movimiento de la caja física."""
+    """Ajuste manual de capital en efectivo → movimiento de la caja física.
+    S01 — la Caja de Efectivo representa la CUENTA CANÓNICA: un ajuste
+    atribuido a OTRA cuenta de efectivo no entra aquí (el traslado posterior
+    hacia la canónica ya genera su propia entrada física); sin atribución
+    (histórico) la canónica lo absorbe, como el inventario por cuenta."""
     if (adj.get("method") or "") != "cash":
         return None
     fund = fund_for_currency(adj.get("currency"))
     aid = str(adj.get("id") or "")
     if not fund or not aid:
         return None
+    acc_id = str(adj.get("account_id") or "")
+    if acc_id:
+        acc = await db.fund_accounts.find_one({"id": acc_id}, {"_id": 0})
+        if not acc or not await _is_company_cash_account(acc):
+            return None
     box = await get_or_create_company_cash_box()
     kind = "entrada" if adj.get("adjustment_type") == "inflow" else "salida"
     mov_id = f"cmov_adj_{aid.replace('-', '')[:20]}"
@@ -245,6 +254,9 @@ async def mirror_company_withdrawal_to_cash_box(
     mov_id = f"cmov_cw_{cwid.replace('-', '')[:20]}"
     concept = (f"Retiro de empresa pagado: {cw.get('beneficiary') or ''}"
                + (f" — {cw['concept']}" if cw.get("concept") else ""))
+    # S03 — el desglose autorizado en el pago viaja al espejo: una sola
+    # fuente de verdad, sin quedar «pendiente» en la Caja.
+    cw_denoms = cw.get("denominations") or None
     doc: Dict[str, Any] = {
         "id": mov_id,
         "box_id": box["id"],
@@ -253,8 +265,8 @@ async def mirror_company_withdrawal_to_cash_box(
         "amount": round(float(cw.get("amount") or 0), 2),
         "concept": concept.strip()[:200],
         "responsible": str(cw.get("beneficiary") or "")[:80],
-        "denominations": None,
-        "denoms_pending": True,
+        "denominations": cw_denoms,
+        "denoms_pending": cw_denoms is None,
         "created_at": cw.get("paid_at") or cw.get("created_at") or iso(now_utc()),
         "created_by_id": cw.get("authorized_by_id") or "system",
         "created_by_name": cw.get("authorized_by_name") or "Sistema",
@@ -278,6 +290,7 @@ async def mirror_client_withdrawal_to_cash_box(
     box = await get_or_create_company_cash_box()
     mov_id = f"cmov_wd_{wid.replace('-', '')[:20]}"
     who = w.get("user_name") or w.get("user_email") or w.get("user_id") or ""
+    w_denoms = w.get("denominations") or None
     doc: Dict[str, Any] = {
         "id": mov_id,
         "box_id": box["id"],
@@ -286,8 +299,8 @@ async def mirror_client_withdrawal_to_cash_box(
         "amount": round(float(w.get("amount_usd") or 0), 2),
         "concept": f"Retiro de cliente pagado: {who}".strip()[:200],
         "responsible": str(who)[:80],
-        "denominations": None,
-        "denoms_pending": True,
+        "denominations": w_denoms,
+        "denoms_pending": w_denoms is None,
         "created_at": w.get("paid_at") or w.get("created_at") or iso(now_utc()),
         "created_by_id": "system",
         "created_by_name": "Sistema (pago a cliente)",
@@ -324,6 +337,7 @@ async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
         return None
     box = await get_or_create_company_cash_box()
     mov_id = f"cmov_tr_{trid.replace('-', '')[:20]}"
+    tr_denoms = tr.get("denominations") or None
     doc: Dict[str, Any] = {
         "id": mov_id,
         "box_id": box["id"],
@@ -334,8 +348,8 @@ async def mirror_fund_transfer_to_cash_box(tr: Dict[str, Any]) -> Optional[str]:
                     f"{tr.get('from_label') or 'Sin asignar'} → "
                     f"{tr.get('to_label') or 'Sin asignar'}")[:200],
         "responsible": str(tr.get("actor_name") or "")[:80],
-        "denominations": None,
-        "denoms_pending": True,
+        "denominations": tr_denoms,
+        "denoms_pending": tr_denoms is None,
         "created_at": tr.get("created_at") or iso(now_utc()),
         "created_by_id": tr.get("actor_id") or "system",
         "created_by_name": tr.get("actor_name") or "Sistema",
@@ -583,6 +597,59 @@ async def _repair_internal_transfer_mirrors() -> int:
     return n
 
 
+async def _repair_foreign_account_adjustment_mirrors() -> int:
+    """S01 — un ajuste cash atribuido a OTRA cuenta de efectivo (no la caja
+    canónica) nunca debió espejarse en la Caja de Efectivo: el traslado
+    posterior hacia la canónica genera su propia entrada y el mismo efectivo
+    se contaba dos veces. El espejo histórico se anula con una COMPENSACIÓN
+    trazable (arqueo invalidado); el ajuste conserva el vínculo original y
+    queda excluido de nuevas reevaluaciones por `mirror_annulled_by`."""
+    n = 0
+    q = {"method": "cash",
+         "cash_box_movement_id": {"$nin": [None, "", NOT_APPLICABLE]},
+         "mirror_annulled_by": {"$exists": False},
+         "account_id": {"$nin": [None, ""]}}
+    async for adj in db.company_fund_adjustments.find(q, {"_id": 0}):
+        acc = await db.fund_accounts.find_one(
+            {"id": adj["account_id"]}, {"_id": 0})
+        if acc and await _is_company_cash_account(acc):
+            continue
+        aid = str(adj.get("id") or "")
+        mov_id = str(adj.get("cash_box_movement_id") or "")
+        mov = await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
+        if not mov:
+            await db.company_fund_adjustments.update_one(
+                {"id": aid}, {"$set": {"mirror_annulled_by": NOT_APPLICABLE}})
+            continue
+        annul_id = f"cmov_annul_{mov_id.replace('-', '')[:24]}"
+        doc = {
+            "id": annul_id,
+            "box_id": mov.get("box_id"),
+            "fund": mov.get("fund"),
+            "type": "entrada" if mov.get("type") == "salida" else "salida",
+            "amount": round(float(mov.get("amount") or 0), 2),
+            "concept": (f"Anulación de espejo: el ajuste {aid} pertenece a "
+                        "otra cuenta de efectivo, no a la caja")[:200],
+            "responsible": "Sistema",
+            "denominations": None,
+            "denoms_pending": True,
+            "created_at": iso(now_utc()),
+            "created_by_id": "system",
+            "created_by_name": "Sistema",
+            "annuls_movement_id": mov_id,
+            "source_adjustment_id": aid,
+        }
+        await _upsert_movement_with_rev(annul_id, doc)
+        await db.cash_box_movements.update_one(
+            {"id": mov_id}, {"$set": {"annulled_by": annul_id}})
+        await db.company_fund_adjustments.update_one(
+            {"id": aid}, {"$set": {"mirror_annulled_by": annul_id}})
+        logger.warning("[cash-box-sync] espejo %s de ajuste en cuenta ajena "
+                       "anulado por %s", mov_id, annul_id)
+        n += 1
+    return n
+
+
 async def backfill_cash_adjustments() -> int:
     """Replica los ajustes en efectivo históricos que aún no están en la caja."""
     return await _backfill(db.company_fund_adjustments, {"method": "cash"},
@@ -606,6 +673,7 @@ async def backfill_cash_operations() -> int:
     await _relink_aborted_transfer_movements()
     await _repair_aborted_transfer_mirrors()
     await _repair_internal_transfer_mirrors()
+    await _repair_foreign_account_adjustment_mirrors()
     await _repair_orphan_movements()
     n = await _repair_legacy_markers()
     n += await _reevaluate_na_markers()

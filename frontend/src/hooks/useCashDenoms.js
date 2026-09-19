@@ -1,6 +1,9 @@
 /**
  * iter277 — Denominaciones de billetes dinámicas (fábrica + añadidas por el
  * admin). Cache a nivel de módulo para no repetir la petición por componente.
+ * S06 — cache REACTIVA: invalidar recarga la configuración y notifica a todos
+ * los consumidores montados (los formularios abiertos ven el billete nuevo
+ * sin recargar la página).
  */
 import { useEffect, useState } from "react";
 import axios from "axios";
@@ -12,21 +15,32 @@ export const DEFAULT_CASH_DENOMS = {
 };
 
 let cache = null;
+const listeners = new Set();
+
+function fetchDenoms() {
+  return axios
+    .get(`${API}/admin/company-funds/denominations-config`, { withCredentials: true })
+    .then((r) => {
+      if (r.data && r.data.CUP) {
+        cache = r.data;
+        listeners.forEach((fn) => fn(cache));
+      }
+    })
+    .catch(() => {});
+}
 
 export function invalidateCashDenoms() {
   cache = null;
+  fetchDenoms();
 }
 
 export function useCashDenoms() {
   const [denoms, setDenoms] = useState(cache || DEFAULT_CASH_DENOMS);
   useEffect(() => {
-    if (cache) { setDenoms(cache); return; }
-    axios
-      .get(`${API}/admin/company-funds/denominations-config`, { withCredentials: true })
-      .then((r) => {
-        if (r.data && r.data.CUP) { cache = r.data; setDenoms(r.data); }
-      })
-      .catch(() => {});
+    listeners.add(setDenoms);
+    if (cache) setDenoms(cache);
+    else fetchDenoms();
+    return () => { listeners.delete(setDenoms); };
   }, []);
   return denoms;
 }

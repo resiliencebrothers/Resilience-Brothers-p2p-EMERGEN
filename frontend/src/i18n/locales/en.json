@@ -2672,7 +2672,11 @@
       "totpInvalid": "Invalid 2FA code.",
       "updateError": "Error changing password.",
       "updated": "Password updated successfully.",
-      "updatedWithSessions": "Password updated. {{count}} additional sessions were closed."
+      "updatedWithSessions": "Password updated. {{count}} additional sessions were closed.",
+      "setTitle": "Set a password",
+      "setBody": "Your account was created with Google and has no password yet. Create one so you can also sign in with your email and password. Your other active sessions will be closed.",
+      "setSubmit": "Set password",
+      "setUpdated": "Password set. You can now sign in with your email and password."
     }
   },
   "tracker": {

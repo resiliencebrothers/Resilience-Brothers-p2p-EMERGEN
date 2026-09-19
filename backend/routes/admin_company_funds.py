@@ -1311,17 +1311,37 @@ async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
         await _assert_available_company_funds(cw)
         update_doc.update(await _paid_from_account_fields(payload, cw))
         await _validate_paid_from_balance(cw, payload, update_doc)
-        # iter277 — desglose de billetes del pago en efectivo: alimenta el
-        # estado canónico de billetes de la cuenta de origen.
+        # iter277/S02 — pago en EFECTIVO: el servidor exige el desglose de
+        # billetes (no basta con la interfaz) y S04 — esos billetes deben
+        # existir en el inventario conocido de la cuenta, bajo este mismo
+        # cerrojo de gasto.
+        acc_id = str(update_doc.get("paid_from_account_id") or "")
+        acc_doc = await db.fund_accounts.find_one(
+            {"id": acc_id}, {"_id": 0}) if acc_id else None
+        valid = (await get_cash_denominations()).get(cw["currency"])
         raw_denoms = payload.get("denominations")
+        paying_cash = bool(acc_doc and acc_doc.get("method") == "cash"
+                           and valid)
+        if paying_cash and not raw_denoms:
+            label = update_doc.get("paid_from_account_label") or acc_id
+            raise HTTPException(
+                status_code=400,
+                detail=(f"El pago sale de la caja «{label}»: indica el "
+                        "desglose de billetes entregados."))
         if raw_denoms:
-            valid = (await get_cash_denominations()).get(cw["currency"])
             if not valid:
                 raise HTTPException(
                     status_code=400,
                     detail="El desglose de billetes solo aplica a CUP y USD")
-            update_doc["denominations"] = _validate_denominations(
+            denoms = _validate_denominations(
                 cw["currency"], raw_denoms, float(cw["amount"]), valid)
+            if paying_cash:
+                from services.account_denoms import assert_bills_available
+                await assert_bills_available(
+                    acc_id, denoms,
+                    str(update_doc.get("paid_from_account_label") or acc_id),
+                    "este pago")
+            update_doc["denominations"] = denoms
         update_doc["paid_at"] = iso(now_utc())
         # M01 — autoridad indivisible: el permiso de gasto se escribe en el
         # PRESUPUESTO condicionado al cerrojo vigente, justo antes de la
@@ -1562,6 +1582,62 @@ async def add_denomination_config(payload: DenominationAdd,
         db, actor, "company_funds.denomination_add", "settings", code,
         summary=f"Nueva denominación {payload.denomination} {code}")
     return cfg
+
+
+@router.get("/admin/company-funds/movements")
+async def unified_fund_movements(request: Request, tipo: str = "all",
+                                 status: str = "all", q: str = "",
+                                 skip: int = 0, limit: int = 50) -> Any:
+    """S07 — historial UNIFICADO (retiros del fondo + depósitos + salidas
+    históricas por ajuste) con filtros y paginación en el SERVIDOR: la tabla
+    puede localizar cualquier registro antiguo y muestra el total real."""
+    import re as _re
+    actor = await require_permission(request, "company_funds")
+    skip = max(0, int(skip))
+    limit = max(1, min(int(limit), 200))
+    scope: Optional[List[str]] = None
+    if actor.get("role") == "employee":
+        allowed = actor.get("allowed_currencies") or []
+        if allowed:
+            scope = [c.upper() for c in allowed]
+    needle = (q or "").strip()
+    rx = {"$regex": _re.escape(needle), "$options": "i"} if needle else None
+    wq: Dict[str, Any] = {}
+    aq: Dict[str, Any] = {}
+    if scope:
+        wq["currency"] = {"$in": scope}
+        aq["currency"] = {"$in": scope}
+    if status != "all":
+        wq["status"] = status
+    if rx:
+        wq["beneficiary"] = rx
+        aq["source_name"] = rx
+    if tipo == "deposits":
+        aq["adjustment_type"] = "inflow"
+    elif tipo == "withdrawals":
+        aq["adjustment_type"] = "outflow"
+    include_w = tipo != "deposits"
+    # un filtro de estado solo aplica a retiros con flujo de estados
+    include_a = status == "all"
+    fetch_n = skip + limit
+    w_rows: list = []
+    a_rows: list = []
+    total = 0
+    if include_w:
+        w_rows = await db.company_withdrawals.find(wq, {"_id": 0}).sort(
+            "created_at", -1).to_list(fetch_n)
+        total += await db.company_withdrawals.count_documents(wq)
+    if include_a:
+        a_rows = await db.company_fund_adjustments.find(aq, {"_id": 0}).sort(
+            "created_at", -1).to_list(fetch_n)
+        total += await db.company_fund_adjustments.count_documents(aq)
+    merged = (
+        [{"kind": "withdrawal", **w} for w in w_rows]
+        + [{"kind": "deposit" if a.get("adjustment_type") == "inflow"
+            else "adjust_out", **a} for a in a_rows])
+    merged.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return {"rows": merged[skip:skip + limit], "total": total,
+            "skip": skip, "limit": limit}
 
 
 @router.get("/admin/company-funds/adjustments")

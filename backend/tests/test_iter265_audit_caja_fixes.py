@@ -270,7 +270,7 @@ class TestH01LedgerCashParity:
         r = _adjust({"adjustment_type": "inflow", "currency": "USD",
                      "amount": 200, "method": "cash",
                      "source_name": f"{MARK} aporte",
-                     "denominations": {"100": 2}})
+                     "denominations": {"20": 10}})
         assert r.status_code == 200, r.text
 
         # retiro de 40 USD pagado desde la cuenta de caja → salida física
@@ -285,16 +285,19 @@ class TestH01LedgerCashParity:
                           "concept": "compra insumos"})
         assert cwr.status_code == 200, cwr.text
         cw = cwr.json()
+        # iter279/S02 — el pago en efectivo exige el desglose de billetes
         r = _cw_status(cw["id"], {"status": "paid",
-                                  "paid_from_account_id": cash_acc["id"]})
+                                  "paid_from_account_id": cash_acc["id"],
+                                  "denominations": {"20": 2}})
         assert r.status_code == 200, r.text
         mov_id = r.json().get("cash_box_movement_id")
         assert mov_id, "el retiro pagado en efectivo debe enlazar su movimiento"
         mov = db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
         assert mov["type"] == "salida" and mov["amount"] == 40.0
         assert mov["fund"] == "USD"
-        assert mov.get("denoms_pending") is True, \
-            "sin billetes conocidos el desglose queda PENDIENTE, no inventado"
+        # iter279/S03 — el desglose autorizado viaja al espejo: nada pendiente
+        assert mov.get("denoms_pending") is False
+        assert mov["denominations"] == {"20": 2}
         assert mov["source_withdrawal_id"] == cw["id"]
 
         # transferencia caja → banco (Sin asignar): salida física,
@@ -306,6 +309,7 @@ class TestH01LedgerCashParity:
                               "currency": "USD",
                               "from_account_id": cash_acc["id"],
                               "to_account_id": None, "amount": 20,
+                              "denominations": {"20": 1},
                               "note": f"{MARK} a banco"}))
         assert r.status_code == 200, r.text
         tr_mov = r.json().get("cash_box_movement_id")
@@ -322,6 +326,7 @@ class TestH01LedgerCashParity:
                           json=with_totp_admin({
                               "currency": "USD", "from_account_id": None,
                               "to_account_id": cash_acc["id"], "amount": 5,
+                              "denominations": {"5": 1},
                               "note": f"{MARK} de banco"}))
         assert r.status_code == 200, r.text
         mov = db.cash_box_movements.find_one(
@@ -375,8 +380,10 @@ class TestH01LedgerCashParity:
                           "concept": "x"})
         assert cwr.status_code == 200, cwr.text
         cw = cwr.json()
+        # iter279/S02 — el pago en efectivo exige el desglose de billetes
         pay = _cw_status(cw["id"], {"status": "paid",
-                                    "paid_from_account_id": cash_acc["id"]})
+                                    "paid_from_account_id": cash_acc["id"],
+                                    "denominations": {"20": 2}})
         assert pay.status_code == 200, pay.text
         mov_id = pay.json()["cash_box_movement_id"]
         box = _auto_box()
@@ -390,11 +397,8 @@ class TestH01LedgerCashParity:
             headers=_hdr(ADMIN_TOKEN))
         assert r.status_code == 409, r.text
 
-        # …pero el desglose PENDIENTE sí puede completarse (una sola vez)
-        r = requests.put(f"{API}/cashbox/boxes/{box['id']}/movimientos/{mov_id}",
-                         headers=_hdr(ADMIN_TOKEN),
-                         json={"denominations": {"20": 2}})
-        assert r.status_code == 200, r.text
+        # iter279/S03 — el desglose autorizado en el pago YA viaja al espejo:
+        # nada queda pendiente y no se reescribe desde la Caja.
         mov = _db().cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
         assert mov["denominations"] == {"20": 2}
         assert mov.get("denoms_pending") is False

@@ -57,8 +57,10 @@ export default function AdminCompanyFunds() {
       <FundCards funds={cf.funds} />
 
       <CompanyWithdrawalsTable
-        rows={cf.filteredItems}
-        rawTotal={cf.mergedRows.length}
+        rows={cf.moveRows}
+        total={cf.moveTotal}
+        page={cf.movePage}
+        setPage={cf.setMovePage}
         isAdmin={cf.isAdmin}
         createCurrencies={cf.createCurrencies}
         currencies={cf.currencies}

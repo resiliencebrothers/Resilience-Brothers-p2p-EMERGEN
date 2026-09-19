@@ -138,7 +138,7 @@ function FundCard({ f, t, onOpenDetail, onOpenBreakdown, onOpenDashboard }) {
       <div className="flex items-start justify-between gap-2">
         <div className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-white/10 bg-white/[0.03] rounded-sm">
           <Wallet className="w-3 h-3 text-[#8B5CF6]" />
-          <span className="text-[0.65rem] font-mono uppercase tracking-widest text-neutral-200">
+          <span translate="no" className="notranslate text-[0.65rem] font-mono uppercase tracking-widest text-neutral-200">
             {f.currency}
           </span>
         </div>

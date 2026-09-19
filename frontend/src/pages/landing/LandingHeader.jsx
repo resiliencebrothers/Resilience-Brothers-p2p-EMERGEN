@@ -12,7 +12,7 @@ import { QrShareButton } from "@/components/QrShareButton";
 export default function LandingHeader({ user, onEnter, onEmailAuth }) {
   const { t } = useTranslation();
   return (
-    <header className="sticky top-0 inset-x-0 z-50 glass-panel">
+    <header className="sticky top-0 inset-x-0 z-50 glass-panel pt-[env(safe-area-inset-top)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 h-16 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
           <img src="/branding/logo-300.png" alt="Resilience Brothers" className="h-10 w-10 sm:h-12 sm:w-12 object-contain" />

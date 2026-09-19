@@ -212,6 +212,17 @@ async def save_account_denoms(account_id: str, payload: DenomsSnapshotPayload,
         raise HTTPException(
             status_code=400,
             detail=f"No hay denominaciones definidas para {code}")
+    # S05 — un traslado provisional que toca la cuenta hace ambiguo el
+    # momento del conteo físico: se confirma o expira antes de contar.
+    pending = await db.fund_account_transfers.find_one(
+        {"status": "pending",
+         "$or": [{"from_account_id": account_id},
+                 {"to_account_id": account_id}]}, {"_id": 0, "id": 1})
+    if pending:
+        raise HTTPException(
+            status_code=409,
+            detail=("Hay un traslado en curso que toca esta cuenta; espera "
+                    "a que se confirme o expire antes de guardar el conteo."))
     clean: Dict[str, int] = {}
     total = 0.0
     for k, v in payload.denominations.items():
@@ -454,19 +465,26 @@ async def transfer_between_fund_accounts(
             status_code=400,
             detail="Origen y destino no pueden ser iguales")
 
-    # iter277 — desglose de billetes del traslado (requerido por la UI cuando
-    # un extremo es de efectivo): validado contra el monto y las
-    # denominaciones vigentes; mantiene el estado canónico de billetes.
+    # iter277/S02 — desglose de billetes del traslado: cuando un extremo es
+    # de efectivo el SERVIDOR lo exige (no basta con la interfaz); validado
+    # contra el monto y las denominaciones vigentes.
+    valid = (await get_cash_denominations()).get(code)
+    cash_involved = bool(valid) and any(
+        i and i.get("method") == "cash" for i in (from_info, to_info))
     denominations = None
     if payload.denominations:
         from routes.admin_company_funds import _validate_denominations
-        valid = (await get_cash_denominations()).get(code)
         if not valid:
             raise HTTPException(
                 status_code=400,
                 detail="El desglose de billetes solo aplica a CUP y USD")
         denominations = _validate_denominations(
             code, payload.denominations, payload.amount, valid)
+    elif cash_involved:
+        raise HTTPException(
+            status_code=400,
+            detail=("El traslado toca efectivo: indica el desglose de "
+                    "billetes que se mueven."))
 
     # N04 — el saldo de origen se valida y consume bajo el MISMO cerrojo de
     # gasto por moneda que usan los retiros de empresa: dos transferencias
@@ -504,6 +522,13 @@ async def transfer_between_fund_accounts(
                 status_code=400,
                 detail=f"Saldo insuficiente en «{origin}»: disponible {avail:.2f} {code}",
             )
+        # S04 — la composición pedida debe existir en los billetes conocidos
+        # del origen, bajo el MISMO cerrojo que consume el saldo: dos salidas
+        # concurrentes jamás usan los mismos billetes.
+        if from_info and from_info.get("method") == "cash" and denominations:
+            from services.account_denoms import assert_bills_available
+            await assert_bills_available(
+                str(frm), denominations, from_info["label"], "este traslado")
 
         doc = {
             "id": str(uuid.uuid4()),
@@ -537,7 +562,11 @@ async def transfer_between_fund_accounts(
                 detail="La operación perdió su turno de gasto; inténtalo de nuevo.")
         confirmed = await db.fund_account_transfers.update_one(
             {"id": doc["id"], "status": "pending"},
-            {"$set": {"status": "confirmed"}})
+            {"$set": {"status": "confirmed",
+                      # S05 — momento EFECTIVO del traslado: el corte del
+                      # inventario de billetes usa esta marca, no la creación
+                      # provisional.
+                      "confirmed_at": iso(now_utc())}})
         if confirmed.matched_count == 0:
             # P02 — la transición definitiva NO ocurrió (la provisional fue
             # revocada/abortada entre medias): se resuelve el estado

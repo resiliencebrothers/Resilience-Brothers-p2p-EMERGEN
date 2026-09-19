@@ -72,7 +72,7 @@ export default function AccountBreakdownDialog({ currency, onClose }) {
         className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-lg max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
-          <DialogTitle className="font-display flex items-center gap-2">
+          <DialogTitle translate="no" className="notranslate font-display flex items-center gap-2">
             <Layers className="w-5 h-5 text-[#8B5CF6]" />
             {t("admin.companyFunds.breakdownTitle", { currency })}
           </DialogTitle>

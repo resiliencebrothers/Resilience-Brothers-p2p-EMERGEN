@@ -10,7 +10,7 @@
  *   • iter277 — pay-in-cash support: account options (with method) and the
  *     bill breakdown that travels with the "paid" transition.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -32,6 +32,9 @@ const emptyForm = {
   concept: "", note: "", invoice_image: "",
 };
 
+// S07 — tamaño de página de la tabla unificada (servidor).
+export const MOVES_PAGE_SIZE = 50;
+
 export function useCompanyFunds() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -40,8 +43,13 @@ export function useCompanyFunds() {
 
   const [funds, setFunds] = useState([]);
   const [items, setItems] = useState([]);
-  const [adjustments, setAdjustments] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  // S07 — tabla unificada servida por el backend (paginación + filtros +
+  // búsqueda reales): la pantalla puede localizar cualquier registro antiguo.
+  const [moveRows, setMoveRows] = useState([]);
+  const [moveTotal, setMoveTotal] = useState(0);
+  const [movePage, setMovePage] = useState(0);
+  const [moveReload, setMoveReload] = useState(0);
 
   const [openCreate, setOpenCreate] = useState(false);
   const [openAdjustment, setOpenAdjustment] = useState(false);
@@ -67,22 +75,54 @@ export function useCompanyFunds() {
 
   const load = useCallback(async () => {
     try {
-      const [f, l, a, c] = await Promise.all([
+      const [f, l, c] = await Promise.all([
         axios.get(`${API}/admin/company-funds`, { withCredentials: true }),
         axios.get(`${API}/admin/company-withdrawals`, { withCredentials: true }),
-        axios.get(`${API}/admin/company-funds/adjustments`, { withCredentials: true }),
         axios.get(`${API}/currencies`, { withCredentials: true }),
       ]);
       setFunds(f.data);
       setItems(l.data);
-      setAdjustments(a.data);
       setCurrencies(c.data);
+      setMoveReload((n) => n + 1);
     } catch {
       toast.error(t("admin.companyFunds.toastLoadError"));
     }
   }, [t]);
   useEffect(() => { load(); }, [load]);
   useLiveRefresh(load, CF_LIVE_EVENTS);
+
+  // S07 — al cambiar un filtro se vuelve a la primera página.
+  useEffect(() => { setMovePage(0); },
+    [tipoFilter, statusFilter, beneficiaryQuery]);
+
+  // S07 — consulta al servidor (búsqueda con debounce de 300 ms).
+  useEffect(() => {
+    let alive = true;
+    const tmr = setTimeout(() => {
+      axios
+        .get(`${API}/admin/company-funds/movements`, {
+          params: {
+            tipo: tipoFilter, status: statusFilter,
+            q: beneficiaryQuery.trim(),
+            skip: movePage * MOVES_PAGE_SIZE, limit: MOVES_PAGE_SIZE,
+          },
+          withCredentials: true,
+        })
+        .then((r) => {
+          if (!alive) return;
+          const rows = (r.data?.rows || []).map((row) => ({
+            kind: row.kind,
+            key: `${row.kind === "withdrawal" ? "w" : "a"}-${row.id}`,
+            created_at: row.created_at || "",
+            data: row,
+          }));
+          setMoveRows(rows);
+          setMoveTotal(Number(r.data?.total || 0));
+        })
+        .catch(() => {});
+    }, 300);
+    return () => { alive = false; clearTimeout(tmr); };
+  }, [tipoFilter, statusFilter, beneficiaryQuery, movePage, moveReload]);
 
   // iter277 — opciones de cuenta (con método) para el prompt de pago.
   useEffect(() => {
@@ -197,44 +237,13 @@ export function useCompanyFunds() {
     (c) => isAdmin || !scopeCurrencies.length || scopeCurrencies.includes(c.code),
   );
 
-  // iter277 — tabla unificada: retiros del fondo + depósitos manuales +
-  // retiros históricos por ajuste (legado), ordenados por fecha.
-  const mergedRows = useMemo(() => {
-    const rows = [
-      ...items.map((w) => ({
-        kind: "withdrawal", key: `w-${w.id}`,
-        created_at: w.created_at || "", data: w,
-      })),
-      ...adjustments.map((a) => ({
-        kind: a.adjustment_type === "inflow" ? "deposit" : "adjust_out",
-        key: `a-${a.id}`, created_at: a.created_at || "", data: a,
-      })),
-    ];
-    rows.sort((x, y) => y.created_at.localeCompare(x.created_at));
-    return rows;
-  }, [items, adjustments]);
-
-  const filteredItems = useMemo(() => {
-    const needle = beneficiaryQuery.trim().toLowerCase();
-    return mergedRows.filter((r) => {
-      if (tipoFilter === "deposits" && r.kind !== "deposit") return false;
-      if (tipoFilter === "withdrawals" && r.kind === "deposit") return false;
-      if (statusFilter !== "all"
-          && (r.kind !== "withdrawal" || r.data.status !== statusFilter)) {
-        return false;
-      }
-      if (needle) {
-        const who = (r.kind === "withdrawal"
-          ? r.data.beneficiary : r.data.source_name) || "";
-        if (!who.toLowerCase().includes(needle)) return false;
-      }
-      return true;
-    });
-  }, [mergedRows, tipoFilter, statusFilter, beneficiaryQuery]);
+  // S07 — el filtrado, la búsqueda y el total viven en el SERVIDOR (endpoint
+  // /admin/company-funds/movements): aquí solo se consume la página actual.
 
   return {
     isAdmin,
-    funds, items, filteredItems, mergedRows, adjustments, currencies,
+    funds, items, currencies,
+    moveRows, moveTotal, movePage, setMovePage,
     statusFilter, setStatusFilter,
     tipoFilter, setTipoFilter,
     beneficiaryQuery, setBeneficiaryQuery,
