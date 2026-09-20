@@ -1861,3 +1861,10 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 - **T03** ruta PUT /cashbox/boxes/{id}/movimientos/{mov} (cash_boxes.py): adjudicación ATÓMICA del desglose único (update condicionado `denominations ∈ [None,{}]` + matched_count) sobre el origen; el espejo se escribe condicionado al valor adjudicado. Reintento idéntico idempotente; incompatible → 409.
 - **T04** `assert_bills_available` (account_denoms.py): distingue inventario DESCONOCIDO (sin conteo → excepción histórica) de CONOCIDO VACÍO (`counted_at` presente → un conteo cero bloquea salidas detalladas hasta reponer).
 - Tests: `test_iter281_t01_t04.py` 9/9 · críticos 427/427 · **suite completa 2001 passed / 0 failed**. Mypy limpio en los 4 archivos tocados.
+
+## 2026-06 · iter282 — Revisión 795176e: U01 corregido + C01 (cobertura CI)
+- **U01** (prioridad media): si fallaba el incremento de `fund_revs` justo tras guardar un desglose, el arqueo anterior seguía vigente y ningún reintento lo invalidaba (el retorno temprano de la convergencia omitía el caso y `rev_bumped` de la creación no cubría cambios posteriores).
+  - Fix: marca recuperable `rev_pending` persistida en la MISMA escritura que los billetes en las 3 rutas (completado de espejo, edición genérica de `update_movement`, rama origen→espejo de `_converge_operation_denoms`); se limpia con `$unset` tras el bump. Nuevo `_recover_pending_rev_bumps()` en el backfill la atiende aunque origen y espejo ya coincidan.
+  - Aceptación verificada: cierre invalidado tras recuperar, desglose conservado, saldo intacto, sin operaciones nuevas, y un arqueo nuevo NO se invalida indefinidamente.
+- **C01**: `test_iter281_t01_t04.py` y `test_iter282_u01.py` añadidos a la lista explícita de `make test-critical` (la que ejecuta el CI de push/PR).
+- Tests: `test_iter282_u01.py` 4/4 · críticos **440/440** · suite completa **2004 passed / 1 flaky** (`test_vip_ledger_email_rate_limited`, rate-limit con estado compartido; pasa aislado, sin relación con caja). Mypy/ruff limpios.

@@ -54,6 +54,8 @@ test-critical: ## Run critical regression subset (~2 min, 190 tests) — pre-com
 		tests/test_iter274_r01.py \
 		tests/test_iter277_denoms_sync.py \
 		tests/test_iter279_s01_s07.py \
+		tests/test_iter281_t01_t04.py \
+		tests/test_iter282_u01.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

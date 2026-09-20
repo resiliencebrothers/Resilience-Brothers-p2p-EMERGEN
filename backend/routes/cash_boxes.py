@@ -361,9 +361,12 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
         # T03 — el espejo se escribe CONDICIONADO al valor adjudicado: un
         # reintento idéntico converge y una composición incompatible se
         # rechaza (jamás quedan origen y espejo con billetes distintos).
+        # U01 — `rev_pending` se persiste JUNTO al desglose: si el incremento
+        # de revisión falla después, el backfill completa la invalidación.
         res = await db.cash_box_movements.update_one(
             {"id": mov_id, "denominations": {"$in": [None, {}]}},
-            {"$set": {"denominations": denoms, "denoms_pending": False}})
+            {"$set": {"denominations": denoms, "denoms_pending": False,
+                      "rev_pending": True}})
         if not res.matched_count:
             cur_mov = await db.cash_box_movements.find_one(
                 {"id": mov_id}, {"_id": 0, "denominations": 1})
@@ -373,6 +376,8 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
                     detail=("Otro completado simultáneo ya fijó un desglose "
                             "distinto para este movimiento."))
         await _bump_fund_rev(box["id"], mov["fund"])
+        await db.cash_box_movements.update_one(
+            {"id": mov_id}, {"$unset": {"rev_pending": ""}})
         return await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
     upd: Dict[str, Any] = {}
     if payload.amount is not None:
@@ -389,8 +394,13 @@ async def update_movement(box_id: str, mov_id: str, payload: MovementUpdate,
         # importe cambiado sin nuevo desglose → el viejo ya no cuadra
         upd["denominations"] = None
     if upd:
-        await db.cash_box_movements.update_one({"id": mov_id}, {"$set": upd})
+        # U01 — la marca se guarda en la MISMA escritura que el cambio; solo
+        # se limpia tras invalidar el arqueo (fund_revs).
+        await db.cash_box_movements.update_one(
+            {"id": mov_id}, {"$set": {**upd, "rev_pending": True}})
         await _bump_fund_rev(box["id"], mov["fund"])
+        await db.cash_box_movements.update_one(
+            {"id": mov_id}, {"$unset": {"rev_pending": ""}})
     return await db.cash_box_movements.find_one({"id": mov_id}, {"_id": 0})
 
 

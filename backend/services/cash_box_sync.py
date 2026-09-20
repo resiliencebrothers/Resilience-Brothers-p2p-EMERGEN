@@ -702,6 +702,26 @@ _DENOM_LINKS: tuple = (
 )
 
 
+async def _recover_pending_rev_bumps() -> int:
+    """U01 — cada modificación de desglose persiste `rev_pending` junto a los
+    billetes y solo lo limpia tras invalidar el arqueo (`fund_revs`). Si el
+    incremento falló a mitad, aquí se completa AUNQUE origen y espejo ya
+    coincidan: la marca `rev_bumped` de la creación original no cubre
+    cambios posteriores."""
+    n = 0
+    async for mov in db.cash_box_movements.find(
+            {"rev_pending": True},
+            {"_id": 0, "id": 1, "box_id": 1, "fund": 1}):
+        await _bump_fund_rev(str(mov.get("box_id") or ""),
+                             str(mov.get("fund") or ""))
+        await db.cash_box_movements.update_one(
+            {"id": mov["id"]}, {"$unset": {"rev_pending": ""}})
+        n += 1
+        logger.warning("[cash-box-sync] invalidación de arqueo pendiente "
+                       "completada para el movimiento %s (U01)", mov["id"])
+    return n
+
+
 async def _converge_operation_denoms() -> int:
     """T02/T03 (continuación de S03) — el desglose de una operación vive en
     dos documentos (origen contable y movimiento físico) y versiones
@@ -745,10 +765,12 @@ async def _converge_operation_denoms() -> int:
                 res = await db.cash_box_movements.update_one(
                     {"id": mov["id"], "denominations": {"$in": [None, {}]}},
                     {"$set": {"denominations": src_denoms,
-                              "denoms_pending": False}})
+                              "denoms_pending": False, "rev_pending": True}})
                 if res.modified_count:
                     await _bump_fund_rev(str(mov.get("box_id") or ""),
                                          str(mov.get("fund") or ""))
+                    await db.cash_box_movements.update_one(
+                        {"id": mov["id"]}, {"$unset": {"rev_pending": ""}})
                     n += 1
                 continue
             if (round(float(src.get(amount_field) or 0), 2)
@@ -794,5 +816,6 @@ async def backfill_cash_operations() -> int:
     n += await _reevaluate_na_markers()
     for coll_fn, extra_q, mirror, _fields in _SOURCES:
         n += await _backfill(coll_fn(), extra_q, mirror)
+    n += await _recover_pending_rev_bumps()
     n += await _converge_operation_denoms()
     return n
