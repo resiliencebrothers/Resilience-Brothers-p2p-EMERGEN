@@ -459,13 +459,20 @@ async def run_post_status_side_effects(order: dict, new_status: str, prev_status
     so paths like `pending → approved → completed` credit exactly once.
     """
     money_states = {"approved", "completed"}
-    is_first_credit = new_status in money_states and prev_status not in money_states
-    if is_first_credit and order["delivery_method"] == "accumulate":
-        await accumulate_vip_balance(order)
-        if order["user_role"] in ("vip", "admin"):
+    in_money = new_status in money_states
+    # EX02 — reanudable: los efectos monetarios se intentan en CADA entrada a
+    # un estado liquidado (no solo la primera transición). Cada uno es
+    # idempotente por su claim, así un reintento tras un crash entre la
+    # transición y el abono completa el crédito exactamente una vez.
+    if in_money and order["delivery_method"] == "accumulate":
+        credited = await accumulate_vip_balance(order)
+        if credited and order["user_role"] in ("vip", "admin"):
             await check_vip_threshold_alert(order)
-    if is_first_credit:
-        # iter112 — one-time referral bonus on the user's first settled order.
+    if in_money:
+        # EX01 — el residuo de entregas en efectivo se abona al liquidar.
+        from services.balances import credit_order_residue
+        await credit_order_residue(order)
+        # iter112 — one-time referral bonus (idempotente por flag atómico).
         await maybe_award_referral_bonus(order)
     if new_status in ("approved", "rejected", "completed") and prev_status != new_status:
         target_user = await db.users.find_one({"user_id": order["user_id"]}, {"_id": 0})

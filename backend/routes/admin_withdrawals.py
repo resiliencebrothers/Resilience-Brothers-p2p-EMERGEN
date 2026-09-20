@@ -596,23 +596,6 @@ async def set_courier_fee(wid: str, payload: dict, request: Request) -> Any:
             km, currency, float(w.get("amount_usd") or 0.0), op_label="Este retiro")
     prev_fee_cur = float(w.get("courier_fee_currency_amount") or 0.0)
     delta = round(fee_cur - prev_fee_cur, 2)
-    if delta > 0:
-        owner = await db.users.find_one({"user_id": w["user_id"]},
-                                        {"_id": 0, "vip_balances": 1})
-        bal = float(((owner or {}).get("vip_balances") or {}).get(currency) or 0.0)
-        if bal < delta:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"Saldo insuficiente del cliente ({bal} {currency}) "
-                        f"para cubrir la mensajería ({delta} {currency})."))
-        # iter248 — débito atómico (guard de saldo en la misma operación).
-        from services.balances import decrement_balance
-        await decrement_balance(w["user_id"], currency, delta)
-    elif delta < 0:
-        await db.users.update_one(
-            {"user_id": w["user_id"]},
-            {"$inc": {f"vip_balances.{currency}": -delta}},
-        )
     update_doc = {
         "courier_km": km,
         "courier_fee_usdt": fee_usdt,
@@ -624,7 +607,14 @@ async def set_courier_fee(wid: str, payload: dict, request: Request) -> Any:
         "courier_rate_snapshot": q["rate_usdt_per_km"],
         "courier_min_fee_snapshot": q["min_fee_usdt"],
     }
-    await db.withdrawals.update_one({"id": wid}, {"$set": update_doc})
+    # ME01 — cambio de tarifa exactamente-una-vez: claim por el valor anterior
+    # + plan persistente + débito/reembolso idempotentes por op_id. Dos
+    # cambios simultáneos jamás cobran o devuelven la misma diferencia dos
+    # veces, y un crash antes del movimiento lo completa el recuperador.
+    from services.courier_fee import apply_fee_change_plan
+    await apply_fee_change_plan("withdrawals", w, w["user_id"], currency,
+                                "courier_fee_currency_amount", update_doc,
+                                delta)
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     # iter199 — keep the courier delivery job in sync with this charge.
     try:

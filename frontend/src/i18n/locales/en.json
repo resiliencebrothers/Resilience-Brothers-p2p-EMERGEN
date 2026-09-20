@@ -2701,7 +2701,8 @@
     "empty": "No messages yet. Coordinate the delivery here — no need to share your personal number.",
     "placeholder": "Type a message…",
     "closed": "This chat closed when the delivery was completed.",
-    "sendBtn": "Send"
+    "sendBtn": "Send",
+    "loadOlder": "Load older messages"
   },
   "courierPanel": {
     "eyebrow": "Courier",

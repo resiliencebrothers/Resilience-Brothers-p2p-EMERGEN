@@ -344,7 +344,15 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
     _collect_order_payout_evidence(payload, update_doc, order)
     _validate_order_payout_evidence(order, update_doc, new_status)
 
-    await db.orders.update_one({"id": order_id}, {"$set": update_doc})
+    # EX02 — claim de la transición por el estado leído: una aprobación y un
+    # rechazo simultáneos ya no pueden pisarse (la petición obsoleta recibe
+    # conflicto y sus efectos monetarios nunca corren).
+    claim = await db.orders.update_one(
+        {"id": order_id, "status": prev_status}, {"$set": update_doc})
+    if claim.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="La orden cambió de estado mientras editabas; recarga.")
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     await run_post_status_side_effects(updated, new_status, prev_status)
 
@@ -442,6 +450,7 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
         {"$set": {"vendor_credited_at": iso(now_utc()),
                   "vendor_credit_net": net,
                   "vendor_commission_pct": pct,
+                  "vendor_credit_op_id": marker["op_id"],
                   "credit_pending": marker}})
     if res.modified_count == 0:
         return
@@ -508,13 +517,26 @@ async def _reverse_vendor_credit_if_any(r: dict) -> None:
     persistente: la marca `vendor_credit_reversed_at` viaja con el plan del
     débito en el mismo claim, y solo se limpia el plan cuando el débito
     (idempotente por op_id) tiene evidencia. Decisión de producto: si el
-    vendedor ya gastó el neto, el débito se fuerza igualmente (saldo negativo
-    = deuda explícita del vendedor) — el reembolso al comprador nunca puede
-    depender de que el vendedor conserve fondos."""
+    el débito se fuerza igualmente (saldo negativo = deuda explícita del
+    vendedor) — el reembolso al comprador nunca puede depender de que el
+    vendedor conserve fondos.
+    MR01 — la fecha del claim NO basta como prueba de que el dinero llegó:
+    si hay `vendor_credit_op_id` sin evidencia de aplicación, no se genera
+    deuda artificial (el abono nunca se aplicó y su intención ya no está)."""
+    fresh = await db.redemptions.find_one({"id": r["id"]}, {"_id": 0})
+    r = fresh or r
     owner_id = r.get("vendor_owner_id") or ""
     net = float(r.get("vendor_credit_net") or 0)
     if not owner_id or not r.get("vendor_credited_at") or net <= 0:
         return
+    op_id = str(r.get("vendor_credit_op_id") or "")
+    if op_id:
+        from services.balances import op_was_applied
+        if not await op_was_applied(owner_id, op_id):
+            logger.warning(
+                "vendor credit %s de canje %s sin evidencia de aplicación: "
+                "no se debita al vendedor (MR01)", op_id, r["id"])
+            return
     settle_cur = r.get("settlement_currency") or "USD"
     plan = await _claim_vendor_reversal_plan(r, settle_cur, net)
     if not plan:
@@ -797,7 +819,17 @@ async def _apply_rejection_effects(r: dict, rid: str, actor: dict) -> None:
     reversos. Reejecutable (iter256/S02): si un crash dejó el rechazo a medias
     (rejection_effects_done=False), volver a PUT 'rejected' completa lo que
     falta sin duplicar nada (cada efecto es idempotente)."""
-    from services.credit_recovery import pending_marker
+    from services.credit_recovery import pending_marker, apply_and_clear
+    # MR01 — si el abono al vendedor quedó A MEDIAS (su marker sigue
+    # pendiente), se COMPLETA antes de escribir el marker del reembolso:
+    # jamás se sobrescribe una intención ajena. El reverso posterior
+    # compensará un crédito que ahora sí tiene evidencia real.
+    fresh0 = await db.redemptions.find_one(
+        {"id": rid}, {"_id": 0, "credit_pending": 1}) or {}
+    cp0 = fresh0.get("credit_pending") or {}
+    if str(cp0.get("op_id") or "").startswith("vendor-credit"):
+        await apply_and_clear("redemptions", rid, cp0)
+        r = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or r
     settle_cur = r.get("settlement_currency") or "USD"
     refund = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
     marker: Optional[dict] = pending_marker(r["user_id"], settle_cur, refund,
@@ -1121,25 +1153,6 @@ async def _log_redemption_status_change(actor: dict, r: dict, rid: str,
     )
 
 
-async def _apply_courier_fee_balance_delta(r: dict, delta: float) -> None:
-    """iter254(R07) — Charge (delta>0) or refund (delta<0) the fee difference
-    in the settlement currency of the redemption (USDT new / USD legacy)."""
-    cur = r.get("settlement_currency") or "USD"
-    if delta > 0:
-        owner = await db.users.find_one({"user_id": r["user_id"]}, {"_id": 0})
-        from services.balances import get_user_balance, decrement_balance
-        bal = get_user_balance(owner or {}, cur)
-        if bal < delta:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"Saldo insuficiente del cliente ({round(bal, 2)} {cur}) "
-                        f"para cubrir la mensajería ({delta} {cur})."))
-        await decrement_balance(r["user_id"], cur, delta)
-    elif delta < 0:
-        await db.users.update_one({"user_id": r["user_id"]},
-                                  {"$inc": {f"vip_balances.{cur}": -delta}})
-
-
 async def _notify_redemption_courier_fee(r: dict, rid: str, km: float,
                                          fee_usdt: float, fee_usd: float,
                                          delta: float) -> None:
@@ -1210,8 +1223,7 @@ async def set_redemption_courier_fee(rid: str, payload: dict, request: Request) 
     km, fee_usdt, fee_usd, muni_name, q = await _price_redemption_fee(payload, r)
     prev_fee = float(r.get("courier_fee_usd") or 0.0)
     delta = round(fee_usd - prev_fee, 2)
-    await _apply_courier_fee_balance_delta(r, delta)
-    await db.redemptions.update_one({"id": rid}, {"$set": {
+    update_doc = {
         "courier_km": km,
         "courier_fee_usdt": fee_usdt,
         "courier_fee_usd": fee_usd,
@@ -1219,7 +1231,15 @@ async def set_redemption_courier_fee(rid: str, payload: dict, request: Request) 
         "courier_fee_status": "charged" if fee_usdt > 0 else "manual_review",
         "courier_rate_snapshot": q["rate_usdt_per_km"],
         "courier_min_fee_snapshot": q["min_fee_usdt"],
-    }})
+    }
+    # ME01 — cambio de tarifa exactamente-una-vez: claim por el valor anterior
+    # + plan persistente + débito/reembolso idempotentes por op_id. Dos
+    # cambios simultáneos jamás cobran o devuelven la misma diferencia dos
+    # veces, y un crash antes del movimiento lo completa el recuperador.
+    from services.courier_fee import apply_fee_change_plan
+    settle_cur = r.get("settlement_currency") or "USD"
+    await apply_fee_change_plan("redemptions", r, r["user_id"], settle_cur,
+                                "courier_fee_usd", update_doc, delta)
     updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
     # iter199 — keep the courier delivery job in sync with this charge.
     try:

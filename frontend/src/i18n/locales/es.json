@@ -2701,7 +2701,8 @@
     "empty": "Aún no hay mensajes. Coordina la entrega por aquí — sin compartir tu número personal.",
     "placeholder": "Escribe un mensaje…",
     "closed": "El chat se cerró al completarse la entrega.",
-    "sendBtn": "Enviar"
+    "sendBtn": "Enviar",
+    "loadOlder": "Ver mensajes anteriores"
   },
   "courierPanel": {
     "eyebrow": "Mensajería",

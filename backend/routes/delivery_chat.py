@@ -22,6 +22,10 @@ router = APIRouter(tags=["DeliveryChat"])
 
 CHAT_OPEN_STATUSES = ("accepted", "on_the_way", "arrived", "delivered")
 
+# ME04 — tamaño de página del historial (los más RECIENTES primero; las
+# páginas anteriores se piden con el cursor `before`).
+CHAT_PAGE = 300
+
 
 async def unread_counts_for(delivery_ids: list, uid: str) -> dict:
     """{delivery_id: n} de mensajes del otro participante aún no leídos."""
@@ -56,20 +60,34 @@ async def _chat_context(did: str, user: dict) -> tuple:
 
 
 @router.get("/deliveries/{did}/chat")
-async def get_chat(did: str, request: Request) -> Any:
+async def get_chat(did: str, request: Request, before: str = "") -> Any:
     user = await require_user(request)
     d, kind = await _chat_context(did, user)
-    msgs = await db.delivery_chat.find(
-        {"delivery_id": did}, {"_id": 0},
-    ).sort("created_at", 1).to_list(300)
+    q: dict = {"delivery_id": did}
+    if before:
+        q["created_at"] = {"$lt": before}
+    # ME04 — se devuelve el tramo MÁS RECIENTE (los mensajes nuevos siempre
+    # aparecen, aunque el hilo supere CHAT_PAGE); `before` pagina hacia atrás.
+    msgs = await db.delivery_chat.find(q, {"_id": 0}) \
+        .sort("created_at", -1).to_list(CHAT_PAGE)
+    msgs.reverse()
+    has_more = bool(msgs) and await db.delivery_chat.count_documents(
+        {"delivery_id": did,
+         "created_at": {"$lt": msgs[0]["created_at"]}}) > 0
     if kind in ("client", "courier"):
-        await db.delivery_chat.update_many(
-            {"delivery_id": did, "sender_id": {"$ne": user["user_id"]},
-             "read_by": {"$ne": user["user_id"]}},
-            {"$addToSet": {"read_by": user["user_id"]}},
-        )
+        # ME04 — solo se marcan leídos los mensajes REALMENTE devueltos en
+        # esta respuesta; los que quedan fuera del tramo siguen sin leer.
+        ids = [m["id"] for m in msgs
+               if m.get("sender_id") != user["user_id"]]
+        if ids:
+            await db.delivery_chat.update_many(
+                {"delivery_id": did, "id": {"$in": ids},
+                 "read_by": {"$ne": user["user_id"]}},
+                {"$addToSet": {"read_by": user["user_id"]}},
+            )
     return {
         "messages": msgs,
+        "has_more": has_more,
         "my_kind": kind,
         "chat_open": d["status"] in CHAT_OPEN_STATUSES,
         "can_send": kind in ("client", "courier")

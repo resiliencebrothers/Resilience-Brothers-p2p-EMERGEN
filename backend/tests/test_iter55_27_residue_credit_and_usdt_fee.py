@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN
+from tests.conftest import BASE_URL as API_ROOT, VIP_TOKEN, ADMIN_TOKEN
 
 API = f"{API_ROOT}/api"
 
@@ -102,8 +102,9 @@ def test_pure_helper_flags_any_fiat_cash():
 
 
 def test_cash_cup_order_credits_residue_to_balance():
-    """The requested scenario: pay 325 ZELLE @ rate 100.5 → gross 32662.5 CUP.
-    Floor to 32662 CUP delivered, credit 0.5 CUP to client's balance."""
+    """EX01 (auditoría 795176e) — pay 325 ZELLE @ rate 100.5 → gross 32662.5.
+    Floor to 32662 CUP delivered. El residuo (0.5) ya NO se acredita al crear:
+    se abona exactamente una vez cuando la orden se LIQUIDA (approved)."""
     _cleanup()
     _upsert_currency("ZELLE27", "fiat", ["transfer"])
     _upsert_currency("CUP", "fiat", ["cash", "transfer"])  # CUP allows cash
@@ -124,10 +125,23 @@ def test_cash_cup_order_credits_residue_to_balance():
     body = r.json()
     assert body["amount_to"] == 32662.0, f"Expected 32662.0, got {body['amount_to']}"
 
-    balance_after = _get_balance("CUP")
-    delta = balance_after - balance_before
-    # 325 * 100.5 = 32662.5 → residue 0.5
+    # EX01 — al crear, NADA se acredita (la orden sigue pendiente).
+    assert _get_balance("CUP") == balance_before, \
+        "el residuo no puede acreditarse sin ingreso confirmado"
+
+    # al liquidar (approved) se acredita el residuo exactamente una vez
+    ra = requests.put(f"{API}/admin/orders/{body['id']}/status",
+                      headers=_hdr(ADMIN_TOKEN), json={"status": "approved"})
+    assert ra.status_code == 200, ra.text
+    delta = _get_balance("CUP") - balance_before
     assert abs(delta - 0.5) < 0.001, f"Expected +0.5 CUP residue, got {delta}"
+
+    # repetir la aprobación no duplica el residuo
+    ra = requests.put(f"{API}/admin/orders/{body['id']}/status",
+                      headers=_hdr(ADMIN_TOKEN), json={"status": "approved"})
+    assert ra.status_code == 200, ra.text
+    delta = _get_balance("CUP") - balance_before
+    assert abs(delta - 0.5) < 0.001, f"residuo duplicado: {delta}"
 
     _cleanup()
 

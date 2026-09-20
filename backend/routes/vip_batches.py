@@ -294,6 +294,10 @@ async def admin_list_batch_pairs(request: Request) -> Any:
 async def create_vip_batch(payload: VipBatchCreate, request: Request) -> Any:
     user = await require_user(request)
     _require_vip(user)
+    # LO02 — mismo candado central que el resto de operaciones del cliente:
+    # una cuenta bloqueada o bajo revisión no puede presentar operaciones.
+    from services.balances import assert_account_active
+    await assert_account_active(user)
 
     fc = (payload.from_code or "").strip().upper()
     tc = (payload.to_code or "").strip().upper()
@@ -333,6 +337,7 @@ async def create_vip_batch(payload: VipBatchCreate, request: Request) -> Any:
         "requires_card": False,
         "note": (payload.note or "").strip() or None,
         "status": "open",
+        "items_reserved": 0,
         "items_pending": 0,
         "items_approved": 0,
         "items_rejected": 0,
@@ -357,6 +362,9 @@ async def create_vip_batch(payload: VipBatchCreate, request: Request) -> Any:
 async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request: Request) -> Any:
     user = await require_user(request)
     _require_vip(user)
+    # LO02 — cuenta bloqueada/bajo revisión: sin escritura de operaciones.
+    from services.balances import assert_account_active
+    await assert_account_active(user)
 
     batch = await db.vip_batches.find_one({"id": batch_id, "vip_user_id": user["user_id"]}, {"_id": 0})
     if not batch:
@@ -457,7 +465,38 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
             "reviewed_at": None,
             "reviewed_by": None,
         })
-    await db.vip_batch_items.insert_many([dict(d) for d in docs])
+    # LO01 — reserva de cupo ATÓMICA vinculada al estado abierto: dos cargas
+    # simultáneas no pueden superar el máximo, y una carga que perdió frente
+    # al cierre no inserta. Los lotes legados sin contador se siembran una
+    # sola vez (guard $exists en el mismo update).
+    if await db.vip_batches.find_one(
+            {"id": batch_id, "items_reserved": {"$exists": False}},
+            {"_id": 0, "id": 1}):
+        current = await db.vip_batch_items.count_documents({"batch_id": batch_id})
+        await db.vip_batches.update_one(
+            {"id": batch_id, "items_reserved": {"$exists": False}},
+            {"$set": {"items_reserved": current}})
+    claim = await db.vip_batches.update_one(
+        {"id": batch_id, "status": "open",
+         "items_reserved": {"$lte": MAX_ITEMS_PER_BATCH - len(docs)}},
+        {"$inc": {"items_reserved": len(docs)}})
+    if claim.matched_count == 0:
+        fresh = await db.vip_batches.find_one({"id": batch_id},
+                                              {"_id": 0, "status": 1})
+        if (fresh or {}).get("status") != "open":
+            raise HTTPException(
+                status_code=409,
+                detail="El lote está cerrado, no se pueden agregar más órdenes.")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Un lote no puede exceder {MAX_ITEMS_PER_BATCH} órdenes.")
+    try:
+        await db.vip_batch_items.insert_many([dict(d) for d in docs])
+    except Exception:
+        # liberar la reserva si la inserción no ocurrió
+        await db.vip_batches.update_one(
+            {"id": batch_id}, {"$inc": {"items_reserved": -len(docs)}})
+        raise
     await refresh_batch_totals(batch_id)
     # iter148 — massive-inflow threshold alerts (item + cumulative batch total)
     await dispatch_vip_batch_alerts(batch_id, docs, "added")
@@ -517,7 +556,9 @@ async def get_vip_batch(batch_id: str, request: Request) -> Any:
         batch["requires_card"] = False
     items = await db.vip_batch_items.find(
         {"batch_id": batch_id}, {"_id": 0},
-    ).sort("created_at", 1).to_list(MAX_ITEMS_PER_BATCH + 1)
+    ).sort("created_at", 1).to_list(None)
+    # LO01 — sin tope artificial: un desbordamiento histórico (carrera de la
+    # versión anterior) sigue siendo consultable en su totalidad.
     return {"batch": serialize_doc(batch), "items": [serialize_doc(it) for it in items]}
 
 

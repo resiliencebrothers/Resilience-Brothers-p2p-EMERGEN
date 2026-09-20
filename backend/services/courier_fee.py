@@ -10,7 +10,9 @@ Business rules (operator PDF, Ago 2026):
 - All tariffs configurable from the admin panel; each charge stores a
   tariff snapshot so later changes never rewrite history.
 """
+from datetime import datetime, timezone
 from typing import Optional
+import uuid
 
 from fastapi import HTTPException
 
@@ -201,3 +203,92 @@ async def price_charge_municipality_or_raise(muni_key: str, currency: str,
             status_code=422,
             detail=f"No hay tasa configurada para convertir USDT → {q['currency']}.")
     return q, fee, converted, m
+
+
+# ============================================================
+# ME01 — cambio de tarifa exactamente-una-vez (plan recuperable)
+# ============================================================
+
+async def apply_fee_change_plan(coll_name: str, doc: dict, user_id: str,
+                                currency: str, prev_field: str,
+                                new_fields: dict, delta: float) -> None:
+    """Reclama el cambio de tarifa por el VALOR ANTERIOR leído (dos cambios
+    simultáneos ya no cobran/devuelven la misma diferencia dos veces) y
+    persiste el plan del movimiento en el mismo update. El débito o
+    reembolso es idempotente por op_id; si el proceso muere a mitad,
+    `heal_courier_fee_plans` lo completa (o revierte si no hay saldo)."""
+    coll = db[coll_name]
+    doc_id = doc["id"]
+    delta = round(float(delta), 2)
+    plan = {
+        "op_id": f"courier-fee:{doc_id}:{uuid.uuid4().hex[:8]}",
+        "delta": delta,
+        "currency": currency,
+        "revert": {k: doc.get(k) for k in new_fields},
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    claim = await coll.update_one(
+        {"id": doc_id, prev_field: doc.get(prev_field),
+         "courier_fee_op_pending": {"$exists": False}},
+        {"$set": {**new_fields, "courier_fee_op_pending": plan}})
+    if claim.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("La tarifa de esta operación cambió o hay un cobro en "
+                    "curso; recarga e inténtalo de nuevo."))
+    if delta == 0:
+        await coll.update_one(
+            {"id": doc_id, "courier_fee_op_pending.op_id": plan["op_id"]},
+            {"$unset": {"courier_fee_op_pending": ""}})
+        return
+    await settle_fee_change_plan(coll_name, doc_id, user_id, plan,
+                                 raise_insufficient=True)
+
+
+async def settle_fee_change_plan(coll_name: str, doc_id: str, user_id: str,
+                                 plan: dict,
+                                 raise_insufficient: bool = False) -> str:
+    """Ejecuta (o completa) el movimiento del plan de tarifa y limpia el
+    plan. Sin saldo para un cobro → revierte los campos de la tarifa al
+    valor anterior guardado en el propio plan."""
+    from services.balances import (credit_balance_idempotent,
+                                   debit_balance_idempotent)
+    coll = db[coll_name]
+    delta = round(float(plan.get("delta") or 0), 2)
+    cur = plan.get("currency") or "USD"
+    op_id = plan["op_id"]
+    if delta > 0:
+        st = await debit_balance_idempotent(user_id, cur, delta, op_id)
+        if st == "insufficient":
+            await coll.update_one(
+                {"id": doc_id, "courier_fee_op_pending.op_id": op_id},
+                {"$set": plan.get("revert") or {},
+                 "$unset": {"courier_fee_op_pending": ""}})
+            if raise_insufficient:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"Saldo insuficiente del cliente para cubrir la "
+                            f"mensajería ({delta} {cur})."))
+            return "insufficient"
+    elif delta < 0:
+        await credit_balance_idempotent(user_id, cur, -delta, op_id)
+    await coll.update_one(
+        {"id": doc_id, "courier_fee_op_pending.op_id": op_id},
+        {"$unset": {"courier_fee_op_pending": ""}})
+    return "ok"
+
+
+async def heal_courier_fee_plans(cutoff: str) -> int:
+    """Completa los planes de tarifa interrumpidos (crash entre el claim y
+    el movimiento): un reintento del operador jamás re-cobra la diferencia."""
+    n = 0
+    for coll_name in ("withdrawals", "redemptions"):
+        rows = await db[coll_name].find(
+            {"courier_fee_op_pending.at": {"$lt": cutoff}},
+            {"_id": 0, "id": 1, "user_id": 1, "courier_fee_op_pending": 1},
+        ).to_list(100)
+        for row in rows:
+            await settle_fee_change_plan(coll_name, row["id"], row["user_id"],
+                                         row["courier_fee_op_pending"])
+            n += 1
+    return n

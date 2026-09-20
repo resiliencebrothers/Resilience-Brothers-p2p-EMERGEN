@@ -93,6 +93,88 @@ async def heal_pending_credits(max_age_seconds: int = 90) -> int:
     return healed
 
 
+async def ensure_company_sale_traces(r: dict) -> bool:
+    """MR02 — asegura los DOS rastros de una venta web de producto de EMPRESA
+    marcados pendientes en la activación del canje (`sale_trace_pending`):
+    el movimiento de inventario 'venta' (dedupe por ref_id) y la entrada al
+    fondo (dedupe_key único). Recuperable e idempotente: repetirlo jamás
+    vuelve a cobrar al cliente ni descuenta mercancía. Un canje ya rechazado
+    NO registra la entrada al fondo (su ciclo se compensó sin ella)."""
+    rid = str(r.get("id") or "")
+    pend = r.get("sale_trace_pending") or {}
+    if not rid or not pend:
+        return True
+    now = datetime.now(timezone.utc).isoformat()
+    ok = True
+    if pend.get("inv"):
+        exists = await db.inventory_movements.find_one(
+            {"ref_id": rid, "type": "venta", "source": "marketplace"},
+            {"_id": 1})
+        if not exists:
+            product = await db.products.find_one(
+                {"id": r.get("product_id")}, {"_id": 0})
+            if product and not product.get("owner_id"):
+                try:
+                    from services.inventory import record_movement
+                    await record_movement(
+                        product=product, mtype="venta",
+                        quantity=int(r.get("quantity") or 0),
+                        note=f"Canje marketplace de {r.get('user_name', '')}",
+                        source="marketplace", ref_id=rid,
+                        actor={"user_id": r.get("user_id") or "",
+                               "name": r.get("user_name") or ""},
+                        apply_stock=False)
+                    exists = True
+                except Exception as e:
+                    ok = False
+                    logger.error("venta de inventario pendiente %s: %s", rid, e)
+            else:
+                exists = True  # producto borrado o de vendedor: nada que trazar
+        if exists:
+            await db.redemptions.update_one(
+                {"id": rid, "sale_trace_pending.inv": True},
+                {"$set": {"sale_trace_pending.inv": False}})
+    if pend.get("fund"):
+        if r.get("status") == "rejected":
+            # el rechazo compensó el ciclo sin esta entrada: registrar la
+            # entrada ahora dejaría capital sin su reverso.
+            await db.redemptions.update_one(
+                {"id": rid, "sale_trace_pending.fund": True},
+                {"$set": {"sale_trace_pending.fund": False}})
+        else:
+            total = round(float(r.get("total_usd") or 0), 2)
+            store_note = ""
+            if r.get("store_currency"):
+                store_note = (f" (≈ {float(r.get('total_store') or 0):g} "
+                              f"{r['store_currency']})")
+            try:
+                from services.company_funds_common import record_auto_fund_adjustment
+                await record_auto_fund_adjustment(
+                    adjustment_type="inflow", currency="USDT", amount=total,
+                    source_name="Marketplace tienda",
+                    note=(f"Venta web: {r.get('quantity')}× "
+                          f"{r.get('product_name', '')} = {total:.2f} USDT"
+                          f"{store_note} (canje {rid[:8]})"),
+                    ref_id=rid, dedupe_key=f"fund-inflow:{rid}:c0")
+                await db.redemptions.update_one(
+                    {"id": rid, "fund_inflow_at": {"$in": [None, ""]}},
+                    {"$set": {"fund_inflow_at": now,
+                              "fund_inflow_amount": total,
+                              "fund_inflow_currency": "USDT"}})
+                await db.redemptions.update_one(
+                    {"id": rid, "sale_trace_pending.fund": True},
+                    {"$set": {"sale_trace_pending.fund": False}})
+            except Exception as e:
+                ok = False
+                logger.error("entrada al fondo pendiente %s: %s", rid, e)
+    if ok:
+        await db.redemptions.update_one(
+            {"id": rid, "sale_trace_pending.inv": {"$ne": True},
+             "sale_trace_pending.fund": {"$ne": True}},
+            {"$unset": {"sale_trace_pending": ""}})
+    return ok
+
+
 async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     """iter254(R03) / iter256(S03,S04,S10) — resuelve de forma DETERMINISTA los
     intentos que murieron a medias en el protocolo reserva/operación/activación.
@@ -334,4 +416,38 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
                 {"id": w["id"], "redebit_pending.op_id": op},
                 {"$unset": {"redebit_pending": ""}})
         healed += 1
+
+    # --- planes de tarifa de mensajería interrumpidos (ME01) ----------------
+    from services.courier_fee import heal_courier_fee_plans
+    healed += await heal_courier_fee_plans(cutoff)
+
+    # --- liquidaciones vinculadas pendientes tras confirmar entrega (ME03) --
+    rows = await db.deliveries.find(
+        {"status": "confirmed", "settlement_pending.at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "settlement_pending": 1}).to_list(100)
+    for dv in rows:
+        sp = dv.get("settlement_pending") or {}
+        try:
+            from services.delivery_settlement import settle_linked_operation
+            await settle_linked_operation(
+                sp.get("kind") or "", sp.get("ref_id") or "",
+                {"user_id": "system", "name": "Sistema", "email": "",
+                 "role": "admin"})
+            await db.deliveries.update_one(
+                {"id": dv["id"], "settlement_pending.at": sp.get("at")},
+                {"$unset": {"settlement_pending": ""}})
+            healed += 1
+            logger.warning("liquidación vinculada completada por el healer: "
+                           "entrega %s → %s %s", dv["id"], sp.get("kind"),
+                           sp.get("ref_id"))
+        except Exception as e:
+            logger.error("liquidación vinculada de %s sigue pendiente: %s",
+                         dv["id"], e)
+
+    # --- rastros de venta de productos de empresa pendientes (MR02) ---------
+    rows = await db.redemptions.find(
+        {"sale_trace_pending.at": {"$lt": cutoff}}, {"_id": 0}).to_list(100)
+    for r in rows:
+        if await ensure_company_sale_traces(r):
+            healed += 1
     return healed

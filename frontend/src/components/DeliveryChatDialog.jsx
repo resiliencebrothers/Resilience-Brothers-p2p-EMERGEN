@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useTranslation } from "react-i18next";
@@ -28,6 +28,10 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // ME04 — páginas anteriores cargadas con el cursor `before` (se conservan
+  // al refrescar la página reciente; deduplicadas por id).
+  const [older, setOlder] = useState([]);
+  const [olderHasMore, setOlderHasMore] = useState(null);
   const endRef = useRef(null);
 
   const load = useCallback(() => {
@@ -35,6 +39,11 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
     axios.get(`${API}/deliveries/${deliveryId}/chat`, { withCredentials: true })
       .then((r) => setData(r.data))
       .catch(() => {});
+  }, [deliveryId]);
+
+  useEffect(() => {
+    setOlder([]);
+    setOlderHasMore(null);
   }, [deliveryId]);
 
   useEffect(() => {
@@ -48,10 +57,33 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
     if (open && e?.delivery_id === deliveryId) load();
   });
 
-  const msgCount = data?.messages?.length || 0;
+  const allMessages = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    [...older, ...(data?.messages || [])].forEach((m) => {
+      if (!seen.has(m.id)) { seen.add(m.id); out.push(m); }
+    });
+    return out;
+  }, [older, data]);
+
+  const hasMore = olderHasMore === null ? !!data?.has_more : olderHasMore;
+
+  const loadOlder = async () => {
+    const first = allMessages[0];
+    if (!first || busy) return;
+    try {
+      const r = await axios.get(`${API}/deliveries/${deliveryId}/chat`, {
+        params: { before: first.created_at }, withCredentials: true,
+      });
+      setOlder((prev) => [...(r.data.messages || []), ...prev]);
+      setOlderHasMore(!!r.data.has_more);
+    } catch { /* silencioso */ }
+  };
+
+  const lastId = allMessages[allMessages.length - 1]?.id;
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [msgCount]);
+  }, [lastId]);
 
   const send = async () => {
     const val = text.trim();
@@ -92,12 +124,22 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
           className="px-4 py-3 space-y-2 max-h-[50vh] min-h-[180px] overflow-y-auto"
           data-testid="delivery-chat-messages"
         >
-          {(data?.messages || []).length === 0 && (
+          {hasMore && (
+            <button
+              type="button"
+              onClick={loadOlder}
+              data-testid="delivery-chat-load-older"
+              className="w-full text-[0.7rem] text-[#A78BFA] hover:text-white py-1.5 border border-white/10 bg-white/[0.03]"
+            >
+              {t("deliveryChat.loadOlder", "Ver mensajes anteriores")}
+            </button>
+          )}
+          {allMessages.length === 0 && (
             <p className="text-xs text-neutral-500 text-center py-8" data-testid="delivery-chat-empty">
               {t("deliveryChat.empty")}
             </p>
           )}
-          {(data?.messages || []).map((m) => {
+          {allMessages.map((m) => {
             const mine = data && m.sender_kind === data.my_kind;
             return (
               <div

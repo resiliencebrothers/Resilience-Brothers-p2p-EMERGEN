@@ -12,6 +12,8 @@ import logging
 import uuid
 from typing import Any, Optional
 
+from fastapi import HTTPException
+
 from db_client import db
 from auth_utils import iso, now_utc
 
@@ -172,7 +174,8 @@ async def cancel_active_delivery(kind: str, ref_id: str,
     now = iso(now_utc())
     await db.deliveries.update_one(
         {"kind": kind, "ref_id": ref_id,
-         "status": {"$nin": ["cancelled", "confirmed"]}},
+         "status": {"$nin": ["cancelled", "confirmed"]},
+         "payout_credited": {"$ne": True}},
         {"$set": {"status": "cancelled", "updated_at": now},
          "$push": {"timeline": {"status": "cancelled", "at": now,
                                 "by": actor_id, "note": note}}},
@@ -234,21 +237,49 @@ async def do_confirm_delivery(d: dict, actor: dict) -> Any:
     # iter249 — claim atómico del payout + intención de abono en el MISMO
     # update: dos confirmaciones simultáneas no pueden pagar dos veces al
     # mensajero, y si el proceso muere antes de abonar, el healer completa.
+    # ME02 — el claim exige que la entrega SIGA en 'delivered': una
+    # cancelación concurrente que ya la movió deja esta confirmación
+    # obsoleta con conflicto (sin pagar comisión).
     if share > 0 and d.get("courier_id"):
         from services.credit_recovery import pending_marker, apply_and_clear
         marker = pending_marker(d["courier_id"], "USDT", share, "courier-share")
         claim = await db.deliveries.update_one(
-            {"id": did, "payout_credited": {"$ne": True}},
+            {"id": did, "status": "delivered",
+             "payout_credited": {"$ne": True}},
             {"$set": {"payout_credited": True, "payout_credited_at": now,
                       "credit_pending": marker}})
         if claim.modified_count:
             await apply_and_clear("deliveries", did, marker)
             credited = True
-    await db.deliveries.update_one({"id": did}, {
-        "$set": {"status": "confirmed", "updated_at": now},
-        "$push": {"timeline": {"status": "confirmed", "at": now,
-                               "by": actor["user_id"]}},
-    })
+        else:
+            cur_d = await db.deliveries.find_one(
+                {"id": did}, {"_id": 0, "payout_credited": 1, "status": 1})
+            if not (cur_d or {}).get("payout_credited"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=("La entrega cambió de estado (¿cancelada?) — "
+                            "no se confirmó ni se pagó la comisión."))
+    # ME03 — la liquidación del documento vinculado (depósito/retiro) queda
+    # registrada como TAREA PENDIENTE en el propio sello: si falla, el
+    # recuperador la completa; la respuesta indica si quedó pendiente.
+    seal_sets = {"status": "confirmed", "updated_at": now}
+    kind = d.get("kind") or ""
+    if d.get("ref_id"):
+        seal_sets["settlement_pending"] = {"kind": kind,
+                                           "ref_id": d["ref_id"], "at": now}
+    seal = await db.deliveries.update_one(
+        {"id": did, "status": "delivered"},
+        {"$set": seal_sets,
+         "$push": {"timeline": {"status": "confirmed", "at": now,
+                                "by": actor["user_id"]}}})
+    if seal.matched_count == 0:
+        cur_d = await db.deliveries.find_one({"id": did},
+                                             {"_id": 0, "status": 1})
+        if (cur_d or {}).get("status") != "confirmed":
+            raise HTTPException(
+                status_code=409,
+                detail=("La entrega ya no está en estado 'entregada' — "
+                        "no se pudo confirmar."))
     await log_action(db, actor, "delivery.confirm", "delivery", did,
                      summary=(f"Entrega {did[:8]} confirmada — {share} USDT "
                               f"acreditados a {d.get('courier_name', '')}"),
@@ -260,9 +291,13 @@ async def do_confirm_delivery(d: dict, actor: dict) -> Any:
     # Vía registro de handlers para no importar routes desde services.
     try:
         from services.delivery_settlement import settle_linked_operation
-        await settle_linked_operation(d.get("kind") or "", d["ref_id"], actor)
+        await settle_linked_operation(kind, d["ref_id"], actor)
+        await db.deliveries.update_one(
+            {"id": did, "settlement_pending.ref_id": d["ref_id"]},
+            {"$unset": {"settlement_pending": ""}})
     except Exception as e:
-        logger.error(f"ref sync after delivery confirm failed: {e}")
+        logger.error(f"ref sync after delivery confirm failed (queda "
+                     f"pendiente para el recuperador): {e}")
     if credited:
         try:
             from routes.notifications import _insert_notification

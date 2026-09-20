@@ -6,11 +6,14 @@ the shared `db_client`.
 """
 from typing import Optional
 from datetime import datetime, timezone, timedelta
+import logging
 import uuid
 
 from fastapi import HTTPException
 
 from db_client import db
+
+logger = logging.getLogger(__name__)
 
 # iter260(E07) — horizonte de seguridad de la compactación: un op 'applied'
 # más joven que esto NUNCA se retira del registro embebido (un ejecutor lento
@@ -425,8 +428,11 @@ async def accumulate_vip_balance(order: dict) -> bool:
     gross = float(order["amount_to"])
     marker = pending_marker(order["user_id"], order["to_code"], gross,
                             "order-accum", prepared=False)
+    # EX02 — el claim exige que la orden SIGA en un estado liquidado: un
+    # rechazo concurrente que ya la movió impide reclamar el abono tardío.
     res = await db.orders.update_one(
-        {"id": order["id"], "accumulated_at": {"$exists": False}},
+        {"id": order["id"], "accumulated_at": {"$exists": False},
+         "status": {"$in": ["approved", "completed"]}},
         {"$set": {"accumulated_at": datetime.now(timezone.utc).isoformat(),
                   "credit_pending": marker}},
     )
@@ -450,6 +456,53 @@ async def accumulate_vip_balance(order: dict) -> bool:
                   "credit_pending.prepared": True}},
     )
     await apply_and_clear("orders", order["id"], marker)
+    return True
+
+
+async def credit_order_residue(order: dict) -> bool:
+    """EX01 — el residuo de una entrega en efectivo (piso fiat) se acredita
+    SOLO cuando la orden llega a un estado liquidado (approved/completed).
+    Idempotente por `residue_credited_at` + marker recuperable (mismo patrón
+    outbox que la acumulación); el claim exige estado liquidado para que un
+    rechazo concurrente impida el abono tardío. Órdenes legadas (residuo ya
+    acreditado al crear) no llevan `residue_amount` → no-op."""
+    residue = float(order.get("residue_amount") or 0)
+    if residue <= 0 or not order.get("to_code"):
+        return False
+    from services.credit_markers import pending_marker, apply_and_clear
+    marker = pending_marker(order["user_id"], order["to_code"], residue,
+                            "order-residue")
+    res = await db.orders.update_one(
+        {"id": order["id"], "residue_credited_at": {"$exists": False},
+         "status": {"$in": ["approved", "completed"]},
+         "credit_pending": {"$exists": False}},
+        {"$set": {"residue_credited_at": datetime.now(timezone.utc).isoformat(),
+                  "credit_pending": marker}},
+    )
+    if res.modified_count == 0:
+        return False
+    await apply_and_clear("orders", order["id"], marker)
+    try:
+        from services.live_events import emit_balance_changed
+        await emit_balance_changed(order["user_id"], "order_residue",
+                                   currency=order["to_code"],
+                                   order_id=order["id"])
+    except Exception as e:
+        logger.error(f"residue balance event failed: {e}")
+    try:
+        from audit_log import log_action
+        await log_action(
+            db, actor={"user_id": "system", "name": "Sistema"},
+            action="order.residue_credited",
+            entity_type="order", entity_id=order["id"],
+            summary=(f"Residuo {residue:.6f} {order['to_code']} acreditado "
+                     "al liquidar la orden"),
+            details={"order_id": order["id"], "user_id": order["user_id"],
+                     "currency": order["to_code"], "residue": residue,
+                     "reason": "fiat_cash_floor"},
+        )
+    except Exception as e:
+        logger.error(f"residue audit log failed: {e}")
     return True
 
 

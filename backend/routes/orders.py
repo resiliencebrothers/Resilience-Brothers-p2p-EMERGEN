@@ -270,33 +270,14 @@ async def create_order(payload: OrderCreate, request: Request) -> Any:
         order.payment_account_id = payment_account.get("id", "")
         order.payment_account_label = payment_account.get("label", "")
     residue = getattr(order, "_residue_to_credit", 0.0)
-    await db.orders.insert_one(order.model_dump())
-    # If cash-to-fiat produced sub-unit residue, credit it to the client's
-    # on-platform balance in the SAME currency. Client can accumulate across
-    # trades or convert to USDT (with 0.01 USDT fee) later.
+    order_doc = order.model_dump()
+    # EX01 — el residuo NO se acredita al crear la orden: se persiste como
+    # plan (`residue_amount`) y se abona exactamente una vez cuando la orden
+    # llega a un estado liquidado (approved/completed). Rechazar una orden
+    # pendiente jamás deja saldo sin ingreso confirmado.
     if residue > 0:
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$inc": {f"vip_balances.{payload.to_code}": residue}},
-        )
-        await emit_balance_changed(user["user_id"], "order_residue",
-                                   currency=payload.to_code, order_id=order.id)
-        try:
-            from audit_log import log_action
-            await log_action(
-                db, actor=user, action="order.residue_credited",
-                entity_type="order", entity_id=order.id,
-                summary=f"Residuo {residue:.6f} {payload.to_code} acreditado al saldo",
-                details={
-                    "order_id": order.id,
-                    "user_id": user["user_id"],
-                    "currency": payload.to_code,
-                    "residue": residue,
-                    "reason": "fiat_cash_floor",
-                },
-            )
-        except Exception as e:
-            logger.error(f"residue audit log failed: {e}")
+        order_doc["residue_amount"] = residue
+    await db.orders.insert_one(order_doc)
     await maybe_flag_defensive_margin(order)
     await dispatch_new_order_alerts(order, user)
     # iter98 — SSE push to admins so /admin/queue prepends the new order
@@ -544,9 +525,17 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             status_code=409,
             detail={"code": "INSUFFICIENT_BALANCE",
                     "message": "Saldo USDT insuficiente"})
+    act_sets: dict = {"status": "pending"}
+    if not product.get("owner_id"):
+        # MR02 — los rastros de la venta (movimiento de inventario + entrada
+        # al fondo) quedan marcados PENDIENTES en la propia activación: si una
+        # escritura falla, heal_initializing_ops los repone sin volver a
+        # cobrar ni descontar mercancía.
+        act_sets["sale_trace_pending"] = {"inv": True, "fund": True,
+                                          "at": iso(now_utc())}
     act = await db.redemptions.update_one(
         {"id": r.id, "status": "initializing"},
-        {"$set": {"status": "pending"},
+        {"$set": act_sets,
          "$unset": {"init_op_id": "", "stock_op_id": ""}})
     if act.matched_count == 0:
         # iter256(S03) — el healer revirtió este intento (tardó demasiado):
@@ -575,42 +564,18 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             logger.error(f"redeem delivery sync failed: {e}")
     await emit_balance_changed(user["user_id"], "marketplace_redeem",
                                redemption_id=r.id)
-    # iter217 — inventario tienda física: cada canje de un producto de la
-    # EMPRESA queda registrado como movimiento de Venta. Los productos de
-    # vendedores VIP no entran al inventario; se notifica al dueño.
+    # iter217/iter219/iter229 — inventario tienda física + entrada al fondo:
+    # MR02 — ambos rastros se aseguran vía la rutina compartida (idempotente
+    # por ref_id y dedupe_key); si algo falla aquí, `sale_trace_pending` deja
+    # la tarea recuperable para heal_initializing_ops.
     if not product.get("owner_id"):
         try:
-            from services.inventory import record_movement
-            await record_movement(
-                product=product, mtype="venta", quantity=payload.quantity,
-                note=f"Canje marketplace de {user['name']}",
-                source="marketplace", ref_id=r.id, actor=user,
-                apply_stock=False)
+            from services.credit_recovery import ensure_company_sale_traces
+            fresh_r = await db.redemptions.find_one({"id": r.id}, {"_id": 0})
+            await ensure_company_sale_traces(fresh_r or r.model_dump())
         except Exception as e:
-            logger.error(f"inventory venta record failed: {e}")
-        # iter219/iter229 — el capital de la venta web entra al fondo de la
-        # empresa en USDT (el cliente paga en USDT); se revierte si se rechaza.
-        # iter257(D08) — primero el ASIENTO (idempotente por dedupe), después
-        # la marca: un crash entre ambos ya no pierde el asiento.
-        try:
-            from services.company_funds_common import record_auto_fund_adjustment
-            await record_auto_fund_adjustment(
-                adjustment_type="inflow", currency="USDT",
-                amount=round(total, 2), source_name="Marketplace tienda",
-                note=(f"Venta web: {payload.quantity}× {product['name']} = "
-                      f"{total:.2f} USDT"
-                      + (f" (≈ {store_total:g} {store_currency})"
-                         if store_currency else "")
-                      + f" (canje {r.id[:8]})"),
-                ref_id=r.id,
-                dedupe_key=f"fund-inflow:{r.id}:c0")
-            await db.redemptions.update_one(
-                {"id": r.id},
-                {"$set": {"fund_inflow_at": iso(now_utc()),
-                          "fund_inflow_amount": round(total, 2),
-                          "fund_inflow_currency": "USDT"}})
-        except Exception as e:
-            logger.error(f"marketplace fund inflow failed: {e}")
+            logger.error(f"sale traces failed (quedan pendientes para el "
+                         f"recuperador): {e}")
     else:
         try:
             from routes.notifications import _insert_notification

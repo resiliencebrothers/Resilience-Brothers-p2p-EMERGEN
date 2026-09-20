@@ -1868,3 +1868,15 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
   - Aceptación verificada: cierre invalidado tras recuperar, desglose conservado, saldo intacto, sin operaciones nuevas, y un arqueo nuevo NO se invalida indefinidamente.
 - **C01**: `test_iter281_t01_t04.py` y `test_iter282_u01.py` añadidos a la lista explícita de `make test-critical` (la que ejecuta el CI de push/PR).
 - Tests: `test_iter282_u01.py` 4/4 · críticos **440/440** · suite completa **2004 passed / 1 flaky** (`test_vip_ledger_email_rate_limited`, rate-limit con estado compartido; pasa aislado, sin relación con caja). Mypy/ruff limpios.
+
+## 2026-06 · iter283 — Auditoría Lotes/Intercambios/Mensajería/Mercado (10 bugs: EX01-02, ME01-04, MR01-02, LO01-02) CERRADA
+- Fixes aplicados en sesión anterior sobre `routes/orders.py`, `routes/deliveries.py`, `routes/admin_withdrawals.py`, `services/courier_fee.py`, `services/credit_recovery.py`, `services/balances.py` y afines. En esta sesión se verificó y cerró:
+- **EX02** (condición de carrera aprobar/rechazar intercambio): transición atómica en `orders.py` con `$match {"id", "status": "pending"}` — aprobar+rechazar simultáneos → un solo ganador (200/409). Verificado.
+- **ME01** (tarifa mensajería exactamente-una-vez): claim por valor anterior + plan persistente `courier_fee_op_pending` + movimientos idempotentes por op_id + healer `heal_courier_fee_plans`. Ajuste de test: dos peticiones "simultáneas" pueden serializarse en el servidor (la 2ª ve delta 0 → 200 no-op legítimo, mismo contrato que el reintento secuencial); el test acepta [200,409] y [200,200] y el invariante exactamente-una-vez se prueba con el saldo exacto.
+- **ME03** (liquidación de recogida interrumpida): fix de test — el healer corre en el proceso pytest donde `routes/deposits.py` (registro del handler real en `delivery_settlement._handlers`) no estaba importado, dejando el `boom` instalado; se añade `import routes.deposits` antes de capturar `orig`.
+- Tests: `test_iter283_audit_lotes.py` **24/24** · críticos **464/464** (0:06:31, incluye las suites 281/282/283). Los 10 bugs de la auditoría quedan cubiertos por tests de repro + recuperación.
+
+## Backlog priorizado (sin cambios)
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
