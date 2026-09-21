@@ -93,13 +93,62 @@ async def heal_pending_credits(max_age_seconds: int = 90) -> int:
     return healed
 
 
+async def _reverse_fund_inflow_for_cycle(rid: str) -> None:
+    """R05 — reverso idempotente de la entrada al fondo del ciclo rechazado.
+    Mismo dedupe_key que el reverso del rechazo (fund-reverse:{rid}:c{n}):
+    corra quien corra primero, el fondo recibe UNA sola compensación."""
+    fresh = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or {}
+    amt = float(fresh.get("fund_inflow_amount") or 0)
+    if not fresh.get("fund_inflow_at") or fresh.get("fund_inflow_reversed_at") \
+            or amt <= 0:
+        return
+    cycle = int(fresh.get("rejection_cycle") or 1)
+    from services.company_funds_common import record_auto_fund_adjustment
+    await record_auto_fund_adjustment(
+        adjustment_type="outflow",
+        currency=fresh.get("fund_inflow_currency") or "USDT", amount=amt,
+        source_name="Marketplace tienda",
+        note=(f"Reverso por canje rechazado: {fresh.get('quantity')}× "
+              f"{fresh.get('product_name', '')} (canje {rid[:8]})"),
+        ref_id=rid, dedupe_key=f"fund-reverse:{rid}:c{cycle}")
+    await db.redemptions.update_one(
+        {"id": rid, "fund_inflow_reversed_at": {"$in": [None, ""]}},
+        {"$set": {"fund_inflow_reversed_at":
+                  datetime.now(timezone.utc).isoformat()}})
+
+
+async def _settle_rejected_fund_trace(rid: str) -> bool:
+    """R05 — el canje se rechazó con la entrada al fondo aún pendiente. Si el
+    asiento c0 ALCANZÓ a publicarse (ejecutor lento o crash tras publicar),
+    se compensa con el reverso idempotente del ciclo; si no existe, no hay
+    nada que revertir. Solo entonces se cierra la tarea."""
+    inflow = await db.company_fund_adjustments.find_one(
+        {"dedupe_key": f"fund-inflow:{rid}:c0"}, {"_id": 0})
+    if inflow:
+        await db.redemptions.update_one(
+            {"id": rid, "fund_inflow_at": {"$in": [None, ""]}},
+            {"$set": {"fund_inflow_at": inflow.get("created_at"),
+                      "fund_inflow_amount": inflow.get("amount"),
+                      "fund_inflow_currency": inflow.get("currency")}})
+        try:
+            await _reverse_fund_inflow_for_cycle(rid)
+        except Exception as e:
+            logger.error("reverso de entrada tardía %s: %s", rid, e)
+            return False
+    await db.redemptions.update_one(
+        {"id": rid, "sale_trace_pending.fund": True},
+        {"$set": {"sale_trace_pending.fund": False}})
+    return True
+
+
 async def ensure_company_sale_traces(r: dict) -> bool:
     """MR02 — asegura los DOS rastros de una venta web de producto de EMPRESA
     marcados pendientes en la activación del canje (`sale_trace_pending`):
-    el movimiento de inventario 'venta' (dedupe por ref_id) y la entrada al
-    fondo (dedupe_key único). Recuperable e idempotente: repetirlo jamás
-    vuelve a cobrar al cliente ni descuenta mercancía. Un canje ya rechazado
-    NO registra la entrada al fondo (su ciclo se compensó sin ella)."""
+    el movimiento de inventario 'venta' (dedupe único por canje/ciclo, R04) y
+    la entrada al fondo (dedupe_key único). Recuperable e idempotente:
+    repetirlo jamás vuelve a cobrar al cliente ni descuenta mercancía. Un
+    canje ya rechazado NO registra la entrada al fondo; si la entrada llegó a
+    publicarse en la carrera, se compensa (R05)."""
     rid = str(r.get("id") or "")
     pend = r.get("sale_trace_pending") or {}
     if not rid or not pend:
@@ -116,6 +165,8 @@ async def ensure_company_sale_traces(r: dict) -> bool:
             if product and not product.get("owner_id"):
                 try:
                     from services.inventory import record_movement
+                    # R04 — identidad única del movimiento de venta por canje
+                    # y ciclo: creador y recuperador solapados escriben UNO.
                     await record_movement(
                         product=product, mtype="venta",
                         quantity=int(r.get("quantity") or 0),
@@ -123,7 +174,8 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                         source="marketplace", ref_id=rid,
                         actor={"user_id": r.get("user_id") or "",
                                "name": r.get("user_name") or ""},
-                        apply_stock=False)
+                        apply_stock=False,
+                        dedupe_key=f"sale-trace:{rid}:c0")
                     exists = True
                 except Exception as e:
                     ok = False
@@ -135,12 +187,20 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                 {"id": rid, "sale_trace_pending.inv": True},
                 {"$set": {"sale_trace_pending.inv": False}})
     if pend.get("fund"):
-        if r.get("status") == "rejected":
-            # el rechazo compensó el ciclo sin esta entrada: registrar la
-            # entrada ahora dejaría capital sin su reverso.
-            await db.redemptions.update_one(
-                {"id": rid, "sale_trace_pending.fund": True},
-                {"$set": {"sale_trace_pending.fund": False}})
+        # R05 — decisión durable ANTES de publicar: el claim exige que el
+        # canje NO esté rechazado en este preciso momento (no en la copia
+        # leída al entrar).
+        claim = await db.redemptions.update_one(
+            {"id": rid, "sale_trace_pending.fund": True,
+             "status": {"$ne": "rejected"}},
+            {"$set": {"sale_trace_pending.fund_claim_at": now}})
+        if claim.matched_count == 0:
+            # rechazado (o tarea ya resuelta): el ciclo se compensó — o se
+            # compensa aquí — sin dejar capital huérfano.
+            still = await db.redemptions.find_one(
+                {"id": rid, "sale_trace_pending.fund": True}, {"_id": 1})
+            if still:
+                ok = await _settle_rejected_fund_trace(rid) and ok
         else:
             total = round(float(r.get("total_usd") or 0), 2)
             store_note = ""
@@ -161,6 +221,13 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                     {"$set": {"fund_inflow_at": now,
                               "fund_inflow_amount": total,
                               "fund_inflow_currency": "USDT"}})
+                # R05 — post-verificación: un rechazo que corrió en paralelo
+                # (entre el claim y el asiento) deja el ciclo compensado aquí
+                # mismo con el reverso idempotente.
+                fresh = await db.redemptions.find_one(
+                    {"id": rid}, {"_id": 0, "status": 1}) or {}
+                if fresh.get("status") == "rejected":
+                    await _reverse_fund_inflow_for_cycle(rid)
                 await db.redemptions.update_one(
                     {"id": rid, "sale_trace_pending.fund": True},
                     {"$set": {"sale_trace_pending.fund": False}})
@@ -420,6 +487,10 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     # --- planes de tarifa de mensajería interrumpidos (ME01) ----------------
     from services.courier_fee import heal_courier_fee_plans
     healed += await heal_courier_fee_plans(cutoff)
+
+    # --- planes de carga de lotes interrumpidos (R03) -----------------------
+    from services.vip_batch_ops import heal_batch_upload_plans
+    healed += await heal_batch_upload_plans(cutoff)
 
     # --- liquidaciones vinculadas pendientes tras confirmar entrega (ME03) --
     rows = await db.deliveries.find(

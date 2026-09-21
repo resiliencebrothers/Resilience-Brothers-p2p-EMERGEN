@@ -347,9 +347,26 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
     # EX02 — claim de la transición por el estado leído: una aprobación y un
     # rechazo simultáneos ya no pueden pisarse (la petición obsoleta recibe
     # conflicto y sus efectos monetarios nunca corren).
-    claim = await db.orders.update_one(
-        {"id": order_id, "status": prev_status}, {"$set": update_doc})
+    claim_filter: dict = {"id": order_id, "status": prev_status}
+    if new_status == "rejected":
+        # R01 — el rechazo compite también con el estado MONETARIO de la
+        # orden: si el abono (acumulación o residuo) ya fue reclamado —
+        # aplicado o aún en vuelo — la orden está liquidada y no se puede
+        # rechazar (regla elegida: bloquear, no compensar).
+        claim_filter["accumulated_at"] = {"$exists": False}
+        claim_filter["residue_credited_at"] = {"$exists": False}
+        claim_filter["credit_pending"] = {"$exists": False}
+    claim = await db.orders.update_one(claim_filter, {"$set": update_doc})
     if claim.matched_count == 0:
+        if new_status == "rejected":
+            fresh = await db.orders.find_one({"id": order_id},
+                                             {"_id": 0, "status": 1})
+            if (fresh or {}).get("status") == prev_status:
+                raise HTTPException(
+                    status_code=409,
+                    detail=("Esta orden ya acreditó (o está acreditando) el "
+                            "dinero al cliente: está liquidada y no se puede "
+                            "rechazar."))
         raise HTTPException(
             status_code=409,
             detail="La orden cambió de estado mientras editabas; recarga.")
@@ -758,9 +775,23 @@ async def _transition_redemption(r: dict, rid: str, new_status: str,
         # rechazo (los op_ids de stock/inventario son únicos por ciclo).
         sets["rejection_effects_done"] = False
         update["$inc"] = {"rejection_cycle": 1}
-    claim = await db.redemptions.update_one(
-        {"id": rid, "status": r["status"]}, update)
+    claim_q: dict = {"id": rid, "status": r["status"]}
+    if new_status == "rejected":
+        # R02 — sin cobro de mensajería EN VUELO: el reembolso se calcularía
+        # con una tarifa aún no demostrada (el plan decide primero).
+        claim_q["courier_fee_op_pending"] = {"$exists": False}
+    claim = await db.redemptions.update_one(claim_q, update)
     if claim.matched_count == 0:
+        if new_status == "rejected":
+            fresh = await db.redemptions.find_one(
+                {"id": rid}, {"_id": 0, "status": 1,
+                              "courier_fee_op_pending": 1})
+            if (fresh or {}).get("status") == r["status"] \
+                    and (fresh or {}).get("courier_fee_op_pending"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=("Hay un cobro de mensajería en curso en este "
+                            "canje; espera unos segundos y reintenta."))
         raise HTTPException(
             status_code=409,
             detail="El canje cambió de estado mientras editabas; recarga.")
@@ -824,12 +855,16 @@ async def _apply_rejection_effects(r: dict, rid: str, actor: dict) -> None:
     # pendiente), se COMPLETA antes de escribir el marker del reembolso:
     # jamás se sobrescribe una intención ajena. El reverso posterior
     # compensará un crédito que ahora sí tiene evidencia real.
-    fresh0 = await db.redemptions.find_one(
-        {"id": rid}, {"_id": 0, "credit_pending": 1}) or {}
+    fresh0 = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or {}
     cp0 = fresh0.get("credit_pending") or {}
     if str(cp0.get("op_id") or "").startswith("vendor-credit"):
         await apply_and_clear("redemptions", rid, cp0)
-        r = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or r
+        fresh0 = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or fresh0
+    # R02 — el reembolso se calcula sobre el doc FRESCO tras el claim de la
+    # transición: sin plan de tarifa en vuelo, la tarifa guardada es la
+    # efectivamente cobrada (jamás se devuelve una tarifa no pagada).
+    if fresh0:
+        r = fresh0
     settle_cur = r.get("settlement_currency") or "USD"
     refund = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
     marker: Optional[dict] = pending_marker(r["user_id"], settle_cur, refund,

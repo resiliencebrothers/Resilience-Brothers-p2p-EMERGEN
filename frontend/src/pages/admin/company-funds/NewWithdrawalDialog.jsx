@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
@@ -17,6 +18,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
+import FundAccountSelect, { UNASSIGNED } from "@/components/FundAccountSelect";
+import PayCashBills from "./PayCashBills";
 
 export default function NewWithdrawalDialog({
   open, onOpenChange,
@@ -25,6 +28,11 @@ export default function NewWithdrawalDialog({
   onInvoiceUpload,
   pendingSubmit,
   onContinueTotp,
+  isAdmin,
+  payNow, setPayNow,
+  createAccount, setCreateAccount,
+  createAccountMethod,
+  createDenoms, setCreateDenoms,
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -124,9 +132,53 @@ export default function NewWithdrawalDialog({
               />
             )}
           </div>
+          {/* iter285 — retiro en 1 paso: pagar ahora desde caja/cuenta */}
+          {isAdmin && (
+            <div className="border border-[#22C55E]/25 bg-[#22C55E]/[0.04] p-3 space-y-3" data-testid="company-form-pay-now-block">
+              <label className="flex items-center justify-between gap-3 cursor-pointer">
+                <div>
+                  <div className="text-sm text-white">{t("admin.companyFunds.payNowToggle")}</div>
+                  <div className="text-[0.65rem] text-neutral-500">{t("admin.companyFunds.payNowHint")}</div>
+                </div>
+                <Switch
+                  data-testid="company-form-pay-now"
+                  checked={payNow}
+                  onCheckedChange={setPayNow}
+                />
+              </label>
+              {payNow && !form.currency && (
+                <p className="text-[0.65rem] text-neutral-500">
+                  {t("admin.companyFunds.payNowPickCurrency")}
+                </p>
+              )}
+              {payNow && form.currency && (
+                <>
+                  <FundAccountSelect
+                    currency={form.currency}
+                    value={createAccount}
+                    onChange={setCreateAccount}
+                    label={t("admin.companyFunds.payNowAccountLabel")}
+                    unassignedLabel={t("admin.companyFunds.unassigned")}
+                    testId="company-form-pay-account"
+                    autoMode
+                  />
+                  {createAccountMethod === "cash" && (
+                    <PayCashBills
+                      currency={form.currency}
+                      amount={parseFloat(form.amount) || 0}
+                      counts={createDenoms}
+                      onChange={setCreateDenoms}
+                      t={t}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <Button
             data-testid="company-form-submit"
-            disabled={pendingSubmit || !form.currency || !form.amount || !form.beneficiary}
+            disabled={pendingSubmit || !form.currency || !form.amount || !form.beneficiary
+              || (payNow && createAccount === UNASSIGNED)}
             onClick={onContinueTotp}
             className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
           >

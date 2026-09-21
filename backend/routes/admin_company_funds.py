@@ -216,6 +216,10 @@ class CompanyWithdrawalCreate(BaseModel):
     invoice_image: str = ""
     note: str = ""
     totp_code: Optional[str] = Field(None, max_length=11)
+    # iter285 — retiro en 1 paso: nace pagado desde la cuenta/caja indicada.
+    pay_now: bool = False
+    paid_from_account_id: str = ""
+    denominations: Optional[Dict[str, int]] = None
 
 
 async def _aggregate_by_currency(
@@ -471,6 +475,11 @@ async def _gather_fund_sources() -> Dict[str, Dict[str, float]]:
         "out_clients_normal": out_clients_normal,
         "out_company": await _aggregate_by_currency(
             db.company_withdrawals, {"status": "paid"}, "currency", "amount"),
+        # iter285 — retiros de empresa aún no pagados: dinero COMPROMETIDO
+        # (informativo, no altera el balance — solo se descuenta al pagar).
+        "pending_company": await _aggregate_by_currency(
+            db.company_withdrawals,
+            {"status": {"$in": ["pending", "approved"]}}, "currency", "amount"),
         "manual_in": manual_in,
         "manual_out": manual_out,
         "client_bal": await _aggregate_client_balances(),
@@ -499,6 +508,7 @@ def _build_fund_row(c: str, src: Dict[str, Dict[str, float]],
     ocn = src["out_clients_normal"].get(c, 0.0)
     oc = ocv + ocn  # legacy field: total client withdrawals
     ok = src["out_company"].get(c, 0.0)
+    pk = src["pending_company"].get(c, 0.0)
     mi = src["manual_in"].get(c, 0.0)
     mo = src["manual_out"].get(c, 0.0)
     cb = src["client_bal"].get(c, 0.0)
@@ -518,6 +528,8 @@ def _build_fund_row(c: str, src: Dict[str, Dict[str, float]],
         "outflow_clients_vip": round(ocv, 4),
         "outflow_clients_normal": round(ocn, 4),
         "outflow_company": round(ok, 4),
+        # iter285 — retiros de empresa pendientes/aprobados (comprometido).
+        "pending_company_withdrawals": round(pk, 4),
         "manual_inflow": round(mi, 4),
         "manual_outflow": round(mo, 4),
         # iter117 — liability: client balances the company still owes.
@@ -1111,6 +1123,11 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
     actor = await require_permission(request, "company_funds")
     currency = payload.currency.upper()
     _enforce_employee_currency_scope(actor, currency)
+    # iter285 — pagar al crear equivale a marcar «pagado»: solo admin.
+    if payload.pay_now and actor.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede pagar el retiro al crearlo")
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
     # V01 — crear y pagar contienden sobre el MISMO cerrojo por moneda: el
     # disponible se evalúa DENTRO de la sección crítica (nunca sobre una foto
@@ -1164,11 +1181,49 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
         # V01 — la reserva reclamada nunca queda huérfana si la inserción falla
         await fund_budget.release_reservation(currency, float(payload.amount))
         raise
+    result: Dict[str, Any] = cw.model_dump()
+    if payload.pay_now:
+        result = await _pay_new_company_withdrawal(cw, payload, actor)
     await log_action(db, actor, "company_withdrawal.create", "company_withdrawal", cw.id,
                      summary=f"Retiro fondo {currency} {payload.amount} → {payload.beneficiary}",
                      details={"currency": currency, "amount": payload.amount,
-                              "beneficiary": payload.beneficiary})
-    return cw.model_dump()
+                              "beneficiary": payload.beneficiary,
+                              "pay_now": payload.pay_now})
+    return result
+
+
+async def _pay_new_company_withdrawal(cw: "CompanyWithdrawal",
+                                      payload: "CompanyWithdrawalCreate",
+                                      actor: dict) -> Dict[str, Any]:
+    """iter285 — retiro en 1 paso: el retiro nace y se paga en la misma
+    operación (mismo camino validado que marcar «pagado»: cerrojo por moneda,
+    desglose de billetes obligatorio en caja, espejo a la Caja de Efectivo).
+    Si el pago falla, el retiro recién creado se ELIMINA y la reserva se
+    libera: una operación de 1 paso nunca deja un pendiente fantasma."""
+    from services import company_fund_budget as fund_budget
+    update_doc: Dict[str, Any] = {"status": "paid"}
+    pay_payload: Dict[str, Any] = {
+        "paid_from_account_id": payload.paid_from_account_id,
+        "denominations": payload.denominations,
+    }
+    try:
+        await _pay_company_withdrawal(cw.id, cw.model_dump(), pay_payload,
+                                      update_doc)
+    except Exception:
+        res = await db.company_withdrawals.delete_one(
+            {"id": cw.id, "status": "pending"})
+        if res.deleted_count:
+            await fund_budget.release_reservation(cw.currency, float(cw.amount))
+        raise
+    await log_action(db, actor, "company_withdrawal.status",
+                     "company_withdrawal", cw.id,
+                     summary=(f"Retiro fondo {cw.currency} {cw.amount} → paid "
+                              "(pago inmediato al crear)"),
+                     details={"from": "pending", "to": "paid", "pay_now": True})
+    fresh = await db.company_withdrawals.find_one({"id": cw.id}, {"_id": 0})
+    if fresh:
+        await _mirror_paid_company_withdrawal(fresh, cw.id)
+    return fresh or cw.model_dump()
 
 
 @router.get("/admin/company-withdrawals")

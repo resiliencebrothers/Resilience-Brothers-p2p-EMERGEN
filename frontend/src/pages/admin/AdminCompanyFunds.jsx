@@ -10,8 +10,6 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
 import FundAccountSelect from "@/components/FundAccountSelect";
 import AdminPageHeader from "@/components/AdminPageHeader";
@@ -22,10 +20,10 @@ import BatchesTodayCard from "@/pages/admin/company-funds/BatchesTodayCard";
 import TotalUsdtCard from "@/pages/admin/company-funds/TotalUsdtCard";
 import CompanyWithdrawalsTable from "@/pages/admin/company-funds/CompanyWithdrawalsTable";
 import NewWithdrawalDialog from "@/pages/admin/company-funds/NewWithdrawalDialog";
+import PayCashBills from "@/pages/admin/company-funds/PayCashBills";
 import ExportCsvDialog from "@/pages/admin/company-funds/ExportCsvDialog";
 import CompanyClosingPdfDialog from "@/pages/admin/company-funds/CompanyClosingPdfDialog";
 import { useCompanyFunds } from "@/pages/admin/company-funds/useCompanyFunds";
-import { useCashDenoms } from "@/hooks/useCashDenoms";
 
 export default function AdminCompanyFunds() {
   const { t } = useTranslation();
@@ -97,6 +95,14 @@ export default function AdminCompanyFunds() {
         onInvoiceUpload={cf.handleInvoiceUpload}
         pendingSubmit={cf.pendingSubmit}
         onContinueTotp={() => cf.setPendingStatus({ submit: true })}
+        isAdmin={cf.isAdmin}
+        payNow={cf.payNow}
+        setPayNow={cf.setPayNow}
+        createAccount={cf.createAccount}
+        setCreateAccount={cf.setCreateAccount}
+        createAccountMethod={cf.createAccountMethod}
+        createDenoms={cf.createDenoms}
+        setCreateDenoms={cf.setCreateDenoms}
       />
 
       <CashBoxDenominationsDialog
@@ -147,46 +153,6 @@ export default function AdminCompanyFunds() {
           </div>
         )}
       </TotpPromptDialog>
-    </div>
-  );
-}
-
-// iter277 — pago en efectivo: qué billetes salen de la cuenta. El total debe
-// coincidir con el monto del retiro (validado aquí y en el backend).
-function PayCashBills({ currency, amount, counts, onChange, t }) {
-  const denomsMap = useCashDenoms();
-  const list = denomsMap[currency] || [];
-  const total = Object.entries(counts).reduce(
-    (s, [d, q]) => s + (parseInt(d) || 0) * (parseInt(q) || 0), 0);
-  const ok = Math.abs(total - amount) <= 0.01;
-  return (
-    <div
-      className="border border-[#22C55E]/25 bg-[#22C55E]/[0.04] p-3 space-y-2"
-      data-testid="cw-pay-denominations-block"
-    >
-      <Label className="micro-label text-neutral-400">
-        {t("admin.companyFunds.payDenomsLabel", { currency })}
-      </Label>
-      <div className="grid grid-cols-3 gap-1.5">
-        {list.map((d) => (
-          <div key={d} className="flex items-center gap-1">
-            <span className="text-[0.6rem] font-mono text-neutral-500 w-9 text-right shrink-0">{d}×</span>
-            <Input
-              data-testid={`cw-pay-denom-${d}`}
-              type="number" min="0" placeholder="0"
-              value={counts[String(d)] ?? ""}
-              onChange={(e) => onChange({ ...counts, [String(d)]: e.target.value })}
-              className="rounded-none h-8 bg-[#0a0a0a] border-white/10 font-mono text-xs px-1.5"
-            />
-          </div>
-        ))}
-      </div>
-      <div className="flex justify-between text-xs pt-1 border-t border-white/10" data-testid="cw-pay-denoms-total">
-        <span className="text-neutral-500">{t("admin.companyFunds.denomsCounted")}:</span>
-        <span className={`font-mono ${ok ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
-          {total.toLocaleString()} / {amount.toLocaleString()} {currency}
-        </span>
-      </div>
     </div>
   );
 }

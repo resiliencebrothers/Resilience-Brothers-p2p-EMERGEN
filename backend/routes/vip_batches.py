@@ -476,10 +476,18 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
         await db.vip_batches.update_one(
             {"id": batch_id, "items_reserved": {"$exists": False}},
             {"$set": {"items_reserved": current}})
+    # R03 — plan de carga persistente (IDs estables) publicado en el MISMO
+    # update que la reserva: una inserción parcial o un crash liberan SOLO el
+    # cupo no insertado (resolve_upload_plan/healer), y el cierre no se sella
+    # mientras haya cargas reservadas en vuelo.
+    upload_plan = {"plan_id": f"vbup_{uuid.uuid4().hex[:12]}",
+                   "item_ids": [d["id"] for d in docs],
+                   "count": len(docs), "at": now}
     claim = await db.vip_batches.update_one(
         {"id": batch_id, "status": "open",
          "items_reserved": {"$lte": MAX_ITEMS_PER_BATCH - len(docs)}},
-        {"$inc": {"items_reserved": len(docs)}})
+        {"$inc": {"items_reserved": len(docs)},
+         "$push": {"upload_plans": upload_plan}})
     if claim.matched_count == 0:
         fresh = await db.vip_batches.find_one({"id": batch_id},
                                               {"_id": 0, "status": 1})
@@ -493,10 +501,14 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
     try:
         await db.vip_batch_items.insert_many([dict(d) for d in docs])
     except Exception:
-        # liberar la reserva si la inserción no ocurrió
-        await db.vip_batches.update_one(
-            {"id": batch_id}, {"$inc": {"items_reserved": -len(docs)}})
+        # R03 — resolver el plan: contar lo realmente insertado y liberar
+        # SOLO el cupo restante (decisión durable + aplicación atómica).
+        from services.vip_batch_ops import resolve_upload_plan
+        await resolve_upload_plan(batch_id, upload_plan)
         raise
+    await db.vip_batches.update_one(
+        {"id": batch_id},
+        {"$pull": {"upload_plans": {"plan_id": upload_plan["plan_id"]}}})
     await refresh_batch_totals(batch_id)
     # iter148 — massive-inflow threshold alerts (item + cumulative batch total)
     await dispatch_vip_batch_alerts(batch_id, docs, "added")
@@ -571,10 +583,23 @@ async def close_vip_batch(batch_id: str, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Lote no encontrado.")
     if batch["status"] != "open":
         raise HTTPException(status_code=409, detail="El lote ya está cerrado.")
-    await db.vip_batches.update_one(
-        {"id": batch_id},
+    # R03 — el cierre solo se SELLA sin cargas reservadas en vuelo: una carga
+    # que ya reservó cupo termina (o se resuelve) antes de cerrar.
+    res = await db.vip_batches.update_one(
+        {"id": batch_id, "status": "open",
+         "$or": [{"upload_plans": {"$exists": False}},
+                 {"upload_plans": {"$size": 0}}]},
         {"$set": {"status": "closed", "closed_at": iso(now_utc()), "updated_at": iso(now_utc())}},
     )
+    if res.matched_count == 0:
+        fresh = await db.vip_batches.find_one({"id": batch_id},
+                                              {"_id": 0, "status": 1})
+        if (fresh or {}).get("status") != "open":
+            raise HTTPException(status_code=409, detail="El lote ya está cerrado.")
+        raise HTTPException(
+            status_code=409,
+            detail=("Hay cargas de órdenes en curso en este lote; espera "
+                    "unos segundos y vuelve a cerrarlo."))
     return serialize_doc({**batch, "status": "closed", "closed_at": iso(now_utc())})
 
 

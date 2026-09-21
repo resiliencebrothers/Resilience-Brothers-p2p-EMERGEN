@@ -57,6 +57,11 @@ export function useCompanyFunds() {
   const [form, setForm] = useState(emptyForm);
   const [pendingSubmit, setPendingSubmit] = useState(false);
   const [pendingStatus, setPendingStatus] = useState(null);
+  // iter285 — retiro en 1 paso: pagar ahora desde caja/cuenta al crear.
+  const [payNow, setPayNow] = useState(false);
+  const [createAccount, setCreateAccount] = useState(UNASSIGNED);
+  const [createDenoms, setCreateDenoms] = useState({});
+  const [createOptions, setCreateOptions] = useState([]);
   // iter194 — optional "paid from account" attribution when marking a
   // company withdrawal as paid (feeds the per-account fund breakdown).
   const [paidFromAccount, setPaidFromAccount] = useState(UNASSIGNED);
@@ -141,6 +146,32 @@ export function useCompanyFunds() {
   const payAccountMethod =
     payOptions.find((o) => o.id === paidFromAccount)?.method || null;
 
+  // iter285 — opciones de cuenta para el retiro en 1 paso (según la moneda
+  // elegida en el formulario) y método de la cuenta seleccionada.
+  useEffect(() => {
+    if (!openCreate || !payNow || !form.currency) {
+      setCreateOptions([]);
+      return undefined;
+    }
+    let alive = true;
+    axios
+      .get(`${API}/admin/fund-accounts/options`, {
+        params: { currency: form.currency }, withCredentials: true,
+      })
+      .then((r) => { if (alive) setCreateOptions(r.data || []); })
+      .catch(() => { if (alive) setCreateOptions([]); });
+    return () => { alive = false; };
+  }, [openCreate, payNow, form.currency]);
+
+  // Al cambiar la moneda del formulario, la cuenta/desglose elegidos caducan.
+  useEffect(() => {
+    setCreateAccount(UNASSIGNED);
+    setCreateDenoms({});
+  }, [form.currency]);
+
+  const createAccountMethod =
+    createOptions.find((o) => o.id === createAccount)?.method || null;
+
   const handleInvoiceUpload = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -165,10 +196,42 @@ export function useCompanyFunds() {
         invoice_image: form.invoice_image,
         totp_code: totpCode,
       };
+      // iter285 — retiro en 1 paso: nace pagado desde la cuenta elegida.
+      if (payNow) {
+        if (createAccount === UNASSIGNED) {
+          toast.error(t("admin.companyFunds.payNowAccountRequired"));
+          return;
+        }
+        body.pay_now = true;
+        body.paid_from_account_id = createAccount;
+        if (createAccountMethod === "cash") {
+          const clean = {};
+          let totalD = 0;
+          Object.entries(createDenoms).forEach(([d, q]) => {
+            const n = parseInt(q, 10);
+            if (n > 0) { clean[d] = n; totalD += (parseInt(d, 10) || 0) * n; }
+          });
+          const amount = parseFloat(form.amount) || 0;
+          if (Math.abs(totalD - amount) > 0.01) {
+            toast.error(t("admin.companyFunds.payDenomsMismatch", {
+              total: totalD.toLocaleString(),
+              amount: amount.toLocaleString(),
+              currency: form.currency,
+            }));
+            return;
+          }
+          body.denominations = clean;
+        }
+      }
       await axios.post(`${API}/admin/company-withdrawals`, body, { withCredentials: true });
-      toast.success(t("admin.companyFunds.toastCreated"));
+      toast.success(payNow
+        ? t("admin.companyFunds.toastCreatedPaid")
+        : t("admin.companyFunds.toastCreated"));
       setOpenCreate(false);
       setForm(emptyForm);
+      setPayNow(false);
+      setCreateAccount(UNASSIGNED);
+      setCreateDenoms({});
       load();
     } catch (e) {
       if (!handleTotpError(e, navigate)) {
@@ -177,7 +240,7 @@ export function useCompanyFunds() {
     } finally {
       setPendingSubmit(false);
     }
-  }, [form, load, navigate, t]);
+  }, [form, payNow, createAccount, createAccountMethod, createDenoms, load, navigate, t]);
 
   const requestStatus = useCallback((p) => {
     setPaidFromAccount(UNASSIGNED);
@@ -255,6 +318,9 @@ export function useCompanyFunds() {
     pendingSubmit, pendingStatus, setPendingStatus,
     requestStatus, paidFromAccount, setPaidFromAccount,
     payOptions, payAccountMethod, payDenoms, setPayDenoms,
+    payNow, setPayNow,
+    createAccount, setCreateAccount, createAccountMethod,
+    createDenoms, setCreateDenoms,
     createCurrencies, adjustmentCurrencies,
     load, handleInvoiceUpload, submitCreate, confirmStatusWithTotp,
   };

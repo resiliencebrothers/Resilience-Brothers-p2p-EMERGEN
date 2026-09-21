@@ -22,7 +22,10 @@ export default function MarketplaceView() {
   const { t } = useTranslation();
   const [products, setProducts] = useState([]);
   const [open, setOpen] = useState(null);
-  const [qty, setQty] = useState(1);
+  // iter285 — la cantidad vive como texto: el usuario puede borrar el «1»
+  // inicial y escribir directamente el número (qtyNum = valor efectivo).
+  const [qty, setQty] = useState("1");
+  const qtyNum = Math.max(0, parseInt(qty, 10) || 0);
   const [addr, setAddr] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState([]);
@@ -109,7 +112,7 @@ export default function MarketplaceView() {
 
   const redeem = async () => {
     if (!open) return;
-    if (qty < 1) return toast.error(t("marketplace.invalidQty"));
+    if (qtyNum < 1) return toast.error(t("marketplace.invalidQty"));
     const pickup = fulfillment === "pickup";
     if (pickup && !storeId) return toast.error(t("marketplace.pickupStoreRequired"));
     if (!pickup && !addr) return toast.error(t("marketplace.addressRequired"));
@@ -117,7 +120,7 @@ export default function MarketplaceView() {
     try {
       await axios.post(`${API}/vip/redeem`, {
         product_id: open.id,
-        quantity: qty,
+        quantity: qtyNum,
         ...(pickup
           ? { fulfillment: "store_pickup", store_id: storeId }
           : {
@@ -131,7 +134,7 @@ export default function MarketplaceView() {
           }),
       }, { withCredentials: true });
       toast.success(t("marketplace.successPending"));
-      setOpen(null); setQty(1); setAddr("");
+      setOpen(null); setQty("1"); setAddr("");
       setDeliveryCoords(null); setCourierQuote(null);
       setFulfillment("delivery"); setStoreId("");
       await refresh();
@@ -361,7 +364,7 @@ export default function MarketplaceView() {
           <div className="space-y-4">
             <div>
               <Label className="micro-label text-neutral-500">{t("marketplace.redeemQuantity")}</Label>
-              <Input data-testid="redeem-qty" type="number" min="1" value={qty} onChange={e => setQty(parseInt(e.target.value) || 1)} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12" />
+              <Input data-testid="redeem-qty" type="number" min="1" value={qty} onChange={e => setQty(e.target.value.replace(/[^0-9]/g, ""))} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12" />
             </div>
             {stores.length > 0 && (
               <div>
@@ -431,7 +434,7 @@ export default function MarketplaceView() {
                 </div>
                 <CourierQuotePicker
                   currency="USD"
-                  amount={(open?.price_usdt || 0) * qty}
+                  amount={(open?.price_usdt || 0) * qtyNum}
                   addressText={addr}
                   onCoords={setDeliveryCoords}
                   onQuote={setCourierQuote}
@@ -441,16 +444,16 @@ export default function MarketplaceView() {
             <div className="border border-white/10 p-3 font-mono text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
-                <span className="text-[#8B5CF6]">{((open?.price_usdt || 0) * qty).toFixed(2)} USDT</span>
+                <span className="text-[#8B5CF6]">{((open?.price_usdt || 0) * qtyNum).toFixed(2)} USDT</span>
               </div>
               {open?.store_currency && open?.price_store != null && (
                 <div className="text-[0.65rem] text-neutral-500" data-testid="redeem-store-equiv">
-                  ≈ {(open.price_store * qty).toLocaleString(undefined, { maximumFractionDigits: 2 })} {open.store_currency} {t("marketplace.cashSuffix")}
+                  ≈ {(open.price_store * qtyNum).toLocaleString(undefined, { maximumFractionDigits: 2 })} {open.store_currency} {t("marketplace.cashSuffix")}
                 </div>
               )}
               {!open?.store_currency && usdtRates.length > 0 && open && (
                 <div className="text-[0.65rem] text-neutral-500" data-testid="redeem-total-equivalents">
-                  ≈ {equivalents((open.price_usdt ?? open.price_usd) * qty)}
+                  ≈ {equivalents((open.price_usdt ?? open.price_usd) * qtyNum)}
                 </div>
               )}
               {courierQuote && fulfillment !== "pickup" && !courierQuote.free && !courierQuote.requires_manual_review && Number(courierQuote.fee_currency_amount) > 0 && (

@@ -1880,3 +1880,11 @@ Movido a `/app/memory/CHANGELOG.md` (iter55.29 → presente).
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-21 · iter285 — Retiro empresa 1 paso + pendientes visibles + marketplace normales
+- **Retiro en 1 paso (pay_now)**: `POST /admin/company-withdrawals` acepta `pay_now`, `paid_from_account_id`, `denominations`. Solo admin (403 empleado). Reutiliza `_pay_company_withdrawal` (cerrojo V01, billetes S02/S04, espejo caja H01). Si el pago falla → el retiro recién creado se ELIMINA y la reserva se libera (sin pendiente fantasma). UI: toggle «Pagar ahora desde caja/cuenta» en `NewWithdrawalDialog.jsx` con `FundAccountSelect` (autoMode) + `PayCashBills.jsx` (extraído a componente propio). Testids: `company-form-pay-now(-block)`, `company-form-pay-account`.
+- **Pendientes visibles**: `services/transactions._fetch_company_withdrawals` incluye status `pending`; nueva métrica `pending_company_withdrawals` (pending+approved) en `_build_fund_row`; `FundDetailDialog.jsx` muestra línea ámbar «Retiros de empresa pendientes (comprometido)» (`fund-dash-pending-cw`).
+- **Marketplace**: `POST /vip/redeem` permite rol `normal` (antes solo vip/admin; empleados siguen 403). Input cantidad (`MarketplaceView.jsx`) ahora es string: se puede borrar el «1» y escribir directo (`qtyNum` efectivo en POST/totales).
+- **Limpieza**: 120 retiros residuales de tests antiguos («Iter35 Vendor», 0.01 USD pending) borrados del preview para no ensuciar el registro.
+- **Tests**: `test_iter285_pay_now_marketplace.py` 8/8 (flujo completo pay_now con billetes+fondo+transacciones, mismatch sin fantasma, cash sin desglose 400, empleado 403, pendiente visible+comprometido, normal canjea+debita, saldo insuficiente 400, empleado no canjea). Añadido a `make test-critical` → **485/485 PASS**. Smoke UI verificado (dialog pay-now con desglose CUP + input cantidad marketplace móvil).
+- i18n: `payNowToggle/Hint/AccountLabel/AccountRequired/PickCurrency`, `toastCreatedPaid`, `pendingCompanyWithdrawals` (es+en).

@@ -301,16 +301,45 @@ async def maybe_alert_low_stock(product_id: str) -> None:
         logger.error(f"low stock in-app notify failed: {e}")
 
 
+_MOV_DEDUPE_INDEX_READY = False
+
+
+async def _insert_movement(doc: dict) -> tuple[dict, bool]:
+    """R04 — inserción del movimiento; con `dedupe_key` es exactamente-una-vez
+    (índice único sparse): dos escritores del mismo efecto convergen en UN
+    registro. Devuelve (doc_final, creado)."""
+    global _MOV_DEDUPE_INDEX_READY
+    if doc.get("dedupe_key"):
+        if not _MOV_DEDUPE_INDEX_READY:
+            await db.inventory_movements.create_index(
+                "dedupe_key", unique=True, sparse=True)
+            _MOV_DEDUPE_INDEX_READY = True
+        try:
+            await db.inventory_movements.insert_one({**doc})
+        except Exception:
+            existing = await db.inventory_movements.find_one(
+                {"dedupe_key": doc["dedupe_key"]}, {"_id": 0})
+            if existing:
+                return existing, False
+            raise
+        return doc, True
+    await db.inventory_movements.insert_one({**doc})
+    return doc, True
+
+
 async def record_movement(*, product: dict, mtype: str, quantity: int,
                           unit_price: Optional[float] = None,
                           unit_cost: Optional[float] = None,
                           note: str = "", source: str = "manual",
                           ref_id: str = "", actor: Optional[dict] = None,
                           apply_stock: bool = True,
-                          photo_url: str = "") -> dict:
+                          photo_url: str = "",
+                          dedupe_key: str = "") -> dict:
     """Inserta un movimiento y (opcionalmente) aplica el delta al stock.
 
-    `apply_stock=False` para flujos donde el stock ya fue tocado (canjes)."""
+    `apply_stock=False` para flujos donde el stock ya fue tocado (canjes).
+    `dedupe_key` (R04): identidad única y persistente del efecto — creador y
+    recuperador solapados jamás duplican la traza."""
     if mtype not in MOVEMENT_TYPES:
         raise HTTPException(status_code=400, detail="Tipo de movimiento inválido")
     if quantity <= 0:
@@ -351,6 +380,8 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
         "actor_email": (actor or {}).get("email", ""),
         "created_at": iso(now_utc()),
     }
+    if dedupe_key:
+        doc["dedupe_key"] = dedupe_key
     # iter254(R03) — registro-primero + aplicación de stock idempotente: si el
     # proceso muere entre el log y el stock, heal_initializing_ops completa la
     # aplicación (op_id determinista); nunca queda un cambio de stock sin su
@@ -358,7 +389,9 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
     if apply_stock and delta != 0:
         doc["needs_stock"] = True
         doc["stock_applied"] = False
-        await db.inventory_movements.insert_one({**doc})
+        doc, created = await _insert_movement(doc)
+        if not created:
+            return doc  # R04 — otro ejecutor ya registró este movimiento
         status = await apply_stock_idempotent(
             product["id"], delta, f"invmov:{doc['id']}",
             require_available=(delta < 0))
@@ -370,7 +403,9 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
             {"id": doc["id"]}, {"$set": {"stock_applied": True}})
         doc["stock_applied"] = True
     else:
-        await db.inventory_movements.insert_one({**doc})
+        doc, created = await _insert_movement(doc)
+        if not created:
+            return doc  # R04 — otro ejecutor ya registró este movimiento
     await _record_fund_flow(doc)
     await maybe_alert_low_stock(product["id"])
     return doc

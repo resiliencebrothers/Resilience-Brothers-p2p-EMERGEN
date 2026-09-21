@@ -20,6 +20,55 @@ from services.vip_batch_alerts import dispatch_vip_batch_alerts
 logger = logging.getLogger("vip_batch_ops")
 
 
+async def resolve_upload_plan(batch_id: str, plan: dict) -> None:
+    """R03 — resuelve un plan de carga fallido o interrumpido: cuenta cuántos
+    ítems del plan llegaron a insertarse y libera SOLO el cupo restante.
+    Decisión durable (release guardado en el propio plan) + aplicación
+    atómica única ($inc + $pull en el mismo update): dos resolutores
+    convergen sin liberar cupo de más ni de menos."""
+    pid = str(plan.get("plan_id") or "")
+    if not pid:
+        return
+    release = plan.get("release")
+    if release is None:
+        inserted = await db.vip_batch_items.count_documents(
+            {"id": {"$in": plan.get("item_ids") or []}})
+        release = max(int(plan.get("count") or 0) - inserted, 0)
+        claim = await db.vip_batches.update_one(
+            {"id": batch_id,
+             "upload_plans": {"$elemMatch": {"plan_id": pid,
+                                             "release": {"$exists": False}}}},
+            {"$set": {"upload_plans.$.release": release}})
+        if claim.matched_count == 0:
+            fresh = await db.vip_batches.find_one(
+                {"id": batch_id, "upload_plans.plan_id": pid},
+                {"_id": 0, "upload_plans.$": 1})
+            if not fresh:
+                return  # otro resolutor ya lo aplicó por completo
+            release = (fresh["upload_plans"][0]).get("release")
+            if release is None:
+                return
+    await db.vip_batches.update_one(
+        {"id": batch_id, "upload_plans.plan_id": pid},
+        {"$inc": {"items_reserved": -int(release)},
+         "$pull": {"upload_plans": {"plan_id": pid}}})
+
+
+async def heal_batch_upload_plans(cutoff: str) -> int:
+    """R03 — completa los planes de carga muertos (crash tras reservar el
+    cupo): libera lo no insertado y desbloquea el cierre del lote."""
+    n = 0
+    rows = await db.vip_batches.find(
+        {"upload_plans.at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "upload_plans": 1}).to_list(100)
+    for b in rows:
+        for plan in (b.get("upload_plans") or []):
+            if (plan.get("at") or "") < cutoff:
+                await resolve_upload_plan(b["id"], plan)
+                n += 1
+    return n
+
+
 def serialize_doc(doc: dict) -> dict:
     d = dict(doc)
     d.pop("_id", None)

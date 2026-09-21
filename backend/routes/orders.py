@@ -364,8 +364,11 @@ async def _load_pickup_store(store_id: Optional[str], product: dict) -> dict:
 async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     user = await require_user(request)
     await assert_account_active(user)
-    if user["role"] not in ("vip", "admin"):
-        raise HTTPException(status_code=403, detail="Solo clientes VIP")
+    # iter285 — los clientes NORMALES también canjean su saldo (antes era
+    # exclusivo VIP); los empleados siguen excluidos (no tienen saldo).
+    if user["role"] not in ("vip", "normal", "admin"):
+        raise HTTPException(status_code=403,
+                            detail="Solo clientes pueden canjear productos")
     await assert_user_fully_verified(db, user, action_label="canjear productos del marketplace")
     product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
     if not product:

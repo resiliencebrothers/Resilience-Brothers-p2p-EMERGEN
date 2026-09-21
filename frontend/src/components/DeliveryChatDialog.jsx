@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useTranslation } from "react-i18next";
@@ -28,22 +28,38 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  // ME04 — páginas anteriores cargadas con el cursor `before` (se conservan
-  // al refrescar la página reciente; deduplicadas por id).
-  const [older, setOlder] = useState([]);
-  const [olderHasMore, setOlderHasMore] = useState(null);
+  // R06 (ME04) — historial COMBINADO por id: cada refresco/página se fusiona
+  // sin descartar mensajes ya cargados (la ventana reciente se desplaza y
+  // antes perdía el mensaje frontera entre páginas).
+  const [messages, setMessages] = useState([]);
+  const [reachedStart, setReachedStart] = useState(false);
   const endRef = useRef(null);
+
+  const mergeMessages = useCallback((incoming) => {
+    if (!incoming || incoming.length === 0) return;
+    setMessages((prev) => {
+      const map = new Map(prev.map((m) => [m.id, m]));
+      incoming.forEach((m) => map.set(m.id, m));
+      return [...map.values()].sort((a, b) =>
+        a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0);
+    });
+  }, []);
 
   const load = useCallback(() => {
     if (!deliveryId) return;
     axios.get(`${API}/deliveries/${deliveryId}/chat`, { withCredentials: true })
-      .then((r) => setData(r.data))
+      .then((r) => {
+        setData(r.data);
+        mergeMessages(r.data.messages);
+        // has_more=false ⇒ no existe nada más antiguo en el hilo.
+        if (r.data.has_more === false) setReachedStart(true);
+      })
       .catch(() => {});
-  }, [deliveryId]);
+  }, [deliveryId, mergeMessages]);
 
   useEffect(() => {
-    setOlder([]);
-    setOlderHasMore(null);
+    setMessages([]);
+    setReachedStart(false);
   }, [deliveryId]);
 
   useEffect(() => {
@@ -57,16 +73,9 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
     if (open && e?.delivery_id === deliveryId) load();
   });
 
-  const allMessages = useMemo(() => {
-    const seen = new Set();
-    const out = [];
-    [...older, ...(data?.messages || [])].forEach((m) => {
-      if (!seen.has(m.id)) { seen.add(m.id); out.push(m); }
-    });
-    return out;
-  }, [older, data]);
-
-  const hasMore = olderHasMore === null ? !!data?.has_more : olderHasMore;
+  const allMessages = messages;
+  // R06 — el botón solo desaparece al llegar al INICIO real del hilo.
+  const hasMore = allMessages.length > 0 && !reachedStart;
 
   const loadOlder = async () => {
     const first = allMessages[0];
@@ -75,8 +84,8 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
       const r = await axios.get(`${API}/deliveries/${deliveryId}/chat`, {
         params: { before: first.created_at }, withCredentials: true,
       });
-      setOlder((prev) => [...(r.data.messages || []), ...prev]);
-      setOlderHasMore(!!r.data.has_more);
+      mergeMessages(r.data.messages);
+      if (r.data.has_more === false) setReachedStart(true);
     } catch { /* silencioso */ }
   };
 

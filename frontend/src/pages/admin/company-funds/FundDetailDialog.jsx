@@ -139,6 +139,20 @@ export default function FundDetailDialog({ fund, onClose }) {
               <DashRow label={t("admin.companyFunds.normalWithdrawals")} value={f.outflow_clients_normal} tone="out" />
               <DashRow label={t("admin.companyFunds.companyOutflow")} value={f.outflow_company} tone="out" />
               <DashRow label={t("admin.companyFunds.ownOutflow")} value={f.manual_outflow} tone="out" />
+              {/* iter285 — comprometido: retiros de empresa aún no pagados */}
+              {Number(f.pending_company_withdrawals) > 0 && (
+                <div
+                  className="flex items-baseline justify-between gap-3 text-[0.75rem] font-mono py-1 border-b border-white/5 last:border-0"
+                  data-testid="fund-dash-pending-cw"
+                >
+                  <span className="text-[#F59E0B]">
+                    {t("admin.companyFunds.pendingCompanyWithdrawals")}
+                  </span>
+                  <span className="text-[#F59E0B] tabular-nums whitespace-nowrap">
+                    {fmt(f.pending_company_withdrawals)}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>

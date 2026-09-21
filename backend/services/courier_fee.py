@@ -227,15 +227,19 @@ async def apply_fee_change_plan(coll_name: str, doc: dict, user_id: str,
         "revert": {k: doc.get(k) for k in new_fields},
         "at": datetime.now(timezone.utc).isoformat(),
     }
+    # R02 — el claim exige atómicamente que la operación NO esté en estado
+    # terminal: un rechazo concurrente jamás convive con un cobro nuevo.
     claim = await coll.update_one(
         {"id": doc_id, prev_field: doc.get(prev_field),
+         "status": {"$nin": ["rejected", "cancelled"]},
          "courier_fee_op_pending": {"$exists": False}},
         {"$set": {**new_fields, "courier_fee_op_pending": plan}})
     if claim.matched_count == 0:
         raise HTTPException(
             status_code=409,
-            detail=("La tarifa de esta operación cambió o hay un cobro en "
-                    "curso; recarga e inténtalo de nuevo."))
+            detail=("La tarifa de esta operación cambió, la operación está "
+                    "en estado terminal o hay un cobro en curso; recarga e "
+                    "inténtalo de nuevo."))
     if delta == 0:
         await coll.update_one(
             {"id": doc_id, "courier_fee_op_pending.op_id": plan["op_id"]},
@@ -260,6 +264,11 @@ async def settle_fee_change_plan(coll_name: str, doc_id: str, user_id: str,
     if delta > 0:
         st = await debit_balance_idempotent(user_id, cur, delta, op_id)
         if st == "insufficient":
+            # R02 — decisión TERMINAL antes de liberar el plan: quema el
+            # débito (un ejecutor lento con este op_id jamás cobrará después,
+            # ni con saldo nuevo) o compensa uno que sí llegó a aplicarse.
+            from services.balances import burn_or_undo_debit
+            await burn_or_undo_debit(user_id, cur, delta, op_id)
             await coll.update_one(
                 {"id": doc_id, "courier_fee_op_pending.op_id": op_id},
                 {"$set": plan.get("revert") or {},

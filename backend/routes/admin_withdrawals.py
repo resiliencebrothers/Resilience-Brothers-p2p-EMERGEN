@@ -157,6 +157,11 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
     claim = await db.withdrawals.update_one(
         {"id": wid, "status": w["status"],
          "balance_refunded": {"$ne": True},
+         # R02 — sin cobro de tarifa EN VUELO y con la tarifa LEÍDA: el
+         # reembolso incluye exactamente lo cobrado, nunca una tarifa
+         # publicada cuyo débito aún no se demostró.
+         "courier_fee_op_pending": {"$exists": False},
+         "courier_fee_currency_amount": w.get("courier_fee_currency_amount"),
          "redebit_pending": {"$exists": False}},
         {"$set": {**sets, "balance_refunded": True,
                   "credit_pending": marker}})
@@ -165,6 +170,7 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
         # previo cuyo re-débito no aplicó)? — transición sin dinero.
         claim = await db.withdrawals.update_one(
             {"id": wid, "status": w["status"], "balance_refunded": True,
+             "courier_fee_op_pending": {"$exists": False},
              "redebit_pending": {"$exists": False}},
             {"$set": sets})
         if claim.matched_count == 0:

@@ -241,9 +241,11 @@ def _company_adjustment_to_transaction(a: dict) -> TransactionItem:
 
 
 def _company_withdrawal_to_salida(cw: dict) -> TransactionItem:
-    """iter55.15 — Company-fund withdrawals (retiros del fondo empresa) that
-    reached `approved` or `paid` status. These are money that physically left
-    the company; the beneficiary is the recipient (proveedor, socio, gasto)."""
+    """iter55.15 — Company-fund withdrawals (retiros del fondo empresa).
+    iter285 — also includes `pending` rows (marked with their status) so a
+    committed-but-unpaid withdrawal never looks like vanished money.
+    These are money that physically left (or is committed to leave) the
+    company; the beneficiary is the recipient (proveedor, socio, gasto)."""
     return {
         "direction": "out",
         "currency": cw.get("currency", ""),
@@ -450,9 +452,10 @@ async def _fetch_company_adjustments(
 async def _fetch_company_withdrawals(
     date_q: dict, currency: Optional[str], holder: Optional[str],
 ) -> List[TransactionItem]:
-    """iter55.15 — Approved/paid `company_withdrawals` (retiros del fondo)."""
+    """iter55.15/iter285 — `company_withdrawals` (retiros del fondo) incluidos
+    los PENDIENTES: aparecen en el registro marcados como «pendiente»."""
     q: dict = {
-        "status": {"$in": ["approved", "paid"]},
+        "status": {"$in": ["pending", "approved", "paid"]},
         **date_q,
     }
     if currency:
