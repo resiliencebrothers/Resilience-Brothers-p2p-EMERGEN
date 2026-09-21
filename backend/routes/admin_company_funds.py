@@ -1226,6 +1226,29 @@ async def _pay_new_company_withdrawal(cw: "CompanyWithdrawal",
     return fresh or cw.model_dump()
 
 
+@router.get("/admin/company-withdrawals/{cwid}/receipt.pdf")
+async def company_withdrawal_receipt(cwid: str, request: Request) -> Any:
+    """iter286 — Recibo PDF firmable de un retiro de empresa PAGADO:
+    datos del retiro + desglose de billetes + firmas (empresa/beneficiario)."""
+    actor = await require_permission(request, "company_funds")
+    cw = await db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
+    if not cw:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    _enforce_employee_currency_scope(actor, cw.get("currency", ""))
+    if cw.get("status") != "paid":
+        raise HTTPException(
+            status_code=400,
+            detail="Solo los retiros PAGADOS tienen recibo imprimible.")
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from company_withdrawal_receipt_pdf import generate_withdrawal_receipt_pdf
+    pdf = generate_withdrawal_receipt_pdf(cw)
+    filename = f"recibo-retiro-{cwid[:8]}.pdf"
+    return StreamingResponse(
+        BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
 @router.get("/admin/company-withdrawals")
 async def list_company_withdrawals(request: Request,
                                      status: Optional[str] = None,

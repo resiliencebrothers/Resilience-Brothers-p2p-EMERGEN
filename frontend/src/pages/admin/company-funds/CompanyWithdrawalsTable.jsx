@@ -7,6 +7,9 @@
  * salidas por «Retiro», así ningún movimiento queda fuera de esta tabla.
  */
 import { useTranslation } from "react-i18next";
+import axios from "axios";
+import { toast } from "sonner";
+import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import {
   FileImage, Plus, Download, Search, FileDown, Banknote,
-  ArrowDownCircle,
+  ArrowDownCircle, Receipt,
 } from "lucide-react";
 
 const STATUS_STYLES = {
@@ -254,6 +257,23 @@ export default function CompanyWithdrawalsTable({
 }
 
 function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t }) {
+  // iter286 — recibo PDF firmable de un retiro pagado.
+  const downloadReceipt = async () => {
+    try {
+      const r = await axios.get(
+        `${API}/admin/company-withdrawals/${w.id}/receipt.pdf`,
+        { responseType: "blob", withCredentials: true },
+      );
+      const url = URL.createObjectURL(r.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `recibo-retiro-${w.id.slice(0, 8)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error(t("admin.companyFunds.receiptError"));
+    }
+  };
   return (
     <tr className="border-b border-white/5" data-testid={`company-withdrawal-row-${w.id}`}>
       <td className="px-4 py-3">
@@ -311,6 +331,17 @@ function WithdrawalRow({ w, isAdmin, typeLabel, statusLabel, onRequestStatus, t 
                 ×
               </Button>
             </div>
+          )}
+          {w.status === "paid" && (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid={`cw-receipt-${w.id}`}
+              onClick={downloadReceipt}
+              className="rounded-none h-7 text-xs border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10"
+            >
+              <Receipt className="w-3 h-3 mr-1" /> {t("admin.companyFunds.receiptBtn")}
+            </Button>
           )}
         </td>
       )}

@@ -81,6 +81,28 @@ def convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
     return _convert_via_usd(amount, code, rates)
 
 
+async def build_convert_rate_lookup(role: Optional[str]) -> dict:
+    """iter286 — Lookup para CONVERSIONES de cliente hacia USDT (barrido de
+    saldos pequeños): en las filas USDT→X el cliente está ADQUIRIENDO USDT,
+    así que se usa la TASA DE VENTA del nivel (`rate_sell_vip` /
+    `rate_sell_normal`) cuando el admin la configuró — la empresa vende su
+    USDT con margen. Sin tasa de venta, comportamiento histórico
+    (`rate_normal`, misma valoración que `build_rate_lookup`)."""
+    docs = await db.rates.find({}, {"_id": 0}).to_list(1000)
+    key = "rate_sell_vip" if role in ("vip", "admin") else "rate_sell_normal"
+    out: dict = {}
+    for d in docs:
+        if d.get("rate_normal") is None:
+            continue
+        rate = float(d["rate_normal"])
+        if d.get("from_code") == "USDT":
+            sell = d.get(key)
+            if sell is not None and float(sell) > 0:
+                rate = float(sell)
+        out[(d["from_code"], d["to_code"])] = rate
+    return out
+
+
 def convert_from_usdt(amount_usdt: float, code: str, rates: dict) -> Optional[float]:
     """Inverse of `convert_to_usdt`: given a USDT amount, return the equivalent
     in `code` using the available rate lookup. Returns None if no rate path

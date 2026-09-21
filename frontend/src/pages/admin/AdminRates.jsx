@@ -17,7 +17,7 @@ import { useLiveEvent } from "@/hooks/useLiveStream";
 import { Plus, Edit2, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { from_code: "", to_code: "", rate_normal: 0, rate_vip: 0, real_rate: "", tiers: [] };
+const empty = { from_code: "", to_code: "", rate_normal: 0, rate_vip: 0, real_rate: "", rate_sell_normal: "", rate_sell_vip: "", tiers: [] };
 
 const newTierKey = () => Math.random().toString(36).slice(2, 10);
 
@@ -52,6 +52,8 @@ export default function AdminRates() {
     rate_normal: parseFloat(form.rate_normal),
     rate_vip: parseFloat(form.rate_vip),
     real_rate: form.real_rate === "" || form.real_rate === null ? null : parseFloat(form.real_rate),
+    rate_sell_normal: form.rate_sell_normal === "" || form.rate_sell_normal == null ? null : parseFloat(form.rate_sell_normal),
+    rate_sell_vip: form.rate_sell_vip === "" || form.rate_sell_vip == null ? null : parseFloat(form.rate_sell_vip),
     tiers: (form.tiers || [])
       .filter(tr => tr.min_amount !== "" && tr.rate_normal !== "" && tr.rate_vip !== "")
       .map(tr => ({
@@ -120,6 +122,7 @@ export default function AdminRates() {
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.rates.colNormal")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.rates.colVip")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.rates.colReal")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.rates.colSell")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("admin.rates.colUpdated")}</th>
               <th className="px-4 py-3"></th>
             </tr>
@@ -140,11 +143,16 @@ export default function AdminRates() {
                   <td className="px-4 py-3 font-mono">{r.rate_normal}</td>
                   <td className="px-4 py-3 font-mono text-[#8B5CF6]">{r.rate_vip}</td>
                   <td className="px-4 py-3 font-mono text-[#22C55E]">{r.real_rate ?? "—"}</td>
+                  <td className="px-4 py-3 font-mono text-[#F59E0B] text-xs" data-testid={`rate-sell-${r.id}`}>
+                    {(r.rate_sell_normal ?? r.rate_sell_vip) != null
+                      ? `N: ${r.rate_sell_normal ?? "—"} · V: ${r.rate_sell_vip ?? "—"}`
+                      : "—"}
+                  </td>
                   <td className="px-4 py-3 text-xs text-neutral-500">{new Date(r.updated_at).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right">
                     {editable ? (
                       <>
-                        <button data-testid={`edit-rate-${r.id}`} onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "", tiers: (r.tiers || []).map(tr => ({ _key: newTierKey(), min_amount: tr.min_amount ?? "", rate_normal: tr.rate_normal ?? "", rate_vip: tr.rate_vip ?? "", real_rate: tr.real_rate ?? "" })) }); setOpen(true); }} className="text-neutral-400 hover:text-[#8B5CF6] mr-3"><Edit2 className="w-4 h-4" /></button>
+                        <button data-testid={`edit-rate-${r.id}`} onClick={() => { setEditing(r); setForm({ ...r, real_rate: r.real_rate ?? "", rate_sell_normal: r.rate_sell_normal ?? "", rate_sell_vip: r.rate_sell_vip ?? "", tiers: (r.tiers || []).map(tr => ({ _key: newTierKey(), min_amount: tr.min_amount ?? "", rate_normal: tr.rate_normal ?? "", rate_vip: tr.rate_vip ?? "", real_rate: tr.real_rate ?? "" })) }); setOpen(true); }} className="text-neutral-400 hover:text-[#8B5CF6] mr-3"><Edit2 className="w-4 h-4" /></button>
                         <button data-testid={`delete-rate-${r.id}`} onClick={() => remove(r.id)} className="text-neutral-400 hover:text-[#EF4444]"><Trash2 className="w-4 h-4" /></button>
                       </>
                     ) : (
@@ -188,6 +196,21 @@ export default function AdminRates() {
               <Label className="micro-label text-neutral-500">{t("admin.rates.realRateLabel")}</Label>
               <Input data-testid="rate-real" type="number" step="any" value={form.real_rate} onChange={e => setForm({ ...form, real_rate: e.target.value })} placeholder={t("admin.rates.realRatePh")} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
               <p className="text-[0.65rem] text-neutral-500 mt-1">{t("admin.rates.realRateHelper")}</p>
+            </div>
+            {/* iter286 — tasas de VENTA para conversiones de saldo */}
+            <div className="border border-[#F59E0B]/25 bg-[#F59E0B]/[0.04] p-3 space-y-2" data-testid="rate-sell-block">
+              <Label className="micro-label text-[#F59E0B]">{t("admin.rates.sellSectionTitle")}</Label>
+              <p className="text-[0.65rem] text-neutral-500 leading-relaxed">{t("admin.rates.sellHelper")}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="micro-label text-neutral-500">{t("admin.rates.sellNormalLabel")}</Label>
+                  <Input data-testid="rate-sell-normal" type="number" step="any" value={form.rate_sell_normal} onChange={e => setForm({ ...form, rate_sell_normal: e.target.value })} placeholder={t("admin.rates.sellPh")} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                </div>
+                <div>
+                  <Label className="micro-label text-neutral-500">{t("admin.rates.sellVipLabel")}</Label>
+                  <Input data-testid="rate-sell-vip" type="number" step="any" value={form.rate_sell_vip} onChange={e => setForm({ ...form, rate_sell_vip: e.target.value })} placeholder={t("admin.rates.sellPh")} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                </div>
+              </div>
             </div>
             <TierEditor tiers={form.tiers || []} onChange={(tiers) => setForm({ ...form, tiers })} t={t} />
             <Button data-testid="save-rate-btn" onClick={save} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">{t("admin.rates.save")}</Button>

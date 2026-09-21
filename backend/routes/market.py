@@ -112,6 +112,12 @@ class ExchangeRate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None  # real market exit rate; used to compute revenue
+    # iter286 — tasas de VENTA: se aplican cuando un CLIENTE ADQUIERE
+    # `from_code` al convertir su saldo (ej. fila USDT→USD con venta 1.10 →
+    # convertir USD→USDT acredita 1/1.10 USDT por USD). Vacío = sin margen
+    # (comportamiento histórico).
+    rate_sell_normal: Optional[float] = None
+    rate_sell_vip: Optional[float] = None
     tiers: Optional[list[RateTier]] = None  # iter143 — amount-tiered overrides
     updated_at: str = Field(default_factory=lambda: iso(now_utc()))
 
@@ -122,6 +128,8 @@ class ExchangeRateCreate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None
+    rate_sell_normal: Optional[float] = None
+    rate_sell_vip: Optional[float] = None
     tiers: Optional[list[RateTier]] = None
     totp_code: Optional[str] = Field(None, max_length=11)
 
@@ -302,18 +310,31 @@ def _rate_convert_for_role(doc: dict, role: str) -> Optional[float]:
     return float(v) if v is not None else None
 
 
+def _rate_sell_for_role(doc: dict, role: str) -> Optional[float]:
+    """iter286 — Tasa de VENTA efectiva para el rol: se aplica cuando el
+    cliente ADQUIERE `from_code` de esta fila (conversión inversa). Sin tasa
+    de venta configurada, cae al comportamiento histórico (compra)."""
+    key = "rate_sell_vip" if role in ("vip", "admin") else "rate_sell_normal"
+    v = doc.get(key)
+    if v is not None and float(v) > 0:
+        return float(v)
+    return _rate_convert_for_role(doc, role)
+
+
 def _scrub_rate_for_client(doc: dict, role: str) -> dict:
-    """Strip competitively-sensitive fields (`real_rate`) from a rate row
-    before sending it to non-staff clients, and inject a pre-computed
-    `rate_convert` so the client-side converter preview stays correct
-    without ever seeing the raw margin."""
-    clean = {k: v for k, v in doc.items() if k != "real_rate"}
+    """Strip competitively-sensitive fields (`real_rate`, raw sell tiers)
+    from a rate row before sending it to non-staff clients, and inject the
+    pre-computed `rate_convert` + `rate_convert_sell` so the client-side
+    converter preview stays correct without ever seeing the raw margin."""
+    hidden = {"real_rate", "rate_sell_normal", "rate_sell_vip"}
+    clean = {k: v for k, v in doc.items() if k not in hidden}
     if isinstance(clean.get("tiers"), list):
         clean["tiers"] = [
             {k: v for k, v in t.items() if k != "real_rate"}
             for t in clean["tiers"] if isinstance(t, dict)
         ]
     clean["rate_convert"] = _rate_convert_for_role(doc, role)
+    clean["rate_convert_sell"] = _rate_sell_for_role(doc, role)
     return clean
 
 
@@ -337,7 +358,9 @@ async def list_rates(request: Request) -> Any:
         # the converter widget's tier picker works even for admin/vip
         # clients using their own dashboard as clients (unlikely but safe).
         return [
-            {**d, "rate_convert": _rate_convert_for_role(d, role)} for d in docs
+            {**d,
+             "rate_convert": _rate_convert_for_role(d, role),
+             "rate_convert_sell": _rate_sell_for_role(d, role)} for d in docs
         ]
     return [_scrub_rate_for_client(d, role) for d in docs]
 

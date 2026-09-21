@@ -34,7 +34,7 @@ from admin_alerts import notify_all_admins
 from pdf_service import generate_vip_closing_pdf
 
 from services.balances import (
-    build_rate_lookup, convert_to_usdt,
+    build_rate_lookup, build_convert_rate_lookup, convert_to_usdt,
     get_user_balance, decrement_balance,
     assert_account_active, assert_not_defensive,
 )
@@ -1313,6 +1313,17 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             return float(real)
         return float(doc.get("rate_normal") or 0.0)
 
+    def _pick_sell_rate(doc: dict) -> float:
+        """iter286 — VENTA: el cliente ADQUIERE el `from_code` de esta fila
+        (conversión por la ruta inversa). Se aplica la tasa de venta del
+        nivel si el admin la configuró; sin ella, comportamiento histórico
+        (misma tasa de compra — sin margen)."""
+        key = "rate_sell_vip" if is_vip else "rate_sell_normal"
+        v = doc.get(key)
+        if v is not None and float(v) > 0:
+            return float(v)
+        return _pick_tier_rate(doc)
+
     rate_doc = await db.rates.find_one(
         {"from_code": from_code, "to_code": to_code}, {"_id": 0}
     )
@@ -1324,7 +1335,9 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             {"from_code": to_code, "to_code": from_code}, {"_id": 0}
         )
         if inverse_doc:
-            inv = _pick_tier_rate(inverse_doc)
+            # iter286 — al usar la fila inversa el cliente está COMPRANDO
+            # `to_code`: aplica la tasa de VENTA de la empresa.
+            inv = _pick_sell_rate(inverse_doc)
             if inv > 0:
                 rate_used = 1.0 / inv
     if rate_used <= 0:
@@ -1561,7 +1574,7 @@ async def vip_dust_preview(request: Request) -> Any:
             status_code=403,
             detail="Empleados no tienen saldo a convertir.",
         )
-    rates = await build_rate_lookup()
+    rates = await build_convert_rate_lookup(user["role"])
     dust = await _collect_dust(user, rates)
     total_usdt = round(sum(d["usdt_equivalent"] for d in dust), 4)
     fee = 0.01
@@ -1616,7 +1629,8 @@ async def vip_convert_dust(request: Request) -> Any:
     await assert_user_fully_verified(
         db, user, action_label="convertir saldos pequeños a USDT"
     )
-    rates = await build_rate_lookup()
+    # iter286 — el barrido ACREDITA USDT: se usa la tasa de VENTA del nivel.
+    rates = await build_convert_rate_lookup(user["role"])
     dust = await _collect_dust(user, rates)
     if not dust:
         raise HTTPException(

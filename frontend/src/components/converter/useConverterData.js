@@ -63,6 +63,14 @@ export function useConverterData({ isVip, enabled = true }) {
       }
       return Number(r.rate_normal);
     };
+    // iter286 — ruta inversa = el cliente ADQUIERE el from_code de la fila:
+    // aplica la tasa de VENTA de la empresa (inyectada por el servidor).
+    const pickSell = (r) => {
+      if (r.rate_convert_sell != null && Number(r.rate_convert_sell) > 0) {
+        return Number(r.rate_convert_sell);
+      }
+      return pick(r);
+    };
     const direct = rates.find((r) => r.from_code === f && r.to_code === tCode);
     if (direct) {
       const v = pick(direct);
@@ -70,7 +78,7 @@ export function useConverterData({ isVip, enabled = true }) {
     }
     const inverse = rates.find((r) => r.from_code === tCode && r.to_code === f);
     if (inverse) {
-      const inv = pick(inverse);
+      const inv = pickSell(inverse);
       if (inv > 0) return 1 / inv;
     }
     return null;
