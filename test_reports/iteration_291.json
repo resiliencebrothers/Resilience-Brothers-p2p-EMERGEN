@@ -1,0 +1,43 @@
+{
+  "summary": "Frontend-only validation of Fase C Mensajería (Mejoras #7 y #8) + campo teléfono en canje marketplace + verificación retiro cash. Todos los flujos críticos PASAN.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "tests_executed": {
+    "admin_deliveries_page_load": "PASS",
+    "admin_tab_metrics_present_and_opens": "PASS",
+    "metric_cards_all_present": "PASS (metric-total, metric-confirmed, metric-cancelled, metric-unsettled, metric-avg-accept, metric-avg-deliver, metric-avg-total, metric-incidents, metric-incidents-pct, metric-sync-pending, metric-fees, metric-courier-paid, metric-platform-net, metric-avg-fee)",
+    "metrics_filters_present": "PASS (metrics-date-from, metrics-date-to, metrics-courier-select)",
+    "metrics_date_range_change_reloads_without_error": "PASS",
+    "delivery_details_dialog_opens_from_row_click": "PASS",
+    "dd_receiver_name_phone_municipality_visible": "PASS",
+    "dd_call_link_href_tel": "PASS (tel:+5355512345)",
+    "dd_map_search_link_present": "PASS",
+    "courier_panel_available_tab_shows_test_delivery": "PASS (después de cambiar a sub-tab 'Disponibles' del CourierPanel embed)",
+    "courier_destination_structured_text": "PASS ('Ana QA · Calle 23 #456 e/ A y B · Playa · La Habana')",
+    "courier_contact_actions_present": "PASS (delivery-contact-actions, delivery-call, delivery-map-link)",
+    "courier_call_href_tel": "PASS (tel:+5355512345 — limpia espacios)",
+    "courier_map_href_google_maps": "PASS (https://www.google.com/maps/search/?api=1&query=...Playa,%20La%20Habana...)",
+    "regression_deliveries_tab_summary_filters": "PASS (team-summary-cards + deliveries-filter-all/available)",
+    "marketplace_redeem_phone_field_present": "PASS (placeholder '+53 5xxxxxxx' junto a redeem-addr)",
+    "vip_cash_withdrawal_form_renders": "PASS (cash-receiver-name, cash-receiver-phone, cash-receiver-address todos presentes tras action-withdraw-btn → method-option-cash)",
+    "console_errors_critical": "0 críticos (solo warnings SW/posthog no relacionados y 4 x 404 de recursos de terceros/imágenes)"
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CourierPanel.jsx sub-tab por defecto es 'mine'; cuando un admin/staff entra desde /admin/deliveries → 'Mis entregas (mensajero)' y no tiene entregas propias, debe hacer clic manualmente en 'Disponibles' para ver la lista. Está OK funcionalmente pero considerar mostrar por defecto 'Disponibles' si mine.length===0 para admins recién habilitados como mensajero.",
+    "Sin problemas de contraste ni layout detectados en las tarjetas nuevas de métricas ni en el destino estructurado del CourierPanel."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (skipped per request)", "frontend": "100% (18/18 aserciones críticas)"},
+  "test_credentials": "Cookies de sesión: test_session_admin_X y test_session_vip_X (dominio p2p-exchange-hub-2.preview.emergentagent.com)",
+  "seed_data_creation": "Se insertó UNA entrega de prueba en MongoDB colección 'deliveries' con id 'qa-test-delivery-8526cb5c' (client_name='QA Cliente', receiver_name='Ana QA', receiver_phone='+53 5551 2345', municipality='Playa', province='La Habana'). LIMPIADA al final (delete_many client_name regex 'QA' → 1 eliminada).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Fase C Mensajería (Mejoras #7 destino estructurado + #8 pestaña Métricas) validada 100% en frontend con datos QA reales. Nota importante para próximos: (1) el CourierPanel embed en Admin arranca en sub-tab 'mine' — para ver Disponibles hay que click en 'button:has-text(\"Disponibles\")'. (2) VIP cash withdrawal está en /dashboard/vip → action-withdraw-btn → method-option-cash. (3) El endpoint /api/courier/deliveries devuelve la delivery de prueba correctamente para admin (35 available en el momento del test).",
+  "rca of the issue": "No se encontraron issues. RCA innecesario."
+}
