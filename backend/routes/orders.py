@@ -73,6 +73,9 @@ class Redemption(BaseModel):
     # nuevos (la UI muestra USDT); docs antiguos sin el campo = 'USD'.
     settlement_currency: str = "USDT"
     delivery_address: str = ""
+    # Mejora #7 (Fase C) — receptor y teléfono guardados por separado.
+    receiver_name: str = ""
+    receiver_phone: str = ""
     status: Literal["pending", "approved", "delivered", "rejected"] = "pending"
     admin_note: str = ""
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
@@ -127,6 +130,10 @@ class RedemptionCreate(BaseModel):
     # iter236 — recogida en tienda física.
     fulfillment: Literal["delivery", "store_pickup"] = "delivery"
     store_id: Optional[str] = None
+    # Mejora #7 (Fase C) — contacto de entrega estructurado (no deducido
+    # del texto de la dirección).
+    receiver_name: Optional[str] = Field(None, max_length=120)
+    receiver_phone: Optional[str] = Field(None, max_length=40)
 
 
 class WithdrawalRequest(BaseModel):
@@ -195,6 +202,11 @@ class WithdrawalCreate(BaseModel):
     cash_delivery_mode: Optional[Literal["courier", "office_pickup"]] = None
     # iter212 — municipio elegido por el cliente cuando el mapa falló.
     courier_municipality: Optional[str] = Field(None, max_length=60)
+    # Mejora #7 (Fase C) — destino estructurado del retiro cash: receptor,
+    # teléfono y dirección por separado (sin deducirlos de `details`).
+    receiver_name: Optional[str] = Field(None, max_length=120)
+    receiver_phone: Optional[str] = Field(None, max_length=40)
+    receiver_address: Optional[str] = Field(None, max_length=300)
     totp_code: Optional[str] = Field(None, min_length=6, max_length=11,
                                       description="Código TOTP (6 dígitos) o código de recuperación (XXXXX-XXXXX)")
 
@@ -474,6 +486,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         total_usd=total,
         cost_usd=cost,
         delivery_address=payload.delivery_address,
+        receiver_name=(payload.receiver_name or "").strip(),
+        receiver_phone=(payload.receiver_phone or "").strip(),
         delivery_latitude=payload.delivery_latitude,
         delivery_longitude=payload.delivery_longitude,
         courier_km=courier_km,
@@ -898,6 +912,10 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     # iter205 — persistir modalidad + cobro de mensajería hecho al crear.
     if payload.method == "cash":
         doc["cash_delivery_mode"] = delivery_mode
+        # Mejora #7 (Fase C) — destino estructurado persistido por separado.
+        doc["receiver_name"] = (payload.receiver_name or "").strip()
+        doc["receiver_phone"] = (payload.receiver_phone or "").strip()
+        doc["receiver_address"] = (payload.receiver_address or "").strip()
         doc["courier_km"] = courier_km
         doc["courier_fee_usdt"] = courier_fee_usdt
         doc["courier_fee_currency_amount"] = courier_fee_cur

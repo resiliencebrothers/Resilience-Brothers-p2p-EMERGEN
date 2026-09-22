@@ -8,7 +8,7 @@ Eventos automáticos idempotentes por `op_key` (índice único sparse).
 import logging
 import math
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
@@ -28,7 +28,8 @@ async def ensure_indexes() -> None:
 
 
 async def record_cash_event(*, courier_id: str, courier_name: str, kind: str,
-                            currency: str, amount, delivery_id=None,
+                            currency: str, amount: Any,
+                            delivery_id: Optional[str] = None,
                             note: str = "", by: Optional[str] = None,
                             by_name: str = "", op_key: Optional[str] = None,
                             discrepancy: bool = False) -> Optional[dict]:

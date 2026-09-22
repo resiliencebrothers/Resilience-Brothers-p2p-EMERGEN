@@ -4,7 +4,7 @@ import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Bike, MapPin, Package, ArrowDownToLine, CheckCircle2, Clock, LocateFixed, X, MessageCircle, AlertTriangle, Banknote, KeyRound } from "lucide-react";
+import { Bike, MapPin, Package, ArrowDownToLine, CheckCircle2, Clock, LocateFixed, X, MessageCircle, AlertTriangle, Banknote, KeyRound, Phone } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -104,20 +104,52 @@ function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reserve
           <AlertTriangle className="w-3 h-3" /> {t("courierPanel.openIncident")}
         </div>
       )}
+      {/* Mejora #7 (Fase C) — destino estructurado: receptor, municipio y
+          provincia por separado, con botones directos de llamada y mapa */}
       <div className="text-xs text-neutral-500 flex items-start gap-1.5">
         <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-        <span>{d.address}{d.province ? ` · ${d.province}` : ""}</span>
+        <span data-testid={`delivery-destination-${d.id}`}>
+          {d.receiver_name ? (
+            <span className="text-neutral-300">{d.receiver_name} · </span>
+          ) : null}
+          {d.address}
+          {d.municipality ? ` · ${d.municipality}` : ""}
+          {d.province ? ` · ${d.province}` : ""}
+        </span>
       </div>
-      {d.delivery_latitude != null && d.delivery_longitude != null && (
-        <a
-          href={`https://www.google.com/maps/dir/?api=1&destination=${d.delivery_latitude},${d.delivery_longitude}`}
-          target="_blank"
-          rel="noreferrer"
-          data-testid={`delivery-map-link-${d.id}`}
-          className="inline-flex items-center gap-1 text-[0.7rem] text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-2"
-        >
-          <MapPin className="w-3 h-3" /> {t("courierPanel.openMap")}
-        </a>
+      {(d.receiver_phone || d.delivery_latitude != null || d.address) && (
+        <div className="flex gap-2" data-testid={`delivery-contact-actions-${d.id}`}>
+          {d.receiver_phone && (
+            <a
+              href={`tel:${String(d.receiver_phone).replace(/[^+\d]/g, "")}`}
+              data-testid={`delivery-call-${d.id}`}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 text-[0.7rem] border border-[#22C55E]/40 text-[#22C55E] hover:bg-[#22C55E]/10 transition-colors"
+            >
+              <Phone className="w-3 h-3" /> {t("courierPanel.callBtn")} {d.receiver_phone}
+            </a>
+          )}
+          {(d.delivery_latitude != null && d.delivery_longitude != null) ? (
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${d.delivery_latitude},${d.delivery_longitude}`}
+              target="_blank"
+              rel="noreferrer"
+              data-testid={`delivery-map-link-${d.id}`}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 text-[0.7rem] border border-[#8B5CF6]/40 text-[#A78BFA] hover:bg-[#8B5CF6]/10 transition-colors"
+            >
+              <MapPin className="w-3 h-3" /> {t("courierPanel.mapBtn")}
+            </a>
+          ) : d.address ? (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([d.address, d.municipality, d.province, "Cuba"].filter(Boolean).join(", "))}`}
+              target="_blank"
+              rel="noreferrer"
+              data-testid={`delivery-map-link-${d.id}`}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-1.5 text-[0.7rem] border border-[#8B5CF6]/40 text-[#A78BFA] hover:bg-[#8B5CF6]/10 transition-colors"
+            >
+              <MapPin className="w-3 h-3" /> {t("courierPanel.mapBtn")}
+            </a>
+          ) : null}
+        </div>
       )}
       <div className="flex items-center justify-between text-xs font-mono border-t border-white/5 pt-2">
         <span className="text-neutral-500">{d.km > 0 ? `${d.km} km` : "—"} · {d.fee_usdt} USDT</span>
@@ -658,7 +690,7 @@ export default function CourierPanel({ embedded = false }) {
         <DialogContent
           data-testid="delivery-pin-dialog"
           aria-describedby={undefined}
-          className="bg-[#0c0c0c] border border-[#22C55E]/30 text-white rounded-none max-w-sm"
+          className="bg-[#0c0c0c] border border-[#22C55E]/30 text-white rounded-none max-w-sm max-h-[85vh] overflow-y-auto"
         >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-[#22C55E]">

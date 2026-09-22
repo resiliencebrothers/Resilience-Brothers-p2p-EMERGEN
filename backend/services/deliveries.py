@@ -195,6 +195,12 @@ def _ref_display(kind: str, ref: dict) -> dict:
             "client_name": ref.get("user_name") or "",
             "address": address,
             "province": ref.get("province"),
+            # Mejora #7 (Fase C) — destino estructurado: receptor, teléfono y
+            # municipio por separado, sin deducirlos del texto concatenado.
+            "receiver_name": (ref.get("receiver_name")
+                              or ref.get("beneficiary_name") or ""),
+            "receiver_phone": ref.get("receiver_phone") or "",
+            "municipality": ref.get("courier_municipality"),
             "amount_label": f"{ref.get('amount_usd', 0)} {ref.get('currency', '')}",
         }
     if kind == "deposit":
@@ -209,6 +215,9 @@ def _ref_display(kind: str, ref: dict) -> dict:
             "client_name": ref.get("user_name") or "",
             "address": address,
             "province": None,
+            "receiver_name": ref.get("contact_name") or "",
+            "receiver_phone": ref.get("pickup_phone") or "",
+            "municipality": ref.get("courier_municipality"),
             "amount_label": (
                 f"Recoger {ref.get('amount', 0)} {ref.get('currency', '')}"
             ),
@@ -218,6 +227,10 @@ def _ref_display(kind: str, ref: dict) -> dict:
         "client_name": ref.get("user_name") or "",
         "address": ref.get("delivery_address") or "",
         "province": None,
+        "receiver_name": (ref.get("receiver_name")
+                          or ref.get("user_name") or ""),
+        "receiver_phone": ref.get("receiver_phone") or "",
+        "municipality": ref.get("courier_municipality"),
         "amount_label": f"{ref.get('product_name', '')} ×{ref.get('quantity', 1)}",
     }
 
@@ -237,6 +250,9 @@ async def build_delivery_doc(kind: str, ref: dict, *, km: float, fee_usdt: float
         "client_name": disp["client_name"],
         "address": disp["address"],
         "province": disp["province"],
+        "municipality": disp.get("municipality"),
+        "receiver_name": disp.get("receiver_name") or "",
+        "receiver_phone": disp.get("receiver_phone") or "",
         "amount_label": disp["amount_label"],
         "delivery_latitude": ref.get("delivery_latitude"),
         "delivery_longitude": ref.get("delivery_longitude"),

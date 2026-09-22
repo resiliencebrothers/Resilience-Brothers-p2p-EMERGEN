@@ -223,7 +223,12 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
         method,
         details: method === "cash" ? composedCashDetails : details,
         beneficiary_name: method === "cash" ? cashReceiverName.trim() : "",
-        ...(method === "cash" ? { province: cashProvince, cash_delivery_mode: cashDeliveryMode } : {}),
+        ...(method === "cash" ? {
+          province: cashProvince, cash_delivery_mode: cashDeliveryMode,
+          receiver_name: cashReceiverName.trim(),
+          receiver_phone: cashReceiverPhone.trim(),
+          receiver_address: cashReceiverAddress.trim(),
+        } : {}),
         ...(method === "cash" && cashDeliveryMode === "courier" && deliveryCoords
           ? { delivery_latitude: deliveryCoords.lat, delivery_longitude: deliveryCoords.lon }
           : {}),

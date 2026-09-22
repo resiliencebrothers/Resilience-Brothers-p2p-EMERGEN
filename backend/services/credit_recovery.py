@@ -226,11 +226,6 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                     {"$set": {"fund_inflow_at": now,
                               "fund_inflow_amount": total,
                               "fund_inflow_currency": "USDT"}})
-                # V03 — marcas aseguradas: el barrido durable por asiento ya
-                # no necesita re-visitar este ingreso.
-                await db.company_fund_adjustments.update_one(
-                    {"dedupe_key": f"fund-inflow:{rid}:c0"},
-                    {"$set": {"marks_ensured": True}})
                 # R05 — post-verificación: un rechazo que corrió en paralelo
                 # (entre el claim y el asiento) deja el ciclo compensado aquí
                 # mismo con el reverso idempotente.
@@ -238,6 +233,14 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                     {"id": rid}, {"_id": 0, "status": 1}) or {}
                 if fresh.get("status") == "rejected":
                     await _reverse_fund_inflow_for_cycle(rid)
+                # W02/V03 — marcas aseguradas SOLO después de completar la
+                # comprobación del rechazo y el reverso necesario: si el
+                # reverso falla, el asiento queda visible para el barrido
+                # durable, que reintenta la compensación aunque el plan
+                # `sale_trace_pending` ya no exista.
+                await db.company_fund_adjustments.update_one(
+                    {"dedupe_key": f"fund-inflow:{rid}:c0"},
+                    {"$set": {"marks_ensured": True}})
                 await db.redemptions.update_one(
                     {"id": rid, "sale_trace_pending.fund": True},
                     {"$set": {"sale_trace_pending.fund": False}})
@@ -571,6 +574,11 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             {"$set": {"fund_inflow_at": adj.get("created_at"),
                       "fund_inflow_amount": adj.get("amount"),
                       "fund_inflow_currency": adj.get("currency")}})
+        # W02 — el estado se comprueba DESPUÉS de reponer las marcas: un
+        # rechazo ocurrido entre la lectura inicial y la reposición no puede
+        # quedar sin compensar por decidir con la copia vieja.
+        red = await db.redemptions.find_one(
+            {"id": rid}, {"_id": 0, "status": 1}) or {}
         if red.get("status") == "rejected":
             try:
                 await _reverse_fund_inflow_for_cycle(rid)

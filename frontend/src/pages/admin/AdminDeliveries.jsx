@@ -13,6 +13,7 @@ import { etaFromDelivery } from "@/services/deliveryEta";
 import DeliveryDetailsDialog from "./deliveries/DeliveryDetailsDialog";
 import MunicipalityRatesTab from "./deliveries/MunicipalityRatesTab";
 import CourierCashTab from "./deliveries/CourierCashTab";
+import DeliveryMetricsTab from "./deliveries/DeliveryMetricsTab";
 import CourierPanel from "@/pages/dashboard/CourierPanel";
 
 // iter199 — Admin: gestión de entregas de mensajería + alta de mensajeros.
@@ -648,6 +649,13 @@ export default function AdminDeliveries() {
           {t("admin.deliveries.tabCash")}
         </button>
         <button
+          onClick={() => setTab("metrics")}
+          data-testid="admin-tab-metrics"
+          className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "metrics" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
+        >
+          {t("admin.deliveries.tabMetrics")}
+        </button>
+        <button
           onClick={() => setTab("rates")}
           data-testid="admin-tab-muni-rates"
           className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "rates" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
@@ -660,6 +668,7 @@ export default function AdminDeliveries() {
         : tab === "my" ? <div data-testid="admin-my-deliveries"><CourierPanel embedded /></div>
         : tab === "rates" ? <MunicipalityRatesTab />
         : tab === "cash" ? <CourierCashTab />
+        : tab === "metrics" ? <DeliveryMetricsTab />
         : <CouriersTab navigate={navigate} />}
     </div>
   );

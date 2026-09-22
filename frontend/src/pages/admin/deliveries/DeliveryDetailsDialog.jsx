@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { etaFromDelivery } from "@/services/deliveryEta";
-import { MapPin, Truck, Clock, User, Package, DollarSign, Copy, KeyRound, AlertTriangle } from "lucide-react";
+import { MapPin, Truck, Clock, User, Package, DollarSign, Copy, KeyRound, AlertTriangle, PhoneCall } from "lucide-react";
 
 // iter208 — Modal con todos los datos de una entrega. Se abre al tocar una fila
 // en /admin/deliveries porque en la tabla algunos campos (dirección, cliente,
@@ -147,8 +147,12 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
   // iter208 — Extract a phone-like token from the concatenated address for a
   // dedicated "copy phone" button. Withdrawal addresses are formatted as
   // "receiver_name — address — phone" upstream (services/deliveries.py).
+  // Mejora #7 (Fase C) — se prefiere el teléfono ESTRUCTURADO cuando existe.
   const phoneMatch = (d.address || "").match(/\+?\d[\d\s\-().]{6,}\d/);
-  const detectedPhone = phoneMatch ? phoneMatch[0].trim() : "";
+  const detectedPhone = d.receiver_phone || (phoneMatch ? phoneMatch[0].trim() : "");
+  const searchMapsUrl = !gps && d.address
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([d.address, d.municipality, d.province, "Cuba"].filter(Boolean).join(", "))}`
+    : "";
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose?.()}>
@@ -180,16 +184,35 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
                  copyValue={d.client_name} copyLabel="Cliente"
                  copyTestid="dd-copy-client-name" />
             <Row label="User ID" value={d.user_id} mono testid="dd-user-id" />
+            {d.receiver_name && (
+              <Row label={t("admin.deliveries.detailsReceiver")} value={d.receiver_name}
+                   testid="dd-receiver-name"
+                   copyValue={d.receiver_name} copyLabel="Receptor"
+                   copyTestid="dd-copy-receiver-name" />
+            )}
             {detectedPhone && (
               <Row label={t("admin.deliveries.detailsPhone")} value={detectedPhone} mono
                    testid="dd-phone"
                    copyValue={detectedPhone} copyLabel="Número"
                    copyTestid="dd-copy-phone" />
             )}
+            {detectedPhone && (
+              <div className="py-1.5" data-testid="dd-call-link">
+                <a
+                  href={`tel:${String(detectedPhone).replace(/[^+\d]/g, "")}`}
+                  className="inline-flex items-center gap-1.5 text-xs text-[#22C55E] hover:text-[#4ADE80] underline underline-offset-2"
+                >
+                  <PhoneCall className="w-3 h-3" /> {t("admin.deliveries.callBtn")}
+                </a>
+              </div>
+            )}
           </Section>
 
           <Section icon={MapPin} title={t("admin.deliveries.detailsAddress")}>
             <Row label={t("admin.deliveries.detailsProvince")} value={d.province || "—"} testid="dd-province" />
+            {d.municipality && (
+              <Row label={t("admin.deliveries.detailsMunicipality")} value={d.municipality} testid="dd-municipality" />
+            )}
             <Row label={t("admin.deliveries.detailsFullAddress")}
                  value={<span className="whitespace-pre-wrap">{d.address || "—"}</span>}
                  testid="dd-address"
@@ -211,6 +234,18 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
                   </a>
                 </div>
               </>
+            )}
+            {searchMapsUrl && (
+              <div className="py-1.5" data-testid="dd-map-search-link">
+                <a
+                  href={searchMapsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-2"
+                >
+                  {t("admin.deliveries.detailsOpenMap")}
+                </a>
+              </div>
             )}
           </Section>
 

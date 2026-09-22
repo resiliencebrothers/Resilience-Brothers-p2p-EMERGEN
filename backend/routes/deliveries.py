@@ -181,6 +181,111 @@ async def admin_deliveries_summary(request: Request,
     }
 
 
+@router.get("/admin/deliveries/metrics")
+async def admin_deliveries_metrics(request: Request,
+                                   date_from: Optional[str] = None,
+                                   date_to: Optional[str] = None,
+                                   courier_id: Optional[str] = None) -> Any:
+    """Mejora #8 (Fase C) — métricas operativas de mensajería: tiempos de
+    asignación→aceptación→entrega, % de incidencias, trabajos sin rendir y
+    costo neto por servicio. Filtros por rango de fechas y mensajero."""
+    await require_permission(request, "deliveries")
+    from datetime import datetime, timedelta
+    q: dict = {}
+    if date_from:
+        q.setdefault("created_at", {})["$gte"] = date_from[:10]
+    if date_to:
+        try:
+            nxt = (datetime.strptime(date_to[:10], "%Y-%m-%d")
+                   + timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400,
+                                detail="fecha inválida (YYYY-MM-DD)")
+        q.setdefault("created_at", {})["$lt"] = nxt
+    if courier_id:
+        q["courier_id"] = courier_id
+    rows = await db.deliveries.find(q, {
+        "_id": 0, "id": 1, "status": 1, "created_at": 1, "timeline": 1,
+        "incidents": 1, "fee_usdt": 1, "courier_share_usdt": 1,
+        "platform_share_usdt": 1, "payout_credited": 1,
+        "settlement_pending": 1}).to_list(2000)
+
+    def _first_at(tl: list, status: str) -> Optional[str]:
+        for e in (tl or []):
+            if e.get("status") == status:
+                return e.get("at")
+        return None
+
+    def _minutes(a: Any, b: Any) -> Optional[float]:
+        try:
+            da = datetime.fromisoformat(str(a).replace("Z", "+00:00"))
+            db_ = datetime.fromisoformat(str(b).replace("Z", "+00:00"))
+            return max(0.0, (db_ - da).total_seconds() / 60.0)
+        except (ValueError, TypeError):
+            return None
+
+    accept_mins: list = []
+    deliver_mins: list = []
+    total_mins: list = []
+    with_incidents = 0
+    unsettled = 0
+    sync_pending = 0
+    cancelled = 0
+    finished = 0
+    fees = courier_total = platform_total = 0.0
+    for d in rows:
+        tl = d.get("timeline") or []
+        accepted_at = _first_at(tl, "accepted")
+        delivered_at = _first_at(tl, "delivered")
+        if accepted_at:
+            m = _minutes(d.get("created_at"), accepted_at)
+            if m is not None:
+                accept_mins.append(m)
+        if accepted_at and delivered_at:
+            m = _minutes(accepted_at, delivered_at)
+            if m is not None:
+                deliver_mins.append(m)
+        if delivered_at:
+            m = _minutes(d.get("created_at"), delivered_at)
+            if m is not None:
+                total_mins.append(m)
+        if d.get("incidents"):
+            with_incidents += 1
+        if d.get("status") == "delivered" and not d.get("payout_credited"):
+            unsettled += 1
+        if d.get("settlement_pending"):
+            sync_pending += 1
+        if d.get("status") == "cancelled":
+            cancelled += 1
+        if d.get("status") == "confirmed":
+            finished += 1
+            fees += float(d.get("fee_usdt") or 0)
+            courier_total += float(d.get("courier_share_usdt") or 0)
+            platform_total += float(d.get("platform_share_usdt") or 0)
+
+    def _avg(xs: list) -> Optional[float]:
+        return round(sum(xs) / len(xs), 1) if xs else None
+
+    total = len(rows)
+    return {
+        "total": total,
+        "confirmed": finished,
+        "cancelled": cancelled,
+        "avg_accept_min": _avg(accept_mins),
+        "avg_deliver_min": _avg(deliver_mins),
+        "avg_total_min": _avg(total_mins),
+        "incidents_count": with_incidents,
+        "incidents_pct": (round(with_incidents * 100.0 / total, 1)
+                          if total else 0.0),
+        "unsettled_count": unsettled,
+        "sync_pending_count": sync_pending,
+        "fees_usdt": round(fees, 2),
+        "courier_paid_usdt": round(courier_total, 2),
+        "platform_net_usdt": round(platform_total, 2),
+        "avg_fee_usdt": round(fees / finished, 2) if finished else None,
+    }
+
+
 @router.post("/courier/deliveries/{did}/claim")
 async def claim_delivery(did: str, request: Request) -> Any:
     me = await _require_courier(request)
@@ -703,12 +808,15 @@ async def admin_courier_cash_register(payload: dict,
     ev = await record_cash_event(
         courier_id=courier_id,
         courier_name=c.get("name") or c.get("email") or "",
-        kind=kind, currency=payload.get("currency"),
+        kind=kind, currency=str(payload.get("currency") or ""),
         amount=payload.get("amount"),
         delivery_id=(payload.get("delivery_id") or None),
         note=(payload.get("note") or ""),
         by=actor["user_id"], by_name=actor.get("name") or "",
         discrepancy=bool(discrepancy_note))
+    if not ev:
+        raise HTTPException(status_code=500,
+                            detail="No se pudo registrar el evento")
     if discrepancy_note:
         try:
             from admin_alerts import notify_all_admins

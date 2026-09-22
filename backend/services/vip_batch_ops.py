@@ -66,8 +66,22 @@ async def resolve_upload_plan(batch_id: str, plan: dict,
                 continue
             try:
                 await db.vip_batch_items.insert_one(dict(d))
-            except Exception:
-                pass  # carrera con el escritor original: el índice único arbitra
+            except Exception as e:
+                # W01 — solo cuenta como éxito el duplicado cuya fila YA
+                # existe (carrera con el escritor: el índice único arbitra).
+                # Un fallo real de escritura no se absorbe en silencio.
+                logger.error("inserción del plan %s (ítem %s): %s",
+                             pid, d.get("id"), e)
+        # W01 — verificación de presencia de TODAS las filas ANTES de retirar
+        # el plan: una carga incompleta conserva plan y reserva (el cierre
+        # sigue bloqueado con 409) y el próximo barrido la reintenta.
+        ids = [str(d.get("id")) for d in plan["docs"] if d.get("id")]
+        present = await db.vip_batch_items.count_documents(
+            {"id": {"$in": ids}})
+        if present < len(ids):
+            logger.warning("plan de carga %s incompleto: %s/%s filas — se "
+                           "conserva para reintento", pid, present, len(ids))
+            return "incomplete"
         await db.vip_batches.update_one(
             {"id": batch_id},
             {"$pull": {"upload_plans": {"plan_id": pid}}})

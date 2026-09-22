@@ -27,6 +27,7 @@ export default function MarketplaceView() {
   const [qty, setQty] = useState("1");
   const qtyNum = Math.max(0, parseInt(qty, 10) || 0);
   const [addr, setAddr] = useState("");
+  const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState([]);
   // iter198 — courier fee for the marketplace deliveries.
@@ -125,6 +126,7 @@ export default function MarketplaceView() {
           ? { fulfillment: "store_pickup", store_id: storeId }
           : {
             delivery_address: addr,
+            ...(phone.trim() ? { receiver_phone: phone.trim() } : {}),
             ...(deliveryCoords
               ? { delivery_latitude: deliveryCoords.lat, delivery_longitude: deliveryCoords.lon }
               : {}),
@@ -134,7 +136,7 @@ export default function MarketplaceView() {
           }),
       }, { withCredentials: true });
       toast.success(t("marketplace.successPending"));
-      setOpen(null); setQty("1"); setAddr("");
+      setOpen(null); setQty("1"); setAddr(""); setPhone("");
       setDeliveryCoords(null); setCourierQuote(null);
       setFulfillment("delivery"); setStoreId("");
       await refresh();
@@ -431,6 +433,10 @@ export default function MarketplaceView() {
                 <div>
                   <Label className="micro-label text-neutral-500">{t("marketplace.redeemAddressLabel")}</Label>
                   <Textarea data-testid="redeem-addr" value={addr} onChange={e => setAddr(e.target.value)} rows={3} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10" />
+                </div>
+                <div>
+                  <Label className="micro-label text-neutral-500">{t("marketplace.redeemPhoneLabel")}</Label>
+                  <Input data-testid="redeem-phone" inputMode="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+53 5xxxxxxx" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11" />
                 </div>
                 <CourierQuotePicker
                   currency="USD"
