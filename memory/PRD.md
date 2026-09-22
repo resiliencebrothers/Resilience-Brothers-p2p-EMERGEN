@@ -1936,3 +1936,16 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-22 · iter290 — Fase B mejoras auditoría (#4 Despacho, #5 Conexión/GPS, #6 Liquidación) COMPLETA
+- **#4 Despacho con prioridades**: cola de Disponibles del mensajero con reservas propias PRIMERO y libres ordenadas atrasadas→nuevas; badge de antigüedad por tarjeta (ámbar >60 min); chips de filtro por tipo (depósito/retiro/canje) y zona (provincia). Admin: columna «Carga activa» por mensajero (trabajos en curso, agregación) en pestaña Mensajeros; banner de atención en Entregas (`GET /admin/deliveries/attention`) con reservas sin respuesta >30 min y entregas detenidas >90 min; job del scheduler `delivery_attention` cada 10 min alerta a admins UNA sola vez por entrega y condición (claim atómico por flags `reservation_alerted`/`stall_alerted`).
+- **#5 Estado de conexión/GPS**: cada `POST /courier/location` actualiza `users.courier_last_gps_at` (presencia); admin ve columna «GPS» con edad coloreada (verde ≤10 min, ámbar ≤60, gris resto). El mensajero ve su estado GPS en la tarjeta de compartir ubicación (activo + «posición enviada hace X min» / inactivo en ámbar). Conflictos 409 en avanzar estado ahora refrescan el panel sin dar por completado el envío.
+- **#6 Liquidación comprensible**: fila «Estado de comisión» en el detalle admin (Calculada / Pendiente de abono / Acreditada ✓ con importe congelado `courier_share_paid_usdt` / + fila «Ajuste pendiente» si `fee_adjustment_pending`); sección «Sincronización de la operación vinculada» con botón «Reintentar sincronización» → `POST /admin/deliveries/{id}/retry-sync` (idempotente, misma identidad de acción): re-liquida `settlement_pending` (marca `origin_conflict` si el origen quedó incompatible) y completa `delivery_sync_pending` del documento de origen; repetirlo responde `nothing_pending`. Historial del mensajero muestra el importe realmente pagado.
+- **Tests**: `tests/test_iter290_fase_b_mejoras.py` **8/8** · `make test-critical` **543/543** (iter290 añadido al CI; 1 flake de timing en iter55 defensive_mode, pasa aislado) · testing agent frontend **100% (7/7 flujos)**: orden de cola, filtros, banner de atención, GPS mensajero y columnas admin, estado de comisión y retry-sync end-to-end (withdrawal → paid).
+- **Pendiente**: Fase C (#7 destino estructurado con botones llamar/mapa, #8 historial con filtros y métricas de tiempos/incidencias/costo neto).
+
+## Backlog priorizado (actualizado 2026-09-22, tras Fase B)
+- P0 (siguiente): Fase C mejoras mensajería (#7 destino estructurado, #8 métricas e historial).
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

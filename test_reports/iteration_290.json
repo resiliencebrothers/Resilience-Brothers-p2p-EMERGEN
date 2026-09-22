@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only verification of iter290 Fase B (auditoría mensajería mejoras #4 despacho con prioridades y banner atención, #5 estado GPS/conexión, #6 liquidación comprensible con retry-sync). Todos los flujos pasaron.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/tests/iter290_seed.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CourierPanel.jsx (Disponibles): orden estable observado — reservada asignada al VIP primero, luego libres antiguas→nuevas. Chip filtros kind (all/deposit/redemption/withdrawal) y zone-{provincia} funcionan sin recargar la lista.",
+    "courier-live-share + courier-gps-status renderiza en Mis entregas (no en Disponibles). El indicador ámbar 'GPS inactivo — el cliente no puede seguirte…' aparece cuando no se comparte ubicación (color rgb(252,211,77)).",
+    "AdminDeliveries.jsx: deliveries-attention-banner muestra reservations y stalled con thresholds correctos (>30min / >90min). Columnas courier-load-{uid} y courier-gps-{uid} presentes en Mensajeros; VIP: load=53 (herencia datos preview), gps='hace 5 min'.",
+    "DeliveryDetailsDialog.jsx: dd-fee-state 'Acreditada ✓ (8 USDT pagados)' cuando payout_credited=true; dd-sync-section + dd-retry-sync se muestran solo si settlement_pending u origin_conflict. Al pulsar dd-retry-sync → toast 'Sincronización completada / Tu retiro fue pagado', sección desaparece y en Mongo el withdrawal pasa a status='paid'.",
+    "Regresión: pestañas admin-tab-deliveries, admin-tab-my-deliveries, admin-tab-couriers, admin-tab-courier-cash, admin-tab-muni-rates cargan sin errores de consola relevantes (solo 401 en pings iniciales por cambio de cookie, no bloqueantes).",
+    "Nota menor a11y: se mantienen warnings Radix 'Missing DialogDescription' del iter288 en varios diálogos — no bloquea."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (7/7 flows PASS)"},
+  "test_credentials": "Cookies session_token=test_session_admin_X (user_test_admin01) y test_session_vip_X (user_test_vip01, is_courier=true) sobre dominio p2p-exchange-hub-2.preview.emergentagent.com.",
+  "seed_data_creation": "8 deliveries + 1 withdrawal insertados con prefijo tb290_ vía /app/tests/iter290_seed.py: old(180m), mid(60m,deposit), new(5m,Artemisa), reserved(2m,assigned_to=VIP), stalares(45m,assigned_to=other), stalled(120m,on_the_way,other), mineact(15m,accepted,VIP), settle(withdrawal confirmed, payout_credited, settlement_pending → withdrawal approved cash USD 500). Todo eliminado al final (deliveries=8, withdrawals=1).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter290 Fase B verificada 100% verde. Script de seed/cleanup reutilizable en /app/tests/iter290_seed.py (`seed` y `cleanup`). El testid correcto para 'Efectivo' en admin es admin-tab-courier-cash (no admin-tab-cash). En Disponibles la lista trae muchas entregas antiguas del preview intercaladas — validar orden RELATIVO usando data-testid con el id sembrado. dd-retry-sync consume la settlement_pending y actualiza el withdrawal a status='paid'. NUNCA usar wait_until='networkidle' en /dashboard/deliveries (SSE abierto).",
+  "detailed_results": {
+    "#4_queue_order_available": "PASS — Order tb290_ en Disponibles: ['tb290_reserved','tb290_old','tb290_mid','tb290_new']. Badge de reserva presente en tb290_reserved. Edades: 'hace 2 min', 'hace 3 h', 'hace 1 h', 'hace 5 min'.",
+    "#4_kind_filter_deposit": "PASS — Con courier-filter-kind-deposit solo aparece tb290_mid.",
+    "#4_zone_filter_Artemisa": "PASS — Con courier-filter-zone-Artemisa solo aparece tb290_new. Volver a 'all' restaura la lista.",
+    "#4_admin_attention_banner": "PASS — deliveries-attention-banner visible con attention-reservations ('1 reserva(s) sin respuesta hace más de 30 min: Cliente TB290') y attention-stalled ('2 entrega(s) detenidas hace más de 90 min: …').",
+    "#5_courier_gps_status_amber": "PASS — courier-live-share visible en Mis entregas; courier-gps-status texto 'GPS inactivo — el cliente no puede seguirte. Actívalo al salir.' color amber (rgb(252,211,77)).",
+    "#5_admin_couriers_load_gps_columns": "PASS — courier-load-user_test_vip01 = '53' (>0 con seed mineact + herencia), courier-gps-user_test_vip01 = 'hace 5 min'.",
+    "#6_fee_state_credited": "PASS — dd-fee-state = 'Estado de comisión Acreditada ✓ (8 USDT pagados)'.",
+    "#6_retry_sync_flow": "PASS — dd-sync-section renderiza con settlement_pending; al pulsar dd-retry-sync → toast 'Sincronización completada / Tu retiro fue pagado', sección desaparece; en Mongo delivery.settlement_pending=None y withdrawal.status='paid'.",
+    "regression_admin_tabs": "PASS — Entregas/Mis entregas/Mensajeros/Efectivo(admin-tab-courier-cash)/Tarifas municipio cargan sin errores de consola relevantes."
+  }
+}
