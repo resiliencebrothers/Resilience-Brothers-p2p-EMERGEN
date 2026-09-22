@@ -1,0 +1,34 @@
+{
+  "summary": "Frontend-only testing of iter288 messaging audit fixes (MSG08/MSG09/MSG10) + regression of /admin/deliveries. All target selectors and behaviors verified green. Seed data created with ta288_ prefix and cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "DeliveryChatDialog (and possibly other Dialogs)", "issues": ["Radix a11y warning: 'Missing Description or aria-describedby={undefined} for DialogContent' — non-blocking."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": ["(Optional a11y) Add DialogDescription/aria-describedby to DeliveryChatDialog and other DialogContent without one to silence Radix warnings."],
+  "critical_code_review_comments": [
+    "CourierPanel.jsx: SSE useLiveEvent + 30s interval + visibilitychange combined correctly with stable load() via useCallback — race-safe.",
+    "DeliveryChatDialog.jsx: genRef invalidation correctly discards in-flight responses when deliveryId changes — verified end-to-end (no A↔B leak).",
+    "deliveryEta.js LOCATION_MAX_AGE_MIN=15 works; DeliveryTrackCard renders data-testid=track-stale-<id>; AdminDeliveries renders data-testid=admin-eta-stale-<id>."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Cookies session_token=test_session_vip_X (user_test_vip01, is_courier=true) and test_session_admin_X (user_test_admin01) on preview domain.",
+  "seed_data_creation": "Inserted 3 deliveries (ta288_mineA, ta288_mineB on_the_way with courier_id=user_test_vip01; ta288_stale on_the_way with client=vip, courier=admin, courier_location.updated_at = 24h ago) and 2 delivery_chat rows (MSG_FROM_A_ONLY, MSG_FROM_B_ONLY). ALL cleaned up (delete_many by prefix ta288_ → 3 + 3 removed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter288 messaging audit frontend fixes verified green. No blocking issues. Preview URL: https://p2p-exchange-hub-2.preview.emergentagent.com. Notes: (a) direct Mongo inserts do NOT emit SSE — rely on 30s polling / visibilitychange; (b) cookie domain must be exact: p2p-exchange-hub-2.preview.emergentagent.com; (c) NEVER wait_until='networkidle' on /dashboard/deliveries (SSE stream keeps it open).",
+  "detailed_results": {
+    "MSG10_panel": "PASS — data-testid=courier-panel; courier-earned-total, courier-pending-total, courier-completed-count all visible; tabs available/mine/history all present and navigable; no eternal spinner and no error state.",
+    "MSG10_refresh_polling": "PASS — visibilitychange dispatch kept panel responsive; code review confirms 30s interval + SSE 'delivery_changed' listener + visibilitychange handler all wired via stable useCallback load().",
+    "MSG10_error_retry": "Not forced. No eternal spinner observed under valid session.",
+    "MSG09_chat_isolation": "PASS — chat A shows only MSG_FROM_A_ONLY; chat B shows only MSG_FROM_B_ONLY; sending via delivery-chat-input + delivery-chat-send-btn appended message immediately.",
+    "MSG08_stale_admin": "PASS — data-testid=admin-eta-stale-ta288_stale rendered with 'Última ubicación hace 1441 min — sin actualización reciente'.",
+    "MSG08_stale_client_api": "PASS — /api/vip/deliveries/track returns ta288_stale with 24h-old courier.location; etaFromDelivery marks stale (ageMin=1441 > 15) → track-stale-<id> path.",
+    "regression_admin_deliveries": "PASS — page loads with heading 'Entregas y Mensajeros', lists entries, only non-blocking Radix a11y warnings in console."
+  }
+}
