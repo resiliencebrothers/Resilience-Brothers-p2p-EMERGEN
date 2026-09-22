@@ -68,10 +68,11 @@ async def courier_deliveries(request: Request) -> Any:
     # NO ve reservadas para otros couriers.
     # MSG07 — las reservas dirigidas al mensajero se consultan SIEMPRE con
     # prioridad propia: nunca desaparecen detrás del tope de la lista libre.
-    reserved_docs = await db.deliveries.find(
+    # N05 — SIN tope: las 51 reservas dirigidas aparecen las 51.
+    reserved_docs = [d async for d in db.deliveries.find(
         {"status": "available", "assigned_to_courier_id": uid},
         {"_id": 0},
-    ).sort("created_at", -1).to_list(50)
+    ).sort("created_at", -1)]
     open_docs = await db.deliveries.find(
         {"status": "available",
          "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
@@ -96,17 +97,20 @@ async def courier_deliveries(request: Request) -> Any:
     ).sort("updated_at", -1).to_list(50)
     # MSG07 — totales por AGREGACIÓN sobre todo el historial, no sobre la
     # ventana de 50 filas mostrada: mensajero y administración coinciden.
+    # N01 — se suma el importe CONGELADO al pagar cuando existe.
     agg = await db.deliveries.aggregate([
         {"$match": {"courier_id": uid, "status": "confirmed"}},
         {"$group": {"_id": None,
-                    "earned": {"$sum": "$courier_share_usdt"},
+                    "earned": {"$sum": {"$ifNull": [
+                        "$courier_share_paid_usdt", "$courier_share_usdt"]}},
                     "count": {"$sum": 1}}},
     ]).to_list(1)
     earned = float((agg[0] if agg else {}).get("earned") or 0)
     completed_count = int((agg[0] if agg else {}).get("count") or 0)
     pending_agg = await db.deliveries.aggregate([
         {"$match": {"courier_id": uid, "status": "delivered"}},
-        {"$group": {"_id": None, "s": {"$sum": "$courier_share_usdt"}}},
+        {"$group": {"_id": None, "s": {"$sum": {"$ifNull": [
+            "$courier_share_paid_usdt", "$courier_share_usdt"]}}}},
     ]).to_list(1)
     pending = float((pending_agg[0] if pending_agg else {}).get("s") or 0)
     # Mejora #1 — efectivo a rendir del mensajero (por moneda).
@@ -141,38 +145,42 @@ async def admin_deliveries_summary(request: Request,
                     + timedelta(days=1)).strftime("%Y-%m-%d")
     except ValueError:
         raise HTTPException(status_code=400, detail="fecha inválida (YYYY-MM-DD)")
-    # Confirmadas del día: tras el sello final nada más toca updated_at.
-    confirmed = await db.deliveries.find(
-        {"status": "confirmed", "updated_at": {"$gte": day, "$lt": next_day}},
-        {"_id": 0, "fee_usdt": 1, "courier_share_usdt": 1,
-         "platform_share_usdt": 1, "courier_id": 1, "courier_name": 1},
-    ).to_list(2000)
+    # N05 — Confirmadas del día por AGREGACIÓN completa (sin tope de lista:
+    # 2.001 entregas cuentan 2.001). N01 — importes CONGELADOS al pagar.
+    groups = await db.deliveries.aggregate([
+        {"$match": {"status": "confirmed",
+                    "updated_at": {"$gte": day, "$lt": next_day}}},
+        {"$group": {
+            "_id": {"$ifNull": ["$courier_id", "—"]},
+            "courier_name": {"$last": {"$ifNull": ["$courier_name", "—"]}},
+            "count": {"$sum": 1},
+            "fees": {"$sum": {"$ifNull": ["$fee_paid_usdt", "$fee_usdt"]}},
+            "earned": {"$sum": {"$ifNull": ["$courier_share_paid_usdt",
+                                            "$courier_share_usdt"]}},
+            "platform": {"$sum": {"$ifNull": ["$platform_share_paid_usdt",
+                                              "$platform_share_usdt"]}},
+        }},
+    ]).to_list(5000)
     active = await db.deliveries.aggregate([
         {"$match": {"status": {"$in": ["available", "accepted", "on_the_way",
                                        "arrived", "delivered"]}}},
         {"$group": {"_id": "$status", "n": {"$sum": 1}}},
     ]).to_list(10)
     active_counts = {r["_id"]: r["n"] for r in active}
-    by_courier: Dict[str, dict] = {}
-    for d in confirmed:
-        key = d.get("courier_id") or "—"
-        row = by_courier.setdefault(key, {
-            "courier_name": (d.get("courier_name") or "—").split(" ")[0],
-            "count": 0, "earned_usdt": 0.0})
-        row["count"] += 1
-        row["earned_usdt"] += float(d.get("courier_share_usdt") or 0)
-    rows = sorted(by_courier.values(), key=lambda r: -r["earned_usdt"])
-    for r in rows:
-        r["earned_usdt"] = round(r["earned_usdt"], 2)
+    rows = sorted(
+        ({"courier_name": (g.get("courier_name") or "—").split(" ")[0],
+          "count": int(g.get("count") or 0),
+          "earned_usdt": round(float(g.get("earned") or 0), 2)}
+         for g in groups), key=lambda r: -float(r["earned_usdt"]))
     return {
         "date": day,
-        "confirmed_count": len(confirmed),
-        "total_fees_usdt": round(sum(float(d.get("fee_usdt") or 0)
-                                     for d in confirmed), 2),
-        "courier_earned_usdt": round(sum(float(d.get("courier_share_usdt") or 0)
-                                         for d in confirmed), 2),
-        "platform_earned_usdt": round(sum(float(d.get("platform_share_usdt") or 0)
-                                          for d in confirmed), 2),
+        "confirmed_count": sum(int(g.get("count") or 0) for g in groups),
+        "total_fees_usdt": round(sum(float(g.get("fees") or 0)
+                                     for g in groups), 2),
+        "courier_earned_usdt": round(sum(float(g.get("earned") or 0)
+                                         for g in groups), 2),
+        "platform_earned_usdt": round(sum(float(g.get("platform") or 0)
+                                          for g in groups), 2),
         "active_count": sum(active_counts.get(s, 0) for s in
                             ("accepted", "on_the_way", "arrived")),
         "available_count": active_counts.get("available", 0),
@@ -208,6 +216,8 @@ async def admin_deliveries_metrics(request: Request,
         "_id": 0, "id": 1, "status": 1, "created_at": 1, "timeline": 1,
         "incidents": 1, "fee_usdt": 1, "courier_share_usdt": 1,
         "platform_share_usdt": 1, "payout_credited": 1,
+        "fee_paid_usdt": 1, "courier_share_paid_usdt": 1,
+        "platform_share_paid_usdt": 1,
         "settlement_pending": 1}).to_list(2000)
 
     def _first_at(tl: list, status: str) -> Optional[str]:
@@ -259,9 +269,16 @@ async def admin_deliveries_metrics(request: Request,
             cancelled += 1
         if d.get("status") == "confirmed":
             finished += 1
-            fees += float(d.get("fee_usdt") or 0)
-            courier_total += float(d.get("courier_share_usdt") or 0)
-            platform_total += float(d.get("platform_share_usdt") or 0)
+            # N01 — importes CONGELADOS al pagar cuando existen.
+            fees += float(d["fee_paid_usdt"]
+                          if d.get("fee_paid_usdt") is not None
+                          else d.get("fee_usdt") or 0)
+            courier_total += float(d["courier_share_paid_usdt"]
+                                   if d.get("courier_share_paid_usdt") is not None
+                                   else d.get("courier_share_usdt") or 0)
+            platform_total += float(d["platform_share_paid_usdt"]
+                                    if d.get("platform_share_paid_usdt") is not None
+                                    else d.get("platform_share_usdt") or 0)
 
     def _avg(xs: list) -> Optional[float]:
         return round(sum(xs) / len(xs), 1) if xs else None
@@ -468,6 +485,24 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
         raise HTTPException(status_code=404, detail="No encontrado")
     if d.get("courier_id") != me["user_id"]:
         raise HTTPException(status_code=403, detail="Esta entrega no es tuya")
+    if d.get("courier_id") != me["user_id"]:
+        raise HTTPException(status_code=403, detail="Esta entrega no es tuya")
+    # N03 — el origen debe seguir operable en CADA avance (no solo al
+    # aceptar): una operación rechazada/cancelada no admite más movimiento.
+    from services.deliveries import (REF_COLLS, TERMINAL_REF_STATUSES,
+                                     handle_origin_rejected)
+    ref_coll = REF_COLLS.get(d.get("kind"))
+    if ref_coll and d.get("ref_id"):
+        ref = await db[ref_coll].find_one({"id": d["ref_id"]},
+                                          {"_id": 0, "status": 1})
+        if ref and ref.get("status") in TERMINAL_REF_STATUSES:
+            await handle_origin_rejected(d["kind"], d["ref_id"],
+                                         note=f"origen {ref.get('status')}")
+            raise HTTPException(
+                status_code=409,
+                detail=("La operación de origen fue rechazada/cancelada — "
+                        "esta entrega quedó cancelada y no admite avances. "
+                        "Contacta a la administración."))
     if _TRANSITIONS.get(d["status"]) != new_status:
         raise HTTPException(
             status_code=400,
@@ -502,6 +537,12 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
                 status_code=400,
                 detail=("Introduce el PIN del cliente para confirmar la "
                         "entrega, o registra una excepción con motivo."))
+    # N04 — la intención de registrar el efectivo viaja EN el mismo update
+    # que sella el movimiento físico: si el insert del evento falla, la
+    # tarea queda viva y el healer la completa (idempotente por op_key).
+    if new_status == "delivered" and d.get("kind") in ("deposit", "withdrawal"):
+        extra_set["cash_event_pending"] = {"at": now,
+                                           "actor_id": me["user_id"]}
     # MSG01 — la escritura exige que SIGAN vigentes el estado y el repartidor
     # comprobados: una petición atrasada (cancelación/reasignación en medio)
     # pierde con 409 y no revive ni altera la entrega.
@@ -546,10 +587,16 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
         except Exception as e:
             logger.error(f"client status push failed: {e}")
     if new_status == "delivered":
-        # Mejora #1 — registro automático del efectivo en tránsito.
+        # Mejora #1 — registro del efectivo en tránsito: la tarea durable ya
+        # quedó sellada con la transición; un fallo aquí NO rompe la
+        # respuesta (el healer completa con el mismo op_key).
         from services.courier_cash import auto_events_for_delivered
-        await auto_events_for_delivered({**d, "status": "delivered"},
-                                        me["user_id"])
+        try:
+            await auto_events_for_delivered({**d, "status": "delivered"},
+                                            me["user_id"])
+        except Exception as e:
+            logger.error(f"registro de efectivo pendiente (lo completa el "
+                         f"healer): {e}")
         if extra_set.get("pin_exception"):
             try:
                 from admin_alerts import notify_all_admins

@@ -65,23 +65,25 @@ async def record_cash_event(*, courier_id: str, courier_name: str, kind: str,
 async def auto_events_for_delivered(d: dict, actor_id: str) -> None:
     """Al marcar 'delivered': depósito → el mensajero RECOGIÓ efectivo del
     cliente; retiro cash → ENTREGÓ efectivo al destinatario. Idempotente por
-    op_key; best-effort (nunca rompe la transición de estado)."""
+    op_key. N04 — procesa la tarea durable `cash_event_pending` sellada en el
+    MISMO update de la transición: registra el evento y SOLO entonces limpia
+    la tarea. Un fallo de escritura la deja viva para el healer; un dato de
+    origen no registrable deja rastro visible (`cash_event_error`)."""
+    kind = d.get("kind")
+    cid = d.get("courier_id")
+    did = d.get("id")
     try:
-        kind = d.get("kind")
-        cid = d.get("courier_id")
-        if not cid:
-            return
-        if kind == "deposit":
+        if cid and kind == "deposit":
             ref = await db.deposits.find_one(
                 {"id": d["ref_id"]}, {"_id": 0, "amount": 1, "currency": 1})
             if ref and float(ref.get("amount") or 0) > 0:
                 await record_cash_event(
                     courier_id=cid, courier_name=d.get("courier_name") or "",
                     kind="collected", currency=ref.get("currency") or "",
-                    amount=float(ref["amount"]), delivery_id=d["id"],
+                    amount=float(ref["amount"]), delivery_id=did,
                     note="Recogida de depósito en efectivo", by=actor_id,
-                    op_key=f"auto:{d['id']}:collected")
-        elif kind == "withdrawal":
+                    op_key=f"auto:{did}:collected")
+        elif cid and kind == "withdrawal":
             ref = await db.withdrawals.find_one(
                 {"id": d["ref_id"]},
                 {"_id": 0, "amount_usd": 1, "currency": 1, "method": 1})
@@ -91,13 +93,51 @@ async def auto_events_for_delivered(d: dict, actor_id: str) -> None:
                     courier_id=cid, courier_name=d.get("courier_name") or "",
                     kind="delivered_to_recipient",
                     currency=ref.get("currency") or "",
-                    amount=float(ref["amount_usd"]), delivery_id=d["id"],
+                    amount=float(ref["amount_usd"]), delivery_id=did,
                     note="Entrega de retiro en efectivo", by=actor_id,
-                    op_key=f"auto:{d['id']}:delivered")
-    except HTTPException:
-        pass
-    except Exception as e:
-        logger.error(f"auto cash event failed: {e}")
+                    op_key=f"auto:{did}:delivered")
+    except HTTPException as e:
+        # Dato de origen inválido: reintentar no lo arregla — el pendiente se
+        # cierra con un error visible para que el operador lo resuelva.
+        logger.error("evento de efectivo no registrable en %s: %s",
+                     did, e.detail)
+        await db.deliveries.update_one(
+            {"id": did},
+            {"$set": {"cash_event_error": str(e.detail)},
+             "$unset": {"cash_event_pending": ""}})
+        return
+    await db.deliveries.update_one(
+        {"id": did}, {"$unset": {"cash_event_pending": ""}})
+
+
+# N04 — inicio del ledger de efectivo (Mejora #1, iter290): la reconciliación
+# solo repone eventos de entregas realizadas DESPUÉS de esta fecha; las
+# anteriores se liquidaron fuera del sistema y no deben inflar pendientes.
+CASH_LEDGER_EPOCH = "2026-09-20"
+
+
+async def reconcile_missing_cash_events(batch: int = 200) -> int:
+    """N04 — entregas ya realizadas (dentro de la era del ledger) cuyo evento
+    automático falta: se repone de forma idempotente (op_key) y el doc queda
+    marcado para no re-escanearse."""
+    rows = await db.deliveries.find(
+        {"status": {"$in": ["delivered", "confirmed"]},
+         "kind": {"$in": ["deposit", "withdrawal"]},
+         "courier_id": {"$nin": [None, ""]},
+         "updated_at": {"$gte": CASH_LEDGER_EPOCH},
+         "cash_event_checked": {"$exists": False},
+         "cash_event_pending": {"$exists": False}},
+        {"_id": 0}).to_list(batch)
+    n = 0
+    for d in rows:
+        try:
+            await auto_events_for_delivered(d, "system-reconcile")
+            await db.deliveries.update_one(
+                {"id": d["id"]}, {"$set": {"cash_event_checked": True}})
+            n += 1
+        except Exception as e:
+            logger.error("reconciliación de efectivo %s: %s", d["id"], e)
+    return n
 
 
 async def cash_pending(courier_id: Optional[str] = None) -> list:

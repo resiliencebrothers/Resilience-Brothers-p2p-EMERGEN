@@ -249,7 +249,10 @@ async def apply_fee_change_plan(coll_name: str, doc: dict, user_id: str,
          "courier_fee_op_pending": {"$exists": False}},
         {"$set": {**new_fields, "courier_fee_op_pending": plan,
                   "delivery_sync_pending": {"op_id": plan["op_id"],
-                                            "at": plan["at"]}}})
+                                            "at": plan["at"]}},
+         # N02 — revisión monotónica de la tarifa: cada decisión de cobro
+         # incrementa la revisión; el reparto solo acepta revisiones ≥ suya.
+         "$inc": {"courier_fee_rev": 1}})
     if claim.matched_count == 0:
         raise HTTPException(
             status_code=409,
@@ -291,8 +294,14 @@ async def settle_fee_change_plan(coll_name: str, doc_id: str, user_id: str,
             if (log or {}).get("state") in ("burned", "undone"):
                 await coll.update_one(
                     {"id": doc_id, "courier_fee_op_pending.op_id": op_id},
-                    {"$set": plan.get("revert") or {},
-                     "$unset": {"courier_fee_op_pending": ""}})
+                    {"$set": {**(plan.get("revert") or {}),
+                              # N02 — restaurar la tarifa es una decisión
+                              # nueva: sube la revisión y deja tarea de sync.
+                              "delivery_sync_pending": {
+                                  "op_id": f"{op_id}:revert",
+                                  "at": datetime.now(timezone.utc).isoformat()}},
+                     "$unset": {"courier_fee_op_pending": ""},
+                     "$inc": {"courier_fee_rev": 1}})
                 if raise_insufficient:
                     raise HTTPException(
                         status_code=400,
@@ -307,8 +316,13 @@ async def settle_fee_change_plan(coll_name: str, doc_id: str, user_id: str,
             await burn_or_undo_debit(user_id, cur, delta, op_id)
             await coll.update_one(
                 {"id": doc_id, "courier_fee_op_pending.op_id": op_id},
-                {"$set": plan.get("revert") or {},
-                 "$unset": {"courier_fee_op_pending": ""}})
+                {"$set": {**(plan.get("revert") or {}),
+                          # N02 — la restauración también sube la revisión.
+                          "delivery_sync_pending": {
+                              "op_id": f"{op_id}:revert",
+                              "at": datetime.now(timezone.utc).isoformat()}},
+                 "$unset": {"courier_fee_op_pending": ""},
+                 "$inc": {"courier_fee_rev": 1}})
             if raise_insufficient:
                 raise HTTPException(
                     status_code=400,

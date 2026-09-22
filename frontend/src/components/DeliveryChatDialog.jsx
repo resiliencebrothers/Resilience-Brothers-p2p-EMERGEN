@@ -37,6 +37,9 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   // MSG09 — generación de solicitud ligada al deliveryId vigente: una
   // respuesta atrasada de la entrega anterior jamás se aplica a la actual.
   const genRef = useRef(0);
+  // N06 — id vigente: una función de carga VIEJA (cerrada sobre otra
+  // entrega) no puede validarse capturando una generación nueva.
+  const activeIdRef = useRef(deliveryId);
 
   const mergeMessages = useCallback((incoming) => {
     if (!incoming || incoming.length === 0) return;
@@ -53,7 +56,8 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
     const gen = genRef.current;
     axios.get(`${API}/deliveries/${deliveryId}/chat`, { withCredentials: true })
       .then((r) => {
-        if (gen !== genRef.current) return; // respuesta atrasada de otra entrega
+        // N06 — doble guarda: generación Y entrega deben seguir vigentes.
+        if (gen !== genRef.current || deliveryId !== activeIdRef.current) return;
         setData(r.data);
         mergeMessages(r.data.messages);
         // has_more=false ⇒ no existe nada más antiguo en el hilo.
@@ -65,6 +69,7 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   useEffect(() => {
     // MSG09 — cambiar de entrega invalida respuestas en vuelo y reinicia
     // contexto, borrador e historial.
+    activeIdRef.current = deliveryId;
     genRef.current += 1;
     setMessages([]);
     setReachedStart(false);
@@ -95,7 +100,8 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
       const r = await axios.get(`${API}/deliveries/${deliveryId}/chat`, {
         params: { before: first.created_at }, withCredentials: true,
       });
-      if (gen !== genRef.current) return; // MSG09 — respuesta atrasada
+      // MSG09/N06 — respuesta atrasada o de otra entrega: se descarta.
+      if (gen !== genRef.current || deliveryId !== activeIdRef.current) return;
       mergeMessages(r.data.messages);
       if (r.data.has_more === false) setReachedStart(true);
     } catch { /* silencioso */ }
@@ -109,14 +115,22 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   const send = async () => {
     const val = text.trim();
     if (!val || busy) return;
+    // N06 — el envío captura entrega Y generación al INICIAR el POST: si el
+    // usuario cambió de chat mientras viajaba, no borra el borrador nuevo ni
+    // recarga el contexto del chat anterior sobre el actual.
+    const id = deliveryId;
+    const gen = genRef.current;
     setBusy(true);
     try {
-      await axios.post(`${API}/deliveries/${deliveryId}/chat`,
+      await axios.post(`${API}/deliveries/${id}/chat`,
         { text: val }, { withCredentials: true });
+      if (gen !== genRef.current || id !== activeIdRef.current) return;
       setText("");
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
+      if (gen === genRef.current && id === activeIdRef.current) {
+        toast.error(e.response?.data?.detail || "Error");
+      }
     } finally {
       setBusy(false);
     }

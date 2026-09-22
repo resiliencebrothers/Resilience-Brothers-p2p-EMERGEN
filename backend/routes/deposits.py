@@ -498,7 +498,12 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
         {"id": dep_id, "status": "pending"},
         {"$set": {"status": "rejected", "updated_at": now, "reviewed_at": now,
                   "reviewed_by": staff["user_id"],
-                  "admin_note": payload.admin_note.strip() or None}},
+                  "admin_note": payload.admin_note.strip() or None,
+                  # N03 — la intención de cancelar la recogida viaja EN el
+                  # mismo claim del rechazo: si la propagación falla, el
+                  # healer la reintenta hasta cancelar o dejar incidencia.
+                  "delivery_cancel_pending": {"at": now,
+                                              "note": "depósito rechazado"}}},
     )
     if claim.matched_count == 0:
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
@@ -510,8 +515,12 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
         await handle_origin_rejected("deposit", dep_id,
                                      actor_id=staff["user_id"],
                                      note="depósito rechazado")
+        await db.deposits.update_one(
+            {"id": dep_id, "delivery_cancel_pending.at": now},
+            {"$unset": {"delivery_cancel_pending": ""}})
     except Exception as e:
-        logger.error(f"[deposits] pickup sync after reject failed: {e}")
+        logger.error(f"[deposits] pickup sync after reject failed (queda "
+                     f"pendiente para el healer): {e}")
     fresh = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="deposit.reject",
