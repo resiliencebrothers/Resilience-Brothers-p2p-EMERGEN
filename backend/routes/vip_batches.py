@@ -476,13 +476,18 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
         await db.vip_batches.update_one(
             {"id": batch_id, "items_reserved": {"$exists": False}},
             {"$set": {"items_reserved": current}})
-    # R03 — plan de carga persistente (IDs estables) publicado en el MISMO
-    # update que la reserva: una inserción parcial o un crash liberan SOLO el
-    # cupo no insertado (resolve_upload_plan/healer), y el cierre no se sella
-    # mientras haya cargas reservadas en vuelo.
+    # R03 — plan de carga persistente (IDs estables + CONTENIDO completo)
+    # publicado en el MISMO update que la reserva: una inserción parcial del
+    # propio escritor libera SOLO el cupo no insertado (resolve_upload_plan),
+    # el healer por antigüedad COMPLETA la carga sin liberar cupo (V02), y el
+    # cierre no se sella mientras haya cargas reservadas en vuelo.
+    from services.vip_batch_ops import (ensure_items_unique_index,
+                                        resolve_upload_plan)
+    await ensure_items_unique_index()
     upload_plan = {"plan_id": f"vbup_{uuid.uuid4().hex[:12]}",
                    "item_ids": [d["id"] for d in docs],
-                   "count": len(docs), "at": now}
+                   "count": len(docs), "at": now,
+                   "docs": [dict(d) for d in docs]}
     claim = await db.vip_batches.update_one(
         {"id": batch_id, "status": "open",
          "items_reserved": {"$lte": MAX_ITEMS_PER_BATCH - len(docs)}},
@@ -501,14 +506,18 @@ async def add_vip_batch_items(batch_id: str, payload: VipBatchItemsBulk, request
     try:
         await db.vip_batch_items.insert_many([dict(d) for d in docs])
     except Exception:
-        # R03 — resolver el plan: contar lo realmente insertado y liberar
-        # SOLO el cupo restante (decisión durable + aplicación atómica).
-        from services.vip_batch_ops import resolve_upload_plan
-        await resolve_upload_plan(batch_id, upload_plan)
-        raise
-    await db.vip_batches.update_one(
-        {"id": batch_id},
-        {"$pull": {"upload_plans": {"plan_id": upload_plan["plan_id"]}}})
+        # R03/V02 — resolver como ESCRITOR ('release': contar lo insertado y
+        # liberar SOLO el cupo restante). Si el healer ya reclamó 'complete',
+        # los ítems SÍ quedaron insertados (identidad estable + índice
+        # único): la carga terminó bien para el cliente.
+        outcome = await resolve_upload_plan(batch_id, upload_plan,
+                                            mode="release")
+        if outcome != "complete":
+            raise
+    else:
+        await db.vip_batches.update_one(
+            {"id": batch_id},
+            {"$pull": {"upload_plans": {"plan_id": upload_plan["plan_id"]}}})
     await refresh_batch_totals(batch_id)
     # iter148 — massive-inflow threshold alerts (item + cumulative batch total)
     await dispatch_vip_batch_alerts(batch_id, docs, "added")

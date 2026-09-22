@@ -121,7 +121,9 @@ async def _settle_rejected_fund_trace(rid: str) -> bool:
     """R05 — el canje se rechazó con la entrada al fondo aún pendiente. Si el
     asiento c0 ALCANZÓ a publicarse (ejecutor lento o crash tras publicar),
     se compensa con el reverso idempotente del ciclo; si no existe, no hay
-    nada que revertir. Solo entonces se cierra la tarea."""
+    nada que revertir AQUÍ — un ingreso publicado más tarde por el escritor
+    original lo detecta y compensa el barrido durable por asiento (V03,
+    `heal_initializing_ops`), que no depende de este plan borrable."""
     inflow = await db.company_fund_adjustments.find_one(
         {"dedupe_key": f"fund-inflow:{rid}:c0"}, {"_id": 0})
     if inflow:
@@ -135,6 +137,9 @@ async def _settle_rejected_fund_trace(rid: str) -> bool:
         except Exception as e:
             logger.error("reverso de entrada tardía %s: %s", rid, e)
             return False
+        await db.company_fund_adjustments.update_one(
+            {"dedupe_key": f"fund-inflow:{rid}:c0"},
+            {"$set": {"marks_ensured": True}})
     await db.redemptions.update_one(
         {"id": rid, "sale_trace_pending.fund": True},
         {"$set": {"sale_trace_pending.fund": False}})
@@ -221,6 +226,11 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                     {"$set": {"fund_inflow_at": now,
                               "fund_inflow_amount": total,
                               "fund_inflow_currency": "USDT"}})
+                # V03 — marcas aseguradas: el barrido durable por asiento ya
+                # no necesita re-visitar este ingreso.
+                await db.company_fund_adjustments.update_one(
+                    {"dedupe_key": f"fund-inflow:{rid}:c0"},
+                    {"$set": {"marks_ensured": True}})
                 # R05 — post-verificación: un rechazo que corrió en paralelo
                 # (entre el claim y el asiento) deja el ciclo compensado aquí
                 # mismo con el reverso idempotente.
@@ -521,4 +531,43 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     for r in rows:
         if await ensure_company_sale_traces(r):
             healed += 1
+
+    # --- V03: ingresos de venta publicados sin marcas en el canje -----------
+    # La tarea durable es el PROPIO asiento (clave fund-inflow:{rid}:c{n}):
+    # aunque otro ejecutor haya borrado el plan `sale_trace_pending`, un
+    # ingreso tardío del escritor original se detecta aquí, se reponen las
+    # marcas del canje y — si el canje está rechazado — se compensa con el
+    # reverso idempotente del ciclo. Cada asiento se procesa UNA vez
+    # (flag `marks_ensured`).
+    rows = await db.company_fund_adjustments.find(
+        {"adjustment_type": "inflow", "source": "marketplace_auto",
+         "dedupe_key": {"$regex": "^fund-inflow:"},
+         "marks_ensured": {"$ne": True},
+         "created_at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "ref_id": 1, "amount": 1, "currency": 1,
+         "created_at": 1}).to_list(200)
+    for adj in rows:
+        rid = str(adj.get("ref_id") or "")
+        red = await db.redemptions.find_one({"id": rid},
+                                            {"_id": 0, "status": 1}) if rid else None
+        if not red:
+            await db.company_fund_adjustments.update_one(
+                {"id": adj["id"]}, {"$set": {"marks_ensured": True}})
+            continue
+        await db.redemptions.update_one(
+            {"id": rid, "fund_inflow_at": {"$in": [None, ""]}},
+            {"$set": {"fund_inflow_at": adj.get("created_at"),
+                      "fund_inflow_amount": adj.get("amount"),
+                      "fund_inflow_currency": adj.get("currency")}})
+        if red.get("status") == "rejected":
+            try:
+                await _reverse_fund_inflow_for_cycle(rid)
+            except Exception as e:
+                logger.error("reverso de ingreso huérfano %s: %s", rid, e)
+                continue  # sin flag: se reintenta en el próximo ciclo
+        await db.company_fund_adjustments.update_one(
+            {"id": adj["id"]}, {"$set": {"marks_ensured": True}})
+        healed += 1
+        logger.warning("ingreso de venta sin marcas reconciliado: canje %s",
+                       rid)
     return healed

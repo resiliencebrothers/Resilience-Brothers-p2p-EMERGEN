@@ -58,16 +58,16 @@ export function useConverterData({ isVip, enabled = true }) {
         return Number(r.rate_convert);
       }
       if (isVip) return Number(r.rate_vip || r.rate_normal);
-      if (r.real_rate != null && Number(r.real_rate) > 0) {
-        return Number(r.real_rate);
-      }
       return Number(r.rate_normal);
     };
-    // iter286 — ruta inversa = el cliente ADQUIERE el from_code de la fila:
-    // aplica la tasa de VENTA de la empresa (inyectada por el servidor).
+    // iter287 — ruta inversa = el cliente ADQUIERE el from_code de la fila:
+    // aplica la tasa de VENTA única de la empresa (inyectada por el servidor).
     const pickSell = (r) => {
       if (r.rate_convert_sell != null && Number(r.rate_convert_sell) > 0) {
         return Number(r.rate_convert_sell);
+      }
+      if (r.rate_sell != null && Number(r.rate_sell) > 0) {
+        return Number(r.rate_sell);
       }
       return pick(r);
     };

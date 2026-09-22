@@ -35,6 +35,7 @@ from pdf_service import generate_vip_closing_pdf
 
 from services.balances import (
     build_rate_lookup, build_convert_rate_lookup, convert_to_usdt,
+    effective_sell_rate,
     get_user_balance, decrement_balance,
     assert_account_active, assert_not_defensive,
 )
@@ -1289,40 +1290,19 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     # the same user), using the inverse quote when direct is unavailable is
     # the natural behaviour.
     #
-    # iter101 — TIER pricing for self-conversion:
-    #   • VIP  → `rate_vip`  (the VIP-tier client price)
-    #   • NORMAL → `real_rate` (the operator's REAL market exit rate — the
-    #                          same one used to compute platform revenue).
-    #     Fallback to `rate_normal` only when a legacy rate row has no
-    #     `real_rate` set.
-    #
-    # Why not `rate_normal` for normal clients? Because `rate_normal` on a
-    # P2P direction is a promotional street price the client earns by
-    # sending funds to the operator. Inverting it for a self-conversion
-    # (where no external market trade happens) would give the client a
-    # free 5% arbitrage the operator never intended to grant. `real_rate`
-    # keeps the platform's true margin intact for every convertible pair —
-    # and if admin edits `real_rate`, the conversion follows automatically.
+    # iter287 — modelo COMPRA/VENTA del operador:
+    #   • Conversión DIRECTA (fila from→to): la empresa COMPRA `from_code`
+    #     al cliente → tasa de compra por nivel (Normal → rate_normal,
+    #     VIP → rate_vip). Ej.: USD→CUP a 680 (normal) / 690 (VIP).
+    #   • Conversión INVERSA (solo existe la fila to→from): el cliente
+    #     ADQUIERE `to_code` → la empresa VENDE a su tasa ÚNICA `rate_sell`
+    #     (igual para todos los niveles). Ej.: CUP→USD a 1/712.
+    # El margen compra < venta impide cualquier arbitraje de ida y vuelta.
     is_vip = user.get("role") in ("vip", "admin")
 
     def _pick_tier_rate(doc: dict) -> float:
-        if is_vip:
-            return float(doc.get("rate_vip") or 0.0)
-        real = doc.get("real_rate")
-        if real is not None and float(real) > 0:
-            return float(real)
-        return float(doc.get("rate_normal") or 0.0)
-
-    def _pick_sell_rate(doc: dict) -> float:
-        """iter286 — VENTA: el cliente ADQUIERE el `from_code` de esta fila
-        (conversión por la ruta inversa). Se aplica la tasa de venta del
-        nivel si el admin la configuró; sin ella, comportamiento histórico
-        (misma tasa de compra — sin margen)."""
-        key = "rate_sell_vip" if is_vip else "rate_sell_normal"
-        v = doc.get(key)
-        if v is not None and float(v) > 0:
-            return float(v)
-        return _pick_tier_rate(doc)
+        key = "rate_vip" if is_vip else "rate_normal"
+        return float(doc.get(key) or 0.0)
 
     rate_doc = await db.rates.find_one(
         {"from_code": from_code, "to_code": to_code}, {"_id": 0}
@@ -1335,9 +1315,9 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             {"from_code": to_code, "to_code": from_code}, {"_id": 0}
         )
         if inverse_doc:
-            # iter286 — al usar la fila inversa el cliente está COMPRANDO
-            # `to_code`: aplica la tasa de VENTA de la empresa.
-            inv = _pick_sell_rate(inverse_doc)
+            # iter287 — ruta inversa: el cliente COMPRA `to_code`, la empresa
+            # VENDE a su tasa única.
+            inv = effective_sell_rate(inverse_doc)
             if inv > 0:
                 rate_used = 1.0 / inv
     if rate_used <= 0:

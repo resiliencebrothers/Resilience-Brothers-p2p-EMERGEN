@@ -20,15 +20,59 @@ from services.vip_batch_alerts import dispatch_vip_batch_alerts
 logger = logging.getLogger("vip_batch_ops")
 
 
-async def resolve_upload_plan(batch_id: str, plan: dict) -> None:
-    """R03 — resuelve un plan de carga fallido o interrumpido: cuenta cuántos
-    ítems del plan llegaron a insertarse y libera SOLO el cupo restante.
-    Decisión durable (release guardado en el propio plan) + aplicación
-    atómica única ($inc + $pull en el mismo update): dos resolutores
-    convergen sin liberar cupo de más ni de menos."""
+async def resolve_upload_plan(batch_id: str, plan: dict,
+                              mode: str = "release") -> str:
+    """R03/V02 — resuelve un plan de carga con UNA decisión terminal:
+      • 'release' (el ESCRITOR, tras fallar su propio insert — ya no va a
+        escribir más): cuenta lo insertado y libera SOLO el cupo restante.
+      • 'complete' (el HEALER por antigüedad — el escritor original PODRÍA
+        seguir vivo): jamás libera cupo. Inserta él mismo los ítems que
+        falten desde el contenido persistido del plan (identidad estable +
+        índice único ⇒ un escritor lento que despierte no puede duplicar
+        filas ni añadirlas tras el cierre) y conserva la reserva como cupo
+        usado.
+    La decisión se RECLAMA atómicamente en el plan (`resolution`); el
+    perdedor ejecuta el protocolo del ganador. Devuelve el modo aplicado."""
     pid = str(plan.get("plan_id") or "")
     if not pid:
-        return
+        return mode
+    await ensure_items_unique_index()
+    final = mode
+    claim = await db.vip_batches.update_one(
+        {"id": batch_id,
+         "upload_plans": {"$elemMatch": {"plan_id": pid,
+                                         "resolution": {"$exists": False},
+                                         "release": {"$exists": False}}}},
+        {"$set": {"upload_plans.$.resolution": mode}})
+    if claim.matched_count == 0:
+        fresh = await db.vip_batches.find_one(
+            {"id": batch_id, "upload_plans.plan_id": pid},
+            {"_id": 0, "upload_plans.$": 1})
+        if not fresh:
+            # Plan ya resuelto y retirado. Para el escritor: si TODOS sus
+            # ítems están visibles fue un 'complete'; si no, un 'release'.
+            ids = plan.get("item_ids") or []
+            inserted = await db.vip_batch_items.count_documents(
+                {"id": {"$in": ids}})
+            return "complete" if ids and inserted == len(ids) else "release"
+        stored = fresh["upload_plans"][0]
+        final = stored.get("resolution") or (
+            "release" if stored.get("release") is not None else mode)
+        plan = {**plan, **stored}
+    if final == "complete" and plan.get("docs"):
+        for d in plan["docs"]:
+            if await db.vip_batch_items.find_one({"id": d.get("id")},
+                                                 {"_id": 1}):
+                continue
+            try:
+                await db.vip_batch_items.insert_one(dict(d))
+            except Exception:
+                pass  # carrera con el escritor original: el índice único arbitra
+        await db.vip_batches.update_one(
+            {"id": batch_id},
+            {"$pull": {"upload_plans": {"plan_id": pid}}})
+        return "complete"
+    # --- release (decisión del escritor, o plan legado sin contenido) ------
     release = plan.get("release")
     if release is None:
         inserted = await db.vip_batch_items.count_documents(
@@ -44,19 +88,33 @@ async def resolve_upload_plan(batch_id: str, plan: dict) -> None:
                 {"id": batch_id, "upload_plans.plan_id": pid},
                 {"_id": 0, "upload_plans.$": 1})
             if not fresh:
-                return  # otro resolutor ya lo aplicó por completo
+                return "release"  # otro resolutor ya lo aplicó por completo
             release = (fresh["upload_plans"][0]).get("release")
             if release is None:
-                return
+                return "release"
     await db.vip_batches.update_one(
         {"id": batch_id, "upload_plans.plan_id": pid},
         {"$inc": {"items_reserved": -int(release)},
          "$pull": {"upload_plans": {"plan_id": pid}}})
+    return "release"
+
+
+_ITEMS_UNIQUE_READY = False
+
+
+async def ensure_items_unique_index() -> None:
+    """V02 — índice único por `id`: la identidad estable de los ítems hace
+    idempotente la inserción entre escritor y healer."""
+    global _ITEMS_UNIQUE_READY
+    if not _ITEMS_UNIQUE_READY:
+        await db.vip_batch_items.create_index("id", unique=True)
+        _ITEMS_UNIQUE_READY = True
 
 
 async def heal_batch_upload_plans(cutoff: str) -> int:
-    """R03 — completa los planes de carga muertos (crash tras reservar el
-    cupo): libera lo no insertado y desbloquea el cierre del lote."""
+    """R03/V02 — resuelve los planes de carga viejos. Por antigüedad NO se
+    libera cupo (el escritor podría seguir vivo y escribir después): se
+    COMPLETA la carga persistida, conservando la reserva."""
     n = 0
     rows = await db.vip_batches.find(
         {"upload_plans.at": {"$lt": cutoff}},
@@ -64,7 +122,7 @@ async def heal_batch_upload_plans(cutoff: str) -> int:
     for b in rows:
         for plan in (b.get("upload_plans") or []):
             if (plan.get("at") or "") < cutoff:
-                await resolve_upload_plan(b["id"], plan)
+                await resolve_upload_plan(b["id"], plan, mode="complete")
                 n += 1
     return n
 

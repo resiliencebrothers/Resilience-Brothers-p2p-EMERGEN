@@ -112,12 +112,12 @@ class ExchangeRate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None  # real market exit rate; used to compute revenue
-    # iter286 — tasas de VENTA: se aplican cuando un CLIENTE ADQUIERE
-    # `from_code` al convertir su saldo (ej. fila USDT→USD con venta 1.10 →
-    # convertir USD→USDT acredita 1/1.10 USDT por USD). Vacío = sin margen
-    # (comportamiento histórico).
-    rate_sell_normal: Optional[float] = None
-    rate_sell_vip: Optional[float] = None
+    # iter287 — tasa de VENTA ÚNICA: precio al que la EMPRESA VENDE el
+    # `from_code` de esta fila, IGUAL para todos los clientes (ej. fila
+    # USD→CUP con compra 680/690 y venta 712 → convertir CUP→USD acredita
+    # 1/712 USD por CUP). Vacío = se usa la mayor tasa de compra (sin
+    # margen adicional, pero nunca por debajo del precio de compra).
+    rate_sell: Optional[float] = None
     tiers: Optional[list[RateTier]] = None  # iter143 — amount-tiered overrides
     updated_at: str = Field(default_factory=lambda: iso(now_utc()))
 
@@ -128,8 +128,7 @@ class ExchangeRateCreate(BaseModel):
     rate_normal: float
     rate_vip: float
     real_rate: Optional[float] = None
-    rate_sell_normal: Optional[float] = None
-    rate_sell_vip: Optional[float] = None
+    rate_sell: Optional[float] = None
     tiers: Optional[list[RateTier]] = None
     totp_code: Optional[str] = Field(None, max_length=11)
 
@@ -295,30 +294,21 @@ async def delete_currency(currency_id: str, request: Request) -> Any:
 # ============================================================
 
 def _rate_convert_for_role(doc: dict, role: str) -> Optional[float]:
-    """iter101.1 — Compute the effective self-conversion rate for a given
-    role WITHOUT exposing the raw `real_rate`. Mirrors the tier picker in
+    """iter287 — tasa de conversión DIRECTA (la empresa COMPRA el from_code
+    al cliente): por nivel. Espejo del tier picker de
     `routes/orders.py::vip_convert::_pick_tier_rate`."""
-    if role in ("vip", "admin"):
-        v = doc.get("rate_vip")
-        return float(v) if v is not None else None
-    # normal + employee + anonymous → operator's real profit rate if set,
-    # else the promotional rate_normal.
-    real = doc.get("real_rate")
-    if real is not None and float(real) > 0:
-        return float(real)
-    v = doc.get("rate_normal")
+    key = "rate_vip" if role in ("vip", "admin") else "rate_normal"
+    v = doc.get(key)
     return float(v) if v is not None else None
 
 
-def _rate_sell_for_role(doc: dict, role: str) -> Optional[float]:
-    """iter286 — Tasa de VENTA efectiva para el rol: se aplica cuando el
-    cliente ADQUIERE `from_code` de esta fila (conversión inversa). Sin tasa
-    de venta configurada, cae al comportamiento histórico (compra)."""
-    key = "rate_sell_vip" if role in ("vip", "admin") else "rate_sell_normal"
-    v = doc.get(key)
-    if v is not None and float(v) > 0:
-        return float(v)
-    return _rate_convert_for_role(doc, role)
+def _rate_sell_effective(doc: dict) -> Optional[float]:
+    """iter287 — tasa de VENTA única de la empresa (igual para todos los
+    niveles). Se aplica cuando el cliente ADQUIERE `from_code` de esta fila
+    (conversión inversa). Sin configurar → la mayor tasa de compra."""
+    from services.balances import effective_sell_rate
+    v = effective_sell_rate(doc)
+    return v if v > 0 else None
 
 
 def _scrub_rate_for_client(doc: dict, role: str) -> dict:
@@ -334,7 +324,7 @@ def _scrub_rate_for_client(doc: dict, role: str) -> dict:
             for t in clean["tiers"] if isinstance(t, dict)
         ]
     clean["rate_convert"] = _rate_convert_for_role(doc, role)
-    clean["rate_convert_sell"] = _rate_sell_for_role(doc, role)
+    clean["rate_convert_sell"] = _rate_sell_effective(doc)
     return clean
 
 
@@ -360,7 +350,7 @@ async def list_rates(request: Request) -> Any:
         return [
             {**d,
              "rate_convert": _rate_convert_for_role(d, role),
-             "rate_convert_sell": _rate_sell_for_role(d, role)} for d in docs
+             "rate_convert_sell": _rate_sell_effective(d)} for d in docs
         ]
     return [_scrub_rate_for_client(d, role) for d in docs]
 

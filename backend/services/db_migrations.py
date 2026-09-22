@@ -106,3 +106,27 @@ async def migrate_vip_ledger_positive_to_balances(db: Any) -> int:
         moved += 1
     await db.migrations.insert_one({"key": key, "at": now, "moved": moved})
     return moved
+
+
+async def migrate_split_sell_rates_to_single(db: Any) -> int:
+    """iter287 — la empresa VENDE a UN solo precio para todos los niveles:
+    consolida los legados rate_sell_normal/rate_sell_vip en `rate_sell`
+    (el mayor de los dos — nunca vender más barato) y retira los campos
+    viejos. Idempotente: sin campos legados no hace nada."""
+    n = 0
+    rows = await db.rates.find(
+        {"$or": [{"rate_sell_normal": {"$exists": True}},
+                 {"rate_sell_vip": {"$exists": True}}]},
+        {"_id": 0}).to_list(1000)
+    for d in rows:
+        vals = [float(x) for x in (d.get("rate_sell_normal"),
+                                   d.get("rate_sell_vip"))
+                if x is not None and float(x) > 0]
+        update: dict = {"$unset": {"rate_sell_normal": "",
+                                   "rate_sell_vip": ""}}
+        current = d.get("rate_sell")
+        if vals and not (current is not None and float(current) > 0):
+            update["$set"] = {"rate_sell": max(vals)}
+        await db.rates.update_one({"id": d["id"]}, update)
+        n += 1
+    return n

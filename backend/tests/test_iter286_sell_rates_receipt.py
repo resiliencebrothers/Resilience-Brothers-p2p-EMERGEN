@@ -1,14 +1,19 @@
-"""iter286 — Tasas de VENTA para conversiones + Recibo PDF de retiro.
+"""iter286/iter287 — Tasa de VENTA ÚNICA + Recibo PDF de retiro.
 
-1. Tasas de venta separadas de las de compra: cuando un cliente convierte su
-   saldo por la ruta inversa (adquiere el `from_code` de la fila, ej.
-   USD→USDT vía la fila USDT→USD), se aplica `rate_sell_vip` /
-   `rate_sell_normal`. Sin tasa de venta → comportamiento histórico.
-   Aplica al convertidor (/vip/convert) y al barrido de saldos pequeños
-   (/vip/dust + /vip/convert-dust). Los campos crudos se ocultan a clientes
-   (solo viaja `rate_convert_sell` pre-calculado por rol).
-2. Recibo PDF firmable para retiros de empresa PAGADOS
-   (GET /admin/company-withdrawals/{id}/receipt.pdf).
+Modelo compra/venta (dueño, Sep 2026):
+  • COMPRA por nivel: la empresa compra el `from_code` al cliente Normal a
+    `rate_normal` y al VIP a `rate_vip` (ej. Zelle a 680 / 690 CUP).
+  • VENTA única: la empresa vende el `from_code` a TODOS al mismo precio
+    `rate_sell` (ej. Zelle a 712 CUP). Se aplica en la ruta INVERSA de las
+    conversiones (el cliente adquiere la moneda). Sin configurar → la mayor
+    tasa de compra (sin arbitraje).
+Aplica al convertidor (/vip/convert) y al barrido (/vip/dust,
+/vip/convert-dust). Los campos `real_rate` y legados se ocultan a clientes.
+
+Recibo PDF firmable para retiros de empresa PAGADOS
+(GET /admin/company-withdrawals/{id}/receipt.pdf). V04 — la prueba del
+retiro pendiente PREPARA fondos USD suficientes (custodia incluida) antes
+de crear el retiro.
 """
 import os
 import uuid
@@ -20,6 +25,7 @@ from pymongo import MongoClient
 from tests.conftest import (
     BASE_URL, ADMIN_TOKEN, VIP_TOKEN, NORMAL_TOKEN, make_admin_totp,
 )
+from tests.test_iter279_s01_s07 import _run
 
 API = f"{BASE_URL}/api"
 MARK = "ITER286"
@@ -38,14 +44,14 @@ def _iso(minutes_ago=0):
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat()
 
 
-def _plant_rate(sell_vip=110.0, sell_normal=120.0, code=XC):
+def _plant_rate(sell=110.0, code=XC, normal=100.0, vip=100.0, real=None):
     db = _db()
     doc = {
         "id": f"rate_{MARK}_{uuid.uuid4().hex[:8]}",
         "from_code": "USDT", "to_code": code,
-        "rate_normal": 100.0, "rate_vip": 100.0,
-        "real_rate": None,
-        "rate_sell_vip": sell_vip, "rate_sell_normal": sell_normal,
+        "rate_normal": normal, "rate_vip": vip,
+        "real_rate": real,
+        "rate_sell": sell,
         "updated_at": _iso(),
     }
     db.rates.insert_one({k: v for k, v in doc.items()})
@@ -75,9 +81,9 @@ class _BalanceSnapshot:
                                 {"$set": {"vip_balances": bal}})
 
 
-class TestSellRateConversions(_BalanceSnapshot):
+class TestSingleSellRateConversions(_BalanceSnapshot):
     def test_vip_convert_inverse_uses_sell_rate(self):
-        _plant_rate(sell_vip=110.0, sell_normal=120.0)
+        _plant_rate(sell=110.0)
         _db().users.update_one(
             {"user_id": "user_test_vip01"},
             {"$set": {"vip_balances": {XC: 500.0, "USDT": 10.0}}})
@@ -86,12 +92,14 @@ class TestSellRateConversions(_BalanceSnapshot):
                                 "amount_from": 500})
         assert r.status_code == 200, r.text
         body = r.json()
-        # venta VIP 110 → 500 / 110 = 4.5455 (antes: 500/100 = 5.0 sin margen)
+        # venta única 110 → 500 / 110 = 4.5455
         assert abs(body["amount_to"] - round(500 / 110.0, 4)) < 0.001, body
         assert abs(body["rate"] - (1 / 110.0)) < 1e-9
 
-    def test_normal_convert_inverse_uses_normal_sell_rate(self):
-        _plant_rate(sell_vip=110.0, sell_normal=120.0)
+    def test_normal_convert_inverse_uses_same_sell_rate(self):
+        """La tasa de venta es ÚNICA: el cliente normal paga el MISMO precio
+        que el VIP al adquirir la moneda (712 para todos, no por nivel)."""
+        _plant_rate(sell=110.0)
         _db().users.update_one(
             {"user_id": "user_test_normal01"},
             {"$set": {"vip_balances": {XC: 500.0, "USDT": 10.0}}})
@@ -99,10 +107,35 @@ class TestSellRateConversions(_BalanceSnapshot):
                           json={"from_code": XC, "to_code": "USDT",
                                 "amount_from": 500})
         assert r.status_code == 200, r.text
-        assert abs(r.json()["amount_to"] - round(500 / 120.0, 4)) < 0.001
+        assert abs(r.json()["amount_to"] - round(500 / 110.0, 4)) < 0.001
 
-    def test_convert_without_sell_rate_keeps_legacy_behavior(self):
-        _plant_rate(sell_vip=None, sell_normal=None, code="X87")
+    def test_direct_conversion_uses_tier_buy_rates(self):
+        """Conversión DIRECTA = la empresa COMPRA al cliente por nivel:
+        Normal → rate_normal (NO real_rate), VIP → rate_vip."""
+        _plant_rate(sell=110.0, code="X89", normal=100.0, vip=103.0,
+                    real=102.0)
+        db = _db()
+        db.users.update_one({"user_id": "user_test_normal01"},
+                            {"$set": {"vip_balances": {"USDT": 10.0}}})
+        rn = requests.post(f"{API}/vip/convert", headers=_hdr(NORMAL_TOKEN),
+                           json={"from_code": "USDT", "to_code": "X89",
+                                 "amount_from": 5})
+        assert rn.status_code == 200, rn.text
+        assert abs(rn.json()["amount_to"] - 500.0) < 0.001, \
+            f"normal recibe 5×100 (rate_normal), no real_rate: {rn.json()}"
+        db.users.update_one({"user_id": "user_test_vip01"},
+                            {"$set": {"vip_balances": {"USDT": 10.0}}})
+        rv = requests.post(f"{API}/vip/convert", headers=_hdr(VIP_TOKEN),
+                           json={"from_code": "USDT", "to_code": "X89",
+                                 "amount_from": 5})
+        assert rv.status_code == 200, rv.text
+        assert abs(rv.json()["amount_to"] - 515.0) < 0.001, \
+            f"VIP recibe 5×103 (rate_vip): {rv.json()}"
+
+    def test_convert_without_sell_rate_falls_back_to_max_buy(self):
+        """Sin tasa de venta → la mayor tasa de compra (jamás vender por
+        debajo de lo que la empresa paga): max(100, 105) = 105."""
+        _plant_rate(sell=None, code="X87", normal=100.0, vip=105.0)
         _db().users.update_one(
             {"user_id": "user_test_vip01"},
             {"$set": {"vip_balances": {"X87": 500.0, "USDT": 10.0}}})
@@ -110,11 +143,10 @@ class TestSellRateConversions(_BalanceSnapshot):
                           json={"from_code": "X87", "to_code": "USDT",
                                 "amount_from": 500})
         assert r.status_code == 200, r.text
-        # fallback: 1/rate_vip = 500/100 = 5.0 (comportamiento histórico)
-        assert abs(r.json()["amount_to"] - 5.0) < 0.001
+        assert abs(r.json()["amount_to"] - round(500 / 105.0, 4)) < 0.001
 
     def test_dust_preview_and_sweep_use_sell_rate(self):
-        _plant_rate(sell_vip=110.0, sell_normal=120.0)
+        _plant_rate(sell=110.0)
         db = _db()
         db.users.update_one(
             {"user_id": "user_test_vip01"},
@@ -136,35 +168,59 @@ class TestSellRateConversions(_BalanceSnapshot):
         assert abs(float(u["vip_balances"]["USDT"]) - expected) < 0.001
         assert float(u["vip_balances"].get(XC, 0.0)) == 0.0
 
-    def test_rates_endpoint_scrubs_raw_sell_fields_for_clients(self):
-        planted = _plant_rate(sell_vip=110.0, sell_normal=120.0)
+    def test_rates_endpoint_scrubs_and_exposes_single_sell(self):
+        planted = _plant_rate(sell=110.0, normal=100.0, vip=103.0, real=102.0)
         rn = requests.get(f"{API}/rates", headers=_hdr(NORMAL_TOKEN))
         assert rn.status_code == 200
         row = next((x for x in rn.json() if x.get("id") == planted["id"]), None)
         assert row is not None
-        assert "rate_sell_vip" not in row and "rate_sell_normal" not in row
         assert "real_rate" not in row
-        assert abs(row["rate_convert_sell"] - 120.0) < 1e-9
+        assert "rate_sell_vip" not in row and "rate_sell_normal" not in row
+        assert row["rate_sell"] == 110.0
+        assert abs(row["rate_convert_sell"] - 110.0) < 1e-9
+        assert abs(row["rate_convert"] - 100.0) < 1e-9, \
+            "normal convierte a rate_normal, no a real_rate"
         rv = requests.get(f"{API}/rates", headers=_hdr(VIP_TOKEN))
         rowv = next((x for x in rv.json() if x.get("id") == planted["id"]), None)
-        assert abs(rowv["rate_convert_sell"] - 110.0) < 1e-9
+        assert abs(rowv["rate_convert_sell"] - 110.0) < 1e-9, \
+            "misma tasa de venta para todos los niveles"
+        assert abs(rowv["rate_convert"] - 103.0) < 1e-9
         ra = requests.get(f"{API}/rates", headers=_hdr(ADMIN_TOKEN))
         rowa = next((x for x in ra.json() if x.get("id") == planted["id"]), None)
-        assert rowa["rate_sell_vip"] == 110.0
-        assert rowa["rate_sell_normal"] == 120.0
+        assert rowa["rate_sell"] == 110.0 and rowa["real_rate"] == 102.0
 
-    def test_admin_persists_sell_rates_via_api(self):
-        planted = _plant_rate(sell_vip=None, sell_normal=None)
+    def test_admin_persists_single_sell_rate_via_api(self):
+        planted = _plant_rate(sell=None)
         r = requests.put(
             f"{API}/admin/rates/{planted['id']}", headers=_hdr(ADMIN_TOKEN),
             json={"from_code": "USDT", "to_code": XC,
                   "rate_normal": 100.0, "rate_vip": 100.0,
-                  "rate_sell_vip": 111.5, "rate_sell_normal": 121.5,
+                  "rate_sell": 111.5,
                   "totp_code": make_admin_totp()})
         assert r.status_code == 200, r.text
-        fresh = r.json()
-        assert fresh["rate_sell_vip"] == 111.5
-        assert fresh["rate_sell_normal"] == 121.5
+        assert r.json()["rate_sell"] == 111.5
+
+    def test_migration_consolidates_legacy_split_fields(self):
+        """Los legados rate_sell_normal/rate_sell_vip se consolidan en
+        `rate_sell` (el mayor) y se retiran."""
+        db = _db()
+        rid = f"rate_{MARK}_{uuid.uuid4().hex[:8]}"
+        db.rates.insert_one({
+            "id": rid, "from_code": "USDT", "to_code": "X85",
+            "rate_normal": 100.0, "rate_vip": 100.0,
+            "rate_sell_normal": 120.0, "rate_sell_vip": 110.0,
+            "updated_at": _iso()})
+
+        def _migrate():
+            async def _f():
+                from db_client import db as adb
+                from services.db_migrations import migrate_split_sell_rates_to_single
+                return await migrate_split_sell_rates_to_single(adb)
+            return _run(_f)
+        _migrate()
+        fresh = db.rates.find_one({"id": rid}, {"_id": 0})
+        assert fresh["rate_sell"] == 120.0, fresh
+        assert "rate_sell_normal" not in fresh and "rate_sell_vip" not in fresh
 
 
 # ============================================================
@@ -214,6 +270,27 @@ def _seed_paid_withdrawal():
     return rw.json()
 
 
+def _seed_usd_available(margin=50.0):
+    """V04 — financiación sintética suficiente para un retiro USD pendiente:
+    cubre custodia de clientes y reservas de retiros ya pendientes."""
+    db = _db()
+    rf = requests.get(f"{API}/admin/company-funds", headers=_hdr(ADMIN_TOKEN))
+    row = next((f for f in rf.json() if f["currency"] == "USD"), None)
+    avail = float(row["balance_available"]) if row else 0.0
+    reserved = sum(float(w.get("amount") or 0) for w in db.company_withdrawals.find(
+        {"currency": "USD", "status": {"$in": ["pending", "approved"]}},
+        {"amount": 1}))
+    need = round(max(0.0, -(avail - reserved)) + margin, 2)
+    db.company_fund_adjustments.insert_one({
+        "id": str(uuid.uuid4()), "adjustment_type": "inflow",
+        "currency": "USD", "amount": need, "method": "transfer",
+        "source_name": f"{MARK} aporte USD", "source_account": "",
+        "note": MARK, "account_id": "", "account_label": "",
+        "denominations": None, "actor_id": "admin", "actor_email": "",
+        "actor_name": "Admin", "created_at": _iso(10),
+    })
+
+
 class TestWithdrawalReceipt:
     def setup_method(self, _):
         _cleanup_cw()
@@ -232,6 +309,7 @@ class TestWithdrawalReceipt:
         assert "recibo-retiro-" in r.headers.get("content-disposition", "")
 
     def test_receipt_rejected_for_pending_withdrawal(self):
+        _seed_usd_available()
         r = requests.post(
             f"{API}/admin/company-withdrawals", headers=_hdr(ADMIN_TOKEN),
             json={"amount": 1, "currency": "USD",

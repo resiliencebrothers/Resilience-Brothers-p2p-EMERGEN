@@ -81,24 +81,35 @@ def convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
     return _convert_via_usd(amount, code, rates)
 
 
+def effective_sell_rate(doc: dict) -> float:
+    """iter287 — tasa a la que la EMPRESA VENDE el `from_code` de la fila:
+    ÚNICA para todos los niveles (ej. Zelle a 712 CUP para cualquier
+    cliente). Sin configurar → la mayor tasa de compra conocida (jamás
+    vender por debajo de lo que se paga: sin arbitraje)."""
+    v = doc.get("rate_sell")
+    if v is not None and float(v) > 0:
+        return float(v)
+    vals = [float(x) for x in (doc.get("rate_normal"), doc.get("rate_vip"),
+                               doc.get("real_rate"))
+            if x is not None and float(x) > 0]
+    return max(vals) if vals else 0.0
+
+
 async def build_convert_rate_lookup(role: Optional[str]) -> dict:
-    """iter286 — Lookup para CONVERSIONES de cliente hacia USDT (barrido de
+    """iter287 — Lookup para CONVERSIONES de cliente hacia USDT (barrido de
     saldos pequeños): en las filas USDT→X el cliente está ADQUIRIENDO USDT,
-    así que se usa la TASA DE VENTA del nivel (`rate_sell_vip` /
-    `rate_sell_normal`) cuando el admin la configuró — la empresa vende su
-    USDT con margen. Sin tasa de venta, comportamiento histórico
-    (`rate_normal`, misma valoración que `build_rate_lookup`)."""
+    así que se usa la TASA DE VENTA única de la empresa
+    (`effective_sell_rate`) — igual para todos los niveles."""
     docs = await db.rates.find({}, {"_id": 0}).to_list(1000)
-    key = "rate_sell_vip" if role in ("vip", "admin") else "rate_sell_normal"
     out: dict = {}
     for d in docs:
         if d.get("rate_normal") is None:
             continue
         rate = float(d["rate_normal"])
         if d.get("from_code") == "USDT":
-            sell = d.get(key)
-            if sell is not None and float(sell) > 0:
-                rate = float(sell)
+            sell = effective_sell_rate(d)
+            if sell > 0:
+                rate = sell
         out[(d["from_code"], d["to_code"])] = rate
     return out
 

@@ -200,6 +200,14 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"VIP ledger positive migration failed: {e}")
 
+    # iter287 — tasa de venta única por par (consolida los campos legados
+    # rate_sell_normal/rate_sell_vip en rate_sell).
+    try:
+        from services.db_migrations import migrate_split_sell_rates_to_single
+        await migrate_split_sell_rates_to_single(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Single sell-rate migration failed: {e}")
+
     # iter48 — security_events collection indexes (idempotent).
     try:
         await security_events_indexes()

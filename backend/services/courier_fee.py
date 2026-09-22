@@ -263,6 +263,26 @@ async def settle_fee_change_plan(coll_name: str, doc_id: str, user_id: str,
     op_id = plan["op_id"]
     if delta > 0:
         st = await debit_balance_idempotent(user_id, cur, delta, op_id)
+        if st == "duplicate":
+            # V01 — 'duplicate' NO distingue un cobro real de un aborto
+            # durable: consultar el estado terminal del log. Un débito
+            # 'burned' (bloqueado sin mover dinero) o 'undone' (compensado)
+            # significa que la tarifa NUNCA quedó cobrada → completar la
+            # restauración `plan.revert` de forma idempotente, jamás cerrar
+            # el plan por la vía de cobro exitoso.
+            log = await db.credit_ops.find_one({"op_id": op_id},
+                                               {"_id": 0, "state": 1})
+            if (log or {}).get("state") in ("burned", "undone"):
+                await coll.update_one(
+                    {"id": doc_id, "courier_fee_op_pending.op_id": op_id},
+                    {"$set": plan.get("revert") or {},
+                     "$unset": {"courier_fee_op_pending": ""}})
+                if raise_insufficient:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(f"Saldo insuficiente del cliente para cubrir "
+                                f"la mensajería ({delta} {cur})."))
+                return "insufficient"
         if st == "insufficient":
             # R02 — decisión TERMINAL antes de liberar el plan: quema el
             # débito (un ejecutor lento con este op_id jamás cobrará después,
