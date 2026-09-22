@@ -770,7 +770,24 @@
       "nextAttempt": "Next attempt",
       "resolveNotePh": "Resolution note (optional)",
       "resolveBtn": "Resolve",
-      "incidentResolved": "Incident resolved"
+      "incidentResolved": "Incident resolved",
+      "attnReservations": "{{n}} reservation(s) unanswered for over {{min}} min:",
+      "attnStalled": "{{n}} deliveries stalled for over {{min}} min:",
+      "colActiveLoad": "Active load",
+      "colGps": "GPS",
+      "gpsAgo": "{{min}} min ago",
+      "feeStateLabel": "Fee status",
+      "feeStateCalculated": "Calculated — credited on confirmation",
+      "feeStatePending": "Pending payout (delivered, not confirmed)",
+      "feeStateCredited": "Credited ✓ ({{v}} USDT paid)",
+      "feeAdjLabel": "Pending adjustment",
+      "feeAdjValue": "New fee {{v}} USDT (share {{s}}) arrived after payout — resolve manually",
+      "syncSection": "Linked operation sync",
+      "syncPendingMsg": "The origin operation ({{kind}}) was left unsynced after confirmation.",
+      "retrySyncBtn": "Retry sync",
+      "retrySyncOk": "Sync completed",
+      "retrySyncConflict": "Origin conflict detected — incident recorded",
+      "originConflictMsg": "Origin incident: {{note}}"
     },
     "common": {
       "loading": "Loading…",
@@ -2842,7 +2859,13 @@
       "reprogramar": "Reschedule"
     },
     "cashPendingTitle": "Cash to hand in",
-    "cashPendingHint": "Hand this cash in at the cash box — the admin will record your settlement."
+    "cashPendingHint": "Hand this cash in at the cash box — the admin will record your settlement.",
+    "gpsActive": "GPS active",
+    "gpsInactive": "GPS off — the client cannot track you. Turn it on when you leave.",
+    "gpsLastSent": "position sent {{min}} min ago",
+    "filterAll": "All",
+    "ageMin": "{{min}} min ago",
+    "ageHours": "{{h}} h ago"
   },
   "courier": {
     "calcBtn": "Calculate courier fee",

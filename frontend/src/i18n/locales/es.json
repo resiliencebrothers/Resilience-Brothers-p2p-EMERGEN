@@ -770,7 +770,24 @@
       "nextAttempt": "Próximo intento",
       "resolveNotePh": "Nota de resolución (opcional)",
       "resolveBtn": "Resolver",
-      "incidentResolved": "Incidencia resuelta"
+      "incidentResolved": "Incidencia resuelta",
+      "attnReservations": "{{n}} reserva(s) sin respuesta hace más de {{min}} min:",
+      "attnStalled": "{{n}} entrega(s) detenidas hace más de {{min}} min:",
+      "colActiveLoad": "Carga activa",
+      "colGps": "GPS",
+      "gpsAgo": "hace {{min}} min",
+      "feeStateLabel": "Estado de comisión",
+      "feeStateCalculated": "Calculada — se abona al confirmar",
+      "feeStatePending": "Pendiente de abono (entregada, sin confirmar)",
+      "feeStateCredited": "Acreditada ✓ ({{v}} USDT pagados)",
+      "feeAdjLabel": "Ajuste pendiente",
+      "feeAdjValue": "Tarifa nueva {{v}} USDT (parte {{s}}) llegó tras el pago — resolver manualmente",
+      "syncSection": "Sincronización de la operación vinculada",
+      "syncPendingMsg": "La operación de origen ({{kind}}) quedó sin sincronizar tras la confirmación.",
+      "retrySyncBtn": "Reintentar sincronización",
+      "retrySyncOk": "Sincronización completada",
+      "retrySyncConflict": "Conflicto de origen detectado — quedó registrada la incidencia",
+      "originConflictMsg": "Incidencia de origen: {{note}}"
     },
     "common": {
       "loading": "Cargando…",
@@ -2842,7 +2859,13 @@
       "reprogramar": "Reprogramar"
     },
     "cashPendingTitle": "Efectivo a rendir",
-    "cashPendingHint": "Entrega este efectivo en caja — el admin registrará tu rendición."
+    "cashPendingHint": "Entrega este efectivo en caja — el admin registrará tu rendición.",
+    "gpsActive": "GPS activo",
+    "gpsInactive": "GPS inactivo — el cliente no puede seguirte. Actívalo al salir.",
+    "gpsLastSent": "posición enviada hace {{min}} min",
+    "filterAll": "Todos",
+    "ageMin": "hace {{min}} min",
+    "ageHours": "hace {{h}} h"
   },
   "courier": {
     "calcBtn": "Calcular mensajería",

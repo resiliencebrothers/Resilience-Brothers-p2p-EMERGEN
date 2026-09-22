@@ -41,7 +41,15 @@ const INCIDENT_TYPES = [
   "no_entregado", "reprogramar",
 ];
 
-function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reservedBadge, onReject, onChat, onIncident }) {
+// Mejora #4 — antigüedad legible de un trabajo en cola.
+function fmtAge(iso, t) {
+  if (!iso) return null;
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 60) return t("courierPanel.ageMin", { min });
+  return t("courierPanel.ageHours", { h: Math.floor(min / 60) });
+}
+
+function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reservedBadge, onReject, onChat, onIncident, showAge }) {
   const { t } = useTranslation();
   return (
     <div
@@ -76,6 +84,17 @@ function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reserve
           {t(`courierPanel.status.${d.status}`)}
         </span>
       </div>
+      {showAge && (
+        <div
+          className={`text-[0.65rem] flex items-center gap-1 ${
+            (Date.now() - new Date(d.created_at).getTime()) / 60000 > 60
+              ? "text-amber-300" : "text-neutral-500"
+          }`}
+          data-testid={`delivery-age-${d.id}`}
+        >
+          <Clock className="w-3 h-3" /> {fmtAge(d.created_at, t)}
+        </div>
+      )}
       <div className="text-sm text-neutral-300">{d.client_name} — {d.amount_label}</div>
       {d.has_open_incident && (
         <div
@@ -176,6 +195,10 @@ export default function CourierPanel({ embedded = false }) {
   const [tab, setTab] = useState("mine");
 
   const [sharing, setSharing] = useState(false);
+  const [lastGpsAt, setLastGpsAt] = useState(null);
+  // Mejora #4 — filtros de la cola de disponibles (tipo y zona).
+  const [kindFilter, setKindFilter] = useState("all");
+  const [zoneFilter, setZoneFilter] = useState("all");
   const watchRef = useRef(null);
   const lastSentRef = useRef(0);
 
@@ -200,7 +223,9 @@ export default function CourierPanel({ embedded = false }) {
         lastSentRef.current = now;
         axios.post(`${API}/courier/location`,
           { lat: pos.coords.latitude, lon: pos.coords.longitude },
-          { withCredentials: true }).catch(() => {});
+          { withCredentials: true })
+          .then((r) => setLastGpsAt(r.data?.at || new Date().toISOString()))
+          .catch(() => {});
       },
       () => {
         toast.error(t("courier.geoDenied"));
@@ -255,6 +280,9 @@ export default function CourierPanel({ embedded = false }) {
       return true;
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
+      // Mejora #5 — mostrar el conflicto y refrescar SIN dar por completado
+      // un envío que el servidor rechazó.
+      if (e.response?.status === 409) load();
       return false;
     }
   };
@@ -485,12 +513,52 @@ export default function CourierPanel({ embedded = false }) {
               </div>
             </div>
           )}
+          {/* Mejora #4 — filtros por tipo y zona; atrasados primero */}
+          {data.available.length > 0 && (
+            <div className="flex flex-wrap gap-2" data-testid="courier-available-filters">
+              {["all", "deposit", "withdrawal", "redemption"].map((k) => (
+                <button
+                  key={k}
+                  onClick={() => setKindFilter(k)}
+                  data-testid={`courier-filter-kind-${k}`}
+                  className={`px-2.5 py-1 text-[0.7rem] border ${
+                    kindFilter === k
+                      ? "border-[#8B5CF6] text-[#8B5CF6]"
+                      : "border-white/10 text-neutral-500"
+                  }`}
+                >
+                  {k === "all" ? t("courierPanel.filterAll")
+                    : t(k === "deposit" ? "courierPanel.kindDeposit"
+                      : k === "withdrawal" ? "courierPanel.kindWithdrawal"
+                      : "courierPanel.kindRedemption")}
+                </button>
+              ))}
+              {[...new Set(data.available.map((d) => d.province).filter(Boolean))].map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setZoneFilter(zoneFilter === p ? "all" : p)}
+                  data-testid={`courier-filter-zone-${p}`}
+                  className={`px-2.5 py-1 text-[0.7rem] border ${
+                    zoneFilter === p
+                      ? "border-[#22C55E] text-[#22C55E]"
+                      : "border-white/10 text-neutral-500"
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="grid sm:grid-cols-2 gap-4">
             {[...data.available.filter((d) => d.reserved_for_me),
-              ...data.available.filter((d) => !d.reserved_for_me)].map((d) => (
+              ...data.available.filter((d) => !d.reserved_for_me)]
+              .filter((d) => kindFilter === "all" || d.kind === kindFilter)
+              .filter((d) => zoneFilter === "all" || d.province === zoneFilter)
+              .map((d) => (
               <DeliveryCard
                 key={d.id}
                 d={d}
+                showAge
                 reservedBadge={!!d.reserved_for_me}
                 actionLabel={d.reserved_for_me ? t("courierPanel.acceptBtn") : t("courierPanel.claimBtn")}
                 actionTestId={`claim-delivery-${d.id}`}
@@ -506,8 +574,21 @@ export default function CourierPanel({ embedded = false }) {
         <div className="space-y-4">
           {data.mine.length > 0 && (
             <div className="tactile-card p-4 flex flex-wrap items-center justify-between gap-3" data-testid="courier-live-share">
-              <div className="text-xs text-neutral-400 max-w-md">
-                {sharing ? t("courierPanel.sharingLiveHint") : t("courierPanel.shareLiveHint")}
+              <div className="text-xs text-neutral-400 max-w-md space-y-1">
+                <div>{sharing ? t("courierPanel.sharingLiveHint") : t("courierPanel.shareLiveHint")}</div>
+                {/* Mejora #5 — estado claro de conexión/GPS */}
+                {sharing ? (
+                  <div className="text-[0.7rem] text-[#22C55E] flex items-center gap-1.5" data-testid="courier-gps-status">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+                    {t("courierPanel.gpsActive")}
+                    {lastGpsAt && ` · ${t("courierPanel.gpsLastSent", { min: Math.max(0, Math.round((Date.now() - new Date(lastGpsAt).getTime()) / 60000)) })}`}
+                  </div>
+                ) : (
+                  <div className="text-[0.7rem] text-amber-300 flex items-center gap-1.5" data-testid="courier-gps-status">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    {t("courierPanel.gpsInactive")}
+                  </div>
+                )}
               </div>
               <Button
                 type="button"
@@ -557,7 +638,7 @@ export default function CourierPanel({ embedded = false }) {
               </div>
               <div className="text-right shrink-0">
                 <div className="font-mono text-[#22C55E] text-sm flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" /> +{d.courier_share_usdt} USDT
+                  <CheckCircle2 className="w-4 h-4" /> +{d.courier_share_paid_usdt ?? d.courier_share_usdt} USDT
                 </div>
               </div>
             </div>

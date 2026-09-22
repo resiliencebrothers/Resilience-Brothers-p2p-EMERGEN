@@ -89,6 +89,7 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
   const [row, setRow] = useState(delivery);
   const [resolveNote, setResolveNote] = useState("");
   const [busyId, setBusyId] = useState(null);
+  const [syncBusy, setSyncBusy] = useState(false);
   useEffect(() => { setRow(delivery); setResolveNote(""); }, [delivery]);
   if (!row) return null;
   const d = row;
@@ -107,6 +108,28 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
       toast.error(e.response?.data?.detail || "Error");
     } finally {
       setBusyId(null);
+    }
+  };
+
+  // Mejora #6 — reintento seguro de sincronización (idempotente en backend).
+  const retrySync = async () => {
+    setSyncBusy(true);
+    try {
+      const r = await axios.post(
+        `${API}/admin/deliveries/${d.id}/retry-sync`, {},
+        { withCredentials: true });
+      setRow(r.data.delivery);
+      const res = r.data.result || {};
+      if (res.settlement === "conflict") {
+        toast.warning(t("admin.deliveries.retrySyncConflict"));
+      } else {
+        toast.success(t("admin.deliveries.retrySyncOk"));
+      }
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    } finally {
+      setSyncBusy(false);
     }
   };
 
@@ -200,7 +223,54 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
             <Row label={t("admin.deliveries.detailsPlatformShare")}
                  value={`${d.platform_share_usdt} USDT`}
                  mono testid="dd-platform-share" />
+            {/* Mejora #6 — estado de liquidación separado y comprensible */}
+            <Row label={t("admin.deliveries.feeStateLabel")}
+                 value={d.payout_credited
+                   ? t("admin.deliveries.feeStateCredited",
+                       { v: d.courier_share_paid_usdt ?? d.courier_share_usdt })
+                   : d.status === "delivered"
+                     ? t("admin.deliveries.feeStatePending")
+                     : t("admin.deliveries.feeStateCalculated")}
+                 testid="dd-fee-state" />
+            {d.fee_adjustment_pending && (
+              <Row label={t("admin.deliveries.feeAdjLabel")}
+                   value={t("admin.deliveries.feeAdjValue", {
+                     v: d.fee_adjustment_pending.fee_usdt,
+                     s: d.fee_adjustment_pending.courier_share_usdt,
+                   })}
+                   testid="dd-fee-adjustment" />
+            )}
           </Section>
+
+          {/* Mejora #6 — sincronización de la operación vinculada */}
+          {(d.settlement_pending || d.origin_conflict) && (
+            <div className="border border-amber-400/30 bg-amber-400/5 p-3 space-y-2" data-testid="dd-sync-section">
+              <div className="text-[0.65rem] uppercase tracking-widest text-amber-300 font-mono border-b border-amber-400/20 pb-2">
+                {t("admin.deliveries.syncSection")}
+              </div>
+              {d.settlement_pending && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-amber-300" data-testid="dd-sync-pending">
+                    {t("admin.deliveries.syncPendingMsg", { kind: d.settlement_pending.kind || d.kind })}
+                  </span>
+                  <Button
+                    size="sm"
+                    disabled={syncBusy}
+                    onClick={retrySync}
+                    data-testid="dd-retry-sync"
+                    className="bg-amber-400 hover:bg-amber-300 text-black rounded-none h-8 text-xs shrink-0 disabled:opacity-40"
+                  >
+                    {syncBusy ? "…" : t("admin.deliveries.retrySyncBtn")}
+                  </Button>
+                </div>
+              )}
+              {d.origin_conflict && (
+                <div className="text-xs text-[#EF4444]" data-testid="dd-origin-conflict">
+                  ⚠ {t("admin.deliveries.originConflictMsg", { note: d.origin_conflict.note })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Mejora #2 — evidencia de entrega (PIN) */}
           {(d.delivery_pin || d.pin_exception || d.pin_verified) && (

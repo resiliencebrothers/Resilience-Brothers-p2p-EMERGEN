@@ -77,7 +77,7 @@ async def courier_deliveries(request: Request) -> Any:
          "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
                  {"assigned_to_courier_id": {"$exists": False}}]},
         {"_id": 0},
-    ).sort("created_at", -1).to_list(50)
+    ).sort("created_at", 1).to_list(50)  # Mejora #4 — atrasados primero
     available_docs = reserved_docs + open_docs
     for d in available_docs:
         d["reserved_for_me"] = d.get("assigned_to_courier_id") == uid
@@ -502,7 +502,10 @@ async def courier_share_location(payload: dict, request: Request) -> Any:
         {"$set": {"courier_location": {"lat": lat, "lon": lon,
                                        "updated_at": now}}},
     )
-    return {"updated": r.modified_count}
+    # Mejora #5 — presencia GPS del mensajero visible para la administración.
+    await db.users.update_one({"user_id": me["user_id"]},
+                              {"$set": {"courier_last_gps_at": now}})
+    return {"updated": r.modified_count, "at": now}
 
 
 # ------------------------------------------------------------------
@@ -773,6 +776,63 @@ async def track_my_deliveries(request: Request) -> Any:
 # Admin endpoints
 # ------------------------------------------------------------------
 
+@router.get("/admin/deliveries/attention")
+async def admin_deliveries_attention(request: Request) -> Any:
+    """Mejora #4 — reservas sin respuesta y trabajos detenidos, para el
+    banner de atención del operador."""
+    await require_permission(request, "deliveries")
+    from services.deliveries import find_attention_items
+    return await find_attention_items()
+
+
+@router.post("/admin/deliveries/{did}/retry-sync")
+async def admin_retry_sync(did: str, request: Request) -> Any:
+    """Mejora #6 — reintento SEGURO de las sincronizaciones vinculadas a la
+    entrega: misma identidad de acción (handlers idempotentes), jamás duplica
+    dinero. Cubre la liquidación pendiente (settlement_pending) y la tarea
+    cobro↔reparto del documento de origen (delivery_sync_pending)."""
+    actor = await require_permission(request, "deliveries")
+    d = await db.deliveries.find_one({"id": did}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=404, detail="No encontrada.")
+    result: Dict[str, Any] = {"settlement": None, "fee_sync": None}
+    sp = d.get("settlement_pending")
+    if sp:
+        from services.delivery_settlement import (settle_linked_operation,
+                                                  OriginConflict)
+        from services.deliveries import flag_origin_conflict
+        try:
+            await settle_linked_operation(sp.get("kind") or d["kind"],
+                                          sp.get("ref_id") or d["ref_id"],
+                                          actor)
+            await db.deliveries.update_one(
+                {"id": did, "settlement_pending.at": sp.get("at")},
+                {"$unset": {"settlement_pending": ""}})
+            result["settlement"] = "ok"
+        except OriginConflict as oc:
+            await db.deliveries.update_one(
+                {"id": did, "settlement_pending.at": sp.get("at")},
+                {"$unset": {"settlement_pending": ""}})
+            await flag_origin_conflict(did, d["kind"], d["ref_id"], str(oc))
+            result["settlement"] = "conflict"
+    coll_name = {"withdrawal": "withdrawals",
+                 "redemption": "redemptions"}.get(d.get("kind"))
+    if coll_name:
+        ref = await db[coll_name].find_one(
+            {"id": d["ref_id"]}, {"_id": 0, "delivery_sync_pending": 1})
+        if ref and ref.get("delivery_sync_pending"):
+            from services.deliveries import sync_delivery_from_doc
+            await sync_delivery_from_doc(coll_name, d["ref_id"],
+                                         actor_id=actor["user_id"])
+            result["fee_sync"] = "ok"
+    if result["settlement"] is None and result["fee_sync"] is None:
+        result["status"] = "nothing_pending"
+    await log_action(db, actor, "delivery.retry_sync", "delivery", did,
+                     details=result)
+    updated = await db.deliveries.find_one({"id": did}, {"_id": 0})
+    return {"result": result, "delivery": updated}
+
+
 @router.get("/admin/deliveries")
 async def admin_list_deliveries(request: Request, status: Optional[str] = None,
                                 courier_id: Optional[str] = None,
@@ -795,7 +855,7 @@ async def admin_list_couriers(request: Request) -> Any:
     users = await db.users.find(
         {"$or": [{"is_courier": True}, {"role": {"$in": ["admin", "employee"]}}]},
         {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1,
-         "is_courier": 1, "phone": 1},
+         "is_courier": 1, "phone": 1, "courier_last_gps_at": 1},
     ).to_list(200)
     stats = await db.deliveries.aggregate([
         {"$match": {"status": "confirmed"}},
@@ -804,10 +864,18 @@ async def admin_list_couriers(request: Request) -> Any:
                     "count": {"$sum": 1}}},
     ]).to_list(500)
     by_id = {s["_id"]: s for s in stats}
+    # Mejora #4 — carga activa (trabajos en curso) por mensajero.
+    active = await db.deliveries.aggregate([
+        {"$match": {"status": {"$in": ["accepted", "on_the_way",
+                                       "arrived", "delivered"]}}},
+        {"$group": {"_id": "$courier_id", "n": {"$sum": 1}}},
+    ]).to_list(500)
+    active_by_id = {a["_id"]: int(a["n"]) for a in active}
     for u in users:
         s = by_id.get(u["user_id"], {})
         u["earned_usdt"] = round(float(s.get("earned") or 0), 2)
         u["deliveries_count"] = int(s.get("count") or 0)
+        u["active_load"] = active_by_id.get(u["user_id"], 0)
     return users
 
 

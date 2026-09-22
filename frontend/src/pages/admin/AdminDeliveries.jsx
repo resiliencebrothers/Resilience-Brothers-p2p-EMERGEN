@@ -70,6 +70,8 @@ function DeliveriesTab({ navigate }) {
   const [summary, setSummary] = useState(null);
   const todayStr = new Date().toISOString().slice(0, 10);
   const [summaryDate, setSummaryDate] = useState(todayStr);
+  // Mejora #4 — reservas sin respuesta y trabajos detenidos.
+  const [attention, setAttention] = useState(null);
 
   const load = useCallback(() => {
     const params = statusFilter === "all" ? {}
@@ -79,6 +81,8 @@ function DeliveriesTab({ navigate }) {
       .then((r) => setRows(r.data)).catch(() => setRows([]));
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data)).catch(() => setCouriers([]));
+    axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
+      .then((r) => setAttention(r.data)).catch(() => {});
   }, [statusFilter]);
 
   useEffect(() => {
@@ -134,6 +138,36 @@ function DeliveriesTab({ navigate }) {
 
   return (
     <div className="space-y-4">
+      {/* Mejora #4 — banner de atención del despacho */}
+      {attention && (attention.unanswered_reservations?.length > 0 || attention.stalled?.length > 0) && (
+        <div className="border border-amber-400/40 bg-amber-400/5 p-3 space-y-1.5" data-testid="deliveries-attention-banner">
+          {attention.unanswered_reservations?.length > 0 && (
+            <div className="text-xs text-amber-300 flex flex-wrap items-baseline gap-1.5" data-testid="attention-reservations">
+              ⏰ {t("admin.deliveries.attnReservations", {
+                n: attention.unanswered_reservations.length,
+                min: attention.thresholds?.reservation_min ?? 30,
+              })}
+              <span className="text-neutral-400">
+                {attention.unanswered_reservations.slice(0, 3).map((d) => d.client_name).join(", ")}
+                {attention.unanswered_reservations.length > 3 ? "…" : ""}
+              </span>
+            </div>
+          )}
+          {attention.stalled?.length > 0 && (
+            <div className="text-xs text-[#EF4444] flex flex-wrap items-baseline gap-1.5" data-testid="attention-stalled">
+              🛑 {t("admin.deliveries.attnStalled", {
+                n: attention.stalled.length,
+                min: attention.thresholds?.active_min ?? 90,
+              })}
+              <span className="text-neutral-400">
+                {attention.stalled.slice(0, 3).map((d) => `${d.client_name} (${d.courier_name || "—"})`).join(", ")}
+                {attention.stalled.length > 3 ? "…" : ""}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* iter216 — Resumen del día de TODO el equipo (iter217: fecha elegible) */}
       {summary && (
         <div className="space-y-2">
@@ -366,6 +400,19 @@ function DeliveriesTab({ navigate }) {
   );
 }
 
+// Mejora #5 — presencia GPS del mensajero (último envío de posición).
+function GpsBadge({ at, t }) {
+  if (!at) return <span className="text-neutral-600">—</span>;
+  const min = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60000));
+  const cls = min <= 10 ? "text-[#22C55E]" : min <= 60 ? "text-amber-300" : "text-neutral-500";
+  return (
+    <span className={`flex items-center gap-1.5 ${cls}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${min <= 10 ? "bg-[#22C55E]" : min <= 60 ? "bg-amber-400" : "bg-neutral-600"}`} />
+      {t("admin.deliveries.gpsAgo", { min })}
+    </span>
+  );
+}
+
 function CouriersTab({ navigate }) {
   const { t } = useTranslation();
   const [couriers, setCouriers] = useState([]);
@@ -461,6 +508,8 @@ function CouriersTab({ navigate }) {
               <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.colPhone")}</th>
               <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.colEarned")}</th>
               <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.colCompleted")}</th>
+              <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.colActiveLoad")}</th>
+              <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.colGps")}</th>
               <th className="px-3 py-3"></th>
             </tr>
           </thead>
@@ -483,6 +532,14 @@ function CouriersTab({ navigate }) {
                 </td>
                 <td className="px-3 py-3 font-mono text-[#22C55E]">{c.earned_usdt} USDT</td>
                 <td className="px-3 py-3 font-mono">{c.deliveries_count}</td>
+                <td className="px-3 py-3 font-mono" data-testid={`courier-load-${c.user_id}`}>
+                  <span className={c.active_load > 0 ? "text-amber-300" : "text-neutral-500"}>
+                    {c.active_load ?? 0}
+                  </span>
+                </td>
+                <td className="px-3 py-3 text-[0.7rem]" data-testid={`courier-gps-${c.user_id}`}>
+                  <GpsBadge at={c.courier_last_gps_at} t={t} />
+                </td>
                 <td className="px-3 py-3 text-right">
                   {c.is_courier && (
                     <Button

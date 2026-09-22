@@ -28,6 +28,81 @@ REF_COLLS = {"withdrawal": "withdrawals", "redemption": "redemptions",
              "deposit": "deposits"}
 TERMINAL_REF_STATUSES = ("rejected", "cancelled")
 
+# Mejora #4 — umbrales de atención del despacho (minutos).
+RESERVATION_STALL_MIN = 30
+ACTIVE_STALL_MIN = 90
+
+
+async def find_attention_items() -> dict:
+    """Mejora #4 — reservas sin respuesta y trabajos detenidos que necesitan
+    intervención del operador."""
+    from datetime import timedelta
+    now_dt = now_utc()
+    res_cutoff = iso(now_dt - timedelta(minutes=RESERVATION_STALL_MIN))
+    act_cutoff = iso(now_dt - timedelta(minutes=ACTIVE_STALL_MIN))
+    fields = {"_id": 0, "id": 1, "kind": 1, "client_name": 1,
+              "amount_label": 1, "status": 1, "assigned_to_courier_id": 1,
+              "courier_name": 1, "courier_id": 1, "updated_at": 1,
+              "created_at": 1}
+    unanswered = await db.deliveries.find(
+        {"status": "available",
+         "assigned_to_courier_id": {"$nin": [None, ""]},
+         "updated_at": {"$lt": res_cutoff}},
+        fields).sort("updated_at", 1).to_list(50)
+    stalled = await db.deliveries.find(
+        {"status": {"$in": ["accepted", "on_the_way", "arrived"]},
+         "updated_at": {"$lt": act_cutoff}},
+        fields).sort("updated_at", 1).to_list(50)
+    return {"unanswered_reservations": unanswered, "stalled": stalled,
+            "thresholds": {"reservation_min": RESERVATION_STALL_MIN,
+                           "active_min": ACTIVE_STALL_MIN}}
+
+
+async def alert_attention_items() -> int:
+    """Mejora #4 — alerta a los admins UNA sola vez por entrega y condición
+    (claim atómico por flag); corre en el scheduler cada 10 min."""
+    items = await find_attention_items()
+    n = 0
+    try:
+        from admin_alerts import notify_all_admins
+    except Exception:
+        return 0
+    for d in items["unanswered_reservations"]:
+        claim = await db.deliveries.update_one(
+            {"id": d["id"], "status": "available",
+             "reservation_alerted": {"$ne": True}},
+            {"$set": {"reservation_alerted": True}})
+        if claim.modified_count:
+            try:
+                await notify_all_admins(
+                    db,
+                    title="⏰ Reserva de mensajería sin respuesta",
+                    body=(f"La entrega #{d['id'][:8]} de {d.get('client_name', '')} "
+                          f"lleva más de {RESERVATION_STALL_MIN} min reservada "
+                          "sin que el mensajero la acepte. Reasígnala o libérala."),
+                    url_path="/admin/deliveries")
+            except Exception as e:
+                logger.error(f"reservation alert failed: {e}")
+            n += 1
+    for d in items["stalled"]:
+        claim = await db.deliveries.update_one(
+            {"id": d["id"], "stall_alerted": {"$ne": True}},
+            {"$set": {"stall_alerted": True}})
+        if claim.modified_count:
+            try:
+                await notify_all_admins(
+                    db,
+                    title="🛑 Entrega detenida",
+                    body=(f"La entrega #{d['id'][:8]} de {d.get('client_name', '')} "
+                          f"({d.get('courier_name') or 'sin nombre'}) lleva más de "
+                          f"{ACTIVE_STALL_MIN} min sin avanzar de "
+                          f"«{d.get('status')}». Contacta al mensajero."),
+                    url_path="/admin/deliveries")
+            except Exception as e:
+                logger.error(f"stall alert failed: {e}")
+            n += 1
+    return n
+
 
 def gen_delivery_pin() -> str:
     """Mejora #2 auditoría — PIN de entrega de un solo uso (4 dígitos),

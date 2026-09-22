@@ -331,6 +331,18 @@ async def run_credit_recovery():
         logger.error(f"[credit-recovery] failed: {e}")
 
 
+async def run_delivery_attention():
+    """iter290 (Mejora #4) — alerta reservas de mensajería sin respuesta y
+    trabajos detenidos; una sola alerta por entrega y condición."""
+    try:
+        from services.deliveries import alert_attention_items
+        n = await alert_attention_items()
+        if n:
+            logger.warning("[delivery-attention] %s alertas emitidas", n)
+    except Exception as e:
+        logger.error(f"[delivery-attention] failed: {e}")
+
+
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
 
@@ -458,6 +470,15 @@ def start_scheduler(db, build_timeseries):
         id="email_bounce_dispatch",
         replace_existing=True,
         misfire_grace_time=60,
+        coalesce=True,
+    )
+    # iter290 (Mejora #4) — vigilancia del despacho cada 10 min.
+    _scheduler.add_job(
+        run_delivery_attention,
+        IntervalTrigger(minutes=10),
+        id="delivery_attention",
+        replace_existing=True,
+        misfire_grace_time=300,
         coalesce=True,
     )
     _scheduler.start()
