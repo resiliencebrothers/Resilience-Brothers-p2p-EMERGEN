@@ -70,6 +70,7 @@ def _cleanup(wid, did, courier_bal_before):
     db = _db()
     db.withdrawals.delete_many({"id": wid})
     db.deliveries.delete_many({"id": did})
+    db.courier_cash_events.delete_many({"delivery_id": did})
     db.notifications.delete_many({"$or": [
         {"data.withdrawal_id": wid}, {"data.delivery_id": did}]})
     delta = round(_usdt(COURIER_ID) - courier_bal_before, 4)

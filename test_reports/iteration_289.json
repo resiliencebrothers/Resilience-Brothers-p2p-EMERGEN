@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only verification of iter289 Fase A (auditoría mensajería): PIN evidencia (correcto / incorrecto / excepción), incidencias mensajero + resolución admin, y Efectivo por mensajero (issued/returned + tarjeta courier-cash-pending). Todos los flujos verdes. Regresión de pestañas /admin/deliveries OK.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/tests/iter289_seed.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/deliveries.py::_strip_courier_secret correctamente elimina delivery_pin de todas las respuestas del courier y expone pin_required — verificado por API en /api/courier/deliveries (sin pin, pin_required=true) vs /api/vip/deliveries/track (delivery_pin visible al cliente).",
+    "CourierPanel.jsx submitPin: la validación /^\\d{4}$/ y el motivo mínimo (≥5 chars) funcionan; el diálogo se cierra en éxito y permanece abierto con toast rojo en PIN incorrecto (backend 400).",
+    "CourierCashTab.jsx: el summary por (courier, currency) se refresca tras cada POST; delta issued (+500) → pending +500, returned (−500) → pending 0. UI consistente. En caso de mostrar valores no-cero para el mensajero VIP en corridas previas, se validó por delta (no por absoluto)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (8/8 flows PASS)"},
+  "test_credentials": "Cookies session_token=test_session_admin_X y test_session_vip_X (dominio p2p-exchange-hub-2.preview.emergentagent.com). Ambas presentes en user_sessions con TTL válido.",
+  "seed_data_creation": "3 deliveries insertados (ta289_pin_ok pin=4477 arrived, ta289_pin_exc pin=8811 arrived, ta289_inc pin=9911 on_the_way), courier_id=user_test_vip01. Además 2 events courier_cash_events issued/returned 500 CUP + 1 par extra 250 CUP para tarjeta courier. Todo eliminado al final (3 deliveries + 4 cash events por cleanup del script + otros que quedaron por note prefix ta289_).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter289 Fase A verificada 100% verde. Script de seed reutilizable en /app/tests/iter289_seed.py (comandos: `seed` y `cleanup`). Ojo: cleanup de courier_cash_events se hace por prefijo de note ta289_ — si en el futuro se cambia la nota, ajustar el regex. Nunca usar wait_until='networkidle' en /dashboard/deliveries (SSE abierto).",
+  "detailed_results": {
+    "PIN_courier_wrong": "PASS — POST /courier/deliveries/{id}/status con pin='0000' → 400, toast de error, la entrega sigue 'arrived'.",
+    "PIN_courier_correct": "PASS — pin='4477' → status pasa a 'delivered', la tarjeta muestra label delivery-waiting-<id>.",
+    "PIN_exception": "PASS — toggle delivery-pin-toggle-exception + motivo ≥5 chars → entrega pasa a delivered.",
+    "PIN_client_visibility_API": "PASS — /api/vip/deliveries/track incluye delivery_pin (4477/8811/9911); /api/courier/deliveries NO incluye delivery_pin y expone pin_required=true.",
+    "Incident_courier": "PASS — abrir courier-incident-<id>, seleccionar tipo direccion_incorrecta, nota ≥5, submit → toast éxito y aparece delivery-incident-badge-<id>.",
+    "Incident_admin": "PASS — filtro deliveries-filter-incidents lista ta289_inc con admin-incident-badge-<id>. Detalles → dd-incidents visible; dd-resolve-note-<iid> + dd-resolve-<iid> resuelve. Tras recargar, el badge desaparece de la fila.",
+    "Cash_admin_issued": "PASS — issued 500 CUP para user_test_vip01: cash-summary-table fila user_test_vip01-CUP pending +500 (delta), evento en cash-events-list.",
+    "Cash_admin_returned": "PASS — returned 500 CUP: pending regresa al valor previo.",
+    "Cash_courier_pending_card": "PASS — con pendiente 250 CUP el /dashboard/deliveries muestra courier-cash-pending con courier-cash-CUP='250 CUP'.",
+    "Regression_admin_tabs": "PASS — pestañas admin-tab-deliveries, admin-tab-my-deliveries, admin-tab-couriers, admin-tab-muni-rates cargan sin errores de consola relevantes (401 solo en pings iniciales tras cambio de cookie, no bloqueantes)."
+  }
+}
