@@ -11,7 +11,8 @@ Rules:
   • Admin / employee         → `real_rate` MUST appear (they audit revenue
                                 and edit rates).
   • Every row MUST carry `rate_convert` — the effective self-conversion
-    rate for the calling role (VIP → rate_vip; else real_rate ?? rate_normal).
+    rate for the calling role (iter287 buy/sell model: VIP/admin →
+    rate_vip; else rate_normal — real_rate never drives conversions).
 """
 import os
 import pytest
@@ -87,13 +88,13 @@ class TestRealRateScrubbing:
 
     @pytest.mark.asyncio
     async def test_rate_convert_matches_tier_picker(self):
-        """rate_convert injection tracks the server-side tier picker
-        used by /vip/convert (`_pick_tier_rate`)."""
+        """rate_convert injection tracks the buy/sell model (iter287):
+        normal → rate_normal, VIP → rate_vip — never real_rate."""
         await _seed("USDT", "USD", rate_normal=1.0, rate_vip=1.035, real_rate=1.05)
-        # Normal → real_rate
+        # Normal → rate_normal (la empresa compra al cliente al precio normal)
         rates = await _get_rates(NORMAL_TOKEN)
         row = next(r for r in rates if r["from_code"] == "USDT" and r["to_code"] == "USD")
-        assert row["rate_convert"] == 1.05
+        assert row["rate_convert"] == 1.0
         # VIP → rate_vip
         rates = await _get_rates(VIP_TOKEN)
         row = next(r for r in rates if r["from_code"] == "USDT" and r["to_code"] == "USD")

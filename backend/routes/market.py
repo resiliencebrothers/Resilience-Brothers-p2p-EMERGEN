@@ -21,14 +21,18 @@ re-exported via server.py for legacy callers (the seed endpoint uses them).
 """
 import uuid
 import logging
+import math
+import re
 from typing import Optional, Literal, Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
+from services.conversions import snap_value
 from auth_utils import (
-    require_staff, require_permission,
+    require_permission,
     _enforce_employee_currency_scope, _enforce_totp_step_up,
     get_session_user,
     now_utc, iso,
@@ -93,15 +97,37 @@ class CurrencyCreate(BaseModel):
     def _strip_code(cls, v: Any) -> Any:
         return v.strip().upper() if isinstance(v, str) else v
 
+    @field_validator("code")
+    @classmethod
+    def _code_format(cls, v: str) -> str:
+        # FX06 — formato único de códigos: 2-12 letras/números/guion bajo.
+        # Sin vacíos, espacios ni puntos (el código es parte de rutas de
+        # campos de MongoDB en los saldos).
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9_]{1,11}", v or ""):
+            raise ValueError(
+                "código de moneda inválido: usa 2-12 letras, números o "
+                "guion bajo (sin espacios ni puntos)")
+        return v
+
 
 class RateTier(BaseModel):
     """iter143 — amount tier: applies when amount_from >= min_amount. The
-    tier with the highest matching min wins (see services/rate_tiers.py)."""
+    tier with the highest matching min wins (see services/rate_tiers.py).
+    FX03 — todos los valores deben ser positivos, finitos y acotados."""
     model_config = ConfigDict(extra="ignore")
-    min_amount: float = Field(..., ge=0)
-    rate_normal: float = Field(..., gt=0)
-    rate_vip: float = Field(..., gt=0)
-    real_rate: Optional[float] = None
+    min_amount: float = Field(..., ge=0, le=1_000_000_000_000,
+                              allow_inf_nan=False)
+    rate_normal: float = Field(..., gt=0, le=1_000_000_000_000,
+                               allow_inf_nan=False)
+    rate_vip: float = Field(..., gt=0, le=1_000_000_000_000,
+                            allow_inf_nan=False)
+    real_rate: Optional[float] = Field(None, gt=0, le=1_000_000_000_000,
+                                       allow_inf_nan=False)
+
+    @field_validator("min_amount", "rate_normal", "rate_vip", "real_rate")
+    @classmethod
+    def _snap_tier(cls, v: Optional[float]) -> Optional[float]:
+        return snap_value(v) if v is not None else v
 
 
 class ExchangeRate(BaseModel):
@@ -123,14 +149,47 @@ class ExchangeRate(BaseModel):
 
 
 class ExchangeRateCreate(BaseModel):
+    # FX03 — tasas positivas, finitas y acotadas; FX07 — códigos normalizados.
     from_code: str
     to_code: str
-    rate_normal: float
-    rate_vip: float
-    real_rate: Optional[float] = None
-    rate_sell: Optional[float] = None
+    rate_normal: float = Field(..., gt=0, le=1_000_000_000_000,
+                               allow_inf_nan=False)
+    rate_vip: float = Field(..., gt=0, le=1_000_000_000_000,
+                            allow_inf_nan=False)
+    real_rate: Optional[float] = Field(None, gt=0, le=1_000_000_000_000,
+                                       allow_inf_nan=False)
+    rate_sell: Optional[float] = Field(None, gt=0, le=1_000_000_000_000,
+                                       allow_inf_nan=False)
     tiers: Optional[list[RateTier]] = None
     totp_code: Optional[str] = Field(None, max_length=11)
+    # Riesgo-negocio #1 (auditoría 22/09/2026) — una tasa de venta por debajo
+    # de la de compra solo se guarda con esta decisión explícita del staff.
+    allow_negative_margin: bool = False
+
+    @field_validator("from_code", "to_code", mode="before")
+    @classmethod
+    def _norm_codes(cls, v: Any) -> Any:
+        return v.strip().upper() if isinstance(v, str) else v
+
+    @field_validator("from_code", "to_code")
+    @classmethod
+    def _code_format(cls, v: str) -> str:
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9_]{1,11}", v or ""):
+            raise ValueError("código de moneda inválido")
+        return v
+
+    @field_validator("rate_normal", "rate_vip", "real_rate", "rate_sell")
+    @classmethod
+    def _snap_rates(cls, v: Optional[float]) -> Optional[float]:
+        # FX03 — el valor se guarda sin ruido float (183.96700000000044
+        # introducido por aritmética previa → 183.967).
+        return snap_value(v) if v is not None else v
+
+    @model_validator(mode="after")
+    def _distinct_pair(self) -> "ExchangeRateCreate":
+        if self.from_code == self.to_code:
+            raise ValueError("las monedas de origen y destino deben ser diferentes")
+        return self
 
 
 class Product(BaseModel):
@@ -271,20 +330,69 @@ async def _find_currency_lenient(code: str) -> Optional[dict]:
 async def create_currency(payload: CurrencyCreate, request: Request) -> Any:
     await require_permission(request, "currencies")
     c = Currency(**payload.model_dump())
-    await db.currencies.insert_one(c.model_dump())
+    try:
+        await db.currencies.insert_one(c.model_dump())
+    except DuplicateKeyError:
+        # FX06 — índice único sobre el código canónico.
+        raise HTTPException(status_code=409,
+                            detail=f"Ya existe la moneda {c.code}.")
     return c.model_dump()
+
+
+async def _currency_references(code: str) -> str:
+    """FX06 — referencias financieras de un código de moneda (tasas y saldos
+    de clientes). Vacío cuando no hay ninguna."""
+    rates_n = await db.rates.count_documents(
+        {"$or": [{"from_code": code}, {"to_code": code}]})
+    bal_n = await db.users.count_documents({f"vip_balances.{code}": {"$gt": 0}})
+    if code == "USD":
+        bal_n += await db.users.count_documents({"vip_balance_usd": {"$gt": 0}})
+    parts = []
+    if rates_n:
+        parts.append(f"{rates_n} tasa(s)")
+    if bal_n:
+        parts.append(f"{bal_n} cliente(s) con saldo")
+    return ", ".join(parts)
 
 
 @router.put("/admin/currencies/{currency_id}")
 async def update_currency(currency_id: str, payload: CurrencyCreate, request: Request) -> Any:
     await require_permission(request, "currencies")
-    await db.currencies.update_one({"id": currency_id}, {"$set": payload.model_dump()})
+    existing = await db.currencies.find_one({"id": currency_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Moneda no encontrada")
+    old_code = str(existing.get("code") or "").strip().upper()
+    if payload.code != old_code:
+        # FX06 — el código es la IDENTIDAD monetaria: con referencias
+        # financieras es inmutable (renombrarlo dejaría saldos y tasas
+        # huérfanos bajo el código antiguo).
+        refs = await _currency_references(old_code)
+        if refs:
+            raise HTTPException(status_code=409, detail=(
+                f"No se puede cambiar el código {old_code}: tiene "
+                f"referencias financieras ({refs}). Crea una moneda nueva "
+                "y desactiva esta."))
+    try:
+        await db.currencies.update_one({"id": currency_id},
+                                       {"$set": payload.model_dump()})
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409,
+                            detail=f"Ya existe la moneda {payload.code}.")
     return await db.currencies.find_one({"id": currency_id}, {"_id": 0})
 
 
 @router.delete("/admin/currencies/{currency_id}")
 async def delete_currency(currency_id: str, request: Request) -> Any:
     await require_permission(request, "currencies")
+    existing = await db.currencies.find_one({"id": currency_id}, {"_id": 0})
+    if existing:
+        code = str(existing.get("code") or "").strip().upper()
+        refs = await _currency_references(code)
+        if refs:
+            # FX06 — retirar una moneda usada = desactivación controlada.
+            raise HTTPException(status_code=409, detail=(
+                f"No se puede eliminar {code}: tiene referencias "
+                f"financieras ({refs}). Desactívala en su lugar."))
     await db.currencies.delete_one({"id": currency_id})
     return {"ok": True}
 
@@ -355,47 +463,160 @@ async def list_rates(request: Request) -> Any:
     return [_scrub_rate_for_client(d, role) for d in docs]
 
 
+def _rate_values_changed(existing: dict, payload: ExchangeRateCreate) -> bool:
+    """FX01 — ¿el guardado cambia algún valor del par existente?"""
+    def _f(v: Any) -> Optional[float]:
+        return None if v is None else float(v)
+    new_tiers = [t.model_dump() for t in (payload.tiers or [])]
+    old_tiers = [
+        {"min_amount": float(t.get("min_amount") or 0),
+         "rate_normal": _f(t.get("rate_normal")),
+         "rate_vip": _f(t.get("rate_vip")),
+         "real_rate": _f(t.get("real_rate"))}
+        for t in (existing.get("tiers") or []) if isinstance(t, dict)]
+    return (
+        _f(existing.get("rate_normal")) != payload.rate_normal
+        or _f(existing.get("rate_vip")) != payload.rate_vip
+        or _f(existing.get("real_rate")) != payload.real_rate
+        or _f(existing.get("rate_sell")) != payload.rate_sell
+        or old_tiers != new_tiers
+    )
+
+
+def _assert_margin_policy(payload: ExchangeRateCreate) -> None:
+    """Riesgo-negocio #1 (auditoría 22/09/2026) — VENTA por debajo de COMPRA:
+    con `rate_sell < max(compra)` un cliente gana convirtiendo ida y vuelta.
+    Se exige la decisión explícita `allow_negative_margin=true`."""
+    if payload.rate_sell is None or payload.allow_negative_margin:
+        return
+    max_buy = max(payload.rate_normal, payload.rate_vip)
+    if payload.rate_sell < max_buy - 1e-12:
+        raise HTTPException(status_code=422, detail={
+            "code": "NEGATIVE_MARGIN",
+            "message": (
+                f"La tasa de venta ({payload.rate_sell:g}) es inferior a la "
+                f"de compra ({max_buy:g}): un cliente ganaría convirtiendo "
+                "ida y vuelta. Si es una promoción deliberada, marca "
+                "'permitir tasa promocional con pérdida' y guarda de nuevo."),
+        })
+
+
+async def _maybe_alert_margin_risks(actor: dict, payload: ExchangeRateCreate,
+                                    fresh: dict) -> None:
+    """Alerta (no bloqueante) a los admins: promoción con pérdida autorizada
+    y/o ciclo rentable entre el par y su inverso."""
+    warnings: list[str] = []
+    max_buy = max(payload.rate_normal, payload.rate_vip)
+    if payload.rate_sell is not None and payload.rate_sell < max_buy - 1e-12:
+        warnings.append(
+            f"venta {payload.rate_sell:g} < compra {max_buy:g} en "
+            f"{fresh['from_code']}→{fresh['to_code']} (promoción con pérdida "
+            f"autorizada por {actor.get('name') or actor.get('email')})")
+    inv = await db.rates.find_one(
+        {"from_code": fresh["to_code"], "to_code": fresh["from_code"]},
+        {"_id": 0, "rate_normal": 1, "rate_vip": 1})
+    if inv:
+        try:
+            inv_buy = max(float(inv.get("rate_normal") or 0),
+                          float(inv.get("rate_vip") or 0))
+        except (TypeError, ValueError):
+            inv_buy = 0.0
+        cycle = max_buy * inv_buy
+        if math.isfinite(cycle) and cycle > 1 + 1e-9:
+            warnings.append(
+                f"ciclo {fresh['from_code']}→{fresh['to_code']}→"
+                f"{fresh['from_code']} con factor {cycle:.6f} > 1: las tasas "
+                "de compra combinadas permiten un beneficio en círculo")
+    if warnings:
+        try:
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db, title="⚠️ Margen de tasas en revisión",
+                body="; ".join(warnings), url_path="/admin/rates")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"margin alert failed: {e}")
+
+
+async def _persist_rate(actor: dict, payload: ExchangeRateCreate,
+                        existing: Optional[dict]) -> dict:
+    """FX01/FX07/FX08 — mutación CENTRAL de tasas: misma validación,
+    escritura atómica frente al índice único, mismo evento y misma auditoría
+    para creación, upsert y edición."""
+    _assert_margin_policy(payload)
+    rate_data = payload.model_dump(exclude={"totp_code", "allow_negative_margin"})
+    old = existing
+    if existing:
+        try:
+            await db.rates.update_one(
+                {"id": existing["id"]},
+                {"$set": {**rate_data, "updated_at": iso(now_utc())}})
+        except DuplicateKeyError:
+            raise HTTPException(status_code=409,
+                                detail="Ya existe una tasa para ese par.")
+        fresh = await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
+    else:
+        r = ExchangeRate(**rate_data)
+        try:
+            await db.rates.insert_one(r.model_dump())
+            fresh = r.model_dump()
+        except DuplicateKeyError:
+            # FX07 — carrera de creación: el índice único arbitra y el
+            # perdedor ACTUALIZA la fila canónica (upsert atómico, un solo
+            # precio por par).
+            row = await db.rates.find_one(
+                {"from_code": payload.from_code, "to_code": payload.to_code},
+                {"_id": 0})
+            if not row:
+                raise HTTPException(status_code=409,
+                                    detail="Conflicto al crear la tasa; reintenta.")
+            old = row
+            await db.rates.update_one(
+                {"id": row["id"]},
+                {"$set": {**rate_data, "updated_at": iso(now_utc())}})
+            fresh = await db.rates.find_one({"id": row["id"]}, {"_id": 0})
+    # FX08 — el evento lleva SOLO id/updated_at: cada cliente recarga su
+    # versión autorizada vía GET /rates (jamás el documento interno con
+    # `real_rate` y tramos crudos).
+    try:
+        from services.live_bus import publish as live_publish
+        await live_publish("rates_updated", {
+            "rate_id": fresh["id"], "updated_at": fresh.get("updated_at")})
+    except Exception as e:
+        logger.error(f"Rate SSE publish failed: {e}")
+    try:
+        await _scan_rate_change_margin(old, fresh)
+    except Exception as e:
+        logger.error(f"Rate margin scan failed: {e}")
+    try:
+        await _fanout_rate_change_push(old, fresh)
+    except Exception as e:
+        logger.error(f"Rate change push fanout failed: {e}")
+    await log_action(
+        db, actor, "rate.update" if old else "rate.create", "rate",
+        fresh["id"],
+        summary=(f"Tasa {fresh['from_code']}→{fresh['to_code']} "
+                 f"{'actualizada' if old else 'creada'}"),
+        details={"old": old, "new": fresh},
+    )
+    await _maybe_alert_margin_risks(actor, payload, fresh)
+    return fresh
+
+
 @router.post("/admin/rates")
 async def create_rate(payload: ExchangeRateCreate, request: Request) -> Any:
-    actor = await require_staff(request)
+    # FX01 — misma autorización que PUT: permiso específico de tasas (antes
+    # bastaba ser staff, lo que permitía editar precios sin el permiso).
+    actor = await require_permission(request, "rates")
     _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
     existing = await db.rates.find_one(
         {"from_code": payload.from_code, "to_code": payload.to_code}, {"_id": 0}
     )
-    if existing:
-        rate_data = payload.model_dump(exclude={"totp_code"})
-        await db.rates.update_one(
-            {"id": existing["id"]},
-            {"$set": {**rate_data, "updated_at": iso(now_utc())}},
-        )
-        fresh = await db.rates.find_one({"id": existing["id"]}, {"_id": 0})
-        # iter97 — SSE fan-out on create-with-upsert branch too.
-        try:
-            from services.live_bus import publish as live_publish
-            await live_publish("rates_updated", {"rate_id": existing["id"], "rate": fresh})
-        except Exception as e:
-            logger.error(f"Rate SSE publish failed: {e}")
-        # iter55.5 — mirror PUT: fanout push when the customer-facing rate moves
-        # so this alternate upsert path notifies clients too.
-        try:
-            await _fanout_rate_change_push(existing, fresh)
-        except Exception as e:
-            logger.error(f"Rate upsert push fanout failed: {e}")
-        return fresh
-    r = ExchangeRate(**payload.model_dump(exclude={"totp_code"}))
-    await db.rates.insert_one(r.model_dump())
-    # iter97 — SSE fan-out for brand-new rate.
-    try:
-        from services.live_bus import publish as live_publish
-        await live_publish("rates_updated", {"rate_id": r.id, "rate": r.model_dump()})
-    except Exception as e:
-        logger.error(f"Rate SSE publish failed: {e}")
-    # New rate: fanout with old=None → first-ever normal/vip values count as a change
-    try:
-        await _fanout_rate_change_push(None, r.model_dump())
-    except Exception as e:
-        logger.error(f"Rate create push fanout failed: {e}")
-    return r.model_dump()
+    if existing and _rate_values_changed(existing, payload):
+        # FX01 — cambiar un precio existente exige el mismo código de
+        # confirmación 2FA que PUT, por CUALQUIER vía.
+        await _enforce_totp_step_up(actor, payload.totp_code,
+                                    action_label="actualizar tasa")
+    return await _persist_rate(actor, payload, existing)
 
 
 @router.put("/admin/rates/{rate_id}")
@@ -404,38 +625,18 @@ async def update_rate(rate_id: str, payload: ExchangeRateCreate, request: Reques
     await _enforce_totp_step_up(actor, payload.totp_code, action_label="actualizar tasa")
     _enforce_employee_currency_scope(actor, payload.from_code, payload.to_code)
     old = await db.rates.find_one({"id": rate_id}, {"_id": 0})
-    if old:
-        _enforce_employee_currency_scope(actor, old["from_code"], old["to_code"])
-    rate_data = payload.model_dump(exclude={"totp_code"})
-    await db.rates.update_one(
-        {"id": rate_id},
-        {"$set": {**rate_data, "updated_at": iso(now_utc())}},
-    )
-    fresh = await db.rates.find_one({"id": rate_id}, {"_id": 0})
-    # iter97 — SSE fan-out to every open tab so users see the new rate
-    # without a manual refresh. Fire-and-forget; publish is in-memory.
-    try:
-        from services.live_bus import publish as live_publish
-        await live_publish("rates_updated", {"rate_id": rate_id, "rate": fresh})
-    except Exception as e:
-        logger.error(f"Rate SSE publish failed: {e}")
-    # If real_rate changed, scan pending orders for negative margin and ping admins
-    try:
-        await _scan_rate_change_margin(old, fresh)
-    except Exception as e:
-        logger.error(f"Rate update margin scan failed: {e}")
-    # iter55 — fanout push notification to all clients when the customer-facing
-    # rate actually changed (ignore no-op saves like updating only real_rate).
-    try:
-        await _fanout_rate_change_push(old, fresh)
-    except Exception as e:
-        logger.error(f"Rate change push fanout failed: {e}")
-    await log_action(
-        db, actor, "rate.update", "rate", rate_id,
-        summary=f"Tasa {fresh['from_code']}→{fresh['to_code']} actualizada",
-        details={"old": old, "new": fresh},
-    )
-    return fresh
+    if not old:
+        raise HTTPException(status_code=404, detail="Tasa no encontrada")
+    _enforce_employee_currency_scope(actor, old["from_code"], old["to_code"])
+    if (payload.from_code, payload.to_code) != (old["from_code"], old["to_code"]):
+        # FX07 — PUT no puede transformar un par en otro ya existente.
+        clash = await db.rates.find_one(
+            {"from_code": payload.from_code, "to_code": payload.to_code,
+             "id": {"$ne": rate_id}}, {"_id": 1})
+        if clash:
+            raise HTTPException(status_code=409,
+                                detail="Ya existe una tasa para ese par.")
+    return await _persist_rate(actor, payload, old)
 
 
 async def _rate_fanout_inapp(

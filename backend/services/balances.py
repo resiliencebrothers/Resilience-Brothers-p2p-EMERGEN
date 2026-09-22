@@ -25,11 +25,26 @@ COMPACT_SAFETY_HOURS = 24
 # Rate lookup + USDT conversion
 # ============================================================
 
+def _finite_rate(v) -> Optional[float]:
+    """FX03 — una tasa vieja dañada (NaN/inf/0/negativa) jamás entra a un
+    lookup usado para valorar o mover saldos."""
+    import math
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) and f > 0 else None
+
+
 async def build_rate_lookup() -> dict:
     """Return rate lookup dict { (from,to): rate_normal } for conversion."""
     docs = await db.rates.find({}, {"_id": 0}).to_list(1000)
-    return {(d["from_code"], d["to_code"]): float(d["rate_normal"])
-            for d in docs if d.get("rate_normal") is not None}
+    out = {}
+    for d in docs:
+        v = _finite_rate(d.get("rate_normal"))
+        if v is not None:
+            out[(d["from_code"], d["to_code"])] = v
+    return out
 
 
 def _convert_direct(amount: float, code: str, rates: dict) -> Optional[float]:
@@ -86,12 +101,13 @@ def effective_sell_rate(doc: dict) -> float:
     ÚNICA para todos los niveles (ej. Zelle a 712 CUP para cualquier
     cliente). Sin configurar → la mayor tasa de compra conocida (jamás
     vender por debajo de lo que se paga: sin arbitraje)."""
-    v = doc.get("rate_sell")
-    if v is not None and float(v) > 0:
-        return float(v)
-    vals = [float(x) for x in (doc.get("rate_normal"), doc.get("rate_vip"),
-                               doc.get("real_rate"))
-            if x is not None and float(x) > 0]
+    v = _finite_rate(doc.get("rate_sell"))
+    if v is not None:
+        return v
+    vals = [f for f in (_finite_rate(doc.get("rate_normal")),
+                        _finite_rate(doc.get("rate_vip")),
+                        _finite_rate(doc.get("real_rate")))
+            if f is not None]
     return max(vals) if vals else 0.0
 
 
@@ -103,12 +119,12 @@ async def build_convert_rate_lookup(role: Optional[str]) -> dict:
     docs = await db.rates.find({}, {"_id": 0}).to_list(1000)
     out: dict = {}
     for d in docs:
-        if d.get("rate_normal") is None:
+        rate = _finite_rate(d.get("rate_normal"))
+        if rate is None:
             continue
-        rate = float(d["rate_normal"])
         if d.get("from_code") == "USDT":
-            sell = effective_sell_rate(d)
-            if sell > 0:
+            sell = _finite_rate(effective_sell_rate(d))
+            if sell is not None:
                 rate = sell
         out[(d["from_code"], d["to_code"])] = rate
     return out

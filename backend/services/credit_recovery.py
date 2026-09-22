@@ -509,6 +509,11 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     from services.vip_batch_ops import heal_batch_upload_plans
     healed += await heal_batch_upload_plans(cutoff)
 
+    # --- conversiones interrumpidas entre registro y asiento (FX09) ---------
+    from services.conversions import heal_pending_conversions
+    healed += await heal_pending_conversions(max_age_seconds=max(
+        600, max_age_seconds))
+
     # --- liquidaciones vinculadas pendientes tras confirmar entrega (ME03) --
     rows = await db.deliveries.find(
         {"status": "confirmed", "settlement_pending.at": {"$lt": cutoff}},

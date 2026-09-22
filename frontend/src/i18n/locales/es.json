@@ -3115,7 +3115,8 @@
     "doneToast_one": "Barrido completo: {{count}} moneda convertida · +{{usdt}} USDT",
     "doneToast_other": "Barrido completo: {{count}} monedas convertidas · +{{usdt}} USDT",
     "previewError": "Error al cargar el resumen del barrido",
-    "error": "Error al ejecutar el barrido"
+    "error": "Error al ejecutar el barrido",
+    "quoteChanged": "La cotización cambió — actualizamos la vista previa; revisa el nuevo total y confirma de nuevo."
   },
   "landing": {
     "nav": {

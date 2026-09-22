@@ -241,6 +241,20 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"deliveries index setup failed: {e}")
 
+    # FX06/FX07 — integridad del catálogo de monedas y tasas (normalización,
+    # consolidación de duplicados e índices únicos) + índices del registro
+    # durable de conversiones (FX09). Idempotente.
+    try:
+        from services.rates_catalog import ensure_market_integrity
+        await ensure_market_integrity()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"market integrity setup failed: {e}")
+    try:
+        from services.conversions import ensure_conversion_indexes
+        await ensure_conversion_indexes()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"conversions index setup failed: {e}")
+
     # iter102 — FAQ default seed (idempotent, only if collection empty).
     try:
         from services.support_seed import seed_faq_defaults

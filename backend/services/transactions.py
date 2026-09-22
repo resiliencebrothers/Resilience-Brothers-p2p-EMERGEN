@@ -337,27 +337,60 @@ def _conversion_to_transaction(a: dict) -> TransactionItem:
     }
 
 
+def _durable_conversion_to_transaction(c: dict) -> TransactionItem:
+    """FX09 — adapta una fila del registro financiero durable
+    (`db.conversions`) a la misma forma que las filas de audit_log."""
+    pseudo = {
+        "id": c.get("id", ""),
+        "actor_name": c.get("user_name", ""),
+        "actor_email": c.get("user_email", ""),
+        "created_at": c.get("created_at", ""),
+        "details": {
+            "from_code": c.get("from_code", ""),
+            "to_code": c.get("to_code", ""),
+            "amount_from": c.get("amount_from", 0.0),
+            "amount_to": c.get("amount_to", 0.0),
+            "rate": c.get("rate", 0.0),
+            "usdt_fee": c.get("usdt_fee", 0.0),
+            "amount_from_usdt": c.get("amount_from_usdt", 0.0),
+            "batch": c.get("kind") == "dust",
+            "batch_size": c.get("batch_size", 0),
+            "batch_index": c.get("batch_index", 0),
+        },
+    }
+    return _conversion_to_transaction(pseudo)
+
+
 async def _fetch_conversions(
     date_q: dict, currency: Optional[str], user_id: Optional[str],
 ) -> List[TransactionItem]:
-    """iter78 — Pull `vip.convert` entries from the audit_log for the given
-    user. iter79 also pulls `vip.convert.dust` batch entries so the dust
-    sweep shows up as one row per swept currency (each already flagged
-    `small_balance` by _conversion_to_transaction's threshold heuristic).
+    """iter78/iter79 — historial de conversiones del usuario.
+
+    FX09 — la fuente PRIMARIA es el registro financiero durable
+    `db.conversions` (existe aunque el log opcional haya fallado). Las filas
+    de audit_log se conservan para las conversiones anteriores al registro
+    durable y se deduplican por `details.conversion_id`.
 
     `user_id` is REQUIRED — admin-scope calls don't get conversions
-    (they are personal balance movements, not company events). Currency
-    filter matches either source OR destination for parity with how a user
-    typically searches for "trades involving X"."""
+    (they are personal balance movements, not company events)."""
     if not user_id:
         return []
+    durable = await db.conversions.find(
+        {"user_id": user_id, "status": "applied", **date_q},
+        {"_id": 0}).to_list(5000)
+    durable_ids = {c.get("id") for c in durable}
+    items = [_durable_conversion_to_transaction(c) for c in durable]
     q: dict = {
         "action": {"$in": ["vip.convert", "vip.convert.dust"]},
         "actor_id": user_id,
         **date_q,
     }
     rows = await db.audit_log.find(q, {"_id": 0}).to_list(5000)
-    items = [_conversion_to_transaction(r) for r in rows]
+    for r in rows:
+        cid = (r.get("details") or {}).get("conversion_id")
+        if cid and cid in durable_ids:
+            continue  # ya representada por el registro durable
+        items.append(_conversion_to_transaction(r))
     if currency:
         cu = currency.upper()
         items = [

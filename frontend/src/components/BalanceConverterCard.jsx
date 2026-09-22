@@ -42,7 +42,7 @@ export default function BalanceConverterCard({ onConverted }) {
   const isVip = user?.role === "vip" || user?.role === "admin";
   const isEmployee = user?.role === "employee";
 
-  const { balances, currencies, positive, computeRate, toUsdt, refresh } =
+  const { balances, currencies, positive, dust, computeRate, toUsdt, refresh } =
     useConverterData({ isVip, enabled: !isEmployee });
 
   const [open, setOpen] = useState(false);
@@ -51,17 +51,11 @@ export default function BalanceConverterCard({ onConverted }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  // iter79 — Dust sweep button visible only when the user actually has
-  // something to sweep (any positive non-USDT balance whose USDT eq < 5).
+  // FX04 — la elegibilidad del barrido viene del ENDPOINT (cotización
+  // ejecutable), no de la valoración local: el botón y el diálogo siempre
+  // coinciden con lo que el servidor realmente barrería.
   const [dustOpen, setDustOpen] = useState(false);
-  const dustBalances = useMemo(
-    () => positive.filter(
-      (b) => b.currency !== "USDT"
-        && Number(b.usdt_equivalent || 0) > 0
-        && Number(b.usdt_equivalent || 0) < DUST_THRESHOLD_USDT,
-    ),
-    [positive],
-  );
+  const dustCount = dust?.items?.length || 0;
 
   const visible = useMemo(
     () => (showAll ? positive : positive.slice(0, 3)),
@@ -157,9 +151,16 @@ export default function BalanceConverterCard({ onConverted }) {
     }
     setBusy(true);
     try {
+      // FX10 — se envía la tasa confirmada; FX09 — op_id idempotente.
+      const opId = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const r = await axios.post(
         `${API}/vip/convert`,
-        { from_code: fromCode, to_code: toCode, amount_from: amt },
+        {
+          from_code: fromCode, to_code: toCode, amount_from: amt,
+          expected_rate: previewRate, op_id: opId,
+        },
         { withCredentials: true },
       );
       const fee = r.data.usdt_fee;
@@ -173,7 +174,19 @@ export default function BalanceConverterCard({ onConverted }) {
       await refresh();
       if (onConverted) await onConverted();
     } catch (e) {
-      toast.error(extractDetailMessage(e, "Error en la conversión"));
+      const det = e?.response?.data?.detail;
+      if (det?.code === "QUOTE_CHANGED") {
+        // FX10 — jamás ejecutar en silencio con otra tasa: se refresca la
+        // cotización y el cliente decide con el importe nuevo a la vista.
+        await refresh();
+        toast.warning(
+          `La cotización cambió: ahora recibirías ${Number(det.amount_to).toLocaleString(undefined, { maximumFractionDigits: 8 })} ${toCode}. ` +
+          "Revisa el nuevo importe y confirma de nuevo.",
+          { duration: 8000 },
+        );
+      } else {
+        toast.error(extractDetailMessage(e, "Error en la conversión"));
+      }
     } finally { setBusy(false); }
   };
 
@@ -228,8 +241,9 @@ export default function BalanceConverterCard({ onConverted }) {
         </button>
       )}
 
-      {/* iter79 — Dust sweep CTA. Only shown when there is dust to sweep. */}
-      {dustBalances.length > 0 && (
+      {/* iter79 — Dust sweep CTA. FX04 — visible solo cuando el ENDPOINT
+          confirma que hay algo barrible con cotización ejecutable. */}
+      {dustCount > 0 && (
         <button
           type="button"
           onClick={() => setDustOpen(true)}
@@ -239,7 +253,7 @@ export default function BalanceConverterCard({ onConverted }) {
           <span className="flex items-center gap-2 text-xs text-neutral-300 group-hover:text-white">
             <Sparkles className="w-3.5 h-3.5 text-[#8B5CF6]" />
             <span>
-              {t("balanceConverter.dustCta", { count: dustBalances.length })}
+              {t("balanceConverter.dustCta", { count: dustCount })}
             </span>
           </span>
           <span className="text-[0.6rem] font-mono text-[#8B5CF6] uppercase tracking-wider">

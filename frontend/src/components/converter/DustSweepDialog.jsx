@@ -45,7 +45,11 @@ export default function DustSweepDialog({ open, onOpenChange, onConverted }) {
     setBusy(true);
     try {
       const r = await axios.post(
-        `${API}/vip/convert-dust`, {}, { withCredentials: true },
+        `${API}/vip/convert-dust`,
+        // FX10 — el total confirmado viaja al servidor: si la cotización
+        // cambió, responde QUOTE_CHANGED sin ejecutar.
+        { expected_total_usdt: preview?.total_usdt ?? null },
+        { withCredentials: true },
       );
       toast.success(
         t("dustSweep.doneToast", {
@@ -56,7 +60,17 @@ export default function DustSweepDialog({ open, onOpenChange, onConverted }) {
       onOpenChange(false);
       if (onConverted) await onConverted();
     } catch (e) {
-      toast.error(extractDetailMessage(e, t("dustSweep.error")));
+      const det = e?.response?.data?.detail;
+      if (det?.code === "QUOTE_CHANGED" || det?.code === "BALANCE_CHANGED") {
+        toast.warning(t("dustSweep.quoteChanged"), { duration: 8000 });
+        setLoading(true);
+        axios.get(`${API}/vip/dust`, { withCredentials: true })
+          .then((r) => setPreview(r.data))
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      } else {
+        toast.error(extractDetailMessage(e, t("dustSweep.error")));
+      }
     } finally {
       setBusy(false);
     }

@@ -18,12 +18,14 @@ Status transitions for admins live in routes/admin.py. Shared business logic
 lives in services/orders_helpers.py and services/balances.py.
 """
 import logging
+import math
 from io import BytesIO
 from typing import Literal, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from pymongo.errors import DuplicateKeyError
 import uuid
 
 from db_client import db
@@ -34,9 +36,9 @@ from admin_alerts import notify_all_admins
 from pdf_service import generate_vip_closing_pdf
 
 from services.balances import (
-    build_rate_lookup, build_convert_rate_lookup, convert_to_usdt,
+    build_rate_lookup, convert_to_usdt,
     effective_sell_rate,
-    get_user_balance, decrement_balance,
+    get_user_balance,
     assert_account_active, assert_not_defensive,
 )
 from services.user_verification import assert_user_fully_verified
@@ -1242,9 +1244,15 @@ async def vip_balance_ledger(request: Request) -> Any:
 # ============================================================
 
 class VipConvertPayload(BaseModel):
-    from_code: str = Field(..., min_length=1, max_length=10)
-    to_code: str = Field(..., min_length=1, max_length=10)
+    from_code: str = Field(..., min_length=1, max_length=12)
+    to_code: str = Field(..., min_length=1, max_length=12)
     amount_from: float = Field(..., gt=0, le=1_000_000_000)
+    # FX10 — cotización aceptada por el cliente: si la tasa vigente difiere,
+    # el servidor responde 409 QUOTE_CHANGED sin mover saldos.
+    expected_rate: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    # FX09 — idempotencia: reintentar con el mismo op_id no duplica la
+    # conversión (devuelve el resultado ya aplicado).
+    op_id: Optional[str] = Field(None, min_length=8, max_length=64)
 
 
 @router.post("/vip/convert")
@@ -1276,22 +1284,17 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             status_code=400,
             detail="Las monedas de origen y destino deben ser diferentes.",
         )
-    # iter55.29 — enforce admin-controlled "convertible destination" flag.
-    # If the destination currency has `is_convertible_to=False` the platform
-    # cannot SEND funds in that currency (e.g. USD/Zelle is receive-only), so
-    # we must not let clients accumulate a converted balance the platform
-    # cannot ever disburse. Missing flag → treat as True for backward compat.
-    to_currency_doc = await db.currencies.find_one(
-        {"code": to_code}, {"_id": 0, "is_convertible_to": 1, "name": 1}
+    # FX05 — guard de catálogo compartido: el DESTINO debe existir, estar
+    # activo y ser convertible (antes bastaba que el doc no existiera para
+    # aceptar la conversión). El ORIGEN no se valida: política explícita —
+    # un saldo en moneda desactivada puede liquidarse hacia monedas activas.
+    from services.conversions import (
+        assert_convertible_destination, get_destination_decimals,
+        floor_amount, record_conversion, mark_conversions,
+        find_conversion_by_op, marker_pipeline_stage, marker_push_update,
     )
-    if to_currency_doc is not None and to_currency_doc.get("is_convertible_to", True) is False:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"La plataforma no puede enviar {to_code} — no está disponible "
-                "como destino de conversión. Elige otra moneda de destino."
-            ),
-        )
+    await assert_convertible_destination(to_code)
+    to_decimals = await get_destination_decimals(to_code)
     # Balance check
     have = get_user_balance(user, from_code)
     if have < payload.amount_from:
@@ -1338,12 +1341,26 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             inv = effective_sell_rate(inverse_doc)
             if inv > 0:
                 rate_used = 1.0 / inv
-    if rate_used <= 0:
+    if rate_used <= 0 or not math.isfinite(rate_used):
+        # FX03 — una tasa vieja dañada (NaN/inf) bloquea la conversión sin
+        # descontar nada; la ausencia de tasa da el mismo 400 de siempre.
         raise HTTPException(
             status_code=400,
-            detail=(f"No hay tasa cotizada para {from_code} → {to_code}. "
+            detail=(f"No hay tasa cotizada válida para {from_code} → {to_code}. "
                     "Contacta a soporte para habilitarla."),
         )
+    # FX10 — cotización vinculada: si el cliente confirmó una tasa y la
+    # vigente difiere, se responde con la nueva cotización SIN ejecutar.
+    if payload.expected_rate is not None and \
+            abs(rate_used - payload.expected_rate) > abs(payload.expected_rate) * 1e-9:
+        raise HTTPException(status_code=409, detail={
+            "code": "QUOTE_CHANGED",
+            "current_rate": rate_used,
+            "amount_to": floor_amount(payload.amount_from * rate_used,
+                                      to_decimals),
+            "message": ("La cotización cambió desde que la viste: revisa el "
+                        "nuevo importe y confirma de nuevo."),
+        })
     # iter77 — Fee model: the 0.01 USDT fee is charged as a **separate**
     # additional debit from the client's USDT balance. Destination receives
     # the FULL equivalent `amount_from × rate_used` (no fee subtraction).
@@ -1400,7 +1417,17 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             ),
         )
     # Destination receives the FULL equivalent, no fee subtraction.
-    amount_to = round(payload.amount_from * rate_used, 4)
+    # FX11 — precisión por moneda (cripto 8 decimales, fiat/USDT 4) y
+    # redondeo SIEMPRE hacia abajo: una ida y vuelta jamás crea valor. Un
+    # resultado menor que la unidad mínima se rechaza SIN mover saldos.
+    amount_to = floor_amount(payload.amount_from * rate_used, to_decimals)
+    if not math.isfinite(amount_to) or amount_to <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"El resultado de la conversión ({payload.amount_from:g} "
+                    f"{from_code}) es menor que la unidad mínima de {to_code} "
+                    f"({10 ** -to_decimals:g}). Aumenta el monto."),
+        )
     fee = CONVERT_FEE_USDT
     # Atomic ledger update:
     #   1. Debit `amount_from` from the source currency.
@@ -1414,6 +1441,36 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     fee = CONVERT_FEE_USDT
     eps = 1e-6
     uid = user["user_id"]
+    # FX09 — idempotencia + registro financiero DURABLE antes de mover saldo:
+    # si esta inserción falla, no se ejecuta nada; si el proceso muere después,
+    # el sanador resuelve con el marcador escrito por la misma actualización.
+    if payload.op_id:
+        prior = await find_conversion_by_op(uid, payload.op_id)
+        if prior and prior.get("status") == "applied":
+            return {
+                "ok": True, "duplicate": True,
+                "conversion_id": prior["id"],
+                "from_code": prior["from_code"], "to_code": prior["to_code"],
+                "amount_from": prior["amount_from"],
+                "amount_to": prior["amount_to"],
+                "usdt_fee": prior["usdt_fee"], "rate": prior["rate"],
+            }
+        if prior and prior.get("status") == "applying":
+            raise HTTPException(status_code=409, detail={
+                "code": "CONVERSION_IN_PROGRESS",
+                "message": "Esta conversión ya está en curso; espera unos segundos."})
+    try:
+        conv = await record_conversion(
+            user=user, kind="convert", from_code=from_code, to_code=to_code,
+            amount_from=payload.amount_from, amount_to=amount_to,
+            rate=rate_used, usdt_fee=fee,
+            amount_from_usdt=round(amount_from_usdt, 4),
+            marker_id="", op_id=payload.op_id)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail={
+            "code": "CONVERSION_IN_PROGRESS",
+            "message": "Esta conversión ya está en curso; espera unos segundos."})
+    marker = conv["marker_id"]
     if from_code == "USD":
         usd_modern: dict = {"$subtract": [
             {"$ifNull": ["$vip_balances.USD", 0.0]},
@@ -1444,6 +1501,7 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                     {"$ifNull": ["$vip_balance_usd", 0.0]},
                     payload.amount_from]}}},
                 {"$set": set_stage},
+                marker_pipeline_stage(marker),
                 {"$unset": "_legacy_take"},
             ],
         )
@@ -1460,14 +1518,17 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         if from_code != "USDT":
             filt["vip_balances.USDT"] = {"$gte": fee - eps}
         res = await db.users.update_one(
-            filt, {"$inc": {k: v for k, v in inc.items() if abs(v) > 1e-12}})
+            filt, {"$inc": {k: v for k, v in inc.items() if abs(v) > 1e-12},
+                   "$push": marker_push_update(marker)})
     if res.matched_count == 0:
+        await mark_conversions(marker, "failed")
         raise HTTPException(
             status_code=409,
             detail={"code": "INSUFFICIENT_BALANCE",
                     "message": ("Saldo insuficiente para completar la "
                                 "conversión (el saldo cambió durante la "
                                 "operación).")})
+    await mark_conversions(marker, "applied")
     await emit_balance_changed(user["user_id"], "convert",
                                from_code=from_code, to_code=to_code)
     # Audit
@@ -1487,12 +1548,14 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                 "rate": rate_used,
                 "usdt_fee": fee,
                 "amount_from_usdt": round(amount_from_usdt, 4),
+                "conversion_id": conv["id"],
             },
         )
     except Exception as e:
         logger.error(f"vip.convert audit log failed: {e}")
     return {
         "ok": True,
+        "conversion_id": conv["id"],
         "from_code": from_code, "to_code": to_code,
         "amount_from": payload.amount_from,
         "amount_to": amount_to,
@@ -1511,19 +1574,28 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
 from services.transactions import SMALL_BALANCE_THRESHOLD_USDT  # noqa: E402
 
 
-async def _collect_dust(user: dict, rates: dict) -> list[dict]:
-    """Return the list of the user's non-USDT balances whose USDT equivalent
-    is strictly positive and strictly less than SMALL_BALANCE_THRESHOLD_USDT.
+async def _collect_dust(user: dict, role: str) -> list[dict]:
+    """Saldos no-USDT cuyo equivalente EJECUTABLE en USDT es > 0 y menor que
+    SMALL_BALANCE_THRESHOLD_USDT.
+
+    FX04 — la cotización es la MISMA función ejecutable del convertidor
+    normal (`services.conversions.quote_convert_rate`, con el rol del
+    cliente); sin ruta configurada la moneda se OMITE — jamás se inventa una
+    paridad USD=USDT para mover dinero.
+    Riesgo-negocio #3 — el USD combina el saldo moderno (`vip_balances.USD`)
+    y el antiguo (`vip_balance_usd`): selección, umbral y cotización usan la
+    misma representación única que ve el cliente.
 
     Each entry:
-        {
-          "currency": str,
-          "amount": float,
-          "usdt_equivalent": float,   # rounded to 4 decimals
-          "rate": float,              # code→USDT rate (client-preview)
-        }
+        { "currency", "amount", "usdt_equivalent", "rate" }
     """
+    from services.conversions import (build_pair_docs, quote_convert_rate,
+                                      floor_amount)
     balances = dict(user.get("vip_balances") or {})
+    legacy_usd = float(user.get("vip_balance_usd") or 0.0)
+    if legacy_usd > 0:
+        balances["USD"] = float(balances.get("USD") or 0.0) + legacy_usd
+    pair_docs = await build_pair_docs()
     dust: list[dict] = []
     for code, amount in balances.items():
         code = str(code).upper().strip()
@@ -1532,18 +1604,16 @@ async def _collect_dust(user: dict, rates: dict) -> list[dict]:
         amt = float(amount or 0.0)
         if amt <= 0:
             continue
-        eq = convert_to_usdt(amt, code, rates)
-        if eq is None or eq <= 0:
+        rate_used = quote_convert_rate(role, code, "USDT", pair_docs)
+        if rate_used is None:
+            continue  # sin ruta ejecutable configurada — no se barre
+        eq = floor_amount(amt * rate_used, 4)
+        if not (0 < eq < SMALL_BALANCE_THRESHOLD_USDT):
             continue
-        if eq >= SMALL_BALANCE_THRESHOLD_USDT:
-            continue
-        # Derive an effective code→USDT rate from the pair we just used so
-        # the frontend can render "1 CUP ≈ 0.0025 USDT" cleanly.
-        rate_used = eq / amt if amt > 0 else 0.0
         dust.append({
             "currency": code,
             "amount": round(amt, 8),
-            "usdt_equivalent": round(eq, 4),
+            "usdt_equivalent": eq,
             "rate": round(rate_used, 8),
         })
     dust.sort(key=lambda d: -d["usdt_equivalent"])
@@ -1572,14 +1642,24 @@ async def vip_dust_preview(request: Request) -> Any:
             status_code=403,
             detail="Empleados no tienen saldo a convertir.",
         )
-    rates = await build_convert_rate_lookup(user["role"])
-    dust = await _collect_dust(user, rates)
+    dust = await _collect_dust(user, user["role"])
     total_usdt = round(sum(d["usdt_equivalent"] for d in dust), 4)
     fee = 0.01
     usdt_bal = float(get_user_balance(user, "USDT") or 0)
     reason = None
     can = True
-    if not dust:
+    # FX05 — el barrido acredita USDT: mismo guard de destino que el
+    # convertidor normal (existe + activa + convertible).
+    usdt_blocked = False
+    try:
+        from services.conversions import assert_convertible_destination
+        await assert_convertible_destination("USDT")
+    except HTTPException:
+        usdt_blocked = True
+    if usdt_blocked:
+        can = False
+        reason = "usdt_blocked"
+    elif not dust:
         can = False
         reason = "no_dust"
     elif usdt_bal < fee:
@@ -1597,23 +1677,27 @@ async def vip_dust_preview(request: Request) -> Any:
     }
 
 
+class DustConvertPayload(BaseModel):
+    # FX10 — total cotizado que el cliente confirmó en el diálogo; si el
+    # recomputo difiere, se responde QUOTE_CHANGED sin ejecutar.
+    expected_total_usdt: Optional[float] = Field(None, ge=0,
+                                                 allow_inf_nan=False)
+
+
 @router.post("/vip/convert-dust")
-async def vip_convert_dust(request: Request) -> Any:
+async def vip_convert_dust(request: Request,
+                           payload: Optional[DustConvertPayload] = None) -> Any:
     """Sweep ALL dust balances (each < 5 USDT equivalent) into USDT in a
     single batch with a FLAT 0.01 USDT fee for the whole operation.
 
-    Rules:
-      • Requires full identity verification (same gate as /vip/convert).
-      • Requires ≥ 0.01 USDT balance to pay the flat fee.
-      • Rejects when the user has no dust balances (nothing to sweep).
-      • Each currency swept is audit-logged separately under
-        `vip.convert.dust` so the History section shows one row per swept
-        currency with `conversion_subtype: "small_balance"`. The FIRST
-        audited row carries the flat 0.01 USDT fee; subsequent rows carry
-        `usdt_fee: 0.00`.
-
-    Response mirrors the preview shape with the ACTUAL swept items:
-      { ok, items, total_usdt, fee_usdt, credited_usdt }
+    FX02 — comisión, débitos y crédito ocurren en UNA sola actualización
+    atómica condicionada del documento del usuario: un fallo no puede dejar
+    débitos sin crédito, y dos solicitudes simultáneas producen como máximo
+    un barrido y una comisión (la segunda recibe 409).
+    FX04 — cada moneda se cotiza con la MISMA función ejecutable del
+    convertidor normal (ver `_collect_dust`).
+    FX09 — cada moneda barrida queda registrada de forma durable en
+    `db.conversions` ANTES de mover saldos.
     """
     user = await require_user(request)
     await assert_account_active(user)
@@ -1627,9 +1711,12 @@ async def vip_convert_dust(request: Request) -> Any:
     await assert_user_fully_verified(
         db, user, action_label="convertir saldos pequeños a USDT"
     )
-    # iter286 — el barrido ACREDITA USDT: se usa la tasa de VENTA del nivel.
-    rates = await build_convert_rate_lookup(user["role"])
-    dust = await _collect_dust(user, rates)
+    from services.conversions import (
+        assert_convertible_destination, record_conversion, mark_conversions,
+        marker_pipeline_stage, floor_amount)
+    # FX05 — el barrido tampoco puede acreditar un destino bloqueado.
+    await assert_convertible_destination("USDT")
+    dust = await _collect_dust(user, user["role"])
     if not dust:
         raise HTTPException(
             status_code=400,
@@ -1648,61 +1735,111 @@ async def vip_convert_dust(request: Request) -> Any:
                 f"para pagar la comisión del barrido. Tienes {usdt_bal:.4f} USDT."
             ),
         )
-    # 1) Debit the flat fee ONCE from USDT.
-    await decrement_balance(user["user_id"], "USDT", FLAT_FEE)
-    # 2) For each dust currency: debit the full balance, credit the USDT
-    #    equivalent. We recompute the USDT equivalent from `rates` here to
-    #    guarantee the amount we actually credit matches what _collect_dust
-    #    said (same rate table, called once).
-    credited_total = 0.0
+    credited = floor_amount(sum(d["usdt_equivalent"] for d in dust), 4)
+    # FX10 — el total que el cliente confirmó debe seguir vigente.
+    if payload and payload.expected_total_usdt is not None and \
+            abs(credited - payload.expected_total_usdt) > 0.00005:
+        raise HTTPException(status_code=409, detail={
+            "code": "QUOTE_CHANGED",
+            "current_total_usdt": credited,
+            "message": ("La cotización del barrido cambió: revisa el nuevo "
+                        "total y confirma de nuevo."),
+        })
+    uid = user["user_id"]
+    eps = 1e-6
+    # FX09 — registros durables (uno por moneda) con marcador compartido.
+    batch_id = f"dust_{uuid.uuid4().hex[:16]}"
+    convs: list[dict] = []
+    for idx, d in enumerate(dust):
+        convs.append(await record_conversion(
+            user=user, kind="dust", from_code=d["currency"], to_code="USDT",
+            amount_from=float(d["amount"]), amount_to=float(d["usdt_equivalent"]),
+            rate=float(d["rate"]), usdt_fee=FLAT_FEE if idx == 0 else 0.0,
+            amount_from_usdt=float(d["usdt_equivalent"]), marker_id=batch_id,
+            batch_id=batch_id, batch_size=len(dust), batch_index=idx))
+    # FX02 — TODO el asiento (comisión + débitos + crédito) en UNA sola
+    # actualización condicionada. El USD respeta el orden legado-primero.
+    conds: list = [
+        {"$gte": [{"$ifNull": ["$vip_balances.USDT", 0.0]}, FLAT_FEE - eps]}]
+    set_stage: dict = {}
+    has_usd = False
+    usd_amt = 0.0
+    for d in dust:
+        code = d["currency"]
+        amt = float(d["amount"])
+        if code == "USD":
+            has_usd = True
+            usd_amt = amt
+            conds.append({"$gte": [{"$add": [
+                {"$ifNull": ["$vip_balances.USD", 0.0]},
+                {"$ifNull": ["$vip_balance_usd", 0.0]}]}, amt - eps]})
+            set_stage["vip_balance_usd"] = {"$subtract": [
+                {"$ifNull": ["$vip_balance_usd", 0.0]}, "$_legacy_take"]}
+            set_stage["vip_balances.USD"] = {"$subtract": [
+                {"$ifNull": ["$vip_balances.USD", 0.0]},
+                {"$subtract": [amt, "$_legacy_take"]}]}
+        else:
+            conds.append({"$gte": [
+                {"$ifNull": [f"$vip_balances.{code}", 0.0]}, amt - eps]})
+            set_stage[f"vip_balances.{code}"] = {"$subtract": [
+                {"$ifNull": [f"$vip_balances.{code}", 0.0]}, amt]}
+    set_stage["vip_balances.USDT"] = {"$add": [
+        {"$ifNull": ["$vip_balances.USDT", 0.0]}, credited - FLAT_FEE]}
+    stages: list = []
+    if has_usd:
+        stages.append({"$set": {"_legacy_take": {"$min": [
+            {"$ifNull": ["$vip_balance_usd", 0.0]}, usd_amt]}}})
+    stages.append({"$set": set_stage})
+    stages.append(marker_pipeline_stage(batch_id))
+    if has_usd:
+        stages.append({"$unset": "_legacy_take"})
+    res = await db.users.update_one(
+        {"user_id": uid, "$expr": {"$and": conds}}, stages)
+    if res.matched_count == 0:
+        # El saldo cambió entre la lectura y el asiento (o un barrido
+        # concurrente ganó): nada se movió y NO se cobra comisión.
+        await mark_conversions(batch_id, "failed")
+        raise HTTPException(status_code=409, detail={
+            "code": "BALANCE_CHANGED",
+            "message": ("El saldo cambió durante la operación (o un barrido "
+                        "simultáneo ya se ejecutó). Revisa y reintenta.")})
+    await mark_conversions(batch_id, "applied")
+    # Auditoría best-effort (el registro financiero durable ya existe).
     from audit_log import log_action
     for idx, d in enumerate(dust):
-        code = d["currency"]
-        amt = d["amount"]
-        eq_usdt = float(d["usdt_equivalent"])
-        try:
-            await decrement_balance(user["user_id"], code, amt)
-        except HTTPException:
-            # iter248 — el saldo cambió concurrentemente; saltar esta moneda.
-            continue
-        await db.users.update_one(
-            {"user_id": user["user_id"]},
-            {"$inc": {"vip_balances.USDT": eq_usdt}},
-        )
-        credited_total += eq_usdt
-        # Audit one row per swept currency so History shows one line per
-        # currency. The first row carries the shared 0.01 USDT fee; the
-        # rest carry 0.00 to avoid double-counting the fee.
         try:
             await log_action(
                 db, actor=user, action="vip.convert.dust",
-                entity_type="user", entity_id=user["user_id"],
+                entity_type="user", entity_id=uid,
                 summary=(
-                    f"Dust sweep: {amt} {code} → {round(eq_usdt, 4)} USDT"
+                    f"Dust sweep: {d['amount']} {d['currency']} → "
+                    f"{round(float(d['usdt_equivalent']), 4)} USDT"
                     + (f" (fee {FLAT_FEE} USDT charged once)" if idx == 0 else "")
                 ),
                 details={
-                    "from_code": code, "to_code": "USDT",
-                    "amount_from": amt,
-                    "amount_to": round(eq_usdt, 4),
+                    "from_code": d["currency"], "to_code": "USDT",
+                    "amount_from": d["amount"],
+                    "amount_to": round(float(d["usdt_equivalent"]), 4),
                     "rate": d["rate"],
                     "usdt_fee": FLAT_FEE if idx == 0 else 0.0,
-                    "amount_from_usdt": round(eq_usdt, 4),
+                    "amount_from_usdt": round(float(d["usdt_equivalent"]), 4),
                     "batch": True,
                     "batch_size": len(dust),
                     "batch_index": idx,
+                    "conversion_id": convs[idx]["id"],
                 },
             )
         except Exception as e:
             logger.error(f"vip.convert.dust audit log failed: {e}")
-    await emit_balance_changed(user["user_id"], "dust_sweep",
-                               credited_usdt=round(credited_total, 4))
+    await emit_balance_changed(uid, "dust_sweep",
+                               credited_usdt=round(credited, 4))
     return {
         "ok": True,
         "items": dust,
-        "total_usdt": round(credited_total, 4),
+        "total_usdt": round(credited, 4),
         "fee_usdt": FLAT_FEE,
-        "credited_usdt": round(credited_total, 4),
+        "credited_usdt": round(credited, 4),
+        "batch_id": batch_id,
     }
 
 

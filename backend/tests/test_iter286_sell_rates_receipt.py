@@ -46,6 +46,14 @@ def _iso(minutes_ago=0):
 
 def _plant_rate(sell=110.0, code=XC, normal=100.0, vip=100.0, real=None):
     db = _db()
+    # FX05: el destino de conversión debe existir en el catálogo y estar
+    # activo — la moneda sintética se registra junto a su fila de tasa.
+    db.currencies.update_one(
+        {"code": code},
+        {"$set": {"code": code, "name": f"Sintética {MARK}", "type": "fiat",
+                  "is_active": True, "is_convertible_to": True,
+                  "test_marker": MARK}},
+        upsert=True)
     doc = {
         "id": f"rate_{MARK}_{uuid.uuid4().hex[:8]}",
         "from_code": "USDT", "to_code": code,
@@ -59,7 +67,9 @@ def _plant_rate(sell=110.0, code=XC, normal=100.0, vip=100.0, real=None):
 
 
 def _cleanup_rates():
-    _db().rates.delete_many({"id": {"$regex": f"^rate_{MARK}"}})
+    db = _db()
+    db.rates.delete_many({"id": {"$regex": f"^rate_{MARK}"}})
+    db.currencies.delete_many({"test_marker": MARK})
 
 
 class _BalanceSnapshot:

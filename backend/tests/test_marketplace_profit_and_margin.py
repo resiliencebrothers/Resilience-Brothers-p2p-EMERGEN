@@ -278,6 +278,9 @@ def _set_rate(from_code, to_code, rate_normal, rate_vip, real_rate=None):
         "from_code": from_code, "to_code": to_code,
         "rate_normal": rate_normal, "rate_vip": rate_vip,
         "real_rate": real_rate,
+        # FX01 — actualizar un par existente por POST exige el mismo código
+        # de confirmación 2FA que PUT.
+        "totp_code": make_admin_totp(),
     }
     r = requests.post(f"{BASE_URL}/api/admin/rates", headers=_h(ADMIN), json=payload)
     assert r.status_code in (200, 201), r.text

@@ -1,19 +1,24 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 
 /**
  * Encapsulates data-fetching + rate math for BalanceConverterCard.
  * Returns balances/rates/currencies + memoized derived state + a
- * `refresh()` helper that reloads only the user's balances.
+ * `refresh()` helper that reloads balances, rates AND dust eligibility.
  *
- * Employees are opted out at the top level of BalanceConverterCard,
- * so this hook always fetches.
+ * FX10 (auditoría 22/09/2026) — las tasas se recargan en vivo con el evento
+ * SSE `rates_updated` y también en cada `refresh()`: la vista previa nunca
+ * se queda con una cotización vieja tras un cambio del operador.
+ * FX04 — la elegibilidad del barrido de saldos pequeños viene del ENDPOINT
+ * (`GET /vip/dust`, cotización ejecutable), no de la valoración local.
  */
 export function useConverterData({ isVip, enabled = true }) {
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0 });
   const [rates, setRates] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  const [dust, setDust] = useState(null);
 
   const loadBalances = useCallback(() => {
     if (!enabled) return Promise.resolve();
@@ -22,14 +27,34 @@ export function useConverterData({ isVip, enabled = true }) {
       .catch(() => {});
   }, [enabled]);
 
+  const loadRates = useCallback(() => {
+    if (!enabled) return Promise.resolve();
+    return axios.get(`${API}/rates`, { withCredentials: true })
+      .then((r) => setRates(r.data))
+      .catch(() => {});
+  }, [enabled]);
+
+  const loadDust = useCallback(() => {
+    if (!enabled) return Promise.resolve();
+    return axios.get(`${API}/vip/dust`, { withCredentials: true })
+      .then((r) => setDust(r.data))
+      .catch(() => {});
+  }, [enabled]);
+
   useEffect(() => {
     if (!enabled) return;
     loadBalances();
-    axios.get(`${API}/rates`).then((r) => setRates(r.data)).catch(() => {});
+    loadRates();
+    loadDust();
     axios.get(`${API}/currencies`)
       .then((r) => setCurrencies(r.data.filter((c) => c.is_active)))
       .catch(() => {});
-  }, [enabled, loadBalances]);
+  }, [enabled, loadBalances, loadRates, loadDust]);
+
+  // FX10 — cualquier alta/edición/borrado de tasa recarga la tabla al
+  // instante (el evento solo trae el id; la respuesta autorizada viene de
+  // GET /rates según el rol).
+  useLiveEvent(enabled ? "rates_updated" : null, loadRates);
 
   // iter85 — Sort positive balances by USDT equivalent DESC so the
   // largest asset in the account shows first in the converter card.
@@ -97,9 +122,14 @@ export function useConverterData({ isVip, enabled = true }) {
     return null;
   }, [rates]);
 
+  const refresh = useCallback(
+    () => Promise.all([loadBalances(), loadRates(), loadDust()]),
+    [loadBalances, loadRates, loadDust],
+  );
+
   return {
-    balances, rates, currencies, positive,
+    balances, rates, currencies, positive, dust,
     computeRate, toUsdt,
-    refresh: loadBalances,
+    refresh,
   };
 }

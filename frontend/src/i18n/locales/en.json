@@ -3115,7 +3115,8 @@
     "doneToast_one": "Sweep complete: {{count}} currency converted · +{{usdt}} USDT",
     "doneToast_other": "Sweep complete: {{count}} currencies converted · +{{usdt}} USDT",
     "previewError": "Error loading sweep preview",
-    "error": "Error running the sweep"
+    "error": "Error running the sweep",
+    "quoteChanged": "The quote changed — preview updated; review the new total and confirm again."
   },
   "landing": {
     "nav": {
