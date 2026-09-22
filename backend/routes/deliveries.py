@@ -14,6 +14,7 @@ Admin-facing (permission `withdrawals`):
 - POST /admin/deliveries/{id}/cancel
 """
 import logging
+import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -39,6 +40,17 @@ async def _require_courier(request: Request) -> dict:
     if user.get("is_courier") or user.get("role") in ("admin", "employee"):
         return user
     raise HTTPException(status_code=403, detail="Solo mensajeros autorizados")
+
+
+def _strip_courier_secret(doc: Any) -> Any:
+    """Mejora #2 — el PIN de entrega es SOLO del cliente: jamás viaja en las
+    respuestas del mensajero. Se expone `pin_required` para que la UI sepa
+    que debe pedirlo al confirmar la entrega."""
+    if isinstance(doc, dict):
+        doc["pin_required"] = bool(doc.get("delivery_pin")) \
+            and not doc.get("pin_verified")
+        doc.pop("delivery_pin", None)
+    return doc
 
 
 # ------------------------------------------------------------------
@@ -97,10 +109,16 @@ async def courier_deliveries(request: Request) -> Any:
         {"$group": {"_id": None, "s": {"$sum": "$courier_share_usdt"}}},
     ]).to_list(1)
     pending = float((pending_agg[0] if pending_agg else {}).get("s") or 0)
+    # Mejora #1 — efectivo a rendir del mensajero (por moneda).
+    from services.courier_cash import cash_pending
+    my_cash = [c for c in await cash_pending(uid) if c["pending"] != 0]
+    for d in available_docs + mine + history:
+        _strip_courier_secret(d)
     return {
         "available": available_docs,
         "mine": mine,
         "history": history,
+        "cash_pending": my_cash,
         "earnings": {
             "confirmed_usdt": round(earned, 2),
             "pending_usdt": round(pending, 2),
@@ -245,7 +263,7 @@ async def claim_delivery(did: str, request: Request) -> Any:
             await send_push_to_user(db, updated["user_id"], push_payload)
         except Exception as e:
             logger.error(f"claim client notify failed: {e}")
-    return updated
+    return _strip_courier_secret(updated)
 
 
 @router.post("/courier/deliveries/{did}/reject-reservation")
@@ -330,7 +348,8 @@ async def reject_reservation(did: str, payload: dict, request: Request) -> Any:
                 pass
     except Exception as e:
         logger.error(f"reject notify failed: {e}")
-    return await db.deliveries.find_one({"id": did}, {"_id": 0})
+    return _strip_courier_secret(
+        await db.deliveries.find_one({"id": did}, {"_id": 0}))
 
 
 @router.post("/courier/deliveries/{did}/status")
@@ -349,14 +368,43 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
             status_code=400,
             detail=f"Transición inválida: {d['status']} → {new_status}")
     now = iso(now_utc())
+    extra_set: Dict[str, Any] = {}
+    tl_note = None
+    # Mejora #2 auditoría — evidencia de entrega: PIN de un solo uso del
+    # cliente, o excepción con motivo (queda marcada para revisión admin).
+    if new_status == "delivered" and d.get("delivery_pin") \
+            and not d.get("pin_verified"):
+        pin = str(payload.get("pin") or "").strip()
+        exc_reason = str(payload.get("pin_exception_reason") or "").strip()
+        if pin:
+            if pin != str(d["delivery_pin"]):
+                raise HTTPException(
+                    status_code=400,
+                    detail="PIN incorrecto — pídeselo al cliente que recibe.")
+            extra_set["pin_verified"] = True
+            extra_set["pin_verified_at"] = now
+            tl_note = "PIN de entrega verificado"
+        elif exc_reason:
+            if len(exc_reason) < 5:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Indica el motivo de la excepción (mínimo 5 caracteres).")
+            extra_set["pin_exception"] = {"reason": exc_reason[:300],
+                                          "by": me["user_id"], "at": now}
+            tl_note = f"Entrega SIN PIN — motivo: {exc_reason[:120]}"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=("Introduce el PIN del cliente para confirmar la "
+                        "entrega, o registra una excepción con motivo."))
     # MSG01 — la escritura exige que SIGAN vigentes el estado y el repartidor
     # comprobados: una petición atrasada (cancelación/reasignación en medio)
     # pierde con 409 y no revive ni altera la entrega.
     res = await db.deliveries.update_one(
         {"id": did, "status": d["status"], "courier_id": me["user_id"]}, {
-            "$set": {"status": new_status, "updated_at": now},
+            "$set": {"status": new_status, "updated_at": now, **extra_set},
             "$push": {"timeline": {"status": new_status, "at": now,
-                                   "by": me["user_id"]}},
+                                   "by": me["user_id"], "note": tl_note}},
         })
     if res.matched_count == 0:
         raise HTTPException(
@@ -393,6 +441,22 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
         except Exception as e:
             logger.error(f"client status push failed: {e}")
     if new_status == "delivered":
+        # Mejora #1 — registro automático del efectivo en tránsito.
+        from services.courier_cash import auto_events_for_delivered
+        await auto_events_for_delivered({**d, "status": "delivered"},
+                                        me["user_id"])
+        if extra_set.get("pin_exception"):
+            try:
+                from admin_alerts import notify_all_admins
+                await notify_all_admins(
+                    db,
+                    title="⚠️ Entrega confirmada SIN PIN",
+                    body=(f"{me.get('name') or 'Mensajero'} marcó entregada "
+                          f"#{did[:8]} de {d.get('client_name', '')} sin PIN. "
+                          f"Motivo: {extra_set['pin_exception']['reason']}"),
+                    url_path="/admin/deliveries")
+            except Exception as e:
+                logger.error(f"pin exception notify failed: {e}")
         try:
             from admin_alerts import notify_all_admins
             await notify_all_admins(
@@ -416,7 +480,7 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
                 await mark_paid_from_delivery(d["ref_id"], me)
             except Exception as e:
                 logger.error(f"auto-paid after courier delivered failed: {e}")
-    return updated
+    return _strip_courier_secret(updated)
 
 
 @router.post("/courier/location")
@@ -439,6 +503,226 @@ async def courier_share_location(payload: dict, request: Request) -> Any:
                                        "updated_at": now}}},
     )
     return {"updated": r.modified_count}
+
+
+# ------------------------------------------------------------------
+# Mejora #3 auditoría — incidencias y reprogramación
+# ------------------------------------------------------------------
+
+INCIDENT_TYPES = {
+    "no_responde": "Cliente no responde",
+    "direccion_incorrecta": "Dirección incorrecta",
+    "importe_diferente": "Importe diferente",
+    "no_entregado": "No se pudo entregar",
+    "reprogramar": "Reprogramar",
+}
+
+
+@router.post("/courier/deliveries/{did}/incident")
+async def courier_report_incident(did: str, payload: dict,
+                                  request: Request) -> Any:
+    """El mensajero registra una incidencia sobre SU entrega activa: motivo,
+    nota y (opcional) próximo intento. El operador la ve con responsable y
+    línea de tiempo; para «importe diferente» NUNCA se confirma la cifra
+    automáticamente — la resuelve el admin."""
+    me = await _require_courier(request)
+    itype = payload.get("type")
+    if itype not in INCIDENT_TYPES:
+        raise HTTPException(status_code=400, detail="Tipo de incidencia inválido")
+    note = (payload.get("note") or "").strip()
+    if len(note) < 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Describe la incidencia (mínimo 5 caracteres).")
+    if len(note) > 300:
+        raise HTTPException(
+            status_code=400,
+            detail="La descripción no puede superar 300 caracteres.")
+    next_attempt = (str(payload.get("next_attempt_at") or "").strip()
+                    or None)
+    d = await db.deliveries.find_one({"id": did}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=404, detail="No encontrada.")
+    if d.get("courier_id") != me["user_id"]:
+        raise HTTPException(status_code=403, detail="Esta entrega no es tuya")
+    if d["status"] not in ("accepted", "on_the_way", "arrived", "delivered"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se pueden registrar incidencias en estado {d['status']}.")
+    now = iso(now_utc())
+    inc = {"id": uuid.uuid4().hex[:12], "type": itype, "note": note,
+           "by": me["user_id"], "by_name": me.get("name") or "",
+           "at": now, "next_attempt_at": next_attempt, "status": "open"}
+    # Escritura condicionada (misma disciplina MSG01): la entrega debe seguir
+    # en el estado leído y a nombre del mensajero.
+    res = await db.deliveries.update_one(
+        {"id": did, "courier_id": me["user_id"], "status": d["status"]},
+        {"$push": {"incidents": inc,
+                   "timeline": {"status": "incident", "at": now,
+                                "by": me["user_id"],
+                                "note": f"{INCIDENT_TYPES[itype]}: {note[:150]}"}},
+         "$set": {"has_open_incident": True, "updated_at": now}})
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="La entrega cambió mientras registrabas — recarga tu panel.")
+    cname = me.get("name") or "El mensajero"
+    try:
+        from admin_alerts import notify_all_admins
+        await notify_all_admins(
+            db,
+            title=f"⚠️ Incidencia en entrega #{did[:8]}: {INCIDENT_TYPES[itype]}",
+            body=(f"{cname} reporta «{INCIDENT_TYPES[itype]}» en la entrega de "
+                  f"{d.get('client_name', '')} ({d.get('amount_label', '')}). "
+                  f"Nota: {note}"
+                  + (f" · Próximo intento: {next_attempt}" if next_attempt else "")),
+            url_path="/admin/deliveries")
+    except Exception as e:
+        logger.error(f"incident admin notify failed: {e}")
+    if itype in ("no_responde", "reprogramar") and d.get("user_id"):
+        try:
+            from routes.notifications import _insert_notification
+            from push_service import (send_push_to_user,
+                                      build_generic_admin_alert_payload)
+            title = ("📞 Tu mensajero no logra contactarte"
+                     if itype == "no_responde"
+                     else "📅 Tu entrega será reprogramada")
+            body = (f"{cname}: {note}"
+                    + (f" · Próximo intento: {next_attempt}"
+                       if next_attempt else ""))
+            await _insert_notification(
+                recipient_user_id=d["user_id"], type="delivery_incident",
+                title=title, message=body,
+                data={"delivery_id": did, "incident_type": itype})
+            push = build_generic_admin_alert_payload(
+                title=title, body=body, url="/dashboard",
+                tag=f"delivery-incident-{did}")
+            await send_push_to_user(db, d["user_id"], push)
+        except Exception as e:
+            logger.error(f"incident client notify failed: {e}")
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(did, d["status"],
+                                     courier_ids=[me["user_id"]])
+    except Exception:
+        pass
+    return _strip_courier_secret(
+        await db.deliveries.find_one({"id": did}, {"_id": 0}))
+
+
+@router.post("/admin/deliveries/{did}/incidents/{iid}/resolve")
+async def admin_resolve_incident(did: str, iid: str, payload: dict,
+                                 request: Request) -> Any:
+    """El operador resuelve una incidencia con nota; si no quedan abiertas,
+    la entrega deja de estar marcada."""
+    actor = await require_permission(request, "deliveries")
+    note = (payload.get("note") or "").strip()[:300]
+    now = iso(now_utc())
+    res = await db.deliveries.update_one(
+        {"id": did, "incidents": {"$elemMatch": {"id": iid, "status": "open"}}},
+        {"$set": {"incidents.$.status": "resolved",
+                  "incidents.$.resolved_by": actor["user_id"],
+                  "incidents.$.resolved_at": now,
+                  "incidents.$.resolution_note": note,
+                  "updated_at": now},
+         "$push": {"timeline": {"status": "incident_resolved", "at": now,
+                                "by": actor["user_id"],
+                                "note": note or None}}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404,
+                            detail="Incidencia no encontrada o ya resuelta.")
+    d = await db.deliveries.find_one({"id": did}, {"_id": 0})
+    still_open = any(i.get("status") == "open"
+                     for i in (d.get("incidents") or []))
+    if not still_open:
+        await db.deliveries.update_one(
+            {"id": did}, {"$set": {"has_open_incident": False}})
+        d["has_open_incident"] = False
+    await log_action(db, actor, "delivery.incident_resolve", "delivery", did,
+                     details={"incident_id": iid, "note": note})
+    return d
+
+
+# ------------------------------------------------------------------
+# Mejora #1 auditoría — control de efectivo por mensajero
+# ------------------------------------------------------------------
+
+@router.get("/courier/cash")
+async def courier_cash_view(request: Request) -> Any:
+    """El mensajero ve su efectivo pendiente de rendir y sus últimos
+    movimientos de caja."""
+    me = await _require_courier(request)
+    from services.courier_cash import cash_pending
+    pending = await cash_pending(me["user_id"])
+    events = await db.courier_cash_events.find(
+        {"courier_id": me["user_id"]}, {"_id": 0},
+    ).sort("at", -1).to_list(20)
+    return {"pending": pending, "events": events}
+
+
+@router.get("/admin/courier-cash/summary")
+async def admin_courier_cash_summary(request: Request) -> Any:
+    """Efectivo en tránsito por mensajero y moneda (pendiente de rendición)."""
+    await require_permission(request, "deliveries")
+    from services.courier_cash import cash_pending
+    return {"couriers": await cash_pending()}
+
+
+@router.get("/admin/courier-cash")
+async def admin_courier_cash_events(request: Request,
+                                    courier_id: Optional[str] = None) -> Any:
+    await require_permission(request, "deliveries")
+    q = {"courier_id": courier_id} if courier_id else {}
+    return await db.courier_cash_events.find(
+        q, {"_id": 0}).sort("at", -1).to_list(100)
+
+
+@router.post("/admin/courier-cash")
+async def admin_courier_cash_register(payload: dict,
+                                      request: Request) -> Any:
+    """El admin registra la entrega de caja al mensajero (`issued`) o la
+    rendición recibida en caja (`returned`). Una diferencia se registra como
+    incidencia con nota — jamás como ajuste silencioso."""
+    actor = await require_permission(request, "deliveries")
+    kind = payload.get("kind")
+    if kind not in ("issued", "returned"):
+        raise HTTPException(status_code=400,
+                            detail="kind debe ser 'issued' o 'returned'")
+    courier_id = (payload.get("courier_id") or "").strip()
+    if not courier_id:
+        raise HTTPException(status_code=400, detail="courier_id requerido")
+    c = await db.users.find_one({"user_id": courier_id},
+                                {"_id": 0, "name": 1, "email": 1})
+    if not c:
+        raise HTTPException(status_code=404, detail="Mensajero no encontrado")
+    from services.courier_cash import record_cash_event
+    discrepancy_note = (payload.get("discrepancy_note") or "").strip()
+    ev = await record_cash_event(
+        courier_id=courier_id,
+        courier_name=c.get("name") or c.get("email") or "",
+        kind=kind, currency=payload.get("currency"),
+        amount=payload.get("amount"),
+        delivery_id=(payload.get("delivery_id") or None),
+        note=(payload.get("note") or ""),
+        by=actor["user_id"], by_name=actor.get("name") or "",
+        discrepancy=bool(discrepancy_note))
+    if discrepancy_note:
+        try:
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db,
+                title="⚠️ Diferencia de efectivo en rendición",
+                body=(f"Rendición de {c.get('name') or courier_id} "
+                      f"({ev['amount']} {ev['currency']}) con diferencia: "
+                      f"{discrepancy_note}"),
+                url_path="/admin/deliveries")
+        except Exception as e:
+            logger.error(f"cash discrepancy notify failed: {e}")
+    await log_action(db, actor, "courier.cash_event", "user", courier_id,
+                     details={"kind": kind, "currency": ev["currency"],
+                              "amount": ev["amount"],
+                              "discrepancy": bool(discrepancy_note)})
+    return ev
 
 
 @router.get("/vip/deliveries/track")
@@ -466,6 +750,9 @@ async def track_my_deliveries(request: Request) -> Any:
             "created_at": d.get("created_at"),
             "updated_at": d.get("updated_at"),
             "chat_unread": unread.get(d["id"], 0),
+            # Mejora #2 — el PIN es del CLIENTE: se muestra en su seguimiento.
+            "delivery_pin": d.get("delivery_pin"),
+            "pin_verified": bool(d.get("pin_verified")),
             "timeline": [{"status": e.get("status"), "at": e.get("at")}
                          for e in (d.get("timeline") or [])],
             "courier": None,
@@ -488,13 +775,16 @@ async def track_my_deliveries(request: Request) -> Any:
 
 @router.get("/admin/deliveries")
 async def admin_list_deliveries(request: Request, status: Optional[str] = None,
-                                courier_id: Optional[str] = None) -> Any:
+                                courier_id: Optional[str] = None,
+                                incident: Optional[str] = None) -> Any:
     await require_permission(request, "deliveries")
     q: dict = {}
     if status:
         q["status"] = status
     if courier_id:
         q["courier_id"] = courier_id
+    if incident == "open":
+        q["has_open_incident"] = True
     rows = await db.deliveries.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
     return rows
 

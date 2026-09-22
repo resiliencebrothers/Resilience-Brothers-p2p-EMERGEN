@@ -4,10 +4,14 @@ import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Bike, MapPin, Package, ArrowDownToLine, CheckCircle2, Clock, LocateFixed, X, MessageCircle } from "lucide-react";
+import { Bike, MapPin, Package, ArrowDownToLine, CheckCircle2, Clock, LocateFixed, X, MessageCircle, AlertTriangle, Banknote, KeyRound } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import DeliveryChatDialog from "@/components/DeliveryChatDialog";
 import { useLiveEvent } from "@/hooks/useLiveStream";
@@ -31,7 +35,13 @@ const STATUS_COLOR = {
   cancelled: "text-[#EF4444]",
 };
 
-function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reservedBadge, onReject, onChat }) {
+// Mejora #3 auditoría — tipos de incidencia que el mensajero puede reportar.
+const INCIDENT_TYPES = [
+  "no_responde", "direccion_incorrecta", "importe_diferente",
+  "no_entregado", "reprogramar",
+];
+
+function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reservedBadge, onReject, onChat, onIncident }) {
   const { t } = useTranslation();
   return (
     <div
@@ -67,6 +77,14 @@ function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reserve
         </span>
       </div>
       <div className="text-sm text-neutral-300">{d.client_name} — {d.amount_label}</div>
+      {d.has_open_incident && (
+        <div
+          className="text-[0.65rem] text-amber-300 flex items-center gap-1"
+          data-testid={`delivery-incident-badge-${d.id}`}
+        >
+          <AlertTriangle className="w-3 h-3" /> {t("courierPanel.openIncident")}
+        </div>
+      )}
       <div className="text-xs text-neutral-500 flex items-start gap-1.5">
         <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
         <span>{d.address}{d.province ? ` · ${d.province}` : ""}</span>
@@ -104,6 +122,16 @@ function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reserve
               {d.chat_unread}
             </span>
           )}
+        </button>
+      )}
+      {onIncident && (
+        <button
+          onClick={onIncident}
+          data-testid={`courier-incident-${d.id}`}
+          className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 transition-colors"
+        >
+          <AlertTriangle className="w-3.5 h-3.5" />
+          {t("courierPanel.reportIncident")}
         </button>
       )}
       {onAction && (
@@ -218,16 +246,90 @@ export default function CourierPanel({ embedded = false }) {
     }
   };
 
+  const postStatus = async (id, body) => {
+    try {
+      await axios.post(`${API}/courier/deliveries/${id}/status`,
+        body, { withCredentials: true });
+      toast.success(t(`courierPanel.status.${body.status}`));
+      load();
+      return true;
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+      return false;
+    }
+  };
+
   const advance = async (d) => {
     const next = NEXT_ACTION[d.status];
     if (!next) return;
+    // Mejora #2 — la entrega exige el PIN del cliente (o excepción con motivo).
+    if (next.status === "delivered" && d.pin_required) {
+      setPinFor(d);
+      setPinValue("");
+      setPinNoPin(false);
+      setPinReason("");
+      return;
+    }
+    await postStatus(d.id, { status: next.status });
+  };
+
+  // Mejora #2 — diálogo de PIN de entrega.
+  const [pinFor, setPinFor] = useState(null);
+  const [pinValue, setPinValue] = useState("");
+  const [pinNoPin, setPinNoPin] = useState(false);
+  const [pinReason, setPinReason] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
+
+  const submitPin = async () => {
+    if (!pinFor) return;
+    const body = { status: "delivered" };
+    if (pinNoPin) {
+      if (pinReason.trim().length < 5) {
+        toast.error(t("courierPanel.pinReasonMin"));
+        return;
+      }
+      body.pin_exception_reason = pinReason.trim();
+    } else {
+      if (!/^\d{4}$/.test(pinValue.trim())) {
+        toast.error(t("courierPanel.pinLenErr"));
+        return;
+      }
+      body.pin = pinValue.trim();
+    }
+    setPinBusy(true);
+    const ok = await postStatus(pinFor.id, body);
+    setPinBusy(false);
+    if (ok) setPinFor(null);
+  };
+
+  // Mejora #3 — reportar incidencia sobre una entrega activa.
+  const [incidentFor, setIncidentFor] = useState(null);
+  const [incType, setIncType] = useState("no_responde");
+  const [incNote, setIncNote] = useState("");
+  const [incNextAt, setIncNextAt] = useState("");
+  const [incBusy, setIncBusy] = useState(false);
+
+  const submitIncident = async () => {
+    if (!incidentFor) return;
+    if (incNote.trim().length < 5) {
+      toast.error(t("courierPanel.incidentMinNote"));
+      return;
+    }
+    setIncBusy(true);
     try {
-      await axios.post(`${API}/courier/deliveries/${d.id}/status`,
-        { status: next.status }, { withCredentials: true });
-      toast.success(t(`courierPanel.status.${next.status}`));
+      await axios.post(`${API}/courier/deliveries/${incidentFor.id}/incident`,
+        { type: incType, note: incNote.trim(),
+          next_attempt_at: incNextAt || null },
+        { withCredentials: true });
+      toast.success(t("courierPanel.incidentSent"));
+      setIncidentFor(null);
+      setIncNote("");
+      setIncNextAt("");
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
+    } finally {
+      setIncBusy(false);
     }
   };
 
@@ -326,6 +428,23 @@ export default function CourierPanel({ embedded = false }) {
         </div>
       </div>
 
+      {/* Mejora #1 — efectivo del negocio/clientes que el mensajero debe rendir */}
+      {(data.cash_pending || []).length > 0 && (
+        <div className="tactile-card p-4 border border-amber-400/30 bg-amber-400/5" data-testid="courier-cash-pending">
+          <div className="micro-label text-amber-300 flex items-center gap-2">
+            <Banknote className="w-4 h-4" /> {t("courierPanel.cashPendingTitle")}
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2">
+            {data.cash_pending.map((c) => (
+              <div key={c.currency} className="font-mono text-lg text-amber-300" data-testid={`courier-cash-${c.currency}`}>
+                {c.pending} <span className="text-xs text-neutral-400">{c.currency}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-[0.65rem] text-neutral-500 mt-1.5">{t("courierPanel.cashPendingHint")}</div>
+        </div>
+      )}
+
       <div className="flex gap-2 border-b border-white/10">
         {tabs.map((tb) => (
           <button
@@ -417,6 +536,7 @@ export default function CourierPanel({ embedded = false }) {
               actionTestId={`advance-delivery-${d.id}`}
               onAction={NEXT_ACTION[d.status] ? () => advance(d) : null}
               onChat={() => setChatFor(d)}
+              onIncident={() => { setIncidentFor(d); setIncType("no_responde"); setIncNote(""); setIncNextAt(""); }}
               waiting={d.status === "delivered"}
             />
           ))}
@@ -451,6 +571,152 @@ export default function CourierPanel({ embedded = false }) {
         open={!!chatFor}
         onClose={() => { setChatFor(null); load(); }}
       />
+
+      {/* Mejora #2 — PIN de entrega (evidencia) */}
+      <Dialog open={!!pinFor} onOpenChange={(o) => !o && setPinFor(null)}>
+        <DialogContent
+          data-testid="delivery-pin-dialog"
+          aria-describedby={undefined}
+          className="bg-[#0c0c0c] border border-[#22C55E]/30 text-white rounded-none max-w-sm"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[#22C55E]">
+              <KeyRound className="w-5 h-5" /> {t("courierPanel.pinDialogTitle")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-1">
+            {!pinNoPin ? (
+              <>
+                <p className="text-xs text-neutral-400">{t("courierPanel.pinPrompt")}</p>
+                <Input
+                  data-testid="delivery-pin-input"
+                  value={pinValue}
+                  onChange={(e) => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  inputMode="numeric"
+                  placeholder="••••"
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-12 text-center font-mono text-2xl tracking-[0.5em]"
+                />
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-amber-300">{t("courierPanel.pinReasonLabel")}</p>
+                <Textarea
+                  data-testid="delivery-pin-exception-input"
+                  value={pinReason}
+                  onChange={(e) => setPinReason(e.target.value)}
+                  placeholder={t("courierPanel.pinReasonPh")}
+                  maxLength={300}
+                  rows={3}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 text-sm"
+                />
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setPinNoPin(!pinNoPin)}
+              data-testid="delivery-pin-toggle-exception"
+              className="text-[0.7rem] text-neutral-500 hover:text-amber-300 underline underline-offset-2"
+            >
+              {pinNoPin ? t("courierPanel.pinBackToPin") : t("courierPanel.pinNoPinToggle")}
+            </button>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setPinFor(null)}
+              data-testid="delivery-pin-cancel"
+              className="rounded-none border-white/10 text-white hover:bg-white/5"
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={submitPin}
+              disabled={pinBusy}
+              data-testid="delivery-pin-confirm"
+              className="rounded-none bg-[#22C55E] hover:bg-[#4ADE80] text-black font-semibold disabled:opacity-40"
+            >
+              {pinBusy ? "…" : t("courierPanel.pinConfirmBtn")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mejora #3 — Registrar incidencia */}
+      <Dialog open={!!incidentFor} onOpenChange={(o) => !o && setIncidentFor(null)}>
+        <DialogContent
+          data-testid="incident-dialog"
+          aria-describedby={undefined}
+          className="bg-[#0c0c0c] border border-amber-400/30 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-300">
+              <AlertTriangle className="w-5 h-5" /> {t("courierPanel.incidentDialogTitle")}
+            </DialogTitle>
+          </DialogHeader>
+          {incidentFor && (
+            <div className="space-y-3 mt-1">
+              <div className="text-xs text-neutral-400">
+                {incidentFor.client_name} — {incidentFor.amount_label}
+              </div>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("courierPanel.incidentTypeLabel")}</div>
+                <Select value={incType} onValueChange={setIncType}>
+                  <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 h-10" data-testid="incident-type-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#1A1730] border-white/10 text-white">
+                    {INCIDENT_TYPES.map((tp) => (
+                      <SelectItem key={tp} value={tp} data-testid={`incident-type-${tp}`}>
+                        {t(`courierPanel.incident.${tp}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("courierPanel.incidentNoteLabel")}</div>
+                <Textarea
+                  data-testid="incident-note-input"
+                  value={incNote}
+                  onChange={(e) => setIncNote(e.target.value)}
+                  placeholder={t("courierPanel.incidentNotePh")}
+                  maxLength={300}
+                  rows={3}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 text-sm"
+                />
+              </div>
+              <div>
+                <div className="micro-label text-neutral-500 mb-1">{t("courierPanel.incidentNextLabel")}</div>
+                <input
+                  type="datetime-local"
+                  value={incNextAt}
+                  onChange={(e) => setIncNextAt(e.target.value)}
+                  data-testid="incident-next-input"
+                  className="w-full bg-[#0a0a0a] border border-white/10 text-white text-sm px-3 h-10 rounded-none [color-scheme:dark]"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setIncidentFor(null)}
+              data-testid="incident-cancel-btn"
+              className="rounded-none border-white/10 text-white hover:bg-white/5"
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={submitIncident}
+              disabled={incBusy || incNote.trim().length < 5}
+              data-testid="incident-submit-btn"
+              className="rounded-none bg-amber-400 hover:bg-amber-300 text-black font-semibold disabled:opacity-40"
+            >
+              {incBusy ? "…" : t("courierPanel.incidentSubmitBtn")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* iter208 — Diálogo Rechazar Reserva */}
       <Dialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)}>

@@ -9,6 +9,7 @@ platform keeps the rest. The courier share is credited to the courier's
 in-platform USDT balance when STAFF confirms the delivered job.
 """
 import logging
+import secrets
 import uuid
 from typing import Any, Optional
 
@@ -26,6 +27,12 @@ ACTIVE_STATUSES = ("available", "accepted", "on_the_way", "arrived", "delivered"
 REF_COLLS = {"withdrawal": "withdrawals", "redemption": "redemptions",
              "deposit": "deposits"}
 TERMINAL_REF_STATUSES = ("rejected", "cancelled")
+
+
+def gen_delivery_pin() -> str:
+    """Mejora #2 auditoría — PIN de entrega de un solo uso (4 dígitos),
+    visible solo para el cliente; el mensajero lo pide al entregar."""
+    return f"{secrets.randbelow(10000):04d}"
 
 
 async def ensure_indexes() -> None:
@@ -50,6 +57,19 @@ async def ensure_indexes() -> None:
             await db.deliveries.update_one(
                 {"id": dup["id"]}, {"$set": {"dup_active_legacy": True}})
     await db.deliveries.create_index("active_key", unique=True, sparse=True)
+    # Mejora #2 — backfill de PIN para trabajos activos previos a la feature.
+    rows2 = await db.deliveries.find(
+        {"status": {"$in": ["available", "accepted", "on_the_way", "arrived"]},
+         "delivery_pin": {"$exists": False}},
+        {"_id": 0, "id": 1}).to_list(2000)
+    for r2 in rows2:
+        await db.deliveries.update_one(
+            {"id": r2["id"], "delivery_pin": {"$exists": False}},
+            {"$set": {"delivery_pin": gen_delivery_pin(),
+                      "pin_verified": False}})
+    # Mejora #1 — índices del ledger de efectivo por mensajero.
+    from services.courier_cash import ensure_indexes as cash_indexes
+    await cash_indexes()
 
 
 async def publish_delivery_event(delivery_id: str, status: str,
@@ -153,6 +173,8 @@ async def build_delivery_doc(kind: str, ref: dict, *, km: float, fee_usdt: float
         "status": "available",
         "courier_id": None,
         "courier_name": None,
+        "delivery_pin": gen_delivery_pin(),
+        "pin_verified": False,
         "payout_credited": False,
         "payout_credited_at": None,
         "created_by": created_by,

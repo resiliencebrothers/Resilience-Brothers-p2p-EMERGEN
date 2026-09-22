@@ -3,7 +3,7 @@ import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import {
-  Bike, Phone, PackageCheck, Search, Check, Clock, MessageCircle,
+  Bike, Phone, PackageCheck, Search, Check, Clock, MessageCircle, KeyRound,
 } from "lucide-react";
 import { etaFromDelivery } from "@/services/deliveryEta";
 import DeliveryChatDialog from "@/components/DeliveryChatDialog";
@@ -46,6 +46,22 @@ export default function DeliveryTrackCard({ d }) {
           {statusLabel}
         </span>
       </div>
+
+      {/* Mejora #2 — PIN de entrega: solo lo ve el cliente; se lo da al
+          mensajero únicamente al recibir. */}
+      {d.delivery_pin && d.status !== "delivered" && (
+        <div className="border border-[#22C55E]/30 bg-[#22C55E]/5 px-3 py-2" data-testid={`track-pin-${d.id}`}>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[0.7rem] text-neutral-400 flex items-center gap-1.5">
+              <KeyRound className="w-3.5 h-3.5 text-[#22C55E]" /> {t("tracker.pinLabel")}
+            </span>
+            <span className="font-mono text-xl tracking-[0.35em] text-[#22C55E]" data-testid={`track-pin-value-${d.id}`}>
+              {d.delivery_pin}
+            </span>
+          </div>
+          <div className="text-[0.62rem] text-neutral-500 mt-1">{t("tracker.pinHint")}</div>
+        </div>
+      )}
 
       {d.status === "available" ? (
         <p className="text-xs text-neutral-500 flex items-center gap-1.5">

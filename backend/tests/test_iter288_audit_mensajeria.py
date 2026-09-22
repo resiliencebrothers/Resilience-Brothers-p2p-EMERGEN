@@ -111,6 +111,7 @@ def _plant_redemption(rid, status="pending", fee=10.0):
 def _cleanup():
     db = _db()
     db.deliveries.delete_many({"id": {"$regex": "^it288_"}})
+    db.deliveries.delete_many({"ref_id": {"$regex": "^it288_"}})
     db.deliveries.delete_many({"courier_id": {"$in": [COURIER_A, COURIER_B]}})
     db.redemptions.delete_many({"id": {"$regex": "^it288_"}})
     db.deposits.delete_many({"id": {"$regex": "^it288_"}})

@@ -755,7 +755,22 @@
       "detailsUpdatedAt": "Updated",
       "detailsAmount": "Amount / Description",
       "detailsPhone": "Phone",
-      "staleLoc": "Last location {{m}} min ago — no recent update"
+      "staleLoc": "Last location {{m}} min ago — no recent update",
+      "openIncident": "Incident",
+      "filterIncidents": "Incidents",
+      "tabCash": "Cash",
+      "pinSection": "Delivery evidence (PIN)",
+      "pinStatus": "Status",
+      "pinVerified": "PIN verified ✓",
+      "pinPending": "Pending verification",
+      "pinException": "NO PIN — {{reason}}",
+      "incidentsTitle": "Incidents",
+      "incidentOpen": "Open",
+      "incidentResolvedTag": "Resolved",
+      "nextAttempt": "Next attempt",
+      "resolveNotePh": "Resolution note (optional)",
+      "resolveBtn": "Resolve",
+      "incidentResolved": "Incident resolved"
     },
     "common": {
       "loading": "Loading…",
@@ -1966,6 +1981,34 @@
       "emptyWeOwe": "No client custody balances.",
       "missingRates": "Currencies without a USDT rate (excluded from totals): {{codes}}",
       "loadError": "Could not load the debts report. Try again."
+    },
+    "cash": {
+      "registerTitle": "Record cash movement",
+      "empty": "No cash movements yet",
+      "colCurrency": "Currency",
+      "colIssued": "Box → courier",
+      "colCollected": "Collected",
+      "colDelivered": "Delivered",
+      "colReturned": "Returned",
+      "colPending": "Pending",
+      "kindIssued": "Cash issued to courier",
+      "kindReturned": "Settlement received at box",
+      "amountPh": "Amount",
+      "currencyPh": "Currency",
+      "notePh": "Note (optional)",
+      "discrepancyPh": "Detected difference — creates an incident (optional)",
+      "submitBtn": "Record",
+      "registered": "Movement recorded",
+      "formErr": "Select courier, currency and amount",
+      "eventsTitle": "Latest movements",
+      "discrepancyTag": "Difference",
+      "negativeHint": "A negative pending means a cash issue to the courier was not recorded.",
+      "kind": {
+        "issued": "Box → courier",
+        "collected": "Collected from client",
+        "delivered_to_recipient": "Delivered to recipient",
+        "returned": "Returned to box"
+      }
     }
   },
   "adminOverview": {
@@ -2709,7 +2752,9 @@
     "dialogTitle": "Track your delivery",
     "noJob": "No active courier job for this operation yet.",
     "staleLocation": "Last location received {{min}} min ago — no recent update",
-    "locationAge": "{{min}} min ago"
+    "locationAge": "{{min}} min ago",
+    "pinLabel": "Delivery PIN",
+    "pinHint": "Give it only to the courier when you receive your delivery."
   },
   "deliveryChat": {
     "openBtn": "Chat with courier",
@@ -2769,7 +2814,35 @@
       "confirmed": "Confirmed",
       "cancelled": "Cancelled"
     },
-    "loadError": "Your courier panel could not be loaded."
+    "loadError": "Your courier panel could not be loaded.",
+    "pinDialogTitle": "Confirm delivery with PIN",
+    "pinPrompt": "Ask the client for their 4-digit delivery PIN. It is the proof they received the delivery.",
+    "pinNoPinToggle": "Client has no PIN / offline",
+    "pinBackToPin": "Back to entering the PIN",
+    "pinReasonLabel": "Explain why you confirm without PIN (recorded for admin review)",
+    "pinReasonPh": "E.g. client has no mobile data, I verified their ID…",
+    "pinLenErr": "The PIN has 4 digits",
+    "pinReasonMin": "Provide a reason (min 5 characters)",
+    "pinConfirmBtn": "Confirm delivery",
+    "reportIncident": "Report incident",
+    "openIncident": "Open incident",
+    "incidentDialogTitle": "Report incident",
+    "incidentTypeLabel": "Incident type",
+    "incidentNoteLabel": "Description",
+    "incidentNotePh": "What happened? The operator will see this note.",
+    "incidentNextLabel": "Next attempt (optional)",
+    "incidentSubmitBtn": "Submit",
+    "incidentSent": "Incident recorded — the operator was notified",
+    "incidentMinNote": "Describe the incident (min 5 characters)",
+    "incident": {
+      "no_responde": "Client not responding",
+      "direccion_incorrecta": "Wrong address",
+      "importe_diferente": "Different amount",
+      "no_entregado": "Could not deliver",
+      "reprogramar": "Reschedule"
+    },
+    "cashPendingTitle": "Cash to hand in",
+    "cashPendingHint": "Hand this cash in at the cash box — the admin will record your settlement."
   },
   "courier": {
     "calcBtn": "Calculate courier fee",

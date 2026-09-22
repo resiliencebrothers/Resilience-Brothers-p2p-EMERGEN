@@ -12,6 +12,7 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import { etaFromDelivery } from "@/services/deliveryEta";
 import DeliveryDetailsDialog from "./deliveries/DeliveryDetailsDialog";
 import MunicipalityRatesTab from "./deliveries/MunicipalityRatesTab";
+import CourierCashTab from "./deliveries/CourierCashTab";
 import CourierPanel from "@/pages/dashboard/CourierPanel";
 
 // iter199 — Admin: gestión de entregas de mensajería + alta de mensajeros.
@@ -71,7 +72,9 @@ function DeliveriesTab({ navigate }) {
   const [summaryDate, setSummaryDate] = useState(todayStr);
 
   const load = useCallback(() => {
-    const params = statusFilter !== "all" ? { status: statusFilter } : {};
+    const params = statusFilter === "all" ? {}
+      : statusFilter === "incidents" ? { incident: "open" }
+      : { status: statusFilter };
     axios.get(`${API}/admin/deliveries`, { params, withCredentials: true })
       .then((r) => setRows(r.data)).catch(() => setRows([]));
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
@@ -225,6 +228,13 @@ function DeliveriesTab({ navigate }) {
             {t(`courierPanel.status.${s}`)}
           </button>
         ))}
+        <button
+          onClick={() => setStatusFilter("incidents")}
+          data-testid="deliveries-filter-incidents"
+          className={`px-3 py-1.5 text-xs border ${statusFilter === "incidents" ? "border-amber-400 text-amber-300" : "border-amber-400/30 text-amber-300/60"}`}
+        >
+          ⚠ {t("admin.deliveries.filterIncidents")}
+        </button>
       </div>
 
       <div className="tactile-card overflow-x-auto">
@@ -295,6 +305,11 @@ function DeliveriesTab({ navigate }) {
                 </td>
                 <td className={`px-3 py-3 text-xs uppercase tracking-wider ${STATUS_COLOR[d.status] || ""}`}>
                   {t(`courierPanel.status.${d.status}`)}
+                  {d.has_open_incident && (
+                    <div className="normal-case tracking-normal text-[0.65rem] text-amber-300 mt-1" data-testid={`admin-incident-badge-${d.id}`}>
+                      ⚠ {t("admin.deliveries.openIncident")}
+                    </div>
+                  )}
                   <DeliveryEta d={d} t={t} />
                 </td>
                 <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
@@ -345,6 +360,7 @@ function DeliveriesTab({ navigate }) {
         delivery={detailsRow}
         open={!!detailsRow}
         onClose={() => setDetailsRow(null)}
+        onChanged={load}
       />
     </div>
   );
@@ -568,6 +584,13 @@ export default function AdminDeliveries() {
           {t("admin.deliveries.tabCouriers")}
         </button>
         <button
+          onClick={() => setTab("cash")}
+          data-testid="admin-tab-courier-cash"
+          className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "cash" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
+        >
+          {t("admin.deliveries.tabCash")}
+        </button>
+        <button
           onClick={() => setTab("rates")}
           data-testid="admin-tab-muni-rates"
           className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "rates" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
@@ -579,6 +602,7 @@ export default function AdminDeliveries() {
       {tab === "deliveries" ? <DeliveriesTab navigate={navigate} />
         : tab === "my" ? <div data-testid="admin-my-deliveries"><CourierPanel embedded /></div>
         : tab === "rates" ? <MunicipalityRatesTab />
+        : tab === "cash" ? <CourierCashTab />
         : <CouriersTab navigate={navigate} />}
     </div>
   );

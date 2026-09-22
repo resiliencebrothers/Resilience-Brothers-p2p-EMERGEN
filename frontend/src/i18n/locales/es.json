@@ -755,7 +755,22 @@
       "detailsUpdatedAt": "Actualizada",
       "detailsAmount": "Monto / Descripción",
       "detailsPhone": "Teléfono",
-      "staleLoc": "Última ubicación hace {{m}} min — sin actualización reciente"
+      "staleLoc": "Última ubicación hace {{m}} min — sin actualización reciente",
+      "openIncident": "Incidencia",
+      "filterIncidents": "Incidencias",
+      "tabCash": "Efectivo",
+      "pinSection": "Evidencia de entrega (PIN)",
+      "pinStatus": "Estado",
+      "pinVerified": "PIN verificado ✓",
+      "pinPending": "Pendiente de verificación",
+      "pinException": "SIN PIN — {{reason}}",
+      "incidentsTitle": "Incidencias",
+      "incidentOpen": "Abierta",
+      "incidentResolvedTag": "Resuelta",
+      "nextAttempt": "Próximo intento",
+      "resolveNotePh": "Nota de resolución (opcional)",
+      "resolveBtn": "Resolver",
+      "incidentResolved": "Incidencia resuelta"
     },
     "common": {
       "loading": "Cargando…",
@@ -1966,6 +1981,34 @@
       "emptyWeOwe": "No hay saldos en custodia de clientes.",
       "missingRates": "Monedas sin tasa a USDT (excluidas de los totales): {{codes}}",
       "loadError": "No se pudo cargar el listado de deudas. Intenta de nuevo."
+    },
+    "cash": {
+      "registerTitle": "Registrar movimiento de efectivo",
+      "empty": "Sin movimientos de efectivo aún",
+      "colCurrency": "Moneda",
+      "colIssued": "Caja → mensajero",
+      "colCollected": "Recogido",
+      "colDelivered": "Entregado",
+      "colReturned": "Rendido",
+      "colPending": "Pendiente",
+      "kindIssued": "Entrega de caja al mensajero",
+      "kindReturned": "Rendición recibida en caja",
+      "amountPh": "Importe",
+      "currencyPh": "Moneda",
+      "notePh": "Nota (opcional)",
+      "discrepancyPh": "Diferencia detectada — crea una incidencia (opcional)",
+      "submitBtn": "Registrar",
+      "registered": "Movimiento registrado",
+      "formErr": "Selecciona mensajero, moneda e importe",
+      "eventsTitle": "Últimos movimientos",
+      "discrepancyTag": "Diferencia",
+      "negativeHint": "Un pendiente negativo indica que falta registrar una entrega de caja al mensajero.",
+      "kind": {
+        "issued": "Caja → mensajero",
+        "collected": "Recogido del cliente",
+        "delivered_to_recipient": "Entregado al destinatario",
+        "returned": "Rendido a caja"
+      }
     }
   },
   "adminOverview": {
@@ -2709,7 +2752,9 @@
     "dialogTitle": "Sigue tu entrega",
     "noJob": "Aún no hay un trabajo de mensajería para esta operación.",
     "staleLocation": "Última ubicación recibida hace {{min}} min — sin actualización reciente",
-    "locationAge": "hace {{min}} min"
+    "locationAge": "hace {{min}} min",
+    "pinLabel": "PIN de entrega",
+    "pinHint": "Dáselo únicamente al mensajero cuando recibas tu entrega."
   },
   "deliveryChat": {
     "openBtn": "Chat con el mensajero",
@@ -2769,7 +2814,35 @@
       "confirmed": "Confirmada",
       "cancelled": "Cancelada"
     },
-    "loadError": "No se pudo cargar tu panel de mensajería."
+    "loadError": "No se pudo cargar tu panel de mensajería.",
+    "pinDialogTitle": "Confirmar entrega con PIN",
+    "pinPrompt": "Pídele al cliente su PIN de entrega (4 dígitos). Es la prueba de que recibió su entrega.",
+    "pinNoPinToggle": "El cliente no tiene el PIN / sin conexión",
+    "pinBackToPin": "Volver a introducir el PIN",
+    "pinReasonLabel": "Explica por qué confirmas sin PIN (quedará registrado y el admin lo revisará)",
+    "pinReasonPh": "Ej: el cliente no tiene datos móviles, verifiqué su identidad con el carnet…",
+    "pinLenErr": "El PIN tiene 4 dígitos",
+    "pinReasonMin": "Indica el motivo (mínimo 5 caracteres)",
+    "pinConfirmBtn": "Confirmar entrega",
+    "reportIncident": "Reportar incidencia",
+    "openIncident": "Incidencia abierta",
+    "incidentDialogTitle": "Registrar incidencia",
+    "incidentTypeLabel": "Tipo de incidencia",
+    "incidentNoteLabel": "Descripción",
+    "incidentNotePh": "¿Qué pasó? El operador verá esta nota.",
+    "incidentNextLabel": "Próximo intento (opcional)",
+    "incidentSubmitBtn": "Registrar",
+    "incidentSent": "Incidencia registrada — el operador fue avisado",
+    "incidentMinNote": "Describe la incidencia (mínimo 5 caracteres)",
+    "incident": {
+      "no_responde": "Cliente no responde",
+      "direccion_incorrecta": "Dirección incorrecta",
+      "importe_diferente": "Importe diferente",
+      "no_entregado": "No se pudo entregar",
+      "reprogramar": "Reprogramar"
+    },
+    "cashPendingTitle": "Efectivo a rendir",
+    "cashPendingHint": "Entrega este efectivo en caja — el admin registrará tu rendición."
   },
   "courier": {
     "calcBtn": "Calcular mensajería",

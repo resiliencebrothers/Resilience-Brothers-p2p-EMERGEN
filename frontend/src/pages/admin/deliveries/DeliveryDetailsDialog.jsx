@@ -1,10 +1,15 @@
+import { useEffect, useState } from "react";
+import axios from "axios";
+import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { etaFromDelivery } from "@/services/deliveryEta";
-import { MapPin, Truck, Clock, User, Package, DollarSign, Copy } from "lucide-react";
+import { MapPin, Truck, Clock, User, Package, DollarSign, Copy, KeyRound, AlertTriangle } from "lucide-react";
 
 // iter208 — Modal con todos los datos de una entrega. Se abre al tocar una fila
 // en /admin/deliveries porque en la tabla algunos campos (dirección, cliente,
@@ -78,10 +83,33 @@ function fmtDate(iso) {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
-export default function DeliveryDetailsDialog({ delivery, open, onClose }) {
+export default function DeliveryDetailsDialog({ delivery, open, onClose, onChanged }) {
   const { t } = useTranslation();
-  if (!delivery) return null;
-  const d = delivery;
+  // Mejora #3 — copia local para reflejar resoluciones sin cerrar el diálogo.
+  const [row, setRow] = useState(delivery);
+  const [resolveNote, setResolveNote] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  useEffect(() => { setRow(delivery); setResolveNote(""); }, [delivery]);
+  if (!row) return null;
+  const d = row;
+
+  const resolveIncident = async (iid) => {
+    setBusyId(iid);
+    try {
+      const r = await axios.post(
+        `${API}/admin/deliveries/${d.id}/incidents/${iid}/resolve`,
+        { note: resolveNote.trim() }, { withCredentials: true });
+      setRow(r.data);
+      setResolveNote("");
+      toast.success(t("admin.deliveries.incidentResolved"));
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const eta = etaFromDelivery(d);
   const gps = (d.delivery_latitude != null && d.delivery_longitude != null)
     ? `${d.delivery_latitude}, ${d.delivery_longitude}` : "";
@@ -173,6 +201,73 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose }) {
                  value={`${d.platform_share_usdt} USDT`}
                  mono testid="dd-platform-share" />
           </Section>
+
+          {/* Mejora #2 — evidencia de entrega (PIN) */}
+          {(d.delivery_pin || d.pin_exception || d.pin_verified) && (
+            <Section icon={KeyRound} title={t("admin.deliveries.pinSection")}>
+              <Row label="PIN" value={d.delivery_pin || "—"} mono testid="dd-pin" />
+              <Row
+                label={t("admin.deliveries.pinStatus")}
+                value={d.pin_verified
+                  ? t("admin.deliveries.pinVerified")
+                  : d.pin_exception
+                    ? t("admin.deliveries.pinException", { reason: d.pin_exception.reason })
+                    : t("admin.deliveries.pinPending")}
+                testid="dd-pin-status"
+              />
+            </Section>
+          )}
+
+          {/* Mejora #3 — incidencias con resolución */}
+          {Array.isArray(d.incidents) && d.incidents.length > 0 && (
+            <div className="border border-amber-400/30 bg-amber-400/5 p-3 space-y-2" data-testid="dd-incidents">
+              <div className="flex items-center gap-2 text-[0.65rem] uppercase tracking-widest text-amber-300 font-mono border-b border-amber-400/20 pb-2">
+                <AlertTriangle className="w-3.5 h-3.5" /> {t("admin.deliveries.incidentsTitle")}
+              </div>
+              {d.incidents.map((inc) => (
+                <div key={inc.id} className="border border-white/10 bg-[#0a0a0a] p-2.5 space-y-1" data-testid={`dd-incident-${inc.id}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[0.7rem] uppercase text-amber-300">
+                      {t(`courierPanel.incident.${inc.type}`, inc.type)}
+                    </span>
+                    <span className={`text-[0.65rem] uppercase ${inc.status === "open" ? "text-amber-300" : "text-[#22C55E]"}`}>
+                      {inc.status === "open"
+                        ? t("admin.deliveries.incidentOpen")
+                        : t("admin.deliveries.incidentResolvedTag")}
+                    </span>
+                  </div>
+                  <div className="text-xs text-white">{inc.note}</div>
+                  <div className="text-[0.65rem] text-neutral-500">
+                    {inc.by_name} · {fmtDate(inc.at)}
+                    {inc.next_attempt_at ? ` · ${t("admin.deliveries.nextAttempt")}: ${inc.next_attempt_at}` : ""}
+                  </div>
+                  {inc.status === "resolved" && inc.resolution_note && (
+                    <div className="text-[0.7rem] text-[#22C55E] italic">✓ {inc.resolution_note}</div>
+                  )}
+                  {inc.status === "open" && (
+                    <div className="flex gap-2 pt-1">
+                      <Input
+                        value={resolveNote}
+                        onChange={(e) => setResolveNote(e.target.value)}
+                        placeholder={t("admin.deliveries.resolveNotePh")}
+                        data-testid={`dd-resolve-note-${inc.id}`}
+                        className="h-8 text-xs rounded-none bg-[#0c0c0c] border-white/10"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={busyId === inc.id}
+                        onClick={() => resolveIncident(inc.id)}
+                        data-testid={`dd-resolve-${inc.id}`}
+                        className="bg-[#22C55E] text-black rounded-none h-8 text-xs shrink-0 disabled:opacity-40"
+                      >
+                        {busyId === inc.id ? "…" : t("admin.deliveries.resolveBtn")}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           <Section icon={Truck} title={t("admin.deliveries.detailsCourier")}>
             <Row label={t("admin.deliveries.colCourier")}

@@ -142,8 +142,13 @@ def test_full_courier_lifecycle_and_payout():
     assert bad.status_code == 400
 
     for step in ("on_the_way", "arrived", "delivered"):
+        body = {"status": step}
+        if step == "delivered":
+            # iter289 (Mejora #2) — la entrega exige el PIN del cliente.
+            body["pin"] = _db().deliveries.find_one(
+                {"id": d["id"]})["delivery_pin"]
         r = requests.post(f"{API}/courier/deliveries/{d['id']}/status",
-                          json={"status": step}, headers=_hdr(VIP_TOKEN))
+                          json=body, headers=_hdr(VIP_TOKEN))
         assert r.status_code == 200, r.text
 
     # earnings show it pending
