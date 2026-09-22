@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend-only validation of iter293 messaging fixes (N06) using seeded VIP courier + admin sessions. All 6 test flows PASSED: courier panel loads with the 2 seeded deliveries (Alicia Chat-A, Bruno Chat-B); delivery chat A allows sending 'Mensaje para A' and shows it in messages with input cleared; switching A->B opens B chat with title 'Chat con Bruno' and shows NO 'Mensaje para A' contamination (empty on first open, only 'Mensaje para B' after send); typing a draft 'Borrador B' in B and reopening A yields empty input in A (draft isolated) and 'Mensaje para A' still present; sending 'Mensaje para B' in B keeps A un-contaminated; admin panel /admin/deliveries loads without blank screen or console errors with summary metrics (Entregas hoy, Ganancia mensajeros hoy, Ganancia plataforma hoy, En curso ahora=3) and full delivery table including the 2 seeded iter293chat_ rows.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_293.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DeliveryChatDialog.jsx: fix N06 uses both genRef and activeIdRef double-guards on load/loadOlder/send — implementation is correct and defensive; the useEffect resets messages/draft/data on deliveryId change ensuring no visual leakage.",
+    "CourierPanel.jsx: cards render fine; 'Mis Entregas' tab count badge is present. No issues found."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (6/6 flows)"},
+  "test_credentials": "session_token=smoke_session_vip_iter292 (user_test_vip01, is_courier=true); session_token=smoke_session_admin_iter292 (user_test_admin01). Both present in MongoDB user_sessions with expires_at 2026-10-22.",
+  "seed_data_creation": "Inserted 2 deliveries into MongoDB `deliveries` collection with id='iter293chat_0' (Alicia Chat-A, Paquete A x1) and id='iter293chat_1' (Bruno Chat-B, Paquete B x1), both status='accepted', courier_id='user_test_vip01', with updated_at refreshed to current UTC so they appear in the top-50 of /api/courier/deliveries -> mine. delivery_chat_messages was cleaned before test; after test it contains 'Mensaje para A' on iter293chat_0 and 'Mensaje para B' on iter293chat_1.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "If retesting, first clean db.delivery_chat_messages where delivery_id regex ^iter293chat_ and refresh updated_at of the 2 seeded deliveries to now (they were pushed off the top-50 in prior runs). VIP+admin session tokens remain valid until 2026-10-22. Route for courier is /dashboard/deliveries (nav 'Mis Entregas'), for admin /admin/deliveries. Login form is blocked by Cloudflare Turnstile as expected — always use cookie-based auth. Chat dialog testids: delivery-chat-dialog, delivery-chat-input, delivery-chat-send-btn, delivery-chat-messages, delivery-chat-empty; card chat button: courier-chat-{delivery_id}.",
+  "rca of the issue": "N06 root cause: previous DeliveryChatDialog implementation could apply a stale in-flight POST/GET result to the newly-opened chat because it only guarded by genRef; fix adds activeIdRef.current comparison in load(), loadOlder(), and send() so any response tied to the prior deliveryId is discarded, and the deliveryId useEffect resets messages/data/draft. Verified functionally: after send in A and switch to B, B shows delivery-chat-empty; drafts do not carry across; no cross-delivery contamination in either direction. Admin summary regression (N05/N01 aggregation rewrite) verified: /api/admin/deliveries/summary renders totals without JS errors or blank screen."
+}

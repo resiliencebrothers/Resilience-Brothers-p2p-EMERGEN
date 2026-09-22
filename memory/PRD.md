@@ -1960,8 +1960,9 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - **Tests**: pytest `make test-critical` **552/552** · mypy limpio · ESLint limpio · testing agent frontend **100% (18/18)**: pestaña Métricas + filtros, destino estructurado y botones llamar/mapa en courier y detalle admin, campo teléfono en marketplace, formulario retiro cash, regresión Entregas.
 - Sugerencia del testing agent (menor, opcional): en el CourierPanel embebido de admin, abrir por defecto la sub-pestaña «Disponibles» cuando `mine` esté vacío.
 
-## Backlog priorizado (actualizado 2026-09-22, tras iter292)
-- HECHO iter292: auditoría FX01–FX11 de Monedas/Tasas/Convertidor completa (detalle en CHANGELOG.md) — 574/574 críticos + frontend 7/7. Reglas de negocio: tramos por importe SOLO en órdenes P2P; monedas desactivadas SÍ liquidables como origen.
+## Backlog priorizado (actualizado 2026-09-22, tras iter293)
+- HECHO iter292: auditoría FX01–FX11 de Monedas/Tasas/Convertidor completa (detalle en CHANGELOG.md) — 574/574 críticos + frontend 7/7.
+- HECHO iter293: revisión de mensajería N01–N06 completa (tarifa congelada al pagar, rev monotónica, cancelación durable de recogidas, ledger de efectivo durable + reconciliación, listas sin topes, chat aislado) — 591/591 críticos + frontend 6/6.
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
