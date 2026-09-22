@@ -62,7 +62,7 @@ export function ConvertPreview({
             </span>
           </div>
           <div className="text-[0.65rem] text-neutral-600 font-mono mt-1">
-            {t("balanceConverter.rateSummary", { from: fromCode, rate: previewRate.toFixed(6), to: toCode })}
+            {t("balanceConverter.rateSummary", { from: fromCode, rate: Number(previewRate.toPrecision(8)).toLocaleString(undefined, { maximumFractionDigits: 10 }), to: toCode })}
           </div>
           {belowMinSource && (
             <div
