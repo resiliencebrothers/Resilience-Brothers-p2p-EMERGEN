@@ -20,7 +20,8 @@
     "no": "No",
     "copied": "Copied to clipboard",
     "shareLinkCopied": "Link copied to clipboard",
-    "shareLinkError": "Could not copy the link"
+    "shareLinkError": "Could not copy the link",
+    "retry": "Retry"
   },
   "quickRange": {
     "last7Days": "Last 7 days",
@@ -753,7 +754,8 @@
       "detailsCreatedAt": "Created",
       "detailsUpdatedAt": "Updated",
       "detailsAmount": "Amount / Description",
-      "detailsPhone": "Phone"
+      "detailsPhone": "Phone",
+      "staleLoc": "Last location {{m}} min ago — no recent update"
     },
     "common": {
       "loading": "Loading…",
@@ -2705,7 +2707,9 @@
     "noPhone": "The courier hasn't added a phone yet.",
     "openBtn": "Track delivery",
     "dialogTitle": "Track your delivery",
-    "noJob": "No active courier job for this operation yet."
+    "noJob": "No active courier job for this operation yet.",
+    "staleLocation": "Last location received {{min}} min ago — no recent update",
+    "locationAge": "{{min}} min ago"
   },
   "deliveryChat": {
     "openBtn": "Chat with courier",
@@ -2764,7 +2768,8 @@
       "delivered": "Delivered",
       "confirmed": "Confirmed",
       "cancelled": "Cancelled"
-    }
+    },
+    "loadError": "Your courier panel could not be loaded."
   },
   "courier": {
     "calcBtn": "Calculate courier fee",

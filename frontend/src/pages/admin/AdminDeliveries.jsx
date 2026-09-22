@@ -29,10 +29,21 @@ const STATUS_COLOR = {
 };
 
 // iter207c — el staff ve a cuántos minutos está el mensajero de entregar.
+// MSG08 — una posición antigua muestra su edad en vez de una ETA "actual".
 function DeliveryEta({ d, t }) {
   if (!["accepted", "on_the_way"].includes(d.status)) return null;
   const eta = etaFromDelivery(d);
   if (!eta) return null;
+  if (eta.stale) {
+    return (
+      <div
+        className="normal-case tracking-normal text-[0.65rem] text-amber-300/80 mt-1"
+        data-testid={`admin-eta-stale-${d.id}`}
+      >
+        {t("admin.deliveries.staleLoc", { m: eta.ageMin })}
+      </div>
+    );
+  }
   return (
     <div
       className="normal-case tracking-normal text-[0.65rem] text-[#A78BFA] mt-1"

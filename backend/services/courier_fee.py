@@ -12,6 +12,7 @@ Business rules (operator PDF, Ago 2026):
 """
 from datetime import datetime, timezone
 from typing import Optional
+import math
 import uuid
 
 from fastapi import HTTPException
@@ -87,6 +88,9 @@ def parse_km_payload(payload: dict) -> float:
     try:
         km = round(float(raw_km), 2)
     except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="km inválido")
+    # MSG11 — NaN/Infinity pasan las comparaciones de rango: exigir finitud.
+    if not math.isfinite(km):
         raise HTTPException(status_code=400, detail="km inválido")
     if km < 0 or km > 5000:
         raise HTTPException(status_code=400, detail="km fuera de rango (0-5000)")
@@ -165,6 +169,9 @@ async def municipality_fallback_quote(address_text: str, currency: str,
         m = await match_municipality(address_text or "")
     if not m:
         return None
+    # MSG11 — un precio no finito guardado en datos viejos jamás cotiza.
+    if not math.isfinite(float(m.get("price_usdt") or 0)):
+        return None
     q = await quote_courier_fee(currency, amount)
     base = {**q, "km": 0.0, "fee_usdt": 0.0, "fee_currency_amount": 0.0,
             "requires_manual_review": False, "reason": None,
@@ -190,6 +197,11 @@ async def price_charge_municipality_or_raise(muni_key: str, currency: str,
         raise HTTPException(
             status_code=404,
             detail="Municipio no encontrado en la tabla de tarifas.")
+    # MSG11 — precio almacenado debe ser un número finito válido.
+    if not math.isfinite(float(m.get("price_usdt") or 0)):
+        raise HTTPException(
+            status_code=422,
+            detail="La tarifa de ese municipio es inválida — corrígela en el panel.")
     q = await quote_courier_fee(currency, amount)
     if q["free"]:
         raise HTTPException(
@@ -229,11 +241,15 @@ async def apply_fee_change_plan(coll_name: str, doc: dict, user_id: str,
     }
     # R02 — el claim exige atómicamente que la operación NO esté en estado
     # terminal: un rechazo concurrente jamás convive con un cobro nuevo.
+    # MSG04 — la intención de sincronizar el reparto viaja EN el mismo claim:
+    # si el proceso muere tras cobrar, el healer completa la sincronización.
     claim = await coll.update_one(
         {"id": doc_id, prev_field: doc.get(prev_field),
          "status": {"$nin": ["rejected", "cancelled"]},
          "courier_fee_op_pending": {"$exists": False}},
-        {"$set": {**new_fields, "courier_fee_op_pending": plan}})
+        {"$set": {**new_fields, "courier_fee_op_pending": plan,
+                  "delivery_sync_pending": {"op_id": plan["op_id"],
+                                            "at": plan["at"]}}})
     if claim.matched_count == 0:
         raise HTTPException(
             status_code=409,

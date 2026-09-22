@@ -54,13 +54,19 @@ async def courier_deliveries(request: Request) -> Any:
     #  - reservada para mí → aparece con `reserved_for_me: True`
     #  - sin asignación previa → visible para todos
     # NO ve reservadas para otros couriers.
-    available_docs = await db.deliveries.find(
-        {"status": "available",
-         "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
-                 {"assigned_to_courier_id": {"$exists": False}},
-                 {"assigned_to_courier_id": uid}]},
+    # MSG07 — las reservas dirigidas al mensajero se consultan SIEMPRE con
+    # prioridad propia: nunca desaparecen detrás del tope de la lista libre.
+    reserved_docs = await db.deliveries.find(
+        {"status": "available", "assigned_to_courier_id": uid},
         {"_id": 0},
     ).sort("created_at", -1).to_list(50)
+    open_docs = await db.deliveries.find(
+        {"status": "available",
+         "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
+                 {"assigned_to_courier_id": {"$exists": False}}]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(50)
+    available_docs = reserved_docs + open_docs
     for d in available_docs:
         d["reserved_for_me"] = d.get("assigned_to_courier_id") == uid
     mine = await db.deliveries.find(
@@ -76,9 +82,21 @@ async def courier_deliveries(request: Request) -> Any:
     history = await db.deliveries.find(
         {"courier_id": uid, "status": "confirmed"}, {"_id": 0},
     ).sort("updated_at", -1).to_list(50)
-    earned = sum(float(d.get("courier_share_usdt") or 0) for d in history)
-    pending = sum(float(d.get("courier_share_usdt") or 0)
-                  for d in mine if d["status"] == "delivered")
+    # MSG07 — totales por AGREGACIÓN sobre todo el historial, no sobre la
+    # ventana de 50 filas mostrada: mensajero y administración coinciden.
+    agg = await db.deliveries.aggregate([
+        {"$match": {"courier_id": uid, "status": "confirmed"}},
+        {"$group": {"_id": None,
+                    "earned": {"$sum": "$courier_share_usdt"},
+                    "count": {"$sum": 1}}},
+    ]).to_list(1)
+    earned = float((agg[0] if agg else {}).get("earned") or 0)
+    completed_count = int((agg[0] if agg else {}).get("count") or 0)
+    pending_agg = await db.deliveries.aggregate([
+        {"$match": {"courier_id": uid, "status": "delivered"}},
+        {"$group": {"_id": None, "s": {"$sum": "$courier_share_usdt"}}},
+    ]).to_list(1)
+    pending = float((pending_agg[0] if pending_agg else {}).get("s") or 0)
     return {
         "available": available_docs,
         "mine": mine,
@@ -86,7 +104,7 @@ async def courier_deliveries(request: Request) -> Any:
         "earnings": {
             "confirmed_usdt": round(earned, 2),
             "pending_usdt": round(pending, 2),
-            "completed_count": len(history),
+            "completed_count": completed_count,
         },
     }
 
@@ -152,6 +170,22 @@ async def claim_delivery(did: str, request: Request) -> Any:
     existing = await db.deliveries.find_one({"id": did}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="No encontrada.")
+    # MSG03 — el origen (retiro/canje/depósito) debe seguir operable antes
+    # de aceptar: una operación rechazada no admite aceptación ni comisión.
+    from services.deliveries import (REF_COLLS, TERMINAL_REF_STATUSES,
+                                     handle_origin_rejected)
+    ref_coll = REF_COLLS.get(existing.get("kind"))
+    if ref_coll and existing.get("ref_id"):
+        ref = await db[ref_coll].find_one({"id": existing["ref_id"]},
+                                          {"_id": 0, "status": 1})
+        if ref and ref.get("status") in TERMINAL_REF_STATUSES:
+            await handle_origin_rejected(
+                existing["kind"], existing["ref_id"],
+                note=f"origen {ref.get('status')}")
+            raise HTTPException(
+                status_code=409,
+                detail=("La operación de origen fue rechazada/cancelada — "
+                        "esta entrega ya no está disponible."))
     # iter208/ME02 — la reserva del admin se respeta DENTRO del filtro
     # atómico: una reserva escrita entre la lectura y la aceptación ya no
     # puede ser borrada por un mensajero que llegó tarde.
@@ -179,6 +213,12 @@ async def claim_delivery(did: str, request: Request) -> Any:
                 detail="Esta entrega está reservada para otro mensajero.")
         raise HTTPException(status_code=409,
                             detail="Esta entrega ya fue tomada por otro mensajero.")
+    # MSG10 — los demás paneles abiertos ven desaparecer el trabajo en vivo.
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(did, "accepted")
+    except Exception:
+        pass
     # iter209 — Avisar al cliente que un mensajero confirmó/aceptó su
     # entrega (estilo Careem/Noon): in-app + push, con teléfono si existe.
     if updated.get("user_id"):
@@ -235,12 +275,26 @@ async def reject_reservation(did: str, payload: dict, request: Request) -> Any:
             detail=f"No se puede rechazar en estado {d['status']}.")
     now = iso(now_utc())
     courier_name = me.get("name") or me.get("email") or "El mensajero"
-    await db.deliveries.update_one({"id": did}, {
-        "$set": {"assigned_to_courier_id": None, "updated_at": now},
-        "$push": {"timeline": {
-            "status": "available", "at": now, "by": me["user_id"],
-            "note": f"Reserva rechazada por {courier_name}: {reason}"}},
-    })
+    # MSG06 — la liberación exige que la reserva LEÍDA siga vigente: un
+    # rechazo atrasado de A jamás borra la reserva nueva de B.
+    res = await db.deliveries.update_one(
+        {"id": did, "status": "available",
+         "assigned_to_courier_id": me["user_id"]}, {
+            "$set": {"assigned_to_courier_id": None, "updated_at": now},
+            "$push": {"timeline": {
+                "status": "available", "at": now, "by": me["user_id"],
+                "note": f"Reserva rechazada por {courier_name}: {reason}"}},
+        })
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("La reserva cambió (ya no está asignada a ti o la "
+                    "entrega cambió de estado); recarga tu panel."))
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(did, "available")
+    except Exception:
+        pass
     # Alertar a admins/staff con permiso de deliveries.
     try:
         from routes.notifications import _insert_notification
@@ -295,11 +349,20 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
             status_code=400,
             detail=f"Transición inválida: {d['status']} → {new_status}")
     now = iso(now_utc())
-    await db.deliveries.update_one({"id": did}, {
-        "$set": {"status": new_status, "updated_at": now},
-        "$push": {"timeline": {"status": new_status, "at": now,
-                               "by": me["user_id"]}},
-    })
+    # MSG01 — la escritura exige que SIGAN vigentes el estado y el repartidor
+    # comprobados: una petición atrasada (cancelación/reasignación en medio)
+    # pierde con 409 y no revive ni altera la entrega.
+    res = await db.deliveries.update_one(
+        {"id": did, "status": d["status"], "courier_id": me["user_id"]}, {
+            "$set": {"status": new_status, "updated_at": now},
+            "$push": {"timeline": {"status": new_status, "at": now,
+                                   "by": me["user_id"]}},
+        })
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("La entrega cambió de estado o de mensajero mientras "
+                    "actualizabas — recarga tu panel."))
     updated = await db.deliveries.find_one({"id": did}, {"_id": 0})
     # iter208 — Notificar al cliente cuando el mensajero avanza el estado
     # para que no tenga que abrir la app a cada rato. Best-effort.
@@ -471,6 +534,12 @@ async def admin_create_delivery(payload: dict, request: Request) -> Any:
     ref = await coll.find_one({"id": ref_id}, {"_id": 0})
     if not ref:
         raise HTTPException(status_code=404, detail="Operación no encontrada")
+    # MSG03 — una operación rechazada/cancelada no admite crear mensajería.
+    if ref.get("status") in ("rejected", "cancelled"):
+        raise HTTPException(
+            status_code=409,
+            detail=(f"La operación está {ref['status']} — no se puede crear "
+                    "una entrega para ella."))
     if kind == "withdrawal" and ref.get("method") != "cash":
         raise HTTPException(status_code=400,
                             detail="Solo retiros en efectivo llevan mensajería")
@@ -482,7 +551,14 @@ async def admin_create_delivery(payload: dict, request: Request) -> Any:
     fee = float(ref.get("courier_fee_usdt") or 0)
     doc = await build_delivery_doc(kind, ref, km=km, fee_usdt=fee,
                                    created_by=actor["user_id"])
-    await db.deliveries.insert_one(dict(doc))
+    # MSG02 — el índice único sobre active_key cierra atómicamente la ventana
+    # buscar→insertar: dos creaciones simultáneas producen UN solo reparto.
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.deliveries.insert_one(dict(doc))
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409,
+                            detail="Ya existe una entrega para esta operación")
     # iter208 — broadcast a couriers cuando el admin crea manualmente
     # una entrega disponible.
     try:
@@ -522,6 +598,8 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     courier_display = courier.get("name") or courier.get("email")
     # ME02 — reasignación condicionada al estado leído: no puede revivir
     # entregas canceladas/confirmadas que cambiaron entre lectura y escritura.
+    # MSG08 — la ubicación GPS del mensajero anterior se INVALIDA al
+    # reasignar: el nuevo mensajero no hereda coordenadas ajenas.
     res = await db.deliveries.update_one(
         {"id": did, "status": {"$in": ["available", "accepted"]}}, {
             "$set": {"status": "available",
@@ -529,6 +607,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
                      "courier_id": None,
                      "courier_name": None,
                      "updated_at": now},
+            "$unset": {"courier_location": ""},
             "$push": {"timeline": {"status": "available", "at": now,
                                    "by": actor["user_id"],
                                    "note": f"Reservada para {courier_display} — pendiente de aceptación"}},
@@ -536,6 +615,16 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     if res.matched_count == 0:
         raise HTTPException(status_code=409,
                             detail="La entrega cambió de estado; recarga.")
+    # MSG10 — el mensajero nuevo (y el anterior, si existía) ven el cambio
+    # en vivo sin recargar el panel.
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(
+            did, "available",
+            courier_ids=[courier_id, d.get("courier_id"),
+                         d.get("assigned_to_courier_id")])
+    except Exception:
+        pass
     try:
         from routes.notifications import _insert_notification
         # iter208 — Diferenciamos el copy según sea entrega (retiro/canje)
@@ -560,7 +649,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
             )
             payload = build_generic_admin_alert_payload(
                 title=title, body=msg,
-                url="/courier",
+                url="/dashboard/deliveries",
                 tag=f"delivery-assigned-{did}",
             )
             await send_push_to_user(db, courier_id, payload)
@@ -602,6 +691,7 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
     res = await db.deliveries.update_one(
         {"id": did, "status": d["status"], "payout_credited": {"$ne": True}}, {
             "$set": {"status": "cancelled", "updated_at": now},
+            "$unset": {"active_key": ""},
             "$push": {"timeline": {"status": "cancelled", "at": now,
                                    "by": actor["user_id"],
                                    "note": (payload.get("note") or "")[:200]}},
@@ -610,6 +700,15 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
         raise HTTPException(
             status_code=409,
             detail="La entrega cambió de estado (¿confirmada?); recarga.")
+    # MSG10 — el panel del mensajero ve la cancelación en vivo.
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(
+            did, "cancelled",
+            courier_ids=None if d["status"] == "available"
+            else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+    except Exception:
+        pass
     await log_action(db, actor, "delivery.cancel", "delivery", did,
                      summary=f"Entrega {did[:8]} cancelada")
     if d.get("courier_id"):

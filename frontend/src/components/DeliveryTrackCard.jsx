@@ -119,11 +119,19 @@ export default function DeliveryTrackCard({ d }) {
             <p className="text-xs text-[#22C55E] flex items-center gap-1.5" data-testid={`track-eta-${d.id}`}>
               <PackageCheck className="w-3.5 h-3.5" /> {t("tracker.arrivedNote")}
             </p>
+          ) : eta && eta.stale ? (
+            <p className="text-[0.7rem] text-amber-300/80 flex items-center gap-1.5" data-testid={`track-stale-${d.id}`}>
+              <Clock className="w-3.5 h-3.5" />
+              {t("tracker.staleLocation", { min: eta.ageMin })}
+            </p>
           ) : eta ? (
             <p className="text-xs text-[#A78BFA] flex items-center gap-1.5" data-testid={`track-eta-${d.id}`}>
               <Clock className="w-3.5 h-3.5" />
               {t("tracker.etaAway", { min: eta.min })}
               <span className="text-neutral-500">· {t("tracker.kmAway", { km: eta.km.toFixed(1) })}</span>
+              {eta.ageMin != null && eta.ageMin > 0 && (
+                <span className="text-neutral-500">· {t("tracker.locationAge", { min: eta.ageMin })}</span>
+              )}
             </p>
           ) : (
             <p className="text-[0.7rem] text-neutral-500" data-testid={`track-noloc-${d.id}`}>

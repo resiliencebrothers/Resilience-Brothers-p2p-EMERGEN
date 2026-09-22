@@ -402,10 +402,11 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
                                          {**status_sets, **update_doc})
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     # iter205 — un retiro rechazado cancela su trabajo de mensajería activo.
+    # MSG03 — si el mensajero ya entregó, queda incidencia en vez de ocultar.
     if new_status == "rejected" and w["status"] != "rejected":
         try:
-            from services.deliveries import cancel_active_delivery
-            await cancel_active_delivery("withdrawal", wid,
+            from services.deliveries import handle_origin_rejected
+            await handle_origin_rejected("withdrawal", wid,
                                          actor_id=actor.get("user_id"),
                                          note="retiro rechazado")
         except Exception as e:
@@ -621,15 +622,17 @@ async def set_courier_fee(wid: str, payload: dict, request: Request) -> Any:
     await apply_fee_change_plan("withdrawals", w, w["user_id"], currency,
                                 "courier_fee_currency_amount", update_doc,
                                 delta)
-    updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
-    # iter199 — keep the courier delivery job in sync with this charge.
+    # MSG04 — la tarea de sincronizar el reparto quedó PERSISTIDA junto con
+    # la decisión del cobro (delivery_sync_pending): si esto falla aquí, el
+    # healer la completa con la tarifa vigente, sin volver a cobrar.
     try:
-        from services.deliveries import upsert_delivery_for_charge
-        await upsert_delivery_for_charge("withdrawal", updated or w, km=km,
-                                         fee_usdt=fee_usdt,
-                                         actor_id=actor.get("user_id"))
+        from services.deliveries import sync_delivery_from_doc
+        await sync_delivery_from_doc("withdrawals", wid,
+                                     actor_id=actor.get("user_id"))
     except Exception as e:
-        logger.error(f"delivery sync failed: {e}")
+        logger.error(f"delivery sync failed (queda pendiente para el "
+                     f"healer): {e}")
+    updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     await log_action(
         db, actor, "withdrawal.courier_fee", "withdrawal", wid,
         summary=(f"Mensajería {km} km → {fee_usdt} USDT "

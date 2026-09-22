@@ -233,6 +233,14 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"kyc_verifications index setup failed: {e}")
 
+    # MSG02 — índice único de trabajo de mensajería activo + migración de
+    # duplicados históricos (idempotente).
+    try:
+        from services.deliveries import ensure_indexes as deliveries_indexes
+        await deliveries_indexes()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"deliveries index setup failed: {e}")
+
     # iter102 — FAQ default seed (idempotent, only if collection empty).
     try:
         from services.support_seed import seed_faq_defaults

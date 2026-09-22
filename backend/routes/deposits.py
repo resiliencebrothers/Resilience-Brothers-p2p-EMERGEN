@@ -416,7 +416,15 @@ async def confirm_deposit_from_delivery(dep_id: str, staff: dict) -> Any:
     """iter209b — Al confirmar la recogida en Mensajería, el depósito cash
     vinculado se confirma automáticamente (acredita el saldo al cliente)."""
     doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
-    if not doc or doc["status"] != "pending":
+    if not doc:
+        return None
+    # MSG03 — un depósito rechazado con recogida ejecutada es un conflicto
+    # de origen: no se cierra la sincronización como resuelta.
+    if doc["status"] == "rejected":
+        from services.delivery_settlement import OriginConflict
+        raise OriginConflict(
+            f"depósito {dep_id[:8]} rechazado — la recogida quedó ejecutada")
+    if doc["status"] != "pending":
         return None
     return await _do_confirm_deposit(doc, staff)
 
@@ -494,6 +502,16 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
     )
     if claim.matched_count == 0:
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
+    # MSG03 — el rechazo del depósito propaga a su recogida de mensajería:
+    # se cancela si aún no hubo movimiento físico; si el mensajero ya
+    # recogió, queda una incidencia visible para resolver el efectivo.
+    try:
+        from services.deliveries import handle_origin_rejected
+        await handle_origin_rejected("deposit", dep_id,
+                                     actor_id=staff["user_id"],
+                                     note="depósito rechazado")
+    except Exception as e:
+        logger.error(f"[deposits] pickup sync after reject failed: {e}")
     fresh = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="deposit.reject",

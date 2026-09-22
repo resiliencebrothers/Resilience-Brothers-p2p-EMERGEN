@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import DeliveryChatDialog from "@/components/DeliveryChatDialog";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 
 // iter199 — Panel del Mensajero (Fase 2): tomar entregas, avanzar estados
 // (en camino → llegué → entregado) y ver ganancias (80% de la tarifa).
@@ -143,6 +144,7 @@ function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reserve
 export default function CourierPanel({ embedded = false }) {
   const { t } = useTranslation();
   const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState(false);
   const [tab, setTab] = useState("mine");
 
   const [sharing, setSharing] = useState(false);
@@ -185,11 +187,24 @@ export default function CourierPanel({ embedded = false }) {
 
   const load = useCallback(() => {
     axios.get(`${API}/courier/deliveries`, { withCredentials: true })
-      .then((r) => setData(r.data))
-      .catch(() => setData(null));
+      .then((r) => { setData(r.data); setLoadError(false); })
+      .catch(() => setLoadError(true));
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // MSG10 — refresco por eventos en vivo + respaldo por intervalo y al
+  // recuperar el foco: una asignación externa aparece sin recarga manual.
+  useLiveEvent("delivery_changed", load);
+  useEffect(() => {
+    const iv = setInterval(load, 30000);
+    const onVis = () => { if (!document.hidden) load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [load]);
 
   const claim = async (d) => {
     try {
@@ -255,6 +270,21 @@ export default function CourierPanel({ embedded = false }) {
   }, [reservedCount]);
 
   if (!data) {
+    // MSG10 — error visible con reintento en vez de un spinner eterno.
+    if (loadError) {
+      return (
+        <div className="text-center py-12 space-y-3" data-testid="courier-panel-error">
+          <p className="text-sm text-neutral-400">{t("courierPanel.loadError")}</p>
+          <Button
+            onClick={load}
+            data-testid="courier-panel-retry"
+            className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white h-9 text-xs"
+          >
+            {t("common.retry")}
+          </Button>
+        </div>
+      );
+    }
     return <div className="text-neutral-500 py-12 text-center" data-testid="courier-panel-loading">…</div>;
   }
 

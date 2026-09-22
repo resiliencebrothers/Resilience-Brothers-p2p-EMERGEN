@@ -185,8 +185,10 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose }) {
             )}
             {eta && (
               <Row label="ETA"
-                   value={t("admin.deliveries.etaInline", { min: eta.min, km: eta.km.toFixed(1) })
-                     + (eta.ageMin != null ? ` · ${t("admin.deliveries.locAge", { m: eta.ageMin })}` : "")}
+                   value={eta.stale
+                     ? t("admin.deliveries.staleLoc", { m: eta.ageMin })
+                     : t("admin.deliveries.etaInline", { min: eta.min, km: eta.km.toFixed(1) })
+                       + (eta.ageMin != null ? ` · ${t("admin.deliveries.locAge", { m: eta.ageMin })}` : "")}
                    testid="dd-eta" />
             )}
           </Section>

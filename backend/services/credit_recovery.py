@@ -498,6 +498,10 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     from services.courier_fee import heal_courier_fee_plans
     healed += await heal_courier_fee_plans(cutoff)
 
+    # --- sincronizaciones cobro↔reparto interrumpidas (MSG04) ---------------
+    from services.deliveries import heal_delivery_sync
+    healed += await heal_delivery_sync(cutoff)
+
     # --- planes de carga de lotes interrumpidos (R03) -----------------------
     from services.vip_batch_ops import heal_batch_upload_plans
     healed += await heal_batch_upload_plans(cutoff)
@@ -509,11 +513,19 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     for dv in rows:
         sp = dv.get("settlement_pending") or {}
         try:
-            from services.delivery_settlement import settle_linked_operation
-            await settle_linked_operation(
-                sp.get("kind") or "", sp.get("ref_id") or "",
-                {"user_id": "system", "name": "Sistema", "email": "",
-                 "role": "admin"})
+            from services.delivery_settlement import (settle_linked_operation,
+                                                      OriginConflict)
+            try:
+                await settle_linked_operation(
+                    sp.get("kind") or "", sp.get("ref_id") or "",
+                    {"user_id": "system", "name": "Sistema", "email": "",
+                     "role": "admin"})
+            except OriginConflict as oc:
+                # MSG03 — origen incompatible: incidencia visible en vez de
+                # reintentar para siempre o cerrar como resuelta.
+                from services.deliveries import flag_origin_conflict
+                await flag_origin_conflict(dv["id"], sp.get("kind") or "",
+                                           sp.get("ref_id") or "", str(oc))
             await db.deliveries.update_one(
                 {"id": dv["id"], "settlement_pending.at": sp.get("at")},
                 {"$unset": {"settlement_pending": ""}})

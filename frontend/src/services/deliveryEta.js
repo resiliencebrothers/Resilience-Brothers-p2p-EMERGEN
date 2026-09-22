@@ -10,6 +10,10 @@ export function distKm(a, b) {
 }
 
 // Acepta docs de admin (courier_location plano) y de tracking (courier.location).
+// MSG08 — una posición antigua (> LOCATION_MAX_AGE_MIN) NO genera una ETA
+// aparentemente actual: se marca `stale` y el consumidor muestra la edad.
+export const LOCATION_MAX_AGE_MIN = 15;
+
 export function etaFromDelivery(d) {
   const loc = d.courier_location || d.courier?.location;
   if (!loc || d.delivery_latitude == null || d.delivery_longitude == null) return null;
@@ -20,5 +24,6 @@ export function etaFromDelivery(d) {
     const age = (Date.now() - new Date(loc.updated_at).getTime()) / 60000;
     if (Number.isFinite(age) && age >= 0) ageMin = Math.round(age);
   }
-  return { min, km, ageMin };
+  const stale = ageMin != null && ageMin > LOCATION_MAX_AGE_MIN;
+  return { min, km, ageMin, stale };
 }

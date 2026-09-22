@@ -27,3 +27,8 @@ async def settle_linked_operation(kind: str, ref_id: str, actor: dict) -> None:
     if fn is None:
         return
     await fn(ref_id, actor)
+
+
+class OriginConflict(Exception):
+    """MSG03 — la operación de origen quedó en un estado incompatible con la
+    entrega ejecutada (p. ej. depósito rechazado con recogida completada)."""

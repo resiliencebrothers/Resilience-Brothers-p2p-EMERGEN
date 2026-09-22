@@ -34,6 +34,9 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   const [messages, setMessages] = useState([]);
   const [reachedStart, setReachedStart] = useState(false);
   const endRef = useRef(null);
+  // MSG09 — generación de solicitud ligada al deliveryId vigente: una
+  // respuesta atrasada de la entrega anterior jamás se aplica a la actual.
+  const genRef = useRef(0);
 
   const mergeMessages = useCallback((incoming) => {
     if (!incoming || incoming.length === 0) return;
@@ -47,8 +50,10 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
 
   const load = useCallback(() => {
     if (!deliveryId) return;
+    const gen = genRef.current;
     axios.get(`${API}/deliveries/${deliveryId}/chat`, { withCredentials: true })
       .then((r) => {
+        if (gen !== genRef.current) return; // respuesta atrasada de otra entrega
         setData(r.data);
         mergeMessages(r.data.messages);
         // has_more=false ⇒ no existe nada más antiguo en el hilo.
@@ -58,8 +63,13 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   }, [deliveryId, mergeMessages]);
 
   useEffect(() => {
+    // MSG09 — cambiar de entrega invalida respuestas en vuelo y reinicia
+    // contexto, borrador e historial.
+    genRef.current += 1;
     setMessages([]);
     setReachedStart(false);
+    setData(null);
+    setText("");
   }, [deliveryId]);
 
   useEffect(() => {
@@ -80,10 +90,12 @@ export default function DeliveryChatDialog({ deliveryId, open, onClose }) {
   const loadOlder = async () => {
     const first = allMessages[0];
     if (!first || busy) return;
+    const gen = genRef.current;
     try {
       const r = await axios.get(`${API}/deliveries/${deliveryId}/chat`, {
         params: { before: first.created_at }, withCredentials: true,
       });
+      if (gen !== genRef.current) return; // MSG09 — respuesta atrasada
       mergeMessages(r.data.messages);
       if (r.data.has_more === false) setReachedStart(true);
     } catch { /* silencioso */ }

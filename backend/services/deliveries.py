@@ -13,6 +13,7 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import iso, now_utc
@@ -20,6 +21,54 @@ from auth_utils import iso, now_utc
 logger = logging.getLogger("deliveries")
 
 ACTIVE_STATUSES = ("available", "accepted", "on_the_way", "arrived", "delivered")
+
+# MSG03 — colecciones de origen y estados terminales que cierran mensajería.
+REF_COLLS = {"withdrawal": "withdrawals", "redemption": "redemptions",
+             "deposit": "deposits"}
+TERMINAL_REF_STATUSES = ("rejected", "cancelled")
+
+
+async def ensure_indexes() -> None:
+    """MSG02 — identidad única de trabajo ACTIVO por (kind, ref_id).
+    `active_key` existe solo mientras el trabajo no está cancelado; el índice
+    único (sparse) cierra atómicamente la ventana buscar→insertar. La
+    migración marca duplicados históricos sin romperlos."""
+    rows = await db.deliveries.find(
+        {"status": {"$ne": "cancelled"}, "active_key": {"$exists": False}},
+        {"_id": 0, "id": 1, "kind": 1, "ref_id": 1, "updated_at": 1},
+    ).to_list(5000)
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(f"{r.get('kind')}:{r.get('ref_id')}", []).append(r)
+    for key, docs in groups.items():
+        docs.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
+        await db.deliveries.update_one({"id": docs[0]["id"]},
+                                       {"$set": {"active_key": key}})
+        for dup in docs[1:]:
+            logger.warning("[deliveries] duplicado activo histórico "
+                           "detectado en migración: %s (%s)", dup["id"], key)
+            await db.deliveries.update_one(
+                {"id": dup["id"]}, {"$set": {"dup_active_legacy": True}})
+    await db.deliveries.create_index("active_key", unique=True, sparse=True)
+
+
+async def publish_delivery_event(delivery_id: str, status: str,
+                                 courier_ids: Optional[list] = None) -> None:
+    """MSG10 — evento SSE `delivery_changed` para que los paneles de
+    mensajería se refresquen sin recarga manual. Best-effort."""
+    try:
+        from services.live_bus import publish as live_publish
+        ids = courier_ids
+        if ids is None:
+            rows = await db.users.find({"is_courier": True},
+                                       {"_id": 0, "user_id": 1}).to_list(500)
+            ids = [r["user_id"] for r in rows]
+        for uid in set(x for x in ids if x):
+            await live_publish("delivery_changed",
+                               {"delivery_id": delivery_id, "status": status},
+                               user_id=uid)
+    except Exception as e:
+        logger.error(f"delivery event publish failed: {e}")
 
 
 async def get_share_pct() -> float:
@@ -88,6 +137,7 @@ async def build_delivery_doc(kind: str, ref: dict, *, km: float, fee_usdt: float
         "id": str(uuid.uuid4()),
         "kind": kind,
         "ref_id": ref["id"],
+        "active_key": f"{kind}:{ref['id']}",
         "user_id": disp["user_id"],
         "client_name": disp["client_name"],
         "address": disp["address"],
@@ -141,6 +191,9 @@ async def _broadcast_new_delivery_to_couriers(doc: dict) -> None:
                 await send_push_to_user(db, c["user_id"], payload)
             except Exception:
                 pass
+        # MSG10 — evento en vivo para que el panel abierto se refresque solo.
+        await publish_delivery_event(doc["id"], "available",
+                                     courier_ids=[c["user_id"] for c in couriers])
     except Exception as e:
         # Nunca dejamos que un error de push impida crear la entrega.
         import logging
@@ -160,7 +213,12 @@ async def ensure_delivery_job(kind: str, ref: dict, *, km: float,
         return active
     doc = await build_delivery_doc(kind, ref, km=km, fee_usdt=fee_usdt,
                                    created_by=actor_id)
-    await db.deliveries.insert_one(dict(doc))
+    try:
+        await db.deliveries.insert_one(dict(doc))
+    except DuplicateKeyError:
+        # MSG02 — otra petición ganó la creación: devolver el MISMO trabajo.
+        return await db.deliveries.find_one(
+            {"active_key": doc["active_key"]}, {"_id": 0})
     # iter208 — broadcast a mensajeros disponibles.
     await _broadcast_new_delivery_to_couriers(doc)
     return doc
@@ -177,9 +235,61 @@ async def cancel_active_delivery(kind: str, ref_id: str,
          "status": {"$nin": ["cancelled", "confirmed"]},
          "payout_credited": {"$ne": True}},
         {"$set": {"status": "cancelled", "updated_at": now},
+         "$unset": {"active_key": ""},
          "$push": {"timeline": {"status": "cancelled", "at": now,
                                 "by": actor_id, "note": note}}},
     )
+
+
+async def handle_origin_rejected(kind: str, ref_id: str,
+                                 actor_id: Optional[str] = None,
+                                 note: str = "") -> Optional[str]:
+    """MSG03 — propaga el rechazo/cancelación del origen a su trabajo de
+    mensajería. Antes del movimiento físico → cancela el trabajo; si el
+    mensajero ya entregó/recogió → NO se oculta el movimiento: queda una
+    incidencia visible que exige resolución."""
+    d = await db.deliveries.find_one(
+        {"kind": kind, "ref_id": ref_id, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "id": 1, "status": 1, "courier_id": 1,
+         "assigned_to_courier_id": 1})
+    if not d:
+        return None
+    if d["status"] in ("delivered", "confirmed"):
+        await flag_origin_conflict(d["id"], kind, ref_id,
+                                   note or "origen rechazado")
+        return "conflict"
+    await cancel_active_delivery(kind, ref_id, actor_id=actor_id, note=note)
+    await publish_delivery_event(
+        d["id"], "cancelled",
+        courier_ids=None if d["status"] == "available"
+        else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+    return "cancelled"
+
+
+async def flag_origin_conflict(did: str, kind: str, ref_id: str,
+                               note: str) -> None:
+    """MSG03 — incidencia única y trazable: la entrega tuvo movimiento
+    físico pero su origen quedó rechazado/cancelado."""
+    now = iso(now_utc())
+    res = await db.deliveries.update_one(
+        {"id": did, "origin_conflict": {"$exists": False}},
+        {"$set": {"origin_conflict": {"kind": kind, "ref_id": ref_id,
+                                      "note": note, "at": now}},
+         "$push": {"timeline": {"status": "origin_conflict", "at": now,
+                                "by": None, "note": note}}})
+    if res.modified_count:
+        try:
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db,
+                title="⚠️ Incidencia: entrega con origen incompatible",
+                body=(f"La entrega {did[:8]} ({kind} {ref_id[:8]}) registra "
+                      "un movimiento físico pero su operación de origen fue "
+                      f"rechazada/cancelada ({note}). Revisa el efectivo/"
+                      "producto y resuelve la incidencia."),
+                url_path="/admin/deliveries")
+        except Exception as e:
+            logger.error(f"origin conflict notify failed: {e}")
 
 
 async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
@@ -195,31 +305,132 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
     now = iso(now_utc())
     if fee_usdt <= 0:
         if active and active["status"] != "confirmed":
-            await db.deliveries.update_one({"id": active["id"]}, {
-                "$set": {"status": "cancelled", "updated_at": now},
-                "$push": {"timeline": {"status": "cancelled", "at": now,
-                                       "by": actor_id, "note": "cobro anulado"}},
-            })
+            await db.deliveries.update_one(
+                {"id": active["id"],
+                 "status": {"$nin": ["confirmed", "cancelled"]}}, {
+                    "$set": {"status": "cancelled", "updated_at": now},
+                    "$unset": {"active_key": ""},
+                    "$push": {"timeline": {"status": "cancelled", "at": now,
+                                           "by": actor_id, "note": "cobro anulado"}},
+                })
         return None
     if active:
         if active["status"] == "confirmed":
             return active
         share_pct = await get_share_pct()
         courier_share, platform_share = compute_shares(fee_usdt, share_pct)
-        await db.deliveries.update_one({"id": active["id"]}, {"$set": {
-            "km": float(km or 0), "fee_usdt": float(fee_usdt),
-            "share_pct_snapshot": share_pct,
-            "courier_share_usdt": courier_share,
-            "platform_share_usdt": platform_share,
-            "updated_at": now,
-        }})
+        # MSG05 — la actualización exige que el trabajo NO haya sido
+        # confirmado/cancelado después de la lectura: una sincronización
+        # atrasada jamás reescribe un pago histórico.
+        res = await db.deliveries.update_one(
+            {"id": active["id"],
+             "status": {"$nin": ["confirmed", "cancelled"]}}, {"$set": {
+                "km": float(km or 0), "fee_usdt": float(fee_usdt),
+                "share_pct_snapshot": share_pct,
+                "courier_share_usdt": courier_share,
+                "platform_share_usdt": platform_share,
+                "updated_at": now,
+            }})
+        if res.matched_count == 0:
+            cur = await db.deliveries.find_one({"id": active["id"]}, {"_id": 0})
+            if (cur or {}).get("status") == "confirmed" \
+                    and float((cur or {}).get("courier_share_usdt") or 0) != courier_share:
+                # El cobro de la tarifa ya ganó pero la confirmación pagó con
+                # el dato anterior: registrar el conflicto como ajuste
+                # separado, sin tocar el pago.
+                await _flag_fee_conflict(active["id"], float(fee_usdt),
+                                         courier_share, now)
+            return cur
         return await db.deliveries.find_one({"id": active["id"]}, {"_id": 0})
     doc = await build_delivery_doc(kind, ref, km=km, fee_usdt=fee_usdt,
                                    created_by=actor_id)
-    await db.deliveries.insert_one(dict(doc))
+    try:
+        await db.deliveries.insert_one(dict(doc))
+    except DuplicateKeyError:
+        # MSG02 — otra petición creó el trabajo primero: converger sobre él.
+        return await upsert_delivery_for_charge(kind, ref, km=km,
+                                                fee_usdt=fee_usdt,
+                                                actor_id=actor_id)
     # iter208 — broadcast a mensajeros cuando aparece una nueva disponible.
     await _broadcast_new_delivery_to_couriers(doc)
     return doc
+
+
+async def _flag_fee_conflict(did: str, fee_usdt: float, courier_share: float,
+                             now: str) -> None:
+    """MSG05 — la tarifa cambió después de confirmar y pagar: el pago
+    histórico se conserva y la diferencia queda como ajuste pendiente
+    trazable (una sola vez), con aviso a los admins."""
+    res = await db.deliveries.update_one(
+        {"id": did, "fee_adjustment_pending": {"$exists": False}},
+        {"$set": {"fee_adjustment_pending": {
+            "fee_usdt": float(fee_usdt),
+            "courier_share_usdt": float(courier_share), "at": now}},
+         "$push": {"timeline": {
+             "status": "fee_conflict", "at": now, "by": None,
+             "note": (f"La tarifa cambió a {fee_usdt} USDT después de "
+                      "confirmar y pagar — requiere ajuste manual.")}}})
+    if res.modified_count:
+        try:
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db,
+                title="⚠️ Conflicto de tarifa en entrega confirmada",
+                body=(f"La entrega {did[:8]} ya estaba confirmada y pagada "
+                      f"cuando llegó una tarifa nueva de {fee_usdt} USDT. "
+                      "El pago histórico NO fue modificado; revisa si "
+                      "corresponde un ajuste."),
+                url_path="/admin/deliveries")
+        except Exception as e:
+            logger.error(f"fee conflict notify failed: {e}")
+
+
+async def sync_delivery_from_doc(coll_name: str, doc_id: str,
+                                 actor_id: Optional[str] = None) -> None:
+    """MSG04 — sincronización durable cobro↔reparto: lee SIEMPRE el estado
+    vigente del documento (tarifa/km actuales) y converge el trabajo de
+    mensajería a ese estado. Idempotente; al terminar limpia la tarea
+    `delivery_sync_pending` publicada junto con la decisión del cobro."""
+    kind = {"withdrawals": "withdrawal", "redemptions": "redemption"}[coll_name]
+    doc = await db[coll_name].find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        return
+    pending_op = (doc.get("delivery_sync_pending") or {}).get("op_id")
+    if doc.get("status") in TERMINAL_REF_STATUSES:
+        await handle_origin_rejected(kind, doc_id, actor_id=actor_id,
+                                     note=f"origen {doc.get('status')}")
+    else:
+        km = float(doc.get("courier_km") or 0)
+        fee = float(doc.get("courier_fee_usdt") or 0)
+        await upsert_delivery_for_charge(kind, doc, km=km, fee_usdt=fee,
+                                         actor_id=actor_id)
+    # Solo se cierra la tarea que ESTA sincronización leyó: una tarea más
+    # nueva (otro cobro concurrente) queda viva para su propio sync/healer.
+    if pending_op:
+        await db[coll_name].update_one(
+            {"id": doc_id, "delivery_sync_pending.op_id": pending_op},
+            {"$unset": {"delivery_sync_pending": ""}})
+
+
+async def heal_delivery_sync(cutoff: str) -> int:
+    """MSG04 — completa sincronizaciones de reparto interrumpidas: tras
+    cualquier corte, crea o actualiza exactamente un reparto con la tarifa
+    vigente, sin volver a cobrar."""
+    n = 0
+    for coll_name in ("withdrawals", "redemptions"):
+        rows = await db[coll_name].find(
+            {"delivery_sync_pending.at": {"$lt": cutoff}},
+            {"_id": 0, "id": 1}).to_list(100)
+        for row in rows:
+            try:
+                await sync_delivery_from_doc(coll_name, row["id"])
+                n += 1
+                logger.warning("sincronización de reparto completada por el "
+                               "healer: %s %s", coll_name, row["id"])
+            except Exception as e:
+                logger.error("delivery sync heal %s/%s: %s",
+                             coll_name, row["id"], e)
+    return n
 
 
 async def do_confirm_delivery(d: dict, actor: dict) -> Any:
@@ -243,18 +454,29 @@ async def do_confirm_delivery(d: dict, actor: dict) -> Any:
     if share > 0 and d.get("courier_id"):
         from services.credit_recovery import pending_marker, apply_and_clear
         marker = pending_marker(d["courier_id"], "USDT", share, "courier-share")
+        # MSG05 — el claim también exige que la comisión leída siga vigente:
+        # el importe liquidado queda CONGELADO en courier_share_paid_usdt.
         claim = await db.deliveries.update_one(
             {"id": did, "status": "delivered",
+             "courier_share_usdt": share,
              "payout_credited": {"$ne": True}},
             {"$set": {"payout_credited": True, "payout_credited_at": now,
+                      "courier_share_paid_usdt": share,
                       "credit_pending": marker}})
         if claim.modified_count:
             await apply_and_clear("deliveries", did, marker)
             credited = True
         else:
             cur_d = await db.deliveries.find_one(
-                {"id": did}, {"_id": 0, "payout_credited": 1, "status": 1})
+                {"id": did}, {"_id": 0, "payout_credited": 1, "status": 1,
+                              "courier_share_usdt": 1})
             if not (cur_d or {}).get("payout_credited"):
+                if float((cur_d or {}).get("courier_share_usdt") or 0) != share:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=("La tarifa de esta entrega cambió mientras "
+                                "confirmabas — recarga y vuelve a confirmar "
+                                "con el importe vigente."))
                 raise HTTPException(
                     status_code=409,
                     detail=("La entrega cambió de estado (¿cancelada?) — "
@@ -290,14 +512,27 @@ async def do_confirm_delivery(d: dict, actor: dict) -> Any:
     # (acredita saldo). Así Depósitos y Retiros no queda "pendiente".
     # Vía registro de handlers para no importar routes desde services.
     try:
-        from services.delivery_settlement import settle_linked_operation
-        await settle_linked_operation(kind, d["ref_id"], actor)
-        await db.deliveries.update_one(
-            {"id": did, "settlement_pending.ref_id": d["ref_id"]},
-            {"$unset": {"settlement_pending": ""}})
+        from services.delivery_settlement import (settle_linked_operation,
+                                                  OriginConflict)
+        try:
+            await settle_linked_operation(kind, d["ref_id"], actor)
+            await db.deliveries.update_one(
+                {"id": did, "settlement_pending.ref_id": d["ref_id"]},
+                {"$unset": {"settlement_pending": ""}})
+        except OriginConflict as oc:
+            # MSG03 — el origen ya no es compatible: la sincronización NO se
+            # cierra como resuelta; queda una incidencia visible.
+            await db.deliveries.update_one(
+                {"id": did, "settlement_pending.ref_id": d["ref_id"]},
+                {"$unset": {"settlement_pending": ""}})
+            await flag_origin_conflict(did, kind, d["ref_id"], str(oc))
     except Exception as e:
         logger.error(f"ref sync after delivery confirm failed (queda "
                      f"pendiente para el recuperador): {e}")
+    # MSG10 — el panel del mensajero se entera de la confirmación en vivo.
+    if d.get("courier_id"):
+        await publish_delivery_event(did, "confirmed",
+                                     courier_ids=[d["courier_id"]])
     if credited:
         try:
             from routes.notifications import _insert_notification

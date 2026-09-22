@@ -8,6 +8,7 @@
 - DELETE /admin/courier/municipality-rates/{mid}
 """
 import logging
+import math
 import uuid
 from typing import Any
 
@@ -27,6 +28,10 @@ def _parse_price(raw: Any) -> float:
     try:
         price = round(float(raw), 2)
     except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Precio inválido.")
+    # MSG11 — NaN/Infinity superan las comparaciones de rango y romperían la
+    # serialización JSON: exigir un número finito ANTES de escribir.
+    if not math.isfinite(price):
         raise HTTPException(status_code=400, detail="Precio inválido.")
     if price <= 0 or price > 1000:
         raise HTTPException(status_code=400,

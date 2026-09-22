@@ -20,7 +20,8 @@
     "no": "No",
     "copied": "Copiado al portapapeles",
     "shareLinkCopied": "Enlace copiado al portapapeles",
-    "shareLinkError": "No se pudo copiar el enlace"
+    "shareLinkError": "No se pudo copiar el enlace",
+    "retry": "Reintentar"
   },
   "quickRange": {
     "last7Days": "Últimos 7 días",
@@ -753,7 +754,8 @@
       "detailsCreatedAt": "Creada",
       "detailsUpdatedAt": "Actualizada",
       "detailsAmount": "Monto / Descripción",
-      "detailsPhone": "Teléfono"
+      "detailsPhone": "Teléfono",
+      "staleLoc": "Última ubicación hace {{m}} min — sin actualización reciente"
     },
     "common": {
       "loading": "Cargando…",
@@ -2705,7 +2707,9 @@
     "noPhone": "El mensajero aún no registró su teléfono.",
     "openBtn": "Seguir entrega",
     "dialogTitle": "Sigue tu entrega",
-    "noJob": "Aún no hay un trabajo de mensajería para esta operación."
+    "noJob": "Aún no hay un trabajo de mensajería para esta operación.",
+    "staleLocation": "Última ubicación recibida hace {{min}} min — sin actualización reciente",
+    "locationAge": "hace {{min}} min"
   },
   "deliveryChat": {
     "openBtn": "Chat con el mensajero",
@@ -2764,7 +2768,8 @@
       "delivered": "Entregada",
       "confirmed": "Confirmada",
       "cancelled": "Cancelada"
-    }
+    },
+    "loadError": "No se pudo cargar tu panel de mensajería."
   },
   "courier": {
     "calcBtn": "Calcular mensajería",

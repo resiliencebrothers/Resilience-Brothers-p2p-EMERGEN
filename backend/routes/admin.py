@@ -1161,9 +1161,11 @@ async def _on_redemption_rejected(r: dict, rid: str, actor: dict,
     await _reverse_vendor_credit_if_any(r)
     await _reverse_fund_inflow_if_any(r)
     # iter205 — el canje rechazado cancela su trabajo de mensajería.
+    # MSG03 — si el mensajero ya entregó, queda una incidencia visible en
+    # vez de ocultar el movimiento físico.
     try:
-        from services.deliveries import cancel_active_delivery
-        await cancel_active_delivery("redemption", rid,
+        from services.deliveries import handle_origin_rejected
+        await handle_origin_rejected("redemption", rid,
                                      actor_id=actor.get("user_id"),
                                      note="canje rechazado")
     except Exception as e:
@@ -1275,15 +1277,17 @@ async def set_redemption_courier_fee(rid: str, payload: dict, request: Request) 
     settle_cur = r.get("settlement_currency") or "USD"
     await apply_fee_change_plan("redemptions", r, r["user_id"], settle_cur,
                                 "courier_fee_usd", update_doc, delta)
-    updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
-    # iter199 — keep the courier delivery job in sync with this charge.
+    # MSG04 — la tarea de sincronizar el reparto quedó PERSISTIDA junto con
+    # la decisión del cobro (delivery_sync_pending): si esto falla aquí, el
+    # healer la completa con la tarifa vigente, sin volver a cobrar.
     try:
-        from services.deliveries import upsert_delivery_for_charge
-        await upsert_delivery_for_charge("redemption", updated or r, km=km,
-                                         fee_usdt=fee_usdt,
-                                         actor_id=actor.get("user_id"))
+        from services.deliveries import sync_delivery_from_doc
+        await sync_delivery_from_doc("redemptions", rid,
+                                     actor_id=actor.get("user_id"))
     except Exception as e:
-        logger.error(f"delivery sync failed: {e}")
+        logger.error(f"delivery sync failed (queda pendiente para el "
+                     f"healer): {e}")
+    updated = await db.redemptions.find_one({"id": rid}, {"_id": 0})
     await log_action(
         db, actor, "redemption.courier_fee", "redemption", rid,
         summary=f"Mensajería {km} km → {fee_usdt} USDT ({fee_usd} USD) en canje {rid[:8]}",

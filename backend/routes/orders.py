@@ -1060,8 +1060,8 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     await apply_and_clear("withdrawals", wid, marker)
     # iter205 — el trabajo de mensajería activo muere con el retiro.
     try:
-        from services.deliveries import cancel_active_delivery
-        await cancel_active_delivery("withdrawal", wid, actor_id=user["user_id"],
+        from services.deliveries import handle_origin_rejected
+        await handle_origin_rejected("withdrawal", wid, actor_id=user["user_id"],
                                      note="retiro cancelado por el cliente")
     except Exception as e:
         logger.error(f"delivery cancel failed: {e}")
