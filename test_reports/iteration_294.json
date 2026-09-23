@@ -1,0 +1,23 @@
+{
+  "summary": "RF05 frontend smoke: BalanceConverterCard idempotency + SSE 'rates_updated' live refresh. All 4 flows PASS. VIP (session smoke_session_vip_iter294) opened converter on /dashboard/assets, executed 5 USD → USDT once (exactly 1 POST /api/vip/convert), UI balance updated in-place (1000→995 USD, 100→104.5354 USDT). Admin edited scrub_test_USDT_USD (rate_vip 1.05→1.08) with pyotp 2FA; VIP tab observed SSE-triggered loadRates+loadDust within ~1s (rate_delta=1, dust_delta=1) WITHOUT reload. Preview dialog reflected the refreshed table. Rate then restored to 1.05 with a fresh TOTP code. Dust CTA correctly hidden (endpoint reports no_dust, items=0). Positive rows ordered by USDT equivalent DESC (USD, USDT). Zero console errors on the dashboard. No layout regressions observed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AdminRates edit dialog uses table row toggle logic that preserves rate_sell only when present in form; behavior fine for this test but worth guarding against accidental clearing when editing unrelated fields.",
+    "useConverterData ordering guards (dustSeqRef/ratesSeqRef) work as intended; observed single reload after SSE with correct latest state."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "test_credentials": "VIP cookie smoke_session_vip_iter294 (USD 1000 / USDT 100 pre-test); Admin cookie smoke_session_admin_iter294; TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP (pyotp). Rate scrub_test_USDT_USD restored to rate_normal=1.1 rate_vip=1.05 rate_sell=null.",
+  "seed_data_creation": "None; only touched rate scrub_test_USDT_USD and reverted it. VIP balances changed by the 5 USD→USDT conversion executed as part of Flow 1 (995 USD / 104.5354 USDT remaining). If next iteration needs the original 100 USDT it should undo or reseed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Converter card is rendered inside AssetsView and is toggled by [data-testid=assets-convert-btn] on /dashboard/assets (not shown on /dashboard root). Useful testids: assets-convert-btn, balance-converter-card, converter-row-{CODE}, converter-trigger-{CODE}, converter-to-code, converter-to-option-{CODE}, converter-amount, converter-max, confirm-converter, dust-sweep-open, admin-rates, edit-rate-{id}, rate-normal, rate-vip, rate-sell, save-rate-btn, totp-prompt-input, totp-prompt-confirm. SSE reload verified within ~1s of admin edit; assertion window used was 20s.",
+  "rca of the issue": "No issues detected. RF05 idempotency (op_id stable, cleared on success/response) and live rate/dust refresh via useLiveEvent('rates_updated') both behave correctly against production preview URL."
+}

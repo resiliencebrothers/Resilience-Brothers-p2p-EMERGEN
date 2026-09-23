@@ -1966,3 +1966,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-22 · iter294 — Verificación FX f244eb0 (RF01–RF06) CERRADA
+- RF01 marcadores durables (compactación segura, sellado por usuario), RF02 idempotencia temprana por op_id (comprobante recuperable, OP_ID_REUSED/OP_ID_CLOSED), RF03 2FA obligatorio para el perdedor de la carrera de creación de tasas, RF04 tolerancia relativa `sufficiency_epsilon` (BTC jamás negativo), RF05 refresco en vivo de tasas+polvo por SSE con op_id estable en frontend, RF06 mypy CI limpio.
+- Tests: `tests/test_iter294_verificacion_fx.py` **14/14** · `make test-critical` **605/605** (suite añadida al Makefile) · mypy 104 archivos limpio · ESLint limpio · testing agent frontend **100% (4/4 flujos)**.
+- Detalle completo en CHANGELOG.md (iter294).
+
+## Backlog priorizado (actualizado 2026-09-22, tras iter294)
+- HECHO iter294: verificación FX RF01–RF06 cerrada — 605/605 críticos + frontend 4/4.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
