@@ -70,11 +70,13 @@ async def courier_deliveries(request: Request) -> Any:
     # prioridad propia: nunca desaparecen detrás del tope de la lista libre.
     # N05 — SIN tope: las 51 reservas dirigidas aparecen las 51.
     reserved_docs = [d async for d in db.deliveries.find(
-        {"status": "available", "assigned_to_courier_id": uid},
+        {"status": "available", "assigned_to_courier_id": uid,
+         "needs_origin_check": {"$ne": True}},
         {"_id": 0},
     ).sort("created_at", -1)]
     open_docs = await db.deliveries.find(
         {"status": "available",
+         "needs_origin_check": {"$ne": True},
          "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
                  {"assigned_to_courier_id": {"$exists": False}}]},
         {"_id": 0},
@@ -338,6 +340,9 @@ async def claim_delivery(did: str, request: Request) -> Any:
     # puede ser borrada por un mensajero que llegó tarde.
     updated = await db.deliveries.find_one_and_update(
         {"id": did, "status": "available",
+         # MV02 — un reparto pendiente de validar contra su origen NO es
+         # aceptable: podría llevar una tarifa ya anulada.
+         "needs_origin_check": {"$ne": True},
          "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
                  {"assigned_to_courier_id": me["user_id"]}]},
         {"$set": {"status": "accepted", "courier_id": me["user_id"],
@@ -351,7 +356,13 @@ async def claim_delivery(did: str, request: Request) -> Any:
     )
     if not updated:
         fresh = await db.deliveries.find_one(
-            {"id": did}, {"_id": 0, "status": 1, "assigned_to_courier_id": 1})
+            {"id": did}, {"_id": 0, "status": 1, "assigned_to_courier_id": 1,
+                          "needs_origin_check": 1})
+        if (fresh or {}).get("needs_origin_check"):
+            raise HTTPException(
+                status_code=409,
+                detail=("Esta entrega está pendiente de validación — "
+                        "inténtalo de nuevo en unos segundos."))
         reserved = (fresh or {}).get("assigned_to_courier_id")
         if (fresh or {}).get("status") == "available" and reserved \
                 and reserved != me["user_id"]:
@@ -1124,7 +1135,9 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     # MSG08 — la ubicación GPS del mensajero anterior se INVALIDA al
     # reasignar: el nuevo mensajero no hereda coordenadas ajenas.
     res = await db.deliveries.update_one(
-        {"id": did, "status": {"$in": ["available", "accepted"]}}, {
+        {"id": did, "status": {"$in": ["available", "accepted"]},
+         # MV02 — no reservar repartos pendientes de validar.
+         "needs_origin_check": {"$ne": True}}, {
             "$set": {"status": "available",
                      "assigned_to_courier_id": courier_id,
                      "courier_id": None,

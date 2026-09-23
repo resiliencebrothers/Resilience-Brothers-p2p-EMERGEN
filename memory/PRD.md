@@ -2000,3 +2000,15 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-23 · iter297 — Verificación de mensajería 79224d6 (MV01–MV02) CERRADA
+- MV02 publicación en dos fases: `needs_origin_check` persistente en el reparto + `heal_unvalidated_deliveries` — un fallo tras insertar deja el documento NO aceptable (claim/listado/reasignación lo excluyen) y el healer lo converge a la decisión vigente; jamás se paga comisión sobre un cargo anulado.
+- MV01 `fee_adjustment_rev` monotónico persistente a nivel de entrega: la decisión «sin ajuste» también avanza revisión y cerca a escritores antiguos — un ajuste obsoleto no reaparece.
+- Tests: `tests/test_iter297_mv01_mv02.py` **6/6** (5/6 fallan sin el fix) · `make test-critical` **630/631** (1 flake preexistente iter14, pasa aislado) · mypy limpio.
+- Detalle completo en CHANGELOG.md (iter297).
+
+## Backlog priorizado (actualizado 2026-09-23, tras iter297)
+- HECHO iter297: auditoría mensajería MV01–MV02 cerrada — 630/631 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

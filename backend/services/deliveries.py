@@ -517,6 +517,13 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
         return await db.deliveries.find_one({"id": active["id"]}, {"_id": 0})
     doc = await build_delivery_doc(kind, ref, km=km, fee_usdt=fee_usdt,
                                    created_by=actor_id, fee_rev=fee_rev)
+    # MV02 — publicación en DOS fases: el reparto nace NO aceptable
+    # (`needs_origin_check` viaja en el propio documento) hasta validar el
+    # origen. Si la validación post-inserción falla por cualquier corte, la
+    # intención persiste en el doc y `heal_unvalidated_deliveries` lo
+    # converge — la única vía de recuperación NO depende del éxito de una
+    # lectura aislada.
+    doc["needs_origin_check"] = True
     try:
         await db.deliveries.insert_one(dict(doc))
     except DuplicateKeyError:
@@ -531,32 +538,76 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
     # si su revisión superó a la nuestra (o quedó terminal), esta publicación
     # atrasada converge al estado vigente en vez de sobrevivir con la tarifa
     # anulada.
-    coll_name = {"withdrawal": "withdrawals",
-                 "redemption": "redemptions"}.get(kind)
-    if coll_name:
-        src = await db[coll_name].find_one(
-            {"id": ref["id"]},
-            {"_id": 0, "status": 1, "courier_fee_usdt": 1,
-             "courier_km": 1, "courier_fee_rev": 1})
-        if src is not None:
-            if src.get("status") in TERMINAL_REF_STATUSES:
-                await handle_origin_rejected(
-                    kind, ref["id"], actor_id=actor_id,
-                    note=f"origen {src.get('status')}")
-                return await db.deliveries.find_one({"id": doc["id"]},
-                                                    {"_id": 0})
-            cur_rev = int(src.get("courier_fee_rev") or 0)
-            if cur_rev > int(fee_rev or 0):
-                fresh = await upsert_delivery_for_charge(
-                    kind, ref, km=float(src.get("courier_km") or 0),
-                    fee_usdt=float(src.get("courier_fee_usdt") or 0),
-                    actor_id=actor_id, fee_rev=cur_rev)
-                if fresh and fresh.get("status") == "available":
-                    await _broadcast_new_delivery_to_couriers(fresh)
-                return fresh
+    try:
+        coll_name = {"withdrawal": "withdrawals",
+                     "redemption": "redemptions"}.get(kind)
+        if coll_name:
+            src = await db[coll_name].find_one(
+                {"id": ref["id"]},
+                {"_id": 0, "status": 1, "courier_fee_usdt": 1,
+                 "courier_km": 1, "courier_fee_rev": 1})
+            if src is not None:
+                if src.get("status") in TERMINAL_REF_STATUSES:
+                    await handle_origin_rejected(
+                        kind, ref["id"], actor_id=actor_id,
+                        note=f"origen {src.get('status')}")
+                    await _clear_origin_check(doc["id"])
+                    return await db.deliveries.find_one({"id": doc["id"]},
+                                                        {"_id": 0})
+                cur_rev = int(src.get("courier_fee_rev") or 0)
+                if cur_rev > int(fee_rev or 0):
+                    await upsert_delivery_for_charge(
+                        kind, ref, km=float(src.get("courier_km") or 0),
+                        fee_usdt=float(src.get("courier_fee_usdt") or 0),
+                        actor_id=actor_id, fee_rev=cur_rev)
+                    await _clear_origin_check(doc["id"])
+                    fresh = await db.deliveries.find_one({"id": doc["id"]},
+                                                         {"_id": 0})
+                    if fresh and fresh.get("status") == "available":
+                        await _broadcast_new_delivery_to_couriers(fresh)
+                    return fresh
+    except Exception as e:
+        # MV02 — la validación falló: el reparto queda publicado pero sigue
+        # NO aceptable (flag persistente); el recuperador lo converge.
+        logger.error("validación post-inserción del reparto %s falló "
+                     "(queda para el healer): %s", doc["id"], e)
+        return await db.deliveries.find_one({"id": doc["id"]}, {"_id": 0})
+    await _clear_origin_check(doc["id"])
+    doc.pop("needs_origin_check", None)
     # iter208 — broadcast a mensajeros cuando aparece una nueva disponible.
     await _broadcast_new_delivery_to_couriers(doc)
     return doc
+
+
+async def _clear_origin_check(did: str) -> None:
+    """MV02 — libera un reparto ya validado contra su origen."""
+    await db.deliveries.update_one(
+        {"id": did}, {"$unset": {"needs_origin_check": ""}})
+
+
+async def heal_unvalidated_deliveries() -> int:
+    """MV02 — repartos publicados cuya validación post-inserción no llegó a
+    completarse: la intención persistente (`needs_origin_check`) los mantiene
+    NO aceptables; aquí se convergen contra el origen vigente (tarifa nueva,
+    anulación o rechazo) y recién entonces se liberan."""
+    rows = await db.deliveries.find(
+        {"needs_origin_check": True},
+        {"_id": 0, "id": 1, "kind": 1, "ref_id": 1}).to_list(200)
+    n = 0
+    for d in rows:
+        coll_name = {"withdrawal": "withdrawals",
+                     "redemption": "redemptions"}.get(d.get("kind"))
+        try:
+            if coll_name and d.get("ref_id"):
+                await sync_delivery_from_doc(coll_name, d["ref_id"])
+            await _clear_origin_check(d["id"])
+            n += 1
+            logger.warning("reparto %s validado contra su origen por el "
+                           "healer", d["id"])
+        except Exception as e:
+            logger.error("validación del reparto %s sigue pendiente: %s",
+                         d["id"], e)
+    return n
 
 
 async def _record_fee_adjustment(cur: dict, fee_usdt: float,
@@ -574,28 +625,42 @@ async def _record_fee_adjustment(cur: dict, fee_usdt: float,
     frozen = float(paid if paid is not None
                    else cur.get("courier_share_usdt") or 0)
     rev = int(fee_rev or 0)
-    rev_guard = {"$or": [
-        {"fee_adjustment_pending": {"$exists": False}},
-        {"fee_adjustment_pending.fee_rev": {"$exists": False}},
-        {"fee_adjustment_pending.fee_rev": {"$lt": rev}},
+    # MV01 — revisión monotónica PERSISTENTE de la última decisión de ajuste
+    # (`fee_adjustment_rev`), independiente de que el ajuste exista: la
+    # decisión «no hay diferencia pendiente» también avanza la revisión y
+    # cerca a los escritores antiguos — un ajuste obsoleto no puede
+    # reaparecer después de una decisión más nueva de no ajustar.
+    rev_guard = {"$and": [
+        {"$or": [{"fee_adjustment_rev": {"$exists": False}},
+                 {"fee_adjustment_rev": {"$lt": rev}}]},
+        {"$or": [{"fee_adjustment_pending": {"$exists": False}},
+                 {"fee_adjustment_pending.fee_rev": {"$exists": False}},
+                 {"fee_adjustment_pending.fee_rev": {"$lt": rev}}]},
     ]}
     if float(courier_share) == frozen:
-        await db.deliveries.update_one(
+        res0 = await db.deliveries.update_one(
             {"id": did, "fee_adjustment_pending": {"$exists": True},
-             "$or": [{"fee_adjustment_pending.fee_rev": {"$exists": False}},
-                     {"fee_adjustment_pending.fee_rev": {"$lt": rev}}]},
-            {"$unset": {"fee_adjustment_pending": ""},
+             **rev_guard},
+            {"$set": {"fee_adjustment_rev": rev},
+             "$unset": {"fee_adjustment_pending": ""},
              "$push": {"timeline": {
                  "status": "fee_conflict_resolved", "at": now, "by": None,
                  "note": ("La tarifa volvió al importe ya liquidado — "
                           "el ajuste pendiente quedó sin efecto.")}}})
+        if res0.matched_count == 0:
+            # Sin ajuste que retirar: la decisión avanza la revisión
+            # igualmente para cercar a cualquier escritor atrasado.
+            await db.deliveries.update_one(
+                {"id": did, **rev_guard},
+                {"$set": {"fee_adjustment_rev": rev}})
         return
     res = await db.deliveries.update_one(
         {"id": did, **rev_guard},
-        {"$set": {"fee_adjustment_pending": {
-            "fee_usdt": float(fee_usdt),
-            "courier_share_usdt": float(courier_share),
-            "fee_rev": rev, "at": now}},
+        {"$set": {"fee_adjustment_rev": rev,
+                  "fee_adjustment_pending": {
+                      "fee_usdt": float(fee_usdt),
+                      "courier_share_usdt": float(courier_share),
+                      "fee_rev": rev, "at": now}},
          "$push": {"timeline": {
              "status": "fee_conflict", "at": now, "by": None,
              "note": (f"La tarifa cambió a {fee_usdt} USDT después de "
@@ -704,6 +769,8 @@ async def heal_delivery_sync(cutoff: str) -> int:
                          dv["id"], e)
     # N04 — reconciliación: entregas ya realizadas sin evento automático.
     n += await reconcile_missing_cash_events()
+    # MV02 — repartos publicados pendientes de validar contra su origen.
+    n += await heal_unvalidated_deliveries()
     return n
 
 
