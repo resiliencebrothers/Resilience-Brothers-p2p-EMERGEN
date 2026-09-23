@@ -1988,3 +1988,15 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-23 · iter296 — Verificación Monedas/Tasas 08ba024 (RT01–RT02) CERRADA
+- RT01 cierre coordinado sanador↔asiento con marcadores sepultados (`cancelled_conversion_markers`): un ejecutor vivo tras el vencimiento no puede descontar (409 CONVERSION_EXPIRED); si su asiento ganó, el sanador resuelve applied — jamás dinero movido con registro fallido; tombstones prescriben a las 24 h.
+- RT02 la identidad del intento (op_id) se conserva ante 5xx/red/409 CONVERSION_IN_PROGRESS y solo se renueva en cierres terminales sin ejecución — un reintento nunca vuelve a ejecutar una conversión.
+- Tests: `tests/test_iter296_rt01_rt02.py` **6/6** (FF sin el fix) · harness Node frontend 5/5 · `make test-critical` **625/625** · mypy/ruff/ESLint limpios.
+- Detalle completo en CHANGELOG.md (iter296).
+
+## Backlog priorizado (actualizado 2026-09-23, tras iter296)
+- HECHO iter296: auditoría FX RT01–RT02 cerrada — 625/625 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

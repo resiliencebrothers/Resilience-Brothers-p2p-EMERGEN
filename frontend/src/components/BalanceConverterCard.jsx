@@ -56,11 +56,10 @@ export default function BalanceConverterCard({ onConverted }) {
   // coinciden con lo que el servidor realmente barrería.
   const [dustOpen, setDustOpen] = useState(false);
   const dustCount = dust?.items?.length || 0;
-  // RF02 — identidad de operación ESTABLE por INTENCIÓN de conversión: se
-  // conserva durante los reintentos de red (el servidor devuelve el mismo
-  // comprobante en vez de ejecutar dos veces) y se renueva al cambiar la
-  // intención o al cerrarse el intento de forma inequívoca (respuesta
-  // recibida, éxito o fallo definitivo).
+  // RF02/RT02 — identidad de operación ESTABLE por INTENCIÓN de conversión:
+  // se conserva durante reintentos de red, errores 5xx (resultado incierto)
+  // y 409 CONVERSION_IN_PROGRESS; solo se renueva al cambiar la intención o
+  // cuando el intento quedó cerrado SIN ejecutarse (éxito o 4xx terminal).
   const opIdRef = useRef(null);
   useEffect(() => { opIdRef.current = null; }, [fromCode, toCode, amount, open]);
 
@@ -187,12 +186,17 @@ export default function BalanceConverterCard({ onConverted }) {
       await refresh();
       if (onConverted) await onConverted();
     } catch (e) {
-      // RF02 — una respuesta recibida (4xx/409) cierra el intento sin
-      // ambigüedad: la próxima confirmación lleva identidad nueva. Un error
-      // de RED (sin respuesta) CONSERVA el op_id para recuperar el
-      // comprobante al reintentar.
-      if (e?.response) opIdRef.current = null;
+      // RT02 — la identidad SOLO se descarta cuando el intento quedó cerrado
+      // sin ejecutarse (4xx terminal: cotización, saldo, OP_ID_*…). Un 5xx
+      // (resultado financiero incierto) o un 409 CONVERSION_IN_PROGRESS (el
+      // primer intento sigue vivo) CONSERVAN el op_id: el reintento recupera
+      // el comprobante original o espera — jamás ejecuta una segunda
+      // conversión. Un error de RED (sin respuesta) también la conserva.
+      const status = e?.response?.status;
       const det = e?.response?.data?.detail;
+      const unresolved = !e?.response || status >= 500
+        || det?.code === "CONVERSION_IN_PROGRESS";
+      if (!unresolved) opIdRef.current = null;
       if (det?.code === "QUOTE_CHANGED") {
         // FX10 — jamás ejecutar en silencio con otra tasa: se refresca la
         // cotización y el cliente decide con el importe nuevo a la vista.

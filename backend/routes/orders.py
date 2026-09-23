@@ -1518,7 +1518,12 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             set_stage[f"vip_balances.{to_code}"] = {"$add": [
                 {"$ifNull": [f"$vip_balances.{to_code}", 0.0]}, amount_to]}
         res = await db.users.update_one(
-            {"user_id": uid, "$expr": {"$and": [
+            {"user_id": uid,
+             # RT01 — el asiento excluye marcadores sepultados por el
+             # sanador: un ejecutor atrasado no puede descontar después
+             # del cierre coordinado.
+             "cancelled_conversion_markers": {"$ne": marker},
+             "$expr": {"$and": [
                 {"$gte": [{"$add": [
                     {"$ifNull": ["$vip_balances.USD", 0.0]},
                     {"$ifNull": ["$vip_balance_usd", 0.0]}]},
@@ -1542,7 +1547,9 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         inc["vip_balances.USDT"] = inc.get("vip_balances.USDT", 0.0) - fee
         inc[f"vip_balances.{to_code}"] = \
             inc.get(f"vip_balances.{to_code}", 0.0) + amount_to
-        filt: dict = {"user_id": uid}
+        filt: dict = {"user_id": uid,
+                      # RT01 — cierre coordinado (ver rama USD).
+                      "cancelled_conversion_markers": {"$ne": marker}}
         need_from = payload.amount_from + (fee if from_code == "USDT" else 0.0)
         filt[f"vip_balances.{from_code}"] = {
             "$gte": need_from - sufficiency_epsilon(need_from)}
@@ -1554,6 +1561,19 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                    "$push": marker_push_update(marker)})
     if res.matched_count == 0:
         await mark_conversions(uid, marker, "failed")
+        # RT01 — distinguir el cierre coordinado del saldo insuficiente: si
+        # el sanador sepultó este marcador, el asiento quedó bloqueado
+        # atómicamente (NO se movió dinero) y el registro durable ya
+        # está en `failed`.
+        closed = await db.users.find_one(
+            {"user_id": uid, "cancelled_conversion_markers": marker},
+            {"_id": 0, "user_id": 1})
+        if closed:
+            raise HTTPException(status_code=409, detail={
+                "code": "CONVERSION_EXPIRED",
+                "message": ("La operación tardó demasiado y fue cerrada por "
+                            "seguridad sin mover dinero — confirma la "
+                            "conversión de nuevo.")})
         raise HTTPException(
             status_code=409,
             detail={"code": "INSUFFICIENT_BALANCE",
@@ -1831,11 +1851,25 @@ async def vip_convert_dust(request: Request,
     if has_usd:
         stages.append({"$unset": "_legacy_take"})
     res = await db.users.update_one(
-        {"user_id": uid, "$expr": {"$and": conds}}, stages)
+        {"user_id": uid,
+         # RT01 — el asiento excluye marcadores sepultados por el sanador.
+         "cancelled_conversion_markers": {"$ne": batch_id},
+         "$expr": {"$and": conds}}, stages)
     if res.matched_count == 0:
         # El saldo cambió entre la lectura y el asiento (o un barrido
         # concurrente ganó): nada se movió y NO se cobra comisión.
         await mark_conversions(uid, batch_id, "failed")
+        # RT01 — si el sanador sepultó el marcador, el asiento quedó
+        # bloqueado atómicamente: cierre coordinado, no carrera de saldo.
+        closed = await db.users.find_one(
+            {"user_id": uid, "cancelled_conversion_markers": batch_id},
+            {"_id": 0, "user_id": 1})
+        if closed:
+            raise HTTPException(status_code=409, detail={
+                "code": "CONVERSION_EXPIRED",
+                "message": ("La operación tardó demasiado y fue cerrada por "
+                            "seguridad sin mover dinero — confirma el "
+                            "barrido de nuevo.")})
         raise HTTPException(status_code=409, detail={
             "code": "BALANCE_CHANGED",
             "message": ("El saldo cambió durante la operación (o un barrido "

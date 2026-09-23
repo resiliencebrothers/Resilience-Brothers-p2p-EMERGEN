@@ -245,7 +245,14 @@ async def heal_pending_conversions(max_age_seconds: int = 600) -> int:
     el registro y la actualización de saldo). Como el movimiento de saldos es
     UNA actualización atómica que además escribe el marcador, la membresía
     del marcador en `recent_conversion_ids` decide sin ambigüedad:
-    presente → applied; ausente → failed (no se movió dinero)."""
+    presente → applied; ausente → failed (no se movió dinero).
+    RT01 — el cierre por 'failed' se COORDINA con la escritura monetaria:
+    antes de fallar, el marcador se sepulta atómicamente en el doc del
+    usuario SOLO si sigue sin gastarse; el asiento del ejecutor excluye
+    marcadores sepultados, así que un ejecutor todavía vivo queda impedido
+    de descontar después del cierre. Si gastó el marcador entre la lectura
+    y el entierro, la operación se resuelve como APLICADA — jamás dinero
+    movido con registro fallido."""
     cutoff = (datetime.now(timezone.utc)
               - timedelta(seconds=max_age_seconds)).isoformat()
     rows = await db.conversions.find(
@@ -261,6 +268,15 @@ async def heal_pending_conversions(max_age_seconds: int = 600) -> int:
         u = await db.users.find_one({"user_id": c["user_id"]},
                                     {"_id": 0, "recent_conversion_ids": 1})
         applied = mid in ((u or {}).get("recent_conversion_ids") or [])
+        if not applied and u is not None:
+            res = await db.users.update_one(
+                {"user_id": c["user_id"],
+                 "recent_conversion_ids": {"$ne": mid}},
+                {"$addToSet": {"cancelled_conversion_markers": mid}})
+            if res.matched_count == 0:
+                # El ejecutor gastó el marcador entre la lectura y el
+                # entierro: el dinero se movió — resolver como aplicada.
+                applied = True
         await mark_conversions(c["user_id"], mid,
                                "applied" if applied else "failed")
         logger.warning("conversión %s resuelta por sanador: %s",
@@ -269,6 +285,9 @@ async def heal_pending_conversions(max_age_seconds: int = 600) -> int:
     # RF01 — compactación SEGURA del registro embebido (nunca expulsa la
     # prueba de una conversión aún pendiente).
     healed += await compact_conversion_markers()
+    # RT01 — los marcadores sepultados prescriben tras la ventana de
+    # seguridad (ningún ejecutor HTTP sobrevive tantas horas).
+    healed += await prune_conversion_tombstones()
     return healed
 
 
@@ -297,5 +316,35 @@ async def compact_conversion_markers(batch: int = 50) -> int:
             await db.users.update_one(
                 {"user_id": u["user_id"]},
                 {"$pullAll": {"recent_conversion_ids": removable}})
+            n += 1
+    return n
+
+
+TOMBSTONE_PRUNE_MIN = 20
+
+
+async def prune_conversion_tombstones(batch: int = 50) -> int:
+    """RT01 — un marcador sepultado solo importa mientras su ejecutor
+    original pudiera seguir vivo: pasada la ventana de seguridad desde la
+    creación de su conversión (o si ya no existe la conversión) se retira."""
+    from services.balances import COMPACT_SAFETY_HOURS
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(hours=COMPACT_SAFETY_HOURS)).isoformat()
+    users = await db.users.find(
+        {f"cancelled_conversion_markers.{TOMBSTONE_PRUNE_MIN}":
+         {"$exists": True}},
+        {"_id": 0, "user_id": 1,
+         "cancelled_conversion_markers": 1}).to_list(batch)
+    n = 0
+    for u in users:
+        tombs = u.get("cancelled_conversion_markers") or []
+        recent = set(await db.conversions.distinct(
+            "marker_id", {"marker_id": {"$in": tombs},
+                          "created_at": {"$gte": cutoff}}))
+        removable = [m for m in tombs if m not in recent]
+        if removable:
+            await db.users.update_one(
+                {"user_id": u["user_id"]},
+                {"$pullAll": {"cancelled_conversion_markers": removable}})
             n += 1
     return n
