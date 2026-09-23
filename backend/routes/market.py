@@ -560,9 +560,10 @@ async def _persist_rate(actor: dict, payload: ExchangeRateCreate,
             await db.rates.insert_one(r.model_dump())
             fresh = r.model_dump()
         except DuplicateKeyError:
-            # FX07 — carrera de creación: el índice único arbitra y el
-            # perdedor ACTUALIZA la fila canónica (upsert atómico, un solo
-            # precio por par).
+            # FX07 — carrera de creación: el índice único arbitra. RF03 — el
+            # perdedor pasa a ser una EDICIÓN del par recién creado: exige la
+            # MISMA confirmación 2FA que cualquier cambio de precio existente
+            # (antes actualizaba sin código).
             row = await db.rates.find_one(
                 {"from_code": payload.from_code, "to_code": payload.to_code},
                 {"_id": 0})
@@ -570,6 +571,9 @@ async def _persist_rate(actor: dict, payload: ExchangeRateCreate,
                 raise HTTPException(status_code=409,
                                     detail="Conflicto al crear la tasa; reintenta.")
             old = row
+            if _rate_values_changed(row, payload):
+                await _enforce_totp_step_up(actor, payload.totp_code,
+                                            action_label="actualizar tasa")
             await db.rates.update_one(
                 {"id": row["id"]},
                 {"$set": {**rate_data, "updated_at": iso(now_utc())}})

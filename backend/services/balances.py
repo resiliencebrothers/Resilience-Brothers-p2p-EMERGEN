@@ -4,7 +4,7 @@ and account-status guards. Extracted from server.py during iter33 refactor.
 Pure business helpers, no HTTP layer; the only side effect is MongoDB I/O via
 the shared `db_client`.
 """
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime, timezone, timedelta
 import logging
 import uuid
@@ -25,7 +25,7 @@ COMPACT_SAFETY_HOURS = 24
 # Rate lookup + USDT conversion
 # ============================================================
 
-def _finite_rate(v) -> Optional[float]:
+def _finite_rate(v: Any) -> Optional[float]:
     """FX03 — una tasa vieja dañada (NaN/inf/0/negativa) jamás entra a un
     lookup usado para valorar o mover saldos."""
     import math

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useLiveEvent } from "@/hooks/useLiveStream";
@@ -19,6 +19,10 @@ export function useConverterData({ isVip, enabled = true }) {
   const [rates, setRates] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [dust, setDust] = useState(null);
+  // RF05 — guarda de orden: si coinciden varias recargas, solo la respuesta
+  // de la solicitud más reciente puede escribir el estado.
+  const dustSeqRef = useRef(0);
+  const ratesSeqRef = useRef(0);
 
   const loadBalances = useCallback(() => {
     if (!enabled) return Promise.resolve();
@@ -29,15 +33,17 @@ export function useConverterData({ isVip, enabled = true }) {
 
   const loadRates = useCallback(() => {
     if (!enabled) return Promise.resolve();
+    const seq = ++ratesSeqRef.current;
     return axios.get(`${API}/rates`, { withCredentials: true })
-      .then((r) => setRates(r.data))
+      .then((r) => { if (seq === ratesSeqRef.current) setRates(r.data); })
       .catch(() => {});
   }, [enabled]);
 
   const loadDust = useCallback(() => {
     if (!enabled) return Promise.resolve();
+    const seq = ++dustSeqRef.current;
     return axios.get(`${API}/vip/dust`, { withCredentials: true })
-      .then((r) => setDust(r.data))
+      .then((r) => { if (seq === dustSeqRef.current) setDust(r.data); })
       .catch(() => {});
   }, [enabled]);
 
@@ -53,8 +59,14 @@ export function useConverterData({ isVip, enabled = true }) {
 
   // FX10 — cualquier alta/edición/borrado de tasa recarga la tabla al
   // instante (el evento solo trae el id; la respuesta autorizada viene de
-  // GET /rates según el rol).
-  useLiveEvent(enabled ? "rates_updated" : null, loadRates);
+  // GET /rates según el rol). RF05 — la ELEGIBILIDAD del barrido depende de
+  // las tasas (umbral de 5 USDT): se recarga con el mismo evento para que
+  // el botón y el diálogo nunca queden obsoletos.
+  const onRatesUpdated = useCallback(() => {
+    loadRates();
+    loadDust();
+  }, [loadRates, loadDust]);
+  useLiveEvent(enabled ? "rates_updated" : null, onRatesUpdated);
 
   // iter85 — Sort positive balances by USDT equivalent DESC so the
   // largest asset in the account shows first in the converter card.

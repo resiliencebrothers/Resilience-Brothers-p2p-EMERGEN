@@ -1292,7 +1292,50 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
         assert_convertible_destination, get_destination_decimals,
         floor_amount, record_conversion, mark_conversions,
         find_conversion_by_op, marker_pipeline_stage, marker_push_update,
+        sufficiency_epsilon,
     )
+    uid = user["user_id"]
+    # RF02/FX09 — la idempotencia se resuelve ANTES de validar catálogo,
+    # saldo y tasas: repetir el mismo op_id devuelve el comprobante original
+    # aunque el saldo haya quedado en cero o la tasa haya cambiado después.
+    if payload.op_id:
+        prior = await find_conversion_by_op(uid, payload.op_id)
+        if prior:
+            same_intent = (
+                prior.get("from_code") == from_code
+                and prior.get("to_code") == to_code
+                and float(prior.get("amount_from") or 0)
+                == float(payload.amount_from))
+            if prior.get("status") == "applying":
+                raise HTTPException(status_code=409, detail={
+                    "code": "CONVERSION_IN_PROGRESS",
+                    "message": ("Esta conversión ya está en curso; espera "
+                                "unos segundos.")})
+            if prior.get("status") == "applied":
+                if not same_intent:
+                    # RF02 — huella del payload: el mismo op_id con otra
+                    # intención es un reuso indebido, no un reintento.
+                    raise HTTPException(status_code=409, detail={
+                        "code": "OP_ID_REUSED",
+                        "message": ("Ese identificador de operación ya se "
+                                    "usó para una conversión distinta — "
+                                    "abre el convertidor de nuevo.")})
+                return {
+                    "ok": True, "duplicate": True,
+                    "conversion_id": prior["id"],
+                    "from_code": prior["from_code"],
+                    "to_code": prior["to_code"],
+                    "amount_from": prior["amount_from"],
+                    "amount_to": prior["amount_to"],
+                    "usdt_fee": prior["usdt_fee"], "rate": prior["rate"],
+                }
+            # status == "failed": intento cerrado sin ejecutar — la nueva
+            # confirmación debe llegar con una identidad nueva.
+            raise HTTPException(status_code=409, detail={
+                "code": "OP_ID_CLOSED",
+                "message": ("El intento anterior con este identificador "
+                            "falló definitivamente — confirma la conversión "
+                            "de nuevo.")})
     await assert_convertible_destination(to_code)
     to_decimals = await get_destination_decimals(to_code)
     # Balance check
@@ -1439,26 +1482,12 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
     # usuario: no pueden quedar conversiones cobradas sin acreditar, comisiones
     # huérfanas ni carreras entre los tres movimientos.
     fee = CONVERT_FEE_USDT
-    eps = 1e-6
-    uid = user["user_id"]
-    # FX09 — idempotencia + registro financiero DURABLE antes de mover saldo:
-    # si esta inserción falla, no se ejecuta nada; si el proceso muere después,
+    # RF04 — la tolerancia de suficiencia es RELATIVA al importe: cubre el
+    # ruido float sin permitir jamás gastar una unidad mínima inexistente
+    # (con eps=1e-6 absoluto, 100 satoshis "gratis" pasaban el filtro).
+    # FX09 — registro financiero DURABLE antes de mover saldo: si esta
+    # inserción falla, no se ejecuta nada; si el proceso muere después,
     # el sanador resuelve con el marcador escrito por la misma actualización.
-    if payload.op_id:
-        prior = await find_conversion_by_op(uid, payload.op_id)
-        if prior and prior.get("status") == "applied":
-            return {
-                "ok": True, "duplicate": True,
-                "conversion_id": prior["id"],
-                "from_code": prior["from_code"], "to_code": prior["to_code"],
-                "amount_from": prior["amount_from"],
-                "amount_to": prior["amount_to"],
-                "usdt_fee": prior["usdt_fee"], "rate": prior["rate"],
-            }
-        if prior and prior.get("status") == "applying":
-            raise HTTPException(status_code=409, detail={
-                "code": "CONVERSION_IN_PROGRESS",
-                "message": "Esta conversión ya está en curso; espera unos segundos."})
     try:
         conv = await record_conversion(
             user=user, kind="convert", from_code=from_code, to_code=to_code,
@@ -1493,8 +1522,9 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
                 {"$gte": [{"$add": [
                     {"$ifNull": ["$vip_balances.USD", 0.0]},
                     {"$ifNull": ["$vip_balance_usd", 0.0]}]},
-                    payload.amount_from - eps]},
-                {"$gte": [{"$ifNull": ["$vip_balances.USDT", 0.0]}, fee - eps]},
+                    payload.amount_from - sufficiency_epsilon(payload.amount_from)]},
+                {"$gte": [{"$ifNull": ["$vip_balances.USDT", 0.0]},
+                          fee - sufficiency_epsilon(fee)]},
             ]}},
             [
                 {"$set": {"_legacy_take": {"$min": [
@@ -1514,21 +1544,23 @@ async def vip_convert(payload: VipConvertPayload, request: Request) -> Any:
             inc.get(f"vip_balances.{to_code}", 0.0) + amount_to
         filt: dict = {"user_id": uid}
         need_from = payload.amount_from + (fee if from_code == "USDT" else 0.0)
-        filt[f"vip_balances.{from_code}"] = {"$gte": need_from - eps}
+        filt[f"vip_balances.{from_code}"] = {
+            "$gte": need_from - sufficiency_epsilon(need_from)}
         if from_code != "USDT":
-            filt["vip_balances.USDT"] = {"$gte": fee - eps}
+            filt["vip_balances.USDT"] = {
+                "$gte": fee - sufficiency_epsilon(fee)}
         res = await db.users.update_one(
             filt, {"$inc": {k: v for k, v in inc.items() if abs(v) > 1e-12},
                    "$push": marker_push_update(marker)})
     if res.matched_count == 0:
-        await mark_conversions(marker, "failed")
+        await mark_conversions(uid, marker, "failed")
         raise HTTPException(
             status_code=409,
             detail={"code": "INSUFFICIENT_BALANCE",
                     "message": ("Saldo insuficiente para completar la "
                                 "conversión (el saldo cambió durante la "
                                 "operación).")})
-    await mark_conversions(marker, "applied")
+    await mark_conversions(uid, marker, "applied")
     await emit_balance_changed(user["user_id"], "convert",
                                from_code=from_code, to_code=to_code)
     # Audit
@@ -1713,7 +1745,7 @@ async def vip_convert_dust(request: Request,
     )
     from services.conversions import (
         assert_convertible_destination, record_conversion, mark_conversions,
-        marker_pipeline_stage, floor_amount)
+        marker_pipeline_stage, floor_amount, sufficiency_epsilon)
     # FX05 — el barrido tampoco puede acreditar un destino bloqueado.
     await assert_convertible_destination("USDT")
     dust = await _collect_dust(user, user["role"])
@@ -1746,7 +1778,9 @@ async def vip_convert_dust(request: Request,
                         "total y confirma de nuevo."),
         })
     uid = user["user_id"]
-    eps = 1e-6
+    # RF04 — suficiencia con tolerancia RELATIVA a cada importe: cubre el
+    # ruido float sin permitir barrer dos veces un saldo de unidades
+    # pequeñas (BTC jamás puede quedar negativo).
     # FX09 — registros durables (uno por moneda) con marcador compartido.
     batch_id = f"dust_{uuid.uuid4().hex[:16]}"
     convs: list[dict] = []
@@ -1760,7 +1794,8 @@ async def vip_convert_dust(request: Request,
     # FX02 — TODO el asiento (comisión + débitos + crédito) en UNA sola
     # actualización condicionada. El USD respeta el orden legado-primero.
     conds: list = [
-        {"$gte": [{"$ifNull": ["$vip_balances.USDT", 0.0]}, FLAT_FEE - eps]}]
+        {"$gte": [{"$ifNull": ["$vip_balances.USDT", 0.0]},
+                  FLAT_FEE - sufficiency_epsilon(FLAT_FEE)]}]
     set_stage: dict = {}
     has_usd = False
     usd_amt = 0.0
@@ -1772,7 +1807,8 @@ async def vip_convert_dust(request: Request,
             usd_amt = amt
             conds.append({"$gte": [{"$add": [
                 {"$ifNull": ["$vip_balances.USD", 0.0]},
-                {"$ifNull": ["$vip_balance_usd", 0.0]}]}, amt - eps]})
+                {"$ifNull": ["$vip_balance_usd", 0.0]}]},
+                amt - sufficiency_epsilon(amt)]})
             set_stage["vip_balance_usd"] = {"$subtract": [
                 {"$ifNull": ["$vip_balance_usd", 0.0]}, "$_legacy_take"]}
             set_stage["vip_balances.USD"] = {"$subtract": [
@@ -1780,7 +1816,8 @@ async def vip_convert_dust(request: Request,
                 {"$subtract": [amt, "$_legacy_take"]}]}
         else:
             conds.append({"$gte": [
-                {"$ifNull": [f"$vip_balances.{code}", 0.0]}, amt - eps]})
+                {"$ifNull": [f"$vip_balances.{code}", 0.0]},
+                amt - sufficiency_epsilon(amt)]})
             set_stage[f"vip_balances.{code}"] = {"$subtract": [
                 {"$ifNull": [f"$vip_balances.{code}", 0.0]}, amt]}
     set_stage["vip_balances.USDT"] = {"$add": [
@@ -1798,12 +1835,12 @@ async def vip_convert_dust(request: Request,
     if res.matched_count == 0:
         # El saldo cambió entre la lectura y el asiento (o un barrido
         # concurrente ganó): nada se movió y NO se cobra comisión.
-        await mark_conversions(batch_id, "failed")
+        await mark_conversions(uid, batch_id, "failed")
         raise HTTPException(status_code=409, detail={
             "code": "BALANCE_CHANGED",
             "message": ("El saldo cambió durante la operación (o un barrido "
                         "simultáneo ya se ejecutó). Revisa y reintenta.")})
-    await mark_conversions(batch_id, "applied")
+    await mark_conversions(uid, batch_id, "applied")
     # Auditoría best-effort (el registro financiero durable ya existe).
     from audit_log import log_action
     for idx, d in enumerate(dust):

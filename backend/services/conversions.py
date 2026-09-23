@@ -76,6 +76,13 @@ def floor_amount(value: float, decimals: int) -> float:
     return float(snapped.quantize(q, rounding=ROUND_FLOOR))
 
 
+def sufficiency_epsilon(amount: float) -> float:
+    """RF04 — tolerancia RELATIVA de suficiencia de saldo: cubre ~1 ulp de
+    ruido float sin acercarse jamás a una unidad mínima — imposible gastar
+    saldo inexistente en monedas de unidades pequeñas (BTC)."""
+    return abs(float(amount)) * 1e-9 + 1e-12
+
+
 async def get_destination_decimals(code: str) -> int:
     doc = await db.currencies.find_one({"code": code}, {"_id": 0})
     return currency_decimals(doc, code)
@@ -180,7 +187,10 @@ async def record_conversion(*, user: dict, kind: str, from_code: str,
                             batch_size: int = 0, batch_index: int = 0) -> dict:
     """Inserta el registro durable ANTES de mover saldos (status=applying).
     Si esta inserción falla, la operación no se ejecuta: nunca puede haber
-    dinero movido sin registro financiero recuperable (FX09)."""
+    dinero movido sin registro financiero recuperable (FX09).
+    RF01 — cada conversión recibe un marcador ÚNICO no vacío; solo un
+    barrido comparte marcador entre SUS propias filas (mismo usuario)."""
+    marker = marker_id or f"cmk_{uuid.uuid4().hex}"
     doc: dict = {
         "id": f"conv_{uuid.uuid4().hex}",
         "user_id": user["user_id"],
@@ -191,7 +201,7 @@ async def record_conversion(*, user: dict, kind: str, from_code: str,
         "amount_from": amount_from, "amount_to": amount_to,
         "rate": rate, "usdt_fee": usdt_fee,
         "amount_from_usdt": amount_from_usdt,
-        "marker_id": marker_id,
+        "marker_id": marker,
         "status": "applying",
         "created_at": iso_now(),
     }
@@ -207,22 +217,26 @@ async def record_conversion(*, user: dict, kind: str, from_code: str,
 
 def marker_pipeline_stage(marker_id: str) -> dict:
     """Etapa de pipeline que anexa el marcador al doc del usuario DENTRO de
-    la misma actualización atómica que mueve los saldos."""
-    return {"$set": {"recent_conversion_ids": {"$slice": [
-        {"$concatArrays": [{"$ifNull": ["$recent_conversion_ids", []]},
-                           [marker_id]]},
-        -CONVERSION_MARKER_CAP]}}}
+    la misma actualización atómica que mueve los saldos. RF01 — SIN recorte
+    ciego: la prueba durable solo se retira cuando su registro está resuelto
+    (ver `compact_conversion_markers`)."""
+    return {"$set": {"recent_conversion_ids": {"$concatArrays": [
+        {"$ifNull": ["$recent_conversion_ids", []]}, [marker_id]]}}}
 
 
 def marker_push_update(marker_id: str) -> dict:
     """Operador `$push` equivalente para actualizaciones no-pipeline."""
-    return {"recent_conversion_ids": {"$each": [marker_id],
-                                      "$slice": -CONVERSION_MARKER_CAP}}
+    return {"recent_conversion_ids": {"$each": [marker_id]}}
 
 
-async def mark_conversions(marker_id: str, status: str) -> None:
+async def mark_conversions(user_id: str, marker_id: str, status: str) -> None:
+    """RF01 — el sellado está condicionado por USUARIO y marcador: la
+    confirmación de una conversión jamás alcanza registros ajenos, y un
+    marcador vacío no puede sellar nada en bloque."""
+    if not marker_id:
+        return
     await db.conversions.update_many(
-        {"marker_id": marker_id, "status": "applying"},
+        {"user_id": user_id, "marker_id": marker_id, "status": "applying"},
         {"$set": {"status": status, "resolved_at": iso_now()}})
 
 
@@ -247,8 +261,41 @@ async def heal_pending_conversions(max_age_seconds: int = 600) -> int:
         u = await db.users.find_one({"user_id": c["user_id"]},
                                     {"_id": 0, "recent_conversion_ids": 1})
         applied = mid in ((u or {}).get("recent_conversion_ids") or [])
-        await mark_conversions(mid, "applied" if applied else "failed")
+        await mark_conversions(c["user_id"], mid,
+                               "applied" if applied else "failed")
         logger.warning("conversión %s resuelta por sanador: %s",
                        mid, "applied" if applied else "failed")
         healed += 1
+    # RF01 — compactación SEGURA del registro embebido (nunca expulsa la
+    # prueba de una conversión aún pendiente).
+    healed += await compact_conversion_markers()
     return healed
+
+
+async def compact_conversion_markers(batch: int = 50) -> int:
+    """RF01 — sustituye al viejo `$slice` ciego: del arreglo
+    `recent_conversion_ids` solo se retiran marcadores cuyos registros están
+    RESUELTOS (o ya no existen). Un marcador con conversión `applying` JAMÁS
+    se expulsa — es la prueba durable con la que el sanador decide
+    applied/failed; 40+ operaciones posteriores no pueden convertir en
+    'fallida' una operación ya ejecutada."""
+    users = await db.users.find(
+        {f"recent_conversion_ids.{CONVERSION_MARKER_CAP}": {"$exists": True}},
+        {"_id": 0, "user_id": 1, "recent_conversion_ids": 1}).to_list(batch)
+    n = 0
+    for u in users:
+        markers = u.get("recent_conversion_ids") or []
+        excess = len(markers) - CONVERSION_MARKER_CAP
+        if excess <= 0:
+            continue
+        candidates = markers[:excess]
+        pending = set(await db.conversions.distinct(
+            "marker_id", {"marker_id": {"$in": candidates},
+                          "status": "applying"}))
+        removable = [m for m in candidates if m not in pending]
+        if removable:
+            await db.users.update_one(
+                {"user_id": u["user_id"]},
+                {"$pullAll": {"recent_conversion_ids": removable}})
+            n += 1
+    return n

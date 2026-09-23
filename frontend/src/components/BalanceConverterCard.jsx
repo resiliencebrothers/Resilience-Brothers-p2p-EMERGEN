@@ -15,7 +15,7 @@
  *     - onConverted: optional callback fired after a successful conversion
  *       (parent components can refresh their own state, e.g. order list).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -56,6 +56,13 @@ export default function BalanceConverterCard({ onConverted }) {
   // coinciden con lo que el servidor realmente barrería.
   const [dustOpen, setDustOpen] = useState(false);
   const dustCount = dust?.items?.length || 0;
+  // RF02 — identidad de operación ESTABLE por INTENCIÓN de conversión: se
+  // conserva durante los reintentos de red (el servidor devuelve el mismo
+  // comprobante en vez de ejecutar dos veces) y se renueva al cambiar la
+  // intención o al cerrarse el intento de forma inequívoca (respuesta
+  // recibida, éxito o fallo definitivo).
+  const opIdRef = useRef(null);
+  useEffect(() => { opIdRef.current = null; }, [fromCode, toCode, amount, open]);
 
   const visible = useMemo(
     () => (showAll ? positive : positive.slice(0, 3)),
@@ -151,10 +158,15 @@ export default function BalanceConverterCard({ onConverted }) {
     }
     setBusy(true);
     try {
-      // FX10 — se envía la tasa confirmada; FX09 — op_id idempotente.
-      const opId = (typeof crypto !== "undefined" && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      // FX10 — se envía la tasa confirmada; FX09/RF02 — op_id idempotente y
+      // estable: un reintento tras perder la respuesta recupera el
+      // comprobante original sin segunda conversión ni segunda comisión.
+      if (!opIdRef.current) {
+        opIdRef.current = (typeof crypto !== "undefined" && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+      const opId = opIdRef.current;
       const r = await axios.post(
         `${API}/vip/convert`,
         {
@@ -163,6 +175,7 @@ export default function BalanceConverterCard({ onConverted }) {
         },
         { withCredentials: true },
       );
+      opIdRef.current = null; // intento cerrado con éxito
       const fee = r.data.usdt_fee;
       // iter77 — Fee is now debited separately; the toast still reports it
       // to close the loop with the client.
@@ -174,6 +187,11 @@ export default function BalanceConverterCard({ onConverted }) {
       await refresh();
       if (onConverted) await onConverted();
     } catch (e) {
+      // RF02 — una respuesta recibida (4xx/409) cierra el intento sin
+      // ambigüedad: la próxima confirmación lleva identidad nueva. Un error
+      // de RED (sin respuesta) CONSERVA el op_id para recuperar el
+      // comprobante al reintentar.
+      if (e?.response) opIdRef.current = null;
       const det = e?.response?.data?.detail;
       if (det?.code === "QUOTE_CHANGED") {
         // FX10 — jamás ejecutar en silencio con otra tasa: se refresca la
