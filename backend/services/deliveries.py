@@ -341,13 +341,16 @@ async def ensure_delivery_job(kind: str, ref: dict, *, km: float,
 
 async def cancel_active_delivery(kind: str, ref_id: str,
                                  actor_id: Optional[str] = None,
-                                 note: str = "") -> None:
+                                 note: str = "") -> Any:
     """iter205 — cancela el trabajo activo (no confirmado) cuando la
-    operación origen muere (retiro/canje rechazado o cancelado)."""
+    operación origen muere (retiro/canje rechazado o cancelado).
+    MS03 — 'delivered' cuenta como movimiento físico sellado: esta
+    cancelación JAMÁS lo sobrescribe, aunque el sello haya ocurrido entre
+    la lectura del caller y esta escritura (el filtro decide en el update)."""
     now = iso(now_utc())
-    await db.deliveries.update_one(
+    return await db.deliveries.update_one(
         {"kind": kind, "ref_id": ref_id,
-         "status": {"$nin": ["cancelled", "confirmed"]},
+         "status": {"$nin": ["cancelled", "confirmed", "delivered"]},
          "payout_credited": {"$ne": True}},
         {"$set": {"status": "cancelled", "updated_at": now},
          "$unset": {"active_key": ""},
@@ -362,23 +365,36 @@ async def handle_origin_rejected(kind: str, ref_id: str,
     """MSG03 — propaga el rechazo/cancelación del origen a su trabajo de
     mensajería. Antes del movimiento físico → cancela el trabajo; si el
     mensajero ya entregó/recogió → NO se oculta el movimiento: queda una
-    incidencia visible que exige resolución."""
-    d = await db.deliveries.find_one(
-        {"kind": kind, "ref_id": ref_id, "status": {"$ne": "cancelled"}},
-        {"_id": 0, "id": 1, "status": 1, "courier_id": 1,
-         "assigned_to_courier_id": 1})
-    if not d:
-        return None
-    if d["status"] in ("delivered", "confirmed"):
-        await flag_origin_conflict(d["id"], kind, ref_id,
-                                   note or "origen rechazado")
-        return "conflict"
-    await cancel_active_delivery(kind, ref_id, actor_id=actor_id, note=note)
-    await publish_delivery_event(
-        d["id"], "cancelled",
-        courier_ids=None if d["status"] == "available"
-        else [d.get("courier_id"), d.get("assigned_to_courier_id")])
-    return "cancelled"
+    incidencia visible que exige resolución.
+    MS03 — la cancelación está condicionada al estado en el MOMENTO de la
+    escritura: si el mensajero selló la recogida entre la lectura y la
+    cancelación, esta pierde, se relee el estado y queda la incidencia."""
+    for _ in range(3):
+        d = await db.deliveries.find_one(
+            {"kind": kind, "ref_id": ref_id, "status": {"$ne": "cancelled"}},
+            {"_id": 0, "id": 1, "status": 1, "courier_id": 1,
+             "assigned_to_courier_id": 1})
+        if not d:
+            return None
+        if d["status"] in ("delivered", "confirmed"):
+            await flag_origin_conflict(d["id"], kind, ref_id,
+                                       note or "origen rechazado")
+            return "conflict"
+        res = await cancel_active_delivery(kind, ref_id, actor_id=actor_id,
+                                           note=note)
+        if res.matched_count:
+            await publish_delivery_event(
+                d["id"], "cancelled",
+                courier_ids=None if d["status"] == "available"
+                else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+            return "cancelled"
+        # La entrega cambió de estado entre la lectura y la escritura:
+        # decidir de nuevo sobre el estado real (¿recogida sellada?).
+    # Sin estado estable tras varios intentos: dejar la tarea pendiente
+    # (el caller conserva su marca durable y el healer reintenta).
+    raise RuntimeError(
+        f"no se pudo propagar el rechazo del origen {kind}/{ref_id}: "
+        "el estado de la entrega cambió repetidamente")
 
 
 async def flag_origin_conflict(did: str, kind: str, ref_id: str,
@@ -447,13 +463,26 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
                         and cur0.get("status") != "cancelled":
                     # N01 — la anulación llegó con el pago ya iniciado: el
                     # importe liquidado no se toca; queda ajuste visible.
-                    await _flag_fee_conflict(active["id"], 0.0, 0.0, now)
+                    await _record_fee_adjustment(cur0, 0.0, 0.0, now,
+                                                 fee_rev=fee_rev)
+        elif active:
+            # MS01 — anulación posterior a la confirmación: el reembolso al
+            # cliente ya ocurrió y el pago histórico no se toca; la
+            # diferencia queda como ajuste recuperable, jamás desaparece.
+            await _record_fee_adjustment(active, 0.0, 0.0, now,
+                                         fee_rev=fee_rev)
         return None
     if active:
-        if active["status"] == "confirmed":
-            return active
         share_pct = await get_share_pct()
         courier_share, platform_share = compute_shares(fee_usdt, share_pct)
+        if active["status"] == "confirmed":
+            # MS01 — la tarifa cambió DESPUÉS de confirmar y pagar: el cobro
+            # al cliente ya ocurrió; el reparto confirmado es historia, pero
+            # la diferencia NO puede desaparecer — queda (o se actualiza al
+            # último objetivo por revisión) como ajuste pendiente.
+            await _record_fee_adjustment(active, float(fee_usdt),
+                                         courier_share, now, fee_rev=fee_rev)
+            return active
         # MSG05 — la actualización exige que el trabajo NO haya sido
         # confirmado/cancelado después de la lectura; N01 — un pago INICIADO
         # (payout_credited) también congela los importes aunque el sello
@@ -477,17 +506,13 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
                 # N02 — una sincronización más nueva ya escribió: este
                 # ejecutor atrasado pierde en silencio, sin conflicto.
                 return cur
-            paid = cur.get("courier_share_paid_usdt")
-            frozen = float(paid if paid is not None
-                           else cur.get("courier_share_usdt") or 0)
-            if (cur.get("payout_credited")
-                    or cur.get("status") == "confirmed") \
-                    and frozen != courier_share:
+            if cur.get("payout_credited") or cur.get("status") == "confirmed":
                 # El cobro de la tarifa ya ganó pero el pago usó el dato
                 # anterior: registrar el conflicto como ajuste separado,
-                # sin tocar el pago (N01/MSG05).
-                await _flag_fee_conflict(active["id"], float(fee_usdt),
-                                         courier_share, now)
+                # sin tocar el pago (N01/MSG05/MS01).
+                await _record_fee_adjustment(cur, float(fee_usdt),
+                                             courier_share, now,
+                                             fee_rev=fee_rev)
             return cur
         return await db.deliveries.find_one({"id": active["id"]}, {"_id": 0})
     doc = await build_delivery_doc(kind, ref, km=km, fee_usdt=fee_usdt,
@@ -500,21 +525,77 @@ async def upsert_delivery_for_charge(kind: str, ref: dict, *, km: float,
                                                 fee_usdt=fee_usdt,
                                                 actor_id=actor_id,
                                                 fee_rev=fee_rev)
+    # MS02 — verificación post-inserción (principio de bandera): una decisión
+    # más nueva del origen (anulación o tarifa nueva) pudo no ver este
+    # reparto porque aún no existía. Se relee el origen DESPUÉS de insertar:
+    # si su revisión superó a la nuestra (o quedó terminal), esta publicación
+    # atrasada converge al estado vigente en vez de sobrevivir con la tarifa
+    # anulada.
+    coll_name = {"withdrawal": "withdrawals",
+                 "redemption": "redemptions"}.get(kind)
+    if coll_name:
+        src = await db[coll_name].find_one(
+            {"id": ref["id"]},
+            {"_id": 0, "status": 1, "courier_fee_usdt": 1,
+             "courier_km": 1, "courier_fee_rev": 1})
+        if src is not None:
+            if src.get("status") in TERMINAL_REF_STATUSES:
+                await handle_origin_rejected(
+                    kind, ref["id"], actor_id=actor_id,
+                    note=f"origen {src.get('status')}")
+                return await db.deliveries.find_one({"id": doc["id"]},
+                                                    {"_id": 0})
+            cur_rev = int(src.get("courier_fee_rev") or 0)
+            if cur_rev > int(fee_rev or 0):
+                fresh = await upsert_delivery_for_charge(
+                    kind, ref, km=float(src.get("courier_km") or 0),
+                    fee_usdt=float(src.get("courier_fee_usdt") or 0),
+                    actor_id=actor_id, fee_rev=cur_rev)
+                if fresh and fresh.get("status") == "available":
+                    await _broadcast_new_delivery_to_couriers(fresh)
+                return fresh
     # iter208 — broadcast a mensajeros cuando aparece una nueva disponible.
     await _broadcast_new_delivery_to_couriers(doc)
     return doc
 
 
-async def _flag_fee_conflict(did: str, fee_usdt: float, courier_share: float,
-                             now: str) -> None:
-    """MSG05 — la tarifa cambió después de confirmar y pagar: el pago
-    histórico se conserva y la diferencia queda como ajuste pendiente
-    trazable (una sola vez), con aviso a los admins."""
+async def _record_fee_adjustment(cur: dict, fee_usdt: float,
+                                 courier_share: float, now: str,
+                                 fee_rev: int = 0) -> None:
+    """MS01 — resuelve el ajuste pendiente hacia el ÚLTIMO objetivo vigente.
+    El pago histórico jamás se toca; el ajuste registra la diferencia:
+      • objetivo ≠ importe pagado → crea o ACTUALIZA el ajuste (una revisión
+        más nueva reemplaza a la anterior; un ejecutor atrasado no puede
+        dejar un objetivo viejo);
+      • objetivo == importe pagado → retira un ajuste obsoleto (guardado
+        por revisión): ya no hay nada que ajustar."""
+    did = cur["id"]
+    paid = cur.get("courier_share_paid_usdt")
+    frozen = float(paid if paid is not None
+                   else cur.get("courier_share_usdt") or 0)
+    rev = int(fee_rev or 0)
+    rev_guard = {"$or": [
+        {"fee_adjustment_pending": {"$exists": False}},
+        {"fee_adjustment_pending.fee_rev": {"$exists": False}},
+        {"fee_adjustment_pending.fee_rev": {"$lt": rev}},
+    ]}
+    if float(courier_share) == frozen:
+        await db.deliveries.update_one(
+            {"id": did, "fee_adjustment_pending": {"$exists": True},
+             "$or": [{"fee_adjustment_pending.fee_rev": {"$exists": False}},
+                     {"fee_adjustment_pending.fee_rev": {"$lt": rev}}]},
+            {"$unset": {"fee_adjustment_pending": ""},
+             "$push": {"timeline": {
+                 "status": "fee_conflict_resolved", "at": now, "by": None,
+                 "note": ("La tarifa volvió al importe ya liquidado — "
+                          "el ajuste pendiente quedó sin efecto.")}}})
+        return
     res = await db.deliveries.update_one(
-        {"id": did, "fee_adjustment_pending": {"$exists": False}},
+        {"id": did, **rev_guard},
         {"$set": {"fee_adjustment_pending": {
             "fee_usdt": float(fee_usdt),
-            "courier_share_usdt": float(courier_share), "at": now}},
+            "courier_share_usdt": float(courier_share),
+            "fee_rev": rev, "at": now}},
          "$push": {"timeline": {
              "status": "fee_conflict", "at": now, "by": None,
              "note": (f"La tarifa cambió a {fee_usdt} USDT después de "

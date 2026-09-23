@@ -2,7 +2,8 @@
 
 Coverage:
  1. Open batch WITH items → closed + auto_closed=True + closed_at set.
- 2. Open batch WITHOUT items → deleted (no blank history entries).
+ 2. Open batch WITHOUT items → soft-discarded (no blank history entries,
+    sin borrado físico).
  3. Already-closed batches are untouched (no auto_closed flag).
  4. Second run is a no-op for the already auto-closed batch.
 """
@@ -35,7 +36,7 @@ async def test_daily_autoclose():
     await _cleanup()
     await db.vip_batches.insert_many([
         _batch("test_ac_a"),                     # open + 1 item  → close
-        _batch("test_ac_b"),                     # open + 0 items → delete
+        _batch("test_ac_b"),                     # open + 0 items → discard
         _batch("test_ac_c", status="closed"),    # closed         → untouched
     ])
     await db.vip_batch_items.insert_one({
@@ -54,7 +55,9 @@ async def test_daily_autoclose():
     assert a.get("auto_closed") is True
     assert a.get("closed_at")
 
-    assert await db.vip_batches.find_one({"id": "test_ac_b"}) is None
+    b = await db.vip_batches.find_one({"id": "test_ac_b"}, {"_id": 0})
+    assert b["status"] == "discarded"
+    assert b.get("discarded_at")
 
     c = await db.vip_batches.find_one({"id": "test_ac_c"}, {"_id": 0})
     assert c["status"] == "closed"

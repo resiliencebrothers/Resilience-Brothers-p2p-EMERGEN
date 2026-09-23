@@ -534,6 +534,9 @@ async def list_vip_batches(request: Request, status: Optional[str] = None,
     q: dict[str, Any] = {"vip_user_id": user["user_id"]}
     if status in ("open", "closed"):
         q["status"] = status
+    else:
+        # Los lotes vacíos descartados por el autocierre no ensucian el historial.
+        q["status"] = {"$ne": "discarded"}
     cursor = db.vip_batches.find(q, {"_id": 0}).sort("created_at", -1).limit(min(max(1, limit), 200))
     return {"items": [serialize_doc(d) async for d in cursor]}
 

@@ -212,13 +212,16 @@ async def admin_deliveries_metrics(request: Request,
         q.setdefault("created_at", {})["$lt"] = nxt
     if courier_id:
         q["courier_id"] = courier_id
-    rows = await db.deliveries.find(q, {
+    # MS04 — los agregados se calculan sobre TODOS los documentos del filtro
+    # (cursor completo, sin tope): con 2.001 confirmaciones la pestaña
+    # informa 2.001, igual que el resumen diario.
+    cursor = db.deliveries.find(q, {
         "_id": 0, "id": 1, "status": 1, "created_at": 1, "timeline": 1,
         "incidents": 1, "fee_usdt": 1, "courier_share_usdt": 1,
         "platform_share_usdt": 1, "payout_credited": 1,
         "fee_paid_usdt": 1, "courier_share_paid_usdt": 1,
         "platform_share_paid_usdt": 1,
-        "settlement_pending": 1}).to_list(2000)
+        "settlement_pending": 1}).batch_size(1000)
 
     def _first_at(tl: list, status: str) -> Optional[str]:
         for e in (tl or []):
@@ -243,7 +246,9 @@ async def admin_deliveries_metrics(request: Request,
     cancelled = 0
     finished = 0
     fees = courier_total = platform_total = 0.0
-    for d in rows:
+    total = 0
+    async for d in cursor:
+        total += 1
         tl = d.get("timeline") or []
         accepted_at = _first_at(tl, "accepted")
         delivered_at = _first_at(tl, "delivered")
@@ -283,7 +288,6 @@ async def admin_deliveries_metrics(request: Request,
     def _avg(xs: list) -> Optional[float]:
         return round(sum(xs) / len(xs), 1) if xs else None
 
-    total = len(rows)
     return {
         "total": total,
         "confirmed": finished,
@@ -319,9 +323,12 @@ async def claim_delivery(did: str, request: Request) -> Any:
         ref = await db[ref_coll].find_one({"id": existing["ref_id"]},
                                           {"_id": 0, "status": 1})
         if ref and ref.get("status") in TERMINAL_REF_STATUSES:
-            await handle_origin_rejected(
-                existing["kind"], existing["ref_id"],
-                note=f"origen {ref.get('status')}")
+            try:
+                await handle_origin_rejected(
+                    existing["kind"], existing["ref_id"],
+                    note=f"origen {ref.get('status')}")
+            except RuntimeError:
+                pass  # estado en disputa: el healer converge; el 409 informa
             raise HTTPException(
                 status_code=409,
                 detail=("La operación de origen fue rechazada/cancelada — "
@@ -496,8 +503,11 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
         ref = await db[ref_coll].find_one({"id": d["ref_id"]},
                                           {"_id": 0, "status": 1})
         if ref and ref.get("status") in TERMINAL_REF_STATUSES:
-            await handle_origin_rejected(d["kind"], d["ref_id"],
-                                         note=f"origen {ref.get('status')}")
+            try:
+                await handle_origin_rejected(d["kind"], d["ref_id"],
+                                             note=f"origen {ref.get('status')}")
+            except RuntimeError:
+                pass  # estado en disputa: el healer converge; el 409 informa
             raise HTTPException(
                 status_code=409,
                 detail=("La operación de origen fue rechazada/cancelada — "

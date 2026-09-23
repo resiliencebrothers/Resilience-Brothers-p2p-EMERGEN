@@ -1977,3 +1977,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-23 · iter295 — Revisión de mensajería 56054ab (MS01–MS04) CERRADA
+- MS01 ajustes de comisión rev-aware que siguen al último objetivo y nunca desaparecen tras confirmar; MS02 verificación post-inserción que impide publicar repartos con tarifas anuladas; MS03 la cancelación por rechazo jamás sobrescribe una recogida sellada (incidencia visible); MS04 métricas sin tope de 2.000.
+- Tests: `tests/test_iter295_ms01_ms04.py` **14/14** (10/14 fallan sin el fix) · `make test-critical` **618/619** (1 flake preexistente iter269, pasa aislado) · mypy/ruff limpios.
+- Detalle completo en CHANGELOG.md (iter295).
+
+## Backlog priorizado (actualizado 2026-09-23, tras iter295)
+- HECHO iter295: revisión mensajería MS01–MS04 cerrada.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

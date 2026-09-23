@@ -233,7 +233,8 @@ async def run_monthly_vip_ledger_email(db):
 async def run_daily_batch_autoclose(db):
     """Daily 00:00 America/Havana — close every open VIP batch so each batch
     accounts for exactly one day of orders. Open batches WITHOUT items are
-    deleted instead, so the history never accumulates blank entries."""
+    soft-discarded (status=discarded, nunca borrado físico) so the history
+    never shows blank entries but the record remains recoverable."""
     now = datetime.now(timezone.utc).isoformat()
     open_batches = await db.vip_batches.find(
         {"status": "open"}, {"_id": 0, "id": 1, "vip_user_id": 1},
@@ -243,7 +244,11 @@ async def run_daily_batch_autoclose(db):
     for b in open_batches:
         items = await db.vip_batch_items.count_documents({"batch_id": b["id"]})
         if items == 0:
-            await db.vip_batches.delete_one({"id": b["id"]})
+            await db.vip_batches.update_one(
+                {"id": b["id"], "status": "open"},
+                {"$set": {"status": "discarded", "discarded_at": now,
+                          "updated_at": now, "auto_closed": True}},
+            )
             deleted += 1
         else:
             await db.vip_batches.update_one(
