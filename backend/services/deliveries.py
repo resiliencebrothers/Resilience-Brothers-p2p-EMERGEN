@@ -638,21 +638,34 @@ async def _record_fee_adjustment(cur: dict, fee_usdt: float,
                  {"fee_adjustment_pending.fee_rev": {"$lt": rev}}]},
     ]}
     if float(courier_share) == frozen:
-        res0 = await db.deliveries.update_one(
-            {"id": did, "fee_adjustment_pending": {"$exists": True},
-             **rev_guard},
+        # MV01 — decisión «sin ajuste» en UNA SOLA escritura condicionada por
+        # revisión: avanza `fee_adjustment_rev` y retira cualquier ajuste
+        # anterior de forma INDIVISIBLE, exista o no al iniciar la petición.
+        # Un ajuste viejo que se cuele entre la lectura y esta escritura cae
+        # aquí igualmente. La igualdad (`$lte`) permite además REPARAR una
+        # fila ya incoherente (revisión vigente con ajuste obsoleto dentro)
+        # al repetir la sincronización de la revisión vigente; un ajuste
+        # legítimo más nuevo jamás se borra (su fee_rev no es menor).
+        no_adjust_guard = {"$and": [
+            {"$or": [{"fee_adjustment_rev": {"$exists": False}},
+                     {"fee_adjustment_rev": {"$lte": rev}}]},
+            {"$or": [{"fee_adjustment_pending": {"$exists": False}},
+                     {"fee_adjustment_pending.fee_rev": {"$exists": False}},
+                     {"fee_adjustment_pending.fee_rev": {"$lt": rev}}]},
+        ]}
+        before = await db.deliveries.find_one_and_update(
+            {"id": did, **no_adjust_guard},
             {"$set": {"fee_adjustment_rev": rev},
-             "$unset": {"fee_adjustment_pending": ""},
-             "$push": {"timeline": {
-                 "status": "fee_conflict_resolved", "at": now, "by": None,
-                 "note": ("La tarifa volvió al importe ya liquidado — "
-                          "el ajuste pendiente quedó sin efecto.")}}})
-        if res0.matched_count == 0:
-            # Sin ajuste que retirar: la decisión avanza la revisión
-            # igualmente para cercar a cualquier escritor atrasado.
+             "$unset": {"fee_adjustment_pending": ""}},
+            projection={"_id": 0, "fee_adjustment_pending": 1})
+        if before and before.get("fee_adjustment_pending"):
+            # Nota de cierre solo cuando de verdad se retiró un ajuste.
             await db.deliveries.update_one(
-                {"id": did, **rev_guard},
-                {"$set": {"fee_adjustment_rev": rev}})
+                {"id": did},
+                {"$push": {"timeline": {
+                    "status": "fee_conflict_resolved", "at": now, "by": None,
+                    "note": ("La tarifa volvió al importe ya liquidado — "
+                             "el ajuste pendiente quedó sin efecto.")}}})
         return
     res = await db.deliveries.update_one(
         {"id": did, **rev_guard},

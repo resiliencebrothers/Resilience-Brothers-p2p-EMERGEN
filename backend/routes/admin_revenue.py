@@ -344,27 +344,38 @@ def _merge_vip_batches_into_roles(by_role: dict, vip_batches: dict) -> None:
         r["volume_usdt"] = round(r["volume_usdt"], 4)
 
 
-def _revenue_summary_payload(*, orders_count: int, batch_items_count: int,
-                             total_profit_usdt: float, total_volume_usdt: float,
-                             marketplace: dict, conversion_fees: dict,
-                             vip_batches: dict, courier: dict,
-                             pair_items: list, by_role: dict,
-                             missing_rate_pairs: set) -> dict:
-    """Ensambla la respuesta de GET /admin/revenue a partir de los agregados."""
+def _grand_revenue_totals(total_profit_usdt: float, total_volume_usdt: float,
+                          sources: dict) -> tuple:
+    """Ganancia total y volumen total combinando todas las fuentes."""
     grand_total_profit = (
         total_profit_usdt
-        + marketplace["total_profit_usd"]
-        + conversion_fees["total_usdt"]
-        + vip_batches["total_usdt"]
-        + courier["platform_usdt"]
+        + sources["marketplace"]["total_profit_usd"]
+        + sources["conversion_fees"]["total_usdt"]
+        + sources["vip_batches"]["total_usdt"]
+        + sources["courier"]["platform_usdt"]
     )
     total_volume_all = (
         total_volume_usdt
-        + vip_batches.get("volume_usdt", 0.0)
-        + marketplace["total_revenue_usd"]
-        + conversion_fees.get("volume_usdt", 0.0)
-        + courier["total_fees_usdt"]
+        + sources["vip_batches"].get("volume_usdt", 0.0)
+        + sources["marketplace"]["total_revenue_usd"]
+        + sources["conversion_fees"].get("volume_usdt", 0.0)
+        + sources["courier"]["total_fees_usdt"]
     )
+    return grand_total_profit, total_volume_all
+
+
+def _revenue_summary_payload(*, orders_count: int, batch_items_count: int,
+                             total_profit_usdt: float, total_volume_usdt: float,
+                             sources: dict, pair_items: list, by_role: dict,
+                             missing_rate_pairs: set) -> dict:
+    """Ensambla la respuesta de GET /admin/revenue a partir de los agregados.
+    `sources` agrupa marketplace / conversion_fees / vip_batches / courier."""
+    marketplace = sources["marketplace"]
+    conversion_fees = sources["conversion_fees"]
+    vip_batches = sources["vip_batches"]
+    courier = sources["courier"]
+    grand_total_profit, total_volume_all = _grand_revenue_totals(
+        total_profit_usdt, total_volume_usdt, sources)
     return {
         "total_profit_usdt": round(grand_total_profit, 4),
         "p2p_profit_usdt": round(total_profit_usdt, 4),
@@ -435,8 +446,9 @@ async def admin_revenue(request: Request, days: Optional[int] = None) -> Any:
         orders_count=len(orders), batch_items_count=batch_items_count,
         total_profit_usdt=total_profit_usdt,
         total_volume_usdt=total_volume_usdt,
-        marketplace=marketplace, conversion_fees=conversion_fees,
-        vip_batches=vip_batches, courier=courier,
+        sources={"marketplace": marketplace,
+                 "conversion_fees": conversion_fees,
+                 "vip_batches": vip_batches, "courier": courier},
         pair_items=pair_items, by_role=by_role,
         missing_rate_pairs=missing_rate_pairs,
     )
@@ -464,17 +476,11 @@ async def _fetch_conversion_fees(
     ).to_list(20000)
 
 
-async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
-                                    year: Optional[int] = None, month: Optional[int] = None) -> Any:
-    """Build per-day or per-month buckets for the admin revenue dashboard.
-
-    Filters:
-      - `days`: restrict to last N days (preferred for daily charts).
-      - `year`/`month`: restrict to a specific calendar month (used for the monthly export).
-    """
+def _timeseries_window_queries(days: Optional[int], year: Optional[int],
+                               month: Optional[int]) -> tuple:
+    """Filtros de ventana para órdenes y canjes del dashboard de ingresos."""
     order_q: dict = {"status": {"$in": ["approved", "completed"]}}
     redemption_q: dict = {"status": "delivered"}
-
     if year and month:
         start = datetime(year, month, 1, tzinfo=timezone.utc)
         end = (datetime(year + 1, 1, 1, tzinfo=timezone.utc)
@@ -485,13 +491,12 @@ async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
         cutoff = (now_utc() - timedelta(days=days)).isoformat()
         order_q["updated_at"] = {"$gte": cutoff}
         redemption_q["created_at"] = {"$gte": cutoff}
+    return order_q, redemption_q
 
-    orders = await db.orders.find(order_q, {"_id": 0}).to_list(20000)
-    redemptions = await db.redemptions.find(redemption_q, {"_id": 0}).to_list(20000)
-    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
-    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
-    fx = await build_rate_lookup()
 
+async def _order_profit_map(orders: list, rate_by_pair: dict,
+                            fx: dict) -> dict:
+    """Ganancia en USDT por orden; anota `_volume_usdt` en cada orden."""
     profit_map: dict = {}
     for o in orders:
         o["_volume_usdt"] = convert_to_usdt(o["amount_from"], o["from_code"], fx) or 0.0
@@ -501,6 +506,26 @@ async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
             continue
         prof_usdt = convert_to_usdt(prof["amount"], prof["currency"], fx) or 0.0
         profit_map[o["id"]] = prof_usdt
+    return profit_map
+
+
+async def build_revenue_timeseries(granularity: str, days: Optional[int] = None,
+                                    year: Optional[int] = None, month: Optional[int] = None) -> Any:
+    """Build per-day or per-month buckets for the admin revenue dashboard.
+
+    Filters:
+      - `days`: restrict to last N days (preferred for daily charts).
+      - `year`/`month`: restrict to a specific calendar month (used for the monthly export).
+    """
+    order_q, redemption_q = _timeseries_window_queries(days, year, month)
+
+    orders = await db.orders.find(order_q, {"_id": 0}).to_list(20000)
+    redemptions = await db.redemptions.find(redemption_q, {"_id": 0}).to_list(20000)
+    rates = await db.rates.find({}, {"_id": 0}).to_list(500)
+    rate_by_pair = {(r["from_code"], r["to_code"]): r for r in rates}
+    fx = await build_rate_lookup()
+
+    profit_map = await _order_profit_map(orders, rate_by_pair, fx)
 
     conversion_fees = await _fetch_conversion_fees(year, month, days)
     vip_batch_margins = await _fetch_vip_batch_margins(year, month, days)

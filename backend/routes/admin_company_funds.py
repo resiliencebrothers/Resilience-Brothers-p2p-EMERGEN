@@ -1118,21 +1118,11 @@ async def company_funds_profit_detail(currency: str, request: Request) -> Any:
     }
 
 
-@router.post("/admin/company-withdrawals")
-async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: Request) -> Any:
-    actor = await require_permission(request, "company_funds")
-    currency = payload.currency.upper()
-    _enforce_employee_currency_scope(actor, currency)
-    # iter285 — pagar al crear equivale a marcar «pagado»: solo admin.
-    if payload.pay_now and actor.get("role") != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Solo un administrador puede pagar el retiro al crearlo")
-    await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
-    # V01 — crear y pagar contienden sobre el MISMO cerrojo por moneda: el
-    # disponible se evalúa DENTRO de la sección crítica (nunca sobre una foto
-    # vieja) y la reserva se comprueba y consume en un único update atómico
-    # contra el presupuesto compartido (services/company_fund_budget).
+async def _reserve_company_funds(currency: str, amount: float) -> None:
+    """V01 — crear y pagar contienden sobre el MISMO cerrojo por moneda: el
+    disponible se evalúa DENTRO de la sección crítica (nunca sobre una foto
+    vieja) y la reserva se comprueba y consume en un único update atómico
+    contra el presupuesto compartido (services/company_fund_budget)."""
     from services import company_fund_budget as fund_budget
     lock = await fund_budget.acquire_pay_lock_wait(currency)
     if not lock:
@@ -1150,8 +1140,7 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
         avail = float(row["balance_available"]) if row else 0.0
         # H02/V01 — los retiros aún no pagados (pending/approved) comprometen
         # el fondo; la reserva se reclama atómicamente (guard + $inc).
-        if not await fund_budget.claim_reservation(
-                currency, float(payload.amount), avail):
+        if not await fund_budget.claim_reservation(currency, amount, avail):
             reserved = await fund_budget.current_reserved(currency)
             disponible = round(avail - reserved, 4)
             raise HTTPException(
@@ -1163,6 +1152,21 @@ async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: R
             )
     finally:
         await fund_budget.release_pay_lock(currency, lock)
+
+
+@router.post("/admin/company-withdrawals")
+async def create_company_withdrawal(payload: CompanyWithdrawalCreate, request: Request) -> Any:
+    actor = await require_permission(request, "company_funds")
+    currency = payload.currency.upper()
+    _enforce_employee_currency_scope(actor, currency)
+    # iter285 — pagar al crear equivale a marcar «pagado»: solo admin.
+    if payload.pay_now and actor.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede pagar el retiro al crearlo")
+    await _enforce_totp_step_up(actor, payload.totp_code, action_label="retiro del fondo")
+    from services import company_fund_budget as fund_budget
+    await _reserve_company_funds(currency, float(payload.amount))
     try:
         cw = CompanyWithdrawal(
             amount=payload.amount,
@@ -1363,6 +1367,40 @@ async def _validate_paid_from_balance(cw: dict, payload: dict,
     update_doc.pop("paid_from_account_label", None)
 
 
+async def _validate_payment_denominations(cw: dict, payload: dict,
+                                          update_doc: Dict[str, Any]) -> None:
+    """iter277/S02 — pago en EFECTIVO: el servidor exige el desglose de
+    billetes (no basta con la interfaz) y S04 — esos billetes deben existir
+    en el inventario conocido de la cuenta, bajo el cerrojo de gasto."""
+    acc_id = str(update_doc.get("paid_from_account_id") or "")
+    acc_doc = await db.fund_accounts.find_one(
+        {"id": acc_id}, {"_id": 0}) if acc_id else None
+    valid = (await get_cash_denominations()).get(cw["currency"])
+    raw_denoms = payload.get("denominations")
+    paying_cash = bool(acc_doc and acc_doc.get("method") == "cash" and valid)
+    if paying_cash and not raw_denoms:
+        label = update_doc.get("paid_from_account_label") or acc_id
+        raise HTTPException(
+            status_code=400,
+            detail=(f"El pago sale de la caja «{label}»: indica el "
+                    "desglose de billetes entregados."))
+    if not raw_denoms:
+        return
+    if not valid:
+        raise HTTPException(
+            status_code=400,
+            detail="El desglose de billetes solo aplica a CUP y USD")
+    denoms = _validate_denominations(
+        cw["currency"], raw_denoms, float(cw["amount"]), valid)
+    if paying_cash:
+        from services.account_denoms import assert_bills_available
+        await assert_bills_available(
+            acc_id, denoms,
+            str(update_doc.get("paid_from_account_label") or acc_id),
+            "este pago")
+    update_doc["denominations"] = denoms
+
+
 async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
                                   update_doc: Dict[str, Any]) -> None:
     """V01 — pago bajo cerrojo exclusivo por moneda: el disponible se evalúa
@@ -1389,37 +1427,9 @@ async def _pay_company_withdrawal(cwid: str, cw: dict, payload: dict,
         await _assert_available_company_funds(cw)
         update_doc.update(await _paid_from_account_fields(payload, cw))
         await _validate_paid_from_balance(cw, payload, update_doc)
-        # iter277/S02 — pago en EFECTIVO: el servidor exige el desglose de
-        # billetes (no basta con la interfaz) y S04 — esos billetes deben
-        # existir en el inventario conocido de la cuenta, bajo este mismo
-        # cerrojo de gasto.
-        acc_id = str(update_doc.get("paid_from_account_id") or "")
-        acc_doc = await db.fund_accounts.find_one(
-            {"id": acc_id}, {"_id": 0}) if acc_id else None
-        valid = (await get_cash_denominations()).get(cw["currency"])
-        raw_denoms = payload.get("denominations")
-        paying_cash = bool(acc_doc and acc_doc.get("method") == "cash"
-                           and valid)
-        if paying_cash and not raw_denoms:
-            label = update_doc.get("paid_from_account_label") or acc_id
-            raise HTTPException(
-                status_code=400,
-                detail=(f"El pago sale de la caja «{label}»: indica el "
-                        "desglose de billetes entregados."))
-        if raw_denoms:
-            if not valid:
-                raise HTTPException(
-                    status_code=400,
-                    detail="El desglose de billetes solo aplica a CUP y USD")
-            denoms = _validate_denominations(
-                cw["currency"], raw_denoms, float(cw["amount"]), valid)
-            if paying_cash:
-                from services.account_denoms import assert_bills_available
-                await assert_bills_available(
-                    acc_id, denoms,
-                    str(update_doc.get("paid_from_account_label") or acc_id),
-                    "este pago")
-            update_doc["denominations"] = denoms
+        # iter277/S02/S04 — pago en efectivo: desglose de billetes
+        # obligatorio y verificado contra el inventario, bajo este cerrojo.
+        await _validate_payment_denominations(cw, payload, update_doc)
         update_doc["paid_at"] = iso(now_utc())
         # M01 — autoridad indivisible: el permiso de gasto se escribe en el
         # PRESUPUESTO condicionado al cerrojo vigente, justo antes de la
@@ -1662,17 +1672,11 @@ async def add_denomination_config(payload: DenominationAdd,
     return cfg
 
 
-@router.get("/admin/company-funds/movements")
-async def unified_fund_movements(request: Request, tipo: str = "all",
-                                 status: str = "all", q: str = "",
-                                 skip: int = 0, limit: int = 50) -> Any:
-    """S07 — historial UNIFICADO (retiros del fondo + depósitos + salidas
-    históricas por ajuste) con filtros y paginación en el SERVIDOR: la tabla
-    puede localizar cualquier registro antiguo y muestra el total real."""
+def _unified_movements_queries(actor: dict, tipo: str, status: str,
+                               q: str) -> tuple:
+    """S07 — construye los filtros de retiros (wq) y ajustes (aq) y decide
+    qué colecciones participan según tipo/estado/alcance del empleado."""
     import re as _re
-    actor = await require_permission(request, "company_funds")
-    skip = max(0, int(skip))
-    limit = max(1, min(int(limit), 200))
     scope: Optional[List[str]] = None
     if actor.get("role") == "employee":
         allowed = actor.get("allowed_currencies") or []
@@ -1697,6 +1701,30 @@ async def unified_fund_movements(request: Request, tipo: str = "all",
     include_w = tipo != "deposits"
     # un filtro de estado solo aplica a retiros con flujo de estados
     include_a = status == "all"
+    return wq, aq, include_w, include_a
+
+
+def _merge_movement_rows(w_rows: list, a_rows: list) -> list:
+    merged = (
+        [{"kind": "withdrawal", **w} for w in w_rows]
+        + [{"kind": "deposit" if a.get("adjustment_type") == "inflow"
+            else "adjust_out", **a} for a in a_rows])
+    merged.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return merged
+
+
+@router.get("/admin/company-funds/movements")
+async def unified_fund_movements(request: Request, tipo: str = "all",
+                                 status: str = "all", q: str = "",
+                                 skip: int = 0, limit: int = 50) -> Any:
+    """S07 — historial UNIFICADO (retiros del fondo + depósitos + salidas
+    históricas por ajuste) con filtros y paginación en el SERVIDOR: la tabla
+    puede localizar cualquier registro antiguo y muestra el total real."""
+    actor = await require_permission(request, "company_funds")
+    skip = max(0, int(skip))
+    limit = max(1, min(int(limit), 200))
+    wq, aq, include_w, include_a = _unified_movements_queries(
+        actor, tipo, status, q)
     fetch_n = skip + limit
     w_rows: list = []
     a_rows: list = []
@@ -1709,11 +1737,7 @@ async def unified_fund_movements(request: Request, tipo: str = "all",
         a_rows = await db.company_fund_adjustments.find(aq, {"_id": 0}).sort(
             "created_at", -1).to_list(fetch_n)
         total += await db.company_fund_adjustments.count_documents(aq)
-    merged = (
-        [{"kind": "withdrawal", **w} for w in w_rows]
-        + [{"kind": "deposit" if a.get("adjustment_type") == "inflow"
-            else "adjust_out", **a} for a in a_rows])
-    merged.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    merged = _merge_movement_rows(w_rows, a_rows)
     return {"rows": merged[skip:skip + limit], "total": total,
             "skip": skip, "limit": limit}
 

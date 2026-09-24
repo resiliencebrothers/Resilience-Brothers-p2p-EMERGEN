@@ -2012,3 +2012,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-24 · iter298 — Code review + variante MV01 (52236b1) CERRADA
+- Code review: 4 hallazgos verificados como falsos positivos (sin acción); refactor mecánico de 9 funciones complejas en admin.py/admin_company_funds.py/admin_revenue.py (helpers extraídos, comportamiento idéntico); división de archivos de rutas descartada por riesgo.
+- Variante MV01: decisión «sin ajuste» ahora es una única escritura indivisible con guarda `$lte` — el ajuste viejo colado entre lecturas se retira, las filas incoherentes se reparan al repetir la revisión vigente y los ajustes legítimos más nuevos quedan intactos. El auditor ya dio por corregidos RT01, RT02 y MV02.
+- Tests: iter297 **9/9** (reparación falla en rojo sin el fix) · `make test-critical` **634/634, cero fallos** · mypy limpio.
+
+## Backlog priorizado (actualizado 2026-09-24, tras iter298)
+- HECHO iter298: variante MV01 cerrada + code review aplicado — 634/634 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

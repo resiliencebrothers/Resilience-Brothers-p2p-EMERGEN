@@ -231,6 +231,142 @@ class TestMV01PersistentAdjustmentRev:
             f"el escritor antiguo (rev 3) no puede recrearlo: {d.get('fee_adjustment_pending')}"
         assert d.get("fee_adjustment_rev") == 4
 
+    def test_old_adjustment_between_no_adjust_read_and_write_is_removed(self):
+        """Variante del informe 52236b1: el escritor antiguo (tarifa 20,
+        rev 2) cuela su ajuste ENTRE la comprobación de la decisión «sin
+        ajuste» (tarifa 10, rev 3) y su escritura. La decisión nueva es UNA
+        sola escritura indivisible: retira el ajuste colado igualmente.
+        Final: tarifa 10, pago 8, revisión persistente 3, NINGÚN ajuste."""
+        did, rid = _plant_delivery(
+            status="confirmed", courier_id=COURIER_A, fee=10.0,
+            extra={"payout_credited": True, "courier_share_paid_usdt": 8.0,
+                   "fee_paid_usdt": 10.0, "platform_share_paid_usdt": 2.0,
+                   "fee_rev": 1})
+        _plant_redemption(rid, fee=20.0, rev=2)
+
+        async def _f():
+            import services.deliveries as sd
+            real_db = sd.db
+            old_hit, old_go = asyncio.Event(), asyncio.Event()
+            fresh_hit, fresh_go = asyncio.Event(), asyncio.Event()
+
+            class _Deliveries:
+                def __getattr__(self, n):
+                    return getattr(real_db.deliveries, n)
+
+                async def update_one(self, q, u, **kw):
+                    adj = (u.get("$set") or {}).get("fee_adjustment_pending")
+                    if adj and adj.get("fee_usdt") == 20.0 \
+                            and not old_hit.is_set():
+                        old_hit.set()
+                        await old_go.wait()
+                    return await real_db.deliveries.update_one(q, u, **kw)
+
+                async def find_one_and_update(self, q, u, **kw):
+                    if "fee_adjustment_pending" in (u.get("$unset") or {}) \
+                            and not fresh_hit.is_set():
+                        fresh_hit.set()
+                        await fresh_go.wait()
+                    return await real_db.deliveries.find_one_and_update(
+                        q, u, **kw)
+
+            class _DB:
+                deliveries = _Deliveries()
+
+                def __getattr__(self, n):
+                    return getattr(real_db, n)
+
+                def __getitem__(self, n):
+                    return real_db[n]
+
+            sd.db = _DB()
+            try:
+                old = asyncio.create_task(sd.upsert_delivery_for_charge(
+                    "redemption", {"id": rid}, km=20.0, fee_usdt=20.0,
+                    fee_rev=2))
+                await old_hit.wait()
+                # Decisión nueva: volver a 10 (rev 3) — pausada justo antes
+                # de SU escritura «sin ajuste».
+                await real_db.redemptions.update_one(
+                    {"id": rid}, {"$set": {"courier_fee_usdt": 10.0,
+                                           "courier_fee_usd": 10.0,
+                                           "courier_fee_rev": 3}})
+                fresh = asyncio.create_task(sd.upsert_delivery_for_charge(
+                    "redemption", {"id": rid}, km=20.0, fee_usdt=10.0,
+                    fee_rev=3))
+                await fresh_hit.wait()
+                # El escritor antiguo guarda su ajuste (16, rev 2) en medio…
+                old_go.set()
+                await old
+                cur = await real_db.deliveries.find_one({"id": did})
+                assert (cur.get("fee_adjustment_pending") or {}).get(
+                    "courier_share_usdt") == 16.0, \
+                    "precondición: el ajuste viejo quedó colado"
+                # …y la decisión nueva se reanuda: su única escritura lo
+                # retira de forma indivisible.
+                fresh_go.set()
+                await fresh
+            finally:
+                sd.db = real_db
+        _run(_f)
+        d = _db().deliveries.find_one({"id": did})
+        assert not d.get("fee_adjustment_pending"), \
+            "el ajuste colado entre lecturas DEBE quedar retirado"
+        assert d.get("fee_adjustment_rev") == 3
+        assert d["courier_share_paid_usdt"] == 8.0
+        # Recuperar y repetir la revisión vigente: sin duplicados.
+        _upsert(rid, fee=10.0, rev=3)
+        _upsert(rid, fee=10.0, rev=3)
+        d = _db().deliveries.find_one({"id": did})
+        assert not d.get("fee_adjustment_pending")
+        resolved = [e for e in d["timeline"]
+                    if e.get("status") == "fee_conflict_resolved"]
+        assert len(resolved) == 1, "una sola nota de cierre, sin duplicados"
+
+    def test_incoherent_row_repaired_by_current_revision_replay(self):
+        """Fila YA incoherente (revisión vigente 2 con ajuste obsoleto de
+        rev 1 dentro): repetir la sincronización de la revisión vigente la
+        repara — el ajuste obsoleto se retira."""
+        did, rid = _plant_delivery(
+            status="confirmed", courier_id=COURIER_A, fee=10.0,
+            extra={"payout_credited": True, "courier_share_paid_usdt": 8.0,
+                   "fee_paid_usdt": 10.0, "platform_share_paid_usdt": 2.0,
+                   "fee_rev": 1, "fee_adjustment_rev": 2,
+                   "fee_adjustment_pending": {
+                       "fee_usdt": 20.0, "courier_share_usdt": 16.0,
+                       "fee_rev": 1, "at": _iso()}})
+        _plant_redemption(rid, fee=10.0, rev=2)
+
+        async def _sync():
+            from services.deliveries import sync_delivery_from_doc
+            await sync_delivery_from_doc("redemptions", rid)
+        _run(_sync)
+        d = _db().deliveries.find_one({"id": did})
+        assert not d.get("fee_adjustment_pending"), \
+            "la reparación retira el ajuste obsoleto de la fila incoherente"
+        assert d.get("fee_adjustment_rev") == 2
+        assert d["courier_share_paid_usdt"] == 8.0
+
+    def test_repair_never_deletes_newer_legitimate_adjustment(self):
+        """Control: una decisión «sin ajuste» ATRASADA (rev 2) no puede
+        borrar un ajuste legítimo más nuevo (rev 3)."""
+        did, rid = _plant_delivery(
+            status="confirmed", courier_id=COURIER_A, fee=10.0,
+            extra={"payout_credited": True, "courier_share_paid_usdt": 8.0,
+                   "fee_paid_usdt": 10.0, "platform_share_paid_usdt": 2.0,
+                   "fee_rev": 1, "fee_adjustment_rev": 3,
+                   "fee_adjustment_pending": {
+                       "fee_usdt": 30.0, "courier_share_usdt": 24.0,
+                       "fee_rev": 3, "at": _iso()}})
+        _plant_redemption(rid, fee=10.0, rev=2)
+        _upsert(rid, fee=10.0, rev=2)
+        d = _db().deliveries.find_one({"id": did})
+        adj = d.get("fee_adjustment_pending")
+        assert adj and adj["courier_share_usdt"] == 24.0 \
+            and adj["fee_rev"] == 3, \
+            "el ajuste legítimo más nuevo permanece intacto"
+        assert d.get("fee_adjustment_rev") == 3
+
     def test_positive_chain_still_updates_to_latest(self):
         """Control: la cadena positiva 10→20→30 sigue dejando objetivo 24 y
         una repetición de la misma revisión no duplica nada."""

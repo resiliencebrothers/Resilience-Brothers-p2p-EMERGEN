@@ -326,6 +326,37 @@ def _validate_order_payout_evidence(order: dict, update_doc: dict, new_status: s
             )
 
 
+async def _claim_order_transition(order_id: str, prev_status: str,
+                                  new_status: str, update_doc: dict) -> None:
+    """EX02 — claim de la transición por el estado leído: una aprobación y un
+    rechazo simultáneos ya no pueden pisarse (la petición obsoleta recibe
+    conflicto y sus efectos monetarios nunca corren)."""
+    claim_filter: dict = {"id": order_id, "status": prev_status}
+    if new_status == "rejected":
+        # R01 — el rechazo compite también con el estado MONETARIO de la
+        # orden: si el abono (acumulación o residuo) ya fue reclamado —
+        # aplicado o aún en vuelo — la orden está liquidada y no se puede
+        # rechazar (regla elegida: bloquear, no compensar).
+        claim_filter["accumulated_at"] = {"$exists": False}
+        claim_filter["residue_credited_at"] = {"$exists": False}
+        claim_filter["credit_pending"] = {"$exists": False}
+    claim = await db.orders.update_one(claim_filter, {"$set": update_doc})
+    if claim.matched_count:
+        return
+    if new_status == "rejected":
+        fresh = await db.orders.find_one({"id": order_id},
+                                         {"_id": 0, "status": 1})
+        if (fresh or {}).get("status") == prev_status:
+            raise HTTPException(
+                status_code=409,
+                detail=("Esta orden ya acreditó (o está acreditando) el "
+                        "dinero al cliente: está liquidada y no se puede "
+                        "rechazar."))
+    raise HTTPException(
+        status_code=409,
+        detail="La orden cambió de estado mientras editabas; recarga.")
+
+
 @router.put("/admin/orders/{order_id}/status")
 async def update_order_status(order_id: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "orders")
@@ -343,33 +374,8 @@ async def update_order_status(order_id: str, payload: dict, request: Request) ->
                   "updated_at": iso(now_utc())}
     _collect_order_payout_evidence(payload, update_doc, order)
     _validate_order_payout_evidence(order, update_doc, new_status)
-
-    # EX02 — claim de la transición por el estado leído: una aprobación y un
-    # rechazo simultáneos ya no pueden pisarse (la petición obsoleta recibe
-    # conflicto y sus efectos monetarios nunca corren).
-    claim_filter: dict = {"id": order_id, "status": prev_status}
-    if new_status == "rejected":
-        # R01 — el rechazo compite también con el estado MONETARIO de la
-        # orden: si el abono (acumulación o residuo) ya fue reclamado —
-        # aplicado o aún en vuelo — la orden está liquidada y no se puede
-        # rechazar (regla elegida: bloquear, no compensar).
-        claim_filter["accumulated_at"] = {"$exists": False}
-        claim_filter["residue_credited_at"] = {"$exists": False}
-        claim_filter["credit_pending"] = {"$exists": False}
-    claim = await db.orders.update_one(claim_filter, {"$set": update_doc})
-    if claim.matched_count == 0:
-        if new_status == "rejected":
-            fresh = await db.orders.find_one({"id": order_id},
-                                             {"_id": 0, "status": 1})
-            if (fresh or {}).get("status") == prev_status:
-                raise HTTPException(
-                    status_code=409,
-                    detail=("Esta orden ya acreditó (o está acreditando) el "
-                            "dinero al cliente: está liquidada y no se puede "
-                            "rechazar."))
-        raise HTTPException(
-            status_code=409,
-            detail="La orden cambió de estado mientras editabas; recarga.")
+    await _claim_order_transition(order_id, prev_status, new_status,
+                                  update_doc)
     updated = await db.orders.find_one({"id": order_id}, {"_id": 0})
     await run_post_status_side_effects(updated, new_status, prev_status)
 
@@ -529,6 +535,22 @@ async def _notify_vendor_reversal(owner_id: str, r: dict, plan: dict,
         logger.error(f"vendor credit reversal notify failed: {e}")
 
 
+async def _vendor_credit_evidence_ok(r: dict, owner_id: str) -> bool:
+    """MR01 — la fecha del claim NO basta como prueba de que el dinero llegó:
+    si hay `vendor_credit_op_id` sin evidencia de aplicación, no se genera
+    deuda artificial (el abono nunca se aplicó y su intención ya no está)."""
+    op_id = str(r.get("vendor_credit_op_id") or "")
+    if not op_id:
+        return True
+    from services.balances import op_was_applied
+    if await op_was_applied(owner_id, op_id):
+        return True
+    logger.warning(
+        "vendor credit %s de canje %s sin evidencia de aplicación: "
+        "no se debita al vendedor (MR01)", op_id, r["id"])
+    return False
+
+
 async def _reverse_vendor_credit_if_any(r: dict) -> None:
     """iter217/iter257(D07) — reverso del crédito al vendedor con PLAN
     persistente: la marca `vendor_credit_reversed_at` viaja con el plan del
@@ -536,24 +558,15 @@ async def _reverse_vendor_credit_if_any(r: dict) -> None:
     (idempotente por op_id) tiene evidencia. Decisión de producto: si el
     el débito se fuerza igualmente (saldo negativo = deuda explícita del
     vendedor) — el reembolso al comprador nunca puede depender de que el
-    vendedor conserve fondos.
-    MR01 — la fecha del claim NO basta como prueba de que el dinero llegó:
-    si hay `vendor_credit_op_id` sin evidencia de aplicación, no se genera
-    deuda artificial (el abono nunca se aplicó y su intención ya no está)."""
+    vendedor conserve fondos."""
     fresh = await db.redemptions.find_one({"id": r["id"]}, {"_id": 0})
     r = fresh or r
     owner_id = r.get("vendor_owner_id") or ""
     net = float(r.get("vendor_credit_net") or 0)
     if not owner_id or not r.get("vendor_credited_at") or net <= 0:
         return
-    op_id = str(r.get("vendor_credit_op_id") or "")
-    if op_id:
-        from services.balances import op_was_applied
-        if not await op_was_applied(owner_id, op_id):
-            logger.warning(
-                "vendor credit %s de canje %s sin evidencia de aplicación: "
-                "no se debita al vendedor (MR01)", op_id, r["id"])
-            return
+    if not await _vendor_credit_evidence_ok(r, owner_id):
+        return
     settle_cur = r.get("settlement_currency") or "USD"
     plan = await _claim_vendor_reversal_plan(r, settle_cur, net)
     if not plan:
@@ -758,6 +771,44 @@ async def mark_redemption_pickup_ready(rid: str, request: Request) -> Any:
     return await db.redemptions.find_one({"id": rid}, {"_id": 0})
 
 
+def _build_redemption_transition(r: dict, rid: str, new_status: str,
+                                 note: str) -> tuple:
+    """Construye el update y el filtro del claim atómico de la transición."""
+    sets: dict = {"status": new_status, "admin_note": note}
+    if new_status == "delivered":
+        sets["delivered_at"] = iso(now_utc())
+    update: dict = {"$set": sets}
+    claim_q: dict = {"id": rid, "status": r["status"]}
+    if new_status == "rejected":
+        sets["rejection_flow_started"] = True
+        # iter256(S02) — señal explícita de efectos pendientes + ciclo de
+        # rechazo (los op_ids de stock/inventario son únicos por ciclo).
+        sets["rejection_effects_done"] = False
+        update["$inc"] = {"rejection_cycle": 1}
+        # R02 — sin cobro de mensajería EN VUELO: el reembolso se calcularía
+        # con una tarifa aún no demostrada (el plan decide primero).
+        claim_q["courier_fee_op_pending"] = {"$exists": False}
+    return claim_q, update
+
+
+async def _raise_redemption_claim_conflict(rid: str, r: dict,
+                                           new_status: str) -> None:
+    """Quien pierde la carrera del claim recibe el 409 que explica por qué."""
+    if new_status == "rejected":
+        fresh = await db.redemptions.find_one(
+            {"id": rid}, {"_id": 0, "status": 1,
+                          "courier_fee_op_pending": 1})
+        if (fresh or {}).get("status") == r["status"] \
+                and (fresh or {}).get("courier_fee_op_pending"):
+            raise HTTPException(
+                status_code=409,
+                detail=("Hay un cobro de mensajería en curso en este "
+                        "canje; espera unos segundos y reintenta."))
+    raise HTTPException(
+        status_code=409,
+        detail="El canje cambió de estado mientras editabas; recarga.")
+
+
 async def _transition_redemption(r: dict, rid: str, new_status: str,
                                  note: str, actor: dict) -> None:
     """iter254(R01) — validaciones primero; luego claim ATÓMICO de la
@@ -765,36 +816,10 @@ async def _transition_redemption(r: dict, rid: str, new_status: str,
     (protegidos por sus propios claims idempotentes)."""
     if new_status == "delivered":
         await _assert_redemption_courier_ready(r)
-    sets: dict = {"status": new_status, "admin_note": note}
-    if new_status == "delivered":
-        sets["delivered_at"] = iso(now_utc())
-    update: dict = {"$set": sets}
-    if new_status == "rejected":
-        sets["rejection_flow_started"] = True
-        # iter256(S02) — señal explícita de efectos pendientes + ciclo de
-        # rechazo (los op_ids de stock/inventario son únicos por ciclo).
-        sets["rejection_effects_done"] = False
-        update["$inc"] = {"rejection_cycle": 1}
-    claim_q: dict = {"id": rid, "status": r["status"]}
-    if new_status == "rejected":
-        # R02 — sin cobro de mensajería EN VUELO: el reembolso se calcularía
-        # con una tarifa aún no demostrada (el plan decide primero).
-        claim_q["courier_fee_op_pending"] = {"$exists": False}
+    claim_q, update = _build_redemption_transition(r, rid, new_status, note)
     claim = await db.redemptions.update_one(claim_q, update)
     if claim.matched_count == 0:
-        if new_status == "rejected":
-            fresh = await db.redemptions.find_one(
-                {"id": rid}, {"_id": 0, "status": 1,
-                              "courier_fee_op_pending": 1})
-            if (fresh or {}).get("status") == r["status"] \
-                    and (fresh or {}).get("courier_fee_op_pending"):
-                raise HTTPException(
-                    status_code=409,
-                    detail=("Hay un cobro de mensajería en curso en este "
-                            "canje; espera unos segundos y reintenta."))
-        raise HTTPException(
-            status_code=409,
-            detail="El canje cambió de estado mientras editabas; recarga.")
+        await _raise_redemption_claim_conflict(rid, r, new_status)
     if new_status == "delivered":
         await _credit_vendor_for_redemption(r)
         await _record_vendor_commission_inflow(r)
@@ -845,26 +870,30 @@ async def update_redemption(rid: str, payload: dict, request: Request) -> Any:
     return updated
 
 
-async def _apply_rejection_effects(r: dict, rid: str, actor: dict) -> None:
-    """Reembolso exactamente-una-vez (claim `rejection_applied` + marker) y
-    reversos. Reejecutable (iter256/S02): si un crash dejó el rechazo a medias
-    (rejection_effects_done=False), volver a PUT 'rejected' completa lo que
-    falta sin duplicar nada (cada efecto es idempotente)."""
-    from services.credit_recovery import pending_marker, apply_and_clear
-    # MR01 — si el abono al vendedor quedó A MEDIAS (su marker sigue
-    # pendiente), se COMPLETA antes de escribir el marker del reembolso:
-    # jamás se sobrescribe una intención ajena. El reverso posterior
-    # compensará un crédito que ahora sí tiene evidencia real.
+async def _complete_stale_vendor_credit(rid: str, r: dict) -> dict:
+    """MR01 — si el abono al vendedor quedó A MEDIAS (su marker sigue
+    pendiente), se COMPLETA antes de escribir el marker del reembolso:
+    jamás se sobrescribe una intención ajena. El reverso posterior
+    compensará un crédito que ahora sí tiene evidencia real."""
+    from services.credit_recovery import apply_and_clear
     fresh0 = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or {}
     cp0 = fresh0.get("credit_pending") or {}
     if str(cp0.get("op_id") or "").startswith("vendor-credit"):
         await apply_and_clear("redemptions", rid, cp0)
         fresh0 = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or fresh0
+    return fresh0 or r
+
+
+async def _apply_rejection_effects(r: dict, rid: str, actor: dict) -> None:
+    """Reembolso exactamente-una-vez (claim `rejection_applied` + marker) y
+    reversos. Reejecutable (iter256/S02): si un crash dejó el rechazo a medias
+    (rejection_effects_done=False), volver a PUT 'rejected' completa lo que
+    falta sin duplicar nada (cada efecto es idempotente)."""
+    from services.credit_recovery import pending_marker
     # R02 — el reembolso se calcula sobre el doc FRESCO tras el claim de la
     # transición: sin plan de tarifa en vuelo, la tarifa guardada es la
     # efectivamente cobrada (jamás se devuelve una tarifa no pagada).
-    if fresh0:
-        r = fresh0
+    r = await _complete_stale_vendor_credit(rid, r)
     settle_cur = r.get("settlement_currency") or "USD"
     refund = float(r["total_usd"]) + float(r.get("courier_fee_usd") or 0.0)
     marker: Optional[dict] = pending_marker(r["user_id"], settle_cur, refund,
