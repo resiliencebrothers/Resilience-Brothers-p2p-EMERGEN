@@ -8,6 +8,7 @@ pending client orders → auto-match / manual review / unmatched.
 All endpoints gated by the dedicated `reconciliation` permission.
 """
 import logging
+import math
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
@@ -17,7 +18,8 @@ from fastapi import (APIRouter, BackgroundTasks, File, Form, HTTPException,
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from auth_utils import require_permission, iso, now_utc
+from auth_utils import (require_permission, iso, now_utc,
+                        _enforce_employee_currency_scope)
 from db_client import db
 from audit_log import log_action
 from services import storage as storage_service
@@ -71,6 +73,26 @@ def _dayfirst_for(bank_name: str, currency: str) -> bool:
     return currency.upper() in ("EUR", "MXN", "BRL")
 
 
+def _currency_scope(actor: dict) -> Optional[List[str]]:
+    """CB06 — monedas autorizadas del empleado (None = sin restricción)."""
+    if actor.get("role") != "employee":
+        return None
+    allowed = [str(c).upper() for c in (actor.get("allowed_currencies") or [])]
+    return allowed or None
+
+
+def _apply_currency_scope(actor: dict, query: Dict[str, Any]) -> None:
+    """CB06 — restringe una consulta de listado a las monedas del empleado."""
+    scope = _currency_scope(actor)
+    if not scope:
+        return
+    cur = query.get("currency")
+    if isinstance(cur, str):
+        _enforce_employee_currency_scope(actor, cur)
+    else:
+        query["currency"] = {"$in": scope}
+
+
 async def _store_file(import_id: str, filename: str, data: bytes,
                       content_type: str) -> str:
     ext = filename.rsplit(".", 1)[-1].lower()
@@ -87,6 +109,18 @@ async def _store_file(import_id: str, filename: str, data: bytes,
         upsert=True,
     )
     return f"mongo://{import_id}"
+
+
+def _fingerprint_ref(t: Dict[str, Any]) -> str:
+    """CB13 — prioridad de la referencia de la huella: identificador bancario
+    fiable → índice de fila (filas SIN fecha) → descripción. La descripción ya
+    no colapsa filas distintas de un registro sin fechas (iter187) ni
+    prevalece sobre el índice de fila."""
+    if t.get("reference"):
+        return str(t["reference"])
+    if not t.get("transaction_date") and t.get("row_index") is not None:
+        return f"row{t['row_index']}"
+    return str(t.get("description") or "")
 
 
 # ---------------------------------------------------------------------------
@@ -109,26 +143,32 @@ async def process_import(import_id: str, data: bytes, ext: str) -> None:
                   "processing_started_at": iso(now_utc())}})
     try:
         dayfirst = _dayfirst_for(imp.get("bank_name") or "", imp["currency"])
-        txs, errors, mode = await parse_statement(data, ext, dayfirst)
+        # CB12 — el interruptor de OCR de Reglas controla realmente el parser.
+        cfg = await get_config()
+        txs, errors, mode = await parse_statement(
+            data, ext, dayfirst, enable_ocr=bool(cfg.get("enable_ocr", True)))
         await _stage("deduplicating")
 
         tx_docs, duplicates, credits, debits = [], 0, 0, 0
         now = iso(now_utc())
         seen_in_file: set = set()
         for t in txs:
-            # iter187 — date-less rows (no date column in the document) use
-            # the row index as the reference component so two identical
-            # payments in the same file are NOT collapsed as duplicates.
-            fp_ref = (t.get("reference") or t.get("description")
-                      or (f"row{t['row_index']}"
-                          if not t.get("transaction_date") and t.get("row_index") is not None
-                          else ""))
+            fp_ref = _fingerprint_ref(t)
             fp = fingerprint(imp.get("bank_account_id") or "",
                              t["transaction_date"], t["amount"],
                              imp["currency"], fp_ref,
-                             t.get("sender_name") or "")
+                             t.get("sender_name") or "",
+                             direction=t["direction"])
+            # CB13 — la huella nueva incorpora la dirección; la histórica (sin
+            # dirección) se sigue comprobando para no re-acreditar filas
+            # importadas antes de este cambio.
+            fp_legacy = fingerprint(imp.get("bank_account_id") or "",
+                                    t["transaction_date"], t["amount"],
+                                    imp["currency"], fp_ref,
+                                    t.get("sender_name") or "")
             is_dup = fp in seen_in_file or bool(
-                await db.bank_transactions.find_one({"fingerprint": fp}, {"_id": 1}))
+                await db.bank_transactions.find_one(
+                    {"fingerprint": {"$in": [fp, fp_legacy]}}, {"_id": 1}))
             seen_in_file.add(fp)
             stored_fp = fp if not is_dup else f"dup:{uuid.uuid4().hex}:{fp[:16]}"
             if t["direction"] == "credit":
@@ -259,6 +299,8 @@ async def upload_statement(request: Request, background: BackgroundTasks,
                            bank_name: str = Form(...),
                            currency: str = Form(...)) -> Any:
     actor = await require_permission(request, "reconciliation")
+    # CB06 — alcance de monedas del empleado también al importar.
+    _enforce_employee_currency_scope(actor, currency.strip().upper())
     filename = file.filename or "statement"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in SUPPORTED_EXTENSIONS:
@@ -333,10 +375,11 @@ async def reconciliation_bank_accounts(request: Request) -> Any:
 @router.get("/admin/reconciliation/imports")
 async def list_imports(request: Request, limit: int = 100,
                        currency: Optional[str] = None) -> Any:
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     q: Dict[str, Any] = {}
     if currency and currency.strip():
         q["currency"] = currency.strip().upper()
+    _apply_currency_scope(actor, q)
     items = await db.bank_statement_imports.find(q, {"_id": 0}) \
         .sort("uploaded_at", -1).to_list(min(max(limit, 1), 500))
     return {"items": items}
@@ -344,19 +387,23 @@ async def list_imports(request: Request, limit: int = 100,
 
 @router.get("/admin/reconciliation/imports/{import_id}")
 async def get_import(import_id: str, request: Request) -> Any:
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     doc = await db.bank_statement_imports.find_one({"id": import_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Importación no encontrada")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (doc.get("currency") or "").upper())
     return doc
 
 
 @router.get("/admin/reconciliation/imports/{import_id}/file")
 async def download_import_file(import_id: str, request: Request) -> Any:
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     doc = await db.bank_statement_imports.find_one({"id": import_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Importación no encontrada")
+    # CB06 — alcance de monedas del empleado también al descargar.
+    _enforce_employee_currency_scope(actor, (doc.get("currency") or "").upper())
     url = doc.get("stored_file_url") or ""
     if url.startswith("mongo://"):
         f = await db.statement_files.find_one({"id": import_id})
@@ -385,6 +432,8 @@ async def reprocess_import(import_id: str, request: Request,
     imp = await db.bank_statement_imports.find_one({"id": import_id}, {"_id": 0})
     if not imp:
         raise HTTPException(status_code=404, detail="Importación no encontrada")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (imp.get("currency") or "").upper())
     if imp.get("processing_status") in ("uploaded", "processing"):
         raise HTTPException(status_code=409,
                             detail="Este import todavía se está procesando.")
@@ -400,13 +449,33 @@ async def reprocess_import(import_id: str, request: Request,
         raise HTTPException(
             status_code=410,
             detail="El archivo original ya no está disponible. Sube el statement de nuevo.")
-    removed = await db.bank_transactions.delete_many({
-        "statement_import_id": import_id,
-        "status": {"$nin": ["auto_matched", "manual_matched"]}})
-    await db.bank_statement_imports.update_one(
-        {"id": import_id},
+    # CB04 — no reprocesar mientras haya una confirmación EN CURSO sobre
+    # movimientos de este import: borrar un movimiento reservado permitiría
+    # volver a acreditar el mismo pago con un sustituto.
+    claimed = await db.bank_transactions.find_one(
+        {"statement_import_id": import_id, "matching_claim": {"$exists": True}},
+        {"_id": 0, "id": 1})
+    if claimed:
+        raise HTTPException(
+            status_code=409,
+            detail="Hay una conciliación en curso sobre movimientos de este "
+                   "import; reintenta en unos segundos.")
+    # CB04 — reproceso EXCLUSIVO: solo un llamador voltea el estado.
+    flip = await db.bank_statement_imports.update_one(
+        {"id": import_id, "processing_status": {"$nin": ["uploaded", "processing"]}},
         {"$set": {"processing_status": "uploaded", "processing_stage": None,
                   "notes": None, "processing_finished_at": None}})
+    if flip.modified_count == 0:
+        raise HTTPException(status_code=409,
+                            detail="Este import ya se está reprocesando.")
+    # CB04 — preservar movimientos conciliados, RESERVADOS (reclamo activo) o
+    # aún referenciados: la identidad bancaria en uso no se borra ni recrea
+    # (las filas re-extraídas idénticas deduplican contra las conservadas).
+    removed = await db.bank_transactions.delete_many({
+        "statement_import_id": import_id,
+        "status": {"$nin": ["auto_matched", "manual_matched"]},
+        "matching_claim": {"$exists": False},
+        "matched_order_id": None})
     await recon_audit("STATEMENT_REPROCESSED",
                       {"user_id": actor["user_id"],
                        "name": actor.get("name") or actor.get("email")},
@@ -435,7 +504,7 @@ async def list_transactions(request: Request, import_id: Optional[str] = None,
                             method: Optional[str] = None,
                             limit: int = 300) -> Any:
     """§40 — filterable transactions list."""
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     import re as _re
     query: Dict[str, Any] = {}
     if import_id:
@@ -450,6 +519,7 @@ async def list_transactions(request: Request, import_id: Optional[str] = None,
         query["bank_name"] = {"$regex": _re.escape(bank.strip()), "$options": "i"}
     if currency and currency.strip():
         query["currency"] = currency.strip().upper()
+    _apply_currency_scope(actor, query)
     date_q: Dict[str, Any] = {}
     if date_from:
         date_q["$gte"] = str(date_from)[:10]
@@ -515,12 +585,13 @@ async def list_transactions(request: Request, import_id: Optional[str] = None,
 @router.get("/admin/reconciliation/summary")
 async def reconciliation_summary(request: Request,
                                  currency: Optional[str] = None) -> Any:
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     # iter185 — per-currency workspaces: every stat can be scoped to one
     # currency so a staff member assigned to e.g. EUR only sees EUR data.
     match: Dict[str, Any] = {}
     if currency and currency.strip():
         match["currency"] = currency.strip().upper()
+    _apply_currency_scope(actor, match)
     pipeline: List[Dict[str, Any]] = []
     if match:
         pipeline.append({"$match": match})
@@ -547,7 +618,7 @@ async def reconciliation_summary(request: Request,
 async def reconciliation_dashboard(request: Request, days: int = 30,
                                    currency: Optional[str] = None) -> Any:
     """§38 + §52 — operational metrics over a configurable window."""
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     from datetime import datetime, timedelta
     days = min(max(days, 1), 730)
     since = iso(now_utc() - timedelta(days=days))
@@ -556,6 +627,9 @@ async def reconciliation_dashboard(request: Request, days: int = 30,
     cur = currency.strip().upper() if currency and currency.strip() else None
     tx_scope: Dict[str, Any] = {"currency": cur} if cur else {}
     imp_scope: Dict[str, Any] = {"currency": cur} if cur else {}
+    # CB06 — sin moneda explícita, un empleado restringido solo ve las suyas.
+    _apply_currency_scope(actor, tx_scope)
+    _apply_currency_scope(actor, imp_scope)
 
     counts = {r["_id"]: r["n"] async for r in db.bank_transactions.aggregate([
         {"$match": {"created_at": {"$gte": since}, **tx_scope}},
@@ -649,13 +723,15 @@ async def reconciliation_dashboard_details(request: Request, bucket: str,
                                            limit: int = 200,
                                            currency: Optional[str] = None) -> Any:
     """iter177 — drill-down de las tarjetas del dashboard."""
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     from datetime import timedelta
     days = min(max(days, 1), 730)
     limit = min(max(limit, 1), 500)
     since = iso(now_utc() - timedelta(days=days))
     cur = currency.strip().upper() if currency and currency.strip() else None
     tx_scope: Dict[str, Any] = {"currency": cur} if cur else {}
+    # CB06 — alcance de monedas del empleado.
+    _apply_currency_scope(actor, tx_scope)
     if bucket in _DETAIL_TX_BUCKETS:
         items = await db.bank_transactions.find(
             {"created_at": {"$gte": since}, "status": _DETAIL_TX_BUCKETS[bucket],
@@ -699,8 +775,13 @@ async def rematch(request: Request,
     CURRENT pending orders and VIP batch items."""
     actor = await require_permission(request, "reconciliation")
     p = payload or RematchPayload()
+    # CB06 — alcance de monedas del empleado en el rematch.
+    scope = _currency_scope(actor)
+    if p.currency:
+        _enforce_employee_currency_scope(actor, p.currency.upper())
     counts = await rematch_transactions(actor, currency=p.currency,
-                                        import_id=p.import_id)
+                                        import_id=p.import_id,
+                                        currencies=None if p.currency else scope)
     await log_action(db, actor, "reconciliation.rematch", "reconciliation",
                      p.import_id or "all",
                      summary=(f"Reproceso de matching: {counts['scanned']} movimientos "
@@ -712,6 +793,65 @@ async def rematch(request: Request,
 
 class ConfirmPayload(BaseModel):
     order_id: str
+
+
+async def _validate_confirm_compatibility(tx: dict, target: dict) -> None:
+    """CB01 — validación financiera común PREVIA a toda reserva/acreditación:
+    dirección crédito, importe válido y suficiente, moneda compatible y cuenta
+    compatible cuando la regla lo exige. Los pagos parciales o incompatibles
+    nunca dan por pagada la orden con una confirmación genérica."""
+    if tx.get("direction") != "credit":
+        raise HTTPException(
+            status_code=409,
+            detail="Este movimiento es un cargo (egreso) — solo un abono "
+                   "puede respaldar una orden.")
+    amount = float(tx.get("amount") or 0)
+    if not math.isfinite(amount) or amount <= 0:
+        raise HTTPException(status_code=409,
+                            detail="El movimiento no tiene un importe válido.")
+    order_cur = str(target.get("from_code") or target.get("currency") or "").upper()
+    tx_cur = str(tx.get("currency") or "").upper()
+    if order_cur and tx_cur and tx_cur != order_cur:
+        raise HTTPException(
+            status_code=409,
+            detail=f"La moneda del movimiento ({tx_cur}) no coincide con la "
+                   f"moneda que la orden espera recibir ({order_cur}).")
+    cfg = await get_config()
+    expected = float(target.get("amount_from") or target.get("amount") or 0)
+    tol = max(0.01, expected * float(cfg.get("amount_tolerance_pct") or 0) / 100.0)
+    if expected > 0 and amount < expected - tol:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El importe del movimiento ({amount:g} {tx_cur}) es "
+                   f"insuficiente para la orden ({expected:g} {order_cur}). "
+                   f"Los pagos parciales deben gestionarse desde Órdenes.")
+    if cfg.get("require_account_match"):
+        tx_acc = tx.get("bank_account_id")
+        target_acc = target.get("payment_account_id")
+        if tx_acc and target_acc and tx_acc != target_acc:
+            raise HTTPException(
+                status_code=409,
+                detail="La cuenta bancaria del movimiento no coincide con la "
+                       "cuenta de pago de la orden (coincidencia de cuenta "
+                       "obligatoria en Reglas).")
+
+
+async def _assert_no_reconciled_twin(tx: dict, tx_id: str) -> None:
+    """CB10 — la identidad bancaria original no puede respaldar dos abonos:
+    si OTRO movimiento con la misma huella ya está conciliado, este es un
+    duplicado reciclado (rechazado/restaurado) y no puede confirmarse."""
+    fp_orig = tx.get("fingerprint_original")
+    if not fp_orig:
+        return
+    twin = await db.bank_transactions.find_one(
+        {"id": {"$ne": tx_id}, "fingerprint_original": fp_orig,
+         "status": {"$in": ["auto_matched", "manual_matched"]}},
+        {"_id": 0, "id": 1})
+    if twin:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Este movimiento es un duplicado del movimiento "
+                   f"{twin['id']}, que ya respalda otra orden.")
 
 
 async def _target_has_recon_stamp(order_id: str, tx_id: str) -> bool:
@@ -793,12 +933,17 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
         item = await db.vip_batch_items.find_one({"id": payload.order_id}, {"_id": 0})
     if not order and not item:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+    target = item or order
+    # CB06 — el alcance de monedas del empleado se aplica en el SERVIDOR:
+    # un empleado limitado a EUR no concilia órdenes USD→USDT.
+    _enforce_employee_currency_scope(
+        actor, str(target.get("from_code") or target.get("currency") or ""),
+        str(target.get("to_code") or ""))
     # iter260(E04)/iter262(G04) — reanudación tras crash SOLO si la decisión
     # quedó PERSISTIDA (sello de ESTE movimiento + estado aprobado): un sello
     # preparado sin aprobación NO es prueba de abono — en ese caso se vuelve
     # a ejecutar la aprobación (idempotente: el pre-stamp reconoce su propio
     # sello y apply_item_decision reclama pendiente→aprobado).
-    target = item or order
     resuming = ((target.get("reconciliation") or {})
                 .get("bank_transaction_id") == tx_id
                 and target.get("status") == "approved")
@@ -817,6 +962,10 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
             if order["status"] != "pending":
                 raise HTTPException(status_code=409,
                                     detail=f"La orden ya no está pendiente (estado: {order['status']}).")
+        # CB01 — validación financiera previa a toda reserva y acreditación.
+        await _validate_confirm_compatibility(tx, target)
+        # CB10 — un duplicado reciclado no puede volver a acreditarse.
+        await _assert_no_reconciled_twin(tx, tx_id)
         other = await db.bank_transactions.find_one(
             {"matched_order_id": payload.order_id,
              "status": {"$in": ["auto_matched", "manual_matched"]}}, {"_id": 0, "id": 1})
@@ -839,8 +988,13 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
         except RuntimeError:
             await _release_bank_claim(tx_id, payload.order_id)
             raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
-    await db.bank_transactions.update_one(
-        {"id": tx_id},
+    # CB03 — solo el dueño del reclamo (o una reanudación legítima sin
+    # movimiento conciliado) escribe el cierre; nunca se pisa otro resultado.
+    fin = await db.bank_transactions.update_one(
+        {"id": tx_id,
+         "$or": [{"matching_claim.order_id": payload.order_id},
+                 {"matching_claim": {"$exists": False},
+                  "status": {"$nin": ["auto_matched", "manual_matched"]}}]},
         {"$set": {"status": "manual_matched", "matched_order_id": payload.order_id,
                   "matched_kind": matched_kind,
                   "match_details": cand,
@@ -849,6 +1003,8 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
                   "updated_at": iso(now_utc())},
          "$unset": {"matching_claim": ""}})
+    if fin.modified_count == 0:
+        logger.error(f"confirm_match: cierre omitido para {tx_id} (reclamo perdido)")
     await recon_audit("MANUAL_MATCHED", actor, tx=tx, order_id=payload.order_id,
                       prev_status=tx["status"], new_status="manual_matched",
                       score=(cand or {}).get("score"),
@@ -867,15 +1023,32 @@ async def reject_suggestion(tx_id: str, payload: RejectPayload, request: Request
     tx = await db.bank_transactions.find_one({"id": tx_id}, {"_id": 0})
     if not tx:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (tx.get("currency") or "").upper())
     if tx["status"] in ("auto_matched", "manual_matched"):
         raise HTTPException(status_code=409,
                             detail="Movimiento ya conciliado — no se puede rechazar.")
-    await db.bank_transactions.update_one(
-        {"id": tx_id},
+    if tx["status"] == "duplicate":
+        # CB10 — un duplicado conserva su identidad: rechazarlo lo convertía
+        # en 'sin identificar' y permitía acreditar dos veces el mismo pago.
+        raise HTTPException(
+            status_code=409,
+            detail="Movimiento duplicado — conserva su vínculo con el "
+                   "movimiento original y no puede reactivarse.")
+    res = await db.bank_transactions.update_one(
+        {"id": tx_id,
+         "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]},
+         "matching_claim": {"$exists": False}},
         {"$set": {"status": "unmatched", "candidates": [],
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
                   "review_note": (payload.note or "").strip() or None,
                   "updated_at": iso(now_utc())}})
+    if res.modified_count == 0:
+        # CB03 — el movimiento cambió de estado o está reclamado entre tanto.
+        raise HTTPException(
+            status_code=409,
+            detail="El movimiento cambió de estado o está siendo conciliado; "
+                   "recarga la lista.")
     await log_action(db, actor, "reconciliation.suggestion_rejected",
                      "bank_transaction", tx_id,
                      summary="Sugerencias descartadas — movimiento sin identificar")
@@ -892,17 +1065,33 @@ async def ignore_transaction(tx_id: str, payload: RejectPayload, request: Reques
     tx = await db.bank_transactions.find_one({"id": tx_id}, {"_id": 0})
     if not tx:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (tx.get("currency") or "").upper())
     if tx["status"] in ("auto_matched", "manual_matched"):
         raise HTTPException(status_code=409,
                             detail="Movimiento ya conciliado — no se puede ignorar.")
-    await db.bank_transactions.update_one(
-        {"id": tx_id},
+    if tx["status"] == "duplicate":
+        # CB10 — la secuencia ignorar→restaurar permitía reactivar duplicados.
+        raise HTTPException(
+            status_code=409,
+            detail="Movimiento duplicado — conserva su vínculo con el "
+                   "movimiento original y no puede ignorarse.")
+    res = await db.bank_transactions.update_one(
+        {"id": tx_id,
+         "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]},
+         "matching_claim": {"$exists": False}},
         {"$set": {"status": "ignored", "ignored_reason": "manual",
                   "review_note": (payload.note or "").strip() or None,
                   "reviewed_by": actor["user_id"],
                   "reviewed_by_name": actor.get("name") or actor.get("email"),
                   "reviewed_at": iso(now_utc()),
                   "updated_at": iso(now_utc())}})
+    if res.modified_count == 0:
+        # CB03 — el movimiento cambió de estado o está reclamado entre tanto.
+        raise HTTPException(
+            status_code=409,
+            detail="El movimiento cambió de estado o está siendo conciliado; "
+                   "recarga la lista.")
     await log_action(db, actor, "reconciliation.ignored", "bank_transaction",
                      tx_id, summary="Movimiento marcado como ignorado")
     await recon_audit("TRANSACTION_IGNORED", actor, tx=tx,
@@ -919,18 +1108,23 @@ async def restore_transaction(tx_id: str, request: Request) -> Any:
     tx = await db.bank_transactions.find_one({"id": tx_id}, {"_id": 0})
     if not tx:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (tx.get("currency") or "").upper())
     if tx["status"] != "ignored":
         raise HTTPException(status_code=409,
                             detail="Solo se pueden restaurar movimientos ignorados.")
     if tx.get("direction") == "debit":
         raise HTTPException(status_code=409,
                             detail="Los débitos (cargos) no se concilian con órdenes.")
-    await db.bank_transactions.update_one(
-        {"id": tx_id},
+    res = await db.bank_transactions.update_one(
+        {"id": tx_id, "status": "ignored"},
         {"$set": {"status": "unmatched", "updated_at": iso(now_utc()),
                   "reviewed_by": None, "reviewed_at": None, "review_note": None,
                   "reviewed_by_name": None},
          "$unset": {"ignored_reason": ""}})
+    if res.modified_count == 0:
+        raise HTTPException(status_code=409,
+                            detail="El movimiento cambió de estado; recarga la lista.")
     await log_action(db, actor, "reconciliation.restored", "bank_transaction",
                      tx_id, summary="Movimiento restaurado desde ignorados")
     await recon_audit("TRANSACTION_RESTORED", actor, tx=tx,
@@ -1005,7 +1199,11 @@ async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
     await db.orders.update_one(
         {"id": order_id, "rollback_pending.op_id": op_id},
         {"$set": {"status": "pending", "updated_at": iso(now_utc()),
-                  "admin_note": f"Rollback de conciliación: {reason}"},
+                  "admin_note": f"Rollback de conciliación: {reason}",
+                  # CB05 — marcador de reversión aplicada: si el cierre del
+                  # movimiento bancario se interrumpe, el reintento reconoce
+                  # la reversión y solo finaliza el vínculo (sin doble débito).
+                  "last_recon_rollback": {"tx_id": tx_id, "at": iso(now_utc())}},
          "$inc": {"accum_cycle": 1},
          "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
                     "bank_transaction_id": "", "reconciliation_score": "",
@@ -1029,44 +1227,71 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
     tx = await db.bank_transactions.find_one({"id": tx_id}, {"_id": 0})
     if not tx:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (tx.get("currency") or "").upper())
     if tx["status"] not in ("auto_matched", "manual_matched"):
         raise HTTPException(status_code=409, detail="Este movimiento no está conciliado.")
     order_id = tx.get("matched_order_id")
     kind = tx.get("matched_kind") or (
         "vip_batch_item" if str(order_id or "").startswith("vitem_") else "order")
     prev_tx_status = tx["status"]
+
+    def _resume_close(doc: Optional[dict]) -> bool:
+        """CB05 — la reversión del documento YA se aplicó (marcador) pero el
+        cierre del movimiento bancario quedó pendiente por una interrupción:
+        el reintento solo finaliza el vínculo, sin repetir el débito."""
+        return bool(doc and doc.get("status") == "pending"
+                    and (doc.get("last_recon_rollback") or {}).get("tx_id") == tx_id
+                    and (doc.get("reconciliation") or {})
+                    .get("bank_transaction_id") != tx_id)
+
     if kind == "vip_batch_item":
         item = await db.vip_batch_items.find_one({"id": order_id}, {"_id": 0}) if order_id else None
-        if not item or (item.get("reconciliation") or {}).get("bank_transaction_id") != tx_id:
-            raise HTTPException(status_code=409,
-                                detail="La orden del lote ya no referencia este movimiento.")
-        if item["status"] != "approved":
-            raise HTTPException(
-                status_code=409,
-                detail=f"El ítem del lote está en '{item['status']}' — no se puede revertir.")
-        await rollback_batch_item_from_reconciliation(item, tx_id, actor, reason)
+        if not _resume_close(item):
+            if not item or (item.get("reconciliation") or {}).get("bank_transaction_id") != tx_id:
+                raise HTTPException(status_code=409,
+                                    detail="La orden del lote ya no referencia este movimiento.")
+            if item["status"] != "approved":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"El ítem del lote está en '{item['status']}' — no se puede revertir.")
+            await rollback_batch_item_from_reconciliation(item, tx_id, actor, reason)
     else:
         order = await db.orders.find_one({"id": order_id}, {"_id": 0}) if order_id else None
-        if not order or (order.get("reconciliation") or {}).get("bank_transaction_id") != tx_id:
-            raise HTTPException(status_code=409,
-                                detail="La orden vinculada ya no referencia este movimiento.")
-        if order["status"] != "approved":
-            raise HTTPException(
-                status_code=409,
-                detail=f"La orden avanzó a '{order['status']}' — revierte su estado "
-                       f"desde Órdenes antes de hacer rollback.")
-        if order.get("accumulated_at"):
-            # iter260(E05a) — la orden acumulada acreditó saldo: revertirlo
-            # (o bloquear) antes de liberar el respaldo bancario.
-            await _rollback_accumulated_order_credit(order, tx_id, reason)
-        else:
-            await db.orders.update_one(
-                {"id": order_id, "status": "approved"},
-                {"$set": {"status": "pending", "updated_at": iso(now_utc()),
-                          "admin_note": f"Rollback de conciliación: {reason}"},
-                 "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
-                            "bank_transaction_id": "", "reconciliation_score": "",
-                            "reconciliation": ""}})
+        if not _resume_close(order):
+            if not order or (order.get("reconciliation") or {}).get("bank_transaction_id") != tx_id:
+                raise HTTPException(status_code=409,
+                                    detail="La orden vinculada ya no referencia este movimiento.")
+            if order["status"] != "approved":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"La orden avanzó a '{order['status']}' — revierte su estado "
+                           f"desde Órdenes antes de hacer rollback.")
+            if order.get("accumulated_at"):
+                # iter260(E05a) — la orden acumulada acreditó saldo: revertirlo
+                # (o bloquear) antes de liberar el respaldo bancario.
+                await _rollback_accumulated_order_credit(order, tx_id, reason)
+            else:
+                res = await db.orders.update_one(
+                    {"id": order_id, "status": "approved",
+                     "reconciliation.bank_transaction_id": tx_id},
+                    {"$set": {"status": "pending", "updated_at": iso(now_utc()),
+                              "admin_note": f"Rollback de conciliación: {reason}",
+                              "last_recon_rollback": {"tx_id": tx_id,
+                                                      "at": iso(now_utc())}},
+                     "$unset": {"payment_confirmed_at": "", "payment_confirmation_source": "",
+                                "bank_transaction_id": "", "reconciliation_score": "",
+                                "reconciliation": ""}})
+                if res.modified_count == 0:
+                    # CB05-A — la orden avanzó (p.ej. a completed) entre la
+                    # lectura y la escritura: BLOQUEAR sin liberar el respaldo
+                    # bancario. Un fallo de comparación por estado nunca
+                    # libera el cobro.
+                    raise HTTPException(
+                        status_code=409,
+                        detail="La orden avanzó de estado durante el rollback; "
+                               "revierte su estado desde Órdenes antes de "
+                               "liberar este movimiento.")
     new_status = "manual_review" if (tx.get("candidates") or []) else "unmatched"
     await db.bank_transactions.update_one(
         {"id": tx_id},
@@ -1112,9 +1337,11 @@ async def reconciliation_audit_trail(request: Request,
 async def search_pending_orders(request: Request, currency: str,
                                 q: Optional[str] = None, limit: int = 20) -> Any:
     """Pending orders + VIP batch items for the manual-link picker."""
-    await require_permission(request, "reconciliation")
+    actor = await require_permission(request, "reconciliation")
     lim = min(max(limit, 1), 50)
     cur = currency.upper()
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, cur)
     query: Dict[str, Any] = {"status": "pending", "from_code": cur}
     import re as _re
     rx = None

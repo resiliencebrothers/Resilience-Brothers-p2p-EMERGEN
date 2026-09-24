@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from auth_utils import require_user
 from db_client import db
 from services import storage as storage_service
+from services.permissions import _has_permission as _has_perm
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Files"])
@@ -30,6 +31,23 @@ router = APIRouter(tags=["Files"])
 
 async def _can_access(user: dict, key: str) -> bool:
     """Return True if `user` is allowed to view the object identified by `key`."""
+    # CB11 — los extractos bancarios NO se conceden por el rol employee:
+    # exigen el permiso de conciliación y el alcance de moneda del empleado
+    # (misma política que la descarga dedicada del módulo).
+    if key.startswith("reconciliation/"):
+        if user.get("role") not in ("admin", "employee"):
+            return False
+        if not _has_perm(user, "reconciliation"):
+            return False
+        allowed = ([str(c).upper() for c in (user.get("allowed_currencies") or [])]
+                   if user.get("role") == "employee" else [])
+        if allowed:
+            imp_id = key.split("/", 1)[1].rsplit(".", 1)[0]
+            imp = await db.bank_statement_imports.find_one(
+                {"id": imp_id}, {"_id": 0, "currency": 1})
+            if imp and str(imp.get("currency") or "").upper() not in allowed:
+                return False
+        return True
     if user.get("role") in ("admin", "employee"):
         return True
     ref = f"/api/files/{key}"

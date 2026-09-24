@@ -3846,7 +3846,8 @@
       "duplicate_name_amount": "Two orders with the same amount and similar name — needs human review",
       "same_sender_multiple_users": "The same sender matches orders from two different users — requires human review",
       "surname_mismatch": "Surname does not match or is below the threshold — surname is mandatory for auto-matching",
-      "duplicate_across_batches": "The same name + amount + date combination appears in different batches — requires human review"
+      "duplicate_across_batches": "The same name + amount + date combination appears in different batches — requires human review",
+      "candidate_universe_incomplete": "Too many pending orders to evaluate every possible match — requires human review"
     },
     "status": {
       "uploaded": "Uploaded",

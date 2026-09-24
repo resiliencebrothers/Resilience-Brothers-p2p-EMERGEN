@@ -2023,3 +2023,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-24 · iter299 — Auditoría Conciliación Bancaria 8a23c0b (CB01–CB14) CERRADA
+- 14 hallazgos corregidos: CB01 validación financiera en confirmación manual (dirección/moneda/importe/cuenta) · CB02 'Debit Amount' exacto-primero · CB03 token por intento + escrituras condicionadas (resultados obsoletos se descartan) · CB04 reprocess preserva reservados/conciliados + flip exclusivo · CB05 rollback verifica modified_count (orden completed bloquea SIN liberar) + reanudación con marcador `last_recon_rollback` · CB06 alcance de monedas del empleado en TODAS las rutas · CB07 dayfirst=False prioriza %m/%d · CB08 prefijo de nombres de pila (diccionario `_GIVEN_NAMES`) no evidencia apellido · CB09 identidad compartida contra TODOS los candidatos (rank sin recorte; top-5 solo visual) · CB10 duplicates protegidos en reject/ignore + revalidación de `fingerprint_original` en toda confirmación · CB11 /api/files/reconciliation/ exige permiso reconciliation + scope moneda · CB12 enable_ocr efectivo (error claro) · CB13 huella con dirección (compat legacy) + fp_ref referencia→row_index→descripción · CB14 pool >5000 marca universo incompleto y bloquea auto (`candidate_universe_incomplete`, etiqueta i18n es/en).
+- Tests: `tests/test_iter298_conciliacion.py` **44/44** (añadido a test-critical) · `make test-critical` **634/634** · mypy/ruff limpios.
+- Nota entorno: 49 deliveries "VIP Test" residuales saturaban el tope 50 de la cola courier y volvían flaky iter290 — limpiados.
+
+## Backlog priorizado (actualizado 2026-09-24, tras iter299)
+- HECHO iter299: auditoría conciliación bancaria CB01–CB14 cerrada — 634/634 críticos + 44 nuevos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

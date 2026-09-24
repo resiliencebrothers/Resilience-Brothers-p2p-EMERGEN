@@ -1535,3 +1535,21 @@ Reportes del operador (producción): (1) «Caja física por denominación» en 0
 ### Variante MV01 (informe Verificacion_Tasas_y_Mensajeria 52236b1 — RT01/RT02/MV02 ya verificados OK por el auditor)
 - La decisión «sin ajuste» de `_record_fee_adjustment` era DOS escrituras (retiro condicionado a `$exists` + avance de revisión); un escritor antiguo podía colar su ajuste entre ambas quedando objetivo obsoleto (16, rev 1) con revisión vigente 2, irreparable. Ahora es UNA sola escritura indivisible (`find_one_and_update` con guarda por revisión) que avanza `fee_adjustment_rev` Y retira cualquier ajuste anterior, exista o no al iniciar; la nota `fee_conflict_resolved` solo se añade si de verdad se retiró algo. La guarda usa `$lte` sobre `fee_adjustment_rev`: repetir la sincronización de la revisión VIGENTE repara filas ya incoherentes (ajuste con fee_rev menor se retira), y un ajuste legítimo más nuevo jamás se borra (su fee_rev no es menor).
 - **Verificación**: 3 tests nuevos en `test_iter297_mv01_mv02.py` (ventana exacta con doble pausa entre la comprobación y la escritura «sin ajuste»; reparación de fila incoherente por replay de revisión vigente — falla en rojo sin el fix; control de ajuste legítimo intacto) → suite iter297 **9/9** · `make test-critical` **634/634 (cero fallos)** · mypy limpio.
+
+## 2026-09-24 · iter299 — Auditoría Conciliación Bancaria 8a23c0b (CB01–CB14)
+Archivos: `services/reconciliation_parser.py`, `services/reconciliation_matcher.py`, `routes/reconciliation.py`, `routes/files.py`, i18n es/en.
+- **CB01**: `_validate_confirm_compatibility()` en confirm — crédito obligatorio, moneda == from_code, importe ≥ esperado − tolerancia, cuenta si `require_account_match`.
+- **CB02**: `_map_headers` pase exacto global primero + `_SUBSTR_ORDER` (credit/debit antes de amount). `row_index` añadido a filas CSV/XLSX.
+- **CB03**: `_apply_auto_match` con `attempt_token` (uuid); limpieza de reclamo solo por token propio. Escritura final de `_match_and_apply` condicionada: auto → filtro por token; review/unmatched → `$nin matched/duplicate` + sin claim (resultado obsoleto descartado). Confirm/reject/ignore/restore con escrituras condicionadas.
+- **CB04**: reprocess → 409 con claim activo; flip de estado exclusivo (modified_count); delete_many excluye matched + claimed + matched_order_id.
+- **CB05**: rollback no-acumulado verifica `modified_count` (0 → 409 sin liberar tx); marcador `last_recon_rollback` en orden/ítem permite reanudar el cierre bancario tras interrupción (`_resume_close`).
+- **CB06**: `_currency_scope`/`_apply_currency_scope` + `_enforce_employee_currency_scope` en upload/get/download/reprocess/confirm/reject/ignore/restore/rollback/rematch/listados/summary/dashboard/orders-search. `rematch_transactions` acepta `currencies=[...]`.
+- **CB07**: `parse_date` ordena formatos por preferencia en ambos sentidos (ISO siempre primero).
+- **CB08**: `surname_similarity` devuelve 0 si el remitente es prefijo del titular Y los tokens tras el primero son nombres de pila conocidos (`_GIVEN_NAMES` ~150). `JUAN PEREZ` vs `Juan Perez Garcia` sigue pasando (PEREZ no es nombre de pila).
+- **CB09**: `rank_candidates` sin recorte (top-5 solo al persistir `candidates`); `_duplicate_reasons(best, others)` y `_ambiguity_reason` evalúan todos los candidatos; desempate por referencia exige que ningún otro la tenga.
+- **CB10**: reject/ignore → 409 sobre duplicates; `_assert_no_reconciled_twin` (fingerprint_original) en confirm y en auto-match.
+- **CB11**: `_can_access` en files.py exige `_has_perm(user,"reconciliation")` para claves `reconciliation/` + scope de moneda consultando el import.
+- **CB12**: `parse_statement(enable_ocr=...)` — PDF sin texto y OCR off → ValueError claro; `process_import` lee `get_config().enable_ocr`.
+- **CB13**: `fingerprint(direction=...)` (huella legacy sin dirección se sigue comprobando en dedupe — `$in [fp, fp_legacy]`); `_fingerprint_ref()`: reference → row_index (sin fecha) → descripción.
+- **CB14**: `load_pending_orders/items` → `(docs, completo)` con `POOL_LIMIT+1`; `decide(pool_complete=False)` añade `candidate_universe_incomplete`; rematch itera cursor completo (sin to_list(5000)).
+- Tests: `test_iter298_conciliacion.py` 44/44 · regresiones iter167/172/174/177/178/181/185/187/190/195/260/261/262 verdes · `make test-critical` 634/634.

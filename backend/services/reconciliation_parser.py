@@ -116,8 +116,12 @@ def parse_date(raw: Any, dayfirst: bool = False) -> Optional[str]:
     if not s:
         return None
     fmts = list(_DATE_FORMATS)
-    if dayfirst:  # prioritise dd/mm for EU banks
-        fmts.sort(key=lambda f: 0 if f.startswith("%d") else 1)
+    # CB07 — respetar la preferencia en AMBOS sentidos: dayfirst=True prioriza
+    # %d/%m (bancos EU) y dayfirst=False prioriza %m/%d (bancos EEUU).
+    # ISO (%Y...) va siempre primero por ser inequívoco.
+    lead = "%d" if dayfirst else "%m"
+    fmts.sort(key=lambda f: 0 if f.startswith("%Y")
+              else (1 if f.startswith(lead) else 2))
     for f in fmts:
         try:
             return datetime.strptime(s, f).date().isoformat()
@@ -131,12 +135,17 @@ def parse_date(raw: Any, dayfirst: bool = False) -> Optional[str]:
 
 
 def fingerprint(bank_account_id: str, date: str, amount: float, currency: str,
-                ref: str, sender: str) -> str:
-    base = "|".join([
+                ref: str, sender: str, direction: str = "") -> str:
+    parts = [
         str(bank_account_id), str(date or ""), f"{float(amount or 0):.2f}",
         str(currency or "").upper(), _norm(ref)[:80], _norm(sender)[:60],
-    ])
-    return hashlib.sha256(base.encode()).hexdigest()
+    ]
+    # CB13 — la dirección forma parte de la identidad: un cargo y un abono
+    # idénticos ya no colapsan como duplicados. Sin dirección se produce la
+    # huella histórica (compatibilidad con filas ya almacenadas).
+    if direction:
+        parts.append(_norm(direction))
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 def file_sha256(data: bytes) -> str:
@@ -146,23 +155,39 @@ def file_sha256(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 # Row mapping (CSV / XLSX share this)
 # ---------------------------------------------------------------------------
+# CB02 — en el pase de subcadenas, débito/crédito tienen prioridad semántica
+# sobre el importe genérico: 'amount' nunca consume 'Debit Amount'.
+_SUBSTR_ORDER = ["date", "credit", "debit", "amount", "description", "sender",
+                 "beneficiary", "reference", "balance", "time"]
+
+
 def _map_headers(headers: List[str]) -> Dict[str, int]:
     mapping: Dict[str, int] = {}
+    used: set = set()
     normed = [_norm(h) for h in headers]
+    # CB02 — pase 1: resolver TODAS las coincidencias exactas primero, para
+    # que una columna expresamente etiquetada ('Debit Amount') se asigne a su
+    # campo real antes de que una búsqueda por subcadena la consuma.
     for field, synonyms in _COLS.items():
         for i, h in enumerate(normed):
-            if not h or i in mapping.values():
+            if not h or i in used:
                 continue
             if h in synonyms or any(h == _norm(x) for x in synonyms):
                 mapping[field] = i
+                used.add(i)
                 break
-        if field not in mapping:  # substring pass
-            for i, h in enumerate(normed):
-                if not h or i in mapping.values():
-                    continue
-                if any(syn in h for syn in synonyms if len(syn) > 3):
-                    mapping[field] = i
-                    break
+    # pase 2: subcadenas para lo que quede, con débito/crédito antes que amount
+    for field in _SUBSTR_ORDER:
+        if field in mapping:
+            continue
+        synonyms = _COLS[field]
+        for i, h in enumerate(normed):
+            if not h or i in used:
+                continue
+            if any(syn in h for syn in synonyms if len(syn) > 3):
+                mapping[field] = i
+                used.add(i)
+                break
     return mapping
 
 
@@ -173,7 +198,7 @@ def _rows_to_transactions(headers: List[str], rows: List[List[Any]],
             "amount" in mapping or "credit" in mapping or "debit" in mapping):
         return [], -1  # signal: heuristic mapping failed → LLM fallback
     txs, errors = [], 0
-    for row in rows:
+    for ri, row in enumerate(rows):
         try:
             def cell(field: str) -> Any:
                 idx = mapping.get(field)
@@ -210,6 +235,7 @@ def _rows_to_transactions(headers: List[str], rows: List[List[Any]],
                 "balance_after": parse_amount(cell("balance")),
                 "payment_method": detect_payment_method(
                     " ".join(filter(None, [desc, str(cell("reference") or "")]))),
+                "row_index": ri,
                 "raw": {headers[i]: str(row[i]) for i in range(min(len(headers), len(row)))
                         if str(row[i] or "").strip()},
             })
@@ -358,7 +384,8 @@ async def llm_extract_from_pdf(file_path: str) -> List[Dict]:
 # Entry point
 # ---------------------------------------------------------------------------
 async def parse_statement(data: bytes, ext: str, dayfirst: bool,
-                          tmp_dir: str = "/tmp") -> Tuple[List[Dict], int, str]:
+                          tmp_dir: str = "/tmp",
+                          enable_ocr: bool = True) -> Tuple[List[Dict], int, str]:
     """Returns (transactions, error_count, parse_mode)."""
     ext = ext.lower().lstrip(".")
     if ext == "csv":
@@ -385,6 +412,13 @@ async def parse_statement(data: bytes, ext: str, dayfirst: bool,
             # path yields nothing, retry with file-attachment OCR.
             if txs:
                 return txs, 0, "pdf_text_llm"
+        # CB12 — el interruptor de OCR es efectivo: sin texto extraíble y con
+        # OCR desactivado NO se llama al extractor de PDFs escaneados.
+        if not enable_ocr:
+            raise ValueError(
+                "El PDF no contiene texto extraíble y el OCR está desactivado "
+                "en Reglas de conciliación. Activa la opción de OCR o exporta "
+                "el extracto en CSV/XLSX.")
         # scanned → file attachment OCR
         import uuid as _uuid
         tmp_path = os.path.join(tmp_dir, f"recon_{_uuid.uuid4().hex}.pdf")

@@ -25,7 +25,7 @@ import unicodedata
 import uuid
 from datetime import datetime
 from difflib import SequenceMatcher
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
@@ -74,6 +74,36 @@ _CONFIG_RANGES = {
 
 _BANK_NOISE = {"llc", "inc", "sa", "sl", "co", "ltd", "de", "del", "la", "el",
                "los", "las", "y", "and", "mr", "mrs", "sr", "sra"}
+
+# CB08 — nombres de pila comunes (regla explícita de negocio): un token de
+# este diccionario que coincide como SEGUNDO nombre no demuestra apellido.
+_GIVEN_NAMES = {
+    "JOSE", "JUAN", "LUIS", "CARLOS", "MANUEL", "MIGUEL", "PEDRO", "PABLO",
+    "ANTONIO", "FRANCISCO", "JAVIER", "ALEJANDRO", "DANIEL", "DAVID",
+    "RAFAEL", "RICARDO", "ROBERTO", "FERNANDO", "SERGIO", "ANDRES", "DIEGO",
+    "OSCAR", "RAUL", "ALBERTO", "ARTURO", "CESAR", "EDUARDO", "ENRIQUE",
+    "ERNESTO", "FELIPE", "GERARDO", "GUILLERMO", "GUSTAVO", "HECTOR", "HUGO",
+    "IGNACIO", "ISMAEL", "JAIME", "JOAQUIN", "JULIO", "LEONARDO", "LORENZO",
+    "MARCO", "MARCOS", "MARIO", "MARTIN", "MATEO", "MAURICIO", "NICOLAS",
+    "OMAR", "RAMON", "RENE", "RODRIGO", "RUBEN", "SALVADOR", "SAMUEL",
+    "SANTIAGO", "SAUL", "SEBASTIAN", "SIMON", "TOMAS", "VICENTE", "VICTOR",
+    "ADRIAN", "ALFREDO", "ALVARO", "ANGEL", "ABEL", "ADAN", "AGUSTIN",
+    "ALFONSO", "ALONSO", "ARMANDO", "BENJAMIN", "BRUNO", "CRISTIAN",
+    "CRISTOBAL", "DOMINGO", "ELIAS", "EMILIO", "ESTEBAN", "EUGENIO", "FELIX",
+    "GABRIEL", "GONZALO", "GREGORIO", "HORACIO", "HUMBERTO", "ISAAC",
+    "IVAN", "JESUS", "JONATHAN", "JORGE", "JOSUE", "LAZARO", "LEANDRO",
+    "MARIA", "ANA", "CARMEN", "ROSA", "LAURA", "MARTA", "ELENA", "ISABEL",
+    "PATRICIA", "SANDRA", "MONICA", "ADRIANA", "ALEJANDRA", "BEATRIZ",
+    "CLAUDIA", "CRISTINA", "DIANA", "GABRIELA", "GLORIA", "IRENE", "JULIA",
+    "KARLA", "LETICIA", "LUCIA", "LOURDES", "MARGARITA", "MARIANA",
+    "NATALIA", "NORMA", "OLGA", "PAOLA", "RAQUEL", "REBECA", "SILVIA",
+    "SOFIA", "SONIA", "SUSANA", "TERESA", "VALERIA", "VERONICA", "YOLANDA",
+    "CAMILA", "DANIELA", "FERNANDA", "XIMENA", "GUADALUPE", "JOSEFINA",
+    "DOLORES", "MERCEDES", "ROSARIO", "ESPERANZA", "CONSUELO", "CAROLINA",
+    "CATALINA", "CECILIA", "CELIA", "CLARA", "EMILIA", "ESTELA", "EVA",
+    "INES", "JUANA", "LILIANA", "LORENA", "LUISA", "MAGDALENA", "MARCELA",
+    "MARISOL", "MIRIAM", "NANCY", "NORA", "PILAR", "SARA", "VIVIANA",
+}
 
 
 async def get_config() -> Dict[str, Any]:
@@ -164,6 +194,18 @@ def surname_similarity(tx_name: Any, order_name: Any) -> float:
     tx_toks = [t for t in normalize_name(tx_name).split()
                if t not in _BANK_NOISE and len(t) >= 2]
     if not order_sn or not tx_toks:
+        return 0.0
+    # CB08 — un remitente que es solo un PREFIJO de los nombres de pila del
+    # titular ('JOSE MANUEL' vs 'JOSE MANUEL PEREZ') no evidencia apellido:
+    # faltan los tokens finales y todo token coincidente tras el primero es
+    # un nombre de pila conocido. Un token desconocido ('JUAN PEREZ') sí se
+    # trata como posible apellido — no se rompen los casos legítimos.
+    order_toks = [t for t in normalize_name(order_name).split()
+                  if t not in _BANK_NOISE]
+    if (len(tx_toks) < len(order_toks)
+            and all(_tokens_match(a, b)
+                    for a, b in zip(tx_toks, order_toks))
+            and all(t in _GIVEN_NAMES for t in tx_toks[1:])):
         return 0.0
     return max(SequenceMatcher(None, sn, tok).ratio()
                for sn in order_sn for tok in tx_toks)
@@ -276,8 +318,15 @@ def score_pair(tx: Dict, order: Dict, cfg: Dict) -> Dict[str, Any]:
             "amount_delta": amount_delta}
 
 
-async def load_pending_orders(currency: str) -> List[Dict]:
-    """§15 — only payment-pending states are candidates."""
+# CB14 — tope de carga por consulta: si se supera, el universo de candidatos
+# está INCOMPLETO y la aprobación automática se bloquea explícitamente.
+POOL_LIMIT = 5000
+
+
+async def load_pending_orders(currency: str) -> Tuple[List[Dict], bool]:
+    """§15 — only payment-pending states are candidates.
+    Devuelve (docs, completo): completo=False si existen más candidatos que
+    POOL_LIMIT (CB14)."""
     docs = await db.orders.find(
         {"status": {"$in": ["pending", "requires_double_approval"]},
          "from_code": currency.upper()},
@@ -285,16 +334,19 @@ async def load_pending_orders(currency: str) -> List[Dict]:
          "sender_name": 1, "amount_from": 1, "amount_to": 1, "from_code": 1,
          "to_code": 1, "created_at": 1, "status": 1, "payment_account_id": 1,
          "payment_account_label": 1, "payment_reference": 1},
-    ).sort("created_at", -1).to_list(5000)
+    ).sort("created_at", -1).to_list(POOL_LIMIT + 1)
+    complete = len(docs) <= POOL_LIMIT
+    docs = docs[:POOL_LIMIT]
     for d in docs:
         d["kind"] = "order"
-    return docs
+    return docs, complete
 
 
-async def load_pending_batch_items(currency: str) -> List[Dict]:
+async def load_pending_batch_items(currency: str) -> Tuple[List[Dict], bool]:
     """iter172 — VIP batch items (Lotes VIP) are matching candidates too.
     The holder_name IS the bank sender the VIP declared per row. Mapped to
-    the order-candidate shape so score_pair/rank work unchanged."""
+    the order-candidate shape so score_pair/rank work unchanged.
+    Devuelve (docs, completo) — CB14."""
     cur = currency.upper()
     docs = await db.vip_batch_items.find(
         {"status": "pending",
@@ -304,7 +356,9 @@ async def load_pending_batch_items(currency: str) -> List[Dict]:
          "amount": 1, "currency": 1, "from_code": 1, "to_code": 1,
          "created_at": 1, "status": 1, "payment_account_id": 1,
          "payment_account_label": 1, "payment_reference": 1},
-    ).sort("created_at", -1).to_list(5000)
+    ).sort("created_at", -1).to_list(POOL_LIMIT + 1)
+    complete = len(docs) <= POOL_LIMIT
+    docs = docs[:POOL_LIMIT]
     return [{
         "kind": "vip_batch_item",
         "id": it["id"],
@@ -321,7 +375,7 @@ async def load_pending_batch_items(currency: str) -> List[Dict]:
         "payment_account_id": it.get("payment_account_id"),
         "payment_account_label": it.get("payment_account_label"),
         "payment_reference": it.get("payment_reference") or "",
-    } for it in docs]
+    } for it in docs], complete
 
 
 def _passes_prefilters(o: Dict, tx_date: Optional[datetime], cfg: Dict,
@@ -384,7 +438,10 @@ def rank_candidates(tx: Dict, orders: List[Dict], cfg: Dict,
     # concepto (la referencia ya no suma al total, pero sí desempata).
     ranked.sort(key=lambda c: (-c["score"],
                                -(c["breakdown"].get("reference_score") or 0)))
-    return ranked[:5]
+    # CB09 — se devuelve la lista COMPLETA: los controles de ambigüedad e
+    # identidad compartida evalúan todos los candidatos, no solo dos. El
+    # recorte visual (top-5) se aplica al persistir, no aquí.
+    return ranked
 
 
 def _amount_flag(best: Dict) -> Optional[str]:
@@ -415,13 +472,16 @@ def _config_gate_reasons(best: Dict, cfg: Dict, flag: Optional[str]) -> List[str
     return reasons
 
 
-def _ambiguity_reason(best: Dict, second: Optional[Dict], cfg: Dict) -> List[str]:
-    """V2: si solo el mejor candidato tiene la referencia RB en el concepto,
-    la ambigüedad queda resuelta a su favor."""
-    if second is None:
+def _ambiguity_reason(best: Dict, others: List[Dict], cfg: Dict) -> List[str]:
+    """V2: si SOLO el mejor candidato tiene la referencia RB en el concepto,
+    la ambigüedad queda resuelta a su favor. CB09 — el desempate por
+    referencia exige que NINGÚN otro candidato la tenga."""
+    if not others:
         return []
+    second = others[0]
     ref_edge = ((best["breakdown"].get("reference_score") or 0) >= 20
-                and (second["breakdown"].get("reference_score") or 0) == 0)
+                and all((o["breakdown"].get("reference_score") or 0) == 0
+                        for o in others))
     if not ref_edge and (best["score"] - second["score"]) < cfg["minimum_score_difference"]:
         return ["ambiguous_candidates"]
     return []
@@ -466,20 +526,30 @@ def _is_duplicate_across_batches(best: Dict, second: Dict) -> bool:
                 and best["order_batch_id"] != second["order_batch_id"])
 
 
-def _duplicate_reasons(best: Dict, second: Optional[Dict]) -> List[str]:
-    if second is None or not (best["amount_exact"] and second["amount_exact"]):
+def _duplicate_reasons(best: Dict, others: List[Dict]) -> List[str]:
+    """CB09 — la ambigüedad de identidad se evalúa contra TODOS los candidatos
+    comparables, no solo el segundo: un tercer candidato igualmente válido de
+    otro usuario o de otro lote debe seguir exigiendo revisión."""
+    if not best["amount_exact"]:
         return []
-    reasons = []
-    # §45: same amount + similar name on 2+ orders without reference.
-    if (best["breakdown"]["reference_score"] == 0
-            and abs(best["breakdown"]["name_score"] - second["breakdown"]["name_score"]) <= 5):
-        reasons.append("duplicate_name_amount")
-    both_strong_names = (best["breakdown"]["name_score"] >= 23
-                         and second["breakdown"]["name_score"] >= 23)
-    if both_strong_names and _is_same_sender_multiple_users(best, second):
-        reasons.append("same_sender_multiple_users")
-    if both_strong_names and _is_duplicate_across_batches(best, second):
-        reasons.append("duplicate_across_batches")
+    reasons: List[str] = []
+    for second in others:
+        if not second["amount_exact"]:
+            continue
+        # §45: same amount + similar name on 2+ orders without reference.
+        if ("duplicate_name_amount" not in reasons
+                and best["breakdown"]["reference_score"] == 0
+                and abs(best["breakdown"]["name_score"]
+                        - second["breakdown"]["name_score"]) <= 5):
+            reasons.append("duplicate_name_amount")
+        both_strong_names = (best["breakdown"]["name_score"] >= 23
+                             and second["breakdown"]["name_score"] >= 23)
+        if (both_strong_names and "same_sender_multiple_users" not in reasons
+                and _is_same_sender_multiple_users(best, second)):
+            reasons.append("same_sender_multiple_users")
+        if (both_strong_names and "duplicate_across_batches" not in reasons
+                and _is_duplicate_across_batches(best, second)):
+            reasons.append("duplicate_across_batches")
     return reasons
 
 
@@ -492,12 +562,13 @@ def _surname_gate_reason(best: Dict, cfg: Dict) -> List[str]:
 
 
 def decide(tx: Dict, candidates: List[Dict], cfg: Dict,
-           import_bank_account_id: str) -> Dict[str, Any]:
+           import_bank_account_id: str,
+           pool_complete: bool = True) -> Dict[str, Any]:
     """§12-§14, §44-§47, §62. Returns {decision, flag}."""
     if not candidates:
         return {"decision": "unmatched", "flag": None}
     best = candidates[0]
-    second = candidates[1] if len(candidates) > 1 else None
+    others = candidates[1:]
 
     flag = _amount_flag(best)
     if best["score"] < cfg["manual_review_score"]:
@@ -506,11 +577,15 @@ def decide(tx: Dict, candidates: List[Dict], cfg: Dict,
     # iter174 — every blocker records WHY so the operator can see the exact
     # reason a movement stopped short of auto-confirmation.
     reasons = (_config_gate_reasons(best, cfg, flag)
-               + _ambiguity_reason(best, second, cfg)
+               + _ambiguity_reason(best, others, cfg)
                + _cap_and_status_reasons(tx, best, cfg)
                + _account_gate_reason(best, cfg, import_bank_account_id)
-               + _duplicate_reasons(best, second)
+               + _duplicate_reasons(best, others)
                + _surname_gate_reason(best, cfg))
+    # CB14 — con el universo de candidatos incompleto (>POOL_LIMIT) puede
+    # existir un candidato ambiguo fuera de la carga: nunca auto.
+    if not pool_complete:
+        reasons.append("candidate_universe_incomplete")
     if reasons:
         if flag is None and "surname_mismatch" in reasons:
             flag = "surname_mismatch"
@@ -731,7 +806,11 @@ async def rollback_batch_item_from_reconciliation(item: Dict, tx_id: str,
         {"$set": {"status": "pending", "updated_at": iso(now_utc()),
                   "reviewed_at": None, "reviewed_by": None,
                   "balance_delta_usdt": None, "margin_usdt": None,
-                  "admin_note": f"Rollback de conciliación: {reason}"},
+                  "admin_note": f"Rollback de conciliación: {reason}",
+                  # CB05 — marcador de reversión aplicada: si el cierre del
+                  # movimiento bancario se interrumpe, el reintento reconoce
+                  # la reversión y solo finaliza el vínculo (sin doble débito).
+                  "last_recon_rollback": {"tx_id": tx_id, "at": iso(now_utc())}},
          "$inc": {"decision_cycle": 1},
          "$unset": {"rollback_pending": "", "reconciliation": "",
                     "payment_confirmation_source": "",
@@ -759,10 +838,24 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
     """Persists an auto decision; falls back to manual review on any
     RuntimeError (order/item no longer pending, vanished candidate...)."""
     cand_doc = next((o for o in pool if o["id"] == best["order_id"]), None)
+    # CB03 — cada intento lleva un token EXCLUSIVO: reservar, finalizar y
+    # liberar solo mediante actualizaciones condicionadas por ese token.
+    attempt_token = uuid.uuid4().hex
     try:
         tx["confidence_score"] = best["score"]
         if cand_doc is None:
             raise RuntimeError("candidate order vanished from pool between rank and apply")
+        # CB10 — la identidad bancaria original no puede respaldar dos abonos:
+        # si otra representación del mismo pago ya está conciliada, no auto.
+        fp_orig = tx.get("fingerprint_original")
+        if fp_orig:
+            twin = await db.bank_transactions.find_one(
+                {"id": {"$ne": tx["id"]}, "fingerprint_original": fp_orig,
+                 "status": {"$in": ["auto_matched", "manual_matched"]}},
+                {"_id": 0, "id": 1})
+            if twin:
+                raise RuntimeError(
+                    f"duplicate bank identity already reconciled via {twin['id']}")
         # iter260(E04) — reclamar el uso EXCLUSIVO del movimiento bancario
         # antes de acreditar (mismo protocolo que la confirmación manual).
         claim = await db.bank_transactions.update_one(
@@ -771,7 +864,8 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
              "matching_claim": {"$exists": False}},
             {"$set": {"matching_claim": {"order_id": best["order_id"],
                                          "at": iso(now_utc()),
-                                         "by": "system_reconciliation"}}})
+                                         "by": "system_reconciliation",
+                                         "token": attempt_token}}})
         if claim.modified_count == 0:
             raise RuntimeError("bank transaction already claimed elsewhere")
         if cand_doc.get("kind") == "vip_batch_item":
@@ -782,10 +876,10 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                 cand_doc, tx, actor, auto=True)
     except RuntimeError as e:
         logger.warning(f"auto-match fallback to review for tx {tx['id']}: {e}")
-        # liberar SOLO nuestro propio reclamo fallido (si llegó a escribirse).
+        # CB03 — liberar EXCLUSIVAMENTE el reclamo de ESTE intento (token):
+        # quien pierde una reserva no limpia ni cambia reclamos ajenos.
         await db.bank_transactions.update_one(
-            {"id": tx["id"], "matching_claim.by": "system_reconciliation",
-             "matching_claim.order_id": best["order_id"]},
+            {"id": tx["id"], "matching_claim.token": attempt_token},
             {"$unset": {"matching_claim": ""}})
         update["status"] = "manual_review"
         return "review"
@@ -796,7 +890,8 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                    "matched_at": iso(now_utc()),
                    "matched_by": "system_reconciliation",
                    "reviewed_by": "system_reconciliation",
-                   "reviewed_at": iso(now_utc())})
+                   "reviewed_at": iso(now_utc()),
+                   "__claim_token": attempt_token})
     taken.add(best["order_id"])
     await recon_audit("AUTO_MATCHED", actor, tx=tx,
                       order_id=best["order_id"],
@@ -807,15 +902,18 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
 
 async def _match_and_apply(tx: Dict, pool: List[Dict], cfg: Dict,
                            bank_account_id: str, taken: set,
-                           actor: Dict) -> str:
+                           actor: Dict, pool_complete: bool = True) -> str:
     """Ranks, decides and persists the outcome for ONE credit transaction.
     Returns the decision bucket: auto | review | unmatched."""
     candidates = rank_candidates(tx, pool, cfg, bank_account_id, taken)
-    verdict = decide(tx, candidates, cfg, bank_account_id)
+    verdict = decide(tx, candidates, cfg, bank_account_id,
+                     pool_complete=pool_complete)
     best = candidates[0] if candidates else None
     prev_status = tx.get("status") or "unprocessed"
     update = {
-        "candidates": candidates,
+        # CB09 — al operador se le muestran hasta 5, pero decide() ya evaluó
+        # la lista completa de candidatos.
+        "candidates": candidates[:5],
         "confidence_score": best["score"] if best else 0,
         "review_flag": verdict["flag"],
         "auto_block_reasons": verdict.get("block_reasons") or [],
@@ -836,18 +934,37 @@ async def _match_and_apply(tx: Dict, pool: List[Dict], cfg: Dict,
                               score=best["score"], details=best["breakdown"])
     else:
         update["status"] = "unmatched"
+    claim_token = update.pop("__claim_token", None)
     final_update: Dict[str, Any] = {"$set": update}
     if update.get("status") == "auto_matched":
         final_update["$unset"] = {"matching_claim": ""}
-    await db.bank_transactions.update_one({"id": tx["id"]}, final_update)
+        # CB03 — solo el intento dueño del reclamo (token) escribe el cierre.
+        guard: Dict[str, Any] = {"id": tx["id"],
+                                 "matching_claim.token": claim_token}
+    else:
+        # CB03 — un resultado de review/unmatched calculado con datos viejos
+        # NUNCA sobrescribe un movimiento confirmado, duplicado o reclamado
+        # por otra operación entre tanto: se descarta.
+        guard = {"id": tx["id"],
+                 "status": {"$nin": ["auto_matched", "manual_matched",
+                                     "duplicate"]},
+                 "matching_claim": {"$exists": False}}
+    res = await db.bank_transactions.update_one(guard, final_update)
+    if res.modified_count == 0:
+        if update.get("status") == "auto_matched":
+            logger.error(f"auto-match final write lost claim for tx {tx['id']}")
+        else:
+            logger.info(f"stale matching result discarded for tx {tx['id']}")
     return decision
 
 
 async def run_matching(import_doc: Dict, tx_docs: List[Dict]) -> Dict[str, int]:
     """Matches freshly-imported CREDIT transactions. Mutates tx docs in DB."""
     cfg = await get_config()
-    pool = (await load_pending_orders(import_doc["currency"])) + \
-           (await load_pending_batch_items(import_doc["currency"]))
+    orders, orders_complete = await load_pending_orders(import_doc["currency"])
+    items, items_complete = await load_pending_batch_items(import_doc["currency"])
+    pool = orders + items
+    pool_complete = orders_complete and items_complete
     bank_account_id = import_doc.get("bank_account_id") or ""
     taken: set = set()
     counts = {"auto": 0, "review": 0, "unmatched": 0}
@@ -855,7 +972,8 @@ async def run_matching(import_doc: Dict, tx_docs: List[Dict]) -> Dict[str, int]:
         if tx.get("direction") != "credit" or tx.get("status") in ("duplicate", "error"):
             continue
         counts[await _match_and_apply(tx, pool, cfg, bank_account_id,
-                                      taken, SYSTEM_ACTOR)] += 1
+                                      taken, SYSTEM_ACTOR,
+                                      pool_complete=pool_complete)] += 1
     return counts
 
 
@@ -874,7 +992,8 @@ async def _refresh_import_counters(import_id: str) -> None:
 
 
 async def rematch_transactions(actor: Dict, currency: Optional[str] = None,
-                               import_id: Optional[str] = None) -> Dict[str, int]:
+                               import_id: Optional[str] = None,
+                               currencies: Optional[List[str]] = None) -> Dict[str, int]:
     """iter174 — re-runs the matching engine over movements still in
     unmatched/manual_review against the CURRENT pending orders and batch
     items. Makes reconciliation order-independent: statements imported
@@ -886,27 +1005,36 @@ async def rematch_transactions(actor: Dict, currency: Optional[str] = None,
                          "matching_claim": {"$exists": False}}
     if currency:
         q["currency"] = currency.upper()
+    elif currencies:
+        # CB06 — alcance de monedas del empleado sin moneda explícita.
+        q["currency"] = {"$in": [str(c).upper() for c in currencies]}
     if import_id:
         q["statement_import_id"] = import_id
-    txs = await db.bank_transactions.find(q, {"_id": 0, "raw": 0}) \
-        .sort([("transaction_date", 1), ("created_at", 1)]).to_list(5000)
-    counts = {"scanned": len(txs), "auto": 0, "review": 0, "unmatched": 0}
-    if not txs:
-        return counts
     cfg = await get_config()
-    pools: Dict[str, List[Dict]] = {}
+    pools: Dict[str, Any] = {}
     taken: set = set()
     affected_imports = set()
-    for tx in txs:
+    counts = {"scanned": 0, "auto": 0, "review": 0, "unmatched": 0}
+    # CB14 — cursor COMPLETO en lugar de un recorte de 5.000: todos los
+    # movimientos pendientes se alcanzan (los nuevos ya no quedan fuera
+    # indefinidamente detrás de los antiguos sin resolver).
+    cursor = db.bank_transactions.find(q, {"_id": 0, "raw": 0}) \
+        .sort([("transaction_date", 1), ("created_at", 1)])
+    async for tx in cursor:
+        counts["scanned"] += 1
         cur = (tx.get("currency") or "").upper()
         if cur not in pools:
-            pools[cur] = (await load_pending_orders(cur)) + \
-                         (await load_pending_batch_items(cur))
+            orders, oc = await load_pending_orders(cur)
+            items, ic = await load_pending_batch_items(cur)
+            pools[cur] = (orders + items, oc and ic)
+        pool, pool_complete = pools[cur]
         counts[await _match_and_apply(
-            tx, pools[cur], cfg, tx.get("bank_account_id") or "",
-            taken, actor)] += 1
+            tx, pool, cfg, tx.get("bank_account_id") or "",
+            taken, actor, pool_complete=pool_complete)] += 1
         if tx.get("statement_import_id"):
             affected_imports.add(tx["statement_import_id"])
+    if not counts["scanned"]:
+        return counts
     for imp_id in affected_imports:
         await _refresh_import_counters(imp_id)
     logger.info(f"rematch: {counts}")
