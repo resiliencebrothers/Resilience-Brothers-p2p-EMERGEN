@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -65,17 +65,30 @@ export default function AdminWithdrawals() {
     axios.get(`${API}/currencies`).then((r) => setCurrencies(r.data || [])).catch(() => {});
   }, []);
 
+  // DR08 — un 403 en canjes no debe vaciar la pantalla: cada sección carga
+  // por separado y la de canjes se oculta si el actor no tiene permiso.
+  const redemptionsBlockedRef = useRef(false);
+  const [redemptionsAllowed, setRedemptionsAllowed] = useState(true);
+
   const load = useCallback(async () => {
     const params = {};
     if (statusFilter !== "all") params.status = statusFilter;
     if (currencyFilter !== "all") params.currency = currencyFilter;
     if (userQuery) params.user_q = userQuery;
-    const [w, r] = await Promise.all([
-      axios.get(`${API}/admin/withdrawals`, { params, withCredentials: true }),
-      axios.get(`${API}/admin/redemptions`, { withCredentials: true }),
-    ]);
-    setItems(w.data);
-    setRedemptions(r.data);
+    try {
+      const w = await axios.get(`${API}/admin/withdrawals`, { params, withCredentials: true });
+      setItems(w.data || []);
+    } catch { /* se conserva lo último cargado */ }
+    if (redemptionsBlockedRef.current) return;
+    try {
+      const r = await axios.get(`${API}/admin/redemptions`, { withCredentials: true });
+      setRedemptions(r.data || []);
+    } catch (e) {
+      if (e?.response?.status === 403) {
+        redemptionsBlockedRef.current = true;
+        setRedemptionsAllowed(false);
+      }
+    }
   }, [statusFilter, currencyFilter, userQuery]);
   useEffect(() => { load(); }, [load]);
   // iter159 — new/updated withdrawals appear without F5.
@@ -232,16 +245,18 @@ export default function AdminWithdrawals() {
         <WithdrawalsTable items={items} statusLabel={statusLabel} onManage={openDialog} />
       </div>
 
-      <div>
-        <h2 className="font-display text-xl mb-3">{t("admin.withdrawals.sectionRedemptions")}</h2>
-        <RedemptionsTable
-          redemptions={redemptions}
-          onUpdateStatus={updateRedemption}
-          onSetCourierFee={(id, km) => setPendingRedFee({ id, km })}
-          onCreateDelivery={(r) => createDelivery("redemption", r.id)}
-          onPickupReady={markPickupReady}
-        />
-      </div>
+      {redemptionsAllowed && (
+        <div>
+          <h2 className="font-display text-xl mb-3">{t("admin.withdrawals.sectionRedemptions")}</h2>
+          <RedemptionsTable
+            redemptions={redemptions}
+            onUpdateStatus={updateRedemption}
+            onSetCourierFee={(id, km) => setPendingRedFee({ id, km })}
+            onCreateDelivery={(r) => createDelivery("redemption", r.id)}
+            onPickupReady={markPickupReady}
+          />
+        </div>
+      )}
 
       <WithdrawalDialog
         open={open}

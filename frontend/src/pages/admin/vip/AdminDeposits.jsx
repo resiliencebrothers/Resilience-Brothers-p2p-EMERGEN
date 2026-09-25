@@ -192,6 +192,16 @@ export default function AdminDeposits({ onChanged }) {
                       {d.tx_hash}
                     </div>
                   )}
+                  {(d.evidence_already_used_by || d.evidence_reused_from) && (
+                    <div
+                      className="text-[0.65rem] text-red-400 mt-0.5 max-w-[220px]"
+                      data-testid={`deposit-evidence-warning-${d.id}`}
+                    >
+                      ⚠ {t("adminDeposits.evidenceReused", {
+                        id: String(d.evidence_already_used_by || d.evidence_reused_from?.deposit_id || "").slice(0, 12),
+                      })}
+                    </div>
+                  )}
                   {d.note && <div className="text-[0.65rem] italic text-neutral-500 mt-0.5 max-w-[220px]">{d.note}</div>}
                 </td>
                 <td className="px-4 py-3 text-xs">

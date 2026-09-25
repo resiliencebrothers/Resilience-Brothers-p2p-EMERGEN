@@ -3547,7 +3547,8 @@
       "notDelivered": "🚚 {{courier}} has not confirmed the cash pickup yet.",
       "ready": "✓ Courier confirmed the pickup — ready to confirm the deposit.",
       "courierFallback": "The courier"
-    }
+    },
+    "evidenceReused": "Evidence already used by deposit {{id}}"
   },
   "historyHub": {
     "breadcrumb": "/ HISTORY",

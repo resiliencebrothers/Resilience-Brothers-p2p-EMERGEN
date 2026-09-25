@@ -265,10 +265,10 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     activar y deshace sus propios efectos (mismos op_ids ⇒ exactamente-una-vez).
     Los failed_init que conservan op_ids (crash a mitad de la compensación) se
     re-compensan de forma idempotente."""
-    from services.balances import credit_balance_idempotent as _credit
-    from services.balances import op_was_applied, debit_balance_idempotent
+    from services.balances import (debit_balance_idempotent,
+                                   burn_or_undo_debit)
     from services.inventory import (apply_stock_idempotent, movement_delta,
-                                    stock_op_was_applied)
+                                    burn_or_undo_stock)
     cutoff = (datetime.now(timezone.utc)
               - timedelta(seconds=max_age_seconds)).isoformat()
     healed = 0
@@ -290,9 +290,12 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         op = w.get("init_op_id") or ""
         amount = (float(w.get("amount_usd") or 0)
                   + float(w.get("courier_fee_currency_amount") or 0))
-        if op and await op_was_applied(w["user_id"], op):
-            await _credit(w["user_id"], w.get("currency") or "USD", amount,
-                          f"{op}:undo")
+        if op:
+            # DR04 — decisión TERMINAL compartida: quema un débito aún no
+            # aplicado (el creador atrasado ya no podrá cobrar después, ni
+            # con saldo nuevo) o compensa el que sí llegó a aplicarse.
+            await burn_or_undo_debit(w["user_id"], w.get("currency") or "USD",
+                                     amount, op)
         await db.withdrawals.update_one(
             {"id": w["id"], "status": "failed_init"},
             {"$unset": {"init_op_id": ""}})
@@ -315,18 +318,18 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             if claim.modified_count == 0:
                 continue  # el creador lo activó primero: NO compensar (S03)
         stock_op = r.get("stock_op_id") or ""
-        if stock_op and await stock_op_was_applied(r["product_id"], stock_op):
-            await apply_stock_idempotent(r["product_id"],
-                                         int(r.get("quantity") or 0),
-                                         f"{stock_op}:undo",
-                                         require_available=False)
+        if stock_op:
+            # DR04 — mismo patrón terminal para la reserva de stock.
+            await burn_or_undo_stock(r["product_id"],
+                                     int(r.get("quantity") or 0), stock_op)
         op = r.get("init_op_id") or ""
         amount = (float(r.get("total_usd") or 0)
                   + float(r.get("courier_fee_usd") or 0))
-        if op and await op_was_applied(r["user_id"], op):
-            await _credit(r["user_id"],
-                          r.get("settlement_currency") or "USDT", amount,
-                          f"{op}:undo")
+        if op:
+            # DR04 — quemar o compensar también el cobro del canje.
+            await burn_or_undo_debit(r["user_id"],
+                                     r.get("settlement_currency") or "USDT",
+                                     amount, op)
         await db.redemptions.update_one(
             {"id": r["id"], "status": "failed_init"},
             {"$unset": {"init_op_id": "", "stock_op_id": ""}})
@@ -358,8 +361,6 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         # no aplicó el débito/reserva, la quema los vuelve 'duplicate' (jamás
         # se aplicarán); si ya se aplicaron, se compensan. Borrar el plan ya
         # no puede dejar un débito tardío sin reverso.
-        from services.balances import burn_or_undo_debit
-        from services.inventory import burn_or_undo_stock
         if debit_op:
             await burn_or_undo_debit(r["user_id"], cur,
                                      float(plan.get("amount") or 0), debit_op)
@@ -485,8 +486,20 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         st = await debit_balance_idempotent(w["user_id"],
                                             rp.get("currency") or "USD",
                                             float(rp.get("amount") or 0), op)
+        if st == "duplicate":
+            # DR04(V01) — un op quemado/compensado nunca cobró: la
+            # reactivación no es válida y el retiro vuelve a rechazado.
+            log = await db.credit_ops.find_one({"op_id": op},
+                                               {"_id": 0, "state": 1})
+            if (log or {}).get("state") in ("burned", "undone"):
+                st = "insufficient"
         if st == "insufficient":
-            # el cliente gastó el reembolso: el retiro vuelve a 'rejected'.
+            # DR04 — decisión TERMINAL antes de liberar el plan: quemar el
+            # débito (un ejecutor atrasado jamás cobrará con saldo nuevo) o
+            # compensar uno aplicado en la carrera. El cliente gastó el
+            # reembolso: el retiro vuelve a 'rejected'.
+            await burn_or_undo_debit(w["user_id"], rp.get("currency") or "USD",
+                                     float(rp.get("amount") or 0), op)
             await db.withdrawals.update_one(
                 {"id": w["id"]},
                 {"$set": {"status": "rejected", "balance_refunded": True},

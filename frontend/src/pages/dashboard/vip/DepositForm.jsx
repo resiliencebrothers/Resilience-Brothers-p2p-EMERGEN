@@ -61,6 +61,9 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
   }, [currencyList, currency]);
 
   const cur = currencyList.find((c) => c.code === currency);
+  // DR01 — precisión de entrada según el tipo de activo (cripto: 8 decimales).
+  const isCrypto = (cur?.type || "").toLowerCase() === "crypto";
+  const amountStep = isCrypto ? "0.00000001" : "0.01";
   const usdtEq = cur?.usdt_per_unit != null && amount
     ? Number(amount) * cur.usdt_per_unit
     : null;
@@ -164,8 +167,8 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
               <Input
                 data-testid="deposit-amount"
                 type="number"
-                min="0.01"
-                step="0.01"
+                min={amountStep}
+                step={amountStep}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="0.00"

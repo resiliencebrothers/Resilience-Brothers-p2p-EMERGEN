@@ -68,6 +68,14 @@ async def _can_access(user: dict, key: str) -> bool:
     )
     if own_order_payout:
         return True
+    # DR07 — comprobante de un depósito PROPIO del cliente ("Depósitos y
+    # Retiros"): el dueño puede ver la captura que él mismo subió.
+    own_deposit = await db.deposits.find_one(
+        {"user_id": user["user_id"], "proof_url": ref},
+        {"_id": 0, "id": 1},
+    )
+    if own_deposit:
+        return True
     # Payout proof for the user's own VIP-balance withdrawal.
     own_withdrawal = await db.withdrawals.find_one(
         {"user_id": user["user_id"], "payout_proof_image": ref},

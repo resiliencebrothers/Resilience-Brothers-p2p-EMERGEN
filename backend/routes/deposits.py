@@ -32,7 +32,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from db_client import db
-from auth_utils import require_user, require_permission, iso, now_utc
+from auth_utils import (require_user, require_permission, iso, now_utc,
+                        _enforce_employee_currency_scope)
 from audit_log import log_action
 from services.balances import (
     build_rate_lookup, convert_to_usdt,
@@ -47,6 +48,66 @@ router = APIRouter(tags=["Deposits"])
 
 COURIER_MIN_USDT = 1000.0
 ALLOWED_METHODS = {"transfer", "crypto", "cash"}
+
+_claims_index_ready = False
+
+
+async def _ensure_evidence_claims_index() -> None:
+    """DR02 — índice único de la reserva durable de evidencias cripto."""
+    global _claims_index_ready
+    if _claims_index_ready:
+        return
+    await db.crypto_evidence_claims.create_index("claim_key", unique=True)
+    _claims_index_ready = True
+
+
+def _amount_precision(currency: dict) -> int:
+    """DR01 — precisión por tipo de activo: cripto 8 decimales, fiat 2."""
+    return 8 if (currency.get("type") or "").lower() == "crypto" else 2
+
+
+def _evidence_claim_key(network: str, tx_hash: str, currency: str,
+                        amount: float) -> str:
+    """DR02 — identidad de la evidencia: red + hash + activo + importe.
+    Distingue transferencias reales distintas dentro de una misma transacción
+    (difieren en importe o activo) sin permitir que el mismo movimiento
+    respalde dos acreditaciones."""
+    return (f"{(network or '').strip().upper()}|{tx_hash.strip().lower()}|"
+            f"{currency.strip().upper()}|{float(amount):.8f}")
+
+
+async def _claim_crypto_evidence(doc: dict) -> None:
+    """DR02 — reserva DURABLE de la evidencia antes de acreditar: dos
+    confirmaciones del mismo pago on-chain (incluso simultáneas o de usuarios
+    distintos) producen UNA acreditación; la segunda recibe 409 con la
+    referencia del depósito que ya consumió la evidencia."""
+    from pymongo.errors import DuplicateKeyError
+    await _ensure_evidence_claims_index()
+    key = _evidence_claim_key(doc.get("network") or "", doc["tx_hash"],
+                              doc["currency"], float(doc["amount"]))
+    try:
+        await db.crypto_evidence_claims.insert_one({
+            "claim_key": key, "deposit_id": doc["id"],
+            "user_id": doc["user_id"], "network": doc.get("network"),
+            "tx_hash": doc["tx_hash"], "currency": doc["currency"],
+            "amount": doc["amount"], "at": iso(now_utc())})
+    except DuplicateKeyError:
+        prior = await db.crypto_evidence_claims.find_one(
+            {"claim_key": key}, {"_id": 0, "deposit_id": 1})
+        if prior and prior.get("deposit_id") == doc["id"]:
+            return  # reintento idempotente del mismo depósito
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Esta evidencia (hash) ya respalda el depósito "
+                    f"{str((prior or {}).get('deposit_id') or '¿?')[:16]} — "
+                    "el mismo pago on-chain no puede acreditarse dos veces."))
+
+
+def _deposit_currency_scope(staff: dict) -> list:
+    """DR06 — monedas autorizadas del empleado (lista vacía = sin límite)."""
+    if staff.get("role") != "employee":
+        return []
+    return [str(c).upper() for c in (staff.get("allowed_currencies") or [])]
 
 
 class DepositCreate(BaseModel):
@@ -241,6 +302,31 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
             cash_mode = "office"
 
     proof_ref = maybe_upload_proof(proof_raw, "deposits") if proof_raw else None
+    # DR01 — normalización explícita por precisión del activo: nunca se
+    # acepta en silencio un importe que la precisión soportada altere ni se
+    # crea una solicitud que normalice a cero.
+    precision = _amount_precision(currency)
+    normalized = round(float(payload.amount), precision)
+    if normalized <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El importe es menor que la precisión mínima de {code} "
+                   f"({precision} decimales).")
+    if abs(float(payload.amount) - normalized) > 10 ** -(precision + 3):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{code} admite máximo {precision} decimales; ajusta el importe.")
+    # DR02 — advertencia visible para el personal si la misma evidencia ya
+    # aparece declarada en otro depósito (cualquier estado).
+    evidence_dup = None
+    if method == "crypto" and tx_hash:
+        prior = await db.deposits.find_one(
+            {"method": "crypto", "tx_hash": tx_hash},
+            {"_id": 0, "id": 1, "status": 1, "user_name": 1})
+        if prior:
+            evidence_dup = {"deposit_id": prior["id"],
+                            "status": prior["status"],
+                            "user_name": prior.get("user_name") or ""}
     now = iso(now_utc())
     doc = {
         "id": f"dep_{uuid.uuid4().hex[:12]}",
@@ -249,7 +335,7 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
         "user_name": user.get("name", ""),
         "user_role": user.get("role", ""),
         "currency": code,
-        "amount": round(float(payload.amount), 2),
+        "amount": normalized,
         "method": method,
         "cash_mode": cash_mode,
         "network": network if method == "crypto" else None,
@@ -257,6 +343,7 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
         "account_holder": holder or None,
         "tx_hash": tx_hash or None,
         "proof_url": proof_ref,
+        "evidence_reused_from": evidence_dup,
         "pickup_address": (payload.pickup_address or "").strip() or None,
         "pickup_phone": (payload.pickup_phone or "").strip() or None,
         "contact_name": (payload.contact_name or "").strip() or None,
@@ -327,7 +414,7 @@ async def admin_list_deposits(request: Request, status: Optional[str] = None,
                                limit: int = 200) -> Any:
     # iter163 — deposits moved from the `orders` gate to `withdrawals` so the
     # designated money-in/money-out staff handles both flows.
-    await require_permission(request, "withdrawals")
+    staff = await require_permission(request, "withdrawals")
     q: dict[str, Any] = {}
     if status in ("pending", "confirmed", "rejected"):
         q["status"] = status
@@ -338,6 +425,10 @@ async def admin_list_deposits(request: Request, status: Optional[str] = None,
     if user_q:
         rx = {"$regex": re.escape(user_q.strip()), "$options": "i"}
         q["$or"] = [{"user_name": rx}, {"user_email": rx}]
+    # DR06 — alcance de monedas del empleado (mismo criterio que retiros).
+    scope = _deposit_currency_scope(staff)
+    if scope:
+        q["currency"] = {"$in": scope}
     rows = await db.deposits.find(q, {"_id": 0}).sort("created_at", -1).to_list(min(max(1, limit), 500))
     # iter208 — attach courier pickup status so the frontend can disable
     # "Confirmar" until the courier confirms the pickup for cash-courier deposits.
@@ -359,7 +450,26 @@ async def admin_list_deposits(request: Request, status: Optional[str] = None,
                 d["courier_delivery_status"] = j.get("status")
                 d["courier_delivery_courier_name"] = j.get("courier_name") or ""
                 d["courier_delivery_assigned"] = bool(j.get("courier_id"))
-    pending = await db.deposits.count_documents({"status": "pending"})
+    # DR02 — señalar al personal las evidencias cripto ya reclamadas por
+    # OTRO depósito (reserva durable en crypto_evidence_claims).
+    hashes = [d["tx_hash"] for d in rows
+              if d.get("method") == "crypto" and d.get("tx_hash")
+              and d.get("status") == "pending"]
+    if hashes:
+        claims = await db.crypto_evidence_claims.find(
+            {"tx_hash": {"$in": hashes}},
+            {"_id": 0, "tx_hash": 1, "deposit_id": 1}).to_list(len(hashes) * 4)
+        by_hash: dict[str, str] = {}
+        for c in claims:
+            by_hash.setdefault(c["tx_hash"], c["deposit_id"])
+        for d in rows:
+            used_by = by_hash.get(d.get("tx_hash") or "")
+            if used_by and used_by != d["id"]:
+                d["evidence_already_used_by"] = used_by
+    pending_q: dict[str, Any] = {"status": "pending"}
+    if scope:
+        pending_q["currency"] = {"$in": scope}
+    pending = await db.deposits.count_documents(pending_q)
     return {"items": rows, "pending": pending}
 
 
@@ -367,10 +477,17 @@ async def admin_list_deposits(request: Request, status: Optional[str] = None,
 async def admin_deposits_hub_pending_count(request: Request) -> Any:
     """iter163 — badges for the Deposits & Withdrawals hub tabs.
     iter166 — capital deposits retired; capital REQUESTS joined the hub."""
-    await require_permission(request, "withdrawals")
-    deposits_pending = await db.deposits.count_documents({"status": "pending"})
+    staff = await require_permission(request, "withdrawals")
+    # DR06 — los contadores también respetan el alcance de monedas.
+    scope = _deposit_currency_scope(staff)
+    dep_q: dict[str, Any] = {"status": "pending"}
+    wd_q: dict[str, Any] = {"status": "pending"}
+    if scope:
+        dep_q["currency"] = {"$in": scope}
+        wd_q["currency"] = {"$in": scope}
+    deposits_pending = await db.deposits.count_documents(dep_q)
     requests_pending = await db.capital_requests.count_documents({"status": "pending"})
-    withdrawals_pending = await db.withdrawals.count_documents({"status": "pending"})
+    withdrawals_pending = await db.withdrawals.count_documents(wd_q)
     return {
         "deposits_pending": deposits_pending,
         "requests_pending": requests_pending,
@@ -384,6 +501,8 @@ async def admin_confirm_deposit(dep_id: str, request: Request) -> Any:
     doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+    # DR06 — alcance de monedas del empleado también al confirmar.
+    _enforce_employee_currency_scope(staff, (doc.get("currency") or "").upper())
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
     # iter208 — For cash+courier deposits: only allow confirmation once the
@@ -434,6 +553,14 @@ async def _do_confirm_deposit(doc: dict, staff: dict) -> Any:
     el endpoint y la sincronización automática desde mensajería (iter209b)."""
     dep_id = doc["id"]
     now = iso(now_utc())
+    # DR01 — defensa en profundidad: jamás confirmar un importe no positivo.
+    if float(doc.get("amount") or 0) <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Este depósito tiene un importe inválido (0) — recházalo.")
+    # DR02 — reserva DURABLE de la evidencia cripto ANTES de acreditar.
+    if doc.get("method") == "crypto" and doc.get("tx_hash"):
+        await _claim_crypto_evidence(doc)
     # Idempotency: flip status first so a double-click can't double-credit.
     # iter249 — la intención de abono viaja en el MISMO update atómico; si el
     # proceso muere antes de acreditar, el healer (credit_recovery) completa.
@@ -489,6 +616,8 @@ async def admin_reject_deposit(dep_id: str, payload: RejectPayload, request: Req
     doc = await db.deposits.find_one({"id": dep_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Depósito no encontrado.")
+    # DR06 — alcance de monedas del empleado también al rechazar.
+    _enforce_employee_currency_scope(staff, (doc.get("currency") or "").upper())
     if doc["status"] != "pending":
         raise HTTPException(status_code=409, detail="Este depósito ya fue procesado.")
     now = iso(now_utc())

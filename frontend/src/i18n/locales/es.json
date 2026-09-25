@@ -3522,6 +3522,7 @@
     }
   },
   "adminDeposits": {
+    "evidenceReused": "Evidencia ya usada en el depósito {{id}}",
     "colClient": "Cliente",
     "colAmount": "Monto",
     "colMethod": "Método / Detalles",

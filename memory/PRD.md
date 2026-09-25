@@ -2034,3 +2034,13 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-25 · iter300 — Auditoría Depósitos y Retiros 8a23c0b (DR01–DR09) CERRADA
+- 9 hallazgos corregidos: DR03 cancelación del cliente con guardas monetarias completas (tarifa en vuelo/igual a la leída, sin reactivación ni abono pendientes) · DR09 decisión durable compartida cancelación↔entrega física (`origin_cancel_intent` en el doc de la entrega; el sello `delivered` la exige ausente; entrega sellada bloquea cancelar SIN reembolso) · DR04 cierres de recuperación con `burn_or_undo_debit` (healer de creación, healer de re-débitos, compensación del creador, reversos de canjes/stock) — un ejecutor atrasado jamás consume saldo nuevo · DR05 `redebit_pending` bloquea TODAS las transiciones (ruta admin + `mark_paid_from_delivery`) y la escritura final se verifica · DR01 precisión por activo en depósitos (cripto 8 dec / fiat 2) + rechazo explícito de exceso de precisión y de importes que normalizan a cero + guard anti-confirmación de importe 0 · DR02 reserva durable de evidencia cripto (`crypto_evidence_claims`, índice único red|hash|moneda|importe) — el mismo pago on-chain nunca respalda dos acreditaciones; advertencia visible al personal · DR06 alcance de monedas del empleado en listar/contar/confirmar/rechazar depósitos y contadores del hub · DR07 el proxy `/api/files` reconoce `deposits.proof_url` del dueño · DR08 pantalla admin de retiros con cargas independientes (403 de canjes oculta esa sección sin vaciar retiros).
+- Tests: `tests/test_iter299_depositos_retiros.py` **25/25** (añadido a test-critical) · `make test-critical` **703/703** · captura frontend OK.
+
+## Backlog priorizado (actualizado 2026-09-25, tras iter300)
+- HECHO iter300: auditoría depósitos y retiros DR01–DR09 cerrada — 703/703 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

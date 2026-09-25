@@ -1553,3 +1553,16 @@ Archivos: `services/reconciliation_parser.py`, `services/reconciliation_matcher.
 - **CB13**: `fingerprint(direction=...)` (huella legacy sin dirección se sigue comprobando en dedupe — `$in [fp, fp_legacy]`); `_fingerprint_ref()`: reference → row_index (sin fecha) → descripción.
 - **CB14**: `load_pending_orders/items` → `(docs, completo)` con `POOL_LIMIT+1`; `decide(pool_complete=False)` añade `candidate_universe_incomplete`; rematch itera cursor completo (sin to_list(5000)).
 - Tests: `test_iter298_conciliacion.py` 44/44 · regresiones iter167/172/174/177/178/181/185/187/190/195/260/261/262 verdes · `make test-critical` 634/634.
+
+## 2026-09-25 · iter300 — Auditoría Depósitos y Retiros 8a23c0b (DR01–DR09)
+Archivos: `routes/deposits.py`, `routes/orders.py`, `routes/admin_withdrawals.py`, `routes/deliveries.py`, `routes/files.py`, `services/credit_recovery.py`, `AdminWithdrawals.jsx`, `AdminDeposits.jsx`, `DepositForm.jsx`, i18n es/en.
+- **DR01**: `_amount_precision()` (cripto 8/fiat 2) en create_deposit — 422 por exceso de precisión o normalización a cero; `_do_confirm_deposit` rechaza amount≤0; DepositForm con `step` dinámico por tipo.
+- **DR02**: `crypto_evidence_claims` (índice único `claim_key` = red|hash|moneda|importe) reclamada en `_claim_crypto_evidence()` ANTES del flip de confirmación; 409 con el depósito que consumió la evidencia; reintento del mismo depósito idempotente; `evidence_reused_from` al crear + `evidence_already_used_by` en el listado + badge rojo en AdminDeposits.
+- **DR03**: claim de `cancel_own_withdrawal` con `courier_fee_op_pending` ∄, `courier_fee_currency_amount` == leído, `redebit_pending` ∄, `credit_pending` ∄.
+- **DR04**: `burn_or_undo_debit` en healer de retiros initializing, healer de canjes initializing (+`burn_or_undo_stock`), healer de `redebit_pending` (con chequeo V01 de 'duplicate' quemado), compensación del creador en orders.py y `_claim_leaving_rejected` (duplicate quemado → rechazado; unset final verificado → 409 si el healer lo abortó).
+- **DR05**: guard `redebit_pending ∄` en la rama general de `_claim_transition_with_effects` (409 dedicado) y en `mark_paid_from_delivery` (pospone con filtro atómico).
+- **DR06**: scope `allowed_currencies` en GET /admin/deposits (query + pending), hub pending-count, confirm y reject (`_enforce_employee_currency_scope`).
+- **DR07**: `_can_access` reconoce `deposits.proof_url` del propio usuario.
+- **DR08**: `load()` de AdminWithdrawals con try/catch por sección + `redemptionsBlockedRef` (403 → oculta sección canjes, no repite la llamada).
+- **DR09**: en cancel — job delivered/confirmed → 409 sin reembolso; job activo → set atómico `origin_cancel_intent` (modified 0 → 409); claim fallido → unset intent. En courier_update_status — guard `origin_cancel_intent ∄` para sellar `delivered` + 409 explicativo; eliminado if duplicado de courier.
+- Tests: `test_iter299_depositos_retiros.py` 25/25 · `make test-critical` 703/703. Aprendizajes de test: op_ids únicos por corrida (residuos de `applied_credit_ops`), `_bal` USD = vip_balances.USD + legacy `vip_balance_usd`, un solo `_run(flow)` por test con motor.

@@ -503,8 +503,6 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
         raise HTTPException(status_code=404, detail="No encontrado")
     if d.get("courier_id") != me["user_id"]:
         raise HTTPException(status_code=403, detail="Esta entrega no es tuya")
-    if d.get("courier_id") != me["user_id"]:
-        raise HTTPException(status_code=403, detail="Esta entrega no es tuya")
     # N03 — el origen debe seguir operable en CADA avance (no solo al
     # aceptar): una operación rechazada/cancelada no admite más movimiento.
     from services.deliveries import (REF_COLLS, TERMINAL_REF_STATUSES,
@@ -567,13 +565,27 @@ async def courier_update_status(did: str, payload: dict, request: Request) -> An
     # MSG01 — la escritura exige que SIGAN vigentes el estado y el repartidor
     # comprobados: una petición atrasada (cancelación/reasignación en medio)
     # pierde con 409 y no revive ni altera la entrega.
+    guard: Dict[str, Any] = {"id": did, "status": d["status"],
+                             "courier_id": me["user_id"]}
+    if new_status == "delivered":
+        # DR09 — el sello del movimiento físico pierde ante una cancelación
+        # del origen en curso: la decisión durable vive en ESTE documento.
+        guard["origin_cancel_intent"] = {"$exists": False}
     res = await db.deliveries.update_one(
-        {"id": did, "status": d["status"], "courier_id": me["user_id"]}, {
+        guard, {
             "$set": {"status": new_status, "updated_at": now, **extra_set},
             "$push": {"timeline": {"status": new_status, "at": now,
                                    "by": me["user_id"], "note": tl_note}},
         })
     if res.matched_count == 0:
+        fresh = await db.deliveries.find_one(
+            {"id": did}, {"_id": 0, "origin_cancel_intent": 1})
+        if new_status == "delivered" and (fresh or {}).get("origin_cancel_intent"):
+            raise HTTPException(
+                status_code=409,
+                detail=("El cliente está cancelando esta operación — la "
+                        "entrega no puede sellarse. Contacta a la "
+                        "administración antes de entregar el dinero."))
         raise HTTPException(
             status_code=409,
             detail=("La entrega cambió de estado o de mensajero mientras "

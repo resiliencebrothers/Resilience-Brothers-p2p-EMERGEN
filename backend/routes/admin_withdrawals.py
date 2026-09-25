@@ -141,8 +141,17 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
         await _claim_leaving_rejected(w, sets, currency, amount)
         return
     claim = await db.withdrawals.update_one(
-        {"id": wid, "status": w["status"]}, {"$set": sets})
+        {"id": wid, "status": w["status"],
+         # DR05 — ninguna transición avanza con un re-débito en vuelo: la
+         # decisión monetaria de la reactivación debe resolverse primero.
+         "redebit_pending": {"$exists": False}}, {"$set": sets})
     if claim.matched_count == 0:
+        if await db.withdrawals.find_one(
+                {"id": wid, "redebit_pending": {"$exists": True}}, {"_id": 1}):
+            raise HTTPException(
+                status_code=409,
+                detail="La reactivación de este retiro aún no completó su "
+                       "débito; espera unos segundos y reintenta.")
         _raise_withdrawal_race()
 
 
@@ -205,9 +214,21 @@ async def _claim_leaving_rejected(w: dict, sets: dict, currency: str,
         return
     # iter257(D11) — re-débito por el helper duradero (guard atómico de
     # saldo + op_id idempotente + log credit_ops), no un $inc artesanal.
-    from services.balances import debit_balance_idempotent
+    from services.balances import debit_balance_idempotent, burn_or_undo_debit
     st = await debit_balance_idempotent(w["user_id"], currency, amount, op)
+    if st == "duplicate":
+        # DR04(V01) — 'duplicate' no distingue un cobro real de un aborto
+        # durable: un op quemado/compensado significa que el re-débito NUNCA
+        # quedó cobrado → la reactivación no es válida.
+        log = await db.credit_ops.find_one({"op_id": op},
+                                           {"_id": 0, "state": 1})
+        if (log or {}).get("state") in ("burned", "undone"):
+            st = "insufficient"
     if st == "insufficient":
+        # DR04 — decisión TERMINAL antes de liberar el plan: quemar el débito
+        # (un ejecutor atrasado jamás cobrará después, ni con saldo nuevo) o
+        # compensar uno aplicado en la carrera.
+        await burn_or_undo_debit(w["user_id"], currency, amount, op)
         await db.withdrawals.update_one(
             {"id": wid, "redebit_pending.op_id": op},
             {"$set": {"status": "rejected", "balance_refunded": True},
@@ -217,9 +238,17 @@ async def _claim_leaving_rejected(w: dict, sets: dict, currency: str,
             detail=(f"El cliente ya no tiene {amount} {currency} "
                     "disponibles (gastó el reembolso); no se puede "
                     "reactivar este retiro."))
-    await db.withdrawals.update_one(
+    fin = await db.withdrawals.update_one(
         {"id": wid, "redebit_pending.op_id": op},
         {"$unset": {"redebit_pending": ""}})
+    if fin.matched_count == 0:
+        # DR05 — el recuperador abortó este plan entre tanto: el retiro quedó
+        # (o quedará) rechazado con el débito compensado — jamás se comunica
+        # una reactivación exitosa sin verificar la escritura final.
+        raise HTTPException(
+            status_code=409,
+            detail="La reactivación fue revertida por seguridad; el retiro "
+                   "permanece rechazado. Recarga la página.")
 
 
 def _collect_payout_evidence(payload: dict, update_doc: dict,
@@ -541,6 +570,12 @@ async def mark_paid_from_delivery(wid: str, actor: dict) -> Optional[dict]:
     w = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     if not w or w.get("status") in ("paid", "rejected", "cancelled"):
         return None
+    # DR05 — no sincronizar 'paid' con un re-débito o abono en vuelo: la
+    # decisión monetaria de la reactivación debe resolverse primero.
+    if w.get("redebit_pending") or w.get("credit_pending"):
+        logger.warning(f"mark_paid_from_delivery: retiro {wid} con efecto de "
+                       "saldo en vuelo — se pospone la sincronización")
+        return None
     update_doc = {
         "status": "paid",
         "paid_at": iso(now_utc()),
@@ -552,7 +587,9 @@ async def mark_paid_from_delivery(wid: str, actor: dict) -> Optional[dict]:
         update_doc["paid_from_account_id"] = acc["id"]
         update_doc["paid_from_account_label"] = acc["label"]
     r = await db.withdrawals.update_one(
-        {"id": wid, "status": w["status"]}, {"$set": update_doc})
+        {"id": wid, "status": w["status"],
+         "redebit_pending": {"$exists": False},
+         "credit_pending": {"$exists": False}}, {"$set": update_doc})
     if r.modified_count == 0:
         return None
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})

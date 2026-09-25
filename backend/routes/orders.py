@@ -956,12 +956,13 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
         {"id": w.id, "status": "initializing"},
         {"$set": {"status": "pending"}, "$unset": {"init_op_id": ""}})
     if act.matched_count == 0:
-        # iter256(S03) — el healer revirtió este intento: deshacer nuestro
-        # débito (mismo op de undo que el healer ⇒ un solo reverso total).
-        from services.balances import credit_balance_idempotent
-        await credit_balance_idempotent(
+        # iter256(S03)/DR04 — el healer revirtió este intento: decisión
+        # TERMINAL compartida (quemar un débito no aplicado o compensar el
+        # real) — nunca un abono ciego que pueda duplicarse con el healer.
+        from services.balances import burn_or_undo_debit
+        await burn_or_undo_debit(
             user["user_id"], currency, payload.amount_usd + courier_fee_cur,
-            f"{debit_op}:undo")
+            debit_op)
         raise HTTPException(
             status_code=409,
             detail=("La solicitud tardó demasiado y fue revertida por "
@@ -1061,6 +1062,28 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     amount = float(w.get("amount_usd") or 0.0)
     # iter198 — a courier fee charged while pending returns with the amount.
     fee_back = float(w.get("courier_fee_currency_amount") or 0.0)
+    # DR09 — decisión durable compartida con la entrega física: antes de
+    # reembolsar debe quedar asegurado que la entrega NO ocurrió y ya no
+    # puede ocurrir. La intención de cancelar se registra atómicamente en el
+    # documento de la entrega; el sello 'delivered' del mensajero exige que
+    # esa intención no exista — gana exactamente una operación.
+    delivered_msg = ("El mensajero ya entregó (o está entregando) el dinero — "
+                     "este retiro no puede cancelarse. Contacta a soporte.")
+    job = await db.deliveries.find_one(
+        {"kind": "withdrawal", "ref_id": wid, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "id": 1, "status": 1})
+    intent_marked = False
+    if job:
+        if job.get("status") in ("delivered", "confirmed"):
+            raise HTTPException(status_code=409, detail=delivered_msg)
+        marked = await db.deliveries.update_one(
+            {"id": job["id"],
+             "status": {"$nin": ["delivered", "confirmed", "cancelled"]}},
+            {"$set": {"origin_cancel_intent": {"at": now,
+                                               "by": user["user_id"]}}})
+        if marked.modified_count == 0:
+            raise HTTPException(status_code=409, detail=delivered_msg)
+        intent_marked = True
     # iter249 — el guard balance_refunded evita el doble reembolso si un admin
     # rechaza el retiro en paralelo; la intención de abono viaja en el mismo
     # claim atómico y el abono es idempotente por op_id (healer ante crash).
@@ -1068,14 +1091,29 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     marker = pending_marker(user["user_id"], currency, amount + fee_back,
                             "withdrawal-cancel-refund")
     res = await db.withdrawals.update_one(
-        {"id": wid, "status": "pending", "balance_refunded": {"$ne": True}},
+        {"id": wid, "status": "pending", "balance_refunded": {"$ne": True},
+         # DR03 — mismas guardas monetarias que el rechazo administrativo:
+         # sin cobro de tarifa EN VUELO, tarifa igual a la LEÍDA (una
+         # modificación entre lectura y reembolso invalida el claim) y sin
+         # reactivación ni abono pendientes.
+         "courier_fee_op_pending": {"$exists": False},
+         "courier_fee_currency_amount": w.get("courier_fee_currency_amount"),
+         "redebit_pending": {"$exists": False},
+         "credit_pending": {"$exists": False}},
         {"$set": {"status": "cancelled", "cancelled_at": now,
                   "balance_refunded": True, "credit_pending": marker}},
     )
     if res.modified_count == 0:
+        if intent_marked:
+            # liberar la intención de cancelación: la entrega sigue su curso.
+            await db.deliveries.update_one(
+                {"id": job["id"], "origin_cancel_intent.by": user["user_id"]},
+                {"$unset": {"origin_cancel_intent": ""}})
         raise HTTPException(
             status_code=409,
-            detail="Este retiro ya está en proceso y no puede cancelarse. Contacta a soporte.",
+            detail="Este retiro tiene un cobro o una operación en curso y no "
+                   "puede cancelarse ahora. Reintenta en unos segundos o "
+                   "contacta a soporte.",
         )
     await apply_and_clear("withdrawals", wid, marker)
     # iter205 — el trabajo de mensajería activo muere con el retiro.
