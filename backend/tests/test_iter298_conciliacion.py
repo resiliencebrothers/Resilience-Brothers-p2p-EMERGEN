@@ -273,11 +273,11 @@ class TestCB13Fingerprint:
 class TestCB08Surname:
     def test_given_names_prefix_is_not_surname(self):
         from services.reconciliation_matcher import surname_similarity
-        assert surname_similarity("JOSE MANUEL", "JOSE MANUEL PEREZ") == 0.0
+        assert surname_similarity("JOSE MANUEL", "JOSE MANUEL PEREZ") < 0.75
 
     def test_initial_prefix_is_not_surname(self):
         from services.reconciliation_matcher import surname_similarity
-        assert surname_similarity("JOSE M", "JOSE MANUEL PEREZ") == 0.0
+        assert surname_similarity("JOSE M", "JOSE MANUEL PEREZ") < 0.75
 
     def test_legit_cases_preserved(self):
         from services.reconciliation_matcher import surname_similarity

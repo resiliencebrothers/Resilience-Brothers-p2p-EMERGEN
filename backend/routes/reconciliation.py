@@ -123,6 +123,31 @@ def _fingerprint_ref(t: Dict[str, Any]) -> str:
     return str(t.get("description") or "")
 
 
+async def _legacy_dedupe_state(t: Dict[str, Any], imp: dict) -> tuple:
+    """CB13 — compatibilidad con huellas ANTERIORES al cambio de identidad:
+    reproduce EXACTAMENTE el cálculo histórico (referencia → descripción →
+    índice de fila, SIN dirección) y comprueba la dirección del registro
+    hallado — un cargo histórico jamás oculta un abono nuevo. Para filas SIN
+    fecha la identidad histórica (basada en la descripción) es débil: la fila
+    va a revisión con la ambigüedad explícita, nunca se descarta ni se
+    acredita automáticamente. Devuelve (es_duplicado, ambigüedad_legacy)."""
+    fp_ref_legacy = (t.get("reference") or t.get("description")
+                     or (f"row{t['row_index']}"
+                         if not t.get("transaction_date")
+                         and t.get("row_index") is not None else ""))
+    fp_legacy = fingerprint(imp.get("bank_account_id") or "",
+                            t["transaction_date"], t["amount"],
+                            imp["currency"], fp_ref_legacy,
+                            t.get("sender_name") or "")
+    hit = await db.bank_transactions.find_one(
+        {"fingerprint": fp_legacy}, {"_id": 0, "direction": 1})
+    if not hit or (hit.get("direction") or "") != t["direction"]:
+        return False, False
+    if t.get("transaction_date"):
+        return True, False
+    return False, True
+
+
 # ---------------------------------------------------------------------------
 # Background pipeline
 # ---------------------------------------------------------------------------
@@ -159,16 +184,12 @@ async def process_import(import_id: str, data: bytes, ext: str) -> None:
                              imp["currency"], fp_ref,
                              t.get("sender_name") or "",
                              direction=t["direction"])
-            # CB13 — la huella nueva incorpora la dirección; la histórica (sin
-            # dirección) se sigue comprobando para no re-acreditar filas
-            # importadas antes de este cambio.
-            fp_legacy = fingerprint(imp.get("bank_account_id") or "",
-                                    t["transaction_date"], t["amount"],
-                                    imp["currency"], fp_ref,
-                                    t.get("sender_name") or "")
             is_dup = fp in seen_in_file or bool(
                 await db.bank_transactions.find_one(
-                    {"fingerprint": {"$in": [fp, fp_legacy]}}, {"_id": 1}))
+                    {"fingerprint": fp}, {"_id": 1}))
+            legacy_ambiguous = False
+            if not is_dup:
+                is_dup, legacy_ambiguous = await _legacy_dedupe_state(t, imp)
             seen_in_file.add(fp)
             stored_fp = fp if not is_dup else f"dup:{uuid.uuid4().hex}:{fp[:16]}"
             if t["direction"] == "credit":
@@ -204,6 +225,7 @@ async def process_import(import_id: str, data: bytes, ext: str) -> None:
                 "last4_account": t.get("last4_account"),
                 "fingerprint": stored_fp,
                 "fingerprint_original": fp,
+                "legacy_identity_ambiguous": legacy_ambiguous or None,
                 "status": ("duplicate" if is_dup
                            else ("ignored" if t["direction"] == "debit" else "unmatched")),
                 "ignored_reason": ("debit" if (t["direction"] == "debit" and not is_dup) else None),
@@ -828,7 +850,16 @@ async def _validate_confirm_compatibility(tx: dict, target: dict) -> None:
     if cfg.get("require_account_match"):
         tx_acc = tx.get("bank_account_id")
         target_acc = target.get("payment_account_id")
-        if tx_acc and target_acc and tx_acc != target_acc:
+        if not tx_acc or not target_acc:
+            # CB01 — la regla obligatoria exige AMBOS identificadores: un
+            # valor ausente no es una coincidencia, es una excepción que debe
+            # resolverse antes de reservar o acreditar.
+            raise HTTPException(
+                status_code=409,
+                detail="La coincidencia de cuenta es obligatoria y falta el "
+                       "identificador de cuenta en el movimiento o en la "
+                       "orden — verifícalo antes de confirmar.")
+        if tx_acc != target_acc:
             raise HTTPException(
                 status_code=409,
                 detail="La cuenta bancaria del movimiento no coincide con la "
@@ -868,15 +899,55 @@ async def _target_has_recon_stamp(order_id: str, tx_id: str) -> bool:
 
 
 async def _claim_bank_transaction(tx: dict, tx_id: str, order_id: str,
-                                  actor: dict) -> None:
-    """iter260(E04) — reclama el USO EXCLUSIVO del movimiento bancario antes
-    de acreditar ninguna orden: dos confirmaciones dirigidas a órdenes
-    distintas ya no pueden respaldarse con el mismo cobro."""
+                                  actor: dict, token: str,
+                                  resuming: bool) -> None:
+    """iter260(E04)/CB03 — reclama el USO EXCLUSIVO del movimiento bancario
+    con un token único por intento: dos solicitudes simultáneas — incluso
+    hacia la MISMA orden — nunca comparten la reserva. Solo una reanudación
+    legítima (decisión ya PERSISTIDA: orden aprobada con el sello de este
+    movimiento) puede tomar el reclamo de un intento interrumpido."""
     new_claim = {"order_id": order_id, "at": iso(now_utc()),
-                 "by": actor["user_id"]}
+                 "by": actor["user_id"], "token": token}
     existing = tx.get("matching_claim")
     if existing and existing.get("order_id") == order_id:
-        return  # nuestro propio enlace a medias — reanudar
+        if resuming:
+            # Reanudación legítima (decisión persistida): tomar el reclamo
+            # interrumpido de forma atómica, condicionado al reclamo leído.
+            take = await db.bank_transactions.update_one(
+                {"id": tx_id, "matching_claim.order_id": order_id,
+                 "matching_claim.at": existing.get("at"),
+                 "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]}},
+                {"$set": {"matching_claim": new_claim}})
+            if take.modified_count == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Otro operador está conciliando este movimiento; espera unos segundos.")
+            return
+        # CB03 — otra solicitud hacia la MISMA orden puede seguir activa: un
+        # intento simultáneo no hereda la reserva por compartir orden. Se roba
+        # con garantías atómicas solo si el reclamo ya está huérfano (viejo) o
+        # si la orden lleva el pre-sello de ESTE movimiento (G04): el sello se
+        # escribe DESPUÉS de reservar, así que su presencia con la orden aún
+        # pendiente prueba un intento interrumpido a mitad de la aprobación —
+        # retomarlo es la única vía de completar el abono (la aprobación
+        # interna es atómica pendiente→aprobado: jamás un doble crédito).
+        stale_cutoff = iso(now_utc() - timedelta(seconds=300))
+        if ((existing.get("at") or "") >= stale_cutoff
+                and not await _target_has_recon_stamp(order_id, tx_id)):
+            raise HTTPException(
+                status_code=409,
+                detail="Otra operación está conciliando este movimiento con "
+                       "la misma orden; espera unos segundos.")
+        steal_same = await db.bank_transactions.update_one(
+            {"id": tx_id, "matching_claim.order_id": order_id,
+             "matching_claim.at": existing.get("at"),
+             "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]}},
+            {"$set": {"matching_claim": new_claim}})
+        if steal_same.modified_count == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Otro operador está conciliando este movimiento; espera unos segundos.")
+        return
     if existing:
         # Reclamo de otro proceso: solo se roba si su orden nunca llegó a
         # aprobarse con este movimiento y el reclamo ya está huérfano.
@@ -910,9 +981,11 @@ async def _claim_bank_transaction(tx: dict, tx_id: str, order_id: str,
             detail="Otro operador está conciliando este movimiento; reintenta en unos segundos.")
 
 
-async def _release_bank_claim(tx_id: str, order_id: str) -> None:
+async def _release_bank_claim(tx_id: str, token: str) -> None:
+    """CB03 — libera EXCLUSIVAMENTE el reclamo de ESTE intento (token):
+    quien pierde jamás borra la reserva de otro intento."""
     await db.bank_transactions.update_one(
-        {"id": tx_id, "matching_claim.order_id": order_id},
+        {"id": tx_id, "matching_claim.token": token},
         {"$unset": {"matching_claim": ""}})
 
 
@@ -973,7 +1046,10 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
             raise HTTPException(status_code=409,
                                 detail=f"La orden ya fue conciliada con el movimiento {other['id']}.")
 
-    await _claim_bank_transaction(tx, tx_id, payload.order_id, actor)
+    # CB03 — identidad exclusiva de ESTE intento de confirmación manual.
+    attempt_token = uuid.uuid4().hex
+    await _claim_bank_transaction(tx, tx_id, payload.order_id, actor,
+                                  attempt_token, resuming)
 
     cand = next((c for c in (tx.get("candidates") or [])
                  if c["order_id"] == payload.order_id), None)
@@ -986,25 +1062,36 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
             else:
                 await approve_order_from_reconciliation(order, tx, actor, auto=False)
         except RuntimeError:
-            await _release_bank_claim(tx_id, payload.order_id)
+            await _release_bank_claim(tx_id, attempt_token)
             raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
-    # CB03 — solo el dueño del reclamo (o una reanudación legítima sin
-    # movimiento conciliado) escribe el cierre; nunca se pisa otro resultado.
+    # CB03 — solo el dueño del reclamo (token de ESTE intento) escribe el
+    # cierre; nunca se pisa otro resultado ni se hereda un reclamo ajeno.
     fin = await db.bank_transactions.update_one(
-        {"id": tx_id,
-         "$or": [{"matching_claim.order_id": payload.order_id},
-                 {"matching_claim": {"$exists": False},
-                  "status": {"$nin": ["auto_matched", "manual_matched"]}}]},
+        {"id": tx_id, "matching_claim.token": attempt_token},
         {"$set": {"status": "manual_matched", "matched_order_id": payload.order_id,
                   "matched_kind": matched_kind,
                   "match_details": cand,
+                  # CB05 — generación única de ESTA conciliación: un cierre
+                  # de reversión antiguo no puede liberar un vínculo nuevo.
+                  "match_uid": uuid.uuid4().hex,
                   "confidence_score": cand["score"] if cand else tx.get("confidence_score"),
                   "matched_at": iso(now_utc()), "matched_by": actor["user_id"],
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
                   "updated_at": iso(now_utc())},
          "$unset": {"matching_claim": ""}})
     if fin.modified_count == 0:
-        logger.error(f"confirm_match: cierre omitido para {tx_id} (reclamo perdido)")
+        fresh = await db.bank_transactions.find_one(
+            {"id": tx_id}, {"_id": 0, "status": 1, "matched_order_id": 1})
+        if not (fresh and fresh.get("status") in ("auto_matched", "manual_matched")
+                and fresh.get("matched_order_id") == payload.order_id):
+            # CB03 — el cierre no quedó registrado: se conserva un estado
+            # RECUPERABLE (orden aprobada con sello) y jamás se informa una
+            # conciliación exitosa que no quedó vinculada.
+            raise HTTPException(
+                status_code=409,
+                detail="La orden quedó aprobada pero el vínculo bancario no "
+                       "pudo registrarse; reintenta la confirmación para "
+                       "completar el cierre.")
     await recon_audit("MANUAL_MATCHED", actor, tx=tx, order_id=payload.order_id,
                       prev_status=tx["status"], new_status="manual_matched",
                       score=(cand or {}).get("score"),
@@ -1235,6 +1322,9 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
     kind = tx.get("matched_kind") or (
         "vip_batch_item" if str(order_id or "").startswith("vitem_") else "order")
     prev_tx_status = tx["status"]
+    # CB05 — identidad de la conciliación que se está deshaciendo: el cierre
+    # solo puede liberar ESTA generación del vínculo, nunca una posterior.
+    expected_match_uid = tx.get("match_uid")
 
     def _resume_close(doc: Optional[dict]) -> bool:
         """CB05 — la reversión del documento YA se aplicó (marcador) pero el
@@ -1293,14 +1383,24 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
                                "revierte su estado desde Órdenes antes de "
                                "liberar este movimiento.")
     new_status = "manual_review" if (tx.get("candidates") or []) else "unmatched"
-    await db.bank_transactions.update_one(
-        {"id": tx_id},
+    # CB05 — cierre condicionado a la MISMA generación de conciliación leída:
+    # un cierre tardío (reanudado) jamás borra un vínculo creado después con
+    # otra orden ni con la misma orden en un ciclo posterior.
+    fin = await db.bank_transactions.update_one(
+        {"id": tx_id, "matched_order_id": order_id,
+         "match_uid": expected_match_uid,
+         "status": {"$in": ["auto_matched", "manual_matched"]}},
         {"$set": {"status": new_status, "matched_order_id": None,
-                  "matched_kind": None,
+                  "matched_kind": None, "match_uid": None,
                   "match_details": None, "matched_at": None, "matched_by": None,
                   "review_note": f"Rollback: {reason}",
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
                   "updated_at": iso(now_utc())}})
+    if fin.modified_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El movimiento ya respalda otra conciliación posterior; "
+                   "este cierre de reversión antiguo se descartó sin liberar nada.")
     await recon_audit("ROLLBACK", actor, tx=tx, order_id=order_id,
                       prev_status=prev_tx_status, new_status=new_status,
                       details={"reason": reason, "kind": kind},

@@ -2044,3 +2044,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-26 · iter301 — Verificación Conciliación Bancaria c4f993b (5 hallazgos parciales) CERRADA
+- 5 hallazgos parciales corregidos: CB01 `require_account_match` exige AMBOS identificadores de cuenta (ausencia = 409, no coincidencia implícita) · CB03 token exclusivo también entre solicitudes hacia la MISMA orden + cierre condicionado al token del intento + estado recuperable si el vínculo no quedó registrado · CB05 `match_uid` (generación única por conciliación) en confirm manual y auto-match; el cierre del rollback exige la generación leída (cierre tardío descartado con 409) · CB08 evidencia de apellido independiente del orden de nombres (tokens del titular que no son nombres de pila) · CB13 dedupe legacy comprueba la dirección del registro histórico; fila sin fecha con identidad débil → revisión con `legacy_identity_ambiguous` (nunca descarte automático).
+- Regresión G04 corregida: el reclamo hacia la misma orden con pre-sello de ESTE movimiento (intento interrumpido a mitad de aprobación) se retoma atómicamente — la aprobación interna atómica pendiente→aprobado garantiza crédito único.
+- Tests: `tests/test_iter300_verificacion_cb.py` (añadido a test-critical) · `make test-critical` **723/723** · mypy/ruff limpios. Nota: 2 flakes de red (Cloudflare 524 hacia preview bajo carga) en la 1ª corrida, verdes aislados y en la 2ª corrida completa.
+
+## Backlog priorizado (actualizado 2026-09-26, tras iter301)
+- HECHO iter301: verificación conciliación bancaria cerrada — 723/723 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

@@ -195,20 +195,17 @@ def surname_similarity(tx_name: Any, order_name: Any) -> float:
                if t not in _BANK_NOISE and len(t) >= 2]
     if not order_sn or not tx_toks:
         return 0.0
-    # CB08 — un remitente que es solo un PREFIJO de los nombres de pila del
-    # titular ('JOSE MANUEL' vs 'JOSE MANUEL PEREZ') no evidencia apellido:
-    # faltan los tokens finales y todo token coincidente tras el primero es
-    # un nombre de pila conocido. Un token desconocido ('JUAN PEREZ') sí se
-    # trata como posible apellido — no se rompen los casos legítimos.
-    order_toks = [t for t in normalize_name(order_name).split()
-                  if t not in _BANK_NOISE]
-    if (len(tx_toks) < len(order_toks)
-            and all(_tokens_match(a, b)
-                    for a, b in zip(tx_toks, order_toks))
-            and all(t in _GIVEN_NAMES for t in tx_toks[1:])):
+    # CB08 — evidencia de apellido INDEPENDIENTE del orden de los nombres:
+    # los candidatos válidos a apellido son los tokens del titular que NO son
+    # nombres de pila conocidos ('PEREZ'); un segundo nombre ('MANUEL') no
+    # demuestra apellido aunque coincida — ni en orden directo ni invertido
+    # ('MANUEL JOSE'). Si el titular no tiene ningún token distinguible como
+    # apellido, se conserva la incertidumbre (0.0 → revisión manual).
+    strong = [sn for sn in order_sn if sn not in _GIVEN_NAMES]
+    if not strong:
         return 0.0
     return max(SequenceMatcher(None, sn, tok).ratio()
-               for sn in order_sn for tok in tx_toks)
+               for sn in strong for tok in tx_toks)
 
 
 def _iso_date(s: Any) -> Optional[datetime]:
@@ -586,6 +583,10 @@ def decide(tx: Dict, candidates: List[Dict], cfg: Dict,
     # existir un candidato ambiguo fuera de la carga: nunca auto.
     if not pool_complete:
         reasons.append("candidate_universe_incomplete")
+    # CB13 — identidad histórica débil (fila sin fecha que podría coincidir
+    # con un pago ya acreditado antes de la migración): decisión humana.
+    if tx.get("legacy_identity_ambiguous"):
+        reasons.append("legacy_identity_ambiguous")
     if reasons:
         if flag is None and "surname_mismatch" in reasons:
             flag = "surname_mismatch"
@@ -887,6 +888,9 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                    "matched_order_id": best["order_id"],
                    "matched_kind": cand_doc.get("kind", "order"),
                    "match_details": best,
+                   # CB05 — generación única de ESTA conciliación: un cierre
+                   # de reversión antiguo no puede liberar un vínculo nuevo.
+                   "match_uid": uuid.uuid4().hex,
                    "matched_at": iso(now_utc()),
                    "matched_by": "system_reconciliation",
                    "reviewed_by": "system_reconciliation",

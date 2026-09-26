@@ -3848,7 +3848,8 @@
       "same_sender_multiple_users": "El mismo remitente coincide con órdenes de dos usuarios distintos — requiere revisión humana",
       "surname_mismatch": "El apellido no coincide o está bajo el umbral — el apellido es obligatorio para auto-conciliar",
       "duplicate_across_batches": "La misma combinación nombre + monto + fecha aparece en lotes diferentes — requiere revisión humana",
-      "candidate_universe_incomplete": "Hay demasiadas órdenes pendientes para evaluar todas las coincidencias — requiere revisión humana"
+      "candidate_universe_incomplete": "Hay demasiadas órdenes pendientes para evaluar todas las coincidencias — requiere revisión humana",
+      "legacy_identity_ambiguous": "Identidad histórica débil (fila sin fecha): puede coincidir con un pago ya acreditado antes de la migración — decide manualmente"
     },
     "status": {
       "uploaded": "Subido",

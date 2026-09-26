@@ -3848,7 +3848,8 @@
       "same_sender_multiple_users": "The same sender matches orders from two different users — requires human review",
       "surname_mismatch": "Surname does not match or is below the threshold — surname is mandatory for auto-matching",
       "duplicate_across_batches": "The same name + amount + date combination appears in different batches — requires human review",
-      "candidate_universe_incomplete": "Too many pending orders to evaluate every possible match — requires human review"
+      "candidate_universe_incomplete": "Too many pending orders to evaluate every possible match — requires human review",
+      "legacy_identity_ambiguous": "Weak legacy identity (dateless row): may match a payment already credited before the migration — decide manually"
     },
     "status": {
       "uploaded": "Uploaded",
