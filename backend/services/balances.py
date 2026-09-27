@@ -84,6 +84,11 @@ def _convert_via_usd(amount: float, code: str, rates: dict) -> Optional[float]:
     return usd_val  # assume 1 USD ≈ 1 USDT if no rate found
 
 
+# DE01 — regla de plataforma: depósito y retiro mínimo en cripto = 1 USDT
+# (o su equivalente al cambio vigente).
+MIN_CRYPTO_USDT = 1.0
+
+
 def convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:
     """Convert amount in `code` to USDT using available rates. Returns None if no path."""
     if amount == 0:

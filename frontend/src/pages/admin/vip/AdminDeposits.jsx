@@ -3,6 +3,7 @@ import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { API } from "@/App";
+import { formatAmount } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -76,13 +77,23 @@ export default function AdminDeposits({ onChanged }) {
     }
   }, []);
 
-  const confirm = async (id) => {
+  const confirm = async (id, movementId) => {
     try {
-      await axios.post(`${API}/admin/deposits/${id}/confirm`, {}, { withCredentials: true });
+      const body = movementId ? { evidence_movement_id: movementId } : {};
+      await axios.post(`${API}/admin/deposits/${id}/confirm`, body, { withCredentials: true });
       toast.success(t("adminDeposits.confirmedToast"));
       load();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || t("adminDeposits.actionError"));
+      const det = err?.response?.data?.detail;
+      if (det?.code === "EVIDENCE_ALREADY_USED") {
+        // DR02 — la misma evidencia ya respalda otro depósito: el personal
+        // puede identificar OTRA transferencia real con un ID de movimiento.
+        const mid = window.prompt(`${det.message}\n\n${t("adminDeposits.movementPrompt")}`, "");
+        if (mid && mid.trim()) return confirm(id, mid.trim());
+        toast.error(det.message);
+        return;
+      }
+      toast.error((typeof det === "string" ? det : det?.message) || t("adminDeposits.actionError"));
     }
   };
 
@@ -162,7 +173,7 @@ export default function AdminDeposits({ onChanged }) {
                   <div className="text-[0.6rem] uppercase text-neutral-600">{d.user_role}</div>
                 </td>
                 <td className="px-4 py-3 font-mono text-emerald-400 text-right">
-                  {Number(d.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {formatAmount(d.amount)}
                   <span className="text-[0.6rem] text-neutral-500 ml-1">{d.currency}</span>
                   {d.usdt_equivalent != null && (
                     <div className="text-[0.6rem] text-neutral-500">≈ {Number(d.usdt_equivalent).toFixed(2)} USDT</div>

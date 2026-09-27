@@ -106,7 +106,8 @@ def _raise_withdrawal_race() -> None:
 
 
 async def _claim_transition_with_effects(w: dict, new_status: str,
-                                         sets: dict) -> None:
+                                         sets: dict,
+                                         actor_id: str = "") -> None:
     """iter256(S01) — máquina de estados del retiro con efectos VINCULADOS.
 
     El estado nuevo y la intención de su efecto de saldo (reembolso al entrar
@@ -135,7 +136,7 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
               + float(w.get("courier_fee_currency_amount") or 0.0))
     was_rejected = w["status"] == "rejected"
     if new_status == "rejected" and not was_rejected:
-        await _claim_entering_rejected(w, sets, currency, amount)
+        await _claim_entering_rejected(w, sets, currency, amount, actor_id)
         return
     if was_rejected and new_status != "rejected":
         await _claim_leaving_rejected(w, sets, currency, amount)
@@ -156,10 +157,22 @@ async def _claim_transition_with_effects(w: dict, new_status: str,
 
 
 async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
-                                   amount: float) -> None:
+                                   amount: float, actor_id: str = "") -> None:
     """Entrada a 'rejected' — el reembolso viaja VINCULADO al claim (marker
     + abono idempotente); si ya estaba reembolsado, transición sin dinero."""
     wid = w["id"]
+    # DR09(B) — el reembolso administrativo usa el MISMO protocolo de decisión
+    # durable que la cancelación del cliente: con la entrega ya sellada
+    # (dinero físico entregado) NO hay reembolso automático, y la intención
+    # registrada impide que un sello tardío del mensajero gane después de
+    # comprometer el reembolso.
+    from services.deliveries import (reserve_origin_cancel_intent,
+                                     release_origin_cancel_intent)
+    job, intent_token = await reserve_origin_cancel_intent(
+        "withdrawal", wid, actor_id or "staff",
+        "El mensajero ya entregó el dinero de este retiro (entrega sellada) — "
+        "no puede rechazarse con reembolso automático; registra una "
+        "corrección explícita.")
     from services.credit_recovery import pending_marker, apply_and_clear
     marker = pending_marker(w["user_id"], currency, amount,
                             "withdrawal-refund")
@@ -183,6 +196,9 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
              "redebit_pending": {"$exists": False}},
             {"$set": sets})
         if claim.matched_count == 0:
+            if job and intent_token:
+                # DR09(B) — solo se libera la intención de ESTE intento.
+                await release_origin_cancel_intent(job["id"], intent_token)
             _raise_withdrawal_race()
         return
     await apply_and_clear("withdrawals", wid, marker)
@@ -428,7 +444,8 @@ async def update_withdrawal(wid: str, payload: dict, request: Request) -> Any:
     # de evidencia/nota viajan en el mismo claim. Quien pierde la carrera
     # recibe 409 y un crash a mitad lo completa el healer.
     await _claim_transition_with_effects(w, new_status,
-                                         {**status_sets, **update_doc})
+                                         {**status_sets, **update_doc},
+                                         actor_id=actor.get("user_id") or "")
     updated = await db.withdrawals.find_one({"id": wid}, {"_id": 0})
     # iter205 — un retiro rechazado cancela su trabajo de mensajería activo.
     # MSG03 — si el mensajero ya entregó, queda incidencia en vez de ocultar.

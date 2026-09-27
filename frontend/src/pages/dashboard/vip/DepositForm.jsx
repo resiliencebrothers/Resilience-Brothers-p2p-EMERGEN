@@ -179,6 +179,11 @@ export function DepositForm({ onSubmitted, showHistory = true, method = "transfe
                   ≈ {usdtEq.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
                 </div>
               )}
+              {isCrypto && (
+                <div className="text-[0.65rem] text-amber-400/80 mt-1" data-testid="deposit-crypto-min-hint">
+                  {t("deposits.cryptoMinHint")}
+                </div>
+              )}
             </div>
           </div>
 

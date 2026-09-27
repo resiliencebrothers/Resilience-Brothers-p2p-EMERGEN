@@ -483,9 +483,13 @@ class TestFaseCMetricsEndpoint:
         # cancelado sin tiempos
         _plant_metric_delivery("cancelled", 30, [])
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # las entregas se plantan "hace 60/45/30 min": cerca de medianoche UTC
+        # caen en el día anterior — el rango cubre ambos días (sin flake).
+        date_from = (datetime.now(timezone.utc)
+                     - timedelta(hours=2)).strftime("%Y-%m-%d")
         r = requests.get(f"{API}/admin/deliveries/metrics",
                          headers=_hdr(ADMIN_TOKEN),
-                         params={"date_from": today, "date_to": today,
+                         params={"date_from": date_from, "date_to": today,
                                  "courier_id": COURIER_ID})
         assert r.status_code == 200, r.text
         m = r.json()

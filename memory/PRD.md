@@ -2055,3 +2055,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-27 · iter302 — Verificación Depósitos y Retiros 502a4a3 CERRADA + regla DE01
+- 4 hallazgos parciales corregidos: **DR09** intención de cancelación con token exclusivo por intento (la perdedora no limpia ni hereda; huérfanas >120s se retoman) + el rechazo administrativo usa el mismo protocolo (entrega sellada → 409 sin reembolso automático) · **DR02** identidad de evidencia cripto = red|hash|activo sin el importe declarado, gemelos históricos sin reserva bloquean el hash (con backfill), otra transferencia real exige `evidence_movement_id` explícito del personal · **DR04** cierre de insuficiencia del recuperador condicionado a `redebit_pending.op_id` (jamás sobrescribe un ciclo nuevo) · **DR01** presentación con `formatAmount` (hasta 8 decimales; 1e-8 ya no se ve como 0).
+- **DE01 (nueva regla de plataforma)**: depósito y retiro mínimo en cripto = 1 USDT (o su equivalente al cambio vigente); hints visibles en los formularios.
+- Tests: `test_iter301_verificacion_dr.py` 17/17 (añadido a test-critical) · `make test-critical` **740/740** · mypy/ruff/eslint limpios en tocados.
+
+## Backlog priorizado (actualizado 2026-09-27, tras iter302)
+- HECHO iter302: verificación depósitos y retiros cerrada + regla mínimo 1 USDT cripto — 740/740 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

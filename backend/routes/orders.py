@@ -838,6 +838,17 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
                 },
             )
         crypto_network = network
+        # DE01 — regla de plataforma: retiro mínimo en cripto = 1 USDT (o su
+        # equivalente al cambio vigente).
+        from services.balances import MIN_CRYPTO_USDT
+        rates_min = await build_rate_lookup()
+        eq_usdt = convert_to_usdt(float(payload.amount_usd), currency,
+                                  rates_min)
+        if eq_usdt is not None and eq_usdt < MIN_CRYPTO_USDT:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"El retiro mínimo en cripto es {MIN_CRYPTO_USDT:g} "
+                        "USDT (o su equivalente)."))
     if payload.method == "transfer":
         # iter158 — reject fake/placeholder account numbers server-side.
         from services.transfer_validation import validate_transfer_details
@@ -1069,21 +1080,13 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     # esa intención no exista — gana exactamente una operación.
     delivered_msg = ("El mensajero ya entregó (o está entregando) el dinero — "
                      "este retiro no puede cancelarse. Contacta a soporte.")
-    job = await db.deliveries.find_one(
-        {"kind": "withdrawal", "ref_id": wid, "status": {"$ne": "cancelled"}},
-        {"_id": 0, "id": 1, "status": 1})
-    intent_marked = False
-    if job:
-        if job.get("status") in ("delivered", "confirmed"):
-            raise HTTPException(status_code=409, detail=delivered_msg)
-        marked = await db.deliveries.update_one(
-            {"id": job["id"],
-             "status": {"$nin": ["delivered", "confirmed", "cancelled"]}},
-            {"$set": {"origin_cancel_intent": {"at": now,
-                                               "by": user["user_id"]}}})
-        if marked.modified_count == 0:
-            raise HTTPException(status_code=409, detail=delivered_msg)
-        intent_marked = True
+    # DR09(A) — la intención es EXCLUSIVA por intento (token): dos
+    # cancelaciones simultáneas jamás comparten la reserva y la perdedora no
+    # puede limpiar la intención de la ganadora.
+    from services.deliveries import (reserve_origin_cancel_intent,
+                                     release_origin_cancel_intent)
+    job, intent_token = await reserve_origin_cancel_intent(
+        "withdrawal", wid, user["user_id"], delivered_msg)
     # iter249 — el guard balance_refunded evita el doble reembolso si un admin
     # rechaza el retiro en paralelo; la intención de abono viaja en el mismo
     # claim atómico y el abono es idempotente por op_id (healer ante crash).
@@ -1104,11 +1107,10 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
                   "balance_refunded": True, "credit_pending": marker}},
     )
     if res.modified_count == 0:
-        if intent_marked:
-            # liberar la intención de cancelación: la entrega sigue su curso.
-            await db.deliveries.update_one(
-                {"id": job["id"], "origin_cancel_intent.by": user["user_id"]},
-                {"$unset": {"origin_cancel_intent": ""}})
+        if job and intent_token:
+            # DR09(A) — liberar SOLO la intención de ESTE intento (token
+            # propio): la de otra cancelación comprometida queda intacta.
+            await release_origin_cancel_intent(job["id"], intent_token)
         raise HTTPException(
             status_code=409,
             detail="Este retiro tiene un cobro o una operación en curso y no "

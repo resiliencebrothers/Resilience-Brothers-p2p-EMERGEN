@@ -245,23 +245,38 @@ class TestDR02EvidenceClaim:
         r2 = requests.post(f"{API}/admin/deposits/{d2['id']}/confirm",
                            headers=_h(ADMIN))
         assert r2.status_code == 409, r2.text
-        assert d1["id"][:16] in r2.json()["detail"]
+        det = r2.json()["detail"]
+        msg = det["message"] if isinstance(det, dict) else det
+        assert d1["id"][:16] in msg
         assert _bal(CLIA_ID, CRYPTO_CODE) == 50.0
         assert _bal(CLIB_ID, CRYPTO_CODE) == 0.0, "jamás doble acreditación"
         assert _db().deposits.find_one({"id": d2["id"]})["status"] == "pending"
 
-    def test_distinct_transfers_in_same_tx_allowed(self):
-        """Dos transferencias reales de una misma transacción (importes
-        distintos) sí pueden acreditarse por separado."""
+    def test_distinct_transfers_need_explicit_movement_id(self):
+        """iter301(DR02) — el importe declarado YA NO forma parte de la
+        identidad: dos importes distintos con el mismo hash no se acreditan
+        por separado salvo que el personal identifique la SEGUNDA
+        transferencia con un ID de movimiento explícito."""
         h = f"{MARK}hash_multi_b"
         d1 = _mk_deposit(f"dep_{MARK}_ev3", user_id=CLIA_ID, amount=10.0,
                          currency=CRYPTO_CODE, method="crypto", tx_hash=h)
         d2 = _mk_deposit(f"dep_{MARK}_ev4", user_id=CLIB_ID, amount=20.0,
                          currency=CRYPTO_CODE, method="crypto", tx_hash=h)
-        for d in (d1, d2):
-            r = requests.post(f"{API}/admin/deposits/{d['id']}/confirm",
-                              headers=_h(ADMIN))
-            assert r.status_code == 200, r.text
+        r1 = requests.post(f"{API}/admin/deposits/{d1['id']}/confirm",
+                           headers=_h(ADMIN))
+        assert r1.status_code == 200, r1.text
+        # cambiar el importe declarado ya no evade la identidad consumida
+        r2 = requests.post(f"{API}/admin/deposits/{d2['id']}/confirm",
+                           headers=_h(ADMIN))
+        assert r2.status_code == 409, r2.text
+        det = r2.json()["detail"]
+        assert isinstance(det, dict) and det.get("code") == "EVIDENCE_ALREADY_USED"
+        # con un ID de movimiento explícito la segunda transferencia real sí
+        # puede acreditarse por separado
+        r3 = requests.post(f"{API}/admin/deposits/{d2['id']}/confirm",
+                           headers=_h(ADMIN),
+                           json={"evidence_movement_id": "log-2"})
+        assert r3.status_code == 200, r3.text
 
     def test_confirm_retry_is_idempotent(self):
         h = f"{MARK}hash_retry_c"

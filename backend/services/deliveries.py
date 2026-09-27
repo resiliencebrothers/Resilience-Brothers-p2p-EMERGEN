@@ -11,6 +11,7 @@ in-platform USDT balance when STAFF confirms the delivered job.
 import logging
 import secrets
 import uuid
+from datetime import timedelta
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -31,6 +32,61 @@ TERMINAL_REF_STATUSES = ("rejected", "cancelled")
 # Mejora #4 — umbrales de atención del despacho (minutos).
 RESERVATION_STALL_MIN = 30
 ACTIVE_STALL_MIN = 90
+
+
+async def reserve_origin_cancel_intent(kind: str, ref_id: str, actor_id: str,
+                                       sealed_msg: str) -> tuple:
+    """DR09 — reserva EXCLUSIVA por intento (token único) de la decisión
+    "cancelar/reembolsar el origen" sobre su entrega física activa. El sello
+    'delivered' del mensajero exige que la intención NO exista, y una
+    solicitud perdedora jamás limpia la intención de otra (token propio).
+    Con la entrega ya sellada no hay reembolso automático (409).
+    Devuelve (job, token) — (None, None) si no hay entrega activa."""
+    job = await db.deliveries.find_one(
+        {"kind": kind, "ref_id": ref_id, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "id": 1, "status": 1})
+    if not job:
+        return None, None
+    if job.get("status") in ("delivered", "confirmed"):
+        raise HTTPException(status_code=409, detail=sealed_msg)
+    token = uuid.uuid4().hex
+    intent = {"at": iso(now_utc()), "by": actor_id, "token": token}
+    marked = await db.deliveries.update_one(
+        {"id": job["id"],
+         "status": {"$nin": ["delivered", "confirmed", "cancelled"]},
+         "origin_cancel_intent": {"$exists": False}},
+        {"$set": {"origin_cancel_intent": intent}})
+    if marked.modified_count:
+        return job, token
+    fresh = await db.deliveries.find_one(
+        {"id": job["id"]}, {"_id": 0, "status": 1, "origin_cancel_intent": 1})
+    if (fresh or {}).get("status") in ("delivered", "confirmed"):
+        raise HTTPException(status_code=409, detail=sealed_msg)
+    cur = (fresh or {}).get("origin_cancel_intent") or {}
+    # Intención huérfana (intento interrumpido hace >120s): robo atómico
+    # condicionado a la intención LEÍDA — jamás se pisa una activa.
+    stale_cutoff = iso(now_utc() - timedelta(seconds=120))
+    if cur and (cur.get("at") or "") < stale_cutoff:
+        steal = await db.deliveries.update_one(
+            {"id": job["id"],
+             "origin_cancel_intent.token": cur.get("token"),
+             "origin_cancel_intent.at": cur.get("at"),
+             "status": {"$nin": ["delivered", "confirmed", "cancelled"]}},
+            {"$set": {"origin_cancel_intent": intent}})
+        if steal.modified_count:
+            return job, token
+    raise HTTPException(
+        status_code=409,
+        detail="Otra cancelación o rechazo de esta operación está en curso; "
+               "espera unos segundos y reintenta.")
+
+
+async def release_origin_cancel_intent(job_id: str, token: str) -> None:
+    """DR09 — libera SOLO la intención de ESTE intento (token propio): quien
+    pierde jamás retira la protección de otra cancelación comprometida."""
+    await db.deliveries.update_one(
+        {"id": job_id, "origin_cancel_intent.token": token},
+        {"$unset": {"origin_cancel_intent": ""}})
 
 
 async def find_attention_items() -> dict:

@@ -500,8 +500,11 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             # reembolso: el retiro vuelve a 'rejected'.
             await burn_or_undo_debit(w["user_id"], rp.get("currency") or "USD",
                                      float(rp.get("amount") or 0), op)
+            # DR04 — el cierre queda CONDICIONADO al plan que se está
+            # resolviendo (op_id): un recuperador atrasado jamás sobrescribe
+            # una reactivación posterior que ya debitó con un plan nuevo.
             await db.withdrawals.update_one(
-                {"id": w["id"]},
+                {"id": w["id"], "redebit_pending.op_id": op},
                 {"$set": {"status": "rejected", "balance_refunded": True},
                  "$unset": {"redebit_pending": ""}})
         else:

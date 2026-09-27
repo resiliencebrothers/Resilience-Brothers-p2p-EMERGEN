@@ -266,6 +266,11 @@ export function VipWithdrawalForm({ balances, onSubmitted, method = "transfer", 
       <Input data-testid="withdraw-amount" type="number" value={amount}
         onChange={e => setAmount(e.target.value)}
         className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12 font-mono" />
+      {method === "crypto" && (
+        <div className="text-[0.65rem] text-amber-400/80 mt-1" data-testid="withdraw-crypto-min-hint">
+          {t("withdraw.cryptoMinHint")}
+        </div>
+      )}
       {selBal && (
         <div className="flex items-center justify-between text-xs mt-2">
           <span className="text-neutral-500">

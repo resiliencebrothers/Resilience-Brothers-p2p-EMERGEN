@@ -8,6 +8,7 @@ import { Clock, CheckCircle2, XCircle, Bike } from "lucide-react";
 import CopyableText from "@/components/CopyableText";
 import ExplorerLink from "@/components/ExplorerLink";
 import CurrencyIcon from "@/components/CurrencyIcon";
+import { formatAmount } from "@/lib/utils";
 import DeliveryTrackDialog from "@/components/DeliveryTrackDialog";
 
 const STATUS_BIG = {
@@ -55,7 +56,7 @@ export function DepositDetailDialog({ d, onClose }) {
             {t("deposits.detail.amountLabel", { currency: d.currency })}
           </div>
           <div className="font-mono text-4xl tracking-tight text-emerald-400" data-testid="deposit-detail-amount">
-            +{Number(d.amount).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+            +{formatAmount(d.amount)}
           </div>
           <span className={`inline-flex items-center gap-1.5 text-xs uppercase tracking-widest px-3 py-1.5 border font-mono ${st.cls}`} data-testid="deposit-detail-status">
             <StIcon className="w-3.5 h-3.5" />
