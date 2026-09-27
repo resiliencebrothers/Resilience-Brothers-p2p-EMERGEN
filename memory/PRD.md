@@ -2091,3 +2091,14 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-27 · iter305 — Extracto Sabadell .xls + Verificación CB 50bec58 (2 residuales) CERRADOS
+- **Parser extractos ES (.xls Sabadell)**: el archivo real (2354 movimientos) fallaba con «LLM response has no JSON array». Fixes: ventana de búsqueda de cabecera 6→12 filas (metadatos previos), sinónimos de fecha «F. Operativa / Fecha contable», extracción del remitente desde el concepto («ABONO TRANSFERENCIA DE <NOMBRE>», «BIZUM DE …») y mensaje de error de IA en español. El extracto real parsea NATIVO: 2354 transacciones, 0 errores, 2144 créditos con remitente.
+- **CB03 v3 (crítica — vip_split_takeover_auto)**: se comprueba el resultado del desplazamiento del token; si el intento anterior ya comprometió el abono, la reserva recién tomada SE CONSERVA (jamás disponible para otro destino) y el intento aborta con 409 recuperable; misma retención en el handler de fallo de confirm. El flujo AUTOMÁTICO aplica la exclusión de abonos comprometidos DESPUÉS de ganar su reserva (`find_committed_backing`, compartido con el manual). Total garantizado: 100 USDT; el reintento del destino comprometido completa el cierre.
+- **CB08 v3 (alta — ambiguous_common_surname)**: `_DUAL_FUNCTION_NAMES` (LEON, CRUZ, SANTOS, PASCUAL, REYES…) — palabras que funcionan como nombre Y apellido no cuentan como evidencia en posición intermedia (incertidumbre → revisión). Se conservan: apellido real en último token (PEDRO LEON), dos apellidos inequívocos (MARIA GARCIA LOPEZ), YUNIER/MANUEL y typos OCR.
+- Tests: iter302 ampliado (16 tests, interleaving exacto del auditor con pausa a nivel motor) + `test_iter304_parser_sabadell.py` (4 tests, E2E upload) · `make test-critical` 772/773 (1 flake TOTP conocido, 12/12 en aislamiento) · mypy/ruff limpios.
+
+## Backlog priorizado (actualizado 2026-09-27, tras iter305)
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

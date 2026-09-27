@@ -205,14 +205,26 @@ def _name_points(sim: float, exact: bool) -> int:
     return 0
 
 
+# CB08 v3 — palabras de DOBLE función (nombre de pila Y apellido): su
+# presencia en el diccionario de apellidos no demuestra su función en un
+# titular concreto ('JOSE LEON PEREZ' → LEON es segundo nombre). En posición
+# intermedia se conserva la incertidumbre → revisión manual, jamás auto.
+_DUAL_FUNCTION_NAMES = {
+    "LEON", "CRUZ", "SANTOS", "PASCUAL", "SANTANA", "FLORES", "ROSALES",
+    "ROSARIO", "REYES", "BUENO", "BRAVO",
+}
+
+
 def _surname_candidates(order_name: Any) -> set:
-    """CB08 v2 — evidencia FIABLE de apellido a partir del nombre completo:
+    """CB08 v2/v3 — evidencia FIABLE de apellido a partir del nombre completo:
       · el ÚLTIMO token del titular (estructura hispana: los apellidos van al
         final), salvo que sea un nombre de pila conocido;
-      · un token intermedio SOLO si es un apellido CONOCIDO (_COMMON_SURNAMES):
-        una palabra ausente de ambos diccionarios (¿'YUNIER'?) no permite
-        distinguir nombre de apellido — se conserva la incertidumbre y el
-        caso va a revisión manual (jamás auto)."""
+      · un token intermedio SOLO si es un apellido CONOCIDO (_COMMON_SURNAMES)
+        que NO funcione también como nombre de pila (_DUAL_FUNCTION_NAMES):
+        una palabra ausente de ambos diccionarios (¿'YUNIER'?) o ambigua
+        (¿'LEON'?, ¿'CRUZ'?) no permite distinguir nombre de apellido — se
+        conserva la incertidumbre y el caso va a revisión manual (jamás
+        auto)."""
     toks = [t for t in normalize_name(order_name).split()
             if t not in _BANK_NOISE and len(t) >= 2]
     if len(toks) < 2:
@@ -221,7 +233,8 @@ def _surname_candidates(order_name: Any) -> set:
     if toks[-1] not in _GIVEN_NAMES:
         strong.add(toks[-1])
     for t in toks[1:-1]:
-        if t in _COMMON_SURNAMES and t not in _GIVEN_NAMES:
+        if t in _COMMON_SURNAMES and t not in _GIVEN_NAMES \
+                and t not in _DUAL_FUNCTION_NAMES:
             strong.add(t)
     return strong
 
@@ -906,6 +919,19 @@ async def rollback_batch_item_from_reconciliation(item: Dict, tx_id: str,
         logger.error(f"reconciliation rollback SSE failed: {e}")
 
 
+async def find_committed_backing(tx_id: str, exclude_id: str = "") -> Optional[str]:
+    """CB03 v3 — ¿algún destino ya COMPROMETIÓ el abono de este movimiento?
+    (aprobado con su sello y a la espera del cierre del vínculo). Devuelve el
+    id del destino o None."""
+    q: Dict[str, Any] = {"status": "approved",
+                         "reconciliation.bank_transaction_id": tx_id}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    doc = (await db.orders.find_one(q, {"_id": 0, "id": 1})
+           or await db.vip_batch_items.find_one(q, {"_id": 0, "id": 1}))
+    return doc["id"] if doc else None
+
+
 async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                             update: Dict, taken: set, actor: Dict,
                             prev_status: str) -> str:
@@ -945,6 +971,15 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                                          "token": attempt_token}}})
         if claim.modified_count == 0:
             raise RuntimeError("bank transaction already claimed elsewhere")
+        # CB03 v3 — la exclusión de abonos ya COMPROMETIDOS aplica también al
+        # flujo automático, verificada DESPUÉS de ganar la reserva (una
+        # consulta aislada previa no protege bajo concurrencia): si otro
+        # destino quedó aprobado con el sello de este movimiento (cierre
+        # pendiente), el movimiento no puede respaldar un segundo abono.
+        committed = await find_committed_backing(tx["id"])
+        if committed:
+            raise RuntimeError(
+                f"credit already committed to {committed}; awaiting link close")
         if cand_doc.get("kind") == "vip_batch_item":
             await approve_batch_item_from_reconciliation(
                 cand_doc["id"], tx, actor, auto=True,

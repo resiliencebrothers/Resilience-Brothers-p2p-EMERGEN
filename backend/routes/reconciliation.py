@@ -30,6 +30,7 @@ from services.reconciliation_matcher import (DEFAULT_CONFIG,
                                              approve_batch_item_from_reconciliation,
                                              rollback_batch_item_from_reconciliation,
                                              rematch_transactions,
+                                             find_committed_backing,
                                              run_matching)
 from services.reconciliation_parser import (PARSER_VERSION,
                                             SUPPORTED_EXTENSIONS,
@@ -950,13 +951,23 @@ async def _claim_bank_transaction(tx: dict, tx_id: str, order_id: str,
         # CB03 v2 — DESPLAZAMIENTO atómico del intento anterior: el sello del
         # ítem pasa a ser propiedad de ESTE intento. El intento desplazado ya
         # no puede aprobar ni acreditar (su decisión exige el token del
-        # sello); si ya había comprometido el abono (aprobado), este
-        # desplazamiento no toca nada y el flujo aborta más adelante sin
-        # liberar el efecto financiero.
-        await db.vip_batch_items.update_one(
+        # sello).
+        disp = await db.vip_batch_items.update_one(
             {"id": order_id, "status": "pending",
              "reconciliation.bank_transaction_id": tx_id},
             {"$set": {"reconciliation.attempt_token": token}})
+        if disp.modified_count == 0:
+            # CB03 v3 — COMPROBAR el resultado del desplazamiento: si no
+            # aplicó porque el intento anterior YA comprometió el abono
+            # (aprobado con el sello de este movimiento), la reserva recién
+            # tomada se CONSERVA — jamás queda disponible para otro destino —
+            # y este intento aborta; el reintento reanudará el cierre.
+            if await find_committed_backing(tx_id) == order_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="La orden ya comprometió este abono y solo falta "
+                           "registrar el vínculo bancario; reintenta la "
+                           "confirmación para completar el cierre.")
         return
     if existing:
         # Reclamo de otro proceso: solo se roba si su orden nunca llegó a
@@ -1003,14 +1014,11 @@ async def _assert_no_committed_backing(tx_id: str, order_id: str) -> None:
     """CB03 v2 — otro destino ya COMPROMETIÓ el abono de este movimiento
     (quedó aprobado con su sello y solo espera el cierre del vínculo): el
     movimiento no puede respaldar una segunda orden mientras tanto."""
-    q = {"status": "approved", "reconciliation.bank_transaction_id": tx_id,
-         "id": {"$ne": order_id}}
-    other = (await db.orders.find_one(q, {"_id": 0, "id": 1})
-             or await db.vip_batch_items.find_one(q, {"_id": 0, "id": 1}))
+    other = await find_committed_backing(tx_id, exclude_id=order_id)
     if other:
         raise HTTPException(
             status_code=409,
-            detail=f"Este movimiento ya respalda la orden {other['id']} "
+            detail=f"Este movimiento ya respalda la orden {other} "
                    "(abono comprometido pendiente de cierre) — no puede "
                    "confirmar otra orden.")
 
@@ -1098,6 +1106,16 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                 await approve_order_from_reconciliation(
                     order, tx, actor, auto=False, match_uid=match_uid)
         except RuntimeError:
+            # CB03 v3 — si el fallo se debe a que ESTE destino ya comprometió
+            # el abono (otro intento lo aprobó con el sello de este
+            # movimiento), la reserva se CONSERVA: liberar dejaría el
+            # movimiento disponible para otro destino con el crédito vivo.
+            if await find_committed_backing(tx_id) == payload.order_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="La orden ya comprometió este abono y solo falta "
+                           "registrar el vínculo bancario; reintenta la "
+                           "confirmación para completar el cierre.")
             await _release_bank_claim(tx_id, attempt_token)
             raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
     # CB03 — solo el dueño del reclamo (token de ESTE intento) escribe el

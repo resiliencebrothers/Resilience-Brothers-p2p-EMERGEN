@@ -27,7 +27,10 @@ SUPPORTED_EXTENSIONS = {"csv", "xls", "xlsx", "pdf"}
 _COLS = {
     "date": ["date", "fecha", "transaction date", "posting date", "post date",
              "fecha operacion", "fecha operación", "f. operacion", "f.valor",
-             "fecha valor", "value date", "booking date", "dia", "día"],
+             "fecha valor", "value date", "booking date", "dia", "día",
+             # Sabadell y bancos ES: 'F. Operativa' / 'Fecha contable'
+             "f. operativa", "fecha operativa", "f operativa",
+             "f. contable", "fecha contable"],
     "amount": ["amount", "importe", "monto", "cantidad", "valor", "amount usd"],
     "credit": ["credit", "abono", "abonos", "haber", "deposit", "deposits",
                "ingreso", "ingresos", "credit amount"],
@@ -70,6 +73,26 @@ def detect_payment_method(text: str) -> str:
         if kw in t:
             return label
     return "Otros"
+
+
+# Extractos ES (Sabadell, BBVA…) sin columna de remitente: el ordenante viene
+# dentro del concepto ('ABONO TRANSFERENCIA DE <NOMBRE>', 'BIZUM DE <NOMBRE>').
+_SENDER_PATTERNS = [
+    re.compile(r"TRANSFERENCIA(?:S)?(?:\s+INMEDIATA|\s+SEPA|\s+RECIBIDA)?"
+               r"\s+DE\s+(.{3,90})", re.I),
+    re.compile(r"(?:BIZUM|ABONO|INGRESO|RECIBIDO)\s+DE\s+(.{3,90})", re.I),
+]
+
+
+def sender_from_description(desc: str) -> Optional[str]:
+    for pat in _SENDER_PATTERNS:
+        m = pat.search(desc or "")
+        if m:
+            name = m.group(1).strip(" .,-")
+            name = re.split(r"\s{2,}|\s+REF\.?:?\s|\s+CONCEPTO:?\s", name)[0].strip()
+            if len(name) >= 3:
+                return name[:90]
+    return None
 
 
 def parse_amount(raw: Any) -> Optional[float]:
@@ -223,12 +246,14 @@ def _rows_to_transactions(headers: List[str], rows: List[List[Any]],
                     errors += 1
                 continue
             desc = str(cell("description") or "").strip()
+            sender = str(cell("sender") or "").strip() or \
+                sender_from_description(desc)
             txs.append({
                 "transaction_date": date,
                 "time": str(cell("time") or "").strip() or None,
                 "amount": round(amount, 2),
                 "direction": direction or "credit",
-                "sender_name": str(cell("sender") or "").strip() or None,
+                "sender_name": sender or None,
                 "beneficiary_name": str(cell("beneficiary") or "").strip() or None,
                 "description": desc or None,
                 "reference": str(cell("reference") or "").strip() or None,
@@ -257,7 +282,8 @@ def parse_csv(data: bytes, dayfirst: bool) -> Tuple[List[Dict], int, str]:
     if not all_rows:
         return [], 0, "empty"
     # header row = first row where mapping resolves; some banks prepend titles
-    for idx in range(min(6, len(all_rows))):
+    # y bloques de metadatos (cuenta, divisa, titular…) — ventana de 12 filas.
+    for idx in range(min(12, len(all_rows))):
         headers = [str(c) for c in all_rows[idx]]
         txs, errors = _rows_to_transactions(headers, all_rows[idx + 1:], dayfirst)
         if errors != -1:
@@ -274,7 +300,7 @@ def parse_xlsx(data: bytes, dayfirst: bool, ext: str) -> Tuple[List[Dict], int, 
     all_rows = [r for r in all_rows if any(str(c or "").strip() for c in r)]
     if not all_rows:
         return [], 0, "empty"
-    for idx in range(min(6, len(all_rows))):
+    for idx in range(min(12, len(all_rows))):
         headers = [str(c) for c in all_rows[idx]]
         txs, errors = _rows_to_transactions(headers, all_rows[idx + 1:], dayfirst)
         if errors != -1:
@@ -321,7 +347,10 @@ def _parse_llm_json(raw: str) -> List[Dict]:
     s = re.sub(r"\s*```$", "", s)
     start, end = s.find("["), s.rfind("]")
     if start == -1 or end == -1:
-        raise ValueError("LLM response has no JSON array")
+        raise ValueError(
+            "El extracto no pudo interpretarse automáticamente (la IA no "
+            "devolvió filas). Exporta el extracto en CSV/XLSX estructurado "
+            "y vuelve a intentarlo.")
     items = json.loads(s[start:end + 1])
     out = []
     for i, it in enumerate(items):

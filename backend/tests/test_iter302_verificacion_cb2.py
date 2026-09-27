@@ -476,6 +476,194 @@ class TestCB08UnlistedGivenName:
         assert d["decision"] == "auto", d
 
 
+# ======================================================================
+# CB03 v3 (informe 50bec58) — vip_split_takeover_auto: la toma de reserva y
+# el desplazamiento del token no son atómicos; el flujo automático no puede
+# reutilizar un abono ya comprometido.
+# ======================================================================
+class TestCB03SplitTakeoverAuto(_Sandbox):
+    def test_split_takeover_total_stays_100_and_auto_blocked(self):
+        """Reproducción EXACTA del auditor (sin fallos de escritura): la
+        solicitud 2 toma la reserva y se pausa ANTES de desplazar el token
+        del ítem; la solicitud 1 aprueba A en ese intervalo. La reserva que
+        respalda el abono comprometido se CONSERVA, B queda bloqueada manual
+        y automáticamente, y el reintento de A completa el cierre. Total:
+        100 USDT."""
+        self._set_usdt(0)
+        item_a, item_b = self._mk_item(), self._mk_item()
+        tx = self._mk_tx()
+
+        async def flow():
+            import routes.reconciliation as recon
+            import services.reconciliation_matcher as rm
+            from motor.motor_asyncio import AsyncIOMotorCollection
+            from db_client import db as adb
+            from fastapi import HTTPException
+            orig_perm = recon.require_permission
+            recon.require_permission = _stub_permission
+            real_apply = rm.apply_item_decision
+            started1, resume1 = asyncio.Event(), asyncio.Event()
+            hit2, go2 = asyncio.Event(), asyncio.Event()
+            calls = {"apply": 0}
+
+            async def gated_apply(item_id, decision, staff, admin_note="",
+                                  recon_attempt_token=None):
+                calls["apply"] += 1
+                if calls["apply"] == 1:
+                    # solicitud 1: pausa antes de la escritura que aprueba A
+                    started1.set()
+                    await asyncio.wait_for(resume1.wait(), timeout=20)
+                return await real_apply(item_id, decision, staff,
+                                        admin_note=admin_note,
+                                        recon_attempt_token=recon_attempt_token)
+
+            orig_update = AsyncIOMotorCollection.update_one
+            armed = {"on": True}
+
+            async def paused_update(coll, flt, update, *a, **k):
+                # pausa la escritura de DESPLAZAMIENTO del token (solicitud 2)
+                if (armed["on"] and coll.name == "vip_batch_items"
+                        and flt.get("reconciliation.bank_transaction_id") == tx
+                        and "reconciliation.attempt_token"
+                        in (update.get("$set") or {})):
+                    armed["on"] = False
+                    hit2.set()
+                    await asyncio.wait_for(go2.wait(), timeout=20)
+                return await orig_update(coll, flt, update, *a, **k)
+
+            rm.apply_item_decision = gated_apply
+            AsyncIOMotorCollection.update_one = paused_update
+            req = types.SimpleNamespace(client=None)
+
+            async def confirm(order_id):
+                try:
+                    await recon.confirm_match(
+                        tx, types.SimpleNamespace(order_id=order_id), req)
+                    return 200
+                except HTTPException as ex:
+                    return ex.status_code
+
+            try:
+                # paso 1: solicitud 1 reserva (token 1), sella y se pausa
+                task1 = asyncio.create_task(confirm(item_a))
+                await asyncio.wait_for(started1.wait(), timeout=20)
+                # paso 2: solicitud 2 toma la reserva (token 2), pausa antes
+                # de cambiar el token del ítem
+                task2 = asyncio.create_task(confirm(item_a))
+                await asyncio.wait_for(hit2.wait(), timeout=20)
+                # paso 3: solicitud 1 aprueba A (el sello aún acepta token 1)
+                resume1.set()
+                code1 = await task1
+                # paso 4: solicitud 2 continúa — su desplazamiento no aplica
+                go2.set()
+                code2 = await task2
+                # paso 5: confirmación manual de B → bloqueada
+                code_b = await confirm(item_b)
+                # paso 6: rematching automático hacia B → sin crédito
+                txd = await adb.bank_transactions.find_one({"id": tx}, {"_id": 0})
+                b_doc = await adb.vip_batch_items.find_one({"id": item_b}, {"_id": 0})
+                b_doc["kind"] = "vip_batch_item"
+                auto_res = await rm._apply_auto_match(
+                    txd, {"order_id": item_b, "score": 95, "breakdown": {}},
+                    [b_doc], {}, set(), dict(ADMIN_ACTOR), "manual_review")
+                # paso 7: el reintento de A (reanudación) completa el cierre
+                code_retry = await confirm(item_a)
+            finally:
+                rm.apply_item_decision = real_apply
+                AsyncIOMotorCollection.update_one = orig_update
+                recon.require_permission = orig_perm
+            return code1, code2, code_b, auto_res, code_retry
+
+        code1, code2, code_b, auto_res, code_retry = _run(flow)
+        assert code1 == 409, f"cierre no registrado → estado recuperable: {code1}"
+        assert code2 == 409, f"el intento desplazado aborta sin liberar: {code2}"
+        assert code_b == 409, f"B bloqueada manualmente: {code_b}"
+        assert auto_res == "review", \
+            f"el flujo automático no reutiliza el abono comprometido: {auto_res}"
+        assert code_retry == 200, f"el reintento de A completa el cierre: {code_retry}"
+        assert _bal("USDT") == 100.0, \
+            f"un solo abono de 100 USD → 100 USDT, no {_bal('USDT')} (CB03 v3)"
+        db = _db()
+        assert db.vip_batch_items.find_one({"id": item_a})["status"] == "approved"
+        assert db.vip_batch_items.find_one({"id": item_b})["status"] == "pending"
+        txd = db.bank_transactions.find_one({"id": tx})
+        assert txd["status"] == "manual_matched"
+        assert txd["matched_order_id"] == item_a, \
+            "el movimiento cierra con A (su abono real), jamás con B"
+
+    def test_auto_flow_excludes_committed_backing_when_unclaimed(self):
+        """Aunque el movimiento quede SIN reserva, el flujo automático detecta
+        (tras ganar su propia reserva) que otro destino ya comprometió el
+        abono y aborta sin acreditar."""
+        self._set_usdt(100)  # abono ya comprometido a A
+        tx = self._mk_tx()
+        item_a = self._mk_item(
+            status="approved",
+            reconciliation={"bank_transaction_id": tx, "matched_at": _now(),
+                            "auto": False, "match_uid": "uidA"})
+        item_b = self._mk_item()
+
+        async def flow():
+            import services.reconciliation_matcher as rm
+            from db_client import db as adb
+            txd = await adb.bank_transactions.find_one({"id": tx}, {"_id": 0})
+            b_doc = await adb.vip_batch_items.find_one({"id": item_b}, {"_id": 0})
+            b_doc["kind"] = "vip_batch_item"
+            res = await rm._apply_auto_match(
+                txd, {"order_id": item_b, "score": 95, "breakdown": {}},
+                [b_doc], {}, set(), dict(ADMIN_ACTOR), "manual_review")
+            fresh = await adb.bank_transactions.find_one({"id": tx}, {"_id": 0})
+            return res, fresh.get("matching_claim")
+
+        res, claim_after = _run(flow)
+        assert res == "review", res
+        assert claim_after is None, "liberó SU propia reserva al abortar"
+        assert _bal("USDT") == 100.0, "jamás un segundo crédito automático"
+        assert _db().vip_batch_items.find_one({"id": item_b})["status"] == "pending"
+        assert item_a  # A conserva su compromiso
+
+
+# ======================================================================
+# CB08 v3 (informe 50bec58) — ambiguous_common_surname: palabras que
+# funcionan como nombre Y apellido no demuestran el apellido del titular.
+# ======================================================================
+class TestCB08AmbiguousDualNames:
+    def test_dual_function_middle_words_are_not_surname_evidence(self):
+        from services.reconciliation_matcher import surname_similarity
+        # casos exactos del auditor: LEON y CRUZ son segundos nombres aquí
+        assert surname_similarity("JOSE LEON", "JOSE LEON PEREZ") < 0.75
+        assert surname_similarity("MARIA CRUZ", "MARIA CRUZ PEREZ") < 0.75
+
+    def test_decide_sends_dual_name_cases_to_review(self):
+        from services.reconciliation_matcher import (DEFAULT_CONFIG,
+                                                     rank_candidates, decide)
+        for holder, bank in (("JOSE LEON PEREZ", "JOSE LEON"),
+                             ("MARIA CRUZ PEREZ", "MARIA CRUZ")):
+            order = {"id": "oX", "kind": "order", "user_id": "uA",
+                     "user_name": holder, "sender_name": holder,
+                     "amount_from": 100.0, "from_code": "USD",
+                     "created_at": "2026-09-24T00:00:00+00:00",
+                     "status": "pending", "payment_reference": ""}
+            tx = {"id": "tX", "amount": 100.0, "currency": "USD",
+                  "sender_name": bank, "transaction_date": "2026-09-24"}
+            ranked = rank_candidates(tx, [order], DEFAULT_CONFIG, "", set())
+            d = decide(tx, ranked, DEFAULT_CONFIG, "")
+            assert d["decision"] == "review", (holder, bank, d)
+            assert "surname_mismatch" in (d.get("block_reasons") or []), d
+
+    def test_real_surname_evidence_preserved(self):
+        from services.reconciliation_matcher import surname_similarity
+        # LEON como apellido REAL (último token del titular) sigue valiendo
+        assert surname_similarity("PEDRO LEON", "PEDRO LEON") >= 0.75
+        # dos apellidos con palabra inequívoca (GARCIA) se conservan
+        assert surname_similarity("MARIA GARCIA", "MARIA GARCIA LOPEZ") >= 0.75
+        # el apellido real aportado por el extracto sigue aprobando
+        assert surname_similarity("JOSE PEREZ", "JOSE LEON PEREZ") >= 0.75
+        # variantes YUNIER/MANUEL ya resueltas se conservan
+        assert surname_similarity("JOSE YUNIER", "JOSE YUNIER PEREZ") < 0.75
+        assert surname_similarity("MANUEL JOSE", "JOSE MANUEL PEREZ") < 0.75
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
