@@ -167,7 +167,8 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
     # registrada impide que un sello tardío del mensajero gane después de
     # comprometer el reembolso.
     from services.deliveries import (reserve_origin_cancel_intent,
-                                     release_origin_cancel_intent)
+                                     release_origin_cancel_intent,
+                                     commit_origin_cancel_intent)
     job, intent_token = await reserve_origin_cancel_intent(
         "withdrawal", wid, actor_id or "staff",
         "El mensajero ya entregó el dinero de este retiro (entrega sellada) — "
@@ -197,10 +198,18 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
             {"$set": sets})
         if claim.matched_count == 0:
             if job and intent_token:
-                # DR09(B) — solo se libera la intención de ESTE intento.
-                await release_origin_cancel_intent(job["id"], intent_token)
+                # DR09 v2 — el perdedor solo libera si el origen NO tiene un
+                # reembolso comprometido; si lo tiene, la intención se escala
+                # a comprometida y sigue bloqueando el sello de la entrega.
+                await release_origin_cancel_intent(
+                    job["id"], intent_token, kind="withdrawal", ref_id=wid)
             _raise_withdrawal_race()
+        if job:
+            await commit_origin_cancel_intent(job["id"], actor_id or "staff")
         return
+    if job:
+        # DR09 v2 — reembolso PERSISTIDO: la intención pasa a comprometida.
+        await commit_origin_cancel_intent(job["id"], actor_id or "staff")
     await apply_and_clear("withdrawals", wid, marker)
 
 

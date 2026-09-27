@@ -37,6 +37,7 @@ from auth_utils import (require_user, require_permission, iso, now_utc,
 from audit_log import log_action
 from services.balances import (
     build_rate_lookup, convert_to_usdt, MIN_CRYPTO_USDT,
+    usdt_equivalent_decimal,
     assert_account_active, assert_not_defensive,
 )
 from services.delivery_rules import allowed_delivery_methods
@@ -61,6 +62,35 @@ async def _ensure_evidence_claims_index() -> None:
         return
     from pymongo.errors import DuplicateKeyError
     await db.crypto_evidence_claims.create_index("claim_key", unique=True)
+    # DR02 v2 — MIGRACIÓN de reservas con el formato anterior (la clave
+    # terminaba en el importe): se reescriben a la clave canónica actual
+    # preservando la exclusión del movimiento consumido. Una colisión (dos
+    # históricos con la misma identidad, doble abono antiguo) conserva la
+    # clave canónica en la primera fila y marca la otra como duplicado
+    # legado SIN liberar la identidad.
+    async for row in db.crypto_evidence_claims.find(
+            {}, {"_id": 1, "claim_key": 1, "deposit_id": 1, "network": 1,
+                 "tx_hash": 1, "currency": 1, "movement_id": 1}):
+        if not row.get("tx_hash") or not row.get("currency"):
+            continue
+        canonical = _evidence_claim_key(row.get("network") or "",
+                                        row["tx_hash"], row["currency"],
+                                        row.get("movement_id") or "")
+        if row.get("claim_key") == canonical:
+            continue
+        try:
+            await db.crypto_evidence_claims.update_one(
+                {"_id": row["_id"], "claim_key": row["claim_key"]},
+                {"$set": {"claim_key": canonical,
+                          "legacy_key": row["claim_key"],
+                          "migrated_at": iso(now_utc())}})
+        except DuplicateKeyError:
+            await db.crypto_evidence_claims.update_one(
+                {"_id": row["_id"], "claim_key": row["claim_key"]},
+                {"$set": {"claim_key": (f"{canonical}|legacy-dup:"
+                                        f"{row['deposit_id']}"),
+                          "legacy_key": row["claim_key"],
+                          "migrated_at": iso(now_utc())}})
     async for d in db.deposits.find(
             {"method": "crypto", "status": "confirmed",
              "tx_hash": {"$nin": [None, ""]}},
@@ -136,18 +166,61 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
                         "registrada) — resuélvelo antes de volver a "
                         "acreditar este hash."))
     own = await db.crypto_evidence_claims.find_one(
-        {"deposit_id": doc["id"]}, {"_id": 1})
+        {"deposit_id": doc["id"]},
+        {"_id": 1, "claim_key": 1, "movement_id": 1})
+    req_mid = (movement_id or "").strip()
     if own:
-        return  # reserva propia ya registrada (reanudación tras interrupción)
+        if (own.get("movement_id") or "").strip() == req_mid:
+            return  # reserva propia con la MISMA identidad (reanudación)
+        # DR02 v2 — reanudación con OTRO ID de movimiento: el depósito, la
+        # reserva y el ID deben ser la MISMA identidad. Transición controlada
+        # y exclusiva de la reserva a la nueva identidad; jamás queda un
+        # movimiento confirmado sin su reserva ni una reserva apuntando a
+        # otro movimiento que el confirmado.
+        fresh_dep = await db.deposits.find_one(
+            {"id": doc["id"]}, {"_id": 0, "status": 1})
+        if (fresh_dep or {}).get("status") != "pending":
+            raise HTTPException(
+                status_code=409,
+                detail="Este depósito ya fue procesado — la identidad de su "
+                       "reserva no puede cambiar.")
+        new_key = _evidence_claim_key(doc.get("network") or "",
+                                      doc["tx_hash"], doc["currency"],
+                                      req_mid)
+        try:
+            moved = await db.crypto_evidence_claims.update_one(
+                {"_id": own["_id"], "claim_key": own["claim_key"],
+                 "deposit_id": doc["id"]},
+                {"$set": {"claim_key": new_key, "movement_id": req_mid,
+                          "moved_from_key": own["claim_key"],
+                          "moved_at": iso(now_utc())}})
+        except DuplicateKeyError:
+            prior = await db.crypto_evidence_claims.find_one(
+                {"claim_key": new_key}, {"_id": 0, "deposit_id": 1})
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "EVIDENCE_ALREADY_USED",
+                        "message": (
+                            "Ese ID de movimiento ya respalda el depósito "
+                            f"{str((prior or {}).get('deposit_id') or '¿?')[:16]}"
+                            " — el mismo movimiento no puede acreditarse dos "
+                            "veces."),
+                        "deposit_id": (prior or {}).get("deposit_id")})
+        if moved.modified_count != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="La reserva de esta evidencia cambió mientras "
+                       "confirmabas; recarga y reintenta.")
+        return
     key = _evidence_claim_key(doc.get("network") or "", doc["tx_hash"],
-                              doc["currency"], movement_id)
+                              doc["currency"], req_mid)
     try:
         await db.crypto_evidence_claims.insert_one({
             "claim_key": key, "deposit_id": doc["id"],
             "user_id": doc["user_id"], "network": doc.get("network"),
             "tx_hash": doc["tx_hash"], "currency": doc["currency"],
             "amount": doc["amount"],
-            "movement_id": (movement_id or "").strip(),
+            "movement_id": req_mid,
             "at": iso(now_utc())})
     except DuplicateKeyError:
         prior = await db.crypto_evidence_claims.find_one(
@@ -335,12 +408,16 @@ async def create_deposit(payload: DepositCreate, request: Request) -> Any:
     cash_mode = None
 
     rates = await build_rate_lookup()
-    usdt_eq = convert_to_usdt(float(payload.amount), code, rates)
-    usdt_eq = round(float(usdt_eq), 4) if usdt_eq is not None else None
+    # DE01 v2 — la VALIDACIÓN del mínimo usa aritmética decimal SIN redondeo
+    # de presentación (0.99995 ya no "se vuelve" 1); el redondeo a 4
+    # decimales es solo para almacenar/mostrar la equivalencia.
+    from decimal import Decimal
+    eq_dec = usdt_equivalent_decimal(float(payload.amount), code, rates)
+    usdt_eq = round(float(eq_dec), 4) if eq_dec is not None else None
     # DE01 — regla de plataforma: depósito mínimo en cripto = 1 USDT (o su
     # equivalente al cambio vigente).
     if (currency.get("type") or "").lower() == "crypto" \
-            and usdt_eq is not None and usdt_eq < MIN_CRYPTO_USDT:
+            and eq_dec is not None and eq_dec < Decimal(str(MIN_CRYPTO_USDT)):
         raise HTTPException(
             status_code=422,
             detail=(f"El depósito mínimo en cripto es {MIN_CRYPTO_USDT:g} "
@@ -638,6 +715,30 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
         raise HTTPException(
             status_code=409,
             detail="Este depósito tiene un importe inválido (0) — recházalo.")
+    # DE01 v2 — el mínimo cripto se protege TAMBIÉN al confirmar: exige una
+    # equivalencia RESOLUBLE (sin tasa → bloqueo hasta configurarla) y
+    # ≥ 1 USDT con aritmética decimal; guarda la valoración que respalda la
+    # decisión. Sin esto, una solicitud creada sin tasa se acreditaba bajo
+    # el mínimo.
+    min_valuation = None
+    if doc.get("method") == "crypto":
+        from decimal import Decimal
+        rates = await build_rate_lookup()
+        eq_dec = usdt_equivalent_decimal(float(doc.get("amount") or 0),
+                                         doc["currency"], rates)
+        if eq_dec is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"No hay tasa para valorar {doc['currency']} en USDT "
+                        "— configúrala antes de confirmar (mínimo "
+                        f"{MIN_CRYPTO_USDT:g} USDT)."))
+        if eq_dec < Decimal(str(MIN_CRYPTO_USDT)):
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Este depósito equivale a {eq_dec} USDT, por debajo "
+                        f"del mínimo de {MIN_CRYPTO_USDT:g} USDT — recházalo."))
+        min_valuation = {"usdt_equivalent": str(eq_dec), "at": now,
+                         "rule": f"min_{MIN_CRYPTO_USDT:g}_usdt"}
     # DR02 — reserva DURABLE de la evidencia cripto ANTES de acreditar.
     if doc.get("method") == "crypto" and doc.get("tx_hash"):
         await _claim_crypto_evidence(doc, evidence_movement_id)
@@ -650,6 +751,8 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
     confirm_sets = {"status": "confirmed", "updated_at": now,
                     "reviewed_at": now, "reviewed_by": staff["user_id"],
                     "credit_pending": marker}
+    if min_valuation:
+        confirm_sets["min_crypto_valuation"] = min_valuation
     if evidence_movement_id.strip():
         confirm_sets["evidence_movement_id"] = evidence_movement_id.strip()
     res = await db.deposits.update_one(

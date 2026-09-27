@@ -6,6 +6,7 @@ the shared `db_client`.
 """
 from typing import Any, Optional
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal, ROUND_DOWN
 import logging
 import uuid
 
@@ -87,6 +88,48 @@ def _convert_via_usd(amount: float, code: str, rates: dict) -> Optional[float]:
 # DE01 — regla de plataforma: depósito y retiro mínimo en cripto = 1 USDT
 # (o su equivalente al cambio vigente).
 MIN_CRYPTO_USDT = 1.0
+
+
+def usdt_equivalent_decimal(amount: float, code: str,
+                            rates: dict) -> Optional[Decimal]:
+    """DE01 v2 — equivalencia en USDT para VALIDAR el mínimo: aritmética
+    Decimal sobre los valores declarados y las tasas (SIN redondeo de
+    presentación; 0.99995 jamás 'se vuelve' 1). Política de precisión
+    explícita: 8 decimales truncados (ROUND_DOWN). None = sin tasa."""
+
+    def _dec(x: object) -> Decimal:
+        return Decimal(str(x))
+
+    code = str(code).upper()
+    amt = _dec(amount)
+    eq: Optional[Decimal] = None
+    if code == "USDT":
+        eq = amt
+    else:
+        inverse = rates.get(("USDT", code))
+        if inverse and inverse > 0:
+            eq = amt / _dec(inverse)
+        elif (code, "USDT") in rates:
+            eq = amt * _dec(rates[(code, "USDT")])
+        else:
+            usd_val = None
+            if (code, "USD") in rates:
+                usd_val = amt * _dec(rates[(code, "USD")])
+            else:
+                inv = rates.get(("USD", code))
+                if inv and inv > 0:
+                    usd_val = amt / _dec(inv)
+            if usd_val is not None:
+                inv_u = rates.get(("USDT", "USD"))
+                if inv_u and inv_u > 0:
+                    eq = usd_val / _dec(inv_u)
+                elif ("USD", "USDT") in rates:
+                    eq = usd_val * _dec(rates[("USD", "USDT")])
+                else:
+                    eq = usd_val
+    if eq is None:
+        return None
+    return eq.quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
 
 
 def convert_to_usdt(amount: float, code: str, rates: dict) -> Optional[float]:

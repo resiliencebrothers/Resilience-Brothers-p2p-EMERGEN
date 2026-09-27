@@ -115,6 +115,15 @@ def setup_module():
                       "delivery_methods": ["crypto"] if ctype == "crypto"
                       else ["cash"]}},
             upsert=True)
+    # DE01 v2 (iter303) — la confirmación cripto exige una tasa resoluble:
+    # tasa alta para que los importes diminutos de precisión sigan ≥ 1 USDT.
+    db.rates.update_one(
+        {"from_code": CRYPTO_CODE, "to_code": "USDT"},
+        {"$set": {"from_code": CRYPTO_CODE, "to_code": "USDT",
+                  "rate_normal": 1_000_000_000.0,
+                  "rate_vip": 1_000_000_000.0,
+                  "real_rate": 1_000_000_000.0}},
+        upsert=True)
     _cleanup_data()
 
 
@@ -125,6 +134,7 @@ def teardown_module():
     db.user_sessions.delete_many({"session_token": {
         "$in": [CLIA_TOKEN, CLIB_TOKEN, COURIER_TOKEN, EMP_EUR_TOKEN]}})
     db.currencies.delete_many({"code": {"$in": [CRYPTO_CODE, FIAT_CODE]}})
+    db.rates.delete_many({"from_code": CRYPTO_CODE})
     _cleanup_data()
 
 

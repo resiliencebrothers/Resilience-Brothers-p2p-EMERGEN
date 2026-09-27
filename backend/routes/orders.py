@@ -990,11 +990,14 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
                                       actor_id=user["user_id"])
         except Exception as e:
             logger.error(f"withdrawal delivery job failed: {e}")
+    # DR10 — el aviso de admins se importa UNA vez para toda la función: la
+    # importación condicional dentro de una rama dejaba el nombre local sin
+    # inicializar en los retiros por transferencia/cripto (UnboundLocalError).
+    from admin_alerts import notify_all_admins
     # iter207 — mensajería SIN cobrar (mapa falló): avisar a los admins para
     # que nadie olvide cobrarla antes de entregar.
     if payload.method == "cash" and courier_status == "manual_review":
         try:
-            from admin_alerts import notify_all_admins
             await notify_all_admins(
                 db,
                 title="⚠️ Mensajería pendiente de cobro",
@@ -1084,7 +1087,8 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     # cancelaciones simultáneas jamás comparten la reserva y la perdedora no
     # puede limpiar la intención de la ganadora.
     from services.deliveries import (reserve_origin_cancel_intent,
-                                     release_origin_cancel_intent)
+                                     release_origin_cancel_intent,
+                                     commit_origin_cancel_intent)
     job, intent_token = await reserve_origin_cancel_intent(
         "withdrawal", wid, user["user_id"], delivered_msg)
     # iter249 — el guard balance_refunded evita el doble reembolso si un admin
@@ -1108,15 +1112,21 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     )
     if res.modified_count == 0:
         if job and intent_token:
-            # DR09(A) — liberar SOLO la intención de ESTE intento (token
-            # propio): la de otra cancelación comprometida queda intacta.
-            await release_origin_cancel_intent(job["id"], intent_token)
+            # DR09 v2 — el perdedor solo libera su intención si el origen NO
+            # comprometió reembolso; si ya lo hizo, la intención se escala a
+            # comprometida y sigue impidiendo el sello de la entrega.
+            await release_origin_cancel_intent(job["id"], intent_token,
+                                               kind="withdrawal", ref_id=wid)
         raise HTTPException(
             status_code=409,
             detail="Este retiro tiene un cobro o una operación en curso y no "
                    "puede cancelarse ahora. Reintenta en unos segundos o "
                    "contacta a soporte.",
         )
+    if job:
+        # DR09 v2 — el reembolso quedó PERSISTIDO: la intención pasa a
+        # comprometida de inmediato (jamás robable/liberable por antigüedad).
+        await commit_origin_cancel_intent(job["id"], user["user_id"])
     await apply_and_clear("withdrawals", wid, marker)
     # iter205 — el trabajo de mensajería activo muere con el retiro.
     try:

@@ -34,6 +34,23 @@ RESERVATION_STALL_MIN = 30
 ACTIVE_STALL_MIN = 90
 
 
+async def _origin_refund_committed(kind: str, ref_id: str) -> bool:
+    """DR09 v2 — ¿el origen ya PERSISTIÓ su decisión de reembolso/cierre?
+    (cancelado/rechazado, reembolso marcado o abono pendiente en curso). Una
+    intención que protege esa decisión no puede robarse ni liberarse por
+    antigüedad."""
+    coll = REF_COLLS.get(kind)
+    if not coll:
+        return False
+    doc = await db[coll].find_one(
+        {"id": ref_id},
+        {"_id": 0, "status": 1, "balance_refunded": 1, "credit_pending": 1})
+    if not doc:
+        return False
+    return bool(doc.get("balance_refunded") or doc.get("credit_pending")
+                or doc.get("status") in TERMINAL_REF_STATUSES)
+
+
 async def reserve_origin_cancel_intent(kind: str, ref_id: str, actor_id: str,
                                        sealed_msg: str) -> tuple:
     """DR09 — reserva EXCLUSIVA por intento (token único) de la decisión
@@ -65,12 +82,27 @@ async def reserve_origin_cancel_intent(kind: str, ref_id: str, actor_id: str,
     cur = (fresh or {}).get("origin_cancel_intent") or {}
     # Intención huérfana (intento interrumpido hace >120s): robo atómico
     # condicionado a la intención LEÍDA — jamás se pisa una activa.
+    # DR09 v2 — la ANTIGÜEDAD por sí sola no libera protecciones: una
+    # intención comprometida nunca se roba, y si el origen ya persistió su
+    # reembolso la intención se ESCALA a comprometida en vez de robarse.
     stale_cutoff = iso(now_utc() - timedelta(seconds=120))
-    if cur and (cur.get("at") or "") < stale_cutoff:
+    if cur and (cur.get("at") or "") < stale_cutoff \
+            and not cur.get("committed"):
+        if await _origin_refund_committed(kind, ref_id):
+            await db.deliveries.update_one(
+                {"id": job["id"],
+                 "origin_cancel_intent.token": cur.get("token")},
+                {"$set": {"origin_cancel_intent.committed": True}})
+            raise HTTPException(
+                status_code=409,
+                detail="La cancelación o el reembolso de esta operación ya "
+                       "quedó comprometido — la entrega permanece bloqueada "
+                       "hasta cerrarse de forma coherente.")
         steal = await db.deliveries.update_one(
             {"id": job["id"],
              "origin_cancel_intent.token": cur.get("token"),
              "origin_cancel_intent.at": cur.get("at"),
+             "origin_cancel_intent.committed": {"$ne": True},
              "status": {"$nin": ["delivered", "confirmed", "cancelled"]}},
             {"$set": {"origin_cancel_intent": intent}})
         if steal.modified_count:
@@ -81,12 +113,43 @@ async def reserve_origin_cancel_intent(kind: str, ref_id: str, actor_id: str,
                "espera unos segundos y reintenta.")
 
 
-async def release_origin_cancel_intent(job_id: str, token: str) -> None:
+async def release_origin_cancel_intent(job_id: str, token: str,
+                                       kind: str = "",
+                                       ref_id: str = "") -> None:
     """DR09 — libera SOLO la intención de ESTE intento (token propio): quien
-    pierde jamás retira la protección de otra cancelación comprometida."""
+    pierde jamás retira la protección de otra cancelación comprometida.
+    DR09 v2 — si el origen ya persistió su decisión de reembolso, la
+    intención se escala a comprometida en vez de liberarse: el sello
+    'delivered' queda impedido hasta cerrar la entrega coherentemente."""
+    if kind and ref_id and await _origin_refund_committed(kind, ref_id):
+        await db.deliveries.update_one(
+            {"id": job_id, "origin_cancel_intent": {"$exists": True}},
+            {"$set": {"origin_cancel_intent.committed": True}})
+        return
     await db.deliveries.update_one(
-        {"id": job_id, "origin_cancel_intent.token": token},
+        {"id": job_id, "origin_cancel_intent.token": token,
+         "origin_cancel_intent.committed": {"$ne": True}},
         {"$unset": {"origin_cancel_intent": ""}})
+
+
+async def commit_origin_cancel_intent(job_id: str, actor_id: str = "") -> None:
+    """DR09 v2 — tras PERSISTIR la decisión de reembolso del origen, la
+    intención pasa a comprometida (jamás robable ni liberable). Si un robo y
+    liberación previos la dejaron ausente, se REINSTALA comprometida mientras
+    la entrega no esté sellada: una decisión monetaria persistida nunca queda
+    desprotegida frente al sello del mensajero."""
+    res = await db.deliveries.update_one(
+        {"id": job_id, "origin_cancel_intent": {"$exists": True}},
+        {"$set": {"origin_cancel_intent.committed": True}})
+    if res.matched_count:
+        return
+    await db.deliveries.update_one(
+        {"id": job_id,
+         "status": {"$nin": ["delivered", "confirmed", "cancelled"]},
+         "origin_cancel_intent": {"$exists": False}},
+        {"$set": {"origin_cancel_intent": {
+            "at": iso(now_utc()), "by": actor_id or "system",
+            "token": uuid.uuid4().hex, "committed": True}}})
 
 
 async def find_attention_items() -> dict:

@@ -2078,3 +2078,16 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-27 · iter304 — Verificación Depósitos y Retiros 623deba (DR09/DR02/DE01/DR10) CERRADA
+- **DR09 v2 (crítica)**: el vencimiento de la intención de cancelación ya no libera un reembolso comprometido — la toma de una intención >120s y la limpieza del perdedor comprueban la decisión persistida del origen (cancelado/reembolsado/abono pendiente) y ESCALAN la intención a `committed` (jamás robable ni liberable); el ganador la compromete (o la reinstala) tras persistir el reembolso. Resultado garantizado: entrega sellada sin reembolso, o reembolso con entrega impedida — nunca ambos. Recuperación de huérfanas con retiro pendiente conservada.
+- **DR02 v2 (alta)**: (A) migración automática de reservas de evidencia con formato legado (clave terminada en importe) a la clave canónica, con colisiones marcadas como duplicado legado SIN liberar la identidad; (B) reanudar una confirmación con OTRO ID de movimiento hace una transición controlada y exclusiva de la reserva — depósito, reserva e ID siempre son la misma identidad; A y B jamás se confirman para el mismo movimiento.
+- **DE01 v2 (media)**: `usdt_equivalent_decimal()` — validación del mínimo 1 USDT con aritmética Decimal sin redondeo de presentación (0.99995/0.99999/0.99999999 → 422; 1 y superiores → 200) y protegida TAMBIÉN al confirmar: sin tasa resoluble → 409, bajo el mínimo → 409; la valoración usada se guarda en `min_crypto_valuation`.
+- **DR10 (baja)**: import único de `notify_all_admins` en `create_withdrawal` — el aviso «Nuevo retiro» se invoca en transferencia y cripto (adiós UnboundLocalError).
+- Tests: `test_iter303_verificacion_dr2.py` 13/13 (reproduce expired_cancel_intent, evidence_migration, evidence_resumption_identity, crypto_minimum, withdrawal_admin_alert; en test-critical) · iter299/iter301 adaptados a la regla de confirmación (tasas de prueba) · `make test-critical` **764/764** · mypy/ruff limpios.
+
+## Backlog priorizado (actualizado 2026-09-27, tras iter304)
+- HECHO iter304: verificación depósitos y retiros 623deba cerrada (3 errores + 2 parciales) — 764/764 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

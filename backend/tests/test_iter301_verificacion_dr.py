@@ -375,17 +375,19 @@ class TestDR02EvidenceIdentity:
         """Reproducción duplicate_crypto (variante 1): mismo hash con importes
         100 y 99 → solo la primera confirmación acredita."""
         h = f"{MARK}hash_amt"
-        d1 = _mk_deposit(f"dep_{MARK}_e1", amount=100.0, tx_hash=h)
-        d2 = _mk_deposit(f"dep_{MARK}_e2", amount=99.0, tx_hash=h)
-        _set_bal(CLIA_ID, CRYPTO_NR, 0)
+        d1 = _mk_deposit(f"dep_{MARK}_e1", amount=100.0, tx_hash=h,
+                         currency=CRYPTO_RT)
+        d2 = _mk_deposit(f"dep_{MARK}_e2", amount=99.0, tx_hash=h,
+                         currency=CRYPTO_RT)
+        _set_bal(CLIA_ID, CRYPTO_RT, 0)
         assert _confirm(d1["id"]).status_code == 200
         r2 = _confirm(d2["id"])
         assert r2.status_code == 409, r2.text
         det = r2.json()["detail"]
         assert isinstance(det, dict) and det["code"] == "EVIDENCE_ALREADY_USED"
         assert d1["id"][:16] in det["message"]
-        assert _bal(CLIA_ID, CRYPTO_NR) == 100.0, \
-            f"jamás 199: {_bal(CLIA_ID, CRYPTO_NR)}"
+        assert _bal(CLIA_ID, CRYPTO_RT) == 100.0, \
+            f"jamás 199: {_bal(CLIA_ID, CRYPTO_RT)}"
         assert _db().deposits.find_one({"id": d2["id"]})["status"] == "pending"
 
     def test_historical_confirmed_without_claim_blocks_reuse(self):
@@ -394,24 +396,28 @@ class TestDR02EvidenceIdentity:
         a acreditarse — el hash queda bloqueado."""
         h = f"{MARK}hash_hist"
         hist = _mk_deposit(f"dep_{MARK}_e3", amount=100.0, tx_hash=h,
-                           status="confirmed")
-        d_new = _mk_deposit(f"dep_{MARK}_e4", amount=100.0, tx_hash=h)
-        _set_bal(CLIA_ID, CRYPTO_NR, 100.0)  # saldo del abono histórico
+                           currency=CRYPTO_RT, status="confirmed")
+        d_new = _mk_deposit(f"dep_{MARK}_e4", amount=100.0, tx_hash=h,
+                            currency=CRYPTO_RT)
+        _set_bal(CLIA_ID, CRYPTO_RT, 100.0)  # saldo del abono histórico
         r = _confirm(d_new["id"])
         assert r.status_code == 409, r.text
         det = r.json()["detail"]
         txt = det["message"] if isinstance(det, dict) else det
         assert hist["id"][:16] in txt
-        assert _bal(CLIA_ID, CRYPTO_NR) == 100.0, "nunca pasa de 100 a 200"
+        assert _bal(CLIA_ID, CRYPTO_RT) == 100.0, "nunca pasa de 100 a 200"
         assert _db().deposits.find_one({"id": d_new["id"]})["status"] == "pending"
 
     def test_movement_id_is_single_use_per_hash(self):
         """Un ID de movimiento identifica UNA transferencia real: reutilizarlo
         con el mismo hash recibe 409; uno distinto sí acredita."""
         h = f"{MARK}hash_mid"
-        d1 = _mk_deposit(f"dep_{MARK}_e5", amount=10.0, tx_hash=h)
-        d2 = _mk_deposit(f"dep_{MARK}_e6", amount=10.0, tx_hash=h)
-        d3 = _mk_deposit(f"dep_{MARK}_e7", amount=10.0, tx_hash=h)
+        d1 = _mk_deposit(f"dep_{MARK}_e5", amount=10.0, tx_hash=h,
+                         currency=CRYPTO_RT)
+        d2 = _mk_deposit(f"dep_{MARK}_e6", amount=10.0, tx_hash=h,
+                         currency=CRYPTO_RT)
+        d3 = _mk_deposit(f"dep_{MARK}_e7", amount=10.0, tx_hash=h,
+                         currency=CRYPTO_RT)
         assert _confirm(d1["id"]).status_code == 200
         r2 = _confirm(d2["id"], {"evidence_movement_id": "m2"})
         assert r2.status_code == 200, r2.text
