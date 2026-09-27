@@ -105,6 +105,30 @@ _GIVEN_NAMES = {
     "MARISOL", "MIRIAM", "NANCY", "NORA", "PILAR", "SARA", "VIVIANA",
 }
 
+# CB08 v2 — apellidos hispanos CONOCIDOS: un token intermedio del titular solo
+# cuenta como evidencia de apellido si figura aquí (una palabra ausente de
+# ambos diccionarios no permite distinguir nombre de apellido).
+_COMMON_SURNAMES = {
+    "GARCIA", "RODRIGUEZ", "MARTINEZ", "HERNANDEZ", "LOPEZ", "GONZALEZ",
+    "PEREZ", "SANCHEZ", "RAMIREZ", "TORRES", "FLORES", "RIVERA", "GOMEZ",
+    "DIAZ", "CRUZ", "MORALES", "REYES", "GUTIERREZ", "ORTIZ", "CHAVEZ",
+    "RUIZ", "ALVAREZ", "CASTILLO", "JIMENEZ", "VASQUEZ", "VAZQUEZ",
+    "MENDOZA", "VARGAS", "FERNANDEZ", "CASTRO", "ROMERO", "SUAREZ",
+    "HERRERA", "MEDINA", "AGUILAR", "GUZMAN", "MUNOZ", "ROJAS", "SALAZAR",
+    "CONTRERAS", "ORTEGA", "DELGADO", "ESPINOSA", "ESPINOZA", "SILVA",
+    "NUNEZ", "RAMOS", "PENA", "VALDES", "VALDEZ", "SANTOS", "DOMINGUEZ",
+    "CABRERA", "CAMPOS", "VEGA", "FUENTES", "CARRILLO", "LEON", "SOTO",
+    "SANTANA", "PACHECO", "MOLINA", "RIOS", "ACOSTA", "NAVARRO", "MIRANDA",
+    "CORDOVA", "MARQUEZ", "MALDONADO", "JUAREZ", "PONCE", "MEJIA", "ROSALES",
+    "SALGADO", "IBARRA", "MONTES", "SOSA", "SERRANO", "FIGUEROA", "BATISTA",
+    "MATOS", "MESA", "BARRERA", "AVILA", "TRUJILLO", "GALLEGOS", "SANDOVAL",
+    "CERVANTES", "PADILLA", "ZAMORA", "PAREDES", "QUINTERO", "GUERRERO",
+    "ESCOBAR", "ARIAS", "BENITEZ", "CARDENAS", "OSORIO", "PALACIOS", "MORA",
+    "VELAZQUEZ", "VELASQUEZ", "ZAPATA", "BRAVO", "BLANCO", "CANO", "BUENO",
+    "PRIETO", "PASCUAL", "LOZANO", "MONTERO", "DUARTE", "VILLANUEVA",
+    "ARELLANO", "CORTES", "SOLIS", "TREJO", "VALENCIA", "OCHOA", "ROSARIO",
+}
+
 
 async def get_config() -> Dict[str, Any]:
     doc = await db.settings.find_one({"id": "reconciliation_config"}, {"_id": 0, "id": 0})
@@ -181,28 +205,34 @@ def _name_points(sim: float, exact: bool) -> int:
     return 0
 
 
-def _surname_tokens(name: Any) -> set:
-    """Tokens tras el nombre de pila — apellidos probables."""
-    toks = [t for t in normalize_name(name).split() if t not in _BANK_NOISE]
-    return {t for t in toks[1:] if len(t) >= 2} if len(toks) >= 2 else set()
+def _surname_candidates(order_name: Any) -> set:
+    """CB08 v2 — evidencia FIABLE de apellido a partir del nombre completo:
+      · el ÚLTIMO token del titular (estructura hispana: los apellidos van al
+        final), salvo que sea un nombre de pila conocido;
+      · un token intermedio SOLO si es un apellido CONOCIDO (_COMMON_SURNAMES):
+        una palabra ausente de ambos diccionarios (¿'YUNIER'?) no permite
+        distinguir nombre de apellido — se conserva la incertidumbre y el
+        caso va a revisión manual (jamás auto)."""
+    toks = [t for t in normalize_name(order_name).split()
+            if t not in _BANK_NOISE and len(t) >= 2]
+    if len(toks) < 2:
+        return set()
+    strong = set()
+    if toks[-1] not in _GIVEN_NAMES:
+        strong.add(toks[-1])
+    for t in toks[1:-1]:
+        if t in _COMMON_SURNAMES and t not in _GIVEN_NAMES:
+            strong.add(t)
+    return strong
 
 
 def surname_similarity(tx_name: Any, order_name: Any) -> float:
-    """Spec V2 — mejor similitud entre los apellidos registrados en la orden
-    y cualquier token (≥2 letras) del remitente bancario."""
-    order_sn = _surname_tokens(order_name)
+    """Spec V2 — mejor similitud entre los apellidos FIABLES del titular y
+    cualquier token (≥2 letras) del remitente bancario."""
+    strong = _surname_candidates(order_name)
     tx_toks = [t for t in normalize_name(tx_name).split()
                if t not in _BANK_NOISE and len(t) >= 2]
-    if not order_sn or not tx_toks:
-        return 0.0
-    # CB08 — evidencia de apellido INDEPENDIENTE del orden de los nombres:
-    # los candidatos válidos a apellido son los tokens del titular que NO son
-    # nombres de pila conocidos ('PEREZ'); un segundo nombre ('MANUEL') no
-    # demuestra apellido aunque coincida — ni en orden directo ni invertido
-    # ('MANUEL JOSE'). Si el titular no tiene ningún token distinguible como
-    # apellido, se conserva la incertidumbre (0.0 → revisión manual).
-    strong = [sn for sn in order_sn if sn not in _GIVEN_NAMES]
-    if not strong:
+    if not strong or not tx_toks:
         return 0.0
     return max(SequenceMatcher(None, sn, tok).ratio()
                for sn in strong for tok in tx_toks)
@@ -626,7 +656,8 @@ SYSTEM_ACTOR = {"user_id": "system_reconciliation", "role": "admin",
 
 
 async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
-                                            auto: bool) -> Dict:
+                                            auto: bool,
+                                            match_uid: Optional[str] = None) -> Dict:
     """§18-§19 — atomic pending→approved with reconciliation stamps.
     The filtered update IS the idempotency lock (Mongo doc-level atomicity)."""
     from services.orders_helpers import run_post_status_side_effects
@@ -652,6 +683,10 @@ async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
                 "auto": auto,
                 "confidence_score": tx.get("confidence_score"),
                 "algorithm_version": ALGORITHM_VERSION,
+                # CB05 v2 — generación de ESTA conciliación en el sello: una
+                # reversión atrasada de otra generación no puede reclamar
+                # este ciclo (el claim del rollback la exige atómicamente).
+                "match_uid": match_uid,
             },
         }},
     )
@@ -682,9 +717,14 @@ async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
 
 
 async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
-                                                 actor: Dict, auto: bool) -> Dict:
+                                                 actor: Dict, auto: bool,
+                                                 attempt_token: Optional[str] = None,
+                                                 match_uid: Optional[str] = None) -> Dict:
     """iter172 — atomic pending→approved for a VIP batch item with
-    reconciliation stamps. The filtered pre-claim IS the idempotency lock."""
+    reconciliation stamps. The filtered pre-claim IS the idempotency lock.
+    CB03 v2 — la PROPIEDAD del intento (token de la reserva bancaria) alcanza
+    la decisión y el compromiso del crédito: el sello lleva el token, la
+    decisión lo exige atómicamente y la limpieza solo borra el sello propio."""
 
     note = (f"Conciliación bancaria {'automática' if auto else 'manual'} — "
             f"movimiento {tx['id']} ({tx.get('transaction_date')}, "
@@ -706,13 +746,33 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
                 "auto": auto,
                 "confidence_score": tx.get("confidence_score"),
                 "algorithm_version": ALGORITHM_VERSION,
+                # CB03 v2 — el sello pertenece a ESTE intento.
+                "attempt_token": attempt_token,
+                # CB05 v2 — generación de ESTA conciliación en el sello.
+                "match_uid": match_uid,
             },
         }},
     )
     if res.modified_count != 1:
         raise RuntimeError("item_no_longer_pending")
+    if attempt_token:
+        # CB03 v2 — el sello NO basta: el intento debe seguir siendo dueño
+        # de la reserva bancaria ANTES de decidir. Si otro intento la
+        # recuperó, este aborta y deshace SOLO su propio sello.
+        owns = await db.bank_transactions.find_one(
+            {"id": tx["id"], "matching_claim.token": attempt_token},
+            {"_id": 0, "id": 1})
+        if not owns:
+            await db.vip_batch_items.update_one(
+                {"id": item_id, "status": {"$ne": "approved"},
+                 "reconciliation.attempt_token": attempt_token},
+                {"$unset": {"reconciliation": "", "payment_confirmation_source": "",
+                            "bank_transaction_id": "", "reconciliation_score": ""}})
+            raise RuntimeError("bank_claim_lost_before_decision")
     try:
-        fresh = await apply_item_decision(item_id, "approved", actor, admin_note=note)
+        fresh = await apply_item_decision(item_id, "approved", actor,
+                                          admin_note=note,
+                                          recon_attempt_token=attempt_token)
     except Exception as e:
         # iter261(F03) — distinguir fallo PRE-COMMIT de POST-COMMIT: si el
         # ítem ya quedó aprobado con el sello de ESTE movimiento, el abono
@@ -723,8 +783,13 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
                      and (fresh.get("reconciliation") or {})
                      .get("bank_transaction_id") == tx["id"])
         if not committed:
+            cleanup: Dict[str, Any] = {"id": item_id, "status": {"$ne": "approved"}}
+            if attempt_token:
+                # CB03 v2 — la limpieza pertenece al MISMO intento: un intento
+                # desplazado jamás borra el sello del nuevo propietario.
+                cleanup["reconciliation.attempt_token"] = attempt_token
             await db.vip_batch_items.update_one(
-                {"id": item_id, "status": {"$ne": "approved"}},
+                cleanup,
                 {"$unset": {"reconciliation": "", "payment_confirmation_source": "",
                             "bank_transaction_id": "", "reconciliation_score": ""}})
             logger.error(f"reconciliation item approval failed for {item_id}: {e!r}")
@@ -751,7 +816,8 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
 
 
 async def rollback_batch_item_from_reconciliation(item: Dict, tx_id: str,
-                                                  actor: Dict, reason: str) -> None:
+                                                  actor: Dict, reason: str,
+                                                  expected_match_uid: Optional[str] = None) -> None:
     """iter172 §25 / iter260(E05b) — revierte la conciliación de un ítem de
     lote con PLAN persistente y débito IDEMPOTENTE por op_id: dos rollbacks
     superpuestos ya no pueden descontar dos veces. Si el VIP ya gastó el
@@ -770,16 +836,23 @@ async def rollback_batch_item_from_reconciliation(item: Dict, tx_id: str,
         {"id": item_id, "status": "approved",
          "decision_cycle": {"$in": [None, 0]} if cycle == 0 else cycle,
          "reconciliation.bank_transaction_id": tx_id,
+         # CB05 v2 — el claim exige la GENERACIÓN bancaria capturada: una
+         # reversión atrasada (leyó una generación anterior) recibe 409
+         # ANTES de descontar o resetear el ciclo nuevo.
+         "reconciliation.match_uid": {"$in": [expected_match_uid, None]},
          "rollback_pending": {"$exists": False}},
         {"$set": {"rollback_pending": plan}})
     if claim.modified_count == 0:
         fresh = await db.vip_batch_items.find_one(
             {"id": item_id},
-            {"_id": 0, "rollback_pending": 1, "status": 1, "decision_cycle": 1})
+            {"_id": 0, "rollback_pending": 1, "status": 1,
+             "decision_cycle": 1, "reconciliation": 1})
         pend = (fresh or {}).get("rollback_pending")
         if not pend or (fresh or {}).get("status") != "approved" \
                 or int((fresh or {}).get("decision_cycle") or 0) != cycle \
-                or int(pend.get("cycle") or 0) != cycle:
+                or int(pend.get("cycle") or 0) != cycle \
+                or ((fresh or {}).get("reconciliation") or {}) \
+                .get("match_uid") not in (expected_match_uid, None):
             raise HTTPException(
                 status_code=409,
                 detail="El ítem del lote ya fue revertido o cambió de ciclo.")
@@ -842,6 +915,9 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
     # CB03 — cada intento lleva un token EXCLUSIVO: reservar, finalizar y
     # liberar solo mediante actualizaciones condicionadas por ese token.
     attempt_token = uuid.uuid4().hex
+    # CB05 v2 — generación de ESTA conciliación, compartida entre el sello
+    # del destino y el cierre del movimiento.
+    match_uid = uuid.uuid4().hex
     try:
         tx["confidence_score"] = best["score"]
         if cand_doc is None:
@@ -871,10 +947,11 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
             raise RuntimeError("bank transaction already claimed elsewhere")
         if cand_doc.get("kind") == "vip_batch_item":
             await approve_batch_item_from_reconciliation(
-                cand_doc["id"], tx, actor, auto=True)
+                cand_doc["id"], tx, actor, auto=True,
+                attempt_token=attempt_token, match_uid=match_uid)
         else:
             await approve_order_from_reconciliation(
-                cand_doc, tx, actor, auto=True)
+                cand_doc, tx, actor, auto=True, match_uid=match_uid)
     except RuntimeError as e:
         logger.warning(f"auto-match fallback to review for tx {tx['id']}: {e}")
         # CB03 — liberar EXCLUSIVAMENTE el reclamo de ESTE intento (token):
@@ -890,7 +967,7 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
                    "match_details": best,
                    # CB05 — generación única de ESTA conciliación: un cierre
                    # de reversión antiguo no puede liberar un vínculo nuevo.
-                   "match_uid": uuid.uuid4().hex,
+                   "match_uid": match_uid,
                    "matched_at": iso(now_utc()),
                    "matched_by": "system_reconciliation",
                    "reviewed_by": "system_reconciliation",

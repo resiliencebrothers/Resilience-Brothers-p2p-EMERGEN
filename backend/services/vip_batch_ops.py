@@ -325,13 +325,19 @@ async def apply_ledger_delta_idempotent(vip_user_id: str, direction: str,
     )
 
 
-async def _claim_item_decision(item_id: str, cycle: int, sets: dict) -> None:
+async def _claim_item_decision(item_id: str, cycle: int, sets: dict,
+                               recon_attempt_token: Optional[str] = None) -> None:
     """iter260(E02)/iter261(F05) — transición ATÓMICA pendiente→decisión del
     ítem, condicionada TAMBIÉN al ciclo leído: una petición obsoleta (leyó el
     ciclo anterior a un rollback) recibe 409 en vez de publicar una
-    aprobación cuyo abono ya fue consumido en el ciclo previo."""
+    aprobación cuyo abono ya fue consumido en el ciclo previo.
+    CB03 v2 — una decisión originada en conciliación exige además que el
+    sello del ítem siga perteneciendo a ESTE intento (token): un intento
+    desplazado por una recuperación recibe 409 y jamás acredita."""
     filt: dict = {"id": item_id, "status": "pending",
                   "decision_cycle": {"$in": [None, 0]} if cycle == 0 else cycle}
+    if recon_attempt_token:
+        filt["reconciliation.attempt_token"] = recon_attempt_token
     claim = await db.vip_batch_items.update_one(filt, {"$set": sets})
     if claim.matched_count == 0:
         raise HTTPException(status_code=409, detail="El ítem ya fue procesado.")
@@ -366,7 +372,8 @@ async def _publish_item_decision_events(item: dict, item_id: str,
 
 
 async def apply_item_decision(item_id: str, decision: str, staff: dict,
-                              admin_note: str = "") -> dict:
+                              admin_note: str = "",
+                              recon_attempt_token: Optional[str] = None) -> dict:
     """iter260(E02) — protocolo único para TODAS las entradas (manual y
     conciliación): primero se CALCULA, luego se RECLAMA la transición
     pendiente→decisión con el plan del abono en el MISMO update atómico, y
@@ -397,7 +404,8 @@ async def apply_item_decision(item_id: str, decision: str, staff: dict,
     }
     if decision != "approved":
         await _claim_item_decision(item_id, cycle,
-                                   {**base_sets, "balance_delta_usdt": None})
+                                   {**base_sets, "balance_delta_usdt": None},
+                                   recon_attempt_token=recon_attempt_token)
     else:
         rates = await build_rate_lookup()
         if item.get("to_code"):
@@ -409,7 +417,8 @@ async def apply_item_decision(item_id: str, decision: str, staff: dict,
             await _claim_item_decision(
                 item_id, cycle,
                 {**base_sets, "balance_delta_usdt": balance_delta, **extra,
-                 "credit_pending": marker})
+                 "credit_pending": marker},
+                recon_attempt_token=recon_attempt_token)
             # iter261(F03) — a partir de aquí la decisión está COMPROMETIDA
             # (claim + marker persistidos): un fallo posterior no debe
             # propagarse río arriba (el healer completa el abono/limpieza);
@@ -427,7 +436,8 @@ async def apply_item_decision(item_id: str, decision: str, staff: dict,
             await _claim_item_decision(
                 item_id, cycle,
                 {**base_sets, "balance_delta_usdt": balance_delta,
-                 "ledger_pending": plan})
+                 "ledger_pending": plan},
+                recon_attempt_token=recon_attempt_token)
             try:
                 await apply_ledger_delta_idempotent(
                     item["vip_user_id"], item["direction"], balance_delta, op_id)

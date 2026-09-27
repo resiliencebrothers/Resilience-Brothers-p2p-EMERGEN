@@ -947,6 +947,16 @@ async def _claim_bank_transaction(tx: dict, tx_id: str, order_id: str,
             raise HTTPException(
                 status_code=409,
                 detail="Otro operador está conciliando este movimiento; espera unos segundos.")
+        # CB03 v2 — DESPLAZAMIENTO atómico del intento anterior: el sello del
+        # ítem pasa a ser propiedad de ESTE intento. El intento desplazado ya
+        # no puede aprobar ni acreditar (su decisión exige el token del
+        # sello); si ya había comprometido el abono (aprobado), este
+        # desplazamiento no toca nada y el flujo aborta más adelante sin
+        # liberar el efecto financiero.
+        await db.vip_batch_items.update_one(
+            {"id": order_id, "status": "pending",
+             "reconciliation.bank_transaction_id": tx_id},
+            {"$set": {"reconciliation.attempt_token": token}})
         return
     if existing:
         # Reclamo de otro proceso: solo se roba si su orden nunca llegó a
@@ -987,6 +997,22 @@ async def _release_bank_claim(tx_id: str, token: str) -> None:
     await db.bank_transactions.update_one(
         {"id": tx_id, "matching_claim.token": token},
         {"$unset": {"matching_claim": ""}})
+
+
+async def _assert_no_committed_backing(tx_id: str, order_id: str) -> None:
+    """CB03 v2 — otro destino ya COMPROMETIÓ el abono de este movimiento
+    (quedó aprobado con su sello y solo espera el cierre del vínculo): el
+    movimiento no puede respaldar una segunda orden mientras tanto."""
+    q = {"status": "approved", "reconciliation.bank_transaction_id": tx_id,
+         "id": {"$ne": order_id}}
+    other = (await db.orders.find_one(q, {"_id": 0, "id": 1})
+             or await db.vip_batch_items.find_one(q, {"_id": 0, "id": 1}))
+    if other:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Este movimiento ya respalda la orden {other['id']} "
+                   "(abono comprometido pendiente de cierre) — no puede "
+                   "confirmar otra orden.")
 
 
 @router.post("/admin/reconciliation/transactions/{tx_id}/confirm")
@@ -1039,6 +1065,8 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
         await _validate_confirm_compatibility(tx, target)
         # CB10 — un duplicado reciclado no puede volver a acreditarse.
         await _assert_no_reconciled_twin(tx, tx_id)
+        # CB03 v2 — un abono ya comprometido por otro destino bloquea este.
+        await _assert_no_committed_backing(tx_id, payload.order_id)
         other = await db.bank_transactions.find_one(
             {"matched_order_id": payload.order_id,
              "status": {"$in": ["auto_matched", "manual_matched"]}}, {"_id": 0, "id": 1})
@@ -1048,6 +1076,11 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
 
     # CB03 — identidad exclusiva de ESTE intento de confirmación manual.
     attempt_token = uuid.uuid4().hex
+    # CB05 v2 — generación de ESTA conciliación, compartida entre el sello
+    # del destino y el cierre del movimiento; al reanudar se reutiliza la
+    # del sello ya comprometido.
+    match_uid = (((target.get("reconciliation") or {}).get("match_uid")
+                  if resuming else None) or uuid.uuid4().hex)
     await _claim_bank_transaction(tx, tx_id, payload.order_id, actor,
                                   attempt_token, resuming)
 
@@ -1058,9 +1091,12 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
     if not resuming:
         try:
             if item:
-                await approve_batch_item_from_reconciliation(item["id"], tx, actor, auto=False)
+                await approve_batch_item_from_reconciliation(
+                    item["id"], tx, actor, auto=False,
+                    attempt_token=attempt_token, match_uid=match_uid)
             else:
-                await approve_order_from_reconciliation(order, tx, actor, auto=False)
+                await approve_order_from_reconciliation(
+                    order, tx, actor, auto=False, match_uid=match_uid)
         except RuntimeError:
             await _release_bank_claim(tx_id, attempt_token)
             raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
@@ -1073,7 +1109,7 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                   "match_details": cand,
                   # CB05 — generación única de ESTA conciliación: un cierre
                   # de reversión antiguo no puede liberar un vínculo nuevo.
-                  "match_uid": uuid.uuid4().hex,
+                  "match_uid": match_uid,
                   "confidence_score": cand["score"] if cand else tx.get("confidence_score"),
                   "matched_at": iso(now_utc()), "matched_by": actor["user_id"],
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
@@ -1225,7 +1261,8 @@ async def restore_transaction(tx_id: str, request: Request) -> Any:
 
 
 async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
-                                             reason: str) -> None:
+                                             reason: str,
+                                             expected_match_uid: Optional[str] = None) -> None:
     """iter260(E05a) — una orden acumulada YA acreditó saldo: revertir ese
     abono (débito idempotente con plan persistente) ANTES de devolverla a
     pendiente y liberar el movimiento bancario. Si la reversión no está
@@ -1260,16 +1297,23 @@ async def _rollback_accumulated_order_credit(order: dict, tx_id: str,
         {"id": order_id, "status": "approved",
          "accum_cycle": {"$in": [None, 0]} if cycle == 0 else cycle,
          "reconciliation.bank_transaction_id": tx_id,
+         # CB05 v2 — el claim exige la GENERACIÓN bancaria capturada al leer
+         # el movimiento: una reversión atrasada (leyó una generación
+         # anterior) recibe 409 ANTES de descontar o resetear la orden.
+         "reconciliation.match_uid": {"$in": [expected_match_uid, None]},
          "rollback_pending": {"$exists": False}},
         {"$set": {"rollback_pending": plan}})
     if claim.modified_count == 0:
         fresh = await db.orders.find_one(
             {"id": order_id},
-            {"_id": 0, "rollback_pending": 1, "status": 1, "accum_cycle": 1})
+            {"_id": 0, "rollback_pending": 1, "status": 1, "accum_cycle": 1,
+             "reconciliation": 1})
         pend = (fresh or {}).get("rollback_pending")
         if not pend or (fresh or {}).get("status") != "approved" \
                 or int((fresh or {}).get("accum_cycle") or 0) != cycle \
-                or int(pend.get("cycle") or 0) != cycle:
+                or int(pend.get("cycle") or 0) != cycle \
+                or ((fresh or {}).get("reconciliation") or {}) \
+                .get("match_uid") not in (expected_match_uid, None):
             raise HTTPException(status_code=409,
                                 detail="La orden cambió de estado o de ciclo; recarga.")
         op_id = pend["op_id"]  # reanudar el mismo plan (idempotente)
@@ -1345,7 +1389,9 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
                 raise HTTPException(
                     status_code=409,
                     detail=f"El ítem del lote está en '{item['status']}' — no se puede revertir.")
-            await rollback_batch_item_from_reconciliation(item, tx_id, actor, reason)
+            await rollback_batch_item_from_reconciliation(
+                item, tx_id, actor, reason,
+                expected_match_uid=expected_match_uid)
     else:
         order = await db.orders.find_one({"id": order_id}, {"_id": 0}) if order_id else None
         if not _resume_close(order):
@@ -1360,11 +1406,16 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
             if order.get("accumulated_at"):
                 # iter260(E05a) — la orden acumulada acreditó saldo: revertirlo
                 # (o bloquear) antes de liberar el respaldo bancario.
-                await _rollback_accumulated_order_credit(order, tx_id, reason)
+                await _rollback_accumulated_order_credit(
+                    order, tx_id, reason,
+                    expected_match_uid=expected_match_uid)
             else:
                 res = await db.orders.update_one(
                     {"id": order_id, "status": "approved",
-                     "reconciliation.bank_transaction_id": tx_id},
+                     "reconciliation.bank_transaction_id": tx_id,
+                     # CB05 v2 — solo la generación capturada puede resetear.
+                     "reconciliation.match_uid": {"$in": [expected_match_uid,
+                                                          None]}},
                     {"$set": {"status": "pending", "updated_at": iso(now_utc()),
                               "admin_note": f"Rollback de conciliación: {reason}",
                               "last_recon_rollback": {"tx_id": tx_id,

@@ -2066,3 +2066,15 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-27 · iter303 — Verificación Conciliación Bancaria 523229f (CB03/CB05/CB08 residuales) CERRADA
+- **CB03 (crítica)**: la propiedad del intento alcanza la decisión y el crédito del ítem VIP — el sello lleva `reconciliation.attempt_token`, una recuperación desplaza atómicamente al intento anterior (re-sella con su token al robar la reserva), la decisión (`_claim_item_decision`) exige el token propio, el pre-sello verifica la propiedad de la reserva antes de decidir y la limpieza solo borra el sello propio. Nuevo guard `_assert_no_committed_backing`: un abono ya comprometido (aprobado con sello, cierre pendiente) bloquea que el movimiento respalde una segunda orden.
+- **CB05 (alta)**: la generación bancaria (`match_uid`) se guarda ahora TAMBIÉN en el sello del destino (orden e ítem, manual y auto); el claim del rollback (acumuladas, órdenes simples e ítems VIP) exige atómicamente `reconciliation.match_uid ∈ {capturada, None}` ANTES de debitar o resetear — una reversión atrasada devuelve 409 sin tocar el saldo/estado/vínculo del ciclo nuevo. Al reanudar un cierre, se reutiliza la generación del sello comprometido.
+- **CB08 (alta)**: diccionario `_COMMON_SURNAMES` — evidencia fiable de apellido = último token del titular (si no es nombre de pila conocido) o apellido CONOCIDO intermedio; una palabra ausente de ambos diccionarios (YUNIER) conserva la incertidumbre → revisión manual. 'JOSE YUNIER' ya no aprueba automáticamente 'JOSE YUNIER PEREZ'; casos legítimos (PEREZ, GARCIA intermedio, typos OCR) conservados.
+- Tests: `test_iter302_verificacion_cb2.py` 11/11 (reproduce los 3 escenarios exactos del auditor: vip_claim_fault, stale_rollback_target_read, unlisted_given_name; añadido a test-critical) · `make test-critical` **751/751** · mypy/ruff limpios.
+
+## Backlog priorizado (actualizado 2026-09-27, tras iter303)
+- HECHO iter303: los 3 bugs residuales de conciliación bancaria (CB03/CB05/CB08) cerrados — 751/751 críticos.
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
