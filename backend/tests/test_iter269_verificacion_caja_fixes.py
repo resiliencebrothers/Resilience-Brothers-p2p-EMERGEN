@@ -107,6 +107,44 @@ def _resumen(box_id, fund="USD"):
     return r.json()
 
 
+def _usd_fund_movs(box_id, fund="USD"):
+    """Mapa {id: importe con signo} de los movimientos del fondo. Aísla el
+    saldo de la caja compartida `company_cash` de espejos concurrentes de
+    OTRAS operaciones bajo carga de la suite (V02/V03)."""
+    out = {}
+    for m in _db().cash_box_movements.find(
+            {"box_id": box_id, "fund": fund},
+            {"_id": 0, "id": 1, "type": 1, "amount": 1}):
+        sign = 1 if m.get("type") == "entrada" else -1
+        out[m["id"]] = sign * round(float(m.get("amount") or 0), 2)
+    return out
+
+
+def _isolated_delta(box_id, base_movs, own_ids, fund="USD"):
+    """Variación del saldo contando SOLO los movimientos previos + los propios
+    de este test — inmune a espejos concurrentes de otras operaciones."""
+    final_movs = _usd_fund_movs(box_id, fund)
+    keep = set(base_movs) | set(own_ids)
+    now = sum(v for k, v in final_movs.items() if k in keep)
+    return round(now - sum(base_movs.values()), 2)
+
+
+def _seal_fresh_arqueo(box_id, fund="USD", attempts=6):
+    """Sella un arqueo que quede VIGENTE (sin superar). Bajo un espejo
+    concurrente en la caja compartida `company_cash`, un rev-bump ajeno puede
+    invalidarlo en el acto: se recalcula el saldo y se resella hasta que quede
+    fresco (o se agotan los intentos). Devuelve el último `resumen`."""
+    res = None
+    for _ in range(attempts):
+        bal = _resumen(box_id, fund)["balance"]
+        _mk_arqueo(box_id, fund, _usd_denoms_for(bal))
+        res = _resumen(box_id, fund)
+        aq = res.get("arqueo_today")
+        if aq and aq.get("superseded") is False and res.get("needs_arqueo") is False:
+            return res
+    return res
+
+
 def _auto_box():
     return _db().cash_boxes.find_one({"system_purpose": "company_cash"},
                                      {"_id": 0})
@@ -289,7 +327,7 @@ class TestV02ClientWithdrawalMirror:
         assert r.status_code == 200, r.text
         box = _auto_box()
         assert box, "la caja del sistema debe existir"
-        base = _resumen(box["id"], "USD")["balance"]
+        base_movs = _usd_fund_movs(box["id"], "USD")
         acc = _cash_account("USD")
         assert acc, "la cuenta de caja USD debe existir"
         wid = f"w{MARK.lower()}_{uuid.uuid4().hex[:8]}"
@@ -309,7 +347,7 @@ class TestV02ClientWithdrawalMirror:
             "sin billetes conocidos el desglose queda PENDIENTE"
         assert db.withdrawals.find_one(
             {"id": wid}, {"_id": 0})["cash_box_movement_id"] == mov["id"]
-        assert _resumen(box["id"], "USD")["balance"] == round(base - 40.0, 2)
+        assert _isolated_delta(box["id"], base_movs, [mov["id"]]) == -40.0
         # idempotencia: repetir el backfill no duplica la salida
         _run_backfill()
         assert db.cash_box_movements.count_documents(
@@ -335,7 +373,7 @@ class TestV02ClientWithdrawalMirror:
                      "denominations": {"20": 3}})
         assert r.status_code == 200, r.text
         box = _auto_box()
-        base = _resumen(box["id"], "USD")["balance"]
+        base_movs = _usd_fund_movs(box["id"], "USD")
         acc = _cash_account("USD")
         wid = f"w{MARK.lower()}_{uuid.uuid4().hex[:8]}"
         db.withdrawals.insert_one({
@@ -352,7 +390,8 @@ class TestV02ClientWithdrawalMirror:
         assert r.status_code == 200, r.text
         assert r.json().get("cash_box_movement_id"), \
             "el pago debe enlazar su movimiento físico en la respuesta"
-        assert _resumen(box["id"], "USD")["balance"] == round(base - 25.0, 2)
+        assert _isolated_delta(box["id"], base_movs,
+                               [r.json()["cash_box_movement_id"]]) == -25.0
 
 
 class TestV03AccountIdentity:
@@ -374,7 +413,7 @@ class TestV03AccountIdentity:
         assert acc, "la cuenta de caja USD debe existir"
         original_name = acc.get("name") or "Fondo Resilience"
         box = _auto_box()
-        base = _resumen(box["id"], "USD")["balance"]
+        base_movs = _usd_fund_movs(box["id"], "USD")
         _ensure_usd_available(45)
         try:
             r = requests.put(
@@ -394,8 +433,9 @@ class TestV03AccountIdentity:
             assert pay.status_code == 200, pay.text
             assert pay.json().get("cash_box_movement_id"), \
                 "la cuenta renombrada sigue reconociéndose como caja (V03)"
-            assert _resumen(box["id"], "USD")["balance"] == \
-                round(base - 40.0, 2), "cuenta y caja cuentan la misma historia"
+            assert _isolated_delta(box["id"], base_movs,
+                                   [pay.json()["cash_box_movement_id"]]) == \
+                -40.0, "cuenta y caja cuentan la misma historia"
         finally:
             requests.put(f"{API}/admin/company-funds/accounts/{acc['id']}",
                          headers=_hdr(ADMIN_TOKEN),
@@ -414,7 +454,7 @@ class TestV03AccountIdentity:
         assert r.status_code == 200, r.text
         acc = _cash_account("USD")
         box = _auto_box()
-        base = _resumen(box["id"], "USD")["balance"]
+        base_movs = _usd_fund_movs(box["id"], "USD")
         cwid = f"cw{MARK.lower()}_{uuid.uuid4().hex[:8]}"
         db.company_withdrawals.insert_one({
             "id": cwid, "currency": "USD", "amount": 15.0, "status": "paid",
@@ -425,7 +465,8 @@ class TestV03AccountIdentity:
         _run_backfill()
         doc = db.company_withdrawals.find_one({"id": cwid}, {"_id": 0})
         assert str(doc["cash_box_movement_id"]).startswith("cmov_"), doc
-        assert _resumen(box["id"], "USD")["balance"] == round(base - 15.0, 2)
+        assert _isolated_delta(box["id"], base_movs,
+                               [doc["cash_box_movement_id"]]) == -15.0
 
 
 class TestV04ArqueoRevision:
@@ -486,9 +527,7 @@ class TestV04ArqueoRevision:
                          "denominations": {"1": 1}})
             assert r.status_code == 200, r.text
             box = _auto_box()
-        bal = _resumen(box["id"], "USD")["balance"]
-        _mk_arqueo(box["id"], "USD", _usd_denoms_for(bal))
-        res = _resumen(box["id"], "USD")
+        res = _seal_fresh_arqueo(box["id"], "USD")
         assert res["needs_arqueo"] is False
         # ajuste histórico (ayer) que aún no estaba en la caja
         aid = f"adj{MARK.lower()}_{uuid.uuid4().hex[:8]}"

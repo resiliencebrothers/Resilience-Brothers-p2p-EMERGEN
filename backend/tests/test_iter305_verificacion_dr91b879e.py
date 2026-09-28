@@ -224,8 +224,9 @@ class TestDR02ConcurrentConfirm:
         segunda confirmación VIVA del mismo depósito mueve la reserva a log:1.
         Al reanudar, la primera (log:0) recibe 409 y la segunda (log:1)
         confirma — el depósito y su reserva terminan con la MISMA identidad
-        (log:1). Un segundo depósito con log:0 se acredita como movimiento
-        realmente distinto, jamás como el que ya confirmó el primero."""
+        (log:1). El log:0 que el move dejó libre queda sellado como lápida:
+        un segundo depósito con log:0 recibe 409 y jamás acredita un doble
+        abono con el mismo pago on-chain."""
         h = f"{MARK}hash_conc"
         depA = _mk_deposit(f"dep_{MARK}_c1", tx_hash=h)
         _set_bal(CLIA_ID, "USDT", 0)
@@ -277,20 +278,22 @@ class TestDR02ConcurrentConfirm:
         assert fresh["status"] == "confirmed"
         assert fresh["evidence_movement_id"] == "log:1", \
             "el depósito confirma con la identidad realmente vigente"
-        claim = _db().crypto_evidence_claims.find_one({"deposit_id": depA["id"]})
+        claim = _db().crypto_evidence_claims.find_one(
+            {"deposit_id": depA["id"], "superseded": {"$ne": True}})
         assert claim["movement_id"] == "log:1", \
-            "reserva y confirmación quedan con la MISMA identidad"
+            "reserva vigente y confirmación quedan con la MISMA identidad"
         assert _bal(CLIA_ID, "USDT") == 100.0, "un solo abono para el depósito"
-        # Un segundo depósito con log:0 es un movimiento realmente distinto:
-        # se acredita, pero jamás consume el log:1 que A confirmó.
+        # DR02 v4 — el log:0 quedó LIBERADO por el move (identidad de una
+        # confirmación viva): un segundo depósito con el MISMO hash NO puede
+        # reclamarlo porque la reserva vieja quedó sellada como lápida. Así se
+        # impide acreditar 200 USDT con un único abono de 100 USD.
         depB = _mk_deposit(f"dep_{MARK}_c2", tx_hash=h)
         rb = _confirm(depB["id"], {"evidence_movement_id": "log:0"})
-        assert rb.status_code == 200, rb.text
+        assert rb.status_code == 409, rb.text
         fb = _db().deposits.find_one({"id": depB["id"]})
-        assert fb["evidence_movement_id"] == "log:0"
-        assert fb["evidence_movement_id"] != fresh["evidence_movement_id"], \
-            "B no consume el movimiento que A confirmó"
-        assert _bal(CLIA_ID, "USDT") == 200.0
+        assert fb["status"] == "pending", "B no consume el movimiento liberado"
+        assert _bal(CLIA_ID, "USDT") == 100.0, \
+            "jamás 200 USDT respaldados por un único abono de 100 USD"
 
     def test_same_movement_second_deposit_still_blocked(self):
         """Regresión: si un segundo depósito intenta el MISMO movimiento ya

@@ -383,16 +383,41 @@ def test_msg04_api_fee_charge_leaves_no_pending_and_one_job():
                                "courier_km": 0}})
     _db().users.update_one({"user_id": CLIENT_ID},
                            {"$set": {"vip_balances.USDT": 100.0}})
-    r = requests.post(f"{API}/admin/redemptions/{rid}/courier-fee",
-                      headers=_hdr(), json=with_totp_admin({"km": 20}),
-                      timeout=20)
-    assert r.status_code == 200, r.text
-    doc = _db().redemptions.find_one({"id": rid})
-    assert not doc.get("delivery_sync_pending")
-    jobs = list(_db().deliveries.find(
-        {"kind": "redemption", "ref_id": rid, "status": {"$ne": "cancelled"}}))
-    assert len(jobs) == 1
-    assert jobs[0]["fee_usdt"] == doc["courier_fee_usdt"]
+    # La tarifa por km depende de la config global de mensajería; otro test de
+    # la suite puede dejarla sucia (rate=0, free_min bajo…) y hacer que km=20
+    # cotice 0/GRATIS y el endpoint responda 422/400. Se fija a los valores
+    # por defecto durante el test y se restaura después (aislamiento de orden).
+    cfg_keys = ("courier_rate_usdt_per_km", "courier_min_fee_usdt",
+                "courier_free_min_usdt")
+    prev_cfg = _db().settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    snap = {k: prev_cfg.get(k) for k in cfg_keys}
+    _db().settings.update_one(
+        {"id": "global"},
+        {"$set": {"courier_rate_usdt_per_km": 0.50,
+                  "courier_min_fee_usdt": 2.00,
+                  "courier_free_min_usdt": 1000.0}}, upsert=True)
+    try:
+        r = requests.post(f"{API}/admin/redemptions/{rid}/courier-fee",
+                          headers=_hdr(), json=with_totp_admin({"km": 20}),
+                          timeout=20)
+        assert r.status_code == 200, r.text
+        doc = _db().redemptions.find_one({"id": rid})
+        assert not doc.get("delivery_sync_pending")
+        jobs = list(_db().deliveries.find(
+            {"kind": "redemption", "ref_id": rid,
+             "status": {"$ne": "cancelled"}}))
+        assert len(jobs) == 1
+        assert jobs[0]["fee_usdt"] == doc["courier_fee_usdt"]
+    finally:
+        op = {}
+        restore = {k: v for k, v in snap.items() if v is not None}
+        unset = {k: "" for k, v in snap.items() if v is None}
+        if restore:
+            op["$set"] = restore
+        if unset:
+            op["$unset"] = unset
+        if op:
+            _db().settings.update_one({"id": "global"}, op)
 
 
 # ============================================================

@@ -384,9 +384,10 @@ class TestDR02EvidenceMigration:
         assert r.status_code == 200, r.text
         fresh = _db().deposits.find_one({"id": dep_a["id"]})
         assert fresh["evidence_movement_id"] == "log:1"
-        row = _db().crypto_evidence_claims.find_one({"deposit_id": dep_a["id"]})
+        row = _db().crypto_evidence_claims.find_one(
+            {"deposit_id": dep_a["id"], "superseded": {"$ne": True}})
         assert row["claim_key"] == f"BEP20|{h}|USDT|log:1", \
-            "la reserva migró a la identidad realmente confirmada"
+            "la reserva vigente migró a la identidad realmente confirmada"
         assert row["movement_id"] == "log:1"
         assert row["moved_from_key"] == f"BEP20|{h}|USDT|log:0"
         assert _bal(CLIA_ID, "USDT") == 100.0

@@ -1106,17 +1106,25 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                 await approve_order_from_reconciliation(
                     order, tx, actor, auto=False, match_uid=match_uid)
         except RuntimeError:
-            # CB03 v3 — si el fallo se debe a que ESTE destino ya comprometió
-            # el abono (otro intento lo aprobó con el sello de este
-            # movimiento), la reserva se CONSERVA: liberar dejaría el
-            # movimiento disponible para otro destino con el crédito vivo.
-            if await find_committed_backing(tx_id) == payload.order_id:
+            # CB03 v3/v4 — si ESTE destino ya comprometió el abono (otro intento
+            # lo aprobó con el sello de este movimiento), la reserva se CONSERVA:
+            # liberar dejaría el movimiento disponible con el crédito vivo.
+            committed = await find_committed_backing(tx_id)
+            if committed == payload.order_id:
                 raise HTTPException(
                     status_code=409,
                     detail="La orden ya comprometió este abono y solo falta "
                            "registrar el vínculo bancario; reintenta la "
                            "confirmación para completar el cierre.")
+            # No robamos ni pisamos reclamos ajenos: liberamos solo el nuestro.
             await _release_bank_claim(tx_id, attempt_token)
+            if committed:
+                # CB03 v4 — el abono ya respalda OTRO destino: este intento no
+                # puede acreditar un segundo crédito con el mismo pago.
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Este movimiento ya respalda la orden {committed} "
+                           "(abono comprometido) — no puede confirmar otra orden.")
             raise HTTPException(status_code=409, detail="La orden ya no está pendiente.")
     # CB03 — solo el dueño del reclamo (token de ESTE intento) escribe el
     # cierre; nunca se pisa otro resultado ni se hereda un reclamo ajeno.
@@ -1464,7 +1472,10 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
                   "match_details": None, "matched_at": None, "matched_by": None,
                   "review_note": f"Rollback: {reason}",
                   "reviewed_by": actor["user_id"], "reviewed_at": iso(now_utc()),
-                  "updated_at": iso(now_utc())}})
+                  "updated_at": iso(now_utc())},
+         # CB03 v4 — al deshacer el vínculo se libera el respaldo exclusivo:
+         # el movimiento vuelve a poder financiar una conciliación legítima.
+         "$unset": {"credit_backing_order": "", "credit_backing_at": ""}})
     if fin.modified_count == 0:
         raise HTTPException(
             status_code=409,

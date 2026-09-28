@@ -166,17 +166,21 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
                         "registrada) — resuélvelo antes de volver a "
                         "acreditar este hash."))
     own = await db.crypto_evidence_claims.find_one(
-        {"deposit_id": doc["id"]},
+        {"deposit_id": doc["id"], "superseded": {"$ne": True}},
         {"_id": 1, "claim_key": 1, "movement_id": 1})
     req_mid = (movement_id or "").strip()
     if own:
         if (own.get("movement_id") or "").strip() == req_mid:
             return  # reserva propia con la MISMA identidad (reanudación)
-        # DR02 v2 — reanudación con OTRO ID de movimiento: el depósito, la
-        # reserva y el ID deben ser la MISMA identidad. Transición controlada
-        # y exclusiva de la reserva a la nueva identidad; jamás queda un
-        # movimiento confirmado sin su reserva ni una reserva apuntando a
-        # otro movimiento que el confirmado.
+        # DR02 v4 — reanudación con OTRO ID de movimiento. La identidad vieja
+        # NUNCA se libera: se INSERTA la reserva nueva y la anterior queda
+        # sellada como LÁPIDA (`superseded`) conservando su clave. Así su
+        # entrada sigue ocupando el índice único y una confirmación viva que
+        # aún apunte a la identidad vieja jamás deja ese movimiento disponible
+        # para que un SEGUNDO depósito lo reclame y acredite (doble abono con
+        # un único pago on-chain). El depósito y su reserva vigente terminan
+        # con la MISMA identidad nueva; un movimiento REALMENTE distinto (jamás
+        # reservado) se sigue aceptando.
         fresh_dep = await db.deposits.find_one(
             {"id": doc["id"]}, {"_id": 0, "status": 1})
         if (fresh_dep or {}).get("status") != "pending":
@@ -187,30 +191,37 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
         new_key = _evidence_claim_key(doc.get("network") or "",
                                       doc["tx_hash"], doc["currency"],
                                       req_mid)
+        moved_at = iso(now_utc())
         try:
-            moved = await db.crypto_evidence_claims.update_one(
-                {"_id": own["_id"], "claim_key": own["claim_key"],
-                 "deposit_id": doc["id"]},
-                {"$set": {"claim_key": new_key, "movement_id": req_mid,
-                          "moved_from_key": own["claim_key"],
-                          "moved_at": iso(now_utc())}})
+            await db.crypto_evidence_claims.insert_one({
+                "claim_key": new_key, "deposit_id": doc["id"],
+                "user_id": doc["user_id"], "network": doc.get("network"),
+                "tx_hash": doc["tx_hash"], "currency": doc["currency"],
+                "amount": doc["amount"], "movement_id": req_mid,
+                "moved_from_key": own["claim_key"], "moved_at": moved_at,
+                "at": moved_at})
         except DuplicateKeyError:
             prior = await db.crypto_evidence_claims.find_one(
                 {"claim_key": new_key}, {"_id": 0, "deposit_id": 1})
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "EVIDENCE_ALREADY_USED",
-                        "message": (
-                            "Ese ID de movimiento ya respalda el depósito "
-                            f"{str((prior or {}).get('deposit_id') or '¿?')[:16]}"
-                            " — el mismo movimiento no puede acreditarse dos "
-                            "veces."),
-                        "deposit_id": (prior or {}).get("deposit_id")})
-        if moved.modified_count != 1:
-            raise HTTPException(
-                status_code=409,
-                detail="La reserva de esta evidencia cambió mientras "
-                       "confirmabas; recarga y reintenta.")
+            # Reintento idempotente del propio move: si la reserva nueva ya es
+            # de ESTE depósito, solo falta asegurar la lápida de la vieja.
+            if (prior or {}).get("deposit_id") != doc["id"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "EVIDENCE_ALREADY_USED",
+                            "message": (
+                                "Ese ID de movimiento ya respalda el depósito "
+                                f"{str((prior or {}).get('deposit_id') or '¿?')[:16]}"
+                                " — el mismo movimiento no puede acreditarse "
+                                "dos veces."),
+                            "deposit_id": (prior or {}).get("deposit_id")})
+        # Sella la identidad anterior como lápida (conserva su clave para
+        # bloquear cualquier reclamo de otro depósito). Idempotente.
+        await db.crypto_evidence_claims.update_one(
+            {"_id": own["_id"], "claim_key": own["claim_key"],
+             "deposit_id": doc["id"]},
+            {"$set": {"superseded": True, "superseded_at": moved_at,
+                      "superseded_by": new_key}})
         return
     key = _evidence_claim_key(doc.get("network") or "", doc["tx_hash"],
                               doc["currency"], req_mid)

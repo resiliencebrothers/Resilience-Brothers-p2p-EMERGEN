@@ -2112,3 +2112,17 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-06 · iter309 — FIX Producción: subida de extracto PDF falla + estabilidad CI
+
+**BUG FIX (P0, reportado en producción) — Conciliación: subir PDF Sabadell da «FALLÓ / LLM response has no JSON array»**:
+- **Causa raíz**: el extracto Sabadell («Consulta de movimientos») en PDF es texto digital en layout VERTICAL (cada campo en su propia línea: fecha → concepto → importe) con MILES de filas (el archivo de prueba real trae 2354). La rama de PDF mandaba todo el texto a la IA (Gemini) pidiendo un único array JSON; con 2000+ filas la respuesta se trunca por el límite de salida → `_parse_llm_json` no encuentra `[...]` → import FALLÓ con 0 detectados. (El mensaje inglés en el screenshot es de código PREVIO a iter304 → producción sin re-desplegar.)
+- **Fix**: nuevo parser NATIVO determinista `parse_pdf_text_native()` en `services/reconciliation_parser.py`, activado por la firma de cabecera ES vertical (`_es_vertical_header_index`: 'F. Operativa'/'Concepto'/'Importe'). Lee tríos fecha/concepto/importe sin IA. La IA queda de respaldo para otros formatos (gate devuelve [] si no hay firma → sin regresión para otros bancos). Rama PDF en `parse_statement`: intenta nativo → si vacío, IA texto → si vacío, OCR.
+- **Extracción de remitente**: nuevo patrón para 'TRANSFERENCIA <NOMBRE>' sin 'DE' (variante Sabadell). Recupera 165 remitentes extra en el archivo real (sin-remitente 219→54, el resto son ingresos en efectivo/comisiones legítimamente sin remitente).
+- **Verificado**: archivo real (2354 filas) procesa E2E vía HTTP en ~6s → status `processed`, mode `pdf_text_native`, 2345 créditos / 9 débitos, 0 errores (antes: FALLÓ). Test nuevo `test_iter309_parser_pdf_sabadell.py` (8 casos: nativo, gate anti-falsos-positivos, patrón remitente, E2E con PDF reportlab). 150/150 regresión familia conciliación (iter298–309). Añadido a `make test-critical`.
+- **PENDIENTE**: (a) el usuario debe RE-DESPLEGAR para que llegue a p2p.resiliencebrothers.com. (b) el `.xls` del screenshot no se pudo reproducir (solo se aportó el PDF); si el `.xls` de Sabadell es HTML disfrazado, requeriría un fix aparte — pedir el archivo o usar el PDF (ya funciona).
+
+**Estabilidad CI — 2 tests flaky (P2)**:
+- `test_iter269_verificacion_caja_fixes.py` (V02/V03): las aserciones de delta de saldo sobre la caja compartida `company_cash` se rompían cuando un espejo concurrente (carga de suite / job `cash_box_sync` de 10 min) movía operaciones AJENAS entre la lectura de `base` y la final. Fix: helper `_isolated_delta` que cuenta SOLO los movimientos previos + el propio del test (inmune a concurrentes). V04 `test_late_recovered_...`: `_seal_fresh_arqueo` resella con reintento acotado si un bump ajeno invalida el arqueo. Verificado robusto bajo contaminador concurrente pesado (4 corridas 12/12).
+- `test_iter288_audit_mensajeria.py::test_msg04_...`: dependiente de orden — otro test dejaba sucia la config global de mensajería (`courier_rate_usdt_per_km`/`min_fee`/`free_min`) haciendo que km=20 cotizara 0/GRATIS → 422/400. Fix: el test fija la config a valores por defecto con snapshot/restore.
+- Sin tocar código de producción ni de auth en los flaky; solo aislamiento de tests.

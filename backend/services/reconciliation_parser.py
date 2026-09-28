@@ -81,6 +81,10 @@ _SENDER_PATTERNS = [
     re.compile(r"TRANSFERENCIA(?:S)?(?:\s+INMEDIATA|\s+SEPA|\s+RECIBIDA)?"
                r"\s+DE\s+(.{3,90})", re.I),
     re.compile(r"(?:BIZUM|ABONO|INGRESO|RECIBIDO)\s+DE\s+(.{3,90})", re.I),
+    # iter309 — 'TRANSFERENCIA <NOMBRE>' sin 'DE' (variante Sabadell). Excluye
+    # modificadores y transferencias emitidas para no capturar beneficiarios.
+    re.compile(r"TRANSFERENCIA\s+(?!INMEDIATA\b|SEPA\b|RECIBIDA\b|DE\b"
+               r"|A\s+FAVOR\b|EMITIDA\b)(.{3,90})", re.I),
 ]
 
 
@@ -318,6 +322,84 @@ def pdf_extract_text(data: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Native digital-PDF parsing (ES vertical statements: Sabadell/BBVA…)
+# ---------------------------------------------------------------------------
+_PDF_DATE_LINE_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+_PDF_AMOUNT_LINE_RE = re.compile(r"^-?\d[\d.,]*$")
+
+
+def _es_vertical_header_index(lines: List[str]) -> Optional[int]:
+    """Índice de la cabecera en extractos ES verticales (Sabadell/BBVA:
+    'F. Operativa' / 'Concepto' / 'Importe', cada etiqueta en su propia línea).
+    None si el PDF no tiene esa firma (→ se usa la IA como antes)."""
+    date_syn = {_norm(x) for x in _COLS["date"]}
+    amount_syn = {_norm(x) for x in (_COLS["amount"] + ["importe", "concepto"])}
+    for i, l in enumerate(lines[:80]):
+        if _norm(l) in date_syn:
+            near = {_norm(x) for x in lines[i:i + 4]}
+            if near & amount_syn:
+                return i
+    return None
+
+
+def parse_pdf_text_native(text: str, dayfirst: bool) -> List[Dict]:
+    """iter309 — parseo NATIVO de extractos PDF de texto digital con layout
+    vertical (cada campo en su propia línea): fecha → concepto → importe.
+    Un extracto Sabadell real trae miles de filas: pedírselas a la IA como un
+    único array JSON desborda el límite de salida y 'FALLÓ' con 0 detectados.
+    Aquí se leen las filas de forma determinista, sin IA. Devuelve [] si el PDF
+    no tiene la firma de cabecera ES vertical (→ la IA sigue de respaldo)."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    hdr = _es_vertical_header_index(lines)
+    if hdr is None:
+        return []
+    txs: List[Dict] = []
+    i, n = hdr + 1, len(lines)
+    while i < n:
+        if not _PDF_DATE_LINE_RE.match(lines[i]):
+            i += 1
+            continue
+        date = parse_date(lines[i], dayfirst=dayfirst)
+        j = i + 1
+        concept_parts: List[str] = []
+        amount: Optional[float] = None
+        while j < n:
+            lj = lines[j]
+            if _PDF_DATE_LINE_RE.match(lj):
+                break  # fila sin importe → se descarta
+            if _PDF_AMOUNT_LINE_RE.match(lj):
+                a = parse_amount(lj)
+                if a is not None:
+                    amount = a
+                    j += 1
+                    break
+            concept_parts.append(lj)
+            j += 1
+        if amount is None or amount == 0 or not date:
+            i = j
+            continue
+        desc = " ".join(concept_parts).strip()
+        direction = "credit" if amount >= 0 else "debit"
+        sender = sender_from_description(desc)
+        txs.append({
+            "transaction_date": date,
+            "time": None,
+            "amount": round(abs(amount), 2),
+            "direction": direction,
+            "sender_name": sender or None,
+            "beneficiary_name": None,
+            "description": desc or None,
+            "reference": None,
+            "balance_after": None,
+            "payment_method": detect_payment_method(desc),
+            "row_index": len(txs),
+            "raw": {"source": "pdf_native", "concept": desc[:200]},
+        })
+        i = j
+    return txs
+
+
+# ---------------------------------------------------------------------------
 # LLM extraction (Emergent universal key)
 # ---------------------------------------------------------------------------
 _LLM_SYSTEM = (
@@ -435,6 +517,12 @@ async def parse_statement(data: bytes, ext: str, dayfirst: bool,
     if ext == "pdf":
         text = pdf_extract_text(data)
         if len(text.strip()) >= 120:
+            # iter309 — extractos ES verticales (Sabadell) se leen NATIVOS:
+            # miles de filas desbordan el límite de salida de la IA y 'FALLÓ'
+            # con 0 detectados. La IA queda de respaldo para otros formatos.
+            native = parse_pdf_text_native(text, dayfirst)
+            if native:
+                return native, 0, "pdf_text_native"
             txs = await llm_extract_from_text(text)
             # iter186 — a PDF can contain >120 chars of boilerplate (headers,
             # footers) while the actual rows are scanned images. If the text

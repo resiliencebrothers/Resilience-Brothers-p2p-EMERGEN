@@ -679,6 +679,11 @@ async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
     note = (f"Conciliación bancaria {'automática' if auto else 'manual'} — "
             f"movimiento {tx['id']} ({tx.get('transaction_date')}, "
             f"{tx.get('amount')} {tx.get('currency')})")
+    # CB03 v4 — respaldo EXCLUSIVO del abono sobre el propio movimiento ANTES
+    # de acreditar: si otro destino ya lo comprometió, este intento no puede
+    # acreditar (evita 200 USDT con un único abono).
+    if not await claim_credit_backing(tx["id"], order["id"]):
+        raise RuntimeError("movement_backing_committed_elsewhere")
     res = await db.orders.update_one(
         {"id": order["id"], "status": "pending",
          "reconciliation.bank_transaction_id": {"$exists": False}},
@@ -704,6 +709,10 @@ async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
         }},
     )
     if res.modified_count != 1:
+        # No sellamos la orden: liberar el respaldo espurio (salvo que este
+        # destino sí quedara comprometido por un intento concurrente del mismo
+        # destino) para no bloquear el movimiento.
+        await release_credit_backing(tx["id"], order["id"])
         raise RuntimeError("order_no_longer_pending")
     updated = await db.orders.find_one({"id": order["id"]}, {"_id": 0})
     try:
@@ -742,6 +751,11 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
     note = (f"Conciliación bancaria {'automática' if auto else 'manual'} — "
             f"movimiento {tx['id']} ({tx.get('transaction_date')}, "
             f"{tx.get('amount')} {tx.get('currency')})")
+    # CB03 v4 — respaldo EXCLUSIVO del abono sobre el propio movimiento ANTES
+    # de sellar/acreditar: si otro destino ya lo comprometió, este ítem no
+    # puede acreditar (evita doble abono con un único pago).
+    if not await claim_credit_backing(tx["id"], item_id):
+        raise RuntimeError("movement_backing_committed_elsewhere")
     res = await db.vip_batch_items.update_one(
         {"id": item_id, "status": "pending",
          # iter262(G04) — reconocer el sello PROPIO preparado por un intento
@@ -767,6 +781,7 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
         }},
     )
     if res.modified_count != 1:
+        await release_credit_backing(tx["id"], item_id)
         raise RuntimeError("item_no_longer_pending")
     if attempt_token:
         # CB03 v2 — el sello NO basta: el intento debe seguir siendo dueño
@@ -781,6 +796,7 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
                  "reconciliation.attempt_token": attempt_token},
                 {"$unset": {"reconciliation": "", "payment_confirmation_source": "",
                             "bank_transaction_id": "", "reconciliation_score": ""}})
+            await release_credit_backing(tx["id"], item_id)
             raise RuntimeError("bank_claim_lost_before_decision")
     try:
         fresh = await apply_item_decision(item_id, "approved", actor,
@@ -805,6 +821,7 @@ async def approve_batch_item_from_reconciliation(item_id: str, tx: Dict,
                 cleanup,
                 {"$unset": {"reconciliation": "", "payment_confirmation_source": "",
                             "bank_transaction_id": "", "reconciliation_score": ""}})
+            await release_credit_backing(tx["id"], item_id)
             logger.error(f"reconciliation item approval failed for {item_id}: {e!r}")
             raise RuntimeError(f"item_approval_failed: {e}")
         logger.error(f"post-commit failure tolerated for item {item_id} "
@@ -930,6 +947,39 @@ async def find_committed_backing(tx_id: str, exclude_id: str = "") -> Optional[s
     doc = (await db.orders.find_one(q, {"_id": 0, "id": 1})
            or await db.vip_batch_items.find_one(q, {"_id": 0, "id": 1}))
     return doc["id"] if doc else None
+
+
+async def claim_credit_backing(tx_id: str, target_id: str) -> bool:
+    """CB03 v4 — compromiso ATÓMICO y EXCLUSIVO del respaldo del abono sobre el
+    PROPIO movimiento bancario. Un ÚNICO documento (el movimiento) decide a qué
+    destino financia mediante un compare-and-set (`credit_backing_order`
+    ausente o ya-este-destino). Es la barrera dura que cierra CB03: ninguna
+    carrera —recuperación de reserva vencida, robo de reclamo, reintento—
+    puede lograr que un mismo abono respalde DOS créditos. Quien pierde el
+    compare-and-set no acredita. Devuelve True si ESTE destino posee el
+    respaldo tras la operación."""
+    res = await db.bank_transactions.update_one(
+        {"id": tx_id,
+         "$or": [{"credit_backing_order": {"$exists": False}},
+                 {"credit_backing_order": target_id}]},
+        {"$set": {"credit_backing_order": target_id,
+                  "credit_backing_at": iso(now_utc())}})
+    # matched_count==1 ⟺ el filtro (ausente o ya-este-destino) casó: el
+    # respaldo es de ESTE destino. 0 ⟺ ya lo tomó otro destino.
+    return res.matched_count == 1
+
+
+async def release_credit_backing(tx_id: str, target_id: str) -> None:
+    """CB03 v4 — libera el respaldo del movimiento SOLO si este destino no
+    llegó a comprometerse de verdad (no quedó aprobado con el sello de este
+    movimiento) y solo si seguimos siendo su dueño. Jamás libera el de otro:
+    un intento que reservó pero no acreditó no puede dejar el abono disponible
+    para otro sin antes comprobar que no hubo crédito comprometido."""
+    if await find_committed_backing(tx_id) == target_id:
+        return  # comprometido de verdad: el respaldo se conserva
+    await db.bank_transactions.update_one(
+        {"id": tx_id, "credit_backing_order": target_id},
+        {"$unset": {"credit_backing_order": "", "credit_backing_at": ""}})
 
 
 async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
