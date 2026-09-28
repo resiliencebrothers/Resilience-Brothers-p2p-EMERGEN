@@ -2102,3 +2102,13 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
 - P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
 - P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.
+
+## 2026-09-28 · iter306 — Verificación DR 91b879e: 2 residuales concurrentes (DR09 crítica + DR02 alta) CERRADOS
+- **DR09 v3 (crítica — cancellation_release_after_stale_origin_read)**: el reembolso administrativo (`routes/admin_withdrawals._claim_entering_rejected`) ahora ASEGURA la protección de la entrega ANTES de mover dinero. Tras reservar la intención de cancelación la COMPROMETE de inmediato (no robable ni liberable por un perdedor con lectura obsoleta), cerrando la ventana reserva→persistencia que permitía a una cancelación de cliente vencida robar y liberar la intención y dejar sellar la entrega. `commit_origin_cancel_intent` pasó a devolver bool estricto: si la entrega YA se selló, devuelve False y el rechazo NO acredita reembolso (entrega válida sin reembolso). Nuevo `force_release_origin_cancel_intent` (retiro por token propio) para abandonar un rechazo sin dinero movido. Invariante garantizada: jamás entrega sellada Y reembolso a la vez.
+- **DR02 v3 (alta — evidence_move_during_live_confirmation)**: dos confirmaciones VIVAS del mismo depósito con movimientos distintos ya no separan la reserva del movimiento confirmado. `routes/deposits._do_confirm_deposit` graba en el propio depósito la identidad reservada (`evidence_claim_movement`) y condiciona la confirmación final a ese movimiento: la petición anterior recibe 409 y jamás libera un movimiento que otra pueda consumir. El depósito y su reserva terminan con la MISMA identidad; un segundo depósito no consume el movimiento ya confirmado (movimientos realmente distintos siguen aceptándose).
+- Tests: `test_iter305_verificacion_dr91b879e.py` (8 tests — barrera de concurrencia a nivel motor para DR02, reproducción de la carrera stale-release para DR09, unit tests de commit estricto/force_release). Añadido a `test-critical`. Regresión: 63/63 en DR/depósitos/retiros + 110/110 en concurrencia/idempotencia/mensajería (1 fallo PREEXISTENTE `test_msg04` por config de tarifa dependiente de orden, ajeno a este cambio). mypy/ruff limpios.
+
+## Backlog priorizado (actualizado 2026-09-28, tras iter306)
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

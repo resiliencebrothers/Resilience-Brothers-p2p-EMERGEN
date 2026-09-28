@@ -132,24 +132,56 @@ async def release_origin_cancel_intent(job_id: str, token: str,
         {"$unset": {"origin_cancel_intent": ""}})
 
 
-async def commit_origin_cancel_intent(job_id: str, actor_id: str = "") -> None:
-    """DR09 v2 — tras PERSISTIR la decisión de reembolso del origen, la
-    intención pasa a comprometida (jamás robable ni liberable). Si un robo y
-    liberación previos la dejaron ausente, se REINSTALA comprometida mientras
-    la entrega no esté sellada: una decisión monetaria persistida nunca queda
-    desprotegida frente al sello del mensajero."""
+async def commit_origin_cancel_intent(job_id: str, actor_id: str = "") -> bool:
+    """DR09 v3 — asegura la protección de la entrega ligada a una decisión de
+    reembolso: marca la intención como comprometida (jamás robable ni
+    liberable). Si un robo+liberación previos la dejaron ausente, la REINSTALA
+    comprometida mientras la entrega no esté sellada.
+
+    Devuelve True SOLO si la entrega queda efectivamente protegida (intención
+    comprometida y entrega no sellada, o entrega ya cancelada que no puede
+    sellarse). Devuelve False si la entrega YA fue sellada
+    ('delivered'/'confirmed'): en ese caso el llamador NO debe continuar con
+    el reembolso — habría entrega física y reembolso a la vez."""
+    # Comprometer una intención vigente sobre una entrega aún no sellada.
     res = await db.deliveries.update_one(
-        {"id": job_id, "origin_cancel_intent": {"$exists": True}},
+        {"id": job_id,
+         "status": {"$nin": ["delivered", "confirmed", "cancelled"]},
+         "origin_cancel_intent": {"$exists": True}},
         {"$set": {"origin_cancel_intent.committed": True}})
     if res.matched_count:
-        return
-    await db.deliveries.update_one(
+        return True
+    # Sin intención vigente: reinstalar comprometida mientras no esté sellada.
+    reinstall = await db.deliveries.update_one(
         {"id": job_id,
          "status": {"$nin": ["delivered", "confirmed", "cancelled"]},
          "origin_cancel_intent": {"$exists": False}},
         {"$set": {"origin_cancel_intent": {
             "at": iso(now_utc()), "by": actor_id or "system",
             "token": uuid.uuid4().hex, "committed": True}}})
+    if reinstall.modified_count:
+        return True
+    # No se pudo instalar protección: inspeccionar el estado final real.
+    fresh = await db.deliveries.find_one(
+        {"id": job_id}, {"_id": 0, "status": 1, "origin_cancel_intent": 1})
+    if not fresh:
+        return True  # sin entrega asociada — el reembolso puede proceder
+    st = fresh.get("status")
+    if st in ("delivered", "confirmed"):
+        return False  # ya sellada — proteger es imposible: rechazar reembolso
+    if st == "cancelled":
+        return True  # entrega cancelada: no puede sellarse — protegida
+    return bool((fresh.get("origin_cancel_intent") or {}).get("committed"))
+
+
+async def force_release_origin_cancel_intent(job_id: str, token: str) -> None:
+    """DR09 v3 — el MISMO intento que comprometió una intención la retira al
+    ABANDONAR su reembolso (la persistencia falló sin mover dinero): la
+    entrega vuelve a poder sellarse. Condicionado al token propio para no
+    tocar jamás la protección de la decisión de otro."""
+    await db.deliveries.update_one(
+        {"id": job_id, "origin_cancel_intent.token": token},
+        {"$unset": {"origin_cancel_intent": ""}})
 
 
 async def find_attention_items() -> dict:

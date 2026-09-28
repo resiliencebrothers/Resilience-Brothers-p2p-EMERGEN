@@ -161,19 +161,29 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
     """Entrada a 'rejected' — el reembolso viaja VINCULADO al claim (marker
     + abono idempotente); si ya estaba reembolsado, transición sin dinero."""
     wid = w["id"]
-    # DR09(B) — el reembolso administrativo usa el MISMO protocolo de decisión
-    # durable que la cancelación del cliente: con la entrega ya sellada
-    # (dinero físico entregado) NO hay reembolso automático, y la intención
-    # registrada impide que un sello tardío del mensajero gane después de
-    # comprometer el reembolso.
+    # DR09(B) v3 — el reembolso administrativo asegura la protección de la
+    # entrega ANTES de mover dinero: tras reservar la intención, la COMPROMETE
+    # de inmediato (jamás robable ni liberable por un perdedor con lectura
+    # obsoleta), cerrando la ventana en la que el sello del mensajero podía
+    # colarse entre la persistencia del reembolso y el compromiso de la
+    # intención. Si la entrega ya se selló, el reembolso automático se rechaza
+    # — nunca hay entrega física y reembolso a la vez.
     from services.deliveries import (reserve_origin_cancel_intent,
-                                     release_origin_cancel_intent,
-                                     commit_origin_cancel_intent)
-    job, intent_token = await reserve_origin_cancel_intent(
-        "withdrawal", wid, actor_id or "staff",
+                                     commit_origin_cancel_intent,
+                                     force_release_origin_cancel_intent)
+    sealed_msg = (
         "El mensajero ya entregó el dinero de este retiro (entrega sellada) — "
         "no puede rechazarse con reembolso automático; registra una "
         "corrección explícita.")
+    job, intent_token = await reserve_origin_cancel_intent(
+        "withdrawal", wid, actor_id or "staff", sealed_msg)
+    if job:
+        secured = await commit_origin_cancel_intent(job["id"],
+                                                    actor_id or "staff")
+        if not secured:
+            # La entrega se selló antes de poder protegerla: el dinero ya se
+            # entregó físicamente — no hay reembolso automático.
+            raise HTTPException(status_code=409, detail=sealed_msg)
     from services.credit_recovery import pending_marker, apply_and_clear
     marker = pending_marker(w["user_id"], currency, amount,
                             "withdrawal-refund")
@@ -190,26 +200,23 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
                   "credit_pending": marker}})
     if claim.matched_count == 0:
         # ¿ya reembolsado por otra vía (p.ej. carrera con un rechazo
-        # previo cuyo re-débito no aplicó)? — transición sin dinero.
+        # previo cuyo re-débito no aplicó)? — transición sin dinero. La
+        # protección comprometida de la entrega sigue en pie: reembolso
+        # único, entrega impedida.
         claim = await db.withdrawals.update_one(
             {"id": wid, "status": w["status"], "balance_refunded": True,
              "courier_fee_op_pending": {"$exists": False},
              "redebit_pending": {"$exists": False}},
             {"$set": sets})
         if claim.matched_count == 0:
+            # Carrera real: este rechazo se ABANDONA sin mover dinero — el
+            # MISMO intento retira la protección que comprometió para que la
+            # entrega pueda seguir su curso (jamás la retira un tercero).
             if job and intent_token:
-                # DR09 v2 — el perdedor solo libera si el origen NO tiene un
-                # reembolso comprometido; si lo tiene, la intención se escala
-                # a comprometida y sigue bloqueando el sello de la entrega.
-                await release_origin_cancel_intent(
-                    job["id"], intent_token, kind="withdrawal", ref_id=wid)
+                await force_release_origin_cancel_intent(job["id"],
+                                                         intent_token)
             _raise_withdrawal_race()
-        if job:
-            await commit_origin_cancel_intent(job["id"], actor_id or "staff")
         return
-    if job:
-        # DR09 v2 — reembolso PERSISTIDO: la intención pasa a comprometida.
-        await commit_origin_cancel_intent(job["id"], actor_id or "staff")
     await apply_and_clear("withdrawals", wid, marker)
 
 

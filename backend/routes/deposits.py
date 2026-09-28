@@ -740,8 +740,21 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
         min_valuation = {"usdt_equivalent": str(eq_dec), "at": now,
                          "rule": f"min_{MIN_CRYPTO_USDT:g}_usdt"}
     # DR02 — reserva DURABLE de la evidencia cripto ANTES de acreditar.
-    if doc.get("method") == "crypto" and doc.get("tx_hash"):
+    req_mid = (evidence_movement_id or "").strip()
+    crypto_evidence = bool(doc.get("method") == "crypto" and doc.get("tx_hash"))
+    if crypto_evidence:
         await _claim_crypto_evidence(doc, evidence_movement_id)
+        # DR02 v3 — la identidad RESERVADA y la finalmente CONFIRMADA quedan
+        # vinculadas de forma indivisible: la reserva graba en el propio
+        # depósito el movimiento que ESTE intento tomó. Una confirmación
+        # concurrente que mueva la reserva a otro movimiento reescribe esta
+        # marca; la confirmación final solo gana si su movimiento sigue siendo
+        # el vigente (filtro `evidence_claim_movement`). Así una petición
+        # anterior no puede confirmar con un movimiento que otra ya reasignó,
+        # ni queda libre un movimiento que aquella aún podría consumir.
+        await db.deposits.update_one(
+            {"id": dep_id, "status": "pending"},
+            {"$set": {"evidence_claim_movement": req_mid}})
     # Idempotency: flip status first so a double-click can't double-credit.
     # iter249 — la intención de abono viaja en el MISMO update atómico; si el
     # proceso muere antes de acreditar, el healer (credit_recovery) completa.
@@ -753,10 +766,15 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
                     "credit_pending": marker}
     if min_valuation:
         confirm_sets["min_crypto_valuation"] = min_valuation
-    if evidence_movement_id.strip():
-        confirm_sets["evidence_movement_id"] = evidence_movement_id.strip()
+    if req_mid:
+        confirm_sets["evidence_movement_id"] = req_mid
+    confirm_filter: dict = {"id": dep_id, "status": "pending"}
+    if crypto_evidence:
+        # DR02 v3 — la confirmación final exige que la identidad reservada por
+        # ESTE intento siga vigente.
+        confirm_filter["evidence_claim_movement"] = req_mid
     res = await db.deposits.update_one(
-        {"id": dep_id, "status": "pending"},
+        confirm_filter,
         {"$set": confirm_sets},
     )
     if res.modified_count == 0:
