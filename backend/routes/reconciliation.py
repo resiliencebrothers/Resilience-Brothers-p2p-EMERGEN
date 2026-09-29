@@ -282,7 +282,7 @@ async def process_import(import_id: str, data: bytes, ext: str) -> None:
                 "total_auto_matched": counts["auto"],
                 "total_manual_review": counts["review"],
                 "total_unmatched": counts["unmatched"],
-                "total_duplicates": duplicates,
+                "total_duplicates": duplicates + counts.get("duplicate", 0),
                 "total_errors": max(errors, 0),
                 "parse_mode": mode,
                 "processing_stage": None,
@@ -508,6 +508,62 @@ async def reprocess_import(import_id: str, request: Request,
     background.add_task(process_import, import_id, data,
                         imp.get("file_type") or "pdf")
     return {"ok": True, "removed_unmatched": removed.deleted_count}
+
+
+@router.delete("/admin/reconciliation/imports/{import_id}")
+async def delete_import(import_id: str, request: Request) -> Any:
+    """iter311 — Borra un extracto bancario COMPLETO (registro + movimientos +
+    archivo original). Seguridad financiera: se BLOQUEA si algún movimiento del
+    extracto sigue CONCILIADO, RESERVADO (reclamo activo) o referenciando una
+    orden — primero hay que revertir esas conciliaciones (rollback) para no
+    dejar órdenes acreditadas sin su respaldo bancario."""
+    actor = await require_permission(request, "reconciliation")
+    imp = await db.bank_statement_imports.find_one({"id": import_id}, {"_id": 0})
+    if not imp:
+        raise HTTPException(status_code=404, detail="Importación no encontrada")
+    # CB06 — alcance de monedas del empleado.
+    _enforce_employee_currency_scope(actor, (imp.get("currency") or "").upper())
+    if imp.get("processing_status") in ("uploaded", "processing"):
+        raise HTTPException(
+            status_code=409,
+            detail="Este extracto todavía se está procesando; espera a que "
+                   "termine antes de borrarlo.")
+    # No se puede borrar un extracto con conciliaciones vivas: eso orfanaría el
+    # respaldo de órdenes ya acreditadas o pisaría una confirmación en curso.
+    blocking = await db.bank_transactions.find_one(
+        {"statement_import_id": import_id,
+         "$or": [{"status": {"$in": ["auto_matched", "manual_matched"]}},
+                 {"matching_claim": {"$exists": True}},
+                 {"matched_order_id": {"$nin": [None, ""]}}]},
+        {"_id": 0, "id": 1})
+    if blocking:
+        raise HTTPException(
+            status_code=409,
+            detail="Este extracto tiene movimientos conciliados o en curso. "
+                   "Revierte esas conciliaciones (rollback) antes de borrar el "
+                   "extracto.")
+    removed = await db.bank_transactions.delete_many(
+        {"statement_import_id": import_id})
+    # Borrar el archivo original almacenado (Mongo o R2).
+    url = imp.get("stored_file_url") or ""
+    if url.startswith("mongo://"):
+        await db.statement_files.delete_one({"id": import_id})
+    elif url:
+        try:
+            storage_service.delete_object(url.replace("/api/files/", "", 1))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"no se pudo borrar el archivo del extracto "
+                           f"{import_id}: {e}")
+    await db.bank_statement_imports.delete_one({"id": import_id})
+    await recon_audit("STATEMENT_DELETED",
+                      {"user_id": actor["user_id"],
+                       "name": actor.get("name") or actor.get("email")},
+                      import_id=import_id,
+                      details={"file": imp.get("original_file_name"),
+                               "bank_name": imp.get("bank_name"),
+                               "currency": imp.get("currency"),
+                               "removed_transactions": removed.deleted_count})
+    return {"ok": True, "removed_transactions": removed.deleted_count}
 
 
 # ---------------------------------------------------------------------------

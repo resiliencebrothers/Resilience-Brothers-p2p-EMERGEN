@@ -174,11 +174,23 @@ async def commit_origin_cancel_intent(job_id: str, actor_id: str = "") -> bool:
     return bool((fresh.get("origin_cancel_intent") or {}).get("committed"))
 
 
-async def force_release_origin_cancel_intent(job_id: str, token: str) -> None:
+async def force_release_origin_cancel_intent(job_id: str, token: str,
+                                             kind: str = "",
+                                             ref_id: str = "") -> None:
     """DR09 v3 — el MISMO intento que comprometió una intención la retira al
     ABANDONAR su reembolso (la persistencia falló sin mover dinero): la
     entrega vuelve a poder sellarse. Condicionado al token propio para no
-    tocar jamás la protección de la decisión de otro."""
+    tocar jamás la protección de la decisión de otro.
+    iter311 (DR09) — JAMÁS retira la protección si el origen YA persistió su
+    reembolso por CUALQUIER vía (otro intento atrasado que ganó la carrera):
+    en ese caso la intención se ESCALA a comprometida en lugar de liberarse,
+    para que el sello del mensajero siga impedido y no coexistan entrega física
+    y reembolso."""
+    if kind and ref_id and await _origin_refund_committed(kind, ref_id):
+        await db.deliveries.update_one(
+            {"id": job_id, "origin_cancel_intent.token": token},
+            {"$set": {"origin_cancel_intent.committed": True}})
+        return
     await db.deliveries.update_one(
         {"id": job_id, "origin_cancel_intent.token": token},
         {"$unset": {"origin_cancel_intent": ""}})

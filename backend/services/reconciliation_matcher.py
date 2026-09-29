@@ -216,15 +216,17 @@ _DUAL_FUNCTION_NAMES = {
 
 
 def _surname_candidates(order_name: Any) -> set:
-    """CB08 v2/v3 — evidencia FIABLE de apellido a partir del nombre completo:
+    """CB08 v4 — evidencia FIABLE de apellido a partir del nombre completo:
       · el ÚLTIMO token del titular (estructura hispana: los apellidos van al
         final), salvo que sea un nombre de pila conocido;
-      · un token intermedio SOLO si es un apellido CONOCIDO (_COMMON_SURNAMES)
-        que NO funcione también como nombre de pila (_DUAL_FUNCTION_NAMES):
-        una palabra ausente de ambos diccionarios (¿'YUNIER'?) o ambigua
-        (¿'LEON'?, ¿'CRUZ'?) no permite distinguir nombre de apellido — se
-        conserva la incertidumbre y el caso va a revisión manual (jamás
-        auto)."""
+      · un token intermedio si es un apellido CONOCIDO (_COMMON_SURNAMES) que
+        NO sea exclusivamente nombre de pila. iter311 — un PRIMER apellido en
+        posición intermedia (p.ej. 'PEDRO LEON PEREZ' → LEON) ya NO se excluye
+        por figurar también en listas de nombres ambiguos: la regla del
+        propietario solo exige UN apellido coincidente, y bloquear el primer
+        apellido provocaba revisiones manuales de más. La exigencia de que
+        además aparezca un NOMBRE de pila (ver `_sender_has_given_and_surname`)
+        impide que un apellido suelto baste para auto-conciliar."""
     toks = [t for t in normalize_name(order_name).split()
             if t not in _BANK_NOISE and len(t) >= 2]
     if len(toks) < 2:
@@ -233,10 +235,22 @@ def _surname_candidates(order_name: Any) -> set:
     if toks[-1] not in _GIVEN_NAMES:
         strong.add(toks[-1])
     for t in toks[1:-1]:
-        if t in _COMMON_SURNAMES and t not in _GIVEN_NAMES \
-                and t not in _DUAL_FUNCTION_NAMES:
+        if t in _COMMON_SURNAMES and t not in _GIVEN_NAMES:
             strong.add(t)
     return strong
+
+
+def _given_name_candidates(order_name: Any) -> set:
+    """iter311 (CB08) — nombres de PILA del titular: los tokens que NO ocupan
+    posición de apellido. Estructura hispana: los últimos 1-2 tokens son
+    apellidos (1 si el titular tiene solo 2 tokens; 2 si tiene 3 o más), el
+    resto son nombres de pila."""
+    toks = [t for t in normalize_name(order_name).split()
+            if t not in _BANK_NOISE and len(t) >= 2]
+    if len(toks) < 2:
+        return set(toks)
+    n_sur = 1 if len(toks) == 2 else 2
+    return set(toks[:-n_sur])
 
 
 def surname_similarity(tx_name: Any, order_name: Any) -> float:
@@ -601,6 +615,55 @@ def _surname_gate_reason(best: Dict, cfg: Dict) -> List[str]:
     return []
 
 
+def _sender_has_given_and_surname(tx: Dict, best: Dict, cfg: Dict) -> bool:
+    """iter311 (CB08 — regla del propietario): el remitente del banco debe
+    aportar ≥1 NOMBRE de pila Y ≥1 APELLIDO del titular en tokens DISTINTOS.
+    Un apellido suelto (o dos apellidos sin nombre) NUNCA basta para
+    auto-conciliar (una misma palabra no puede cubrir a la vez nombre y
+    apellido). Para titulares sin estructura clara (empresa o un solo token)
+    la exigencia de nombre de pila NO aplica y decide el resto de reglas."""
+    thr = float(cfg.get("surname_match_threshold", 0.75))
+    tx_name = tx.get("sender_name") or ""
+    tx_toks = [t for t in normalize_name(tx_name).split()
+               if t not in _BANK_NOISE and len(t) >= 2]
+    if not tx_toks and tx.get("description"):
+        tx_toks = [t for t in normalize_name(tx.get("description")).split()
+                   if t not in _BANK_NOISE and len(t) >= 2]
+    if not tx_toks:
+        return False
+
+    def _hit(tok: str, pool: set) -> bool:
+        return any(_tokens_match(tok, p)
+                   or SequenceMatcher(None, tok, p).ratio() >= thr
+                   for p in pool)
+
+    had_structure = False
+    for holder in (best.get("order_sender_name"), best.get("order_user_name")):
+        if not holder:
+            continue
+        givens = _given_name_candidates(holder)
+        surs = _surname_candidates(holder)
+        if not givens or not surs:
+            continue  # titular sin estructura clara: la regla no aplica aquí
+        had_structure = True
+        given_idx = {i for i, t in enumerate(tx_toks) if _hit(t, givens)}
+        sur_idx = {i for i, t in enumerate(tx_toks) if _hit(t, surs)}
+        if any(i != j for i in given_idx for j in sur_idx):
+            return True
+    # Algún candidato tenía estructura y ninguno cumplió → falla la regla; si
+    # NINGUNO tenía estructura (empresa/único token) → la regla no aplica.
+    return not had_structure
+
+
+def _given_name_gate_reason(tx: Dict, best: Dict, cfg: Dict) -> List[str]:
+    """iter311 (CB08): sin al menos un NOMBRE de pila del titular (además del
+    apellido) el movimiento va a revisión — un apellido solo no auto-concilia.
+    """
+    if not _sender_has_given_and_surname(tx, best, cfg):
+        return ["given_name_missing"]
+    return []
+
+
 def decide(tx: Dict, candidates: List[Dict], cfg: Dict,
            import_bank_account_id: str,
            pool_complete: bool = True) -> Dict[str, Any]:
@@ -621,7 +684,8 @@ def decide(tx: Dict, candidates: List[Dict], cfg: Dict,
                + _cap_and_status_reasons(tx, best, cfg)
                + _account_gate_reason(best, cfg, import_bank_account_id)
                + _duplicate_reasons(best, others)
-               + _surname_gate_reason(best, cfg))
+               + _surname_gate_reason(best, cfg)
+               + _given_name_gate_reason(tx, best, cfg))
     # CB14 — con el universo de candidatos incompleto (>POOL_LIMIT) puede
     # existir un candidato ambiguo fuera de la carga: nunca auto.
     if not pool_complete:
@@ -633,6 +697,8 @@ def decide(tx: Dict, candidates: List[Dict], cfg: Dict,
     if reasons:
         if flag is None and "surname_mismatch" in reasons:
             flag = "surname_mismatch"
+        elif flag is None and "given_name_missing" in reasons:
+            flag = "given_name_missing"
         return {"decision": "review", "flag": flag, "block_reasons": reasons}
     return {"decision": "auto", "flag": flag, "block_reasons": []}
 
@@ -682,7 +748,7 @@ async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
     # CB03 v4 — respaldo EXCLUSIVO del abono sobre el propio movimiento ANTES
     # de acreditar: si otro destino ya lo comprometió, este intento no puede
     # acreditar (evita 200 USDT con un único abono).
-    if not await claim_credit_backing(tx["id"], order["id"]):
+    if not await claim_credit_backing(tx["id"], order["id"], uid=match_uid):
         raise RuntimeError("movement_backing_committed_elsewhere")
     res = await db.orders.update_one(
         {"id": order["id"], "status": "pending",
@@ -714,6 +780,29 @@ async def approve_order_from_reconciliation(order: Dict, tx: Dict, actor: Dict,
         # destino) para no bloquear el movimiento.
         await release_credit_backing(tx["id"], order["id"])
         raise RuntimeError("order_no_longer_pending")
+    # CB03 v5 (iter311) — REAFIRMAR la propiedad EXCLUSIVA del respaldo tras
+    # sellar la orden y ANTES de acreditar. Una aprobación de un ciclo ANTERIOR
+    # (su reserva fue LIBERADA por una reversión y RE-tomada por otro destino
+    # mientras este intento estaba en vuelo) vuelve a encontrar la orden
+    # 'pending' sin sello y la sella; pero el respaldo del abono ya pertenece a
+    # otra generación. Si ya no es nuestro, deshacer el sello (volver al estado
+    # previo) y abortar SIN acreditar — evita 200 USDT con un único abono.
+    backing = await db.bank_transactions.find_one(
+        {"id": tx["id"]},
+        {"_id": 0, "credit_backing_order": 1, "credit_backing_uid": 1})
+    ours = ((backing or {}).get("credit_backing_order") == order["id"]
+            and (backing or {}).get("credit_backing_uid") in (match_uid, None))
+    if not ours:
+        await db.orders.update_one(
+            {"id": order["id"], "status": "approved",
+             "reconciliation.bank_transaction_id": tx["id"],
+             "reconciliation.match_uid": match_uid},
+            {"$set": {"status": prev_status, "updated_at": iso(now_utc())},
+             "$unset": {"admin_note": "", "payment_confirmed_at": "",
+                        "payment_confirmation_source": "",
+                        "bank_transaction_id": "", "reconciliation_score": "",
+                        "reconciliation": ""}})
+        raise RuntimeError("bank_backing_reclaimed_before_credit")
     updated = await db.orders.find_one({"id": order["id"]}, {"_id": 0})
     try:
         await run_post_status_side_effects(updated, "approved", prev_status)
@@ -949,7 +1038,8 @@ async def find_committed_backing(tx_id: str, exclude_id: str = "") -> Optional[s
     return doc["id"] if doc else None
 
 
-async def claim_credit_backing(tx_id: str, target_id: str) -> bool:
+async def claim_credit_backing(tx_id: str, target_id: str,
+                               uid: Optional[str] = None) -> bool:
     """CB03 v4 — compromiso ATÓMICO y EXCLUSIVO del respaldo del abono sobre el
     PROPIO movimiento bancario. Un ÚNICO documento (el movimiento) decide a qué
     destino financia mediante un compare-and-set (`credit_backing_order`
@@ -957,13 +1047,19 @@ async def claim_credit_backing(tx_id: str, target_id: str) -> bool:
     carrera —recuperación de reserva vencida, robo de reclamo, reintento—
     puede lograr que un mismo abono respalde DOS créditos. Quien pierde el
     compare-and-set no acredita. Devuelve True si ESTE destino posee el
-    respaldo tras la operación."""
+    respaldo tras la operación. iter311 — el respaldo guarda además la
+    GENERACIÓN (`credit_backing_uid`) de la conciliación que lo tomó, para que
+    una aprobación de un ciclo anterior no pueda darse por válida tras una
+    reversión + re-conciliación de otro destino."""
+    setter: Dict[str, Any] = {"credit_backing_order": target_id,
+                              "credit_backing_at": iso(now_utc())}
+    if uid:
+        setter["credit_backing_uid"] = uid
     res = await db.bank_transactions.update_one(
         {"id": tx_id,
          "$or": [{"credit_backing_order": {"$exists": False}},
                  {"credit_backing_order": target_id}]},
-        {"$set": {"credit_backing_order": target_id,
-                  "credit_backing_at": iso(now_utc())}})
+        {"$set": setter})
     # matched_count==1 ⟺ el filtro (ausente o ya-este-destino) casó: el
     # respaldo es de ESTE destino. 0 ⟺ ya lo tomó otro destino.
     return res.matched_count == 1
@@ -980,6 +1076,56 @@ async def release_credit_backing(tx_id: str, target_id: str) -> None:
     await db.bank_transactions.update_one(
         {"id": tx_id, "credit_backing_order": target_id},
         {"$unset": {"credit_backing_order": "", "credit_backing_at": ""}})
+
+
+# iter312 — detección de RE-IMPORTACIÓN del mismo extracto en otro formato
+# (PDF vs Excel): la huella exacta difiere porque la referencia/concepto se
+# extraen distinto en cada formato, así que el dedupe por huella no lo atrapa.
+# La identidad ECONÓMICA sí es estable: cuenta, moneda, dirección, importe
+# EXACTO, fecha (±ventana corta) y remitente equivalente. Umbrales estrictos
+# para no colapsar pagos de personas distintas con el mismo importe.
+_TWIN_DATE_WINDOW_DAYS = 3
+_TWIN_SENDER_SIM = 0.90
+
+
+async def find_reconciled_economic_twin(tx: Dict) -> Optional[Dict]:
+    """iter312 — ¿existe OTRO abono, con la misma identidad económica, que YA
+    quedó conciliado (auto/manual)? Si es así, ESTE movimiento es el mismo pago
+    reimportado en otro formato y no debe volver a acreditarse: se marca como
+    duplicado del original. Conservador a propósito (importe exacto + misma
+    cuenta + ventana de fecha corta + remitente equivalente) para jamás
+    colapsar dos pagos reales de personas distintas."""
+    amount = float(tx.get("amount") or 0)
+    if amount <= 0:
+        return None
+    tx_date = _iso_date(tx.get("transaction_date"))
+    tx_acc = tx.get("bank_account_id") or None
+    tx_sender = tx.get("sender_name") or tx.get("description") or ""
+    if not normalize_name(tx_sender):
+        return None  # sin remitente no hay evidencia de identidad compartida
+    q = {
+        "id": {"$ne": tx.get("id")},
+        "direction": "credit",
+        "currency": (tx.get("currency") or "").upper(),
+        "status": {"$in": ["auto_matched", "manual_matched"]},
+        "amount": {"$gte": amount - 0.005, "$lte": amount + 0.005},
+    }
+    async for cand in db.bank_transactions.find(
+            q, {"_id": 0, "id": 1, "transaction_date": 1, "sender_name": 1,
+                "description": 1, "bank_account_id": 1,
+                "matched_order_id": 1, "matched_kind": 1}).limit(50):
+        if (cand.get("bank_account_id") or None) != tx_acc:
+            continue
+        cd = _iso_date(cand.get("transaction_date"))
+        if tx_date and cd and abs((tx_date - cd).days) > _TWIN_DATE_WINDOW_DAYS:
+            continue
+        cand_sender = cand.get("sender_name") or cand.get("description") or ""
+        if not normalize_name(cand_sender):
+            continue
+        if (normalize_name(tx_sender) == normalize_name(cand_sender)
+                or name_similarity(tx_sender, cand_sender) >= _TWIN_SENDER_SIM):
+            return cand
+    return None
 
 
 async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
@@ -1099,7 +1245,29 @@ async def _match_and_apply(tx: Dict, pool: List[Dict], cfg: Dict,
                               new_status="manual_review",
                               score=best["score"], details=best["breakdown"])
     else:
-        update["status"] = "unmatched"
+        # iter312 — respaldo anti re-importación: si este abono quedaría sin
+        # identificar PERO su gemelo económico ya está conciliado, es el mismo
+        # pago reimportado en otro formato (PDF/Excel). Se marca como duplicado
+        # (nunca acredita dos veces) en lugar de dejarlo atascado sin
+        # puntuación ni revisión.
+        twin = await find_reconciled_economic_twin(tx)
+        if twin:
+            update["status"] = "duplicate"
+            update["duplicate_of"] = twin["id"]
+            update["duplicate_reason"] = "reimport_same_payment"
+            update["review_flag"] = "reimport_duplicate"
+            update["auto_block_reasons"] = ["reimport_duplicate"]
+            update["confidence_score"] = 0
+            update["candidates"] = []
+            decision = "duplicate"
+            await recon_audit(
+                "REIMPORT_DUPLICATE", actor, tx=tx,
+                order_id=twin.get("matched_order_id"),
+                prev_status=prev_status, new_status="duplicate",
+                details={"duplicate_of": twin["id"],
+                         "reason": "reimport_same_payment"})
+        else:
+            update["status"] = "unmatched"
     claim_token = update.pop("__claim_token", None)
     final_update: Dict[str, Any] = {"$set": update}
     if update.get("status") == "auto_matched":
@@ -1133,7 +1301,7 @@ async def run_matching(import_doc: Dict, tx_docs: List[Dict]) -> Dict[str, int]:
     pool_complete = orders_complete and items_complete
     bank_account_id = import_doc.get("bank_account_id") or ""
     taken: set = set()
-    counts = {"auto": 0, "review": 0, "unmatched": 0}
+    counts = {"auto": 0, "review": 0, "unmatched": 0, "duplicate": 0}
     for tx in tx_docs:
         if tx.get("direction") != "credit" or tx.get("status") in ("duplicate", "error"):
             continue
@@ -1180,7 +1348,8 @@ async def rematch_transactions(actor: Dict, currency: Optional[str] = None,
     pools: Dict[str, Any] = {}
     taken: set = set()
     affected_imports = set()
-    counts = {"scanned": 0, "auto": 0, "review": 0, "unmatched": 0}
+    counts = {"scanned": 0, "auto": 0, "review": 0, "unmatched": 0,
+              "duplicate": 0}
     # CB14 — cursor COMPLETO en lugar de un recorte de 5.000: todos los
     # movimientos pendientes se alcanzan (los nuevos ya no quedan fuera
     # indefinidamente detrás de los antiguos sin resolver).

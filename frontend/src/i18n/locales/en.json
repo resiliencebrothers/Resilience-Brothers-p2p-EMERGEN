@@ -3932,6 +3932,8 @@
       "blockTitle": "Why it wasn't auto-matched",
       "surname_mismatch": "Name and amount match but the surname does not — review before confirming",
       "surname_mismatchShort": "Surname",
+      "reimport_duplicate": "Same payment as an already-reconciled movement (statement re-imported in another format: PDF/Excel) — not credited twice",
+      "reimport_duplicateShort": "Duplicate",
       "restore": "Restore",
       "restoreOk": "Movement restored and re-evaluated against pending orders",
       "ignoredAuto": "Auto-ignored (outgoing / debit)",

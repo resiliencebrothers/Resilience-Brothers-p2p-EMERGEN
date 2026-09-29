@@ -624,19 +624,26 @@ class TestCB03SplitTakeoverAuto(_Sandbox):
 
 
 # ======================================================================
-# CB08 v3 (informe 50bec58) — ambiguous_common_surname: palabras que
-# funcionan como nombre Y apellido no demuestran el apellido del titular.
+# CB08 (iter311, decisión del propietario — opción A): basta UN apellido
+# coincidente + un nombre de pila para auto-conciliar. Un PRIMER apellido en
+# posición intermedia (p.ej. 'JOSE LEON PEREZ' → LEON) SÍ cuenta como
+# evidencia de apellido, aunque la palabra también funcione como nombre. El
+# gate de nombre de pila (`_sender_has_given_and_surname`) impide que un
+# apellido suelto baste. Reemplaza la regla estricta CB08 v3 (informe
+# 50bec58), que mandaba estos casos a revisión manual.
 # ======================================================================
 class TestCB08AmbiguousDualNames:
-    def test_dual_function_middle_words_are_not_surname_evidence(self):
+    def test_first_surname_in_middle_position_counts_as_evidence(self):
         from services.reconciliation_matcher import surname_similarity
-        # casos exactos del auditor: LEON y CRUZ son segundos nombres aquí
-        assert surname_similarity("JOSE LEON", "JOSE LEON PEREZ") < 0.75
-        assert surname_similarity("MARIA CRUZ", "MARIA CRUZ PEREZ") < 0.75
+        # iter311: LEON/CRUZ como PRIMER apellido (posición intermedia) SÍ
+        # valen como evidencia — la regla exige un solo apellido coincidente.
+        assert surname_similarity("JOSE LEON", "JOSE LEON PEREZ") >= 0.75
+        assert surname_similarity("MARIA CRUZ", "MARIA CRUZ PEREZ") >= 0.75
 
-    def test_decide_sends_dual_name_cases_to_review(self):
+    def test_decide_auto_matches_first_surname_cases(self):
         from services.reconciliation_matcher import (DEFAULT_CONFIG,
                                                      rank_candidates, decide)
+        # iter311 (opción A): nombre + primer apellido → auto-conciliación.
         for holder, bank in (("JOSE LEON PEREZ", "JOSE LEON"),
                              ("MARIA CRUZ PEREZ", "MARIA CRUZ")):
             order = {"id": "oX", "kind": "order", "user_id": "uA",
@@ -648,8 +655,8 @@ class TestCB08AmbiguousDualNames:
                   "sender_name": bank, "transaction_date": "2026-09-24"}
             ranked = rank_candidates(tx, [order], DEFAULT_CONFIG, "", set())
             d = decide(tx, ranked, DEFAULT_CONFIG, "")
-            assert d["decision"] == "review", (holder, bank, d)
-            assert "surname_mismatch" in (d.get("block_reasons") or []), d
+            assert d["decision"] == "auto", (holder, bank, d)
+            assert "surname_mismatch" not in (d.get("block_reasons") or []), d
 
     def test_real_surname_evidence_preserved(self):
         from services.reconciliation_matcher import surname_similarity

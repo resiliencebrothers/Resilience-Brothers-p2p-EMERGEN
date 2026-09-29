@@ -172,11 +172,11 @@ class TestCB03OrderRecovery:
                 return await real_approve(order, txd, actor, auto,
                                           match_uid=match_uid)
 
-            async def gated_backing(tx_id, target_id):
+            async def gated_backing(tx_id, target_id, uid=None):
                 if target_id == order_b:
                     reached_b.set()
                     await asyncio.wait_for(gate_b.wait(), timeout=20)
-                return await real_backing(tx_id, target_id)
+                return await real_backing(tx_id, target_id, uid=uid)
 
             recon.approve_order_from_reconciliation = gated_approve
             rm.claim_credit_backing = gated_backing

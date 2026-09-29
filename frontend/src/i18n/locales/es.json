@@ -3932,6 +3932,8 @@
       "blockTitle": "Por qué no se auto-concilió",
       "surname_mismatch": "Nombre y monto coinciden pero el apellido no — revisa antes de confirmar",
       "surname_mismatchShort": "Apellido",
+      "reimport_duplicate": "Mismo pago que un movimiento ya conciliado (extracto reimportado en otro formato: PDF/Excel) — no se acredita dos veces",
+      "reimport_duplicateShort": "Duplicado",
       "restore": "Restaurar",
       "restoreOk": "Movimiento restaurado y re-evaluado contra las órdenes pendientes",
       "ignoredAuto": "Ignorado automáticamente (egreso / débito)",

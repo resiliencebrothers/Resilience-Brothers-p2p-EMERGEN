@@ -2,9 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Download, RefreshCw, RotateCcw, Loader2 } from "lucide-react";
+import { Download, RefreshCw, RotateCcw, Loader2, Trash2 } from "lucide-react";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import { ImportSummaryRow } from "./ImportTab";
 

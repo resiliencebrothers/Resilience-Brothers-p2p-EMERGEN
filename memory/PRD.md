@@ -2126,3 +2126,20 @@ Decisiones del usuario: PIN de 4 dígitos autogenerado visible solo al cliente, 
 - `test_iter269_verificacion_caja_fixes.py` (V02/V03): las aserciones de delta de saldo sobre la caja compartida `company_cash` se rompían cuando un espejo concurrente (carga de suite / job `cash_box_sync` de 10 min) movía operaciones AJENAS entre la lectura de `base` y la final. Fix: helper `_isolated_delta` que cuenta SOLO los movimientos previos + el propio del test (inmune a concurrentes). V04 `test_late_recovered_...`: `_seal_fresh_arqueo` resella con reintento acotado si un bump ajeno invalida el arqueo. Verificado robusto bajo contaminador concurrente pesado (4 corridas 12/12).
 - `test_iter288_audit_mensajeria.py::test_msg04_...`: dependiente de orden — otro test dejaba sucia la config global de mensajería (`courier_rate_usdt_per_km`/`min_fee`/`free_min`) haciendo que km=20 cotizara 0/GRATIS → 422/400. Fix: el test fija la config a valores por defecto con snapshot/restore.
 - Sin tocar código de producción ni de auth en los flaky; solo aislamiento de tests.
+
+
+## 2026-09-29 · iter312 — BUG FIX P0: nombres duplicados por reimportar el mismo extracto (PDF + Excel)
+
+**Reporte del operador**: «subí el mismo statement bancario pero en formato PDF y en Excel, el sistema procesó los dos y me salieron duplicados los nombres; el modelo no le da puntuación ni aprueba uno de los dos duplicados ni los manda a revisión — corregir esa lógica».
+
+- **Causa raíz**: el dedupe de importación usa una HUELLA exacta (cuenta+fecha+importe+moneda+referencia+remitente+dirección). Entre PDF y Excel, la REFERENCIA/CONCEPTO se extraen distinto (y a veces el remitente), así que la huella difiere → el mismo pago entra dos veces. Tras conciliar el primero (auto), la orden pasa a `approved` y sale del pool de pendientes; el segundo movimiento se queda **`unmatched` sin puntuación** (o podría enganchar una orden equivocada = dinero fantasma).
+- **Fix** (`services/reconciliation_matcher.py`): nuevo `find_reconciled_economic_twin(tx)` que detecta el MISMO pago por identidad ECONÓMICA estable (misma cuenta, moneda, dirección `credit`, importe EXACTO, fecha ±3 días y remitente equivalente — igualdad normalizada o similitud ≥0.90). Se aplica como **respaldo SOLO cuando el movimiento quedaría `unmatched`**: si su gemelo económico ya está conciliado (`auto_matched`/`manual_matched`), el re-importado se marca `duplicate` (`duplicate_of`, `duplicate_reason=reimport_same_payment`, flag `reimport_duplicate`) — nunca acredita dos veces ni queda atascado. Un pago GENUINO con su propia orden pendiente sigue casando con normalidad (el respaldo no dispara porque no queda `unmatched`).
+- **Contadores**: bucket `duplicate` añadido a `run_matching` y `rematch_transactions`; `process_import` suma `counts.duplicate` a `total_duplicates`.
+- **i18n**: claves `reconciliation.tx.reimport_duplicate`/`reimport_duplicateShort` (es/en) para la insignia del movimiento.
+- **Decisión de negocio del propietario (opción A)** sobre CB08: un PRIMER apellido en posición intermedia (p.ej. «JOSE LEON» → «JOSE LEON PEREZ») SÍ auto-concilia (nombre + un apellido coincidente + gate de nombre de pila). Se alinearon 2 tests obsoletos de `test_iter302` (regla CB08 v3 → iter311). Se arregló también `test_iter307` (monkeypatch `gated_backing` sin el kwarg `uid` que iter311 añadió a `claim_credit_backing`).
+- **Tests**: `test_iter312_reimport_duplicate.py` (5 casos: reimport→duplicate, pago genuino con orden pendiente NO se marca, remitente distinto no es gemelo, gemelo solo si está conciliado, tolerancia de fecha ±3d + remitente en concepto). Regresión familia conciliación **143/143** verde (iter298/300–308 + iter312) + parser 26/26 (iter167/172/195/304/309). Cambio aislado a conciliación.
+
+## Backlog priorizado (actualizado 2026-09-29, tras iter312)
+- P1: Testimonios de confianza en landing + FAQ para lista de espera de 1000+ usuarios.
+- P2: Envío automático por email del PDF de cierre de la compañía a socios los lunes.
+- P3: Aviso conciliación lista · Historial rechazos mensajeros · PIN opcional 4 dígitos para Caja de Efectivo.

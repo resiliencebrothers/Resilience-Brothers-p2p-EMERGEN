@@ -214,7 +214,9 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
             # entrega pueda seguir su curso (jamás la retira un tercero).
             if job and intent_token:
                 await force_release_origin_cancel_intent(job["id"],
-                                                         intent_token)
+                                                         intent_token,
+                                                         kind="withdrawal",
+                                                         ref_id=wid)
             _raise_withdrawal_race()
         return
     await apply_and_clear("withdrawals", wid, marker)

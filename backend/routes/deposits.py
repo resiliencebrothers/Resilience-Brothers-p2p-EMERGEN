@@ -763,6 +763,20 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
         # el vigente (filtro `evidence_claim_movement`). Así una petición
         # anterior no puede confirmar con un movimiento que otra ya reasignó,
         # ni queda libre un movimiento que aquella aún podría consumir.
+        # DR02 v4 (iter311) — la marca de identidad SOLO puede escribirla el
+        # intento cuya reserva sigue VIGENTE (no superada). Un intento antiguo
+        # cuya identidad fue MOVIDA por otra confirmación concurrente no puede
+        # reescribir la marca a un movimiento ya superado (dejaría el depósito
+        # confirmado y su reserva activa apuntando a movimientos distintos).
+        active = await db.crypto_evidence_claims.find_one(
+            {"deposit_id": dep_id, "superseded": {"$ne": True}},
+            {"_id": 0, "movement_id": 1})
+        if (active or {}).get("movement_id", "").strip() != req_mid:
+            raise HTTPException(
+                status_code=409,
+                detail="La identidad de la evidencia de este depósito fue "
+                       "reasignada por otra confirmación en curso; recárgalo "
+                       "y vuelve a intentarlo.")
         await db.deposits.update_one(
             {"id": dep_id, "status": "pending"},
             {"$set": {"evidence_claim_movement": req_mid}})

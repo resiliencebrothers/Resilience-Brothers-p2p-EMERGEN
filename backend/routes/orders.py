@@ -1087,10 +1087,22 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     # cancelaciones simultáneas jamás comparten la reserva y la perdedora no
     # puede limpiar la intención de la ganadora.
     from services.deliveries import (reserve_origin_cancel_intent,
-                                     release_origin_cancel_intent,
-                                     commit_origin_cancel_intent)
+                                     commit_origin_cancel_intent,
+                                     force_release_origin_cancel_intent,
+                                     _origin_refund_committed)
     job, intent_token = await reserve_origin_cancel_intent(
         "withdrawal", wid, user["user_id"], delivered_msg)
+    # DR09 v4 (iter311) — MISMO protocolo que el rechazo administrativo: ASEGURA
+    # la protección de la entrega ANTES de persistir el reembolso y COMPRUEBA su
+    # resultado. Comprometer la intención de inmediato la vuelve no robable ni
+    # liberable por antigüedad, cerrando la ventana en la que un rechazo admin
+    # podía recuperar la intención vencida y, tras el sello del mensajero,
+    # coexistir entrega física y reembolso. Si la entrega ya se selló, no hay
+    # reembolso automático (409).
+    if job:
+        secured = await commit_origin_cancel_intent(job["id"], user["user_id"])
+        if not secured:
+            raise HTTPException(status_code=409, detail=delivered_msg)
     # iter249 — el guard balance_refunded evita el doble reembolso si un admin
     # rechaza el retiro en paralelo; la intención de abono viaja en el mismo
     # claim atómico y el abono es idempotente por op_id (healer ante crash).
@@ -1112,21 +1124,19 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     )
     if res.modified_count == 0:
         if job and intent_token:
-            # DR09 v2 — el perdedor solo libera su intención si el origen NO
-            # comprometió reembolso; si ya lo hizo, la intención se escala a
-            # comprometida y sigue impidiendo el sello de la entrega.
-            await release_origin_cancel_intent(job["id"], intent_token,
-                                               kind="withdrawal", ref_id=wid)
+            # DR09 v4 — el reembolso NO se persistió por este intento: retirar
+            # la protección que comprometimos SOLO si el origen no reembolsó
+            # por otra vía (si ya lo hizo, force-release la ESCALA a
+            # comprometida y la entrega sigue impedida — reembolso único).
+            if not await _origin_refund_committed("withdrawal", wid):
+                await force_release_origin_cancel_intent(
+                    job["id"], intent_token, kind="withdrawal", ref_id=wid)
         raise HTTPException(
             status_code=409,
             detail="Este retiro tiene un cobro o una operación en curso y no "
                    "puede cancelarse ahora. Reintenta en unos segundos o "
                    "contacta a soporte.",
         )
-    if job:
-        # DR09 v2 — el reembolso quedó PERSISTIDO: la intención pasa a
-        # comprometida de inmediato (jamás robable/liberable por antigüedad).
-        await commit_origin_cancel_intent(job["id"], user["user_id"])
     await apply_and_clear("withdrawals", wid, marker)
     # iter205 — el trabajo de mensajería activo muere con el retiro.
     try:
