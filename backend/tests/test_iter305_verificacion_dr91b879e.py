@@ -328,20 +328,41 @@ class TestDR09CommitStrict:
         assert _run(call) is False
 
     def test_commit_secures_active_delivery(self):
-        """Sobre una entrega activa, `commit` deja la intención comprometida y
-        devuelve True — el sello del mensajero queda impedido."""
+        """Sobre una entrega activa, `commit` con el token PROPIO deja la
+        intención comprometida y devuelve True — el sello del mensajero queda
+        impedido. DR09 v5: exige propiedad estricta del token reservado."""
         wid = f"wd_{MARK}_active"
         _mk_withdrawal(wid)
-        dv = _mk_delivery(f"dv_{MARK}_active", wid, status="arrived")
+        dv = _mk_delivery(f"dv_{MARK}_active", wid, status="arrived",
+                          origin_cancel_intent={"at": _now(), "by": "staff",
+                                                "token": "tok_mine"})
 
         async def call():
             from services.deliveries import commit_origin_cancel_intent
-            ok = await commit_origin_cancel_intent(dv["id"], "staff")
+            ok = await commit_origin_cancel_intent(dv["id"], "tok_mine", "staff")
             return ok
 
         assert _run(call) is True
         fresh = _db().deliveries.find_one({"id": dv["id"]})
         assert (fresh.get("origin_cancel_intent") or {}).get("committed") is True
+
+    def test_commit_false_when_intent_stolen_by_other(self):
+        """DR09 v5 — si nuestra intención fue reemplazada por otro intento
+        (otro token), `commit` devuelve False: jamás reembolsamos bajo la
+        protección de otra cancelación."""
+        wid = f"wd_{MARK}_stolen"
+        _mk_withdrawal(wid)
+        dv = _mk_delivery(f"dv_{MARK}_stolen", wid, status="arrived",
+                          origin_cancel_intent={"at": _now(), "by": "other",
+                                                "token": "tok_other",
+                                                "committed": True})
+
+        async def call():
+            from services.deliveries import commit_origin_cancel_intent
+            return await commit_origin_cancel_intent(dv["id"], "tok_mine",
+                                                     "staff")
+
+        assert _run(call) is False
 
     def test_force_release_only_removes_own_token(self):
         """`force_release_origin_cancel_intent` solo retira la intención de su
@@ -391,12 +412,12 @@ class TestDR09StaleReleaseNeverBoth:
             commit_reached = asyncio.Event()
             commit_gate = asyncio.Event()
 
-            async def held_commit(job_id, actor_id=""):
+            async def held_commit(job_id, token="", actor_id=""):
                 # Pausa a la reserva del admin ENTRE reservar y comprometer,
                 # recreando la ventana que explotaba la carrera.
                 commit_reached.set()
                 await commit_gate.wait()
-                return await orig_commit(job_id, actor_id)
+                return await orig_commit(job_id, token, actor_id)
 
             sd.commit_origin_cancel_intent = held_commit
             try:

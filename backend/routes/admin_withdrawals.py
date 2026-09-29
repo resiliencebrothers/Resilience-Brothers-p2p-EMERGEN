@@ -178,7 +178,7 @@ async def _claim_entering_rejected(w: dict, sets: dict, currency: str,
     job, intent_token = await reserve_origin_cancel_intent(
         "withdrawal", wid, actor_id or "staff", sealed_msg)
     if job:
-        secured = await commit_origin_cancel_intent(job["id"],
+        secured = await commit_origin_cancel_intent(job["id"], intent_token,
                                                     actor_id or "staff")
         if not secured:
             # La entrega se selló antes de poder protegerla: el dinero ya se

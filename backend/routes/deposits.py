@@ -139,7 +139,22 @@ def _evidence_claim_key(network: str, tx_hash: str, currency: str,
     return f"{base}|{(movement_id or '').strip()}"
 
 
-async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
+async def _next_evidence_seq(deposit_id: str) -> int:
+    """DR02 v5 (iter313) — secuencia monotónica por depósito para ordenar las
+    reservas de evidencia. Cada creación/movimiento de reserva obtiene un número
+    estrictamente creciente; el sello de identidad en el depósito solo puede
+    escribirlo un intento con secuencia ≥ a la ya grabada, de modo que una
+    reserva ANTIGUA (superada por otra confirmación) jamás re-sella el depósito."""
+    from pymongo import ReturnDocument
+    d = await db.deposits.find_one_and_update(
+        {"id": deposit_id},
+        {"$inc": {"evidence_claim_seq_next": 1}},
+        projection={"_id": 0, "evidence_claim_seq_next": 1},
+        return_document=ReturnDocument.AFTER)
+    return int((d or {}).get("evidence_claim_seq_next") or 1)
+
+
+async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
     """DR02 — reserva DURABLE de la evidencia antes de acreditar: el mismo
     pago on-chain (red+hash+activo) produce UNA acreditación aunque cambie el
     importe declarado, el documento o el usuario; la segunda recibe 409 con
@@ -167,11 +182,18 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
                         "acreditar este hash."))
     own = await db.crypto_evidence_claims.find_one(
         {"deposit_id": doc["id"], "superseded": {"$ne": True}},
-        {"_id": 1, "claim_key": 1, "movement_id": 1})
+        {"_id": 1, "claim_key": 1, "movement_id": 1, "movement_seq": 1})
     req_mid = (movement_id or "").strip()
     if own:
         if (own.get("movement_id") or "").strip() == req_mid:
-            return  # reserva propia con la MISMA identidad (reanudación)
+            # Reanudación con la MISMA identidad: devuelve su secuencia (o
+            # asigna una si es una reserva antigua sin secuencia registrada).
+            seq = own.get("movement_seq")
+            if seq is None:
+                seq = await _next_evidence_seq(doc["id"])
+                await db.crypto_evidence_claims.update_one(
+                    {"_id": own["_id"]}, {"$set": {"movement_seq": seq}})
+            return int(seq)
         # DR02 v4 — reanudación con OTRO ID de movimiento. La identidad vieja
         # NUNCA se libera: se INSERTA la reserva nueva y la anterior queda
         # sellada como LÁPIDA (`superseded`) conservando su clave. Así su
@@ -192,17 +214,20 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
                                       doc["tx_hash"], doc["currency"],
                                       req_mid)
         moved_at = iso(now_utc())
+        moved_seq = await _next_evidence_seq(doc["id"])
         try:
             await db.crypto_evidence_claims.insert_one({
                 "claim_key": new_key, "deposit_id": doc["id"],
                 "user_id": doc["user_id"], "network": doc.get("network"),
                 "tx_hash": doc["tx_hash"], "currency": doc["currency"],
                 "amount": doc["amount"], "movement_id": req_mid,
+                "movement_seq": moved_seq,
                 "moved_from_key": own["claim_key"], "moved_at": moved_at,
                 "at": moved_at})
         except DuplicateKeyError:
             prior = await db.crypto_evidence_claims.find_one(
-                {"claim_key": new_key}, {"_id": 0, "deposit_id": 1})
+                {"claim_key": new_key},
+                {"_id": 0, "deposit_id": 1, "movement_seq": 1})
             # Reintento idempotente del propio move: si la reserva nueva ya es
             # de ESTE depósito, solo falta asegurar la lápida de la vieja.
             if (prior or {}).get("deposit_id") != doc["id"]:
@@ -215,6 +240,7 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
                                 " — el mismo movimiento no puede acreditarse "
                                 "dos veces."),
                             "deposit_id": (prior or {}).get("deposit_id")})
+            moved_seq = int((prior or {}).get("movement_seq") or moved_seq)
         # Sella la identidad anterior como lápida (conserva su clave para
         # bloquear cualquier reclamo de otro depósito). Idempotente.
         await db.crypto_evidence_claims.update_one(
@@ -222,16 +248,17 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
              "deposit_id": doc["id"]},
             {"$set": {"superseded": True, "superseded_at": moved_at,
                       "superseded_by": new_key}})
-        return
+        return moved_seq
     key = _evidence_claim_key(doc.get("network") or "", doc["tx_hash"],
                               doc["currency"], req_mid)
+    first_seq = await _next_evidence_seq(doc["id"])
     try:
         await db.crypto_evidence_claims.insert_one({
             "claim_key": key, "deposit_id": doc["id"],
             "user_id": doc["user_id"], "network": doc.get("network"),
             "tx_hash": doc["tx_hash"], "currency": doc["currency"],
             "amount": doc["amount"],
-            "movement_id": req_mid,
+            "movement_id": req_mid, "movement_seq": first_seq,
             "at": iso(now_utc())})
     except DuplicateKeyError:
         prior = await db.crypto_evidence_claims.find_one(
@@ -247,6 +274,7 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> None:
                         "real, identifícala con un ID de movimiento distinto "
                         "al confirmar."),
                     "deposit_id": (prior or {}).get("deposit_id")})
+    return first_seq
 
 
 def _deposit_currency_scope(staff: dict) -> list:
@@ -754,32 +782,22 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
     req_mid = (evidence_movement_id or "").strip()
     crypto_evidence = bool(doc.get("method") == "crypto" and doc.get("tx_hash"))
     if crypto_evidence:
-        await _claim_crypto_evidence(doc, evidence_movement_id)
-        # DR02 v3 — la identidad RESERVADA y la finalmente CONFIRMADA quedan
-        # vinculadas de forma indivisible: la reserva graba en el propio
-        # depósito el movimiento que ESTE intento tomó. Una confirmación
-        # concurrente que mueva la reserva a otro movimiento reescribe esta
-        # marca; la confirmación final solo gana si su movimiento sigue siendo
-        # el vigente (filtro `evidence_claim_movement`). Así una petición
-        # anterior no puede confirmar con un movimiento que otra ya reasignó,
-        # ni queda libre un movimiento que aquella aún podría consumir.
-        # DR02 v4 (iter311) — la marca de identidad SOLO puede escribirla el
-        # intento cuya reserva sigue VIGENTE (no superada). Un intento antiguo
-        # cuya identidad fue MOVIDA por otra confirmación concurrente no puede
-        # reescribir la marca a un movimiento ya superado (dejaría el depósito
-        # confirmado y su reserva activa apuntando a movimientos distintos).
-        active = await db.crypto_evidence_claims.find_one(
-            {"deposit_id": dep_id, "superseded": {"$ne": True}},
-            {"_id": 0, "movement_id": 1})
-        if (active or {}).get("movement_id", "").strip() != req_mid:
-            raise HTTPException(
-                status_code=409,
-                detail="La identidad de la evidencia de este depósito fue "
-                       "reasignada por otra confirmación en curso; recárgalo "
-                       "y vuelve a intentarlo.")
+        # DR02 v5 (iter313) — la reserva devuelve una SECUENCIA monotónica por
+        # depósito. El sello de identidad se escribe con esa secuencia como
+        # guarda (`evidence_claim_stamp_seq`): un intento ANTIGUO cuya reserva
+        # fue MOVIDA a otro movimiento por una confirmación concurrente (que
+        # obtuvo una secuencia mayor) NO puede sobrescribir el sello más nuevo,
+        # aunque su lectura previa sugiriera que su movimiento seguía vigente.
+        # Así el depósito confirmado y su reserva vigente terminan SIEMPRE con
+        # el mismo movimiento; la confirmación final solo gana si su movimiento
+        # sigue siendo el sellado (filtro `evidence_claim_movement`).
+        my_seq = await _claim_crypto_evidence(doc, evidence_movement_id)
         await db.deposits.update_one(
-            {"id": dep_id, "status": "pending"},
-            {"$set": {"evidence_claim_movement": req_mid}})
+            {"id": dep_id, "status": "pending",
+             "$or": [{"evidence_claim_stamp_seq": {"$exists": False}},
+                     {"evidence_claim_stamp_seq": {"$lte": my_seq}}]},
+            {"$set": {"evidence_claim_movement": req_mid,
+                      "evidence_claim_stamp_seq": my_seq}})
     # Idempotency: flip status first so a double-click can't double-credit.
     # iter249 — la intención de abono viaja en el MISMO update atómico; si el
     # proceso muere antes de acreditar, el healer (credit_recovery) completa.

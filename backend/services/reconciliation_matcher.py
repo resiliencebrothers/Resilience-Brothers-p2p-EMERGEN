@@ -241,16 +241,25 @@ def _surname_candidates(order_name: Any) -> set:
 
 
 def _given_name_candidates(order_name: Any) -> set:
-    """iter311 (CB08) — nombres de PILA del titular: los tokens que NO ocupan
-    posición de apellido. Estructura hispana: los últimos 1-2 tokens son
-    apellidos (1 si el titular tiene solo 2 tokens; 2 si tiene 3 o más), el
-    resto son nombres de pila."""
+    """iter313 (CB08) — nombres de PILA del titular = todos los tokens que NO
+    son evidencia de apellido (`_surname_candidates`). Antes se asumía de forma
+    RÍGIDA que los dos últimos tokens eran apellidos cuando había ≥3 palabras;
+    eso excluía el SEGUNDO nombre de pila en estructuras de 2 nombres + 1
+    apellido (p.ej. 'JOSE MANUEL PEREZ' o 'ANA MARIA GARCIA'), y remitentes
+    válidos como 'MANUEL PEREZ' o 'MARIA GARCIA' iban a revisión con
+    'given_name_missing'. Ahora, todo token que no sea apellido fiable cuenta
+    como nombre de pila; los apellidos siguen delimitados por
+    `_surname_candidates` (último token + apellidos conocidos intermedios), así
+    que un remitente de SOLO apellidos sigue bloqueado."""
     toks = [t for t in normalize_name(order_name).split()
             if t not in _BANK_NOISE and len(t) >= 2]
     if len(toks) < 2:
         return set(toks)
-    n_sur = 1 if len(toks) == 2 else 2
-    return set(toks[:-n_sur])
+    surs = _surname_candidates(order_name)
+    givens = {t for t in toks if t not in surs}
+    # Salvaguarda: si por la estructura todos los tokens quedaran como apellido,
+    # el primero (posición hispana de nombre) se conserva como nombre de pila.
+    return givens or {toks[0]}
 
 
 def surname_similarity(tx_name: Any, order_name: Any) -> float:
@@ -1233,6 +1242,26 @@ async def _match_and_apply(tx: Dict, pool: List[Dict], cfg: Dict,
         "updated_at": iso(now_utc()),
     }
     decision = verdict["decision"]
+    # iter312/iter313 (CB10) — ¿existe OTRO abono con la MISMA identidad
+    # económica que YA está conciliado? Entonces este movimiento es el mismo
+    # pago reimportado en otro formato (PDF/Excel) y NUNCA debe volver a
+    # acreditarse, ni siquiera si hay una orden pendiente compatible que casaría
+    # (eso duplicaría el crédito de un único pago real). Se calcula UNA vez.
+    twin = await find_reconciled_economic_twin(tx)
+    if twin and decision in ("auto", "review"):
+        # Conflicto: el pago ya se acreditó una vez. Se EXPONE en revisión
+        # (jamás auto) para que un humano decida si es duplicado o un segundo
+        # pago legítimo; no se auto-marca 'duplicate' porque hay una orden
+        # pendiente que podría corresponder a otro pago.
+        decision = "review"
+        flag = verdict.get("flag") or "possible_reimport_duplicate"
+        update["review_flag"] = flag
+        reasons = list(update["auto_block_reasons"])
+        if "possible_reimport_duplicate" not in reasons:
+            reasons.append("possible_reimport_duplicate")
+        update["auto_block_reasons"] = reasons
+        update["duplicate_of"] = twin["id"]
+
     if decision == "auto":
         assert best is not None  # decide() returns "auto" only when a candidate ranks
         decision = await _apply_auto_match(tx, best, pool, update, taken,
@@ -1250,7 +1279,6 @@ async def _match_and_apply(tx: Dict, pool: List[Dict], cfg: Dict,
         # pago reimportado en otro formato (PDF/Excel). Se marca como duplicado
         # (nunca acredita dos veces) en lugar de dejarlo atascado sin
         # puntuación ni revisión.
-        twin = await find_reconciled_economic_twin(tx)
         if twin:
             update["status"] = "duplicate"
             update["duplicate_of"] = twin["id"]

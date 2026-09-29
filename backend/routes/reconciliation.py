@@ -542,8 +542,26 @@ async def delete_import(import_id: str, request: Request) -> Any:
             detail="Este extracto tiene movimientos conciliados o en curso. "
                    "Revierte esas conciliaciones (rollback) antes de borrar el "
                    "extracto.")
+    # CB15 — borrado ATÓMICO por-movimiento: elimina SOLO los que siguen libres
+    # (sin conciliar, sin reclamo activo, sin orden). Una confirmación que entre
+    # entre la comprobación anterior y este borrado deja su movimiento
+    # conciliado/reclamado → NO se borra y se detecta abajo, conservando el
+    # respaldo de la orden ya acreditada (la lectura previa no basta por sí sola).
     removed = await db.bank_transactions.delete_many(
-        {"statement_import_id": import_id})
+        {"statement_import_id": import_id,
+         "status": {"$nin": ["auto_matched", "manual_matched", "duplicate"]},
+         "matching_claim": {"$exists": False},
+         "matched_order_id": {"$in": [None, ""]}})
+    # Si algún movimiento del extracto sobrevive, una confirmación ganó la
+    # carrera: abortar el borrado del extracto para no orfanar ese respaldo.
+    leftover = await db.bank_transactions.find_one(
+        {"statement_import_id": import_id}, {"_id": 0, "id": 1})
+    if leftover:
+        raise HTTPException(
+            status_code=409,
+            detail="Entró una confirmación mientras se borraba el extracto. "
+                   "Revierte esa conciliación (rollback) antes de borrar el "
+                   "extracto.")
     # Borrar el archivo original almacenado (Mongo o R2).
     url = imp.get("stored_file_url") or ""
     if url.startswith("mongo://"):

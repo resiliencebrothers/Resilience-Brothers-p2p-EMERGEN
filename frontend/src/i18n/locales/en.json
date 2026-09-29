@@ -3934,6 +3934,8 @@
       "surname_mismatchShort": "Surname",
       "reimport_duplicate": "Same payment as an already-reconciled movement (statement re-imported in another format: PDF/Excel) — not credited twice",
       "reimport_duplicateShort": "Duplicate",
+      "possible_reimport_duplicate": "Possibly the same payment as an already-reconciled movement — review before confirming to avoid crediting twice",
+      "possible_reimport_duplicateShort": "Duplicate?",
       "restore": "Restore",
       "restoreOk": "Movement restored and re-evaluated against pending orders",
       "ignoredAuto": "Auto-ignored (outgoing / debit)",

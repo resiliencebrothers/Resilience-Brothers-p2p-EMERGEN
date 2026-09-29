@@ -3934,6 +3934,8 @@
       "surname_mismatchShort": "Apellido",
       "reimport_duplicate": "Mismo pago que un movimiento ya conciliado (extracto reimportado en otro formato: PDF/Excel) — no se acredita dos veces",
       "reimport_duplicateShort": "Duplicado",
+      "possible_reimport_duplicate": "Posible mismo pago que un movimiento ya conciliado — revísalo antes de confirmar para no acreditar dos veces",
+      "possible_reimport_duplicateShort": "¿Duplicado?",
       "restore": "Restaurar",
       "restoreOk": "Movimiento restaurado y re-evaluado contra las órdenes pendientes",
       "ignoredAuto": "Ignorado automáticamente (egreso / débito)",

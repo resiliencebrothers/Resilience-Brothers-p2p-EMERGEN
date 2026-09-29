@@ -1100,7 +1100,8 @@ async def cancel_own_withdrawal(wid: str, request: Request) -> Any:
     # coexistir entrega física y reembolso. Si la entrega ya se selló, no hay
     # reembolso automático (409).
     if job:
-        secured = await commit_origin_cancel_intent(job["id"], user["user_id"])
+        secured = await commit_origin_cancel_intent(job["id"], intent_token,
+                                                    user["user_id"])
         if not secured:
             raise HTTPException(status_code=409, detail=delivered_msg)
     # iter249 — el guard balance_refunded evita el doble reembolso si un admin
