@@ -516,6 +516,42 @@ class TestCB15AtomicDelete:
         assert db.bank_transactions.count_documents(
             {"statement_import_id": imp_id}) == 2
 
+    def test_race_confirm_wins_delete_aborts_preserving_backing(self):
+        """Carrera EXACTA del auditor: `delete_import` hace su lectura de
+        seguridad (sin bloqueos) y se pausa; una confirmación concilia el
+        movimiento y acredita; al reanudar, el borrado SOLO elimina libres → el
+        conciliado sobrevive y el chequeo de sobrantes aborta (409),
+        conservando el respaldo de la orden. Mimetiza las dos consultas de
+        `delete_import` con la conciliación inyectada ENTRE la lectura y el
+        borrado — una comprobación de lectura previa ya NO basta por sí sola."""
+        db = _db()
+        imp_id = self._mk_import("racewin")
+        tx_id = self._mk_tx(imp_id, "racewinTx")  # libre al iniciar el borrado
+        # Paso 1 — lectura de seguridad de delete_import: no hay bloqueos.
+        blocking = db.bank_transactions.find_one(
+            {"statement_import_id": imp_id,
+             "$or": [{"status": {"$in": ["auto_matched", "manual_matched"]}},
+                     {"matching_claim": {"$exists": True}},
+                     {"matched_order_id": {"$nin": [None, ""]}}]})
+        assert blocking is None, "libre: el borrado procedería"
+        # Paso 2 — la confirmación gana la carrera y concilia el movimiento.
+        db.bank_transactions.update_one(
+            {"id": tx_id}, {"$set": {"status": "manual_matched",
+                                     "matched_order_id": "ordRACE"}})
+        # Paso 3 — el borrado se reanuda: borrado atómico SOLO de libres.
+        removed = db.bank_transactions.delete_many(
+            {"statement_import_id": imp_id,
+             "status": {"$nin": ["auto_matched", "manual_matched",
+                                 "duplicate"]},
+             "matching_claim": {"$exists": False},
+             "matched_order_id": {"$in": [None, ""]}})
+        leftover = db.bank_transactions.find_one(
+            {"statement_import_id": imp_id}, {"_id": 0, "id": 1})
+        assert removed.deleted_count == 0, \
+            "el movimiento recién conciliado NO se borra"
+        assert leftover is not None and leftover["id"] == tx_id, \
+            "sobrevive el respaldo → el borrado aborta (409), orden protegida"
+
 
 class TestCICoverage:
     def test_makefile_critical_includes_iter313(self):
