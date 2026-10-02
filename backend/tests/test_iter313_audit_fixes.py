@@ -64,6 +64,34 @@ def _today():
     return datetime.now(timezone.utc).date().isoformat()
 
 
+# ---------------------------------------------------------------------------
+# Proxy de BD para pausar escrituras concretas y recrear una carrera exacta
+# (mismo patrón que iter306): intercepta `deposits.update_one`.
+# ---------------------------------------------------------------------------
+class _CollProxy:
+    def __init__(self, real, on_update):
+        self._real = real
+        self._on_update = on_update
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    async def update_one(self, filt, update, *a, **k):
+        await self._on_update(filt, update)
+        return await self._real.update_one(filt, update, *a, **k)
+
+
+class _DbProxy:
+    def __init__(self, real, on_update):
+        self._real = real
+        self._on_update = on_update
+
+    def __getattr__(self, name):
+        if name == "deposits":
+            return _CollProxy(self._real.deposits, self._on_update)
+        return getattr(self._real, name)
+
+
 def setup_module():
     _cleanup()
 
@@ -78,6 +106,8 @@ def _cleanup():
     db.bank_transactions.delete_many({"id": {"$regex": f"^btx{MARK}"}})
     db.deposits.delete_many({"id": {"$regex": f"^dep{MARK}"}})
     db.bank_statement_imports.delete_many({"id": {"$regex": f"^imp{MARK}"}})
+    db.crypto_evidence_claims.delete_many({"tx_hash": {"$regex": MARK}})
+    db.users.delete_many({"user_id": "u_dr02race"})
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +168,88 @@ class TestDR02EvidenceSequence:
         fresh = _db().deposits.find_one({"id": dep_id})
         assert fresh["evidence_claim_movement"] == "mov7"
         assert fresh["evidence_claim_stamp_seq"] == 7
+
+    def test_displaced_attempt_cannot_confirm_and_stamp_stays_consistent(self):
+        """Escenario EXACTO del auditor (reproducción E2E con pausas a nivel
+        motor): A reserva log:0 y se pausa ANTES de escribir su marca. B mueve
+        la reserva a log:1, escribe la marca y se pausa ANTES de confirmar. A se
+        reanuda. Con la guarda de secuencia v5, la marca de A (secuencia menor)
+        se RECHAZA y su confirmación recibe 409 — el intento desplazado jamás
+        acredita. B gana. CIERRE: depósito confirmado, sello de identidad y
+        reserva activa indican el MISMO movimiento (log:1) y el saldo es único."""
+        import routes.deposits as dep
+        real_db = dep.db
+        client = "u_dr02race"
+        _db().users.update_one(
+            {"user_id": client},
+            {"$set": {"user_id": client, "email": f"{client}@t.com",
+                      "name": client, "role": "vip",
+                      "vip_balances": {"USDT": 0.0}, "vip_balance_usd": 0.0,
+                      "applied_credit_ops": []}}, upsert=True)
+        dep_id = f"dep{MARK}race"
+        _db().deposits.insert_one({
+            "id": dep_id, "user_id": client, "user_email": f"{client}@t.com",
+            "user_name": client, "user_role": "vip", "currency": "USDT",
+            "amount": 100.0, "method": "crypto", "network": "BEP20",
+            "tx_hash": f"{MARK}race_hash", "status": "pending",
+            "created_at": _now(), "updated_at": _now()})
+
+        async def flow():
+            staff = await real_db.users.find_one(
+                {"user_id": "user_test_admin01"}, {"_id": 0}) or {
+                "user_id": "user_test_admin01", "role": "admin",
+                "email": "admin.test@resilience.com"}
+            a_stamp_reached, a_stamp_gate = asyncio.Event(), asyncio.Event()
+            b_flip_reached, b_flip_gate = asyncio.Event(), asyncio.Event()
+
+            async def on_update(filt, update):
+                sets = update.get("$set", {}) if isinstance(update, dict) else {}
+                if "evidence_claim_stamp_seq" in sets \
+                        and sets.get("status") is None \
+                        and sets.get("evidence_claim_movement") == "log:0":
+                    a_stamp_reached.set()
+                    await a_stamp_gate.wait()
+                if sets.get("status") == "confirmed" \
+                        and filt.get("evidence_claim_movement") == "log:1":
+                    b_flip_reached.set()
+                    await b_flip_gate.wait()
+
+            dep.db = _DbProxy(real_db, on_update)
+            try:
+                dA = await real_db.deposits.find_one({"id": dep_id}, {"_id": 0})
+                tA = asyncio.create_task(
+                    dep._do_confirm_deposit(dict(dA), staff, "log:0"))
+                await asyncio.wait_for(a_stamp_reached.wait(), 15)
+                dB = await real_db.deposits.find_one({"id": dep_id}, {"_id": 0})
+                tB = asyncio.create_task(
+                    dep._do_confirm_deposit(dict(dB), staff, "log:1"))
+                await asyncio.wait_for(b_flip_reached.wait(), 15)
+                a_stamp_gate.set()
+                rA = (await asyncio.gather(tA, return_exceptions=True))[0]
+                b_flip_gate.set()
+                rB = (await asyncio.gather(tB, return_exceptions=True))[0]
+                return rA, rB
+            finally:
+                dep.db = real_db
+
+        from fastapi import HTTPException
+        rA, rB = _run(flow())
+        assert isinstance(rA, HTTPException) and rA.status_code == 409, rA
+        assert isinstance(rB, dict) and rB.get("status") == "confirmed", rB
+
+        fresh = _db().deposits.find_one({"id": dep_id})
+        active = _db().crypto_evidence_claims.find_one(
+            {"deposit_id": dep_id, "superseded": {"$ne": True}},
+            {"_id": 0, "movement_id": 1})
+        u = _db().users.find_one({"user_id": client}, {"_id": 0,
+                                                       "vip_balances": 1})
+        assert fresh["status"] == "confirmed"
+        assert fresh["evidence_movement_id"] == "log:1"
+        assert fresh["evidence_claim_movement"] == "log:1"
+        assert (active or {}).get("movement_id") == "log:1"
+        assert float((u.get("vip_balances") or {}).get("USDT") or 0) == 100.0, \
+            "crédito único: jamás 200 USDT con un solo abono"
+        _db().users.delete_many({"user_id": client})
 
 
 # ---------------------------------------------------------------------------
