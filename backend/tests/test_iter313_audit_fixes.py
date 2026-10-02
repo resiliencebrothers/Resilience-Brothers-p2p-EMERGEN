@@ -107,6 +107,8 @@ def _cleanup():
     db.deposits.delete_many({"id": {"$regex": f"^dep{MARK}"}})
     db.bank_statement_imports.delete_many({"id": {"$regex": f"^imp{MARK}"}})
     db.crypto_evidence_claims.delete_many({"tx_hash": {"$regex": MARK}})
+    db.withdrawals.delete_many({"id": {"$regex": f"^wd{MARK}"}})
+    db.deliveries.delete_many({"id": {"$regex": f"^dv{MARK}"}})
     db.users.delete_many({"user_id": "u_dr02race"})
 
 
@@ -273,6 +275,54 @@ class TestDR09CommitTokenSignature:
         src = (inspect.getsource(orders_mod.cancel_own_withdrawal)
                + inspect.getsource(aw_mod._claim_entering_rejected))
         assert "commit_origin_cancel_intent(job[\"id\"], intent_token" in src
+
+    def test_displaced_request_cannot_inherit_stolen_intent(self):
+        """Variante del auditor (reproducción con las rutas REALES de servicio):
+        A reserva la intención A; tras 180 s su reserva vence; B la recupera,
+        instala la intención B y la compromete. Cuando A se reanuda, su
+        `commit` con el token PROPIO (A) NO puede heredar la protección de B →
+        devuelve False y el llamador aborta el reembolso (409). El dueño vigente
+        (B) sí mantiene su protección. Gana exactamente un intento — jamás
+        coexisten entrega sellada y reembolso."""
+        db = _db()
+        wid = f"wd{MARK}steal"
+        dvid = f"dv{MARK}steal"
+        db.withdrawals.insert_one({
+            "id": wid, "user_id": "clientA", "amount_usd": 100.0,
+            "currency": "USD", "method": "cash", "status": "pending",
+            "created_at": _now(), "updated_at": _now()})
+        db.deliveries.insert_one({
+            "id": dvid, "kind": "withdrawal", "ref_id": wid, "status": "arrived",
+            "courier_id": "cour1", "user_id": "clientA",
+            "created_at": _now(), "updated_at": _now()})
+
+        async def flow():
+            from services.deliveries import (reserve_origin_cancel_intent,
+                                             commit_origin_cancel_intent)
+            jobA, tokA = await reserve_origin_cancel_intent(
+                "withdrawal", wid, "clientA", "sellada")
+            # Simula 180 s transcurridos: la reserva de A vence (corte 120 s).
+            old_at = (datetime.now(timezone.utc)
+                      - timedelta(seconds=180)).isoformat()
+            _db().deliveries.update_one(
+                {"id": dvid}, {"$set": {"origin_cancel_intent.at": old_at}})
+            jobB, tokB = await reserve_origin_cancel_intent(
+                "withdrawal", wid, "clientB", "sellada")
+            committed_b = await commit_origin_cancel_intent(
+                jobB["id"], tokB, "clientB")
+            # A se reanuda con su propio token (ya desplazado por B).
+            committed_a = await commit_origin_cancel_intent(
+                jobA["id"], tokA, "clientA")
+            return tokA, tokB, committed_b, committed_a
+
+        tokA, tokB, committed_b, committed_a = _run(flow())
+        assert tokA != tokB
+        assert committed_b is True, "el dueño vigente (B) mantiene su protección"
+        assert committed_a is False, \
+            "A desplazado NO hereda la protección de B — su reembolso se aborta"
+        intent = db.deliveries.find_one({"id": dvid})["origin_cancel_intent"]
+        assert intent["token"] == tokB, "la intención vigente es la de B"
+        assert intent.get("committed") is True
 
 
 # ---------------------------------------------------------------------------
