@@ -2245,3 +2245,13 @@ Integración del flujo IPV del Excel del operador en el módulo de tienda físic
 - **Archivos**: `services/inventory_ipv.py`, `routes/inventory.py`, `services/inventory.py` (backend); `InventoryControlTab.jsx`, `InventoryMovementsTab.jsx`, `InventoryCloseTab.jsx` + i18n es/en (frontend). Test: `tests/test_iter320_ipv_phase1.py`.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
 - **Próximo (backlog)**: IPV Fase 2 — costeo ponderado y valoración histórica (P1).
+
+## 2026-10-03 · iter321 — IPV Fase 2: Costeo ponderado (WAC) + Valoración por lote + Acta de conteo PDF
+Verificado E2E (testing_agent iter321): **12/12 backend PASS + frontend 100%**, cero incidencias.
+- **Costo Promedio Ponderado (WAC)**: en una ENTRADA el costo del producto ya no se reemplaza por el último precio; se mezcla: `nuevo = (existencia·costo_viejo + cantidad·costo_entrada)/(existencia+cantidad)`. El profit de venta usa el WAC. Verificado: alta 10@100 + entrada 10@200 → cost_usd=150.
+- **Lotes** (`inventory_lots`, append-only, índice único por movement_id): cada entrada (manual/alta) queda como un lote (fecha, costo unitario, cantidad). No cambian el profit (opción a); solo trazabilidad/valoración.
+- **Valoración** (`services/inventory_lots.build_valuation`): por producto existencia, WAC, valor WAC y valor por lotes con asignación **FIFO en lectura** (la existencia restante son los lotes más recientes; los antiguos se consideran vendidos). `stock_sin_lote` para productos previos a la Fase 2. Endpoints: `GET /api/admin/inventory/valuation` + `/valuation.csv`. Nueva pestaña frontend **Valoración** (`InventoryValuationTab.jsx`).
+- **Acta de conteo PDF firmable**: `GET /api/admin/inventory/count-sheet.pdf?date=` (`store_count_sheet_pdf.py` + `inventory_ipv.build_count_sheet`): tabla producto/teórico/conteo/diferencia/estado + bloque de firma (responsable/revisor/folio rellenado del cierre guardado o líneas en blanco). Botón "Acta de conteo (PDF)" en la pestaña Cierre.
+- **Archivos**: `services/inventory_lots.py` (nuevo), `store_count_sheet_pdf.py` (nuevo), `routes/inventory.py` (WAC en entrada + 3 endpoints), `routes/market.py` (lote inicial en alta), `services/inventory_ipv.py` (build_count_sheet); `InventoryValuationTab.jsx` (nuevo), `AdminInventory.jsx`, `InventoryCloseTab.jsx` + i18n es/en. Test: `tests/test_iter321_ipv_phase2.py`.
+- **Nota de rendimiento (backlog)**: `build_valuation` agrupa lotes en memoria; paginar/cachear si el catálogo crece mucho.
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.

@@ -1,0 +1,22 @@
+{
+  "summary": "E2E Fase 2 IPV (iter321) - WAC + lotes + valoración FIFO + acta PDF. 12/12 pytest backend PASS + Playwright frontend PASS (tab Valoración + Acta de conteo PDF).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter321_ipv_phase2.py",
+    "/app/test_reports/pytest/iter321.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/inventory_lots.py build_valuation: carga 100k lotes en memoria con find({}).to_list(100000) y agrupa Python-side; funciona para MVP pero debería paginar/pre-agrupar por product_id si el catálogo escala.",
+    "FIFO lectura: cálculo O(N·L) por request; cache 30-60s en memoria mitigaría coste si /admin/inventory/valuation se consulta mucho.",
+    "La fixture company_product_api NO permite al operador borrar el producto si hay movimientos (DELETE podría devolver 409); el teardown igual limpia Mongo directamente, pero convendría documentarlo."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter321_ipv_phase2.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100%"},
+  "test_credentials": "Backend: conftest tokens (test_session_admin_X, _employee_X, _vip_X, _normal_X). Frontend: cookie session_token=smoke_session_admin_iter294.",
+  "seed_data_creation": "Productos TEST_WAC_*, TEST_LEGACY_*, TEST_VIP_* creados y limpiados por fixtures (incluye inventory_movements e inventory_lots).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fase 2 IPV completa y verificada: WAC en entrada (10@100 + 10@200 → cost_usd=150, 2 lotes), venta usa WAC para cost_of_sale/profit, lote idempotente por movement_id, FIFO depleción (vieja consumida primero), CSV, acta PDF 200 incluso con/sin cierre, 400 en fecha inválida, permisos products (employee 200, vip/normal 403), stock_sin_lote para productos legacy. Fase 1 pasa 16/16 en test_iter320_ipv_phase1.py."
+}
