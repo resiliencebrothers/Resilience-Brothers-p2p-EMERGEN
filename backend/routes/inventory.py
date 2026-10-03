@@ -122,7 +122,18 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
                 product=product, field_label="Costo promedio ponderado",
                 old=old_cost, new=new_wac, actor=actor)
         if updates:
-            await db.products.update_one({"id": product["id"]}, {"$set": updates})
+            update_doc = {"$set": updates}
+            # IPV-FINAL-02 — si el precio de venta almacenado cambia por esta
+            # entrada, la oferta anterior deja de ser válida: se retira la
+            # etiqueta y sus metadatos en la MISMA escritura (sin estado
+            # intermedio con precio nuevo y descuento viejo). Si la entrada solo
+            # cambia costo/cantidad/WAC y conserva el precio, la oferta se
+            # mantiene.
+            if "price_usd" in updates and product.get("on_offer"):
+                updates["on_offer"] = False
+                update_doc["$unset"] = {"offer_original_price": "",
+                                        "offer_discount_pct": "", "offer_at": ""}
+            await db.products.update_one({"id": product["id"]}, update_doc)
         try:
             await record_lot(product, payload.quantity, entry_cost, doc["id"],
                              source=doc.get("source") or "manual", actor=actor)
@@ -342,6 +353,16 @@ async def apply_liquidation(product_id: str, request: Request,
     product = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    # IPV-FINAL-01 — un producto ya en oferta no se vuelve a liquidar (evita
+    # acumular descuentos sobre el precio ya rebajado). Hay que quitar la
+    # oferta antes de aplicar otra.
+    if product.get("on_offer"):
+        raise HTTPException(
+            status_code=409,
+            detail="El producto ya está en oferta; quítala antes de aplicar otra liquidación.")
+    base_price = float(product.get("price_usd") or 0)
+    base_cost = float(product.get("cost_usd") or 0)
+    base_stock = int(product.get("stock") or 0)
     data = await build_valuation(window_days=window)
     row = next((p for p in data["products"]
                 if p["product_id"] == product_id), None)
@@ -350,26 +371,37 @@ async def apply_liquidation(product_id: str, request: Request,
         raise HTTPException(
             status_code=400,
             detail="Este producto no tiene un descuento de liquidación sugerido.")
-    old_price = float(product.get("price_usd") or 0)
     new_price = float(liq["suggested_price"])
-    if abs(new_price - old_price) < 1e-9:
+    if abs(new_price - base_price) < 1e-9:
         raise HTTPException(status_code=400,
                             detail="El precio ya está en el valor sugerido.")
-    await db.products.update_one({"id": product_id},
-                                 {"$set": {"price_usd": new_price,
-                                           "on_offer": True,
-                                           "offer_original_price": old_price,
-                                           "offer_discount_pct": liq["discount_pct"],
-                                           "offer_at": iso(now_utc())}})
+    # IPV-FINAL-01 — escritura ATÓMICA condicionada al estado base: solo aplica
+    # si el producto NO está en oferta y precio/costo/stock siguen siendo los
+    # usados para calcular la sugerencia. Así, reintentos y solicitudes
+    # simultáneas aplican el descuento una sola vez, y un cambio concurrente de
+    # la ficha no se sobrescribe con una sugerencia desactualizada.
+    result = await db.products.update_one(
+        {"id": product_id, "on_offer": {"$ne": True},
+         "price_usd": base_price, "cost_usd": base_cost, "stock": base_stock},
+        {"$set": {"price_usd": new_price,
+                  "on_offer": True,
+                  "offer_original_price": base_price,
+                  "offer_discount_pct": liq["discount_pct"],
+                  "offer_at": iso(now_utc())}})
+    if result.modified_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El estado del producto cambió; recarga la valoración e inténtalo de nuevo.")
+    # Auditoría solo cuando la escritura aplicó realmente el cambio.
     await record_price_change(product=product,
                               field_label="Precio de liquidación",
-                              old=old_price, new=new_price, actor=actor)
+                              old=base_price, new=new_price, actor=actor)
     try:
         from services.live_bus import publish
         await publish("products_changed", {"product_id": product_id})
     except Exception as e:  # noqa: BLE001
         logger.error(f"products_changed publish failed: {e}")
-    return {"applied": True, "old_price": old_price, "new_price": new_price,
+    return {"applied": True, "old_price": base_price, "new_price": new_price,
             "discount_pct": liq["discount_pct"]}
 
 
