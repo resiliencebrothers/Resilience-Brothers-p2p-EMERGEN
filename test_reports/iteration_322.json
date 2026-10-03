@@ -1,0 +1,29 @@
+{
+  "summary": "iter322 — IPV Fase 2: margen por lote + rotación/capital inmovilizado + ventana configurable. Backend 10/10 pytest OK (margen WAC y por lote, FIFO depletion, capital_status/immobilized, window 1/30/60/90, CSV ampliado, permisos employee/vip/normal). Frontend validado en /admin/inventory → pestaña Valoración: 6 KPIs renderizan (valuation-total-products/-units/-wac/-lots/-margin/-immob), botones valuation-window-30/60/90 cambian el período y recargan datos, valuation-only-immob reduce la tabla de 405→297 filas (filtro de capital inmovilizado), badges valuation-status-{id} muestran estado (Sin ventas, Activo, Lento, Sin stock). Expansión de filas funciona pero en el entorno de preview los 8 primeros productos muestran 'SIN LOTE' (histórico pre-Fase 2) y 0 lotes; para ver el detalle de lotes el operador debe expandir productos con lotes (p.ej. recién ingresados). No se observaron errores de consola ni problemas de contraste/overflow.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter322_valuation_margin_rotation.py",
+    "/app/test_reports/pytest/iter322.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/inventory_lots.py::build_valuation importa `datetime`/`timedelta` localmente dentro de la función además del import de módulo arriba — funciona, pero ensucia; mover a top-level mejora legibilidad.",
+    "La asignación FIFO itera `reversed(plist)` sin filtrar lotes con qty<=0, lo que no afecta correctness pero sí performance en catálogos grandes; aceptable.",
+    "En el CSV, el header lista 20 columnas pero la fila sin lote escribe `base + 8 vacíos` (correcto en conteo). Confirmado."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter322_valuation_margin_rotation.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: test_session_admin_X; employee: test_session_employee_X; vip: test_session_vip_X; normal: test_session_normal_X. Frontend cookie: session_token=smoke_session_admin_iter294",
+  "seed_data_creation": "Productos TEST_MR_* y TEST_IMMOB_* creados y limpiados por fixtures (products + inventory_movements + inventory_lots).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter322 completa el ciclo de valoración (Fase 2). test_iter322_valuation_margin_rotation.py cubre: margen por lote (A=100 → 200/66.67%; B=200 → 100/33.33%), WAC-level expected_margin=3000, FIFO depletion (venta 5 consume lote viejo primero), capital_status='sin_ventas' + immobilized=true para productos sin ventas, window_days echo, CSV con columnas Margen %, Margen esperado, Vendidas (período), Días p/agotar, Estado capital, Lote margen %, Lote margen restante. UI validada con cookie smoke_session_admin_iter294.",
+  "rca of the issue": "N/A — no bugs encountered."
+}

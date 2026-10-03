@@ -2255,3 +2255,11 @@ Verificado E2E (testing_agent iter321): **12/12 backend PASS + frontend 100%**, 
 - **Archivos**: `services/inventory_lots.py` (nuevo), `store_count_sheet_pdf.py` (nuevo), `routes/inventory.py` (WAC en entrada + 3 endpoints), `routes/market.py` (lote inicial en alta), `services/inventory_ipv.py` (build_count_sheet); `InventoryValuationTab.jsx` (nuevo), `AdminInventory.jsx`, `InventoryCloseTab.jsx` + i18n es/en. Test: `tests/test_iter321_ipv_phase2.py`.
 - **Nota de rendimiento (backlog)**: `build_valuation` agrupa lotes en memoria; paginar/cachear si el catálogo crece mucho.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+## 2026-10-03 · iter322 — Rentabilidad por lote + Rotación con costo (capital inmovilizado)
+Extensión de la Valoración (IPV Fase 2). Verificado E2E (testing_agent iter322): **backend 10/10 + frontend 100%**, cero incidencias.
+- **Rentabilidad por lote**: cada lote muestra margen esperado = precio de venta − costo del lote (margin_unit, margin_pct, remaining_margin = margen de las unidades restantes). A nivel producto: margin_pct_wac y expected_margin = existencia·(precio−WAC). Verificado: lote 100→200/66.67%, lote 200→100/33.33%.
+- **Rotación con costo**: `build_valuation` cruza con `build_rotation` (ventas del período) → sold_window, sellout_days, rotation y capital_status (activo/lento/sin_ventas/vacío). `immobilized` = sin ventas o >90 días p/agotar. Totales: expected_margin, immobilized_value, immobilized_count. Período configurable (?window=30/60/90).
+- **UI** (`InventoryValuationTab.jsx`): 6 KPIs (+ Margen esperado, Capital inmovilizado), selector de período 30/60/90d, columnas Margen % y Capital (badge), filtro "Solo capital inmovilizado", y columnas de margen por lote en el detalle expandible. CSV ampliado con todas las columnas.
+- **Archivos**: `services/inventory_lots.py` (build_valuation ampliado), `routes/inventory.py` (param window + CSV), `InventoryValuationTab.jsx` + i18n es/en. Test: `tests/test_iter322_valuation_margin_rotation.py`.
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.
