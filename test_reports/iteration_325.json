@@ -1,0 +1,25 @@
+{
+  "summary": "iter325 — IPV audit fixes (IPV-FINAL-01 & IPV-FINAL-02). Nuevo archivo pytest /app/backend/tests/test_iter325_ipv_audit_fixes.py: 13/13 PASS. Cubre: (a) reintento del apply-liquidation → 409 y precio permanece 400 (sin acumular 320) con exactamente 1 movimiento 'Precio de liquidación'; (b) 4 solicitudes concurrentes vía ThreadPoolExecutor → 1 éxito (200) + 3 rechazos (409), un único movimiento de precio; (c) escritura atómica condicionada al estado base (demostrada con update_one directo cuyo modified_count==0 si price/cost/stock no coinciden); (d) oferta no toca stock/WAC/lotes/inventory_value_wac=1600; (e) entrada con sale_price=550 limpia on_offer, WAC=220, stock=10, valor=2200, margen=3300 y /api/products NO anuncia la oferta; (f) entrada con sale_price=400 (igual al actual) MANTIENE on_offer=true actualizando WAC=220; (g) regresión: clear-offer mantiene precio y 400 si no está en oferta, 404 si no existe, 403 para vip/normal, 200 para employee staff; apply sin sugerencia 400, inexistente 404, vip/normal 403; PUT /admin/products que cambia precio limpia la oferta. Smoke UI (admin): /dashboard/marketplace muestra badge 'Oferta −20%' y precio tachado 500 USDT; /admin/inventory › Valoración muestra badge 'En oferta -20%' en la fila; al expandir aparece 'Quitar oferta' (NO 'Aplicar liquidación'), y al pulsarlo on_offer pasa a false conservando precio 400.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter325_ipv_audit_fixes.py",
+    "/app/test_reports/pytest/iter325_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "apply_liquidation usa update_one con filtro {on_offer:{$ne:true}, price_usd, cost_usd, stock} + chequeo de modified_count — correcto para idempotencia y concurrencia; auditoría solo cuando modified_count>0 → no deja basura por reintento.",
+    "create_movement (bloque 'entrada') limpia on_offer y $unset de offer_* en la MISMA escritura cuando el precio cambia — evita el estado intermedio con precio nuevo + descuento viejo visible en la tienda.",
+    "El filtro de igualdad usa float exacto; coincide con el valor leído del mismo doc por build_valuation, por lo que no hay riesgo de drift por redondeo (ambos vienen de Mongo). Nota: documentar que depende de que compute_liquidation lea del mismo product doc que luego se pasa al filtro — se cumple en el código actual."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter325_ipv_audit_fixes.py"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (smoke UI OK)"},
+  "test_credentials": "pytest: test_session_admin_X / test_session_employee_X / test_session_vip_X / test_session_normal_X (conftest). UI smoke: smoke_session_admin_iter325 (admin, auto-limpiado).",
+  "seed_data_creation": "Creó TEST_SMOKE_OFFER_325 (500/200/8) para smoke UI y lo eliminó al final junto con sus movimientos y lotes; cada test pytest crea TEST_IPV325_* y limpia en finally.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Los dos fallos de auditoría IPV están cerrados y verificados. Para re-regresión, basta correr pytest tests/test_iter325_ipv_audit_fixes.py. Para la concurrencia se usa ThreadPoolExecutor sobre requests sync; si en el futuro se preferiera asyncio.gather con httpx, el conftest ya trae bypass de Turnstile para httpx.",
+  "rca of the issue": "IPV-FINAL-01: el apply-liquidation leía→calculaba→escribía sin candado, así que un segundo click (o solicitudes paralelas) tomaba el precio ya rebajado como base y aplicaba un 2º descuento (400→320). Fix: rechazar temprano si on_offer=true, y hacer la escritura ATÓMICA condicionada a {on_offer!=true, price_usd, cost_usd, stock} vía update_one; si modified_count==0 → 409 'recarga la valoración'. La auditoría del movimiento se emite SOLO cuando la escritura aplicó. IPV-FINAL-02: cuando una Entrada cambiaba el precio de venta, el bloque 'entrada' sólo actualizaba price/cost pero dejaba on_offer=true + offer_original_price de la liquidación anterior, por lo que la tienda seguía mostrando '-20% vs 500' con el precio nuevo 550. Fix: en la misma escritura ($set/$unset) retirar on_offer y los metadatos de oferta cuando 'price_usd' está en updates y product.on_offer; si la entrada solo cambia WAC/stock sin tocar el precio, la oferta se preserva."
+}

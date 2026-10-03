@@ -227,11 +227,13 @@ class TestApplyLiquidation:
                     or price_mvs[0].get("description") or "")
             assert "liquidación" in note.lower() or "liquidacion" in note.lower()
 
-            # Segundo POST → 400 (precio ya en sugerido o margen agotado)
+            # IPV-FINAL-01 (iter325) — un producto ya en oferta no se vuelve a
+            # liquidar: el segundo POST responde 409 (antes 400 por agotar
+            # margen). El precio permanece en el valor de la primera oferta.
             r2 = requests.post(
                 f"{API}/admin/inventory/products/{pid}/apply-liquidation",
                 params={"window": 30}, headers=_auth(ADMIN_TOKEN))
-            assert r2.status_code == 400, r2.text
+            assert r2.status_code == 409, r2.text
         finally:
             _delete_product(pid)
 
