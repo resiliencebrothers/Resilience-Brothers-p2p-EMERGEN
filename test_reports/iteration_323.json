@@ -1,0 +1,29 @@
+{
+  "summary": "iter323 — IPV Fase 3: Liquidación Sugerida. Backend 12/12 pytest OK: (a) sin ventas price=113/cost=100 → disc=10, suggested=101.70, loss=False, margin_room≈11.5; (b) margen<5% (103/100) → disc=0; (c) loss (90/100) → loss=True, disc=0; (d) producto activo (venta reciente) → liquidation=None; FLOOR nunca por debajo de WAC confirmado en 5 combinaciones (todos los discount_pct múltiplos de 5); POST apply-liquidation 200 (113→101.70, discount 10%), movimiento tipo 'precio' auditado con nota 'Precio de liquidación', segundo POST 400, loss 400, sin sugerencia 400, inexistente 404; permisos vip/normal 403, employee 200/400 (no 403); totals.liquidation_recovery, immobilized_value, immobilized_count presentes y liquidation_recovery ≥ estimated_revenue del producto creado. Frontend validado en /admin/inventory → pestaña Valoración: valuation-only-immob activa el banner valuation-liq-summary ('1,543,202.04 en capital inmovilizado (254 productos). Liquidando al precio sugerido recuperarías ~1,672,090.5'); 254 badges valuation-liq-badge-{id}; expandir una fila inmovilizada muestra valuation-liq-{id} con el descuento (precio→sugerido, capital atado, recuperarías) y botón valuation-liq-apply-{id} ('Aplicar precio 2,520'). Click sobre el apply: el badge del producto desaparece de la tabla recargada, el banner resumen se recalcula (recovery baja a 1,611,610.5 ≈ -60,480 = la contribución del producto aplicado). Para un producto con margen <5% aparece el aviso 'Margen insuficiente para un descuento limpio' y NO el botón de aplicar (equivalente al escenario loss).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter323_liquidation.py",
+    "/app/test_reports/pytest/iter323.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/inventory_lots.py::compute_liquidation — la rama de margen<5% genera disc=0 pero devuelve suggested_price = price (sin descuento). El endpoint apply-liquidation lo bloquea con 400 ('discount_pct<=0'), pero puede ser confuso en la UI: podría devolverse liquidation=None directamente cuando disc==0 y loss==False, igual que loss. Comportamiento actual es seguro aunque algo redundante (badge no se renderiza si disc<=0 según la UI, pero el banner interno sí aparece con el aviso 'Margen insuficiente').",
+    "routes/inventory.py::apply_liquidation hace build_valuation(window) completo (lee todos los productos + lotes + rotación) por cada POST. En catálogos grandes es O(N); aceptable hoy (<500 productos) pero podría extraerse compute_liquidation para un solo producto y evitar el barrido completo. No es bloqueante.",
+    "El movimiento 'precio' auditado usa field_label='Precio de liquidación' pero re-usa el helper record_price_change estándar: la nota resultante empieza por 'Precio de liquidación: ...'. OK, pero conviene añadir un campo type dedicado (p.ej. 'liquidation') si se quiere filtrar en reportes futuros."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter323_liquidation.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: test_session_admin_X; employee: test_session_employee_X; vip: test_session_vip_X; normal: test_session_normal_X. Frontend cookie: session_token=smoke_session_admin_iter294",
+  "seed_data_creation": "Productos TEST_LIQ_* creados por el fixture y limpiados (products + inventory_movements + inventory_lots) al final de cada test. No queda residuo.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter323 completa el ciclo de IPV Fase 3 (liquidación sugerida). test_iter323_liquidation.py cubre: 4 casos de compute (sin_ventas con desc, margen bajo, loss, activo); FLOOR nunca <wac en 5 combinaciones; apply-liquidation 200 + movimiento auditado + segundo POST 400; errores 400 (sin sugerencia / loss) y 404 (inexistente); permisos vip/normal 403 y employee no-403. UI validada con cookie smoke_session_admin_iter294: banner resumen, 254 badges, botón 'Aplicar precio X' que persiste al backend y recarga la tabla sin la badge aplicada. Nota de flakiness: APScheduler cada 2-5 min puede alterar `sold_window` si el test corre justo durante un refresh; el test de 'producto activo' usa 5 ventas / 10 stock para asegurar sellout=60d ≤ 90 → 'activo'.",
+  "rca of the issue": "N/A — todas las validaciones pasan. Dos ajustes menores en el test durante la primera iteración: (1) 'activo' requiere sellout_days ≤ 90 → aumenté la cantidad de la venta de 2 a 5 (stock=10, 30d window) para forzar sellout=60d; con solo 2 ventas quedaba 'lento' y disparaba liquidación.(2) El test 'no suggestion' se corrigió por lo mismo (sellout>90 → lento → sí tenía sugerencia → 400 falló)."
+}

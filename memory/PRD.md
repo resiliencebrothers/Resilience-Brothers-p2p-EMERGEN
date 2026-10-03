@@ -2263,3 +2263,12 @@ Extensión de la Valoración (IPV Fase 2). Verificado E2E (testing_agent iter322
 - **UI** (`InventoryValuationTab.jsx`): 6 KPIs (+ Margen esperado, Capital inmovilizado), selector de período 30/60/90d, columnas Margen % y Capital (badge), filtro "Solo capital inmovilizado", y columnas de margen por lote en el detalle expandible. CSV ampliado con todas las columnas.
 - **Archivos**: `services/inventory_lots.py` (build_valuation ampliado), `routes/inventory.py` (param window + CSV), `InventoryValuationTab.jsx` + i18n es/en. Test: `tests/test_iter322_valuation_margin_rotation.py`.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+## 2026-10-03 · iter323 — Liquidación Sugerida (liberar capital inmovilizado)
+Extensión de la Valoración (IPV). Verificado E2E (testing_agent iter323): **backend 12/12 + frontend 100%**, cero incidencias.
+- **Sugerencia de descuento** por producto inmovilizado (`compute_liquidation`): base 20% (sin ventas) / 10% (lento) + bono por antigüedad del lote más viejo; tope = margen disponible y **floor a múltiplos de 5% → el precio sugerido NUNCA baja del costo (WAC)**. Si el precio ya está bajo costo → `loss` (no se remata a pérdida). Devuelve discount_pct, suggested_price, cash_to_free, estimated_revenue.
+- **Aplicar precio**: `POST /api/admin/inventory/products/{id}/apply-liquidation?window=` recalcula en servidor, actualiza price_usd, audita como movimiento 'precio' ("Precio de liquidación: X → Y"), publica products_changed. Idempotente (2º intento 400), 404 si no existe, requiere permiso 'products'.
+- **Totales**: `liquidation_recovery` (caja recuperable liquidando al precio sugerido) junto a immobilized_value/count.
+- **UI** (`InventoryValuationTab.jsx`): filas inmovilizadas resaltadas, badge −N% en la columna Capital, banner de resumen al filtrar ("X en capital inmovilizado · recuperarías ~Y"), y en el detalle expandible el banner de liquidación con botón "Aplicar precio X" (o aviso de pérdida/margen insuficiente).
+- **Archivos**: `services/inventory_lots.py` (compute_liquidation + liquidation en build_valuation), `routes/inventory.py` (apply_liquidation), `InventoryValuationTab.jsx` + i18n es/en. Test: `tests/test_iter323_liquidation.py`.
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.
