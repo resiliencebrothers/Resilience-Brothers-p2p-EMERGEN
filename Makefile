@@ -86,6 +86,7 @@ test-critical: ## Run critical regression subset (~2 min, 190 tests) — pre-com
 		tests/test_iter312_reimport_duplicate.py \
 		tests/test_iter313_audit_fixes.py \
 		tests/test_iter314_audit_residuals.py \
+		tests/test_iter315_manual_auto_overlap.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

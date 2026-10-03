@@ -31,6 +31,9 @@ from services.reconciliation_matcher import (DEFAULT_CONFIG,
                                              rollback_batch_item_from_reconciliation,
                                              rematch_transactions,
                                              find_committed_backing,
+                                             _economic_identity_key,
+                                             claim_economic_identity,
+                                             release_economic_identity,
                                              run_matching)
 from services.reconciliation_parser import (PARSER_VERSION,
                                             SUPPORTED_EXTENSIONS,
@@ -898,6 +901,11 @@ async def rematch(request: Request,
 
 class ConfirmPayload(BaseModel):
     order_id: str
+    # iter315 (CB10 v3) — override EXPLÍCITO y TRAZABLE del operador para
+    # confirmar dos pagos REALES con identidad económica idéntica (p.ej. dos
+    # transferencias iguales el mismo día). Sin override, una segunda
+    # confirmación del MISMO pago reimportado se bloquea.
+    override_duplicate: bool = False
 
 
 async def _validate_confirm_compatibility(tx: dict, target: dict) -> None:
@@ -1174,6 +1182,34 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
     await _claim_bank_transaction(tx, tx_id, payload.order_id, actor,
                                   attempt_token, resuming)
 
+    # iter315 (CB10 v3) — PROTOCOLO de reserva de identidad económica COMPARTIDO
+    # con la ruta automática: la confirmación manual TAMBIÉN reserva la
+    # identidad económica (cuenta|moneda|importe|fecha|remitente) ANTES de
+    # acreditar. Así una decisión AUTOMÁTICA previa que aún no tomó su reserva, o
+    # una segunda confirmación del MISMO pago reimportado (otra huella), no
+    # pueden generar un segundo crédito: quien no gana la reserva pierde. Un
+    # operador puede resolver dos pagos REALES con atributos idénticos solo con
+    # override EXPLÍCITO (queda registrado en el movimiento y en la auditoría).
+    econ_key = _economic_identity_key(tx)
+    econ_owned = False
+    override_used = False
+    if not resuming and econ_key:
+        econ_owned = await claim_economic_identity(econ_key, tx_id)
+        if not econ_owned:
+            if not payload.override_duplicate:
+                await _release_bank_claim(tx_id, attempt_token)
+                raise HTTPException(
+                    status_code=409,
+                    detail="Este pago ya fue acreditado por otra representación "
+                           "del mismo movimiento (posible reimportación "
+                           "PDF/Excel). Si de verdad son pagos distintos, "
+                           "confírmalo marcando 'override_duplicate'.")
+            override_used = True
+            logger.warning(
+                "MANUAL override_duplicate tx=%s order=%s by=%s "
+                "(identidad económica ya acreditada)",
+                tx_id, payload.order_id, actor["user_id"])
+
     cand = next((c for c in (tx.get("candidates") or [])
                  if c["order_id"] == payload.order_id), None)
     tx["confidence_score"] = cand["score"] if cand else tx.get("confidence_score")
@@ -1200,6 +1236,11 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                            "confirmación para completar el cierre.")
             # No robamos ni pisamos reclamos ajenos: liberamos solo el nuestro.
             await _release_bank_claim(tx_id, attempt_token)
+            # iter315 — este intento no acreditó: libera la identidad económica
+            # que reservó, para no bloquear un reintento legítimo ni a otra
+            # representación.
+            if econ_owned:
+                await release_economic_identity(econ_key, tx_id)
             if committed:
                 # CB03 v4 — el abono ya respalda OTRO destino: este intento no
                 # puede acreditar un segundo crédito con el mismo pago.
@@ -1241,6 +1282,18 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
                       score=(cand or {}).get("score"),
                       details=(cand or {}).get("breakdown"),
                       ip=request.client.host if request.client else None)
+    if override_used:
+        # iter315 — traza del override explícito (dos pagos reales con atributos
+        # idénticos acreditados por decisión consciente del operador).
+        await db.bank_transactions.update_one(
+            {"id": tx_id},
+            {"$set": {"duplicate_override_by": actor["user_id"],
+                      "duplicate_override_at": iso(now_utc()),
+                      "duplicate_override_key": econ_key}})
+        await recon_audit("MANUAL_DUPLICATE_OVERRIDE", actor, tx=tx,
+                          order_id=payload.order_id,
+                          prev_status=tx["status"], new_status="manual_matched",
+                          ip=request.client.host if request.client else None)
     return await db.bank_transactions.find_one({"id": tx_id}, {"_id": 0, "raw": 0})
 
 
