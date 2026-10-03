@@ -2272,3 +2272,12 @@ Extensión de la Valoración (IPV). Verificado E2E (testing_agent iter323): **ba
 - **UI** (`InventoryValuationTab.jsx`): filas inmovilizadas resaltadas, badge −N% en la columna Capital, banner de resumen al filtrar ("X en capital inmovilizado · recuperarías ~Y"), y en el detalle expandible el banner de liquidación con botón "Aplicar precio X" (o aviso de pérdida/margen insuficiente).
 - **Archivos**: `services/inventory_lots.py` (compute_liquidation + liquidation en build_valuation), `routes/inventory.py` (apply_liquidation), `InventoryValuationTab.jsx` + i18n es/en. Test: `tests/test_iter323_liquidation.py`.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+## 2026-10-03 · iter324 — Promoción Visible (oferta en la tienda web al liquidar)
+Extensión de la Liquidación (IPV). Verificado E2E (testing_agent iter324): **backend 9/9 + frontend 100%**, cero incidencias.
+- **Aplicar liquidación marca oferta**: `apply_liquidation` setea on_offer + offer_original_price (precio anterior) + offer_discount_pct + offer_at.
+- **Tienda web** (`GET /products` + `augment_products_fx` + `MarketplaceView.jsx`): badge "OFERTA −N%" sobre la imagen + precio anterior tachado (USDT y CUP); las ofertas se muestran **primero** (orden estable).
+- **Quitar oferta**: `POST /admin/inventory/products/{id}/clear-offer` retira la etiqueta manteniendo el precio rebajado (2º intento 400, 404 si no existe, permiso 'products'). Botón "Quitar oferta" + badge "En oferta" en la pestaña Valoración.
+- **Auto-limpieza**: editar el precio manualmente (`PUT /admin/products`) retira la oferta; editar sin tocar el precio la mantiene.
+- **Archivos**: `routes/inventory.py` (apply marca oferta + clear_offer), `routes/market.py` (modelo Product + list_products orden + update_product limpia), `services/marketplace_fx.py`, `services/inventory.py` + `services/inventory_lots.py` (passthrough), `MarketplaceView.jsx`, `InventoryValuationTab.jsx` + i18n es/en. Test: `tests/test_iter324_offer_visibility.py`.
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.

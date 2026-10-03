@@ -1,0 +1,22 @@
+{
+  "summary": "iter324 'Promoción Visible' end-to-end: 9/9 backend pytest + full frontend smoke (marketplace badge + valuation Quitar oferta) PASS. apply-liquidation marca on_offer con offer_original_price=500 y offer_discount_pct=20; GET /api/products expone on_offer, offer_original_price_store=500, offer_original_price_usdt=500, price_usdt=400 y ordena ofertas-primero. clear-offer retira la etiqueta manteniendo el precio rebajado (2.º 400, inexistente 404, vip/normal 403, employee pasa). PUT /api/admin/products limpia la oferta cuando cambia price_usd; sin cambio de precio mantiene la oferta. /admin/inventory/valuation incluye on_offer y offer_discount_pct. UI: en /dashboard/marketplace aparece product-offer-badge-{id} ('Oferta −20%') y product-offer-old-{id} ('500 USDT' tachado); en /admin/inventory › Valoración, valuation-offer-badge-{id} y botón valuation-offer-clear-{id} funcionan (toast 'Etiqueta de oferta retirada (se mantiene el precio).' y recarga sin badge).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter324_offer_visibility.py",
+    "/app/test_reports/pytest/iter324_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/inventory.py::clear_offer y routes/market.py::update_product duplican el bloque $unset de offer_* (DRY menor). Considerar helper _unset_offer(product_id) en services/inventory.py.",
+    "augment_products_fx añade on_offer y offer_original_price_* al dict devuelto por GET /products pero el modelo Pydantic Product no los declara en el schema de salida: hoy funciona porque la ruta retorna dicts, pero si se migra a response_model=List[Product] habría que añadirlos (riesgo futuro).",
+    "list_products ordena por on_offer con sort estable al final tras otro ordenamiento previo — ok mientras se asuma orden Mongo determinista por insertion, pero no hay prueba explícita de 'orden por fecha dentro de cada grupo' en el test (sólo inferida). Opcional reforzar."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter324_offer_visibility.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Backend: ADMIN/EMPLOYEE/VIP/NORMAL seeded tokens (conftest). Frontend: session_token=smoke_session_admin_iter294 (re-seeded a user_test_admin01).",
+  "seed_data_creation": "Productos TEST_OFF_* y TEST_UI_OFF_* creados y eliminados por los tests; verificado 0 leftovers en products.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter324 verificado completo (apply-liq→marca oferta, orden ofertas-primero, clear-offer, edit-price-clears-offer, valuation refleja oferta, UI badges + botón Quitar oferta). Store currency en tests es CUPFX 1:1 → offer_original_price_usdt == offer_original_price_store (500). margen 60% con stock=8/price=500/cost=200 produce exactamente discount_pct=20 y new_price=400 (banda media). Para probar banda 10% usar price=113/cost=100 (ver iter323). Scheduler APScheduler cada 2-5min no afectó esta corrida."
+}
