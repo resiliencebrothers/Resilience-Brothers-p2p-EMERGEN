@@ -212,6 +212,11 @@ class Product(BaseModel):
     # iter236 — sucursales donde está disponible (vacío = todas).
     available_store_ids: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
+    # iter324 — oferta/liquidación visible en la tienda web.
+    on_offer: bool = False
+    offer_original_price: float = 0.0
+    offer_discount_pct: float = 0.0
+    offer_at: str = ""
 
 
 class ProductCreate(BaseModel):
@@ -819,7 +824,11 @@ async def list_products(request: Request) -> Any:
     from auth_utils import get_session_user
     from services.marketplace_fx import augment_products_fx
     user = await get_session_user(request)
-    return await augment_products_fx(rows, role=(user or {}).get("role"))
+    out = await augment_products_fx(rows, role=(user or {}).get("role"))
+    # iter324 — las ofertas se muestran primero (orden estable: conserva la
+    # fecha dentro de cada grupo).
+    out.sort(key=lambda p: 0 if p.get("on_offer") else 1)
+    return out
 
 
 def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool) -> Any:
@@ -943,6 +952,14 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
     from services.proof_upload import maybe_upload_proof
     data["image_url"] = maybe_upload_proof(data.get("image_url"), "products") or ""
     await db.products.update_one({"id": product_id}, {"$set": data})
+    # iter324 — editar el precio manualmente retira la etiqueta de oferta
+    # (el precio de la oferta ya no es válido), manteniendo el nuevo precio.
+    if not existing.get("owner_id") and price_changed and existing.get("on_offer"):
+        await db.products.update_one(
+            {"id": product_id},
+            {"$set": {"on_offer": False},
+             "$unset": {"offer_original_price": "", "offer_discount_pct": "",
+                        "offer_at": ""}})
     # iter219 — auditoría de precios + alerta de stock bajo tras edición manual.
     if not existing.get("owner_id"):
         try:

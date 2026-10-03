@@ -2973,7 +2973,8 @@
     "pickupCodeLabel": "Código",
     "showQrBtn": "Ver QR",
     "qrTitle": "Muestra este código en la tienda",
-    "qrHint": "El personal lo escaneará con la cámara y tu entrega quedará confirmada al instante."
+    "qrHint": "El personal lo escaneará con la cámara y tu entrega quedará confirmada al instante.",
+    "offer": "Oferta"
   },
   "kyc": {
     "eyebrow": "/ Verificación de identidad",
@@ -4366,7 +4367,11 @@
       "liqError": "No se pudo aplicar el precio",
       "liqLoss": "El precio está por debajo del costo (WAC). Revisa el costo o el precio antes de liquidar.",
       "liqNoRoom": "Margen insuficiente para un descuento limpio (menos del 5%).",
-      "liqSummary": "{{cash}} en capital inmovilizado ({{n}} productos). Liquidando al precio sugerido recuperarías ~{{recovery}}."
+      "liqSummary": "{{cash}} en capital inmovilizado ({{n}} productos). Liquidando al precio sugerido recuperarías ~{{recovery}}.",
+      "offerTag": "En oferta",
+      "offerActive": "Este producto está en oferta en la tienda web (−{{pct}}%).",
+      "offerClear": "Quitar oferta",
+      "offerCleared": "Etiqueta de oferta retirada (se mantiene el precio)."
     }
   },
   "vendorProducts": {

@@ -271,6 +271,8 @@ async def build_valuation(window_days: int = 30) -> dict:
             "capital_status": cap_status,
             "immobilized": immobilized,
             "liquidation": liquidation,
+            "on_offer": bool(r.get("on_offer")),
+            "offer_discount_pct": float(r.get("offer_discount_pct") or 0),
             "lots": lot_rows,
         })
         tot_val_wac += val_wac

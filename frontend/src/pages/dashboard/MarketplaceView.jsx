@@ -232,7 +232,12 @@ export default function MarketplaceView() {
         )}
         {visibleProducts.map(p => (
           <div key={p.id} className="tactile-card overflow-hidden flex flex-col">
-            <div className="aspect-video bg-[#0a0a0a] overflow-hidden">
+            <div className="aspect-video bg-[#0a0a0a] overflow-hidden relative">
+              {p.on_offer && p.offer_discount_pct > 0 && (
+                <span className="absolute top-2 left-2 z-10 text-[0.65rem] font-bold uppercase tracking-wider px-2 py-1 bg-red-500 text-white shadow-lg" data-testid={`product-offer-badge-${p.id}`}>
+                  {t("marketplace.offer")} −{p.offer_discount_pct}%
+                </span>
+              )}
               {p.image_url ? (
                 <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
               ) : (
@@ -256,10 +261,20 @@ export default function MarketplaceView() {
                 <div>
                   <div className="font-display text-xl text-[#8B5CF6]" data-testid={`product-price-${p.id}`}>
                     {p.price_usdt != null ? p.price_usdt : "—"} <span className="text-xs text-neutral-400">USDT</span>
+                    {p.on_offer && p.offer_original_price_usdt != null && (
+                      <span className="ml-2 text-xs text-neutral-500 line-through font-normal" data-testid={`product-offer-old-${p.id}`}>
+                        {p.offer_original_price_usdt} USDT
+                      </span>
+                    )}
                   </div>
                   {p.store_currency && p.price_store != null && (
                     <div className="text-[0.65rem] text-neutral-500 font-mono" data-testid={`product-store-equiv-${p.id}`}>
                       ≈ {Number(p.price_store).toLocaleString(undefined, { maximumFractionDigits: 2 })} {p.store_currency} {t("marketplace.cashSuffix")}
+                      {p.on_offer && p.offer_original_price_store != null && (
+                        <span className="ml-1 line-through text-neutral-600">
+                          {Number(p.offer_original_price_store).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </span>
+                      )}
                     </div>
                   )}
                   {!p.store_currency && usdtRates.length > 0 && (

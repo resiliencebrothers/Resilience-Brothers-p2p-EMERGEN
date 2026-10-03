@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import { Button } from "@/components/ui/button";
 import {
-  Download, Layers, Package, Coins, Percent, Snowflake, Flame,
+  Download, Layers, Package, Coins, Percent, Snowflake, Flame, Tag,
   ChevronDown, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -31,6 +31,7 @@ export default function InventoryValuationTab() {
   const [window_, setWindow] = useState(30);
   const [onlyImmob, setOnlyImmob] = useState(false);
   const [applying, setApplying] = useState(null);
+  const [clearing, setClearing] = useState(null);
 
   const load = useCallback(() => {
     axios.get(`${API}/admin/inventory/valuation`, {
@@ -71,6 +72,17 @@ export default function InventoryValuationTab() {
       load();
     } catch (e) { toast.error(e.response?.data?.detail || t("inventory.valuation.liqError")); }
     finally { setApplying(null); }
+  };
+
+  // iter324 — retirar la etiqueta de oferta (mantiene el precio rebajado).
+  const clearOffer = async (pid) => {
+    setClearing(pid);
+    try {
+      await axios.post(`${API}/admin/inventory/products/${pid}/clear-offer`, {}, { withCredentials: true });
+      toast.success(t("inventory.valuation.offerCleared"));
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || t("inventory.valuation.liqError")); }
+    finally { setClearing(null); }
   };
 
   if (!data) return <p className="text-neutral-500 text-sm py-8 text-center" data-testid="valuation-loading">…</p>;
@@ -193,7 +205,11 @@ export default function InventoryValuationTab() {
                       <span className={`text-[0.6rem] uppercase tracking-wide px-1.5 py-0.5 border ${cap.cls}`} data-testid={`valuation-status-${p.product_id}`}>
                         {t(`inventory.valuation.${cap.key}`)}
                       </span>
-                      {p.liquidation && !p.liquidation.loss && p.liquidation.discount_pct > 0 && (
+                      {p.on_offer ? (
+                        <span className="block mt-1 text-[0.6rem] text-[#C4B5FD]" data-testid={`valuation-offer-badge-${p.product_id}`}>
+                          <Tag className="w-2.5 h-2.5 inline mr-0.5" />{t("inventory.valuation.offerTag")} −{p.offer_discount_pct}%
+                        </span>
+                      ) : p.liquidation && !p.liquidation.loss && p.liquidation.discount_pct > 0 && (
                         <span className="block mt-1 text-[0.6rem] text-red-300 font-mono" data-testid={`valuation-liq-badge-${p.product_id}`}>
                           −{p.liquidation.discount_pct}%
                         </span>
@@ -205,7 +221,19 @@ export default function InventoryValuationTab() {
                     <tr className="bg-[#0a0a0a]/40" data-testid={`valuation-lots-${p.product_id}`}>
                       <td></td>
                       <td colSpan="9" className="px-3 py-3">
-                        {p.liquidation && (
+                        {p.on_offer ? (
+                          <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-3 mb-3 flex items-center justify-between flex-wrap gap-2" data-testid={`valuation-offer-${p.product_id}`}>
+                            <span className="text-xs text-[#C4B5FD]">
+                              <Tag className="w-3.5 h-3.5 inline mr-1" />
+                              {t("inventory.valuation.offerActive", { pct: p.offer_discount_pct })}
+                            </span>
+                            <Button size="sm" variant="outline" data-testid={`valuation-offer-clear-${p.product_id}`}
+                              disabled={clearing === p.product_id} onClick={() => clearOffer(p.product_id)}
+                              className="rounded-none border-white/10 text-xs h-8">
+                              {clearing === p.product_id ? "…" : t("inventory.valuation.offerClear")}
+                            </Button>
+                          </div>
+                        ) : p.liquidation && (
                           <div className="border border-red-500/20 bg-red-500/5 p-3 mb-3 flex items-center justify-between flex-wrap gap-2" data-testid={`valuation-liq-${p.product_id}`}>
                             <div className="text-xs leading-relaxed">
                               {p.liquidation.loss ? (

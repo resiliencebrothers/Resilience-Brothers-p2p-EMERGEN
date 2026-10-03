@@ -356,7 +356,11 @@ async def apply_liquidation(product_id: str, request: Request,
         raise HTTPException(status_code=400,
                             detail="El precio ya está en el valor sugerido.")
     await db.products.update_one({"id": product_id},
-                                 {"$set": {"price_usd": new_price}})
+                                 {"$set": {"price_usd": new_price,
+                                           "on_offer": True,
+                                           "offer_original_price": old_price,
+                                           "offer_discount_pct": liq["discount_pct"],
+                                           "offer_at": iso(now_utc())}})
     await record_price_change(product=product,
                               field_label="Precio de liquidación",
                               old=old_price, new=new_price, actor=actor)
@@ -367,6 +371,30 @@ async def apply_liquidation(product_id: str, request: Request,
         logger.error(f"products_changed publish failed: {e}")
     return {"applied": True, "old_price": old_price, "new_price": new_price,
             "discount_pct": liq["discount_pct"]}
+
+
+@router.post("/admin/inventory/products/{product_id}/clear-offer")
+async def clear_offer(product_id: str, request: Request) -> Any:
+    """IPV — retira la etiqueta de oferta de la tienda web (mantiene el precio
+    rebajado; el admin ya decidió venderlo a ese precio)."""
+    await require_permission(request, "products")
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if not product.get("on_offer"):
+        raise HTTPException(status_code=400,
+                            detail="El producto no está en oferta.")
+    await db.products.update_one(
+        {"id": product_id},
+        {"$set": {"on_offer": False},
+         "$unset": {"offer_original_price": "", "offer_discount_pct": "",
+                    "offer_at": ""}})
+    try:
+        from services.live_bus import publish
+        await publish("products_changed", {"product_id": product_id})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"products_changed publish failed: {e}")
+    return {"ok": True}
 
 
 @router.get("/admin/inventory/count-sheet.pdf")

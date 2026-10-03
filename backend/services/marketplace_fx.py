@@ -66,4 +66,13 @@ async def augment_products_fx(products: list,
             p["store_currency"] = fx["store_currency"]
             p["price_usdt"] = to_usdt(p["price_store"], fx["rate"])
             p["fx_rate"] = fx["rate"] or None
+        # iter324 — oferta/liquidación: precio anterior tachado en la web.
+        if (p.get("on_offer") and not p.get("owner_id")
+                and float(p.get("offer_original_price") or 0) > 0):
+            orig = float(p["offer_original_price"])
+            p["on_offer"] = True
+            p["offer_original_price_store"] = orig
+            p["offer_original_price_usdt"] = to_usdt(orig, fx["rate"])
+        else:
+            p["on_offer"] = False
     return products

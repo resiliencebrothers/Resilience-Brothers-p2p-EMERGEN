@@ -683,6 +683,9 @@ async def build_control_rows() -> list:
             "count_status": (c or {}).get("status") if c else "sin_conteo",
             "count_id": (c or {}).get("id") if c else None,
             "count_authorized": bool((c or {}).get("authorized")) if c else False,
+            # iter324 — oferta/liquidación visible en la tienda web.
+            "on_offer": bool(p.get("on_offer")),
+            "offer_discount_pct": float(p.get("offer_discount_pct") or 0),
         })
     rows.sort(key=lambda r: r["name"].lower())
     return rows
