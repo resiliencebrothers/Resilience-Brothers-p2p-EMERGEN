@@ -18,6 +18,7 @@ de lectura, así que nunca se escribe en la ruta de venta idempotente ni hay
 riesgo de descuadre con el stock.
 """
 import logging
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -52,6 +53,43 @@ def compute_wac(old_stock: int, old_cost: float, qty: int,
     if denom <= 0:
         return round(ec, 4)
     return round((base * oc + q * ec) / denom, 4)
+
+
+def compute_liquidation(price: float, wac: float, capital_status: str,
+                        oldest_age_days) -> Optional[dict]:
+    """IPV — sugerencia de liquidación para mercancía con capital inmovilizado.
+
+    Descuento base según el estado (sin ventas pesa más que lento), reforzado
+    por la antigüedad del lote más viejo aún en existencia. Nunca se sugiere
+    bajar del costo (WAC): el tope es el margen disponible, así liberar caja no
+    genera pérdida. Si el precio ya está por debajo del costo se marca `loss`
+    para que el operador revise costo/precio en vez de rematar a pérdida. El
+    descuento se redondea a múltiplos de 5% para una oferta limpia."""
+    if capital_status not in ("sin_ventas", "lento") or price <= 0:
+        return None
+    margin_room = (price - wac) / price * 100.0
+    base = 20.0 if capital_status == "sin_ventas" else 10.0
+    age = oldest_age_days or 0
+    if age > 180:
+        base += 15.0
+    elif age > 90:
+        base += 10.0
+    elif age > 60:
+        base += 5.0
+    loss = margin_room <= 0
+    if loss:
+        disc = 0.0
+    else:
+        # floor a múltiplos de 5% para no pasar nunca del margen disponible
+        # (una oferta limpia que jamás deja el precio por debajo del costo).
+        disc = math.floor(min(base, margin_room) / 5.0) * 5.0
+    suggested = round(price * (1 - disc / 100.0), 2)
+    return {
+        "discount_pct": disc,
+        "suggested_price": suggested,
+        "loss": loss,
+        "margin_room_pct": round(margin_room, 2),
+    }
 
 
 async def _ensure_lots_index() -> None:
@@ -146,6 +184,7 @@ async def build_valuation(window_days: int = 30) -> dict:
     tot_expected_margin = 0.0
     tot_immob_value = 0.0
     tot_immob_count = 0
+    tot_liq_recovery = 0.0
     for r in rows:
         stock = int(r.get("stock") or 0)
         wac = float(r.get("cost_usd") or 0)
@@ -198,6 +237,18 @@ async def build_valuation(window_days: int = 30) -> dict:
         else:
             cap_status = "activo"
         immobilized = cap_status in ("sin_ventas", "lento")
+        # Sugerencia de liquidación para liberar el capital atado.
+        liquidation = None
+        if immobilized:
+            rem_ages = [x["age_days"] for x in lot_rows
+                        if x["remaining"] > 0 and x["age_days"] is not None]
+            oldest_age = max(rem_ages) if rem_ages else None
+            liq = compute_liquidation(price, wac, cap_status, oldest_age)
+            if liq:
+                liq["cash_to_free"] = val_wac
+                liq["estimated_revenue"] = round(stock * liq["suggested_price"], 2)
+                liq["oldest_age_days"] = oldest_age
+                liquidation = liq
         out.append({
             "product_id": r["product_id"],
             "name": r.get("name", ""),
@@ -219,6 +270,7 @@ async def build_valuation(window_days: int = 30) -> dict:
             "rotation": rotation,
             "capital_status": cap_status,
             "immobilized": immobilized,
+            "liquidation": liquidation,
             "lots": lot_rows,
         })
         tot_val_wac += val_wac
@@ -229,6 +281,8 @@ async def build_valuation(window_days: int = 30) -> dict:
         if immobilized:
             tot_immob_value += val_wac
             tot_immob_count += 1
+            if liquidation and not liquidation["loss"] and liquidation["discount_pct"] > 0:
+                tot_liq_recovery += liquidation["estimated_revenue"]
     out.sort(key=lambda x: x["inventory_value_wac"], reverse=True)
     return {
         "products": out,
@@ -242,5 +296,6 @@ async def build_valuation(window_days: int = 30) -> dict:
             "expected_margin": round(tot_expected_margin, 2),
             "immobilized_value": round(tot_immob_value, 2),
             "immobilized_count": tot_immob_count,
+            "liquidation_recovery": round(tot_liq_recovery, 2),
         },
     }

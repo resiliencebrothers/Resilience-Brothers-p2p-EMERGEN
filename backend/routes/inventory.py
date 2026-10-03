@@ -332,6 +332,43 @@ async def inventory_valuation_csv(request: Request, window: int = 30) -> Any:
                  f'attachment; filename="inventario_valoracion_{ts}.csv"'})
 
 
+@router.post("/admin/inventory/products/{product_id}/apply-liquidation")
+async def apply_liquidation(product_id: str, request: Request,
+                            window: int = 30) -> Any:
+    """IPV — aplica el precio de liquidación sugerido (libera caja). El precio
+    se recalcula en el servidor (no se confía en el cliente) y queda auditado."""
+    actor = await require_permission(request, "products")
+    from services.inventory_lots import build_valuation
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    data = await build_valuation(window_days=window)
+    row = next((p for p in data["products"]
+                if p["product_id"] == product_id), None)
+    liq = (row or {}).get("liquidation")
+    if not liq or liq.get("loss") or float(liq.get("discount_pct") or 0) <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto no tiene un descuento de liquidación sugerido.")
+    old_price = float(product.get("price_usd") or 0)
+    new_price = float(liq["suggested_price"])
+    if abs(new_price - old_price) < 1e-9:
+        raise HTTPException(status_code=400,
+                            detail="El precio ya está en el valor sugerido.")
+    await db.products.update_one({"id": product_id},
+                                 {"$set": {"price_usd": new_price}})
+    await record_price_change(product=product,
+                              field_label="Precio de liquidación",
+                              old=old_price, new=new_price, actor=actor)
+    try:
+        from services.live_bus import publish
+        await publish("products_changed", {"product_id": product_id})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"products_changed publish failed: {e}")
+    return {"applied": True, "old_price": old_price, "new_price": new_price,
+            "discount_pct": liq["discount_pct"]}
+
+
 @router.get("/admin/inventory/count-sheet.pdf")
 async def count_sheet_pdf(request: Request, date: Optional[str] = None) -> Any:
     """IPV Fase 2 — acta de conteo físico firmable del día (PDF)."""

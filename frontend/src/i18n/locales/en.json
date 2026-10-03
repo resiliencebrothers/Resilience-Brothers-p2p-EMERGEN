@@ -4358,7 +4358,15 @@
       "capVacio": "—",
       "lotMargin": "Margin %",
       "lotMarginRem": "Rem. margin",
-      "selloutHint": "Sells out in ~{{n}} days at current pace"
+      "selloutHint": "Sells out in ~{{n}} days at current pace",
+      "liqSuggest": "Suggested discount {{pct}}%: {{from}} → {{to}}",
+      "liqFree": "Capital tied up: {{cash}} · you'd recover ~{{rev}} selling at the suggested price",
+      "liqApply": "Apply price {{price}}",
+      "liqApplied": "Liquidation price applied: {{price}} (−{{pct}}%)",
+      "liqError": "Could not apply the price",
+      "liqLoss": "Price is below cost (WAC). Review cost or price before liquidating.",
+      "liqNoRoom": "Not enough margin for a clean discount (under 5%).",
+      "liqSummary": "{{cash}} in immobilized capital ({{n}} products). Selling at the suggested price you'd recover ~{{recovery}}."
     }
   },
   "vendorProducts": {

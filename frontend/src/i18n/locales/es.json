@@ -4358,7 +4358,15 @@
       "capVacio": "—",
       "lotMargin": "Margen %",
       "lotMarginRem": "Margen rest.",
-      "selloutHint": "Se agota en ~{{n}} días al ritmo actual"
+      "selloutHint": "Se agota en ~{{n}} días al ritmo actual",
+      "liqSuggest": "Descuento sugerido {{pct}}%: {{from}} → {{to}}",
+      "liqFree": "Capital atado: {{cash}} · recuperarías ~{{rev}} al liquidar al precio sugerido",
+      "liqApply": "Aplicar precio {{price}}",
+      "liqApplied": "Precio de liquidación aplicado: {{price}} (−{{pct}}%)",
+      "liqError": "No se pudo aplicar el precio",
+      "liqLoss": "El precio está por debajo del costo (WAC). Revisa el costo o el precio antes de liquidar.",
+      "liqNoRoom": "Margen insuficiente para un descuento limpio (menos del 5%).",
+      "liqSummary": "{{cash}} en capital inmovilizado ({{n}} productos). Liquidando al precio sugerido recuperarías ~{{recovery}}."
     }
   },
   "vendorProducts": {

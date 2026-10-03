@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import { Button } from "@/components/ui/button";
 import {
-  Download, Layers, Package, Coins, Percent, Snowflake,
+  Download, Layers, Package, Coins, Percent, Snowflake, Flame,
   ChevronDown, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -30,6 +30,7 @@ export default function InventoryValuationTab() {
   const [exporting, setExporting] = useState(false);
   const [window_, setWindow] = useState(30);
   const [onlyImmob, setOnlyImmob] = useState(false);
+  const [applying, setApplying] = useState(null);
 
   const load = useCallback(() => {
     axios.get(`${API}/admin/inventory/valuation`, {
@@ -58,6 +59,18 @@ export default function InventoryValuationTab() {
       toast.success(t("inventory.export.done"));
     } catch { toast.error(t("inventory.export.error")); }
     finally { setExporting(false); }
+  };
+
+  // iter323 — aplicar el precio de liquidación sugerido (libera caja).
+  const applyLiquidation = async (pid) => {
+    setApplying(pid);
+    try {
+      const r = await axios.post(`${API}/admin/inventory/products/${pid}/apply-liquidation`,
+        {}, { params: { window: window_ }, withCredentials: true });
+      toast.success(t("inventory.valuation.liqApplied", { price: fmt(r.data.new_price), pct: r.data.discount_pct }));
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || t("inventory.valuation.liqError")); }
+    finally { setApplying(null); }
   };
 
   if (!data) return <p className="text-neutral-500 text-sm py-8 text-center" data-testid="valuation-loading">…</p>;
@@ -117,6 +130,19 @@ export default function InventoryValuationTab() {
         </button>
       </div>
 
+      {onlyImmob && totals.immobilized_count > 0 && (
+        <div className="tactile-card p-4 border-l-2 border-red-500/50" data-testid="valuation-liq-summary">
+          <p className="text-sm text-neutral-200">
+            <Flame className="w-4 h-4 inline mr-1.5 text-red-400" />
+            {t("inventory.valuation.liqSummary", {
+              cash: fmt(totals.immobilized_value),
+              n: totals.immobilized_count,
+              recovery: fmt(totals.liquidation_recovery),
+            })}
+          </p>
+        </div>
+      )}
+
       <div className="tactile-card overflow-auto max-h-[60vh]" data-testid="valuation-table">
         <table className="w-full text-sm min-w-[1040px]">
           <thead className="border-b border-white/10 bg-[#0a0a0a] sticky top-0 z-10">
@@ -141,7 +167,7 @@ export default function InventoryValuationTab() {
               const cap = CAP[p.capital_status] || CAP.vacio;
               return (
                 <Fragment key={p.product_id}>
-                  <tr className="border-b border-white/5" data-testid={`valuation-row-${p.product_id}`}>
+                  <tr className={`border-b border-white/5 ${p.immobilized ? "bg-red-500/[0.04]" : ""}`} data-testid={`valuation-row-${p.product_id}`}>
                     <td className="px-3 py-3">
                       <button data-testid={`valuation-expand-${p.product_id}`} onClick={() => toggle(p.product_id)}
                         className="text-neutral-400 hover:text-white" title={t("inventory.valuation.lotsTitle")}>
@@ -167,6 +193,11 @@ export default function InventoryValuationTab() {
                       <span className={`text-[0.6rem] uppercase tracking-wide px-1.5 py-0.5 border ${cap.cls}`} data-testid={`valuation-status-${p.product_id}`}>
                         {t(`inventory.valuation.${cap.key}`)}
                       </span>
+                      {p.liquidation && !p.liquidation.loss && p.liquidation.discount_pct > 0 && (
+                        <span className="block mt-1 text-[0.6rem] text-red-300 font-mono" data-testid={`valuation-liq-badge-${p.product_id}`}>
+                          −{p.liquidation.discount_pct}%
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-3 font-mono text-right">{p.num_lotes}</td>
                   </tr>
@@ -174,6 +205,34 @@ export default function InventoryValuationTab() {
                     <tr className="bg-[#0a0a0a]/40" data-testid={`valuation-lots-${p.product_id}`}>
                       <td></td>
                       <td colSpan="9" className="px-3 py-3">
+                        {p.liquidation && (
+                          <div className="border border-red-500/20 bg-red-500/5 p-3 mb-3 flex items-center justify-between flex-wrap gap-2" data-testid={`valuation-liq-${p.product_id}`}>
+                            <div className="text-xs leading-relaxed">
+                              {p.liquidation.loss ? (
+                                <span className="text-red-300" data-testid={`valuation-liq-loss-${p.product_id}`}>
+                                  <Flame className="w-3.5 h-3.5 inline mr-1" />{t("inventory.valuation.liqLoss")}
+                                </span>
+                              ) : p.liquidation.discount_pct > 0 ? (
+                                <span className="text-neutral-200">
+                                  <Flame className="w-3.5 h-3.5 inline mr-1 text-red-400" />
+                                  {t("inventory.valuation.liqSuggest", { pct: p.liquidation.discount_pct, from: fmt(p.price_usd), to: fmt(p.liquidation.suggested_price) })}
+                                  <span className="block text-[0.65rem] text-neutral-500 mt-0.5">
+                                    {t("inventory.valuation.liqFree", { cash: fmt(p.liquidation.cash_to_free), rev: fmt(p.liquidation.estimated_revenue) })}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="text-neutral-400">{t("inventory.valuation.liqNoRoom")}</span>
+                              )}
+                            </div>
+                            {!p.liquidation.loss && p.liquidation.discount_pct > 0 && (
+                              <Button size="sm" data-testid={`valuation-liq-apply-${p.product_id}`} disabled={applying === p.product_id}
+                                onClick={() => applyLiquidation(p.product_id)}
+                                className="bg-red-500/80 hover:bg-red-500 text-white rounded-none text-xs h-8">
+                                {applying === p.product_id ? "…" : t("inventory.valuation.liqApply", { price: fmt(p.liquidation.suggested_price) })}
+                              </Button>
+                            )}
+                          </div>
+                        )}
                         {p.lots.length === 0 ? (
                           <p className="text-xs text-neutral-500">{t("inventory.valuation.noLots")}</p>
                         ) : (
