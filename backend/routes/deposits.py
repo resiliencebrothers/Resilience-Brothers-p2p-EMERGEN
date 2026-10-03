@@ -253,6 +253,20 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
             # Reintento idempotente del propio move: si la reserva nueva ya es
             # de ESTE depósito, solo falta asegurar la lápida de la vieja.
             if (prior or {}).get("deposit_id") != doc["id"]:
+                # DR02 v8 (iter317) — el move a una identidad AJENA falla, pero
+                # el contador de generación YA se incrementó (línea del
+                # `_next_evidence_seq` previo). Sin coordinación, el contador
+                # quedaría por delante de la generación de la reserva que SIGUE
+                # vigente (nunca se superó), y su confirmación válida casaría
+                # `evidence_claim_seq_next == my_seq` para siempre con 409 —
+                # bloqueando el crédito legítimo. Re-sincronizamos la generación
+                # de la reserva vigente con el contador ya consumido (sin
+                # decrementar nada: evitar invalidar moves concurrentes). La
+                # condición `superseded != True` protege contra pisar un move
+                # legítimo concurrente que ya movió la reserva.
+                await db.crypto_evidence_claims.update_one(
+                    {"_id": own["_id"], "superseded": {"$ne": True}},
+                    {"$set": {"movement_seq": moved_seq}})
                 raise HTTPException(
                     status_code=409,
                     detail={"code": "EVIDENCE_ALREADY_USED",
