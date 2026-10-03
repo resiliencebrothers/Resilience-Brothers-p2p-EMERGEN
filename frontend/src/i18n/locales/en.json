@@ -3988,7 +3988,8 @@
       "movements": "Movements",
       "dashboard": "Dashboard",
       "close": "Closing",
-      "stores": "Stores"
+      "stores": "Stores",
+      "valuation": "Valuation"
     },
     "stores": {
       "title": "Branches / Physical stores",
@@ -4309,7 +4310,40 @@
       "salLine": "{{units}} u · {{cost}} {{cur}} at cost",
       "closedBy": "Closed by {{email}}",
       "noClose": "This day has no recorded closing yet.",
-      "respRequired": "Enter the closing preparer"
+      "respRequired": "Enter the closing preparer",
+      "countSheetPdf": "Count sheet (PDF)",
+      "countSheetDone": "Count sheet downloaded",
+      "countSheetError": "Could not generate the count sheet"
+    },
+    "valuation": {
+      "title": "Inventory valuation",
+      "hint": "Weighted average cost (WAC) and value per lot. Current stock is assigned to the most recent lots (FIFO); older ones are considered already sold.",
+      "totProducts": "Products",
+      "totUnits": "Units",
+      "totWac": "Value (WAC)",
+      "totLots": "Value by lots",
+      "colProduct": "Product",
+      "colStock": "Stock",
+      "colWac": "WAC",
+      "colValueWac": "WAC value",
+      "colValueLots": "Lots value",
+      "colLots": "Lots",
+      "lotsTitle": "Lots (purchase history)",
+      "lotDate": "Date",
+      "lotSource": "Source",
+      "lotCost": "Unit cost",
+      "lotQty": "Quantity",
+      "lotRemaining": "Remaining",
+      "lotValue": "Remaining value",
+      "lotAge": "Days",
+      "sinLote": "{{n}} u no lot",
+      "sinLoteTotal": "{{n}} unit(s) with no historical lot (imported before lot costing). Their value is counted by WAC but does not appear in the lot detail.",
+      "noLots": "No lots recorded for this product yet.",
+      "empty": "No company products in inventory.",
+      "csvBtn": "Valuation CSV",
+      "srcAlta": "Initial",
+      "srcManual": "Purchase",
+      "days": "{{n}} d"
     }
   },
   "vendorProducts": {

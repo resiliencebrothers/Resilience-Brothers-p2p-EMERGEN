@@ -24,6 +24,7 @@ export default function InventoryCloseTab() {
   const [date, setDate] = useState(todayLocal());
   const [data, setData] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadingSheet, setDownloadingSheet] = useState(false);
   // iter320 (IPV) — revisión del cierre: alertas + firma (responsable/revisor/folio).
   const [review, setReview] = useState(null);
   const emptySign = { responsable: "", revisado_por: "", folio: "", note: "" };
@@ -48,6 +49,27 @@ export default function InventoryCloseTab() {
     } catch {
       toast.error(t("inventory.close.pdfError"));
     } finally { setDownloading(false); }
+  };
+
+  // iter321 (IPV Fase 2) — acta de conteo físico firmable del día (PDF).
+  const downloadCountSheet = async () => {
+    setDownloadingSheet(true);
+    try {
+      const r = await axios.get(`${API}/admin/inventory/count-sheet.pdf`, {
+        params: { date }, responseType: "blob", withCredentials: true,
+      });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `acta_conteo_${date}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(t("inventory.close.countSheetDone"));
+    } catch {
+      toast.error(t("inventory.close.countSheetError"));
+    } finally { setDownloadingSheet(false); }
   };
 
   const load = useCallback(() => {
@@ -104,6 +126,10 @@ export default function InventoryCloseTab() {
         <Button data-testid="close-pdf-btn" onClick={downloadPdf} disabled={downloading}
           variant="outline" size="sm" className="rounded-none border-white/10 text-xs mb-1 ml-auto">
           <FileDown className="w-3.5 h-3.5 mr-1" /> {downloading ? "…" : t("inventory.close.downloadPdf")}
+        </Button>
+        <Button data-testid="close-count-sheet-btn" onClick={downloadCountSheet} disabled={downloadingSheet}
+          variant="outline" size="sm" className="rounded-none border-white/10 text-xs mb-1">
+          <ClipboardCheck className="w-3.5 h-3.5 mr-1" /> {downloadingSheet ? "…" : t("inventory.close.countSheetPdf")}
         </Button>
       </div>
 

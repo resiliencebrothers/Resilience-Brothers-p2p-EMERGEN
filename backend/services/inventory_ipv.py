@@ -203,6 +203,47 @@ async def build_close_review(day: str) -> dict:
     }
 
 
+async def build_count_sheet(day: str) -> dict:
+    """IPV Fase 2 — datos del acta de conteo físico firmable del día: una fila
+    por producto de la empresa con stock teórico, conteo físico, diferencia y
+    estado. Si el día ya tiene cierre guardado, adjunta responsable/revisor/
+    folio para rellenar el acta; si no, el PDF deja líneas para firmar a mano."""
+    products = await db.products.find(
+        _COMPANY_FILTER, {"_id": 0, "id": 1, "name": 1, "stock": 1,
+                          "category": 1, "is_active": 1}).to_list(5000)
+    active = [p for p in products if p.get("is_active", True)]
+    counts = await list_counts(day)
+    rows = []
+    for p in sorted(active, key=lambda x: (x.get("name") or "").lower()):
+        c = counts.get(p["id"])
+        if c:
+            rows.append({
+                "name": p.get("name", ""),
+                "category": p.get("category", ""),
+                "theoretical": int(c.get("theoretical_stock") or 0),
+                "counted": c.get("counted_qty"),
+                "difference": int(c.get("difference") or 0),
+                "status": c.get("status") or "sin_conteo",
+            })
+        else:
+            rows.append({
+                "name": p.get("name", ""),
+                "category": p.get("category", ""),
+                "theoretical": int(p.get("stock") or 0),
+                "counted": None,
+                "difference": None,
+                "status": "sin_conteo",
+            })
+    close = await db.inventory_closes.find_one({"close_date": day}, {"_id": 0})
+    return {
+        "date": day,
+        "rows": rows,
+        "close": close,
+        "productos_contados": len(counts),
+        "productos_activos": len(active),
+    }
+
+
 async def save_close_review(day: str, responsable: str, revisado_por: str,
                             folio: str, note: str, actor: dict) -> dict:
     """ADMIN — guarda el cierre formal del día (constancia). No bloquea nuevos

@@ -3988,7 +3988,8 @@
       "movements": "Movimientos",
       "dashboard": "Dashboard",
       "close": "Cierre",
-      "stores": "Tiendas"
+      "stores": "Tiendas",
+      "valuation": "Valoración"
     },
     "stores": {
       "title": "Sucursales / Tiendas físicas",
@@ -4309,7 +4310,40 @@
       "salLine": "{{units}} ud · {{cost}} {{cur}} a costo",
       "closedBy": "Cerrado por {{email}}",
       "noClose": "Este día aún no tiene cierre registrado.",
-      "respRequired": "Indica el responsable del cierre"
+      "respRequired": "Indica el responsable del cierre",
+      "countSheetPdf": "Acta de conteo (PDF)",
+      "countSheetDone": "Acta de conteo descargada",
+      "countSheetError": "No se pudo generar el acta"
+    },
+    "valuation": {
+      "title": "Valoración de inventario",
+      "hint": "Costo promedio ponderado (WAC) y valor por lote. La existencia actual se asigna a los lotes más recientes (FIFO); los más antiguos se consideran ya vendidos.",
+      "totProducts": "Productos",
+      "totUnits": "Unidades",
+      "totWac": "Valor (WAC)",
+      "totLots": "Valor por lotes",
+      "colProduct": "Producto",
+      "colStock": "Existencia",
+      "colWac": "WAC",
+      "colValueWac": "Valor WAC",
+      "colValueLots": "Valor lotes",
+      "colLots": "Lotes",
+      "lotsTitle": "Lotes (historial de compras)",
+      "lotDate": "Fecha",
+      "lotSource": "Origen",
+      "lotCost": "Costo unit.",
+      "lotQty": "Cantidad",
+      "lotRemaining": "Restante",
+      "lotValue": "Valor restante",
+      "lotAge": "Días",
+      "sinLote": "{{n}} ud sin lote",
+      "sinLoteTotal": "{{n}} unidad(es) sin lote histórico (importadas antes del costeo por lote). Su valor se cuenta por WAC pero no aparece en el detalle de lotes.",
+      "noLots": "Sin lotes registrados para este producto todavía.",
+      "empty": "No hay productos en el inventario de la empresa.",
+      "csvBtn": "CSV Valoración",
+      "srcAlta": "Alta",
+      "srcManual": "Compra",
+      "days": "{{n}} d"
     }
   },
   "vendorProducts": {

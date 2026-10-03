@@ -21,7 +21,8 @@ from services.inventory import (record_movement, record_price_change,
                                 build_rotation)
 from services.inventory_ipv import (record_physical_count, clear_physical_count,
                                      authorize_count_adjustment,
-                                     build_close_review, save_close_review)
+                                     build_close_review, save_close_review,
+                                     build_count_sheet)
 from services.proof_upload import maybe_upload_proof
 
 logger = logging.getLogger(__name__)
@@ -97,9 +98,17 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
         unit_price=payload.unit_price, unit_cost=payload.unit_cost,
         note=payload.note, source="manual", actor=actor, photo_url=photo)
     # iter219 — una Entrada puede actualizar la ficha del producto (precio de
-    # venta / costo unitario). Cada cambio queda auditado (tipo 'precio').
+    # venta). iter321 (IPV Fase 2) — el COSTO ya no se reemplaza: se mezcla con
+    # el existente como costo PROMEDIO PONDERADO (WAC). Cada entrada queda como
+    # un LOTE para la valoración histórica. Todo queda auditado.
     if payload.type == "entrada":
+        from services.inventory_lots import compute_wac, record_lot
         updates = {}
+        old_cost = float(product.get("cost_usd") or 0)
+        old_stock = int(product.get("stock") or 0)
+        entry_cost = (float(payload.unit_cost) if payload.unit_cost is not None
+                      else old_cost)
+        new_wac = compute_wac(old_stock, old_cost, payload.quantity, entry_cost)
         if payload.sale_price is not None and \
                 float(payload.sale_price) != float(product.get("price_usd") or 0):
             updates["price_usd"] = round(float(payload.sale_price), 2)
@@ -107,15 +116,18 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
                 product=product, field_label="Precio venta",
                 old=float(product.get("price_usd") or 0),
                 new=updates["price_usd"], actor=actor)
-        if payload.unit_cost is not None and \
-                float(payload.unit_cost) != float(product.get("cost_usd") or 0):
-            updates["cost_usd"] = round(float(payload.unit_cost), 2)
+        if abs(new_wac - old_cost) > 1e-9:
+            updates["cost_usd"] = new_wac
             await record_price_change(
-                product=product, field_label="Costo unitario",
-                old=float(product.get("cost_usd") or 0),
-                new=updates["cost_usd"], actor=actor)
+                product=product, field_label="Costo promedio ponderado",
+                old=old_cost, new=new_wac, actor=actor)
         if updates:
             await db.products.update_one({"id": product["id"]}, {"$set": updates})
+        try:
+            await record_lot(product, payload.quantity, entry_cost, doc["id"],
+                             source=doc.get("source") or "manual", actor=actor)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"record_lot failed: {e}")
     await log_action(
         db, actor, f"inventory.{payload.type}", "inventory_movement", doc["id"],
         summary=(f"{_TYPE_LABELS[payload.type]} {payload.quantity}× "
@@ -258,6 +270,79 @@ async def post_close_review(payload: CloseReviewSave, request: Request) -> Any:
                  "alerts": doc.get("alerts_snapshot")})
     return doc
 
+
+
+# ══════════════════ IPV Fase 2: Valoración (WAC + lotes) + Acta PDF ══════════
+@router.get("/admin/inventory/valuation")
+async def inventory_valuation(request: Request) -> Any:
+    """IPV Fase 2 — valoración del inventario: por producto existencia, costo
+    promedio ponderado (WAC), valor por WAC y valor por lotes (FIFO)."""
+    await require_permission(request, "products")
+    from services.inventory_lots import build_valuation
+    return await build_valuation()
+
+
+@router.get("/admin/inventory/valuation.csv")
+async def inventory_valuation_csv(request: Request) -> Any:
+    """IPV Fase 2 — CSV contable de la valoración (producto + lotes)."""
+    import csv
+    import io
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from services.inventory_lots import build_valuation
+
+    await require_permission(request, "products")
+    data = await build_valuation()
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow(["Producto", "Categoría", "Existencia", "WAC (costo prom.)",
+                     "Valor WAC", "Valor por lotes", "Stock sin lote",
+                     "Lote fecha", "Lote costo unit.", "Lote cantidad",
+                     "Lote restante", "Lote valor restante", "Días"])
+    for p in data["products"]:
+        if p["lots"]:
+            for lot in p["lots"]:
+                writer.writerow([
+                    p["name"], p["category"], p["stock"], p["wac"],
+                    p["inventory_value_wac"], p["inventory_value_lots"],
+                    p["stock_sin_lote"], (lot.get("received_at") or "")[:10],
+                    lot["unit_cost"], lot["qty"], lot["remaining"],
+                    lot["remaining_value"],
+                    lot["age_days"] if lot["age_days"] is not None else ""])
+        else:
+            writer.writerow([p["name"], p["category"], p["stock"], p["wac"],
+                             p["inventory_value_wac"], p["inventory_value_lots"],
+                             p["stock_sin_lote"], "", "", "", "", "", ""])
+    buf = BytesIO()
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))
+    buf.seek(0)
+    ts = iso(now_utc())[:16].replace("-", "").replace(":", "").replace("T", "_")
+    return StreamingResponse(
+        buf, media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="inventario_valoracion_{ts}.csv"'})
+
+
+@router.get("/admin/inventory/count-sheet.pdf")
+async def count_sheet_pdf(request: Request, date: Optional[str] = None) -> Any:
+    """IPV Fase 2 — acta de conteo físico firmable del día (PDF)."""
+    from datetime import datetime
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from store_count_sheet_pdf import build_count_sheet_pdf
+
+    await require_permission(request, "products")
+    day = (date or today_havana())[:10]
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="Fecha inválida (formato YYYY-MM-DD)")
+    pdf = build_count_sheet_pdf(await build_count_sheet(day))
+    return StreamingResponse(
+        BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f'attachment; filename="acta_conteo_{day}.pdf"'})
 
 
 class BarcodeAssign(BaseModel):

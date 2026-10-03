@@ -913,11 +913,15 @@ async def create_product(payload: ProductCreate, request: Request) -> Any:
     if int(p.stock or 0) > 0:
         try:
             from services.inventory import record_movement
-            await record_movement(
+            mov = await record_movement(
                 product=p.model_dump(), mtype="entrada", quantity=int(p.stock),
                 unit_cost=float(p.cost_usd or 0),
                 note="Stock inicial al crear el producto",
                 source="alta", actor=actor, apply_stock=False)
+            # iter321 (IPV Fase 2) — el stock inicial es el primer LOTE.
+            from services.inventory_lots import record_lot
+            await record_lot(p.model_dump(), int(p.stock), float(p.cost_usd or 0),
+                             (mov or {}).get("id", ""), source="alta", actor=actor)
         except Exception as e:  # noqa: BLE001
             logger.error(f"initial stock entrada failed: {e}")
     return p.model_dump()
