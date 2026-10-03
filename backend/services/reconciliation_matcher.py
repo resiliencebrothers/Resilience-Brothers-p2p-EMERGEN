@@ -241,25 +241,26 @@ def _surname_candidates(order_name: Any) -> set:
 
 
 def _given_name_candidates(order_name: Any) -> set:
-    """iter313 (CB08) — nombres de PILA del titular = todos los tokens que NO
-    son evidencia de apellido (`_surname_candidates`). Antes se asumía de forma
-    RÍGIDA que los dos últimos tokens eran apellidos cuando había ≥3 palabras;
-    eso excluía el SEGUNDO nombre de pila en estructuras de 2 nombres + 1
-    apellido (p.ej. 'JOSE MANUEL PEREZ' o 'ANA MARIA GARCIA'), y remitentes
-    válidos como 'MANUEL PEREZ' o 'MARIA GARCIA' iban a revisión con
-    'given_name_missing'. Ahora, todo token que no sea apellido fiable cuenta
-    como nombre de pila; los apellidos siguen delimitados por
-    `_surname_candidates` (último token + apellidos conocidos intermedios), así
-    que un remitente de SOLO apellidos sigue bloqueado."""
+    """iter314 (CB08 v6) — nombres de PILA por EVIDENCIA POSITIVA de su función,
+    no por descarte. La AUSENCIA de un token en la lista de apellidos NO prueba
+    que sea un nombre: un PRIMER apellido intermedio DESCONOCIDO (p.ej. 'RAYDEL
+    BARO QUIAN' → BARO, o 'MELISSA ZALDIVAR OLIVER' → ZALDIVAR) no debe colarse
+    como nombre y permitir que DOS apellidos sin nombre auto-concilien. Un token
+    es nombre de pila cuando hay evidencia positiva:
+      · es el PRIMER token (posición canónica hispana del nombre), o
+      · es un nombre de pila CONOCIDO en cualquier posición (rescata el 2º
+        nombre: 'JOSE MANUEL PEREZ' → MANUEL, 'ANA MARIA GARCIA' → MARIA), o
+      · es una palabra de DOBLE función (nombre y apellido: LEON, CRUZ…).
+    Los apellidos los sigue delimitando `_surname_candidates`; así un remitente
+    de solo apellidos —conocidos o no— nunca basta para auto-conciliar."""
     toks = [t for t in normalize_name(order_name).split()
             if t not in _BANK_NOISE and len(t) >= 2]
     if len(toks) < 2:
         return set(toks)
-    surs = _surname_candidates(order_name)
-    givens = {t for t in toks if t not in surs}
-    # Salvaguarda: si por la estructura todos los tokens quedaran como apellido,
-    # el primero (posición hispana de nombre) se conserva como nombre de pila.
-    return givens or {toks[0]}
+    givens = {toks[0]}
+    givens |= {t for t in toks
+               if t in _GIVEN_NAMES or t in _DUAL_FUNCTION_NAMES}
+    return givens
 
 
 def surname_similarity(tx_name: Any, order_name: Any) -> float:
@@ -1087,6 +1088,52 @@ async def release_credit_backing(tx_id: str, target_id: str) -> None:
         {"$unset": {"credit_backing_order": "", "credit_backing_at": ""}})
 
 
+# iter314 (CB10 v2) — RESERVA ATÓMICA de la IDENTIDAD ECONÓMICA compartida entre
+# representaciones del MISMO pago (PDF/Excel). La huella difiere entre formatos
+# y cada representación es un documento distinto, así que ninguna reserva por
+# movimiento (`matching_claim`/`credit_backing_order`) serializa dos abonos que
+# representan un ÚNICO pago bancario. El candado por identidad económica
+# (cuenta|moneda|dirección|importe|fecha|remitente) sí: la 1ª representación que
+# acredita lo toma; cualquier otra con la misma identidad pierde el compare-and-
+# set y cae a revisión (jamás doble crédito), aun si ambas corren en paralelo y
+# ninguna ha cerrado todavía su conciliación. Dos pagos REALMENTE distintos
+# tienen identidades distintas (otra fecha/importe/remitente) y no colisionan.
+def _economic_identity_key(tx: Dict) -> str:
+    sender = normalize_name(tx.get("sender_name") or tx.get("description") or "")
+    if not sender:
+        return ""  # sin remitente no hay identidad concluyente
+    acc = (tx.get("bank_account_id") or "").strip()
+    cur = (tx.get("currency") or "").upper()
+    direction = tx.get("direction") or "credit"
+    amount = round(float(tx.get("amount") or 0), 2)
+    d = _iso_date(tx.get("transaction_date"))
+    date_s = d.isoformat() if d else ""
+    return f"econ|{acc}|{cur}|{direction}|{amount:.2f}|{date_s}|{sender}"
+
+
+async def claim_economic_identity(key: str, tx_id: str) -> bool:
+    """Compare-and-set atómico de la identidad económica: inserta un documento
+    con `_id = key` (único por definición). Devuelve True si ESTE movimiento la
+    posee tras la operación; False si otra representación ya la tomó."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.economic_credit_claims.insert_one(
+            {"_id": key, "tx_id": tx_id, "at": iso(now_utc())})
+        return True
+    except DuplicateKeyError:
+        existing = await db.economic_credit_claims.find_one(
+            {"_id": key}, {"tx_id": 1})
+        return bool(existing and existing.get("tx_id") == tx_id)
+
+
+async def release_economic_identity(key: str, tx_id: str) -> None:
+    """Libera la identidad económica SOLO si la posee este movimiento y su
+    crédito no llegó a comprometerse (fallback a revisión). Un crédito que sí se
+    acreditó conserva el candado para bloquear futuras reimportaciones."""
+    if key:
+        await db.economic_credit_claims.delete_one({"_id": key, "tx_id": tx_id})
+
+
 # iter312 — detección de RE-IMPORTACIÓN del mismo extracto en otro formato
 # (PDF vs Excel): la huella exacta difiere porque la referencia/concepto se
 # extraen distinto en cada formato, así que el dedupe por huella no lo atrapa.
@@ -1116,13 +1163,22 @@ async def find_reconciled_economic_twin(tx: Dict) -> Optional[Dict]:
         "id": {"$ne": tx.get("id")},
         "direction": "credit",
         "currency": (tx.get("currency") or "").upper(),
-        "status": {"$in": ["auto_matched", "manual_matched"]},
+        # iter314 (CB10) — incluye además movimientos con un crédito YA
+        # COMPROMETIDO pero sin estado final escrito (`credit_backing_order`):
+        # en la carrera de reimportación, el primer abono aprueba y acredita su
+        # orden ANTES de sellar el movimiento como auto_matched; sin esto, la
+        # segunda representación no veía al gemelo y volvía a acreditar.
+        "$or": [
+            {"status": {"$in": ["auto_matched", "manual_matched"]}},
+            {"credit_backing_order": {"$exists": True, "$nin": [None, ""]}},
+        ],
         "amount": {"$gte": amount - 0.005, "$lte": amount + 0.005},
     }
     async for cand in db.bank_transactions.find(
             q, {"_id": 0, "id": 1, "transaction_date": 1, "sender_name": 1,
                 "description": 1, "bank_account_id": 1,
-                "matched_order_id": 1, "matched_kind": 1}).limit(50):
+                "matched_order_id": 1, "matched_kind": 1,
+                "credit_backing_order": 1}).limit(50):
         if (cand.get("bank_account_id") or None) != tx_acc:
             continue
         cd = _iso_date(cand.get("transaction_date"))
@@ -1149,6 +1205,10 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
     # CB05 v2 — generación de ESTA conciliación, compartida entre el sello
     # del destino y el cierre del movimiento.
     match_uid = uuid.uuid4().hex
+    # iter314 (CB10 v2) — candado de identidad económica (se libera si este
+    # intento no llega a acreditar).
+    econ_key = ""
+    econ_owned = False
     try:
         tx["confidence_score"] = best["score"]
         if cand_doc is None:
@@ -1185,6 +1245,16 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
         if committed:
             raise RuntimeError(
                 f"credit already committed to {committed}; awaiting link close")
+        # iter314 (CB10 v2) — barrera dura entre REPRESENTACIONES del mismo pago:
+        # reservar la identidad económica ANTES de aprobar/acreditar. Si otra
+        # representación (otra huella, otro movimiento) ya la tomó, este abono es
+        # el MISMO pago reimportado → nunca acredita por segunda vez.
+        econ_key = _economic_identity_key(tx)
+        if econ_key:
+            econ_owned = await claim_economic_identity(econ_key, tx["id"])
+            if not econ_owned:
+                raise RuntimeError(
+                    "economic identity already credited by another representation")
         if cand_doc.get("kind") == "vip_batch_item":
             await approve_batch_item_from_reconciliation(
                 cand_doc["id"], tx, actor, auto=True,
@@ -1199,6 +1269,11 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
         await db.bank_transactions.update_one(
             {"id": tx["id"], "matching_claim.token": attempt_token},
             {"$unset": {"matching_claim": ""}})
+        # iter314 (CB10 v2) — este intento no acreditó: libera la identidad
+        # económica que reservó, para no bloquear un reintento legítimo ni a
+        # otra representación (que ya cayó a revisión).
+        if econ_owned:
+            await release_economic_identity(econ_key, tx["id"])
         update["status"] = "manual_review"
         return "review"
     update.update({"status": "auto_matched",

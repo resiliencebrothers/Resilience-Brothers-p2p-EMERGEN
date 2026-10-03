@@ -205,6 +205,25 @@ def _autoseed_sessions():
 
 
 @pytest.fixture(autouse=True)
+def _reset_economic_credit_claims():
+    """iter314 (CB10 v2) — el candado de identidad económica
+    (`economic_credit_claims`) es un ledger PERMANENTE en producción (bloquea
+    reimportaciones del mismo pago para siempre). En la suite, muchos tests
+    reutilizan la misma identidad sintética (mismo remitente/importe/fecha), así
+    que un candado dejado por una corrida anterior el MISMO día haría caer a
+    revisión el primer crédito del test. Se limpia antes de cada test para
+    garantizar aislamiento; cada test crea sus propios candados DURANTE su
+    ejecución, así que su lógica intra-test se conserva intacta."""
+    try:
+        from pymongo import MongoClient as _MC
+        _MC(os.environ["MONGO_URL"])[os.environ["DB_NAME"]] \
+            .economic_credit_claims.delete_many({})
+    except Exception:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_motor_client_loop_binding():
     """iter55.36 — Motor's `AsyncIOMotorClient` lazily binds to whatever event
     loop first uses it; when a sibling test finishes and its loop closes (e.g.

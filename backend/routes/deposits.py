@@ -816,6 +816,15 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
         # DR02 v3 — la confirmación final exige que la identidad reservada por
         # ESTE intento siga vigente.
         confirm_filter["evidence_claim_movement"] = req_mid
+        # DR02 v6 (iter314) — además, exige la GENERACIÓN vigente de la reserva.
+        # `_next_evidence_seq` (find_one_and_update ATÓMICO) incrementa
+        # `evidence_claim_seq_next` en el depósito al INICIO de todo movimiento
+        # de reserva, antes de cualquier otra escritura. Así, si otra
+        # confirmación concurrente movió la reserva a una generación mayor
+        # (aunque todavía no haya reescrito el sello `evidence_claim_movement`),
+        # ESTA confirmación antigua pierde el filtro y recibe 409 — el depósito
+        # confirmado y su reserva activa terminan SIEMPRE en el mismo movimiento.
+        confirm_filter["evidence_claim_seq_next"] = my_seq
     res = await db.deposits.update_one(
         confirm_filter,
         {"$set": confirm_sets},
