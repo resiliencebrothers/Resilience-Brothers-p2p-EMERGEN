@@ -2204,3 +2204,15 @@ Residual del informe sobre iter316: en la rama de "mover la reserva" de `_claim_
 - **Verificación**: `make test-critical` → **847 passed, 0 failed** (846 previos + iter317). Cero regresiones.
 - **Status**: fix en preview, verificado vía pytest. Pendiente re-despliegue a producción junto con iter314/315/316.
 
+
+## 2026-10-03 · iter318 — CB10 v4 (MEDIA): la reserva de identidad económica quedaba retenida tras revertir y borrar la importación
+
+Informe reproducido con las rutas originales: (1) conciliar automáticamente A → crédito de 100 y reserva económica propiedad de btx-A; (2) revertir la conciliación (rollback) → 200, saldo a 0; (3) borrar la importación → 200, se elimina btx-A; (4) reimportar el mismo pago con import y movimiento nuevos. El motor encontraba una orden compatible, pero la reserva (`economic_credit_claims`) seguía perteneciendo a btx-A, un registro que ya no existe → el pago caía a REVISIÓN y el saldo permanecía en 0 (sin pérdida de dinero, pero exigía intervención manual por una reserva que dejó de respaldar un crédito).
+
+- **Causa raíz**: la reserva de identidad económica (iter314/315) se CREA al acreditar y se CONSERVA mientras el crédito vive (bloquea reimportaciones del mismo pago). Pero su liberación NO estaba integrada con el ciclo de reversión/borrado: ni `rollback_match` ni `delete_import` la soltaban, dejándola huérfana de un crédito que ya no existe.
+- **Fix** (`routes/reconciliation.py`):
+  - `rollback_match`: tras revertir TODOS los efectos del crédito (orden a pendiente / acumulado debitado por `_rollback_accumulated_order_credit` —que bloquea si no puede— y vínculo bancario liberado con éxito en `fin`), se libera la identidad económica que ESE movimiento reservó: `release_economic_identity(_economic_identity_key(tx), tx_id)`. Propiedad ESTRICTA por `tx_id`: una reversión antigua jamás libera una reserva nueva de otra reimportación.
+  - `delete_import`: tras pasar el bloqueo (que aborta si algún movimiento del extracto respalda un crédito vivo), libera las reservas de identidad económica de los movimientos de ESE extracto (`economic_credit_claims.delete_many({"tx_id": {"$in": import_tx_ids}})`). Defensa en profundidad del ciclo de vida: cubre reservas colgadas por reversiones anteriores a este fix. Scope estricto por `tx_id`: no toca reservas de otro extracto.
+- **Tests**: `test_iter318_econ_claim_lifecycle.py` (4 casos): (a) reproductor completo conciliar→revertir→reimportar, la reimportación legítima acredita UNA vez (saldo 100, no atascada en revisión con 0); (b) el borrado libera la reserva de SU extracto y NO la de otro (propiedad estricta); (c) mientras el crédito siga vivo el borrado se bloquea 409 y la reserva se conserva; (d) `release_economic_identity` con dueño ajeno es no-op (propiedad estricta). Añadido al `Makefile`.
+- **Verificación**: `make test-critical` → **851 passed, 0 failed** (847 previos + 4 iter318). Cero regresiones.
+- **Status**: fix en preview, verificado vía pytest. Pendiente re-despliegue a producción junto con iter314/315/316/317.

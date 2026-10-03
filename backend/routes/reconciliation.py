@@ -554,6 +554,13 @@ async def delete_import(import_id: str, request: Request) -> Any:
     # crédito comprometido. Una confirmación que entre entre la comprobación
     # anterior y este borrado deja su movimiento respaldado → NO se borra y se
     # detecta abajo (la lectura previa no basta por sí sola).
+    # iter318 (CB10 v4) — ids de los movimientos del extracto ANTES de borrarlos,
+    # para liberar después su reserva de identidad económica. Solo las de ESTOS
+    # movimientos (propiedad estricta): nunca tocamos reservas de otro extracto
+    # ni de una reimportación nueva.
+    import_tx_ids = [t["id"] for t in await db.bank_transactions.find(
+        {"statement_import_id": import_id},
+        {"_id": 0, "id": 1}).to_list(100000)]
     removed = await db.bank_transactions.delete_many(
         {"statement_import_id": import_id,
          "status": {"$nin": ["auto_matched", "manual_matched"]},
@@ -573,6 +580,16 @@ async def delete_import(import_id: str, request: Request) -> Any:
                    "acreditación (conciliados, reclamados o con orden "
                    "vinculada). Revierte esas conciliaciones (rollback) antes "
                    "de borrar el extracto.")
+    # iter318 (CB10 v4) — todos los movimientos del extracto quedaron sin crédito
+    # vivo (el bloqueo anterior aborta si alguno respaldaba una acreditación),
+    # así que liberamos las reservas de identidad económica que poseían. Propiedad
+    # ESTRICTA por `tx_id`: jamás tocamos la reserva de otro extracto ni la de una
+    # reimportación posterior. Defensa en profundidad del ciclo de vida: aunque el
+    # rollback ya suele liberarla, un extracto con movimientos revertidos antes de
+    # este fix (o restaurados) no debe dejar la identidad retenida.
+    if import_tx_ids:
+        await db.economic_credit_claims.delete_many(
+            {"tx_id": {"$in": import_tx_ids}})
     # Borrar el archivo original almacenado (Mongo o R2).
     url = imp.get("stored_file_url") or ""
     if url.startswith("mongo://"):
@@ -1616,6 +1633,18 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
             status_code=409,
             detail="El movimiento ya respalda otra conciliación posterior; "
                    "este cierre de reversión antiguo se descartó sin liberar nada.")
+    # iter318 (CB10 v4) — CICLO DE VIDA de la reserva de identidad económica.
+    # Llegados aquí TODOS los efectos del crédito quedaron revertidos: la orden
+    # volvió a pendiente (o el acumulado se debitó sin recuperación pendiente —
+    # `_rollback_accumulated_order_credit` bloquea si no puede) y el vínculo
+    # bancario se liberó con éxito (`fin`). Recién entonces liberamos la
+    # identidad económica que ESTE movimiento reservó, para que una
+    # reimportación legítima del mismo pago pueda volver a reservarla y acreditar
+    # una vez. Propiedad ESTRICTA (`tx_id`): una reversión antigua jamás libera
+    # una reserva nueva creada por otra representación/reimportación.
+    econ_key = _economic_identity_key(tx)
+    if econ_key:
+        await release_economic_identity(econ_key, tx_id)
     await recon_audit("ROLLBACK", actor, tx=tx, order_id=order_id,
                       prev_status=prev_tx_status, new_status=new_status,
                       details={"reason": reason, "kind": kind},
