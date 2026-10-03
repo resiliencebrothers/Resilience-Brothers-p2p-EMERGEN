@@ -2235,3 +2235,13 @@ La reparación de iter317 usaba `$set movement_seq` con guard `superseded != Tru
 - **Tests**: `test_iter319_generation_ownership.py` (2 casos con proxy de BD `_HookDb` que pausa una tarea antes de la escritura atómica, reproduciendo el orden inverso real; verificación negativa confirmada: ambos tests fallan al revertir los fixes). Ajustado el stub `gated_claim` de iter315 a la nueva firma (3 args). Añadido al `Makefile`.
 - **Verificación**: `make test-critical` → **854 tests, 853 passed** (851 previos + 2 iter319). La única falla (`test_iter290::test_retry_sync_completes_fee_sync_task`) es la flakiness CONOCIDA del scheduler APScheduler — pasa aislada y junto a los tests tocados (18/18). Cero regresiones reales de código.
 - **Status**: fixes en preview, verificados vía pytest. Pendiente re-despliegue a producción (iter314–319).
+
+## 2026-10-03 · iter320 — IPV (Inventario Físico) Fase 1 COMPLETADA Y VERIFICADA
+Integración del flujo IPV del Excel del operador en el módulo de tienda física. Verificado E2E (testing_agent iter320): **16/16 backend PASS + frontend 100%**, cero incidencias.
+- **Conteo físico** (`inventory_counts`, índice único product_id+count_date): POST/DELETE `/api/admin/inventory/counts`. Contar NUNCA mueve el stock; solo calcula diferencia (contado − teórico) y estado (cuadra/faltante/sobrante). Columnas CONTEO y DIF. en la pestaña Control.
+- **Ajuste autorizado SOLO admin**: POST `/api/admin/inventory/counts/{count_id}/adjust` exige documento (<2 chars → 400), aplica ajuste_pos/ajuste_neg al stock, es idempotente (re-adjust/re-count/delete → 409). Empleado con permiso 'products' puede contar pero no ajustar (403).
+- **Salidas no-venta**: `MovementCreate.type` acepta merma|consumo|otra_salida (OUTPUT_TYPES). Descuentan stock pero NO generan ingreso ni tocan el fondo de empresa ni `daily-close.ventas`. Disponibles en el diálogo y filtro de Movimientos.
+- **Revisión + cierre formal** (`inventory_closes`): GET/POST `/api/admin/inventory/close-review`. Alertas (sin conteo / diferencias / salidas sin documento), desglose de salidas, resultado sugerido CUADRA/DESCUADRA. Cierre formal admin-only (responsable obligatorio — validado en frontend Y backend 400), deja constancia sin bloquear movimientos.
+- **Archivos**: `services/inventory_ipv.py`, `routes/inventory.py`, `services/inventory.py` (backend); `InventoryControlTab.jsx`, `InventoryMovementsTab.jsx`, `InventoryCloseTab.jsx` + i18n es/en (frontend). Test: `tests/test_iter320_ipv_phase1.py`.
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+- **Próximo (backlog)**: IPV Fase 2 — costeo ponderado y valoración histórica (P1).

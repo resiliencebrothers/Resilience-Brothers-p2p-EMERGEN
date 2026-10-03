@@ -244,6 +244,9 @@ async def post_close_review(payload: CloseReviewSave, request: Request) -> Any:
     except ValueError:
         raise HTTPException(status_code=400,
                             detail="Fecha inválida (formato YYYY-MM-DD)")
+    if not (payload.responsable or "").strip():
+        raise HTTPException(status_code=400,
+                            detail="Indica el responsable del cierre.")
     doc = await save_close_review(payload.date, payload.responsable,
                                   payload.revisado_por, payload.folio,
                                   payload.note, actor)

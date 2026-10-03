@@ -1,0 +1,31 @@
+{
+  "summary": "IPV Fase 1 (iter320) E2E — Backend: 16/16 pytest PASS cubriendo conteo físico sin tocar stock, ajuste autorizado por admin con documento (idempotencia, 409 en re-adjust/re-count/delete, 400/422 sin documento, 400 cuando diff=0), permisos (empleado puede contar pero no ajustar/cerrar; vip/normal 403), salidas no-venta (merma/consumo/otra_salida) que descuentan stock sin generar fondo ni ingresos en daily-close, revisión del cierre con alertas, cierre formal admin-only. Frontend: pestañas Control, Movimientos y Cierre renderizan correctamente; conteo via inventory-count-input + save muestra badge FALTANTE/SOBRANTE/CUADRA y NO cambia el stock; diálogo count-adjust-dialog con count-adjust-document aplica el ajuste y el stock se actualiza (24→23 verificado). Filtro y diálogo de Movimientos ofrecen tipos merma/consumo/otra_salida y movement-output-hint aparece al seleccionarlos. Pestaña Cierre renderiza todas las secciones (close-review-section/result/alerts/counted-summary/salida-*).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter320_ipv_phase1.py",
+    "/app/test_reports/pytest/iter320_ipv.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/inventory.py — _require_admin_products exige role=='admin' para adjust/close mientras que require_permission('products') permite al staff contar. Correcto por regla.",
+    "services/inventory_ipv — índice único (product_id, count_date) y check `authorized` garantizan idempotencia del ajuste.",
+    "services/inventory.record_movement — OUTPUT_TYPES producen delta negativo con total=cost*qty (valoración) pero profit=0; _record_fund_flow filtra solo entrada manual/alta y venta manual, por lo que salidas no-venta no tocan fondo ni daily-close.ventas. ✓",
+    "InventoryCloseTab.jsx — el render es condicional: review.close ? close-review-done : isAdmin ? close-review-form : close-review-admin-only. Útil para QA: cuando existe close del día, el form no aparece (comportamiento correcto por diseño).",
+    "La validación de 'responsable obligatorio al firmar' no está en el backend (Field default ''); si el operador la exige, debe implementarse en frontend (saveReview) o backend (min_length=1 en CloseReviewSave.responsable). Hueco menor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter320_ipv_phase1.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% selectores verificados"},
+  "test_credentials": "Backend pytest: test_session_{admin,employee,vip,normal}_X. Frontend browser: session_token=smoke_session_admin_iter294 → user_test_admin01.",
+  "seed_data_creation": "Pytest crea/elimina productos prod_test_ipv_* por fixture; movements/counts purgados. Un inventory_close del día quedó registrado durante tests UI (no bloquea).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "IPV Fase 1 validado E2E. Si re-ejecutas UI tests del Cierre y ves close-review-form faltante, es porque ya existe un inventory_closes para today_havana — borra `db.inventory_closes.delete_many({close_date: today})` y reintenta. Nota: la validación 'responsable obligatorio' no está implementada ni en backend (Field default='') ni visible en el frontend; si el operador la requiere, informar.",
+  "rca_of_the_issue": "N/A — todos los flujos pasan."
+}
