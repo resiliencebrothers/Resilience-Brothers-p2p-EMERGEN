@@ -4343,7 +4343,22 @@
       "csvBtn": "CSV Valoración",
       "srcAlta": "Alta",
       "srcManual": "Compra",
-      "days": "{{n}} d"
+      "days": "{{n}} d",
+      "totMargin": "Margen esperado",
+      "totImmob": "Capital inmovilizado",
+      "immobCount": "{{n}} productos",
+      "colMargin": "Margen",
+      "colSold": "Vendidas",
+      "colStatus": "Capital",
+      "daysN": "{{n}} d",
+      "onlyImmob": "Solo capital inmovilizado",
+      "capActivo": "Activo",
+      "capLento": "Lento",
+      "capSinVentas": "Sin ventas",
+      "capVacio": "—",
+      "lotMargin": "Margen %",
+      "lotMarginRem": "Margen rest.",
+      "selloutHint": "Se agota en ~{{n}} días al ritmo actual"
     }
   },
   "vendorProducts": {

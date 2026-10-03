@@ -4343,7 +4343,22 @@
       "csvBtn": "Valuation CSV",
       "srcAlta": "Initial",
       "srcManual": "Purchase",
-      "days": "{{n}} d"
+      "days": "{{n}} d",
+      "totMargin": "Expected margin",
+      "totImmob": "Immobilized capital",
+      "immobCount": "{{n}} products",
+      "colMargin": "Margin",
+      "colSold": "Sold",
+      "colStatus": "Capital",
+      "daysN": "{{n}} d",
+      "onlyImmob": "Only immobilized capital",
+      "capActivo": "Active",
+      "capLento": "Slow",
+      "capSinVentas": "No sales",
+      "capVacio": "—",
+      "lotMargin": "Margin %",
+      "lotMarginRem": "Rem. margin",
+      "selloutHint": "Sells out in ~{{n}} days at current pace"
     }
   },
   "vendorProducts": {

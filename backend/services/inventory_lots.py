@@ -98,7 +98,7 @@ def _lot_age_days(received_at: str, ref: datetime) -> Optional[int]:
         return None
 
 
-async def build_valuation() -> dict:
+async def build_valuation(window_days: int = 30) -> dict:
     """Valoración del inventario de la empresa por producto y por lote.
 
     - `inventory_value_wac` = existencia × costo promedio ponderado.
@@ -107,8 +107,17 @@ async def build_valuation() -> dict:
       actual; los más antiguos se consideran ya vendidos).
     - `stock_sin_lote` = unidades sin historial de lote (p. ej. productos
       importados antes de la Fase 2): el operador ve cuánto stock aún no tiene
-      trazabilidad por lote."""
-    from services.inventory import build_control_rows
+      trazabilidad por lote.
+
+    iter322 — además cruza con la ROTACIÓN del período (`window_days`):
+    - Por lote: margen esperado unitario/%, y margen de las unidades restantes
+      (precio de venta actual − costo del lote) → qué compras rinden más.
+    - Por producto: margen al WAC y clasificación de capital (activo / lento /
+      sin ventas) para detectar capital inmovilizado en mercancía de baja venta.
+    """
+    from datetime import datetime, timedelta
+    from services.inventory import (build_control_rows, build_rotation,
+                                     today_havana)
     rows = await build_control_rows()
     lots = await db.inventory_lots.find({}, {"_id": 0}) \
         .sort("received_at", 1).to_list(100000)
@@ -116,15 +125,31 @@ async def build_valuation() -> dict:
     for lot in lots:
         lots_by.setdefault(lot["product_id"], []).append(lot)
 
+    # Rotación (ventas) del período para cruzar con el WAC.
+    wd = max(int(window_days or 30), 1)
+    end_day = today_havana()
+    start_day = (datetime.strptime(end_day, "%Y-%m-%d")
+                 - timedelta(days=wd - 1)).strftime("%Y-%m-%d")
+    rot_by: dict = {}
+    try:
+        for rr in await build_rotation(start_day, end_day):
+            rot_by[rr["product_id"]] = rr
+    except Exception:  # noqa: BLE001
+        rot_by = {}
+
     ref = now_utc()
     out = []
     tot_val_wac = 0.0
     tot_val_lots = 0.0
     tot_units = 0
     tot_sin_lote = 0
+    tot_expected_margin = 0.0
+    tot_immob_value = 0.0
+    tot_immob_count = 0
     for r in rows:
         stock = int(r.get("stock") or 0)
         wac = float(r.get("cost_usd") or 0)
+        price = float(r.get("price_usd") or 0)
         val_wac = round(stock * wac, 2)
         plist = lots_by.get(r["product_id"], [])
         # FIFO: la existencia restante son los lotes MÁS RECIENTES.
@@ -138,45 +163,84 @@ async def build_valuation() -> dict:
         val_lots = 0.0
         for lot in plist:
             rem = alloc.get(lot["id"], 0)
-            rv = round(rem * float(lot.get("unit_cost") or 0), 2)
+            lc = float(lot.get("unit_cost") or 0)
+            rv = round(rem * lc, 2)
             val_lots += rv
+            margin_unit = round(price - lc, 2)
             lot_rows.append({
                 "id": lot["id"],
                 "received_at": lot.get("received_at"),
-                "unit_cost": float(lot.get("unit_cost") or 0),
+                "unit_cost": lc,
                 "qty": int(lot.get("qty") or 0),
                 "remaining": rem,
                 "remaining_value": rv,
+                "margin_unit": margin_unit,
+                "margin_pct": round(margin_unit / price * 100, 2) if price > 0 else None,
+                "remaining_margin": round(rem * margin_unit, 2),
                 "age_days": _lot_age_days(lot.get("received_at") or "", ref),
                 "source": lot.get("source", ""),
             })
         sin_lote = remaining if remaining > 0 else 0
+        margin_unit_wac = round(price - wac, 2)
+        expected_margin = round(stock * margin_unit_wac, 2)
+        # Rotación → clasificación de capital.
+        rr = rot_by.get(r["product_id"], {})
+        sold = int(rr.get("sold") or 0)
+        sellout = rr.get("sellout_days")
+        rotation = float(rr.get("rotation") or 0)
+        daily = float(rr.get("daily_rate") or 0)
+        if val_wac <= 0:
+            cap_status = "vacio"
+        elif sold == 0:
+            cap_status = "sin_ventas"
+        elif sellout is not None and sellout > 90:
+            cap_status = "lento"
+        else:
+            cap_status = "activo"
+        immobilized = cap_status in ("sin_ventas", "lento")
         out.append({
             "product_id": r["product_id"],
             "name": r.get("name", ""),
             "category": r.get("category", ""),
             "is_active": bool(r.get("is_active", True)),
             "stock": stock,
-            "price_usd": float(r.get("price_usd") or 0),
+            "price_usd": price,
             "wac": round(wac, 4),
             "inventory_value_wac": val_wac,
             "inventory_value_lots": round(val_lots, 2),
             "stock_sin_lote": sin_lote,
             "num_lotes": len([x for x in lot_rows if x["remaining"] > 0]),
+            "margin_unit_wac": margin_unit_wac,
+            "margin_pct_wac": round(margin_unit_wac / price * 100, 2) if price > 0 else None,
+            "expected_margin": expected_margin,
+            "sold_window": sold,
+            "daily_rate": daily,
+            "sellout_days": sellout,
+            "rotation": rotation,
+            "capital_status": cap_status,
+            "immobilized": immobilized,
             "lots": lot_rows,
         })
         tot_val_wac += val_wac
         tot_val_lots += val_lots
         tot_units += stock
         tot_sin_lote += sin_lote
+        tot_expected_margin += expected_margin
+        if immobilized:
+            tot_immob_value += val_wac
+            tot_immob_count += 1
     out.sort(key=lambda x: x["inventory_value_wac"], reverse=True)
     return {
         "products": out,
+        "window_days": wd,
         "totals": {
             "units": tot_units,
             "value_wac": round(tot_val_wac, 2),
             "value_lots": round(tot_val_lots, 2),
             "num_products": len(out),
             "stock_sin_lote": tot_sin_lote,
+            "expected_margin": round(tot_expected_margin, 2),
+            "immobilized_value": round(tot_immob_value, 2),
+            "immobilized_count": tot_immob_count,
         },
     }

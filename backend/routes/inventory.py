@@ -274,16 +274,17 @@ async def post_close_review(payload: CloseReviewSave, request: Request) -> Any:
 
 # ══════════════════ IPV Fase 2: Valoración (WAC + lotes) + Acta PDF ══════════
 @router.get("/admin/inventory/valuation")
-async def inventory_valuation(request: Request) -> Any:
+async def inventory_valuation(request: Request, window: int = 30) -> Any:
     """IPV Fase 2 — valoración del inventario: por producto existencia, costo
-    promedio ponderado (WAC), valor por WAC y valor por lotes (FIFO)."""
+    promedio ponderado (WAC), valor por WAC/lotes (FIFO), margen esperado y
+    rotación del período para detectar capital inmovilizado."""
     await require_permission(request, "products")
     from services.inventory_lots import build_valuation
-    return await build_valuation()
+    return await build_valuation(window_days=window)
 
 
 @router.get("/admin/inventory/valuation.csv")
-async def inventory_valuation_csv(request: Request) -> Any:
+async def inventory_valuation_csv(request: Request, window: int = 30) -> Any:
     """IPV Fase 2 — CSV contable de la valoración (producto + lotes)."""
     import csv
     import io
@@ -292,27 +293,35 @@ async def inventory_valuation_csv(request: Request) -> Any:
     from services.inventory_lots import build_valuation
 
     await require_permission(request, "products")
-    data = await build_valuation()
+    data = await build_valuation(window_days=window)
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
     writer.writerow(["Producto", "Categoría", "Existencia", "WAC (costo prom.)",
-                     "Valor WAC", "Valor por lotes", "Stock sin lote",
-                     "Lote fecha", "Lote costo unit.", "Lote cantidad",
-                     "Lote restante", "Lote valor restante", "Días"])
+                     "Precio venta", "Margen %", "Valor WAC", "Valor por lotes",
+                     "Margen esperado", "Stock sin lote", "Vendidas (período)",
+                     "Días p/agotar", "Estado capital", "Lote fecha",
+                     "Lote costo unit.", "Lote cantidad", "Lote restante",
+                     "Lote valor restante", "Lote margen %",
+                     "Lote margen restante", "Días"])
+    cap_es = {"activo": "Activo", "lento": "Lento", "sin_ventas": "Sin ventas",
+              "vacio": "Sin stock"}
     for p in data["products"]:
+        base = [p["name"], p["category"], p["stock"], p["wac"], p["price_usd"],
+                p["margin_pct_wac"] if p["margin_pct_wac"] is not None else "",
+                p["inventory_value_wac"], p["inventory_value_lots"],
+                p["expected_margin"], p["stock_sin_lote"], p["sold_window"],
+                p["sellout_days"] if p["sellout_days"] is not None else "",
+                cap_es.get(p["capital_status"], p["capital_status"])]
         if p["lots"]:
             for lot in p["lots"]:
-                writer.writerow([
-                    p["name"], p["category"], p["stock"], p["wac"],
-                    p["inventory_value_wac"], p["inventory_value_lots"],
-                    p["stock_sin_lote"], (lot.get("received_at") or "")[:10],
-                    lot["unit_cost"], lot["qty"], lot["remaining"],
-                    lot["remaining_value"],
+                writer.writerow(base + [
+                    (lot.get("received_at") or "")[:10], lot["unit_cost"],
+                    lot["qty"], lot["remaining"], lot["remaining_value"],
+                    lot["margin_pct"] if lot["margin_pct"] is not None else "",
+                    lot["remaining_margin"],
                     lot["age_days"] if lot["age_days"] is not None else ""])
         else:
-            writer.writerow([p["name"], p["category"], p["stock"], p["wac"],
-                             p["inventory_value_wac"], p["inventory_value_lots"],
-                             p["stock_sin_lote"], "", "", "", "", "", ""])
+            writer.writerow(base + ["", "", "", "", "", "", "", ""])
     buf = BytesIO()
     buf.write(text_buf.getvalue().encode("utf-8-sig"))
     buf.seek(0)
