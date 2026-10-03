@@ -1111,27 +1111,56 @@ def _economic_identity_key(tx: Dict) -> str:
     return f"econ|{acc}|{cur}|{direction}|{amount:.2f}|{date_s}|{sender}"
 
 
-async def claim_economic_identity(key: str, tx_id: str) -> bool:
+async def claim_economic_identity(key: str, tx_id: str,
+                                  match_uid: str = "") -> bool:
     """Compare-and-set atómico de la identidad económica: inserta un documento
     con `_id = key` (único por definición). Devuelve True si ESTE movimiento la
-    posee tras la operación; False si otra representación ya la tomó."""
+    posee tras la operación; False si otra representación ya la tomó.
+
+    CB10 v5 (iter319) — la reserva lleva además el TOKEN DE CICLO (`match_uid`)
+    de la conciliación que la adquirió. Si el MISMO movimiento se reconcilia otra
+    vez en un ciclo nuevo (tras una reversión), se RENUEVA el token para que ese
+    ciclo nuevo sea el dueño vigente; así una reversión antigua (con el token
+    viejo) ya no puede liberar la reserva que ahora protege el crédito nuevo."""
     from pymongo.errors import DuplicateKeyError
     try:
         await db.economic_credit_claims.insert_one(
-            {"_id": key, "tx_id": tx_id, "at": iso(now_utc())})
+            {"_id": key, "tx_id": tx_id, "match_uid": match_uid,
+             "at": iso(now_utc())})
         return True
     except DuplicateKeyError:
         existing = await db.economic_credit_claims.find_one(
             {"_id": key}, {"tx_id": 1})
-        return bool(existing and existing.get("tx_id") == tx_id)
+        if not existing or existing.get("tx_id") != tx_id:
+            return False
+        # Mismo movimiento reconciliado en un CICLO NUEVO: renovamos el token de
+        # ciclo vigente para que una reversión antigua no pueda liberarlo.
+        await db.economic_credit_claims.update_one(
+            {"_id": key, "tx_id": tx_id},
+            {"$set": {"match_uid": match_uid, "at": iso(now_utc())}})
+        return True
 
 
-async def release_economic_identity(key: str, tx_id: str) -> None:
-    """Libera la identidad económica SOLO si la posee este movimiento y su
-    crédito no llegó a comprometerse (fallback a revisión). Un crédito que sí se
-    acreditó conserva el candado para bloquear futuras reimportaciones."""
-    if key:
-        await db.economic_credit_claims.delete_one({"_id": key, "tx_id": tx_id})
+async def release_economic_identity(key: str, tx_id: str,
+                                    match_uid: Optional[str] = None) -> None:
+    """Libera la identidad económica SOLO si la posee este movimiento Y el ciclo
+    (`match_uid`) coincide con el que se está deshaciendo. Un crédito que sí se
+    acreditó conserva el candado para bloquear futuras reimportaciones.
+
+    CB10 v5 (iter319) — propiedad ESTRICTA por ciclo: una reversión antigua (con
+    su token viejo) jamás libera la reserva que un ciclo posterior RENOVÓ sobre
+    el MISMO movimiento (mismo `tx_id`, token distinto). Las reservas heredadas
+    sin token siguen liberándose por su dueño para no quedar huérfanas."""
+    if not key:
+        return
+    flt = {"_id": key, "tx_id": tx_id}
+    if match_uid:
+        # El token del ciclo revertido debe coincidir; o ser una reserva heredada
+        # sin token (compatibilidad con reservas previas a este protocolo).
+        flt["$or"] = [{"match_uid": match_uid},
+                      {"match_uid": {"$in": [None, ""]}},
+                      {"match_uid": {"$exists": False}}]
+    await db.economic_credit_claims.delete_one(flt)
 
 
 # iter312 — detección de RE-IMPORTACIÓN del mismo extracto en otro formato
@@ -1251,7 +1280,8 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
         # el MISMO pago reimportado → nunca acredita por segunda vez.
         econ_key = _economic_identity_key(tx)
         if econ_key:
-            econ_owned = await claim_economic_identity(econ_key, tx["id"])
+            econ_owned = await claim_economic_identity(econ_key, tx["id"],
+                                                       match_uid)
             if not econ_owned:
                 raise RuntimeError(
                     "economic identity already credited by another representation")
@@ -1273,7 +1303,7 @@ async def _apply_auto_match(tx: Dict, best: Dict, pool: List[Dict],
         # económica que reservó, para no bloquear un reintento legítimo ni a
         # otra representación (que ya cayó a revisión).
         if econ_owned:
-            await release_economic_identity(econ_key, tx["id"])
+            await release_economic_identity(econ_key, tx["id"], match_uid)
         update["status"] = "manual_review"
         return "review"
     update.update({"status": "auto_matched",

@@ -1211,7 +1211,7 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
     econ_owned = False
     override_used = False
     if not resuming and econ_key:
-        econ_owned = await claim_economic_identity(econ_key, tx_id)
+        econ_owned = await claim_economic_identity(econ_key, tx_id, match_uid)
         if not econ_owned:
             if not payload.override_duplicate:
                 await _release_bank_claim(tx_id, attempt_token)
@@ -1257,7 +1257,7 @@ async def confirm_match(tx_id: str, payload: ConfirmPayload, request: Request) -
             # que reservó, para no bloquear un reintento legítimo ni a otra
             # representación.
             if econ_owned:
-                await release_economic_identity(econ_key, tx_id)
+                await release_economic_identity(econ_key, tx_id, match_uid)
             if committed:
                 # CB03 v4 — el abono ya respalda OTRO destino: este intento no
                 # puede acreditar un segundo crédito con el mismo pago.
@@ -1640,11 +1640,13 @@ async def rollback_match(tx_id: str, payload: RollbackPayload, request: Request)
     # bancario se liberó con éxito (`fin`). Recién entonces liberamos la
     # identidad económica que ESTE movimiento reservó, para que una
     # reimportación legítima del mismo pago pueda volver a reservarla y acreditar
-    # una vez. Propiedad ESTRICTA (`tx_id`): una reversión antigua jamás libera
-    # una reserva nueva creada por otra representación/reimportación.
+    # una vez. Propiedad ESTRICTA por CICLO (`tx_id` + `match_uid`): una reversión
+    # antigua jamás libera una reserva que un ciclo posterior renovó sobre el
+    # mismo movimiento (CB10 v5 / iter319) ni una reserva nueva de otra
+    # representación/reimportación.
     econ_key = _economic_identity_key(tx)
     if econ_key:
-        await release_economic_identity(econ_key, tx_id)
+        await release_economic_identity(econ_key, tx_id, expected_match_uid)
     await recon_audit("ROLLBACK", actor, tx=tx, order_id=order_id,
                       prev_status=prev_tx_status, new_status=new_status,
                       details={"reason": reason, "kind": kind},

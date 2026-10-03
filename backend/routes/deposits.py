@@ -264,8 +264,18 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
                 # decrementar nada: evitar invalidar moves concurrentes). La
                 # condición `superseded != True` protege contra pisar un move
                 # legítimo concurrente que ya movió la reserva.
+                # DR02 v9 (iter319) — la reparación debe ser MONOTÓNICA: dos
+                # moves inválidos concurrentes pueden terminar sus reparaciones
+                # en orden inverso; una reparación antigua (`moved_seq` menor) no
+                # puede HACER RETROCEDER `movement_seq` por debajo de una
+                # reparación más reciente, o la confirmación válida volvería a
+                # recibir 409. El guard `movement_seq < moved_seq` (o sin valor)
+                # garantiza que solo se incremente, nunca se reduzca.
                 await db.crypto_evidence_claims.update_one(
-                    {"_id": own["_id"], "superseded": {"$ne": True}},
+                    {"_id": own["_id"], "superseded": {"$ne": True},
+                     "$or": [{"movement_seq": {"$lt": moved_seq}},
+                             {"movement_seq": None},
+                             {"movement_seq": {"$exists": False}}]},
                     {"$set": {"movement_seq": moved_seq}})
                 raise HTTPException(
                     status_code=409,

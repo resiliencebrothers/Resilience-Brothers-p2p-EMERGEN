@@ -90,6 +90,7 @@ test-critical: ## Run critical regression subset (~2 min, 190 tests) — pre-com
 		tests/test_iter316_dr02_generation_pending_guard.py \
 		tests/test_iter317_dr02_failed_move_reservation_sync.py \
 		tests/test_iter318_econ_claim_lifecycle.py \
+		tests/test_iter319_generation_ownership.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

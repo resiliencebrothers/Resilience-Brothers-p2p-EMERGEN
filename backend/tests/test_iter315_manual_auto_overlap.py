@@ -157,11 +157,11 @@ class TestManualAutoOverlap:
             recon.require_permission = _stub_permission
             reached, gate = asyncio.Event(), asyncio.Event()
 
-            async def gated_claim(key, tx_id):
+            async def gated_claim(key, tx_id, match_uid=""):
                 if tx_id == tx_xls:  # pausa SOLO la reserva de la automática
                     reached.set()
                     await asyncio.wait_for(gate.wait(), timeout=20)
-                return await real_claim(key, tx_id)
+                return await real_claim(key, tx_id, match_uid)
 
             rm.claim_economic_identity = gated_claim
             try:
