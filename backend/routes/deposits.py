@@ -139,19 +139,29 @@ def _evidence_claim_key(network: str, tx_hash: str, currency: str,
     return f"{base}|{(movement_id or '').strip()}"
 
 
-async def _next_evidence_seq(deposit_id: str) -> int:
-    """DR02 v5 (iter313) — secuencia monotónica por depósito para ordenar las
-    reservas de evidencia. Cada creación/movimiento de reserva obtiene un número
-    estrictamente creciente; el sello de identidad en el depósito solo puede
-    escribirlo un intento con secuencia ≥ a la ya grabada, de modo que una
-    reserva ANTIGUA (superada por otra confirmación) jamás re-sella el depósito."""
+async def _next_evidence_seq(deposit_id: str,
+                             require_pending: bool = True) -> Optional[int]:
+    """DR02 v5/v7 — secuencia monotónica por depósito para ordenar las reservas
+    de evidencia. El incremento de generación es CONDICIONAL al estado 'pending'
+    del depósito y ATÓMICO con esa comprobación: un depósito que YA salió de
+    pendiente (confirmado/rechazado) NO es elegible y la operación devuelve
+    None. Así ningún intento puede bumpear la generación ni mover/crear reservas
+    sobre un depósito ya resuelto (la comprobación de estado deja de ser una
+    lectura separada previa al incremento). El sello de identidad solo lo
+    escribe un intento con secuencia ≥ a la grabada; una reserva ANTIGUA
+    (superada por otra confirmación) jamás re-sella el depósito."""
     from pymongo import ReturnDocument
+    filt: dict = {"id": deposit_id}
+    if require_pending:
+        filt["status"] = "pending"
     d = await db.deposits.find_one_and_update(
-        {"id": deposit_id},
+        filt,
         {"$inc": {"evidence_claim_seq_next": 1}},
         projection={"_id": 0, "evidence_claim_seq_next": 1},
         return_document=ReturnDocument.AFTER)
-    return int((d or {}).get("evidence_claim_seq_next") or 1)
+    if d is None:
+        return None  # depósito no elegible: ya salió de pendiente
+    return int(d.get("evidence_claim_seq_next") or 1)
 
 
 async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
@@ -191,10 +201,18 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
             seq = own.get("movement_seq")
             if seq is None:
                 seq = await _next_evidence_seq(doc["id"])
+                if seq is None:
+                    # Depósito ya no pendiente: NO se bumpea la generación; se
+                    # lee el contador vigente (la confirmación fallará por
+                    # estado), sin tocar la reserva.
+                    cur = await db.deposits.find_one(
+                        {"id": doc["id"]},
+                        {"_id": 0, "evidence_claim_seq_next": 1})
+                    return int((cur or {}).get("evidence_claim_seq_next") or 1)
                 await db.crypto_evidence_claims.update_one(
                     {"_id": own["_id"]}, {"$set": {"movement_seq": seq}})
             return int(seq)
-        # DR02 v4 — reanudación con OTRO ID de movimiento. La identidad vieja
+        # DR02 v4/v7 — reanudación con OTRO ID de movimiento. La identidad vieja
         # NUNCA se libera: se INSERTA la reserva nueva y la anterior queda
         # sellada como LÁPIDA (`superseded`) conservando su clave. Así su
         # entrada sigue ocupando el índice único y una confirmación viva que
@@ -203,18 +221,22 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
         # un único pago on-chain). El depósito y su reserva vigente terminan
         # con la MISMA identidad nueva; un movimiento REALMENTE distinto (jamás
         # reservado) se sigue aceptando.
-        fresh_dep = await db.deposits.find_one(
-            {"id": doc["id"]}, {"_id": 0, "status": 1})
-        if (fresh_dep or {}).get("status") != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail="Este depósito ya fue procesado — la identidad de su "
-                       "reserva no puede cambiar.")
         new_key = _evidence_claim_key(doc.get("network") or "",
                                       doc["tx_hash"], doc["currency"],
                                       req_mid)
         moved_at = iso(now_utc())
+        # DR02 v7 (iter316) — el incremento de generación es la GUARDA ATÓMICA:
+        # si el depósito YA salió de pendiente (otra confirmación ganó), devuelve
+        # None y RECHAZAMOS el intento ANTES de crear o sustituir reservas. No se
+        # devuelve una generación de respaldo que permita continuar. Cierra la
+        # carrera donde la comprobación de estado era una lectura separada previa
+        # al incremento.
         moved_seq = await _next_evidence_seq(doc["id"])
+        if moved_seq is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Este depósito ya fue procesado — la identidad de su "
+                       "reserva no puede cambiar.")
         try:
             await db.crypto_evidence_claims.insert_one({
                 "claim_key": new_key, "deposit_id": doc["id"],
@@ -252,6 +274,12 @@ async def _claim_crypto_evidence(doc: dict, movement_id: str = "") -> int:
     key = _evidence_claim_key(doc.get("network") or "", doc["tx_hash"],
                               doc["currency"], req_mid)
     first_seq = await _next_evidence_seq(doc["id"])
+    if first_seq is None:
+        # DR02 v7 — no se reserva evidencia nueva sobre un depósito que ya salió
+        # de pendiente.
+        raise HTTPException(
+            status_code=409,
+            detail="Este depósito ya fue procesado — no admite nueva evidencia.")
     try:
         await db.crypto_evidence_claims.insert_one({
             "claim_key": key, "deposit_id": doc["id"],
