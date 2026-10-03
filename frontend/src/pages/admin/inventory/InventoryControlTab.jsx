@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
-import { BellRing, Search, Plus, Eye, EyeOff, Trash2 } from "lucide-react";
+import { BellRing, Search, Plus, Eye, EyeOff, Trash2, Check, X, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -47,6 +47,10 @@ export default function InventoryControlTab() {
   const [currencies, setCurrencies] = useState([]);
   const [totpOpen, setTotpOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // iter320 (IPV) — conteo físico inline + ajuste autorizado (admin).
+  const [countDraft, setCountDraft] = useState({});
+  const [adjust, setAdjust] = useState(null);
+  const [adjustBusy, setAdjustBusy] = useState(false);
 
   const load = useCallback(() => {
     axios.get(`${API}/admin/inventory/control`, { withCredentials: true })
@@ -85,6 +89,50 @@ export default function InventoryControlTab() {
   };
 
   const statusLabel = { ok: t("inventory.control.statusOk"), bajo: t("inventory.control.statusLow"), agotado: t("inventory.control.statusOut") };
+
+  // iter320 (IPV) — estado del conteo físico por producto.
+  const COUNT_STATUS = {
+    sin_conteo: { label: t("inventory.control.cstSinConteo"), cls: "text-neutral-500 border-white/10" },
+    cuadra: { label: t("inventory.control.cstCuadra"), cls: "text-emerald-400 border-emerald-500/30" },
+    faltante: { label: t("inventory.control.cstFaltante"), cls: "text-red-400 border-red-500/30" },
+    sobrante: { label: t("inventory.control.cstSobrante"), cls: "text-amber-300 border-amber-500/30" },
+    ajustado: { label: t("inventory.control.cstAjustado"), cls: "text-sky-300 border-sky-500/30" },
+  };
+
+  const saveCount = async (r) => {
+    const raw = countDraft[r.product_id] !== undefined ? countDraft[r.product_id] : r.counted_qty;
+    if (raw === "" || raw === null || raw === undefined) return;
+    const qty = parseInt(raw);
+    if (isNaN(qty) || qty < 0) return toast.error(t("inventory.control.countPlaceholder"));
+    try {
+      await axios.post(`${API}/admin/inventory/counts`, { product_id: r.product_id, counted_qty: qty, note: "" }, { withCredentials: true });
+      toast.success(t("inventory.control.countSaved"));
+      setCountDraft((d) => { const n = { ...d }; delete n[r.product_id]; return n; });
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+  };
+
+  const clearCount = async (r) => {
+    try {
+      await axios.delete(`${API}/admin/inventory/counts/${r.product_id}`, { withCredentials: true });
+      toast.success(t("inventory.control.countCleared"));
+      setCountDraft((d) => { const n = { ...d }; delete n[r.product_id]; return n; });
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+  };
+
+  const doAdjust = async () => {
+    if (!adjust?.row?.count_id) return;
+    if (!adjust.document || adjust.document.trim().length < 2) return toast.error(t("inventory.control.adjustDocHint"));
+    setAdjustBusy(true);
+    try {
+      await axios.post(`${API}/admin/inventory/counts/${adjust.row.count_id}/adjust`, { document: adjust.document.trim(), note: adjust.note || "" }, { withCredentials: true });
+      toast.success(t("inventory.control.adjustDone"));
+      setAdjust(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+    finally { setAdjustBusy(false); }
+  };
 
   const onProductPhoto = (file) => {
     if (!file) return;
@@ -209,7 +257,8 @@ export default function InventoryControlTab() {
         </div>
       )}
       <div className="tactile-card overflow-auto max-h-[65vh]" data-testid="inventory-control-table">
-      <table className="w-full text-sm min-w-[980px]">
+      <p className="text-[0.65rem] text-neutral-500 px-4 pt-3" data-testid="inventory-count-hint">{t("inventory.control.countHint")}</p>
+      <table className="w-full text-sm min-w-[1180px]">
         <thead className="border-b border-white/10 bg-[#0a0a0a] sticky top-0 z-10">
           <tr className="text-left">
             <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.control.product")}</th>
@@ -221,19 +270,21 @@ export default function InventoryControlTab() {
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.invValue")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.soldToday")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.revenueToday")}</th>
+            <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.control.colCount")}</th>
+            <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.control.colDiff")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.control.status")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.control.actions")}</th>
           </tr>
         </thead>
         <tbody>
           {loading && (
-            <tr><td colSpan="11" className="text-center text-neutral-500 py-8">…</td></tr>
+            <tr><td colSpan="13" className="text-center text-neutral-500 py-8">…</td></tr>
           )}
           {!loading && rows.length === 0 && (
-            <tr><td colSpan="11" className="text-center text-neutral-500 py-8">{t("inventory.control.empty")}</td></tr>
+            <tr><td colSpan="13" className="text-center text-neutral-500 py-8">{t("inventory.control.empty")}</td></tr>
           )}
           {!loading && rows.length > 0 && visible.length === 0 && (
-            <tr><td colSpan="11" className="text-center text-neutral-500 py-8" data-testid="inventory-search-empty">{t("inventory.control.searchEmpty")}</td></tr>
+            <tr><td colSpan="13" className="text-center text-neutral-500 py-8" data-testid="inventory-search-empty">{t("inventory.control.searchEmpty")}</td></tr>
           )}
           {visible.map((r) => (
             <tr key={r.product_id} className="border-b border-white/5" data-testid={`inventory-row-${r.product_id}`}>
@@ -249,6 +300,42 @@ export default function InventoryControlTab() {
               <td className="px-4 py-3 font-mono text-right">{fmt(r.inventory_value)}</td>
               <td className="px-4 py-3 font-mono text-right">{r.sold_today}</td>
               <td className="px-4 py-3 font-mono text-right">{fmt(r.revenue_today)}</td>
+              <td className="px-4 py-3" data-testid={`inventory-count-cell-${r.product_id}`}>
+                {r.count_authorized ? (
+                  <span className="text-xs text-sky-300 font-mono">{r.counted_qty}</span>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <input type="number" min="0"
+                      data-testid={`inventory-count-input-${r.product_id}`}
+                      value={countDraft[r.product_id] !== undefined ? countDraft[r.product_id] : (r.counted_qty ?? "")}
+                      onChange={(e) => setCountDraft((d) => ({ ...d, [r.product_id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveCount(r); }}
+                      placeholder={t("inventory.control.countPlaceholder")}
+                      className="w-16 h-8 bg-[#0a0a0a] border border-white/10 text-sm px-2 text-white font-mono" />
+                    <button data-testid={`inventory-count-save-${r.product_id}`} onClick={() => saveCount(r)}
+                      title={t("inventory.control.countSave")} className="text-neutral-400 hover:text-emerald-400">
+                      <Check className="w-4 h-4" />
+                    </button>
+                    {r.counted_qty !== null && r.counted_qty !== undefined && (
+                      <button data-testid={`inventory-count-clear-${r.product_id}`} onClick={() => clearCount(r)}
+                        title={t("inventory.control.countClear")} className="text-neutral-400 hover:text-red-400">
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </td>
+              <td className="px-4 py-3" data-testid={`inventory-diff-${r.product_id}`}>
+                {(() => {
+                  const st = COUNT_STATUS[r.count_status] || COUNT_STATUS.sin_conteo;
+                  const showNum = r.count_status === "faltante" || r.count_status === "sobrante";
+                  return (
+                    <span className={`text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border whitespace-nowrap ${st.cls}`} data-testid={`inventory-count-status-${r.product_id}`}>
+                      {st.label}{showNum ? ` ${r.count_difference > 0 ? "+" : ""}${r.count_difference}` : ""}
+                    </span>
+                  );
+                })()}
+              </td>
               <td className="px-4 py-3">
                 <span className={`text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border ${STATUS_STYLES[r.estado]}`} data-testid={`inventory-status-${r.product_id}`}>
                   {statusLabel[r.estado]}
@@ -256,6 +343,16 @@ export default function InventoryControlTab() {
               </td>
               <td className="px-4 py-3">
                 <div className="flex gap-2">
+                  {isAdmin && r.count_status !== "sin_conteo" && r.count_difference !== 0 && !r.count_authorized && (
+                    <button
+                      onClick={() => setAdjust({ row: r, document: "", note: "" })}
+                      data-testid={`inventory-adjust-${r.product_id}`}
+                      className="text-neutral-400 hover:text-sky-300"
+                      title={t("inventory.control.adjustAction")}
+                    >
+                      <Wrench className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     onClick={() => toggleActive(r)}
                     data-testid={`inventory-toggle-${r.product_id}`}
@@ -400,6 +497,38 @@ export default function InventoryControlTab() {
               {addBusy ? "…" : t("inventory.control.formSave")}
             </Button>
           </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!adjust} onOpenChange={(v) => !v && setAdjust(null)}>
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none" data-testid="count-adjust-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display">{t("inventory.control.adjustTitle")}</DialogTitle>
+          </DialogHeader>
+          {adjust && (
+            <div className="space-y-3">
+              <p className="text-xs text-neutral-400">
+                {t("inventory.control.adjustDesc", { name: adjust.row.name, diff: `${adjust.row.count_difference > 0 ? "+" : ""}${adjust.row.count_difference}` })}
+              </p>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("inventory.control.adjustDoc")}</Label>
+                <Input data-testid="count-adjust-document" value={adjust.document}
+                  onChange={(e) => setAdjust((a) => ({ ...a, document: e.target.value }))}
+                  placeholder={t("inventory.control.adjustDocHint")}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("inventory.control.adjustNote")}</Label>
+                <Input data-testid="count-adjust-note" value={adjust.note}
+                  onChange={(e) => setAdjust((a) => ({ ...a, note: e.target.value }))}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+              </div>
+              <Button data-testid="count-adjust-confirm" onClick={doAdjust} disabled={adjustBusy}
+                className="w-full bg-sky-700 hover:bg-sky-600 text-white font-bold rounded-none h-11">
+                {adjustBusy ? "…" : t("inventory.control.adjustConfirm")}
+              </Button>
+            </div>
           )}
         </DialogContent>
       </Dialog>

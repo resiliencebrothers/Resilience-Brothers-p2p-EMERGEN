@@ -17,6 +17,9 @@ const TYPE_STYLES = {
   ajuste_pos: "text-sky-300",
   ajuste_neg: "text-red-400",
   precio: "text-fuchsia-300",
+  merma: "text-orange-400",
+  consumo: "text-cyan-300",
+  otra_salida: "text-rose-300",
 };
 
 const selectCls = "w-full h-10 mt-1 bg-[#0a0a0a] border border-white/10 text-sm px-3 text-white";
@@ -37,6 +40,9 @@ export default function InventoryMovementsTab() {
   const createTypes = {
     entrada: t("inventory.movements.typeEntrada"),
     venta: t("inventory.movements.typeVenta"),
+    merma: t("inventory.movements.typeMerma"),
+    consumo: t("inventory.movements.typeConsumo"),
+    otra_salida: t("inventory.movements.typeOtraSalida"),
   };
   const displayLabel = {
     ...createTypes,
@@ -44,6 +50,8 @@ export default function InventoryMovementsTab() {
     ajuste_neg: t("inventory.movements.typeAjusteNeg"),
     precio: t("inventory.movements.typePrecio"),
   };
+  // iter320 (IPV) — salidas no-venta que requieren motivo/documento.
+  const OUTPUT_TYPES = ["merma", "consumo", "otra_salida"];
 
   const load = useCallback(() => {
     const params = {};
@@ -106,6 +114,9 @@ export default function InventoryMovementsTab() {
             <option value="">{t("inventory.movements.filterAll")}</option>
             <option value="entrada">{t("inventory.movements.typeEntrada")}</option>
             <option value="venta">{t("inventory.movements.typeVenta")}</option>
+            <option value="merma">{t("inventory.movements.typeMerma")}</option>
+            <option value="consumo">{t("inventory.movements.typeConsumo")}</option>
+            <option value="otra_salida">{t("inventory.movements.typeOtraSalida")}</option>
             <option value="precio">{t("inventory.movements.typePrecio")}</option>
           </select>
           <select
@@ -212,6 +223,9 @@ export default function InventoryMovementsTab() {
             <div>
               <Label className="micro-label text-neutral-500">{t("inventory.movements.note")}</Label>
               <Input data-testid="movement-note" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+              {OUTPUT_TYPES.includes(form.type) && (
+                <p className="text-[0.65rem] text-orange-300/80 mt-1" data-testid="movement-output-hint">{t("inventory.movements.outputNoteHint")}</p>
+              )}
             </div>
             <div>
               <Label className="micro-label text-neutral-500">{t("inventory.movements.photo")}</Label>

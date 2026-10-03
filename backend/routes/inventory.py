@@ -19,20 +19,27 @@ from services.inventory import (record_movement, record_price_change,
                                 _day_bounds, today_havana,
                                 build_control_rows, build_dashboard,
                                 build_rotation)
+from services.inventory_ipv import (record_physical_count, clear_physical_count,
+                                     authorize_count_adjustment,
+                                     build_close_review, save_close_review)
 from services.proof_upload import maybe_upload_proof
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Inventory"])
 
 _TYPE_LABELS = {"entrada": "Entrada", "venta": "Venta",
-                "ajuste_pos": "Ajuste +", "ajuste_neg": "Ajuste −"}
+                "ajuste_pos": "Ajuste +", "ajuste_neg": "Ajuste −",
+                "merma": "Merma", "consumo": "Consumo interno",
+                "otra_salida": "Otra salida"}
 
 
 class MovementCreate(BaseModel):
     # iter219 — los ajustes manuales se retiraron a pedido del operador:
     # solo Entrada y Venta (los reversos internos siguen usando ajuste_pos).
+    # iter320 (IPV) — además, salidas NO-venta: merma, consumo interno y otras
+    # salidas (traslado / devolución a proveedor).
     product_id: str
-    type: Literal["entrada", "venta"]
+    type: Literal["entrada", "venta", "merma", "consumo", "otra_salida"]
     quantity: int = Field(..., gt=0, le=1_000_000)
     unit_price: Optional[float] = Field(None, ge=0)
     unit_cost: Optional[float] = Field(None, ge=0)
@@ -121,6 +128,133 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
     except Exception as e:  # noqa: BLE001
         logger.error(f"products_changed publish failed: {e}")
     return doc
+
+
+# ══════════════════ IPV: Conteo físico + Revisión del cierre (iter320) ═══════
+async def _require_admin_products(request: Request) -> dict:
+    """Solo un administrador revisa/cierra y autoriza ajustes de conteo
+    (separación de funciones: cualquier staff con 'products' puede contar)."""
+    actor = await require_permission(request, "products")
+    if actor.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede revisar/cerrar el día o "
+                   "autorizar un ajuste por conteo.")
+    return actor
+
+
+class CountCreate(BaseModel):
+    product_id: str
+    counted_qty: int = Field(..., ge=0, le=100_000_000)
+    note: str = Field("", max_length=300)
+
+
+class CountAdjust(BaseModel):
+    document: str = Field(..., min_length=2, max_length=300)
+    note: str = Field("", max_length=300)
+
+
+class CloseReviewSave(BaseModel):
+    date: str = Field(..., min_length=10, max_length=10)
+    responsable: str = Field("", max_length=120)
+    revisado_por: str = Field("", max_length=120)
+    folio: str = Field("", max_length=60)
+    note: str = Field("", max_length=300)
+
+
+@router.post("/admin/inventory/counts")
+async def create_count(payload: CountCreate, request: Request) -> Any:
+    """Registra/actualiza el conteo físico de hoy de un producto (staff con
+    permiso 'products'). No altera el stock."""
+    actor = await require_permission(request, "products")
+    product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if product.get("owner_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Los productos de vendedores VIP no entran al inventario de la empresa")
+    doc = await record_physical_count(product, payload.counted_qty, actor,
+                                      payload.note)
+    await log_action(
+        db, actor, "inventory.count", "inventory_count", doc["id"],
+        summary=f"Conteo {product.get('name', '')}: {payload.counted_qty} "
+                f"(dif {doc['difference']})",
+        details={"product_id": product["id"],
+                 "counted_qty": payload.counted_qty,
+                 "difference": doc["difference"], "status": doc["status"]})
+    return doc
+
+
+@router.delete("/admin/inventory/counts/{product_id}")
+async def delete_count(product_id: str, request: Request,
+                       date: Optional[str] = None) -> Any:
+    """Borra el conteo del día (vuelve a SIN CONTEO)."""
+    await require_permission(request, "products")
+    await clear_physical_count(product_id, date)
+    return {"ok": True}
+
+
+@router.post("/admin/inventory/counts/{count_id}/adjust")
+async def adjust_count(count_id: str, payload: CountAdjust,
+                       request: Request) -> Any:
+    """ADMIN — aplica la diferencia del conteo como ajuste de stock
+    AUTORIZADO, exigiendo documento de respaldo."""
+    actor = await _require_admin_products(request)
+    doc = await authorize_count_adjustment(count_id, payload.document,
+                                           payload.note, actor)
+    await log_action(
+        db, actor, "inventory.count_adjust", "inventory_count", count_id,
+        summary=f"Ajuste por conteo {doc.get('product_name', '')} "
+                f"(dif {doc.get('difference')})",
+        details={"product_id": doc.get("product_id"),
+                 "document": payload.document,
+                 "movement_id": doc.get("adjustment_movement_id")})
+    try:
+        from services.live_bus import publish
+        await publish("products_changed", {"product_id": doc.get("product_id")})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"products_changed publish failed: {e}")
+    return doc
+
+
+@router.get("/admin/inventory/close-review")
+async def close_review(request: Request, date: Optional[str] = None) -> Any:
+    """Resumen de revisión del cierre del día: alertas (SIN CONTEO,
+    diferencias, salidas sin documento), salidas no-venta y cierre guardado."""
+    from datetime import datetime
+    await require_permission(request, "products")
+    day = (date or today_havana())[:10]
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="Fecha inválida (formato YYYY-MM-DD)")
+    return await build_close_review(day)
+
+
+@router.post("/admin/inventory/close-review")
+async def post_close_review(payload: CloseReviewSave, request: Request) -> Any:
+    """ADMIN — guarda el cierre formal del día (responsable/revisor/folio).
+    Deja constancia, no bloquea nuevos movimientos."""
+    from datetime import datetime
+    actor = await _require_admin_products(request)
+    try:
+        datetime.strptime(payload.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="Fecha inválida (formato YYYY-MM-DD)")
+    doc = await save_close_review(payload.date, payload.responsable,
+                                  payload.revisado_por, payload.folio,
+                                  payload.note, actor)
+    await log_action(
+        db, actor, "inventory.close_review", "inventory_close", payload.date,
+        summary=f"Cierre {payload.date}: {doc.get('resultado', '').upper()} "
+                f"· folio {doc.get('folio') or '—'}",
+        details={"resultado": doc.get("resultado"),
+                 "alerts": doc.get("alerts_snapshot")})
+    return doc
+
 
 
 class BarcodeAssign(BaseModel):

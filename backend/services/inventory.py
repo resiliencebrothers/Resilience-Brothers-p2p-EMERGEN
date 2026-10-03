@@ -19,7 +19,10 @@ from auth_utils import now_utc, iso
 
 logger = logging.getLogger(__name__)
 
-MOVEMENT_TYPES = ("entrada", "venta", "ajuste_pos", "ajuste_neg")
+# iter320 (IPV) — salidas que NO son venta: descuentan stock pero no son
+# ingreso ni afectan el fondo de la empresa.
+OUTPUT_TYPES = ("merma", "consumo", "otra_salida")
+MOVEMENT_TYPES = ("entrada", "venta", "ajuste_pos", "ajuste_neg", *OUTPUT_TYPES)
 LOW_STOCK_THRESHOLD = 5
 
 _COMPANY_FILTER = {"$or": [{"owner_id": {"$in": [None, ""]}},
@@ -56,7 +59,7 @@ async def _rejected_marketplace_refs() -> set:
 
 def movement_delta(mtype: str, quantity: int) -> int:
     """Delta de stock que implica un movimiento (compartido con el healer)."""
-    if mtype in ("venta", "ajuste_neg"):
+    if mtype in ("venta", "ajuste_neg", *OUTPUT_TYPES):
         return -quantity
     return quantity
 
@@ -359,6 +362,12 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
         delta = quantity
     elif mtype == "ajuste_pos":
         delta = quantity
+    elif mtype in OUTPUT_TYPES:
+        # iter320 (IPV) — merma / consumo interno / otras salidas: descuentan
+        # stock y registran su VALOR A COSTO (para valoración), pero nunca son
+        # ingreso ni ganancia y no tocan el fondo de la empresa.
+        total = round(cost * quantity, 2)
+        delta = -quantity
     else:  # ajuste_neg
         delta = -quantity
     doc = {
@@ -433,6 +442,9 @@ async def build_daily_close(date_str: str) -> dict:
              and not m.get("stock_apply_failed")]
     compras = [m for m in movs if m["type"] == "entrada"
                and m.get("source") in ("manual", "alta")]
+    # iter320 (IPV) — salidas no-venta del día (merma / consumo / otras): no
+    # son ingreso, se muestran aparte en el cierre para no confundir la caja.
+    salidas = [m for m in movs if m["type"] in ("merma", "consumo", "otra_salida")]
 
     red_ids = [m.get("ref_id") for m in web_v if m.get("ref_id")]
     reds = await db.redemptions.find(
@@ -495,9 +507,22 @@ async def build_daily_close(date_str: str) -> dict:
     fx = await get_store_fx()
     ventas_fis = _tot(fis_v)
     compras_tot = _tot(compras)
+    # IPV — resumen de salidas no-venta por tipo (unidades + valor a costo).
+    def _salida(tp: str) -> dict:
+        rows = [m for m in salidas if m["type"] == tp]
+        return {"unidades": _units(rows), "valor_costo": _tot(rows),
+                "num": len(rows)}
+    salidas_resumen = {
+        "merma": _salida("merma"),
+        "consumo": _salida("consumo"),
+        "otra_salida": _salida("otra_salida"),
+        "total_unidades": _units(salidas),
+        "total_valor_costo": _tot(salidas),
+    }
     return {
         "date": date_str,
         "store_currency": fx["store_currency"],
+        "salidas": salidas_resumen,
         "fisica": {
             "ventas": ventas_fis,
             "unidades_vendidas": _units(fis_v),
@@ -618,6 +643,10 @@ async def build_control_rows() -> list:
                     "revenue": {"$sum": "$total"}}}
     ]).to_list(2000)
     today_by = {a["_id"]: a for a in today_agg}
+    # iter320 (IPV) — conteo físico del día (hora de Cuba) por producto, para
+    # mostrar Conteo + Diferencia en la pantalla Control. Vacío = SIN CONTEO.
+    counts = {c["product_id"]: c for c in await db.inventory_counts.find(
+        {"count_date": today}, {"_id": 0}).to_list(20000)}
     rows = []
     for p in products:
         m = by_product.get(p["id"], {})
@@ -630,6 +659,7 @@ async def build_control_rows() -> list:
         else:
             estado = "ok"
         td = today_by.get(p["id"], {})
+        c = counts.get(p["id"])
         rows.append({
             "product_id": p["id"],
             "name": p.get("name", ""),
@@ -647,6 +677,12 @@ async def build_control_rows() -> list:
             "sold_today": int(td.get("qty", 0)),
             "revenue_today": round(float(td.get("revenue", 0)), 2),
             "estado": estado,
+            # IPV — conteo físico de hoy (None = SIN CONTEO).
+            "counted_qty": (c or {}).get("counted_qty") if c else None,
+            "count_difference": (c or {}).get("difference") if c else None,
+            "count_status": (c or {}).get("status") if c else "sin_conteo",
+            "count_id": (c or {}).get("id") if c else None,
+            "count_authorized": bool((c or {}).get("authorized")) if c else False,
         })
     rows.sort(key=lambda r: r["name"].lower())
     return rows
