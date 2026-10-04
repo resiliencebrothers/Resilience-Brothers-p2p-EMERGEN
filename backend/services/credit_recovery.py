@@ -436,9 +436,14 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
          "created_at": {"$lt": cutoff}}, {"_id": 0}).to_list(200)
     for m in rows:
         delta = movement_delta(m.get("type") or "", int(m.get("quantity") or 0))
+        # iter327 (IPV-R02) — recuperar una ENTRADA funde el WAC igual que la
+        # ruta normal (mismo op_id → idempotente y con el costo correcto).
+        cost_fold = (((int(m.get("quantity") or 0), float(m.get("unit_cost") or 0)))
+                     if (m.get("type") == "entrada") else None)
         st = await apply_stock_idempotent(m["product_id"], delta,
                                           f"invmov:{m['id']}",
-                                          require_available=(delta < 0))
+                                          require_available=(delta < 0),
+                                          cost_fold=cost_fold)
         if st == "insufficient":
             # iter256(S10) — fallido ≠ aplicado: no cuenta en KPIs ni cierre.
             await db.inventory_movements.update_one(

@@ -260,11 +260,17 @@ export default function InventoryCloseTab() {
               className={`ml-auto text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border whitespace-nowrap ${
                 review.resultado_sugerido === "cuadra"
                   ? "text-emerald-400 border-emerald-500/30"
+                  : review.resultado_sugerido === "pendiente"
+                  ? "text-sky-300 border-sky-500/30"
                   : "text-amber-300 border-amber-500/30"
               }`}
             >
-              {t("inventory.close.resultado")}: {review.resultado_sugerido === "cuadra"
-                ? t("inventory.close.resCuadra") : t("inventory.close.resDescuadra")}
+              {t("inventory.close.resultado")}: {
+                review.resultado_sugerido === "cuadra"
+                  ? t("inventory.close.resCuadra")
+                  : review.resultado_sugerido === "pendiente"
+                  ? t("inventory.close.resPendiente")
+                  : t("inventory.close.resDescuadra")}
             </span>
           </div>
           <p className="text-[0.65rem] text-neutral-500">{t("inventory.close.ipvHint")}</p>

@@ -56,7 +56,7 @@ def compute_wac(old_stock: int, old_cost: float, qty: int,
 
 
 def compute_liquidation(price: float, wac: float, capital_status: str,
-                        oldest_age_days) -> Optional[dict]:
+                        oldest_age_days: Optional[float]) -> Optional[dict]:
     """IPV — sugerencia de liquidación para mercancía con capital inmovilizado.
 
     Descuento base según el estado (sin ventas pesa más que lento), reforzado

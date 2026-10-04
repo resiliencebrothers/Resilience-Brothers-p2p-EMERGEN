@@ -17,6 +17,7 @@ import uuid
 from typing import Optional
 
 from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import now_utc, iso
@@ -77,9 +78,21 @@ async def record_physical_count(product: dict, counted_qty: int,
         "adjustment_movement_id": None,
         "updated_at": now,
     }
-    await db.inventory_counts.update_one(
-        {"product_id": product["id"], "count_date": day},
-        {"$set": doc, "$setOnInsert": {"created_at": now}}, upsert=True)
+    # iter327 (IPV-R03) — escritura CONDICIONADA a que el conteo NO esté
+    # autorizado: si una autorización concurrente lo marcó entre la lectura y
+    # esta escritura, el filtro no casa el doc autorizado y el upsert intenta
+    # insertar → DuplicateKeyError (índice único product_id+count_date) → 409.
+    # Así un recuento atrasado nunca sobrescribe ni desautoriza un ajuste.
+    try:
+        await db.inventory_counts.update_one(
+            {"product_id": product["id"], "count_date": day,
+             "authorized": {"$ne": True}},
+            {"$set": doc, "$setOnInsert": {"created_at": now}}, upsert=True)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=409,
+            detail="Este conteo ya tiene un ajuste autorizado; no puede "
+                   "modificarse. Vuelve a contar en otra jornada si procede.")
     return doc
 
 
@@ -175,7 +188,18 @@ async def build_close_review(day: str) -> dict:
         b["unidades"] += int(m.get("quantity") or 0)
         b["valor_costo"] = round(b["valor_costo"] + float(m.get("total") or 0), 2)
         b["num"] += 1
-    resultado = "cuadra" if not diffs and not salidas_sin_doc else "descuadra"
+    # iter327 (IPV-R04) — tres estados con prioridad a las ANOMALÍAS:
+    # DESCUADRA si hay diferencias sin ajustar o salidas sin documento (se
+    # destapa la incidencia aunque falten conteos); PENDIENTE si falta contar
+    # productos activos y NO hay anomalías aún; CUADRA solo si está completo y
+    # sin incidencias (elegible para "revisado" al firmar con responsable y
+    # revisor). Prioriza la señal de fraude/descuadre sobre el avance del conteo.
+    if diffs or salidas_sin_doc:
+        resultado = "descuadra"
+    elif sin_conteo:
+        resultado = "pendiente"
+    else:
+        resultado = "cuadra"
     close = await db.inventory_closes.find_one({"close_date": day}, {"_id": 0})
     return {
         "date": day,
@@ -250,13 +274,19 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
     movimientos. El resultado se calcula con las alertas vigentes al cerrar."""
     review = await build_close_review(day)
     now = iso(now_utc())
+    # iter327 (IPV-R04) — el estado guardado solo es "cuadra" (conforme/revisado)
+    # si el día está completo y sin incidencias Y hay revisor. Sin revisor o con
+    # productos sin conteo, no puede presentarse como cierre plenamente revisado.
+    resultado = review["resultado_sugerido"]
+    if resultado == "cuadra" and not (revisado_por or "").strip():
+        resultado = "pendiente"
     doc = {
         "close_date": day,
         "responsable": (responsable or "").strip(),
         "revisado_por": (revisado_por or "").strip(),
         "folio": (folio or "").strip(),
         "note": (note or "").strip(),
-        "resultado": review["resultado_sugerido"],
+        "resultado": resultado,
         "alerts_snapshot": review["alerts"],
         "closed_by": actor.get("user_id", ""),
         "closed_by_email": actor.get("email", ""),

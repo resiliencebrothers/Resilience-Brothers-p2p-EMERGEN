@@ -66,10 +66,17 @@ def movement_delta(mtype: str, quantity: int) -> int:
 
 async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
                                  require_available: bool = True,
-                                 extra_filter: Optional[dict] = None) -> str:
+                                 extra_filter: Optional[dict] = None,
+                                 cost_fold: Optional[tuple] = None) -> str:
     """iter254(R03) — cambio de stock atómico, condicional e IDEMPOTENTE por
     op_id (registro embebido en el producto + log duradero iter256/S07).
-    Devuelve 'applied' | 'duplicate' | 'insufficient'."""
+    Devuelve 'applied' | 'duplicate' | 'insufficient'.
+
+    iter327 (IPV-R02) — `cost_fold=(qty, entry_cost)` para ENTRADAS: incrementa
+    el stock Y recalcula el costo promedio ponderado (WAC) en la MISMA escritura
+    atómica (pipeline), usando el stock/costo VIGENTE. Así, entradas concurrentes
+    funden su compra en el promedio sin perder cálculo, con el mismo candado por
+    op_id (la ruta normal y el healer convergen en el valor correcto)."""
     state = await _stock_ops_ensure(op_id, product_id, delta_qty)
     if state == "applied":
         return "duplicate"
@@ -80,13 +87,34 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
         filt.update(extra_filter)
     if delta_qty < 0 and require_available:
         filt["stock"] = {"$gte": -delta_qty}
-    res = await db.products.update_one(
-        filt,
-        # iter257(D06) — SIN $slice: un op solo sale del registro embebido
-        # cuando su log duradero está 'applied' (compact_stock_registries).
-        {"$inc": {"stock": delta_qty},
-         "$push": {"applied_stock_ops": op_id}},
-    )
+    if cost_fold is not None:
+        # iter327 (IPV-R02) — WAC atómico: cost_usd y stock se calculan en el
+        # mismo $set a partir del documento de entrada (valores PREVIOS), por lo
+        # que el promedio es correcto e independiente del orden entre entradas.
+        q, entry_cost = cost_fold
+        base_stock = {"$ifNull": ["$stock", 0]}
+        new_stock_expr = {"$add": [base_stock, delta_qty]}
+        res = await db.products.update_one(filt, [{"$set": {
+            "cost_usd": {"$round": [{"$cond": [
+                {"$gt": [new_stock_expr, 0]},
+                {"$divide": [
+                    {"$add": [
+                        {"$multiply": [base_stock, {"$ifNull": ["$cost_usd", 0]}]},
+                        float(q) * float(entry_cost)]},
+                    new_stock_expr]},
+                float(entry_cost)]}, 4]},
+            "stock": new_stock_expr,
+            "applied_stock_ops": {"$concatArrays": [
+                {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
+        }}])
+    else:
+        res = await db.products.update_one(
+            filt,
+            # iter257(D06) — SIN $slice: un op solo sale del registro embebido
+            # cuando su log duradero está 'applied' (compact_stock_registries).
+            {"$inc": {"stock": delta_qty},
+             "$push": {"applied_stock_ops": op_id}},
+        )
     if res.matched_count:
         await _stock_ops_mark_applied(op_id)
         return "applied"
@@ -401,9 +429,12 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
         doc, created = await _insert_movement(doc)
         if not created:
             return doc  # R04 — otro ejecutor ya registró este movimiento
+        # iter327 (IPV-R02) — en una ENTRADA, el stock y el WAC se funden en una
+        # sola escritura atómica (cost_fold). El healer usa el mismo op_id.
+        cost_fold = ((int(quantity), float(cost)) if mtype == "entrada" else None)
         status = await apply_stock_idempotent(
             product["id"], delta, f"invmov:{doc['id']}",
-            require_available=(delta < 0))
+            require_available=(delta < 0), cost_fold=cost_fold)
         if status == "insufficient":
             await db.inventory_movements.delete_one({"id": doc["id"]})
             raise HTTPException(status_code=400,

@@ -1153,7 +1153,7 @@ async def release_economic_identity(key: str, tx_id: str,
     sin token siguen liberándose por su dueño para no quedar huérfanas."""
     if not key:
         return
-    flt = {"_id": key, "tx_id": tx_id}
+    flt: Dict[str, Any] = {"_id": key, "tx_id": tx_id}
     if match_uid:
         # El token del ciclo revertido debe coincidir; o ser una reserva heredada
         # sin token (compatibilidad con reservas previas a este protocolo).

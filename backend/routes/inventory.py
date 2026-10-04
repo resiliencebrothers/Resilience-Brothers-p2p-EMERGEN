@@ -97,43 +97,47 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
         product=product, mtype=payload.type, quantity=payload.quantity,
         unit_price=payload.unit_price, unit_cost=payload.unit_cost,
         note=payload.note, source="manual", actor=actor, photo_url=photo)
-    # iter219 — una Entrada puede actualizar la ficha del producto (precio de
-    # venta). iter321 (IPV Fase 2) — el COSTO ya no se reemplaza: se mezcla con
-    # el existente como costo PROMEDIO PONDERADO (WAC). Cada entrada queda como
-    # un LOTE para la valoración histórica. Todo queda auditado.
+    # iter219 — una Entrada puede actualizar el precio de venta del producto.
+    # iter327 (IPV-R02) — el COSTO promedio (WAC) ya se funde ATÓMICAMENTE junto
+    # con el stock dentro de record_movement (no se recalcula aquí con lecturas
+    # viejas). iter327 (IPV-R01) — el precio y el retiro de la oferta se escriben
+    # en un pipeline CONDICIONAL atómico: la oferta solo se retira si el precio
+    # ALMACENADO cambia tras el redondeo (una liquidación concurrente no queda
+    # con un descuento obsoleto; y 400.001→400.00 no retira la oferta).
     if payload.type == "entrada":
-        from services.inventory_lots import compute_wac, record_lot
-        updates = {}
+        from services.inventory_lots import record_lot
         old_cost = float(product.get("cost_usd") or 0)
-        old_stock = int(product.get("stock") or 0)
         entry_cost = (float(payload.unit_cost) if payload.unit_cost is not None
                       else old_cost)
-        new_wac = compute_wac(old_stock, old_cost, payload.quantity, entry_cost)
-        if payload.sale_price is not None and \
-                float(payload.sale_price) != float(product.get("price_usd") or 0):
-            updates["price_usd"] = round(float(payload.sale_price), 2)
-            await record_price_change(
-                product=product, field_label="Precio venta",
-                old=float(product.get("price_usd") or 0),
-                new=updates["price_usd"], actor=actor)
+        if payload.sale_price is not None:
+            new_price = round(float(payload.sale_price), 2)
+            changed = {"$ne": [{"$round": [{"$ifNull": ["$price_usd", 0]}, 2]},
+                               new_price]}
+            await db.products.update_one(
+                {"id": product["id"]},
+                [{"$set": {
+                    "price_usd": {"$cond": [changed, new_price, {"$ifNull": ["$price_usd", 0]}]},
+                    "on_offer": {"$cond": [changed, False, {"$ifNull": ["$on_offer", False]}]},
+                    "offer_original_price": {"$cond": [changed, "$$REMOVE", "$offer_original_price"]},
+                    "offer_discount_pct": {"$cond": [changed, "$$REMOVE", "$offer_discount_pct"]},
+                    "offer_at": {"$cond": [changed, "$$REMOVE", "$offer_at"]},
+                }}])
+            # Auditoría best-effort del cambio de precio (solo si cambió).
+            after = await db.products.find_one({"id": product["id"]},
+                                               {"_id": 0, "price_usd": 1})
+            old_price = float(product.get("price_usd") or 0)
+            if after and abs(float(after.get("price_usd") or 0) - old_price) > 1e-9:
+                await record_price_change(
+                    product=product, field_label="Precio venta",
+                    old=old_price, new=float(after["price_usd"]), actor=actor)
+        # Auditoría del WAC (re-leído tras el fundido atómico en record_movement).
+        after_cost = await db.products.find_one({"id": product["id"]},
+                                                {"_id": 0, "cost_usd": 1})
+        new_wac = float((after_cost or {}).get("cost_usd") or 0)
         if abs(new_wac - old_cost) > 1e-9:
-            updates["cost_usd"] = new_wac
             await record_price_change(
                 product=product, field_label="Costo promedio ponderado",
                 old=old_cost, new=new_wac, actor=actor)
-        if updates:
-            update_doc = {"$set": updates}
-            # IPV-FINAL-02 — si el precio de venta almacenado cambia por esta
-            # entrada, la oferta anterior deja de ser válida: se retira la
-            # etiqueta y sus metadatos en la MISMA escritura (sin estado
-            # intermedio con precio nuevo y descuento viejo). Si la entrada solo
-            # cambia costo/cantidad/WAC y conserva el precio, la oferta se
-            # mantiene.
-            if "price_usd" in updates and product.get("on_offer"):
-                updates["on_offer"] = False
-                update_doc["$unset"] = {"offer_original_price": "",
-                                        "offer_discount_pct": "", "offer_at": ""}
-            await db.products.update_one({"id": product["id"]}, update_doc)
         try:
             await record_lot(product, payload.quantity, entry_cost, doc["id"],
                              source=doc.get("source") or "manual", actor=actor)

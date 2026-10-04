@@ -502,7 +502,7 @@ export default function InventoryControlTab() {
       </Dialog>
 
       <Dialog open={!!adjust} onOpenChange={(v) => !v && setAdjust(null)}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none" data-testid="count-adjust-dialog">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto" data-testid="count-adjust-dialog">
           <DialogHeader>
             <DialogTitle className="font-display">{t("inventory.control.adjustTitle")}</DialogTitle>
           </DialogHeader>
