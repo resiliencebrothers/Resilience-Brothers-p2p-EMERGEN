@@ -13,7 +13,7 @@ smoke: ## Run the 6 drift-guarded smoke tests (~15s) — same as pre-commit
 		tests/test_iter55_19g_notification_explorer_link.py \
 		-q
 
-test-critical: ## Run critical regression subset (~2 min, 190 tests) — pre-commit safety net
+test-critical: ## Run critical regression subset (~5 min, ~270 tests incl. IPV iter320-326) — pre-commit safety net
 	cd backend && python -m pytest \
 		tests/test_iter55_16_permissions.py \
 		tests/test_iter55_16b_audit_perm_snapshot.py \
@@ -91,6 +91,13 @@ test-critical: ## Run critical regression subset (~2 min, 190 tests) — pre-com
 		tests/test_iter317_dr02_failed_move_reservation_sync.py \
 		tests/test_iter318_econ_claim_lifecycle.py \
 		tests/test_iter319_generation_ownership.py \
+		tests/test_iter320_ipv_phase1.py \
+		tests/test_iter321_ipv_phase2.py \
+		tests/test_iter322_valuation_margin_rotation.py \
+		tests/test_iter323_liquidation.py \
+		tests/test_iter324_offer_visibility.py \
+		tests/test_iter325_ipv_audit_fixes.py \
+		tests/test_iter326_ipv_concurrency.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

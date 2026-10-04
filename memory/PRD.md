@@ -2304,3 +2304,12 @@ Correcciones de concurrencia/semántica del módulo IPV reportadas en Auditoría
 - **CI**: mypy limpio (anotación `compute_liquidation(oldest_age_days: Optional[float])` en `inventory_lots.py`; `flt: Dict[str,Any]` en `reconciliation_matcher.py:1156`). ESLint regla `rb-local/no-dialog-without-scroll` resuelta (añadido `max-h-[85vh] overflow-y-auto` al `count-adjust-dialog` en `InventoryControlTab.jsx`).
 - **Tests**: `tests/test_iter326_ipv_concurrency.py` (nuevo, punto de regresión R01–R04). Reporte: `/app/test_reports/iteration_326.json`.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+### 2026-10-04 · iter327b — Fase 0 IPV cerrada al 100% (revisión del "Plan por Fases")
+Tras revisar el documento del cliente "Plan por Fases IPV (04-10-2026)", se cerraron los 2 pendientes de Fase 0:
+- **Pruebas IPV en el CI obligatorio**: añadidas las 7 suites iter320–326 a `make test-critical` (Makefile). Verificado: `make -n` parsea el target y las 7 suites corren **80/80 PASS** (~158s). mypy proyecto completo: 106 ficheros sin errores; ESLint limpio.
+- **Borrado atómico del conteo (IPV-R03)**: `delete_count` en `services/inventory_ipv.py` ahora condiciona el `delete_one` a `authorized != true` y devuelve **409** si `deleted_count==0` (cierra la micro-ventana read-then-delete frente a una autorización concurrente).
+- **Decisiones de negocio registradas para fases siguientes**: (1) fracciones/peso = solo unas pocas referencias en libras → Fase 4 se difiere y se hablará; (2) **inventario físico en CUP efectivo**, y en la tienda el precio se muestra en **CUP + equivalente USDT** (clave para la valoración de Fase 1); los nombres internos `cost_usd`/`price_usd` NO implican USD en el producto de empresa.
+- **Nota de método**: la plataforma usa WAC móvil; el Excel de referencia usa promedio periódico diario → cifras distintas, a documentar al comparar.
+- **Backlog priorizado IPV** (del plan, pendiente de arrancar): Fase 1 Corte histórico + valorar diferencias (ALTA) → Fase 2 Mínimos por producto (MEDIA) → Fase 3 Seguimiento de incidencias (MEDIA) → Fase 4 Unidades/fracciones (condicional).
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.

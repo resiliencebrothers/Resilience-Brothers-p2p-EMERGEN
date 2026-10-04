@@ -108,8 +108,17 @@ async def clear_physical_count(product_id: str, day: Optional[str] = None) -> No
         raise HTTPException(
             status_code=409,
             detail="No se puede borrar un conteo con ajuste autorizado.")
-    await db.inventory_counts.delete_one(
-        {"product_id": product_id, "count_date": day})
+    # iter327 (IPV-R03) — borrado CONDICIONADO a authorized!=true: si una
+    # autorización concurrente marcó el conteo entre la lectura anterior y este
+    # borrado, el filtro no casa (deleted_count==0) → 409 y la evidencia
+    # autorizada se preserva. Evita la micro-ventana de carrera read-then-delete.
+    res = await db.inventory_counts.delete_one(
+        {"product_id": product_id, "count_date": day,
+         "authorized": {"$ne": True}})
+    if res.deleted_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="No se puede borrar un conteo con ajuste autorizado.")
 
 
 async def list_counts(day: str) -> dict:
