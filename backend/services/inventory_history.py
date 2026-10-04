@@ -81,6 +81,13 @@ async def build_cutoff_report(cutoff: str,
         by_prod.setdefault(m["product_id"], []).append(m)
 
     pids = allowed
+
+    # iter329 — tasa USDT→CUP vigente a la fecha de corte (VIP) para valorar el
+    # inventario también en USDT de forma reproducible.
+    from services.fx_history import get_fx_at
+    fx = await get_fx_at(cutoff)
+    rate_vip = float(fx.get("rate_vip") or 0)
+
     rows = []
     coverage_from = None
     tot_value = 0.0
@@ -174,6 +181,7 @@ async def build_cutoff_report(cutoff: str,
             "wac": _r(wac, 4),
             "price": _r(price, 2) if price is not None else None,
             "value": value,
+            "value_usdt": _r(value / rate_vip, 2) if rate_vip > 0 else None,
             "currency": STORE_CURRENCY,
             "coverage": "parcial" if partial else "completa",
             "count": count_block,
@@ -186,12 +194,22 @@ async def build_cutoff_report(cutoff: str,
         "start": start or None,
         "currency": STORE_CURRENCY,
         "coverage_from": (coverage_from or "")[:10] or None,
+        "fx": {
+            "rate_field": "rate_vip",
+            "rate": rate_vip,
+            "rate_normal": float(fx.get("rate_normal") or 0),
+            "rate_date": fx.get("rate_date"),
+            "estimated": bool(fx.get("estimated")),
+            "quote_currency": "USDT",
+        },
         "products": rows,
         "totals": {
             "num_products": len(rows),
             "units": _r(tot_units, 3),
             "value": _r(tot_value, 2),
+            "value_usdt": _r(tot_value / rate_vip, 2) if rate_vip > 0 else None,
             "diff_value": _r(tot_diff_value, 2),
+            "diff_value_usdt": _r(tot_diff_value / rate_vip, 2) if rate_vip > 0 else None,
             "partial_count": partials,
         },
     }

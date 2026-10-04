@@ -348,6 +348,20 @@ async def run_delivery_attention():
         logger.error(f"[delivery-attention] failed: {e}")
 
 
+async def run_daily_fx_snapshot(db):
+    """iter329 — congela la tasa USDT→CUP del día para el histórico de
+    valoración del inventario en USDT (00:10 America/Havana + al arrancar)."""
+    try:
+        from services.fx_history import capture_fx_snapshot
+        snap = await capture_fx_snapshot(source="daily")
+        if snap:
+            logger.info("[fx-snapshot] %s rate_vip=%s", snap["date"],
+                        snap.get("rate_vip"))
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[fx-snapshot] failed: {e}")
+
+
+
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
 
@@ -485,6 +499,18 @@ def start_scheduler(db, build_timeseries):
         replace_existing=True,
         misfire_grace_time=300,
         coalesce=True,
+    )
+    # iter329 — snapshot diario de la tasa USDT→CUP (00:10 Cuba) + al arrancar
+    # (next_run_time) para registrar el histórico de valoración en USDT.
+    _scheduler.add_job(
+        run_daily_fx_snapshot,
+        CronTrigger(hour=0, minute=10, timezone="America/Havana"),
+        kwargs={"db": db},
+        id="daily_fx_snapshot",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
     )
     _scheduler.start()
     logger.info(

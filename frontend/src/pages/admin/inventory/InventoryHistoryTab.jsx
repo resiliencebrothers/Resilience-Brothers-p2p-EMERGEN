@@ -101,12 +101,32 @@ export default function InventoryHistoryTab() {
         {t("inventory.history.hint", { cur })}
       </p>
 
+      {/* Tasa USDT usada para valorar el corte */}
+      {data?.fx && (
+        <div className="flex items-center gap-2 text-[0.7rem] text-neutral-400" data-testid="history-fx-note">
+          <Coins className="w-3.5 h-3.5 text-[#8B5CF6]" />
+          <span>
+            {t("inventory.history.fxNote", {
+              rate: fmt(data.fx.rate), date: data.fx.rate_date || "—",
+            })}
+          </span>
+          {data.fx.estimated && (
+            <span className="text-[0.55rem] uppercase px-1.5 py-0.5 border border-amber-500/30 text-amber-300"
+              data-testid="history-fx-estimated">
+              {t("inventory.history.fxEstimated")}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Resumen */}
       {tot && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="history-summary">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="history-summary">
           <Card icon={Boxes} label={t("inventory.history.sumProducts")} value={tot.num_products} />
           <Card icon={ScanLine} label={t("inventory.history.sumUnits")} value={qty(tot.units)} />
           <Card icon={Coins} label={t("inventory.history.sumValue", { cur })} value={fmt(tot.value)} accent />
+          <Card icon={Coins} label={t("inventory.history.sumValueUsdt")}
+            value={tot.value_usdt != null ? fmt(tot.value_usdt) : "—"} accent />
           <Card icon={Coins} label={t("inventory.history.sumDiffValue", { cur })}
             value={fmt(tot.diff_value)}
             tone={tot.diff_value < 0 ? "neg" : tot.diff_value > 0 ? "pos" : "mut"} />
@@ -141,6 +161,7 @@ export default function InventoryHistoryTab() {
               <th className="text-right px-2 py-2 font-semibold">{t("inventory.history.colFinal")}</th>
               <th className="text-right px-2 py-2">{t("inventory.history.colWac")}</th>
               <th className="text-right px-3 py-2 font-semibold">{t("inventory.history.colValue")}</th>
+              <th className="text-right px-3 py-2 font-semibold">{t("inventory.history.colValueUsdt")}</th>
               <th className="text-right px-2 py-2">{t("inventory.history.colDiff")}</th>
               <th className="text-right px-3 py-2">{t("inventory.history.colDiffValue")}</th>
             </tr>
@@ -176,6 +197,7 @@ export default function InventoryHistoryTab() {
                 <td className="text-right px-2 py-2 font-semibold text-white">{qty(p.final_stock)}</td>
                 <td className="text-right px-2 py-2 text-neutral-400">{fmt(p.wac)}</td>
                 <td className="text-right px-3 py-2 font-semibold text-[#8B5CF6]">{fmt(p.value)}</td>
+                <td className="text-right px-3 py-2 font-semibold text-sky-300">{p.value_usdt != null ? fmt(p.value_usdt) : "—"}</td>
                 <td className={`text-right px-2 py-2 ${p.count ? (p.count.difference < 0 ? "text-red-400" : p.count.difference > 0 ? "text-emerald-400" : "text-neutral-400") : "text-neutral-600"}`}>
                   {p.count ? (p.count.difference > 0 ? "+" : "") + p.count.difference : "—"}
                 </td>
@@ -185,11 +207,11 @@ export default function InventoryHistoryTab() {
               </tr>
             ))}
             {!loading && !(data?.products || []).length && (
-              <tr><td colSpan={13} className="px-3 py-8 text-center text-neutral-500"
+              <tr><td colSpan={14} className="px-3 py-8 text-center text-neutral-500"
                 data-testid="history-empty">{t("inventory.history.empty")}</td></tr>
             )}
             {loading && (
-              <tr><td colSpan={13} className="px-3 py-8 text-center text-neutral-500">{t("inventory.history.loading")}</td></tr>
+              <tr><td colSpan={14} className="px-3 py-8 text-center text-neutral-500">{t("inventory.history.loading")}</td></tr>
             )}
           </tbody>
         </table>

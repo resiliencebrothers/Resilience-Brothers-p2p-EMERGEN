@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, X, TrendingUp, TrendingDown, Minus, ArrowRightLeft } from "lucide-react";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -32,6 +32,20 @@ export default function InventoryDashboardTab() {
   const [data, setData] = useState(null);
   // iter225 — tabla de rotación por mercancía.
   const [rotation, setRotation] = useState([]);
+  // iter329 — variación FX (USDT vs CUP) sobre el valor del inventario por corte.
+  const [fxCut, setFxCut] = useState(todayStr());
+  const [fxRef, setFxRef] = useState(daysAgo(30));
+  const [fxData, setFxData] = useState(null);
+  const [fxLoading, setFxLoading] = useState(false);
+
+  const loadFx = useCallback(() => {
+    if (!fxRef) return;
+    setFxLoading(true);
+    axios.get(`${API}/admin/inventory/fx-variation`, {
+      params: { cut: fxCut, ref: fxRef }, withCredentials: true,
+    }).then((r) => setFxData(r.data)).catch(() => setFxData(null))
+      .finally(() => setFxLoading(false));
+  }, [fxCut, fxRef]);
 
   const load = useCallback((s, e, ids) => {
     const params = { start: s, end: e };
@@ -44,6 +58,7 @@ export default function InventoryDashboardTab() {
 
   useEffect(() => {
     load(start, end, selected);
+    loadFx();
     axios.get(`${API}/admin/inventory/control`, { withCredentials: true })
       .then((r) => setProducts(r.data)).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -151,6 +166,72 @@ export default function InventoryDashboardTab() {
             {data.vip_commission_earned !== null && data.vip_commission_earned !== undefined && (
               <Kpi testid="kpi-vip-commission" label={t("inventory.dashboard.vipCommission")} value={fmt(data.vip_commission_earned)} tone="text-amber-300" />
             )}
+          </div>
+
+          {/* iter329 — Variación FX (USDT vs CUP) por corte */}
+          <div data-testid="inventory-fx-variation">
+            <h3 className="font-display text-lg mb-1 flex items-center gap-2">
+              <ArrowRightLeft className="w-4 h-4 text-[#8B5CF6]" />
+              {t("inventory.dashboard.fxTitle")}
+            </h3>
+            <p className="text-xs text-neutral-500 mb-3">{t("inventory.dashboard.fxHint")}</p>
+            <div className="tactile-card px-5 py-4 space-y-4">
+              <div className="flex items-end gap-3 flex-wrap">
+                <div>
+                  <div className="micro-label text-neutral-500">{t("inventory.dashboard.fxCut")}</div>
+                  <Input data-testid="fx-cut" type="date" value={fxCut} max={todayStr()}
+                    onChange={(e) => setFxCut(e.target.value)}
+                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 w-[160px]" />
+                </div>
+                <div>
+                  <div className="micro-label text-neutral-500">{t("inventory.dashboard.fxRef")}</div>
+                  <Input data-testid="fx-ref" type="date" value={fxRef} max={todayStr()}
+                    onChange={(e) => setFxRef(e.target.value)}
+                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10 w-[160px]" />
+                </div>
+                <Button data-testid="fx-apply" onClick={loadFx} disabled={!fxRef || fxLoading}
+                  className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none">
+                  {t("inventory.dashboard.fxApply")}
+                </Button>
+              </div>
+              {fxData && (
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="fx-result">
+                  <Kpi testid="fx-value-cup" label={t("inventory.dashboard.fxValueCup")} value={fmt(fxData.value_cup)} />
+                  <div className="tactile-card px-5 py-4" data-testid="fx-usdt-ref">
+                    <div className="micro-label text-neutral-500 mb-1">
+                      {t("inventory.dashboard.fxUsdtRef")} · {fxData.ref.rate_date || fxData.ref_date}
+                      {fxData.ref.estimated && <span className="ml-1 text-amber-300">({t("inventory.dashboard.fxEst")})</span>}
+                    </div>
+                    <div className="font-display text-2xl text-neutral-300">{fxData.ref.value_usdt != null ? fmt(fxData.ref.value_usdt) : "—"}</div>
+                    <div className="text-[0.65rem] text-neutral-500 mt-1">{t("inventory.dashboard.fxRateVip")}: {fmt(fxData.ref.rate)}</div>
+                  </div>
+                  <div className="tactile-card px-5 py-4" data-testid="fx-usdt-cut">
+                    <div className="micro-label text-neutral-500 mb-1">
+                      {t("inventory.dashboard.fxUsdtCut")} · {fxData.cut.rate_date || fxData.cut_date}
+                      {fxData.cut.estimated && <span className="ml-1 text-amber-300">({t("inventory.dashboard.fxEst")})</span>}
+                    </div>
+                    <div className="font-display text-2xl text-sky-300">{fxData.cut.value_usdt != null ? fmt(fxData.cut.value_usdt) : "—"}</div>
+                    <div className="text-[0.65rem] text-neutral-500 mt-1">{t("inventory.dashboard.fxRateVip")}: {fmt(fxData.cut.rate)}</div>
+                  </div>
+                  <div className={`tactile-card px-5 py-4 ${fxData.direction === "loss" ? "border-l-2 border-red-500" : fxData.direction === "gain" ? "border-l-2 border-emerald-500" : ""}`}
+                    data-testid="fx-delta">
+                    <div className="micro-label text-neutral-500 mb-1 flex items-center gap-1">
+                      {fxData.direction === "loss" ? <TrendingDown className="w-3.5 h-3.5 text-red-400" />
+                        : fxData.direction === "gain" ? <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                        : <Minus className="w-3.5 h-3.5 text-neutral-500" />}
+                      {t("inventory.dashboard.fxDelta")}
+                    </div>
+                    <div className={`font-display text-2xl ${fxData.direction === "loss" ? "text-red-400" : fxData.direction === "gain" ? "text-emerald-400" : "text-neutral-300"}`}
+                      data-testid="fx-delta-pct">
+                      {fxData.delta_pct != null ? `${fxData.delta_pct > 0 ? "+" : ""}${fmt(fxData.delta_pct)}%` : "—"}
+                    </div>
+                    <div className="text-[0.65rem] text-neutral-500 mt-1" data-testid="fx-delta-usdt">
+                      {fxData.delta_usdt != null ? `${fxData.delta_usdt > 0 ? "+" : ""}${fmt(fxData.delta_usdt)} USDT` : "—"}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* iter225 — rotación de inventario por mercancía */}

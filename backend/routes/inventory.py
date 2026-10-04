@@ -333,21 +333,24 @@ async def inventory_cutoff_report_csv(request: Request,
         raise HTTPException(status_code=400,
                             detail="'start' no puede ser posterior a la fecha de corte")
     data = await build_cutoff_report(cutoff, period)
+    fx = data.get("fx") or {}
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
     writer.writerow([
         "Producto", "Categoría", "Activo", "Existencia inicial", "Entradas",
         "Ventas", "Merma", "Consumo", "Otras salidas", "Ajuste neto",
         "Existencia final", f"Costo WAC ({data['currency']})",
-        f"Valor ({data['currency']})", "Cobertura", "Conteo físico",
-        "Teórico", "Diferencia", "Costo ref.", "Valor diferencia", "Autorizado"])
+        f"Valor ({data['currency']})", "Valor (USDT)", "Cobertura",
+        "Conteo físico", "Teórico", "Diferencia", "Costo ref.",
+        "Valor diferencia", "Autorizado"])
     for p in data["products"]:
         c = p.get("count") or {}
         writer.writerow([
             p["name"], p["category"], "Sí" if p["is_active"] else "No",
             p["opening"], p["entradas"], p["ventas"], p["merma"], p["consumo"],
             p["otra_salida"], p["ajuste_neto"], p["final_stock"], p["wac"],
-            p["value"], p["coverage"],
+            p["value"], p.get("value_usdt", "") if p.get("value_usdt") is not None else "",
+            p["coverage"],
             c.get("counted_qty", "") if c else "",
             c.get("theoretical", "") if c else "",
             c.get("difference", "") if c else "",
@@ -357,8 +360,14 @@ async def inventory_cutoff_report_csv(request: Request,
     t = data["totals"]
     writer.writerow([])
     writer.writerow(["TOTALES", "", "", "", "", "", "", "", "", "",
-                     t["units"], "", t["value"], f"{t['partial_count']} parcial(es)",
+                     t["units"], "", t["value"],
+                     t.get("value_usdt", "") if t.get("value_usdt") is not None else "",
+                     f"{t['partial_count']} parcial(es)",
                      "", "", "", "", t["diff_value"], ""])
+    writer.writerow([])
+    writer.writerow([f"Tasa USDT→CUP (VIP) al corte: {fx.get('rate') or '—'}"
+                     + (f" (estimada, {fx.get('rate_date') or 's/d'})"
+                        if fx.get("estimated") else f" ({fx.get('rate_date') or ''})")])
     buf = BytesIO()
     buf.write(text_buf.getvalue().encode("utf-8-sig"))
     buf.seek(0)
@@ -366,6 +375,56 @@ async def inventory_cutoff_report_csv(request: Request,
     return StreamingResponse(
         buf, media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/admin/inventory/fx-variation")
+async def inventory_fx_variation(request: Request, cut: Optional[str] = None,
+                                 ref: Optional[str] = None) -> Any:
+    """IPV Fase 1+ — efecto de la variación de la tasa USDT↔CUP sobre el valor
+    del inventario. El inventario se controla en CUP; su valor en USDT depende
+    de la tasa VIGENTE. Compara la tasa VIP de la fecha de corte `cut` contra la
+    de una fecha de referencia `ref` y calcula cuánto se gana/pierde en USDT (y
+    su %) sobre el valor ACTUAL del inventario, por el solo movimiento de la
+    tasa (el CUP se mantiene constante en la comparación)."""
+    from services.fx_history import get_fx_at
+    from services.inventory import _COMPANY_FILTER
+    await require_permission(request, "products")
+    cut_d = _valid_day(cut or today_havana(), "cut")
+    if not ref:
+        raise HTTPException(status_code=400,
+                            detail="Indica una fecha de referencia")
+    ref_d = _valid_day(ref, "ref")
+    products = await db.products.find(
+        _COMPANY_FILTER, {"_id": 0, "stock": 1, "cost_usd": 1}).to_list(5000)
+    value_cup = round(sum(float(p.get("stock") or 0) * float(p.get("cost_usd") or 0)
+                          for p in products), 2)
+    fx_cut = await get_fx_at(cut_d)
+    fx_ref = await get_fx_at(ref_d)
+    rc = float(fx_cut.get("rate_vip") or 0)
+    rr = float(fx_ref.get("rate_vip") or 0)
+    usdt_cut = round(value_cup / rc, 2) if rc > 0 else None
+    usdt_ref = round(value_cup / rr, 2) if rr > 0 else None
+    delta_usdt = (round(usdt_cut - usdt_ref, 2)
+                  if (usdt_cut is not None and usdt_ref is not None) else None)
+    delta_pct = round((rr / rc - 1) * 100, 2) if (rc > 0 and rr > 0) else None
+    direction = "flat"
+    if delta_usdt is not None:
+        direction = "loss" if delta_usdt < 0 else "gain" if delta_usdt > 0 else "flat"
+    return {
+        "cut_date": cut_d,
+        "ref_date": ref_d,
+        "currency_store": "CUP",
+        "quote_currency": "USDT",
+        "rate_field": "rate_vip",
+        "value_cup": value_cup,
+        "cut": {"rate": rc, "rate_date": fx_cut.get("rate_date"),
+                "estimated": bool(fx_cut.get("estimated")), "value_usdt": usdt_cut},
+        "ref": {"rate": rr, "rate_date": fx_ref.get("rate_date"),
+                "estimated": bool(fx_ref.get("estimated")), "value_usdt": usdt_ref},
+        "delta_usdt": delta_usdt,
+        "delta_pct": delta_pct,
+        "direction": direction,
+    }
 
 
 

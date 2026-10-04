@@ -592,6 +592,14 @@ async def _persist_rate(actor: dict, payload: ExchangeRateCreate,
             "rate_id": fresh["id"], "updated_at": fresh.get("updated_at")})
     except Exception as e:
         logger.error(f"Rate SSE publish failed: {e}")
+    # iter329 — si cambió la tasa USDT→CUP, congela el snapshot del día para el
+    # histórico de valoración del inventario en USDT (reproducible por fecha).
+    if fresh.get("from_code") == "USDT" and fresh.get("to_code") == "CUP":
+        try:
+            from services.fx_history import capture_fx_snapshot
+            await capture_fx_snapshot(source="rate_change")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"FX snapshot capture failed: {e}")
     try:
         await _scan_rate_change_margin(old, fresh)
     except Exception as e:
