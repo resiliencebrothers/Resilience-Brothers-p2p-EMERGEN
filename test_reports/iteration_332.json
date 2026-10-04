@@ -1,0 +1,19 @@
+{
+  "summary": "Iter332 — Cierre Congelado + IPV Fase 2 (Mínimos por Producto). Backend pytest tests/test_iter332_min_stock_frozen_close.py = 10/10 PASSED. Backend endpoints verificados por curl: PATCH /api/admin/inventory/products/{id}/min-stock → admin set/clear OK, VIP 403, 404 unknown. GET /api/admin/inventory/close-snapshot?date=2026-10-04 devuelve snapshot inmutable v1 con totals.value_cup=770447.04, totals.value_usdt=1950.5, fx.rate_vip=395.0, versions=[1]; VIP 403. Fila /api/admin/inventory/control incluye min_stock+effective_min+estado (ok/bajo/agotado). UI Admin → /admin/inventory → Control: columna 'Mín.' presente, inputs inventory-min-input-<pid> funcionales, placeholder muestra umbral global (5), al setear 999 toast 'Mínimo actualizado' y estado inventory-status-<pid> refleja el cambio, al vaciar vuelve a usar global. Formulario Agregar producto incluye data-testid=inv-product-min-stock con label 'Stock mínimo (opcional)'. UI Cierre: bloque close-frozen-acta visible mostrando 770,447.04 CUPFX ≈ 1,950.5 USDT a tasa VIP 395 CUP/USDT con responsable/revisor/folio/firma. No se detectaron claves i18n crudas (inventory.control.colMin / inventory.close.actaTitle / etc) ni en Control ni en Cierre.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter332_min_stock_frozen_close.py",
+    "/app/test_reports/pytest/iter332_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin cookie session_token=smoke_session_admin_fork327; VIP cookie session_token=smoke_session_vip_iter294",
+  "seed_data_creation": "No new seed data. Pre-existing close/acta for date 2026-10-04 (v1) remained from main agent's prior validation; left untouched since UI showed the already-done state (close-review-form absent, close-review-done+close-frozen-acta present). No TEST_* products created.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature completo y verde. Para re-probar flujo de guardado desde UI, usar una fecha pasada sin cierre previo (p.ej. 2026-10-01) via el DatePicker 'FECHA' en pestaña Cierre, llenar close-review-form y verificar que al guardar aparece close-review-done con close-frozen-acta (value_cup/value_usdt/rate_vip). Para re-cierre (v2) hacer POST /api/admin/inventory/close-review de nuevo misma fecha → version=2, GET close-snapshot devuelve versions=[1,2] y snapshot=v2.",
+  "rca of the issue": "N/A — no issues found. Implementación correcta de ambas features según spec."
+}
