@@ -286,6 +286,89 @@ async def post_close_review(payload: CloseReviewSave, request: Request) -> Any:
     return doc
 
 
+# ══════════════════ IPV Fase 1: Corte histórico del inventario ══════════════
+def _valid_day(day: str, field: str = "date") -> str:
+    from datetime import datetime
+    day = (day or "")[:10]
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail=f"Fecha inválida en '{field}' (YYYY-MM-DD)")
+    return day
+
+
+@router.get("/admin/inventory/cutoff-report")
+async def inventory_cutoff_report(request: Request, date: Optional[str] = None,
+                                  start: Optional[str] = None) -> Any:
+    """IPV Fase 1 — reporte histórico del inventario a una FECHA DE CORTE.
+    Reconstruye existencia y valor (CUP) desde los movimientos hasta el corte;
+    opcionalmente acumula flujos del período [start, corte]. Valora las
+    diferencias de conteo del día al costo de referencia guardado."""
+    await require_permission(request, "products")
+    from services.inventory_history import build_cutoff_report
+    cutoff = _valid_day(date or today_havana(), "date")
+    period = _valid_day(start, "start") if start else None
+    if period and period > cutoff:
+        raise HTTPException(status_code=400,
+                            detail="'start' no puede ser posterior a la fecha de corte")
+    return await build_cutoff_report(cutoff, period)
+
+
+@router.get("/admin/inventory/cutoff-report.csv")
+async def inventory_cutoff_report_csv(request: Request,
+                                      date: Optional[str] = None,
+                                      start: Optional[str] = None) -> Any:
+    """IPV Fase 1 — CSV contable del corte histórico."""
+    import csv
+    import io
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from services.inventory_history import build_cutoff_report
+
+    await require_permission(request, "products")
+    cutoff = _valid_day(date or today_havana(), "date")
+    period = _valid_day(start, "start") if start else None
+    if period and period > cutoff:
+        raise HTTPException(status_code=400,
+                            detail="'start' no puede ser posterior a la fecha de corte")
+    data = await build_cutoff_report(cutoff, period)
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+    writer.writerow([
+        "Producto", "Categoría", "Activo", "Existencia inicial", "Entradas",
+        "Ventas", "Merma", "Consumo", "Otras salidas", "Ajuste neto",
+        "Existencia final", f"Costo WAC ({data['currency']})",
+        f"Valor ({data['currency']})", "Cobertura", "Conteo físico",
+        "Teórico", "Diferencia", "Costo ref.", "Valor diferencia", "Autorizado"])
+    for p in data["products"]:
+        c = p.get("count") or {}
+        writer.writerow([
+            p["name"], p["category"], "Sí" if p["is_active"] else "No",
+            p["opening"], p["entradas"], p["ventas"], p["merma"], p["consumo"],
+            p["otra_salida"], p["ajuste_neto"], p["final_stock"], p["wac"],
+            p["value"], p["coverage"],
+            c.get("counted_qty", "") if c else "",
+            c.get("theoretical", "") if c else "",
+            c.get("difference", "") if c else "",
+            c.get("reference_cost", "") if c else "",
+            c.get("difference_value", "") if c else "",
+            ("Sí" if c.get("authorized") else "No") if c else ""])
+    t = data["totals"]
+    writer.writerow([])
+    writer.writerow(["TOTALES", "", "", "", "", "", "", "", "", "",
+                     t["units"], "", t["value"], f"{t['partial_count']} parcial(es)",
+                     "", "", "", "", t["diff_value"], ""])
+    buf = BytesIO()
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))
+    buf.seek(0)
+    fname = f"inventario_corte_{cutoff}.csv"
+    return StreamingResponse(
+        buf, media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+
 
 # ══════════════════ IPV Fase 2: Valoración (WAC + lotes) + Acta PDF ══════════
 @router.get("/admin/inventory/valuation")

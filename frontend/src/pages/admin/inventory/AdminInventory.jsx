@@ -12,12 +12,13 @@ import InventoryDashboardTab from "./InventoryDashboardTab";
 import InventoryScanTab from "./InventoryScanTab";
 import InventoryCloseTab from "./InventoryCloseTab";
 import InventoryValuationTab from "./InventoryValuationTab";
+import InventoryHistoryTab from "./InventoryHistoryTab";
 import InventoryStoresTab from "./InventoryStoresTab";
 import LabelsDialog from "./LabelsDialog";
 
 // iter217 — Control de flujo de inventario de la tienda física (réplica del
 // Excel del operador: Control Inventario + Movimientos + Dashboard).
-const TABS = ["control", "scan", "movements", "close", "valuation", "stores", "dashboard"];
+const TABS = ["control", "scan", "movements", "close", "valuation", "history", "stores", "dashboard"];
 
 export default function AdminInventory() {
   const { t } = useTranslation();
@@ -98,6 +99,7 @@ export default function AdminInventory() {
       {tab === "movements" && <InventoryMovementsTab />}
       {tab === "close" && <InventoryCloseTab />}
       {tab === "valuation" && <InventoryValuationTab />}
+      {tab === "history" && <InventoryHistoryTab />}
       {tab === "stores" && <InventoryStoresTab />}
       {tab === "dashboard" && <InventoryDashboardTab />}
       <LabelsDialog open={labelsOpen} onOpenChange={setLabelsOpen} />

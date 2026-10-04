@@ -61,6 +61,10 @@ async def record_physical_count(product: dict, counted_qty: int,
             detail="Este conteo ya tiene un ajuste autorizado; no puede "
                    "modificarse. Vuelve a contar en otra jornada si procede.")
     now = iso(now_utc())
+    # iter328 (IPV Fase 1) — se CONGELA el costo de referencia (WAC vigente del
+    # producto), la unidad, la moneda y el momento de valoración. Así el valor
+    # de la diferencia queda fijado al conteo y un costo posterior no lo altera.
+    ref_cost = round(float(product.get("cost_usd") or 0), 4)
     doc = {
         "id": (existing or {}).get("id") or str(uuid.uuid4()),
         "product_id": product["id"],
@@ -69,6 +73,11 @@ async def record_physical_count(product: dict, counted_qty: int,
         "counted_qty": int(counted_qty),
         "theoretical_stock": theoretical,
         "difference": difference,
+        "difference_value": round(difference * ref_cost, 2),
+        "reference_cost": ref_cost,
+        "unit": product.get("unit") or "u",
+        "currency": "CUP",
+        "valued_at": now,
         "status": _count_status(difference),
         "note": note or "",
         "counted_by": (actor or {}).get("user_id", ""),
