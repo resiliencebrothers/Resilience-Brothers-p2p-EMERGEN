@@ -1,0 +1,21 @@
+{
+  "summary": "ITER-331 IPV Fase 1 FX (rate_vip histórico + Variación FX dashboard): backend pytest 21/21 PASS (test_iter330_fx_history 6/6, test_iter328 4/4, test_iter329 11/11); endpoints en vivo validados vía cookie admin (cutoff-report incluye bloque fx y value_usdt, fx-variation 400 sin ref, 403 vip, 200 admin, delta -20%/loss con snapshots pasados 400→500). UI: pestaña Histórico muestra nota 'Valorado en USDT a la tasa VIP 395 CUP/USDT (2026-10-04)', 5ª tarjeta 'Valor total (USDT)', columna 'Valor USDT' en tabla, sin claves i18n crudas. Dashboard muestra sección 'Variación FX (USDT vs CUP) por corte' con selectores fx-cut/fx-ref/fx-apply y resultado fx-result (value_cup 770,367.04 CUP; usdt_ref 1,925.92 @VIP 400; usdt_cut 1,540.73 @VIP 500; delta -20% / -385.19 USDT, borde rojo 'loss'). Snapshot: fx_rate_history tiene snapshot de hoy (source daily/test según histórico). Capture_fx_snapshot idempotente y get_fx_at usa último ≤ fecha; estimated=True si no existe snapshot ≤ ref (visto en curl con ref=2025-12-15 sin datos).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter330_fx_history.py",
+    "/app/backend/tests/test_iter328_cutoff_history.py",
+    "/app/backend/tests/test_iter329_cutoff_api.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "El badge 'Estimada' (history-fx-estimated) no se mostró en el entorno de prueba porque existe snapshot del día (estimated=False). Comportamiento correcto; validado por curl que al pedir fx-variation con ref=2025-12-15 (sin snapshot <= esa fecha) devuelve estimated:true en ambos lados."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "cookie session_token=smoke_session_admin_fork327 (admin), smoke_session_vip_iter294 (vip 403), smoke_session_normal_iter292 (normal 403), smoke_session_emp_iter281 (empleado 200)",
+  "seed_data_creation": "Inserté temporalmente 2 snapshots source='test' (2025-12-01 rate_vip=400 y 2025-12-31 rate_vip=500) en fx_rate_history para validar delta≠0 en UI; LIMPIADOS al terminar (quedó solo el snapshot original del día).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature IPV Fase 1 FX totalmente verificada en backend y UI. Para validar delta visible, insertar 2 snapshots con rates distintos en fechas pasadas y elegirlas en fx-cut/fx-ref; limpiar al terminar (source='test')."
+}
