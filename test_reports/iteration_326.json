@@ -1,0 +1,25 @@
+{
+  "summary": "iter326 — IPV Audit #2 (R01–R04) E2E verification. Executed the full iter320–325 regression suite (72/72 PASS) PLUS a new concurrency smoke suite test_iter326_ipv_concurrency.py (8/8 PASS) covering real HTTP concurrency on R02 (WAC+stock atomic fold under ThreadPoolExecutor), R01 (offer atomic withdrawal on entry when price changes / preserved when sale_price rounds to same stored value), R03 (409 on count POST after authorized adjust), and R04 (close-review 3-state priority — 'descuadra' wins over 'pendiente' when there's an anomaly + many missing counts). Also validated R04 UI: in /admin/inventory the 'Cierre' tab (data-testid='inventory-tab-close') renders the badge 'RESULTADO: PENDIENTE' in ES with no raw i18n key leak.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter326_ipv_concurrency.py",
+    "/app/test_reports/pytest/iter326.xml",
+    "/app/test_reports/pytest/iter320_325_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "R02 fold: services/inventory.apply_stock_idempotent accepts cost_fold=(qty,entry_cost) and recomputes WAC inside a single $set pipeline — verified atomic under 2 and 6 concurrent entries (no lost update).",
+    "R01 withdrawal: routes/inventory.create_movement writes price_usd + removes offer_* only when $round($price_usd,2) differs from the new rounded sale_price. Confirmed via live tests both branches (price changes clears offer; 300.001→300.00 keeps it).",
+    "R03 duplicate: inventory_counts has a unique (product_id, count_date) index and record_physical_count is conditioned to authorized!=true → DuplicateKeyError translates to 409. Verified by API round-trip.",
+    "R04 priority: build_close_review returns 'descuadra' when a merma movement with empty note exists even if many products are uncounted — confirmed on live DB with 405 uncounted products."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter326_ipv_concurrency.py"],
+  "success_rate": {"backend": "100% (72/72 regression + 8/8 iter326)", "frontend": "100% (badge R04 OK)"},
+  "test_credentials": "Cookie session_token=smoke_session_admin_fork327 → user_test_admin01 (admin), seeded in user_sessions (TTL ~2 days). Pytest uses test_session_admin_X / employee / vip / normal via conftest.",
+  "seed_data_creation": "Each test creates TEST_IPV326_* products and cleans them up (products + inventory_movements + inventory_lots + inventory_counts) in finally. No orphans left; sanity-checked after run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter320–326 IPV module is green. The concurrency file at /app/backend/tests/test_iter326_ipv_concurrency.py is a regression entry point for future R01-R04 changes. BD compartida tiene ~405 productos company (owner_id vacío) sin conteo del día; por eso close-review por defecto siempre devuelve 'pendiente' (o 'descuadra' si se inyecta anomalía). Para probar 'cuadra' hay que trabajar en una fecha controlada sin productos sin contar — pytest iter320 ya lo cubre.",
+  "rca of the issue": "N/A — no bugs encontrados. El fix previo del main agent sobre la prioridad R04 ('descuadra' gana) está correcto y verificado tanto por pytest como por API live."
+}
