@@ -2974,7 +2974,8 @@
     "showQrBtn": "Show QR",
     "qrTitle": "Show this code at the store",
     "qrHint": "The staff will scan it with the camera and your delivery will be confirmed instantly.",
-    "offer": "Offer"
+    "offer": "Offer",
+    "offersChip": "Offers"
   },
   "kyc": {
     "eyebrow": "/ Identity Verification",

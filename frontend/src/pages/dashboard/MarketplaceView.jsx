@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Boxes, Package, Search, Truck, Store, MapPin, QrCode } from "lucide-react";
+import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
@@ -48,13 +48,17 @@ export default function MarketplaceView() {
   const [query, setQuery] = useState("");
   // iter222 — chips de categoría para navegar la tienda más rápido.
   const [category, setCategory] = useState("");
+  // iter326 — filtro "Ofertas": ver todas las liquidaciones juntas.
+  const [onlyOffers, setOnlyOffers] = useState(false);
   const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const offerCount = useMemo(() => products.filter((p) => p.on_offer).length, [products]);
   const categories = useMemo(
     () => [...new Set(products.map((p) => (p.category || "").trim()).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b)),
     [products],
   );
   const visibleProducts = products.filter((p) =>
+    (!onlyOffers || p.on_offer) &&
     (!category || (p.category || "").trim() === category) &&
     (!query.trim() || norm(p.name).includes(norm(query)) ||
       norm(p.category).includes(norm(query)) || norm(p.owner_name).includes(norm(query))));
@@ -194,14 +198,27 @@ export default function MarketplaceView() {
         />
       </div>
 
-      {/* iter222 — chips de categoría */}
-      {categories.length > 1 && (
+      {/* iter222 — chips de categoría · iter326 — chip de Ofertas */}
+      {(categories.length > 1 || offerCount > 0) && (
         <div className="flex gap-2 flex-wrap" data-testid="marketplace-category-chips">
+          {offerCount > 0 && (
+            <button
+              data-testid="category-chip-offers"
+              onClick={() => setOnlyOffers((v) => !v)}
+              className={`px-3 py-1.5 text-xs uppercase tracking-wider border rounded-full transition-colors flex items-center gap-1 ${
+                onlyOffers
+                  ? "border-red-500 text-white bg-red-500"
+                  : "border-red-500/40 text-red-300 hover:bg-red-500/10"
+              }`}
+            >
+              <Tag className="w-3 h-3" /> {t("marketplace.offersChip")} ({offerCount})
+            </button>
+          )}
           <button
             data-testid="category-chip-all"
-            onClick={() => setCategory("")}
+            onClick={() => { setCategory(""); setOnlyOffers(false); }}
             className={`px-3 py-1.5 text-xs uppercase tracking-wider border rounded-full transition-colors ${
-              !category
+              !category && !onlyOffers
                 ? "border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10"
                 : "border-white/10 text-neutral-400 hover:text-white"
             }`}

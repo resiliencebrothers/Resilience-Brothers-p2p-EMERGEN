@@ -2974,7 +2974,8 @@
     "showQrBtn": "Ver QR",
     "qrTitle": "Muestra este código en la tienda",
     "qrHint": "El personal lo escaneará con la cámara y tu entrega quedará confirmada al instante.",
-    "offer": "Oferta"
+    "offer": "Oferta",
+    "offersChip": "Ofertas"
   },
   "kyc": {
     "eyebrow": "/ Verificación de identidad",

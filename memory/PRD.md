@@ -2289,3 +2289,8 @@ Dos fallos reportados por auditoría externa, reproducidos y corregidos. Verific
 - **Archivos**: `routes/inventory.py` (apply_liquidation atómico + entrada limpia oferta). Tests: `tests/test_iter325_ipv_audit_fixes.py` (nuevo); `tests/test_iter323_liquidation.py` (aserción 400→409).
 - **Nota de entorno**: el test `test_iter320...caja_neta==0` es una aserción GLOBAL del día y es frágil ante movimientos de otras pruebas del mismo día (hora Cuba). Las pruebas manuales por curl crean productos cuyo `alta` deja un movimiento de entrada; borrar el producto NO borra sus movimientos. Si falla por `caja_neta != 0`, limpiar los movimientos/lotes huérfanos de hoy (product_id inexistente), NO es regresión de código.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+## 2026-10-04 · iter326 — Sección "Ofertas" en la tienda web
+- Nuevo chip **"Ofertas (N)"** (rojo, con icono) en el marketplace (`MarketplaceView.jsx`) que filtra para ver solo los productos liquidados/en oferta. Convive con el buscador y los chips de categoría; "Todos" lo desactiva. El chip solo aparece si hay ofertas; el contador refleja cuántas hay.
+- Verificado por captura (desktop + móvil): el chip filtra a solo las ofertas con su badge "OFERTA −N%". i18n es/en (`marketplace.offersChip`).
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.
