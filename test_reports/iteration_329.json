@@ -1,0 +1,25 @@
+{
+  "summary": "Fase 1 IPV 'Corte Histórico' verificada OK (backend + frontend). pytest test_iter328_cutoff_history.py 4/4 PASS. Nuevo test_iter329_cutoff_api.py 11/11 PASS cubre permisos (admin/employee 200; vip/normal 403; CSV también 403 para vip), validaciones (fecha inválida 400, start inválido 400, start>date 400), forma del JSON y orden por value DESC, CSV con cabeceras requeridas + fila TOTALES, y persistencia de reference_cost/difference_value/currency/unit en POST /api/admin/inventory/counts. UI /admin/inventory → pestaña 'Histórico' renderiza con todos los data-testid; tabla ordenada por valor DESC; aviso de cobertura parcial visible (375 huérfanos TEST_SnapCost_* de iteraciones previas en la DB de preview, no es bug); sin claves i18n crudas. Summary cards muestran 863 productos / 3,158 unidades / 970,620 CUP / 0 CUP dif.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter328_cutoff_history.py",
+    "/app/backend/tests/test_iter329_cutoff_api.py",
+    "/app/test_reports/pytest/iter329_api.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Nota (no bug): la DB de preview contiene ~375 productos huérfanos TEST_SnapCost_* insertados en iteraciones previas sin movimiento 'entrada', por eso aparecen con cobertura 'parcial'. Main agent ya lo documentó. Si molesta visualmente, se podría ejecutar un one-off: db.products.delete_many({id: /^TEST_/}) junto con sus inventory_movements/inventory_counts. Mis tests sí limpian los suyos con fixtures.",
+    "services/inventory_history.py:177 ordena por value DESC pero no tiene criterio desempate; con 10 productos de igual valor podría variar el orden entre llamadas. Minor — considerar agregar name como tiebreaker.",
+    "El endpoint devuelve 863 filas sin paginación. Para tiendas más grandes convendría paginar o limitar el payload en el front; hoy 500k docs de movimientos es el límite duro (línea 68)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter329_cutoff_api.py (nuevo)"
+  ],
+  "success_rate": {"backend": "100% (4/4 unit + 11/11 API)", "frontend": "100% (todos los data-testid + ordenamiento + sin i18n leak)"},
+  "test_credentials": "cookie session_token=test_session_admin_X (admin), test_session_employee_X (employee con permiso products), test_session_vip_X (vip, sin permiso → 403), test_session_normal_X (normal → 403). Usados por conftest.py del backend.",
+  "seed_data_creation": "Se crean y eliminan dentro de los tests: productos TEST_IPV329A_*, TEST_IPV329B_*, TEST_IPV329C_*, con sus inventory_movements e inventory_counts, limpieza completa en fixtures (yield + delete).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter329_cutoff_api.py cubre API+CSV+perm+count-fields. Si se añaden más endpoints a Fase 1 (p.ej. PDF o Fase 2), extender este archivo. Los TEST_SnapCost_* huérfanos en preview no son nuestros; limpiarlos requiere acción del main agent si se desea una vista limpia del Histórico."
+}

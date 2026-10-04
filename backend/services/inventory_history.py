@@ -59,9 +59,19 @@ async def build_cutoff_report(cutoff: str,
          "is_active": 1}).to_list(5000)
     pmap = {p["id"]: p for p in products}
 
+    # Conteos físicos del día de corte (para valorar diferencias).
+    counts = {c["product_id"]: c for c in await db.inventory_counts.find(
+        {"count_date": cutoff}, {"_id": 0}).to_list(50000)}
+
+    # Solo productos que EXISTEN en la colección (incluye inactivos: un producto
+    # desactivado tras el corte sigue en su histórico) o con conteo ese día. Los
+    # movimientos de productos ya BORRADOS no generan filas (evita ruido).
+    allowed = set(pmap.keys()) | set(counts.keys())
+
     # Movimientos hasta el corte (afectan stock + cambios de precio), en orden.
     movs = await db.inventory_movements.find(
-        {"created_at": {"$lt": cutoff_end},
+        {"product_id": {"$in": list(allowed)},
+         "created_at": {"$lt": cutoff_end},
          "type": {"$in": [*_STOCK_TYPES, "precio"]}},
         {"_id": 0, "product_id": 1, "product_name": 1, "type": 1,
          "quantity": 1, "unit_cost": 1, "unit_price": 1,
@@ -70,11 +80,7 @@ async def build_cutoff_report(cutoff: str,
     for m in movs:
         by_prod.setdefault(m["product_id"], []).append(m)
 
-    # Conteos físicos del día de corte (para valorar diferencias).
-    counts = {c["product_id"]: c for c in await db.inventory_counts.find(
-        {"count_date": cutoff}, {"_id": 0}).to_list(50000)}
-
-    pids = set(by_prod.keys()) | set(counts.keys())
+    pids = allowed
     rows = []
     coverage_from = None
     tot_value = 0.0
@@ -174,7 +180,7 @@ async def build_cutoff_report(cutoff: str,
         })
         tot_value += value
         tot_units += final_stock if final_stock > 0 else 0
-    rows.sort(key=lambda r: r["value"], reverse=True)
+    rows.sort(key=lambda r: (-r["value"], r["name"].lower()))
     return {
         "cutoff": cutoff,
         "start": start or None,

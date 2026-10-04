@@ -2313,3 +2313,17 @@ Tras revisar el documento del cliente "Plan por Fases IPV (04-10-2026)", se cerr
 - **Nota de método**: la plataforma usa WAC móvil; el Excel de referencia usa promedio periódico diario → cifras distintas, a documentar al comparar.
 - **Backlog priorizado IPV** (del plan, pendiente de arrancar): Fase 1 Corte histórico + valorar diferencias (ALTA) → Fase 2 Mínimos por producto (MEDIA) → Fase 3 Seguimiento de incidencias (MEDIA) → Fase 4 Unidades/fracciones (condicional).
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+## 2026-10-04 · iter328 — IPV Fase 1: Corte Histórico del inventario
+Nueva consulta de inventario a una FECHA DE CORTE, reconstruida desde los MOVIMIENTOS inmutables (no del estado actual) → un cambio posterior de costo/precio/nombre/estado NO altera el pasado. Verificado E2E (testing_agent iter329): **backend 4/4 aceptación + 11/11 API, frontend 100%**, cero incidencias.
+- **Backend `services/inventory_history.py`** (`build_cutoff_report(cutoff, start?)`): reconstruye stock + WAC replicando entradas cronológicamente ≤ corte; valor en **CUP** = existencia × WAC al corte; flujos del período [start, corte] (inicial = antes de start); diferencias de conteo valoradas al **costo de referencia CONGELADO** del conteo; cobertura **"parcial"** si la existencia reconstruida cae bajo cero (falta base inicial auditada → no se rellena con el stock de hoy); orden por valor DESC (desempate por nombre).
+- **Reglas**: Existencia final = inicial + entradas − ventas − merma − consumo − otras + ajuste_neto; Valor = final × WAC; Valor diferencia = diferencia × reference_cost.
+- **Conteo ampliado** (`record_physical_count`): guarda `reference_cost` (WAC vigente), `unit`, `currency:"CUP"`, `valued_at`, `difference_value`. Así la evidencia del conteo queda fijada y un costo posterior no la cambia.
+- **Rutas**: `GET /api/admin/inventory/cutoff-report?date&start` y `/cutoff-report.csv` (permiso 'products'; vip/normal 403; fecha inválida / start>date → 400).
+- **Frontend**: nueva pestaña **"Histórico"** (`InventoryHistoryTab.jsx`, testid `inventory-tab-history`) con selector de corte + "Desde" opcional, 4 tarjetas de resumen, tabla ordenada por valor con columnas inicial/entradas/ventas/merma/consumo/otras/ajuste/final/WAC/valor/dif.conteo/valor dif., aviso de cobertura parcial y export CSV. i18n es/en (`inventory.tabs.history`, `inventory.history.*`).
+- **Inclusión de filas**: solo productos que existen en la colección (incluye inactivos → "desactivado sigue en histórico") o con conteo ese día; los movimientos de productos BORRADOS no generan filas (evita ruido).
+- **Limpieza de datos**: eliminados 357 productos de prueba `TEST_*` + 975 movimientos huérfanos + 5 lotes que ensuciaban Control/Valoración/Histórico (ids reales son UUID; ninguno real se llama TEST_).
+- **Moneda**: control en CUP (los campos internos cost_usd/price_usd guardan CUP). El equivalente histórico en USDT queda como seguimiento (requiere snapshot de la tasa a la fecha de corte; `rates` solo tiene la tasa actual).
+- **Nota**: los productos del demo creados antes de iter226 carecen de Entrada base → salen "parcial" con valor 0 (comportamiento correcto del plan). Productos con historial de entrada completo reconstruyen bien (probado).
+- **Tests**: `tests/test_iter328_cutoff_history.py` (4) + `tests/test_iter329_cutoff_api.py` (11), añadidos a `make test-critical`. Reporte: `/app/test_reports/iteration_329.json`.
+- **Status**: en preview, verificado. Pendiente re-despliegue a producción.

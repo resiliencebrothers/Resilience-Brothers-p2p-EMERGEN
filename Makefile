@@ -98,6 +98,8 @@ test-critical: ## Run critical regression subset (~5 min, ~270 tests incl. IPV i
 		tests/test_iter324_offer_visibility.py \
 		tests/test_iter325_ipv_audit_fixes.py \
 		tests/test_iter326_ipv_concurrency.py \
+		tests/test_iter328_cutoff_history.py \
+		tests/test_iter329_cutoff_api.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)
