@@ -189,6 +189,11 @@ class CloseReviewSave(BaseModel):
     note: str = Field("", max_length=300)
 
 
+class MinStockUpdate(BaseModel):
+    # iter332 (IPV Fase 2) — None limpia el mínimo propio (vuelve al global).
+    min_stock: int | None = Field(None, ge=0, le=1_000_000)
+
+
 @router.post("/admin/inventory/counts")
 async def create_count(payload: CountCreate, request: Request) -> Any:
     """Registra/actualiza el conteo físico de hoy de un producto (staff con
@@ -425,6 +430,43 @@ async def inventory_fx_variation(request: Request, cut: Optional[str] = None,
         "delta_pct": delta_pct,
         "direction": direction,
     }
+
+
+@router.patch("/admin/inventory/products/{product_id}/min-stock")
+async def set_product_min_stock(product_id: str, payload: MinStockUpdate,
+                                request: Request) -> Any:
+    """IPV Fase 2 — fija (o limpia con null) el stock mínimo de un producto de
+    la empresa. Dispara la re-evaluación de la alerta de existencias bajas."""
+    await require_permission(request, "products")
+    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not existing or existing.get("owner_id"):
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    await db.products.update_one(
+        {"id": product_id}, {"$set": {"min_stock": payload.min_stock}})
+    from services.inventory import maybe_alert_low_stock
+    await maybe_alert_low_stock(product_id)
+    return {"ok": True, "product_id": product_id, "min_stock": payload.min_stock}
+
+
+@router.get("/admin/inventory/close-snapshot")
+async def inventory_close_snapshot(request: Request, date: Optional[str] = None,
+                                   version: Optional[int] = None) -> Any:
+    """IPV — acta de cierre CONGELADA de un día (existencia + valor CUP/USDT +
+    tasa + firmas). Devuelve la última versión (o la pedida) y el listado de
+    versiones para auditar correcciones posteriores."""
+    await require_permission(request, "products")
+    day = _valid_day(date or today_havana(), "date")
+    q: dict = {"close_date": day}
+    if version is not None:
+        q["version"] = version
+    snap = await db.inventory_close_snapshots.find_one(
+        q, {"_id": 0}, sort=[("version", -1)])
+    versions = await db.inventory_close_snapshots.find(
+        {"close_date": day},
+        {"_id": 0, "version": 1, "frozen_at": 1, "resultado": 1,
+         "frozen_by_email": 1, "responsable": 1, "revisado_por": 1,
+         "totals": 1, "fx": 1}).sort("version", -1).to_list(100)
+    return {"date": day, "snapshot": snap, "versions": versions}
 
 
 

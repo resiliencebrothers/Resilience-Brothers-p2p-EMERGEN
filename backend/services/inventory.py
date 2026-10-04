@@ -282,6 +282,19 @@ async def get_low_stock_threshold() -> int:
         return LOW_STOCK_THRESHOLD
 
 
+def effective_low_stock_threshold(product: dict, global_threshold: int) -> int:
+    """iter332 (IPV Fase 2) — umbral efectivo de un producto: su `min_stock`
+    si está configurado (incluye 0 = solo avisa al agotarse), o el umbral
+    global si está vacío/None (sin mínimo propio)."""
+    ms = product.get("min_stock")
+    if ms is None:
+        return global_threshold
+    try:
+        return max(0, int(ms))
+    except (TypeError, ValueError):
+        return global_threshold
+
+
 async def maybe_alert_low_stock(product_id: str) -> None:
     """iter218 — avisa a los admins (push + email + campana in-app) cuando un
     producto de la empresa cae al umbral de stock bajo o se agota.
@@ -292,7 +305,8 @@ async def maybe_alert_low_stock(product_id: str) -> None:
     product = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not product or product.get("owner_id"):
         return
-    threshold = await get_low_stock_threshold()
+    threshold = effective_low_stock_threshold(
+        product, await get_low_stock_threshold())
     stock = int(product.get("stock") or 0)
     if stock > threshold:
         if product.get("low_stock_alert_level"):
@@ -650,7 +664,7 @@ async def record_price_change(*, product: dict, field_label: str,
 async def build_control_rows() -> list:
     """Tabla 'Control Inventario' en tiempo real (una fila por producto)."""
     products = await db.products.find(_COMPANY_FILTER, {"_id": 0}).to_list(1000)
-    threshold = await get_low_stock_threshold()
+    global_threshold = await get_low_stock_threshold()
     # iter256(S11) — mismo criterio de venta efectiva que el dashboard:
     # excluir canjes rechazados (y sus reversos) y movimientos fallidos.
     refs = await _rejected_marketplace_refs()
@@ -683,6 +697,7 @@ async def build_control_rows() -> list:
         m = by_product.get(p["id"], {})
         stock = int(p.get("stock") or 0)
         cost = float(p.get("cost_usd") or 0)
+        threshold = effective_low_stock_threshold(p, global_threshold)
         if stock <= 0:
             estado = "agotado"
         elif stock <= threshold:
@@ -700,6 +715,8 @@ async def build_control_rows() -> list:
             "price_usd": float(p.get("price_usd") or 0),
             "cost_usd": cost,
             "stock": stock,
+            "min_stock": p.get("min_stock"),
+            "effective_min": threshold,
             "entradas": int(m.get("entrada", 0)),
             "ventas": int(m.get("venta", 0)),
             "ajustes_pos": int(m.get("ajuste_pos", 0)),

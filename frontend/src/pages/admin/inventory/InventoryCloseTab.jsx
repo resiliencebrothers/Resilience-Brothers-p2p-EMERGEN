@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { CalendarDays, TrendingUp, TrendingDown, Wallet, Globe, FileDown, PackageCheck, ClipboardCheck, AlertTriangle, PackageMinus } from "lucide-react";
+import { CalendarDays, TrendingUp, TrendingDown, Wallet, Globe, FileDown, PackageCheck, ClipboardCheck, AlertTriangle, PackageMinus, Lock } from "lucide-react";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const todayLocal = () => {
@@ -328,6 +328,23 @@ export default function InventoryCloseTab() {
               <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.folio")}:</span> {review.close.folio || "—"}</p>
               {review.close.note && (
                 <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.obs")}:</span> {review.close.note}</p>
+              )}
+              {review.close.value_cup != null && (
+                <div className="mt-2 pt-2 border-t border-emerald-500/20" data-testid="close-frozen-acta">
+                  <p className="micro-label text-neutral-500 flex items-center gap-1 mb-1">
+                    <Lock className="w-3 h-3 text-emerald-400" />
+                    {t("inventory.close.actaTitle", { v: review.close.snapshot_version || 1 })}
+                  </p>
+                  <p className="text-sm font-mono">
+                    <span className="text-[#8B5CF6]">{fmt(review.close.value_cup)} {cur}</span>
+                    {review.close.value_usdt != null && (
+                      <span className="text-sky-300"> · ≈ {fmt(review.close.value_usdt)} USDT</span>
+                    )}
+                  </p>
+                  <p className="text-[0.65rem] text-neutral-500">
+                    {t("inventory.close.actaRate", { rate: fmt(review.close.fx_rate_vip) })}
+                  </p>
+                </div>
               )}
               <p className="text-[0.65rem] text-neutral-500 pt-1">
                 {t("inventory.close.closedBy", { email: review.close.closed_by_email || "—" })}

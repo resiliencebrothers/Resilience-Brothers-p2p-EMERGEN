@@ -286,6 +286,48 @@ async def build_count_sheet(day: str) -> dict:
     }
 
 
+async def _build_close_acta(day: str, review: dict) -> dict:
+    """iter332 — datos del acta de cierre: valoración VIVA al cerrar (stock ×
+    costo WAC) en CUP + equivalente USDT a la tasa VIP del día, con una fila por
+    producto de la empresa. Es la fotografía del inventario al momento de cerrar."""
+    products = await db.products.find(
+        _COMPANY_FILTER,
+        {"_id": 0, "id": 1, "name": 1, "category": 1, "stock": 1,
+         "cost_usd": 1, "is_active": 1}).to_list(5000)
+    from services.fx_history import get_fx_at
+    fx = await get_fx_at(day)
+    rate = float(fx.get("rate_vip") or 0)
+    rows = []
+    tot_cup = 0.0
+    units = 0.0
+    for p in products:
+        stock = float(p.get("stock") or 0)
+        cost = float(p.get("cost_usd") or 0)
+        val = round(stock * cost, 2)
+        if stock == 0 and val == 0:
+            continue
+        rows.append({
+            "product_id": p["id"], "name": p.get("name", ""),
+            "category": p.get("category", ""), "stock": stock,
+            "cost_usd": round(cost, 4), "value_cup": val,
+            "value_usdt": round(val / rate, 2) if rate > 0 else None,
+        })
+        tot_cup += val
+        units += stock
+    rows.sort(key=lambda r: -r["value_cup"])
+    return {
+        "fx": {"rate_vip": rate, "rate_date": fx.get("rate_date"),
+               "estimated": bool(fx.get("estimated"))},
+        "totals": {
+            "num_products": len(rows), "units": round(units, 3),
+            "value_cup": round(tot_cup, 2),
+            "value_usdt": round(tot_cup / rate, 2) if rate > 0 else None,
+        },
+        "products": rows,
+        "alerts_snapshot": review["alerts"],
+    }
+
+
 async def save_close_review(day: str, responsable: str, revisado_por: str,
                             folio: str, note: str, actor: dict) -> dict:
     """ADMIN — guarda el cierre formal del día (constancia). No bloquea nuevos
@@ -313,4 +355,29 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
     await db.inventory_closes.update_one(
         {"close_date": day},
         {"$set": doc, "$setOnInsert": {"created_at": now}}, upsert=True)
+    # iter332 — ACTA CONGELADA inmutable y VERSIONADA: cada cierre deja una copia
+    # (existencia + valor CUP/USDT + tasa + firmas) que no se altera aunque luego
+    # cambien datos. Una corrección posterior crea una NUEVA versión preservando
+    # la anterior como evidencia (trazabilidad de revisiones).
+    acta = await _build_close_acta(day, review)
+    last = await db.inventory_close_snapshots.find_one(
+        {"close_date": day}, {"_id": 0, "version": 1}, sort=[("version", -1)])
+    version = ((last or {}).get("version") or 0) + 1
+    snap = {
+        "id": str(uuid.uuid4()), "close_date": day, "version": version,
+        "responsable": doc["responsable"], "revisado_por": doc["revisado_por"],
+        "folio": doc["folio"], "note": doc["note"], "resultado": resultado,
+        "fx": acta["fx"], "totals": acta["totals"], "products": acta["products"],
+        "alerts_snapshot": acta["alerts_snapshot"],
+        "frozen_by": actor.get("user_id", ""),
+        "frozen_by_email": actor.get("email", ""),
+        "frozen_at": now, "immutable": True,
+    }
+    await db.inventory_close_snapshots.insert_one(snap)
+    await db.inventory_closes.update_one(
+        {"close_date": day},
+        {"$set": {"snapshot_version": version, "snapshot_id": snap["id"],
+                  "value_cup": acta["totals"]["value_cup"],
+                  "value_usdt": acta["totals"]["value_usdt"],
+                  "fx_rate_vip": acta["fx"]["rate_vip"]}})
     return await db.inventory_closes.find_one({"close_date": day}, {"_id": 0})

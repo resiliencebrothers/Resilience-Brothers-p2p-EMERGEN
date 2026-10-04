@@ -211,6 +211,8 @@ class Product(BaseModel):
     rejection_reason: str = ""
     # iter236 — sucursales donde está disponible (vacío = todas).
     available_store_ids: list[str] = Field(default_factory=list)
+    # iter332 (IPV Fase 2) — mínimo opcional por producto (None = usa global).
+    min_stock: int | None = None
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
     # iter324 — oferta/liquidación visible en la tienda web.
     on_offer: bool = False
@@ -230,6 +232,9 @@ class ProductCreate(BaseModel):
     category: str = "general"
     is_active: bool = True
     available_store_ids: list[str] = Field(default_factory=list)
+    # iter332 (IPV Fase 2) — mínimo opcional por producto. None = usa el umbral
+    # global de "stock bajo"; 0 = solo alerta al agotarse (distingue vacío de cero).
+    min_stock: int | None = Field(None, ge=0, le=1_000_000)
 
 
 # ============================================================
