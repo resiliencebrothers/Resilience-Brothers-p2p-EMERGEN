@@ -20,7 +20,7 @@ from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import now_utc, iso
-from services.inventory import _COMPANY_FILTER, today_havana
+from services.inventory import _COMPANY_FILTER, today_havana, UNIT_ABBR
 
 logger = logging.getLogger(__name__)
 
@@ -116,13 +116,17 @@ async def on_count_recorded(count: dict) -> None:
     day = count["count_date"]
     await _auto_resolve(f"conteo_pendiente:{pid}:{day}",
                         "El producto fue contado en la jornada.")
-    diff = int(count.get("difference") or 0)
+    # iter337 (H02) — conservar la precisión fraccionaria. El int() anterior
+    # truncaba −0,75 lb a 0 y la incidencia de diferencia se auto-resolvía como
+    # si el conteo cuadrara. Se usa el mismo criterio de cero que _count_status.
+    diff = round(float(count.get("difference") or 0), 3)
+    unit = UNIT_ABBR.get(count.get("unit") or "", count.get("unit") or "ud")
     dk = f"diferencia:{count.get('id', '')}"
-    if diff != 0 and not count.get("authorized"):
+    if abs(diff) > 1e-9 and not count.get("authorized"):
         await _upsert_incident(
             itype="diferencia", product_id=pid,
             product_name=count.get("product_name", ""),
-            detail=(f"Descuadre de {diff:+d} ud (contado "
+            detail=(f"Descuadre de {diff:+g} {unit} (contado "
                     f"{count.get('counted_qty')} vs teórico "
                     f"{count.get('theoretical_stock')})."),
             amount=count.get("difference_value") or 0,

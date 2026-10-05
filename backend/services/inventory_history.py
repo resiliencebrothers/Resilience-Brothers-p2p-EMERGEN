@@ -147,7 +147,10 @@ async def build_cutoff_report(cutoff: str,
             partials += 1
         count_block = None
         if c:
-            diff = int(c.get("difference") or 0)
+            # iter337 (H02) — conservar la precisión fraccionaria (lb/kg a 3
+            # decimales) de la diferencia. El int() anterior truncaba −0,75 lb
+            # a 0 y hacía desaparecer la diferencia y su valor del histórico/CSV.
+            diff = _r(float(c.get("difference") or 0), 3)
             ref_cost = c.get("reference_cost")
             fallback = ref_cost is None
             if fallback:
@@ -158,6 +161,7 @@ async def build_cutoff_report(cutoff: str,
                 "counted_qty": c.get("counted_qty"),
                 "theoretical": c.get("theoretical_stock"),
                 "difference": diff,
+                "unit": c.get("unit") or "unidad",
                 "reference_cost": _r(float(ref_cost or 0), 4),
                 "difference_value": diff_value,
                 "currency": c.get("currency") or STORE_CURRENCY,
