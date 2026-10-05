@@ -1,0 +1,24 @@
+{
+  "summary": "iter338 regression testing complete. All three targeted changes validated end-to-end: (1) H03 effective-order history (unit tests) PASS — pending movements excluded during pause, WAC=300/value=1800 after applying out-of-order, and effects applied past cutoff excluded. (2) Cutoff CSV new 'Unidad' column PASS via live HTTP — header 'Diferencia'→'Unidad'→'Costo ref.' alignment confirmed, 'lb' abbreviation and TOTALES row column-count aligned (22 cols). (3) Frontend dialog.jsx regression PASS — login dialog on '/' (with DialogDescription) and 2 admin dialogs ('Agregar producto al inventario', 'Etiquetas con código de barras') on /admin/inventory open/close cleanly, zero Radix 'Missing Description or aria-describedby' warnings in console. Only pre-existing unrelated failures observed (iter328 asyncio.get_event_loop deprecation, iter230 WAC profit — both flagged by main agent as not part of this batch).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter338_ipv_h03_effective_order.py",
+    "/app/backend/tests/test_iter338_http_csv.py",
+    "/app/test_reports/pytest/iter338_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Pre-existing test files tests/test_iter328_cutoff_history.py use `asyncio.get_event_loop().run_until_complete(...)` which is deprecated and raises RuntimeError in Python 3.11. Consider migrating to `pytest.mark.asyncio` for consistency with iter338 tests. Not a regression of this batch — tracked separately.",
+    "dialog.jsx's recursive hasDialogDescription() traversal runs on every DialogContent render; acceptable for current dialog depth but could memoize via React.Children if dialogs grow deeper children trees."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter338_http_csv.py (new)"
+  ],
+  "success_rate": {"backend": "100% (iter338 scope: 2/2 H03 unit + 2/2 CSV HTTP)", "frontend": "100% (3/3 dialogs open+close, 0 Radix warnings)"},
+  "test_credentials": "Admin cookie session_token=smoke_fp4_admin (user_test_admin01) used for admin HTTP + browser flows per request.",
+  "seed_data_creation": "test_iter338_http_csv.py seeds a 'libra' product + inventory_movement + inventory_counts row (prefix TEST_IPV338CSV_) and cleans up on teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter338 batch (H03 effective-order history, CSV 'Unidad' column, dialog.jsx a11y silencer) is green. Pre-existing failures NOT caused by this batch: tests/test_iter328_cutoff_history.py (RuntimeError: 'no current event loop' – asyncio.get_event_loop deprecation in py3.11) and tests/test_iter230_daily_close.py::test_daily_close_aggregates_store_and_web (WAC-correct expected 883.33 vs stale 850, confirmed by main agent via git stash). Admin browser login blocked by Turnstile captcha — use session_token cookie directly."
+}

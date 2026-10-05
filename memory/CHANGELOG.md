@@ -1623,3 +1623,17 @@ Archivos: `services/reconciliation_parser.py`, `services/reconciliation_matcher.
 - Nota pre-existente ajena a H02 (no bloqueante): `test_iter333_incidents_reorder.py` puede sufrir contaminación de orden por estado global (`_INDEX_READY`) al correr junto a otros; en aislamiento pasa.
 - **Status**: fix en preview. El usuario debe re-desplegar (Deploy) para llevarlo a `p2p.resiliencebrothers.com`.
 - Pendiente parkeado: accesibilidad de Diálogos (`aria-describedby`) en `frontend/src/components/ui/dialog.jsx`.
+
+## 2026-10-05 · iter338 — Fix H03 (ALTA) orden efectivo del histórico + 2 mejoras
+**H03 (ALTA)** — El histórico reconstruía stock/WAC por `created_at` del registro, no por el orden EFECTIVO de aplicación. Repro del auditor: apertura 8@200; entrada 2@500 insertada pero aplicada DESPUÉS de una venta de 4 → stock real 6 / WAC 300 / valor 1.800, pero el histórico devolvía WAC 260 / valor 1.560 (reproducía la entrada antes de la venta por tener created_at anterior).
+- **Fix** (`services/inventory_history.py::build_cutoff_report`): (1) se IGNORAN los movimientos pendientes (`needs_stock=True` y `stock_applied!=True`) hasta que su efecto aterriza; (2) el orden y el filtro de corte usan el TIEMPO EFECTIVO `_eff = applied_at || created_at` (no created_at); (3) un efecto cuyo `applied_at` cae después del fin del día de corte no cuenta en ese histórico. Los flujos aplicados fuera de record_movement (canjes, sin `needs_stock`) siguen contando con su created_at.
+- **Sello `applied_at`**: `services/inventory.py::record_movement` y `services/credit_recovery.py::heal_initializing_ops` ahora graban `applied_at` en el momento en que el stock/WAC cambia realmente (ruta normal y recuperación). Campo aditivo; movimientos antiguos sin `applied_at` usan created_at (compat).
+- **Criterio cumplido**: tras completar/recuperar, la valoración histórica concuerda con el costo móvil efectivo; probado con interrupción (pausa → muestra 8, no 10) y límite de fecha.
+- **Tests**: `tests/test_iter338_ipv_h03_effective_order.py` (2 casos) + `tests/test_iter338_http_csv.py` (testing agent). Regresión: iter328 corte histórico 4/4, iter320 phase1, iter337 H02. Testing agent 100% backend+frontend, 0 issues.
+
+**Mejora — Columna 'Unidad' en CSV de corte**: `routes/inventory.py` cutoff-report.csv añade columna 'Unidad' (lb/kg/u vía `UNIT_ABBR`) entre 'Diferencia' y 'Costo ref.'. Filas y TOTALES realineados (22 columnas). Verificado por HTTP: fila libra → Diferencia=-0.75, Unidad=lb, Costo ref.=20.0, Valor diferencia=-15.0.
+
+**Mejora — Accesibilidad diálogos**: `frontend/src/components/ui/dialog.jsx`. `DialogContent` detecta (recursivo) si ya hay un `<DialogDescription>` o un `aria-describedby` propio; si no hay ninguno, fuerza `aria-describedby={undefined}` (fix recomendado por Radix 1.1.11) para silenciar el aviso "Missing Description" sin dejar un enlace aria colgante ni romper los diálogos que sí tienen descripción. Verificado: compila, diálogos abren/cierran, 0 avisos de describedby en consola.
+
+**Pre-existente NO relacionado** (no tocado): `test_iter230_daily_close.py::test_daily_close_aggregates_store_and_web` espera ganancia web 850 (costo 550) pero el comportamiento correcto desde iter327 es WAC 516,67 → 883,33; confirmado con `git stash` que falla igual sin mis cambios.
+- **Status**: en preview. Re-desplegar (Deploy) para producción.
