@@ -68,17 +68,37 @@ async def build_cutoff_report(cutoff: str,
     # movimientos de productos ya BORRADOS no generan filas (evita ruido).
     allowed = set(pmap.keys()) | set(counts.keys())
 
-    # Movimientos hasta el corte (afectan stock + cambios de precio), en orden.
+    # iter338 (H03) — Reconstrucción por ORDEN EFECTIVO de aplicación, no por
+    # created_at. Un movimiento con `needs_stock` cuyo efecto aún NO aterrizó
+    # (stock_applied != True) está PENDIENTE y no cuenta hasta aplicarse; su
+    # tiempo efectivo es `applied_at` (puede ser posterior a otro movimiento
+    # registrado después pero aplicado antes). Los flujos cuyo stock se toca
+    # fuera de record_movement (canjes: sin `needs_stock`) sí cuentan, con su
+    # created_at como tiempo efectivo. Así el WAC histórico concuerda con el
+    # costo móvil efectivamente aplicado al producto.
     movs = await db.inventory_movements.find(
         {"product_id": {"$in": list(allowed)},
          "created_at": {"$lt": cutoff_end},
          "type": {"$in": [*_STOCK_TYPES, "precio"]}},
         {"_id": 0, "product_id": 1, "product_name": 1, "type": 1,
          "quantity": 1, "unit_cost": 1, "unit_price": 1,
-         "created_at": 1}).sort("created_at", 1).to_list(500000)
+         "created_at": 1, "applied_at": 1,
+         "needs_stock": 1, "stock_applied": 1}).to_list(500000)
     by_prod: dict = {}
     for m in movs:
+        # Pendiente de aplicación (efecto no aterrizado) → se ignora.
+        if m.get("needs_stock") and not m.get("stock_applied"):
+            continue
+        # Instante efectivo = cuando el stock/WAC cambió realmente (applied_at),
+        # con created_at como respaldo (precios y flujos sin needs_stock).
+        eff = m.get("applied_at") or m["created_at"]
+        # Un efecto que aterrizó DESPUÉS del corte no pertenece al histórico.
+        if eff >= cutoff_end:
+            continue
+        m["_eff"] = eff
         by_prod.setdefault(m["product_id"], []).append(m)
+    for lst in by_prod.values():
+        lst.sort(key=lambda x: (x["_eff"], x["created_at"]))
 
     pids = allowed
 
@@ -110,7 +130,7 @@ async def build_cutoff_report(cutoff: str,
         name = pmap.get(pid, {}).get("name", "")
         for m in mlist:
             t = m["type"]
-            created = m["created_at"]
+            created = m["_eff"]  # iter338 (H03) — orden/efecto por tiempo real
             name = m.get("product_name") or name
             if (period_start is not None and not opening_captured
                     and created >= period_start):

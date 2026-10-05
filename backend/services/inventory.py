@@ -527,9 +527,16 @@ async def record_movement(*, product: dict, mtype: str, quantity: float,
             await db.inventory_movements.delete_one({"id": doc["id"]})
             raise HTTPException(status_code=400,
                                 detail="Stock insuficiente para este movimiento")
+        # iter338 (H03) — se sella el INSTANTE EFECTIVO en que el stock/WAC
+        # cambió realmente (puede ser posterior al created_at si la aplicación
+        # se retrasó/recuperó). El histórico reconstruye por este orden, no por
+        # el de registro.
+        applied_ts = iso(now_utc())
         await db.inventory_movements.update_one(
-            {"id": doc["id"]}, {"$set": {"stock_applied": True}})
+            {"id": doc["id"]},
+            {"$set": {"stock_applied": True, "applied_at": applied_ts}})
         doc["stock_applied"] = True
+        doc["applied_at"] = applied_ts
     else:
         doc, created = await _insert_movement(doc)
         if not created:

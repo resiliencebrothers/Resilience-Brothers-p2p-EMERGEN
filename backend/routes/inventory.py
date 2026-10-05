@@ -18,7 +18,7 @@ from audit_log import log_action
 from services.inventory import (record_movement, record_price_change,
                                 _day_bounds, today_havana,
                                 build_control_rows, build_dashboard,
-                                build_rotation, qnum)
+                                build_rotation, qnum, UNIT_ABBR)
 from services.inventory_ipv import (record_physical_count, clear_physical_count,
                                      authorize_count_adjustment,
                                      build_close_review, save_close_review,
@@ -367,7 +367,7 @@ async def inventory_cutoff_report_csv(request: Request,
         "Ventas", "Merma", "Consumo", "Otras salidas", "Ajuste neto",
         "Existencia final", f"Costo WAC ({data['currency']})",
         f"Valor ({data['currency']})", "Valor (USDT)", "Cobertura",
-        "Conteo físico", "Teórico", "Diferencia", "Costo ref.",
+        "Conteo físico", "Teórico", "Diferencia", "Unidad", "Costo ref.",
         "Valor diferencia", "Autorizado"])
     for p in data["products"]:
         c = p.get("count") or {}
@@ -380,6 +380,7 @@ async def inventory_cutoff_report_csv(request: Request,
             c.get("counted_qty", "") if c else "",
             c.get("theoretical", "") if c else "",
             c.get("difference", "") if c else "",
+            (UNIT_ABBR.get(c.get("unit", ""), c.get("unit", "")) if c else ""),
             c.get("reference_cost", "") if c else "",
             c.get("difference_value", "") if c else "",
             ("Sí" if c.get("authorized") else "No") if c else ""])
@@ -389,7 +390,7 @@ async def inventory_cutoff_report_csv(request: Request,
                      t["units"], "", t["value"],
                      t.get("value_usdt", "") if t.get("value_usdt") is not None else "",
                      f"{t['partial_count']} parcial(es)",
-                     "", "", "", "", t["diff_value"], ""])
+                     "", "", "", "", "", t["diff_value"], ""])
     writer.writerow([])
     writer.writerow([f"Tasa USDT→CUP (VIP) al corte: {fx.get('rate') or '—'}"
                      + (f" (estimada, {fx.get('rate_date') or 's/d'})"

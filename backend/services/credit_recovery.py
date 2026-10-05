@@ -450,8 +450,13 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
                 {"id": m["id"]}, {"$set": {"stock_apply_failed": True}})
             logger.warning("movimiento %s: stock insuficiente al recuperar", m["id"])
         else:
+            # iter338 (H03) — el healer también sella el instante efectivo de
+            # aplicación para que la reconstrucción histórica respete el orden
+            # real (no el de registro) tras una recuperación.
             await db.inventory_movements.update_one(
-                {"id": m["id"]}, {"$set": {"stock_applied": True}})
+                {"id": m["id"]},
+                {"$set": {"stock_applied": True,
+                          "applied_at": datetime.now(timezone.utc).isoformat()}})
             # iter256(S10) — completar también el asiento contable del fondo
             # (idempotente por flag fund_flow_recorded).
             try:
