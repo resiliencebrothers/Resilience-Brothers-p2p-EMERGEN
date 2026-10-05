@@ -26,6 +26,7 @@ sin rellenarlo con el stock/costo de hoy.
 from typing import Optional
 
 from services.inventory import (_COMPANY_FILTER, _day_bounds, OUTPUT_TYPES)
+from auth_utils import now_utc, iso
 from db_client import db
 
 STORE_CURRENCY = "CUP"
@@ -50,13 +51,16 @@ async def build_cutoff_report(cutoff: str,
     si no, la inicial es 0 y todo el histórico es flujo."""
     _, cutoff_end = _day_bounds(cutoff)          # fin EXCLUSIVO del día de corte
     period_start = _day_bounds(start)[0] if start else None  # inicio del período
+    # iter339 (H04) — un corte es VIGENTE si abarca el presente (hoy/futuro). Solo
+    # entonces la existencia reconstruida puede contrastarse con la real actual.
+    is_current_cutoff = cutoff_end > iso(now_utc())
 
     # Productos de la empresa (incluye inactivos: un producto desactivado tras
     # el corte sigue en su reporte histórico).
     products = await db.products.find(
         _COMPANY_FILTER,
         {"_id": 0, "id": 1, "name": 1, "category": 1,
-         "is_active": 1}).to_list(5000)
+         "is_active": 1, "stock": 1}).to_list(5000)
     pmap = {p["id"]: p for p in products}
 
     # Conteos físicos del día de corte (para valorar diferencias).
@@ -114,6 +118,7 @@ async def build_cutoff_report(cutoff: str,
     tot_units = 0.0
     tot_diff_value = 0.0
     partials = 0
+    undoc_count = 0
     for pid in pids:
         mlist = by_prod.get(pid, [])
         if mlist:
@@ -156,15 +161,29 @@ async def build_cutoff_report(cutoff: str,
         if period_start is not None and not opening_captured:
             opening = stock  # el período empieza tras el último movimiento
         final_stock = stock
+        # iter339 (H04) — Integridad de la base: en un corte VIGENTE (incluye el
+        # presente) la existencia reconstruida debe igualar la existencia REAL
+        # del producto. Si no coincide, hay una base SIN DOCUMENTAR (p. ej. stock
+        # cargado antes de la Fase 2, sin movimiento de apertura) y el histórico
+        # de ese producto NO es fiable → PARCIAL. La ausencia de saldo negativo
+        # no prueba integridad; y NO se rellena el pasado con la existencia de hoy.
+        current_stock = _r(float(pmap.get(pid, {}).get("stock") or 0), 3)
+        base_gap = (_r(current_stock - final_stock, 3)
+                    if (is_current_cutoff and pid in pmap) else 0.0)
+        undocumented = abs(base_gap) > 1e-9
         value = _r(final_stock * wac, 2)
-        # Incluir solo filas con actividad/saldo o con conteo del día.
+        # Incluir solo filas con actividad/saldo, con conteo del día, o con una
+        # base sin documentar que haya que señalar (H04).
         has_flow = any(flows[k] for k in _FLOW_KEYS)
         c = counts.get(pid)
-        if _r(final_stock, 3) == 0 and not has_flow and not c:
+        if (_r(final_stock, 3) == 0 and not has_flow and not c
+                and not undocumented):
             continue
-        partial = negative_seen
+        partial = negative_seen or undocumented
         if partial:
             partials += 1
+        if undocumented:
+            undoc_count += 1
         count_block = None
         if c:
             # iter337 (H02) — conservar la precisión fraccionaria (lb/kg a 3
@@ -208,6 +227,8 @@ async def build_cutoff_report(cutoff: str,
             "value_usdt": _r(value / rate_vip, 2) if rate_vip > 0 else None,
             "currency": STORE_CURRENCY,
             "coverage": "parcial" if partial else "completa",
+            "undocumented_base": undocumented,
+            "base_gap": base_gap,
             "count": count_block,
         })
         tot_value += value
@@ -235,5 +256,6 @@ async def build_cutoff_report(cutoff: str,
             "diff_value": _r(tot_diff_value, 2),
             "diff_value_usdt": _r(tot_diff_value / rate_vip, 2) if rate_vip > 0 else None,
             "partial_count": partials,
+            "undocumented_count": undoc_count,
         },
     }
