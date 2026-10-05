@@ -1,0 +1,24 @@
+{
+  "summary": "Backend-only verification of iter337 fix for IPV H02 (fractional difference not truncated). Ran provided unit tests (5/5 pass) and created an independent end-to-end HTTP test suite against the public REACT_APP_BACKEND_URL using session_token cookie, covering POST /api/admin/inventory/counts, GET /api/admin/inventory/cutoff-report (JSON + CSV), and GET /api/admin/inventory/incidents?type=diferencia. All 4 HTTP flows passed with the auditor's exact scenario (10 lb @ 20 CUP/lb, counted 9.25 lb → diff=-0.75, value=-15.0, unit=libra, status=faltante, incident pendiente with amount=-15.0 and detail containing '-0.75 lb'). Zero-difference count correctly auto-resolves. Larger fraction (-2.5 lb / -50 CUP) also preserved. CSV row parsed and verified decimals are intact (comma or dot). The H02 regression is fixed: diff and difference_value are no longer truncated to 0 in cutoff-report/CSV, and the diferencia incident is NOT auto-resolved when |diff|>1e-9.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter337_ipv_h02_fraction_diff.py",
+    "/app/backend/tests/test_iter337_http_flow.py",
+    "/app/test_reports/pytest/iter337_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/inventory_history.py build_cutoff_report: fix is correct — diff = _r(float(c.get('difference') or 0), 3) and count_block carries 'unit' + 'fallback_cost'. Rounding to 3 decimals is adequate for lb/kg; consider documenting the precision contract for consumers.",
+    "services/inventory_incidents.py on_count_recorded: gate abs(diff) > 1e-9 and UNIT_ABBR formatting look good; '{diff:+g}' prints '-0.75' as expected and the auto-resolve path for cuadra (diff=0) still works.",
+    "Minor pre-existing (unrelated to iter337): running tests/test_iter333_incidents_reorder.py together in the same pytest session with other iter test files causes test-order pollution via shared global state (e.g. _INDEX_READY, seeded _COMPANY_FILTER data). Individual runs pass. Non-blocking for H02 but worth isolating fixtures with teardown of module-level state."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter337_http_flow.py (new)"],
+  "success_rate": {"backend": "100% (9/9 iter337 tests pass)", "frontend": "N/A"},
+  "test_credentials": "Admin cookie session_token=smoke_fp4_admin (user_test_admin01)",
+  "seed_data_creation": "Each HTTP/unit test inserts and then deletes a TEST_IPV337_* product plus its inventory_counts/incidents/movements/lots/stock_ops. No persistent seed data left behind.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter337 H02 is independently confirmed via both internal service calls and real HTTP against the preview URL. Reusable regression file: /app/backend/tests/test_iter337_http_flow.py. If adding more inventory tests, use a dedicated event loop in sync fixtures (asyncio.new_event_loop) to avoid clashing with pytest-asyncio's event loop (lesson from first run).",
+  "rca of the issue": "Two consumers (services/inventory_history.build_cutoff_report and services/inventory_incidents.on_count_recorded) applied int(difference) to a float, truncating -0.75 → 0. Downstream: cutoff-report + CSV showed Diferencia=0 / Valor=0 and the diferencia incident fell into the else branch (|diff|==0) → _auto_resolve, closing the incident as if the count were balanced. Fix: round(float(diff), 3) with gate abs(diff) > 1e-9 in both places, and the cutoff_report count_block now also carries 'unit'. Repro: POST /api/admin/inventory/counts with counted_qty=9.25 against a 10-lb/20-CUP product → before fix the count persisted correctly but history/CSV/incident reported 0; after fix all three expose -0.75 lb / -15.0 CUP and the incident stays pendiente."
+}

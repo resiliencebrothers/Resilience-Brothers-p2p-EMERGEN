@@ -1609,3 +1609,17 @@ Archivos: `services/reconciliation_parser.py`, `services/reconciliation_matcher.
 - **CB08 v3**: `_DUAL_FUNCTION_NAMES` excluidas de la evidencia por token intermedio en `_surname_candidates`.
 - Aprendizajes: para pausar ENTRE dos escrituras internas de una función, parchear `AsyncIOMotorCollection.update_one` a nivel de clase con detección por filtro/$set (determinista, mismo loop); el tool de bash reintenta comandos al agotar timeout → usar `/app/scripts/run_critical.sh` (guard pgrep) para jamás duplicar la suite; flake conocido: TOTP_INVALID bajo carga (iter269/otros) — verificar en aislamiento.
 - Tests: 772/773 críticos (flake TOTP aislado 12/12) · nuevos 9 tests en verde.
+
+## 2026-10-05 · iter337 — Fix auditoría H02 (ALTA): diferencias fraccionarias truncadas a entero
+- **Causa raíz**: dos CONSUMIDORES aplicaban `int(difference)` sobre un float, truncando −0,75 → 0.
+  - `services/inventory_history.py::build_cutoff_report` (línea ~150): el histórico/corte y su CSV mostraban Diferencia=0 y Valor diferencia=0.
+  - `services/inventory_incidents.py::on_count_recorded` (línea ~119): el gate `if diff != 0` caía en `else` → `_auto_resolve`, cerrando la incidencia de diferencia como si el conteo cuadrara (lo más grave).
+  - El CONTEO (`inventory_ipv.record_physical_count`) ya guardaba bien la fracción; sólo fallaban los consumidores.
+- **Fix**:
+  - `build_cutoff_report`: `diff = _r(float(difference), 3)` y el `count_block` ahora incluye `unit`. El CSV de corte lee de ese bloque → también correcto.
+  - `on_count_recorded`: `diff = round(float(difference), 3)`, gate `abs(diff) > 1e-9` (mismo criterio que `_count_status`), y detalle con unidad abreviada vía `UNIT_ABBR` (ej. "Descuadre de -0.75 lb ...").
+- **Criterio del auditor cumplido**: producto 10 lb @ 20 CUP/lb, conteo 9,25 lb → −0,75 lb y −15 CUP coinciden en conteo, histórico, incidencia y exportación; una diferencia ≠ 0 nunca se auto-cierra como cero.
+- **Tests**: `tests/test_iter337_ipv_h02_fraction_diff.py` (5 casos) + `tests/test_iter337_http_flow.py` (flujo HTTP real contra preview, creado por el testing agent). Verificado: 19 unit (337+335+336) · 175 regresión inventario/IPV · flujo HTTP live en preview · testing agent 100% backend, 0 issues.
+- Nota pre-existente ajena a H02 (no bloqueante): `test_iter333_incidents_reorder.py` puede sufrir contaminación de orden por estado global (`_INDEX_READY`) al correr junto a otros; en aislamiento pasa.
+- **Status**: fix en preview. El usuario debe re-desplegar (Deploy) para llevarlo a `p2p.resiliencebrothers.com`.
+- Pendiente parkeado: accesibilidad de Diálogos (`aria-describedby`) en `frontend/src/components/ui/dialog.jsx`.
