@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import TotpPromptDialog from "@/components/TotpPromptDialog";
 import { BellRing, Search, Plus, Eye, EyeOff, Trash2, Check, X, Wrench } from "lucide-react";
 import { toast } from "sonner";
+import { UNIT_OPTIONS, isFractionUnit, fmtQty, qtyStep } from "@/utils/units";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -32,7 +33,7 @@ export default function InventoryControlTab() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   // iter223 — alta de productos directo desde el control de inventario.
-  const emptyProduct = { name: "", category: "mercadito", price_usd: "", cost_usd: "", stock: 0, min_stock: "", target_stock: "", image_url: "", is_active: true };
+  const emptyProduct = { name: "", category: "mercadito", price_usd: "", cost_usd: "", stock: 0, unit: "unidad", min_stock: "", target_stock: "", image_url: "", is_active: true };
   // iter226 — modo doble: crear producto nuevo o reponer uno existente.
   const emptyRestock = { product_id: "", quantity: 1, unit_cost: "", sale_price: "", note: "" };
   const [addOpen, setAddOpen] = useState(false);
@@ -103,7 +104,7 @@ export default function InventoryControlTab() {
 
   const saveMinStock = async (r) => {
     const raw = minDraft[r.product_id];
-    const n = parseInt(raw);
+    const n = parseFloat(raw);
     const val = (raw === "" || raw === undefined || isNaN(n)) ? null : Math.max(0, n);
     try {
       await axios.patch(`${API}/admin/inventory/products/${r.product_id}/min-stock`,
@@ -116,7 +117,7 @@ export default function InventoryControlTab() {
 
   const saveTargetStock = async (r) => {
     const raw = targetDraft[r.product_id];
-    const n = parseInt(raw);
+    const n = parseFloat(raw);
     const val = (raw === "" || raw === undefined || isNaN(n)) ? null : Math.max(0, n);
     try {
       await axios.patch(`${API}/admin/inventory/products/${r.product_id}/target-stock`,
@@ -130,7 +131,7 @@ export default function InventoryControlTab() {
   const saveCount = async (r) => {
     const raw = countDraft[r.product_id] !== undefined ? countDraft[r.product_id] : r.counted_qty;
     if (raw === "" || raw === null || raw === undefined) return;
-    const qty = parseInt(raw);
+    const qty = parseFloat(raw);
     if (isNaN(qty) || qty < 0) return toast.error(t("inventory.control.countPlaceholder"));
     try {
       await axios.post(`${API}/admin/inventory/counts`, { product_id: r.product_id, counted_qty: qty, note: "" }, { withCredentials: true });
@@ -186,11 +187,12 @@ export default function InventoryControlTab() {
         image_url: prod.image_url,
         price_usd: price,
         cost_usd: parseFloat(prod.cost_usd) || 0,
-        stock: parseInt(prod.stock) || 0,
+        stock: parseFloat(prod.stock) || 0,
+        unit: prod.unit || "unidad",
         category: prod.category.trim() || "mercadito",
         is_active: prod.is_active,
-        min_stock: prod.min_stock === "" ? null : (parseInt(prod.min_stock) >= 0 ? parseInt(prod.min_stock) : null),
-        target_stock: prod.target_stock === "" ? null : (parseInt(prod.target_stock) >= 0 ? parseInt(prod.target_stock) : null),
+        min_stock: prod.min_stock === "" ? null : (parseFloat(prod.min_stock) >= 0 ? parseFloat(prod.min_stock) : null),
+        target_stock: prod.target_stock === "" ? null : (parseFloat(prod.target_stock) >= 0 ? parseFloat(prod.target_stock) : null),
       }, { withCredentials: true });
       toast.success(t("inventory.control.productCreated"));
       setAddOpen(false); setProd(emptyProduct);
@@ -201,7 +203,7 @@ export default function InventoryControlTab() {
 
   const saveRestock = async () => {
     if (!restock.product_id) return toast.error(t("inventory.control.restockProductRequired"));
-    const qty = parseInt(restock.quantity);
+    const qty = parseFloat(restock.quantity);
     if (!qty || qty <= 0) return toast.error(t("inventory.control.restockQtyRequired"));
     setAddBusy(true);
     try {
@@ -324,9 +326,9 @@ export default function InventoryControlTab() {
                 {r.name}
                 {!r.is_active && <span className="ml-2 text-[0.6rem] uppercase text-neutral-500">({t("inventory.control.inactive")})</span>}
               </td>
-              <td className="px-4 py-3 font-mono text-right" data-testid={`inventory-stock-${r.product_id}`}>{r.stock}</td>
+              <td className="px-4 py-3 font-mono text-right" data-testid={`inventory-stock-${r.product_id}`}>{fmtQty(r.stock, r.unit)}</td>
               <td className="px-4 py-3 text-right" data-testid={`inventory-min-cell-${r.product_id}`}>
-                <input type="number" min="0"
+                <input type="number" min="0" step={qtyStep(r.unit)}
                   data-testid={`inventory-min-input-${r.product_id}`}
                   value={minDraft[r.product_id] !== undefined ? minDraft[r.product_id] : (r.min_stock ?? "")}
                   onChange={(e) => setMinDraft((d) => ({ ...d, [r.product_id]: e.target.value }))}
@@ -337,7 +339,7 @@ export default function InventoryControlTab() {
                   className="w-16 h-8 bg-[#0a0a0a] border border-white/10 text-sm px-2 text-white font-mono text-right" />
               </td>
               <td className="px-4 py-3 text-right" data-testid={`inventory-target-cell-${r.product_id}`}>
-                <input type="number" min="0"
+                <input type="number" min="0" step={qtyStep(r.unit)}
                   data-testid={`inventory-target-input-${r.product_id}`}
                   value={targetDraft[r.product_id] !== undefined ? targetDraft[r.product_id] : (r.target_stock ?? "")}
                   onChange={(e) => setTargetDraft((d) => ({ ...d, [r.product_id]: e.target.value }))}
@@ -352,14 +354,14 @@ export default function InventoryControlTab() {
               <td className="px-4 py-3 font-mono text-right text-emerald-400">{r.entradas}</td>
               <td className="px-4 py-3 font-mono text-right text-amber-300">{r.ventas}</td>
               <td className="px-4 py-3 font-mono text-right">{fmt(r.inventory_value)}</td>
-              <td className="px-4 py-3 font-mono text-right">{r.sold_today}</td>
+              <td className="px-4 py-3 font-mono text-right">{fmtQty(r.sold_today, r.unit)}</td>
               <td className="px-4 py-3 font-mono text-right">{fmt(r.revenue_today)}</td>
               <td className="px-4 py-3" data-testid={`inventory-count-cell-${r.product_id}`}>
                 {r.count_authorized ? (
-                  <span className="text-xs text-sky-300 font-mono">{r.counted_qty}</span>
+                  <span className="text-xs text-sky-300 font-mono">{fmtQty(r.counted_qty, r.unit)}</span>
                 ) : (
                   <div className="flex items-center gap-1">
-                    <input type="number" min="0"
+                    <input type="number" min="0" step={qtyStep(r.unit)}
                       data-testid={`inventory-count-input-${r.product_id}`}
                       value={countDraft[r.product_id] !== undefined ? countDraft[r.product_id] : (r.counted_qty ?? "")}
                       onChange={(e) => setCountDraft((d) => ({ ...d, [r.product_id]: e.target.value }))}
@@ -474,13 +476,13 @@ export default function InventoryControlTab() {
                   className="w-full h-10 mt-1 bg-[#0a0a0a] border border-white/10 text-sm px-3 text-white"
                 >
                   <option value="">—</option>
-                  {rows.map((r) => <option key={r.product_id} value={r.product_id}>{`${r.name} (stock ${r.stock})`}</option>)}
+                  {rows.map((r) => <option key={r.product_id} value={r.product_id}>{`${r.name} (stock ${fmtQty(r.stock, r.unit)})`}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="micro-label text-neutral-500">{t("inventory.control.restockQty")}</Label>
-                  <Input data-testid="restock-qty" type="number" min="1" value={restock.quantity} onChange={(e) => setRestock({ ...restock, quantity: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                  <Input data-testid="restock-qty" type="number" min="0" step={qtyStep(rows.find((x) => x.product_id === restock.product_id)?.unit)} value={restock.quantity} onChange={(e) => setRestock({ ...restock, quantity: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
                 </div>
                 <div>
                   <Label className="micro-label text-neutral-500">{t("inventory.control.restockCost")}</Label>
@@ -530,12 +532,19 @@ export default function InventoryControlTab() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="micro-label text-neutral-500">{t("inventory.control.formStock")}</Label>
-                <Input data-testid="inv-product-stock" type="number" min="0" value={prod.stock} onChange={(e) => setProd({ ...prod, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                <Input data-testid="inv-product-stock" type="number" min="0" step={qtyStep(prod.unit)} value={prod.stock} onChange={(e) => setProd({ ...prod, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
               </div>
               <div>
                 <Label className="micro-label text-neutral-500">{t("inventory.control.formCategory")}</Label>
                 <Input data-testid="inv-product-category" value={prod.category} onChange={(e) => setProd({ ...prod, category: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
               </div>
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">{t("units.label")}</Label>
+              <select data-testid="inv-product-unit" value={prod.unit || "unidad"} onChange={(e) => setProd({ ...prod, unit: e.target.value })} className="w-full h-10 mt-1 bg-[#0a0a0a] border border-white/10 text-sm px-3 text-white">
+                {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{t(`units.${u}`)}</option>)}
+              </select>
+              <p className="text-[0.65rem] text-neutral-600 mt-1" data-testid="inv-product-unit-hint">{t("units.hint")}</p>
             </div>
             <div>
               <Label className="micro-label text-neutral-500">{t("inventory.control.formMinStock")}</Label>

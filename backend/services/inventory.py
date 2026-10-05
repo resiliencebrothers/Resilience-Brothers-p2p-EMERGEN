@@ -25,6 +25,38 @@ OUTPUT_TYPES = ("merma", "consumo", "otra_salida")
 MOVEMENT_TYPES = ("entrada", "venta", "ajuste_pos", "ajuste_neg", *OUTPUT_TYPES)
 LOW_STOCK_THRESHOLD = 5
 
+# iter335 (IPV Fase 4) — unidades de medida + venta por fracción.
+# "unidad" = venta por pieza (cantidades enteras). "libra"/"kg" = venta por
+# fracción (decimales a 3 posiciones). El stock se lleva en la propia unidad.
+QTY_DECIMALS = 3
+ALLOWED_UNITS = ("unidad", "libra", "kg")
+FRACTION_UNITS = ("libra", "kg")
+UNIT_ABBR = {"unidad": "u", "libra": "lb", "kg": "kg"}
+
+
+def qnum(v) -> float:
+    """Cantidad normalizada a 3 decimales (soporta fracciones lb/kg).
+    Sustituye los int() defensivos que truncaban la fracción."""
+    try:
+        return round(float(v or 0), QTY_DECIMALS)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def product_unit(product: dict) -> str:
+    u = (product or {}).get("unit") or "unidad"
+    return u if u in ALLOWED_UNITS else "unidad"
+
+
+def sells_fraction(product: dict) -> bool:
+    return product_unit(product) in FRACTION_UNITS
+
+
+def norm_qty(product: dict, qty) -> float:
+    """Redondea a 3 decimales; fuerza entero si el producto se vende por unidad."""
+    q = qnum(qty)
+    return q if sells_fraction(product) else float(round(q))
+
 _COMPANY_FILTER = {"$or": [{"owner_id": {"$in": [None, ""]}},
                            {"owner_id": {"$exists": False}}]}
 
@@ -57,14 +89,14 @@ async def _rejected_marketplace_refs() -> set:
     return {d["id"] for d in rows}
 
 
-def movement_delta(mtype: str, quantity: int) -> int:
+def movement_delta(mtype: str, quantity: float) -> float:
     """Delta de stock que implica un movimiento (compartido con el healer)."""
     if mtype in ("venta", "ajuste_neg", *OUTPUT_TYPES):
-        return -quantity
-    return quantity
+        return -qnum(quantity)
+    return qnum(quantity)
 
 
-async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
+async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
                                  require_available: bool = True,
                                  extra_filter: Optional[dict] = None,
                                  cost_fold: Optional[tuple] = None) -> str:
@@ -93,7 +125,7 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
         # que el promedio es correcto e independiente del orden entre entradas.
         q, entry_cost = cost_fold
         base_stock = {"$ifNull": ["$stock", 0]}
-        new_stock_expr = {"$add": [base_stock, delta_qty]}
+        new_stock_expr = {"$round": [{"$add": [base_stock, delta_qty]}, QTY_DECIMALS]}
         res = await db.products.update_one(filt, [{"$set": {
             "cost_usd": {"$round": [{"$cond": [
                 {"$gt": [new_stock_expr, 0]},
@@ -112,8 +144,15 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
             filt,
             # iter257(D06) — SIN $slice: un op solo sale del registro embebido
             # cuando su log duradero está 'applied' (compact_stock_registries).
-            {"$inc": {"stock": delta_qty},
-             "$push": {"applied_stock_ops": op_id}},
+            # iter335 (IPV Fase 4) — pipeline con $round a 3 decimales para
+            # soportar fracciones (lb/kg) sin acumular error de coma flotante.
+            [{"$set": {
+                "stock": {"$round": [
+                    {"$add": [{"$ifNull": ["$stock", 0]}, delta_qty]},
+                    QTY_DECIMALS]},
+                "applied_stock_ops": {"$concatArrays": [
+                    {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
+            }}],
         )
     if res.matched_count:
         await _stock_ops_mark_applied(op_id)
@@ -132,7 +171,7 @@ async def apply_stock_idempotent(product_id: str, delta_qty: int, op_id: str,
 _STOCK_OPS_READY = False
 
 
-async def _stock_ops_ensure(op_id: str, product_id: str, delta_qty: int) -> str:
+async def _stock_ops_ensure(op_id: str, product_id: str, delta_qty: float) -> str:
     """iter256(S07) — log duradero insert-first de operaciones de stock (índice
     único por op_id): aunque el op salga del registro embebido del producto
     (cap 500), este log bloquea cualquier replay. Si Mongo falla aquí, el
@@ -147,7 +186,7 @@ async def _stock_ops_ensure(op_id: str, product_id: str, delta_qty: int) -> str:
         try:
             await db.stock_ops.insert_one({
                 "op_id": op_id, "product_id": product_id,
-                "delta": int(delta_qty), "state": "pending",
+                "delta": qnum(delta_qty), "state": "pending",
                 "at": iso(now_utc())})
             return "new"
         except Exception:
@@ -166,7 +205,7 @@ async def _stock_ops_mark_applied(op_id: str) -> None:
         {"$set": {"state": "applied", "applied_at": iso(now_utc())}})
 
 
-async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
+async def burn_or_undo_stock(product_id: str, quantity: float, op_id: str) -> str:
     """iter260(E08)/iter261(F01)/iter262(G01) — versión de stock de
     burn_or_undo_debit: el bloqueo usa el TOKEN `op:burn` (nunca el op real)
     y la rama 'burned' SIEMPRE re-resuelve la evidencia — una reserva real se
@@ -179,7 +218,7 @@ async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
         if state == "undone":
             return "undone"
         if state == "applied":
-            await apply_stock_idempotent(product_id, int(quantity),
+            await apply_stock_idempotent(product_id, qnum(quantity),
                                          f"{op_id}:undo",
                                          require_available=False)
             await db.stock_ops.update_one(
@@ -192,7 +231,7 @@ async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
                     {"op_id": op_id,
                      "state": {"$nin": ["applied", "burned", "undone"]}},
                     {"$set": {"state": "burned", "burned": True,
-                              "product_id": product_id, "delta": int(quantity),
+                              "product_id": product_id, "delta": qnum(quantity),
                               "applied_at": iso(now_utc())}},
                     upsert=True)
                 claimed = bool(res.modified_count) or \
@@ -206,7 +245,7 @@ async def burn_or_undo_stock(product_id: str, quantity: int, op_id: str) -> str:
             {"$push": {"applied_stock_ops": burn_token}})
         if await db.products.find_one(
                 {"id": product_id, "applied_stock_ops": op_id}, {"_id": 1}):
-            await apply_stock_idempotent(product_id, int(quantity),
+            await apply_stock_idempotent(product_id, qnum(quantity),
                                          f"{op_id}:undo",
                                          require_available=False)
             await db.stock_ops.update_one(
@@ -290,7 +329,7 @@ def effective_low_stock_threshold(product: dict, global_threshold: int) -> int:
     if ms is None:
         return global_threshold
     try:
-        return max(0, int(ms))
+        return max(0.0, qnum(ms))
     except (TypeError, ValueError):
         return global_threshold
 
@@ -305,19 +344,20 @@ async def build_reorder_list() -> list:
         {**_COMPANY_FILTER, "is_active": {"$ne": False}}, {"_id": 0}).to_list(2000)
     rows = []
     for p in products:
-        stock = int(p.get("stock") or 0)
+        stock = qnum(p.get("stock"))
         min_eff = effective_low_stock_threshold(p, global_threshold)
         if stock > min_eff:
             continue
         ts = p.get("target_stock")
-        target = int(ts) if ts is not None else min_eff
+        target = qnum(ts) if ts is not None else min_eff
         if target < min_eff:
             target = min_eff
-        suggested = max(0, target - stock)
+        suggested = round(max(0.0, target - stock), QTY_DECIMALS)
         cost = float(p.get("cost_usd") or 0)
         rows.append({
             "product_id": p["id"], "name": p.get("name", ""),
             "category": p.get("category", ""), "stock": stock,
+            "unit": product_unit(p),
             "min_stock": min_eff, "target": target, "suggested": suggested,
             "out_of_stock": stock <= 0,
             "restock_cost": round(suggested * cost, 2),
@@ -339,7 +379,7 @@ async def maybe_alert_low_stock(product_id: str) -> None:
         return
     threshold = effective_low_stock_threshold(
         product, await get_low_stock_threshold())
-    stock = int(product.get("stock") or 0)
+    stock = qnum(product.get("stock"))
     if stock > threshold:
         if product.get("low_stock_alert_level"):
             await db.products.update_one(
@@ -404,7 +444,7 @@ async def _insert_movement(doc: dict) -> tuple[dict, bool]:
     return doc, True
 
 
-async def record_movement(*, product: dict, mtype: str, quantity: int,
+async def record_movement(*, product: dict, mtype: str, quantity: float,
                           unit_price: Optional[float] = None,
                           unit_cost: Optional[float] = None,
                           note: str = "", source: str = "manual",
@@ -419,6 +459,7 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
     recuperador solapados jamás duplican la traza."""
     if mtype not in MOVEMENT_TYPES:
         raise HTTPException(status_code=400, detail="Tipo de movimiento inválido")
+    quantity = norm_qty(product, quantity)
     if quantity <= 0:
         raise HTTPException(status_code=400, detail="La cantidad debe ser mayor que 0")
     price = float(unit_price if unit_price is not None else product.get("price_usd") or 0)
@@ -449,7 +490,8 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
         "product_id": product["id"],
         "product_name": product.get("name", ""),
         "type": mtype,
-        "quantity": int(quantity),
+        "quantity": qnum(quantity),
+        "unit": product_unit(product),
         "unit_price": price,
         "unit_cost": cost,
         "total": total,
@@ -477,7 +519,7 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
             return doc  # R04 — otro ejecutor ya registró este movimiento
         # iter327 (IPV-R02) — en una ENTRADA, el stock y el WAC se funden en una
         # sola escritura atómica (cost_fold). El healer usa el mismo op_id.
-        cost_fold = ((int(quantity), float(cost)) if mtype == "entrada" else None)
+        cost_fold = ((qnum(quantity), float(cost)) if mtype == "entrada" else None)
         status = await apply_stock_idempotent(
             product["id"], delta, f"invmov:{doc['id']}",
             require_available=(delta < 0), cost_fold=cost_fold)
@@ -543,22 +585,22 @@ async def build_daily_close(date_str: str) -> dict:
     def _tot(rows: list, field: str = "total") -> float:
         return round(sum(float(r.get(field) or 0) for r in rows), 2)
 
-    def _units(rows: list) -> int:
-        return sum(int(r.get("quantity") or 0) for r in rows)
+    def _units(rows: list) -> float:
+        return round(sum(qnum(r.get("quantity")) for r in rows), QTY_DECIMALS)
 
     productos: dict = {}
     for m in fis_v:
         e = productos.setdefault(m["product_id"], {
             "product_id": m["product_id"], "name": m.get("product_name", ""),
             "unidades": 0, "unidades_web": 0, "total": 0.0, "ganancia": 0.0})
-        e["unidades"] += int(m.get("quantity") or 0)
+        e["unidades"] += qnum(m.get("quantity"))
         e["total"] = round(e["total"] + float(m.get("total") or 0), 2)
         e["ganancia"] = round(e["ganancia"] + float(m.get("profit") or 0), 2)
     for m in web_ok:
         e = productos.setdefault(m["product_id"], {
             "product_id": m["product_id"], "name": m.get("product_name", ""),
             "unidades": 0, "unidades_web": 0, "total": 0.0, "ganancia": 0.0})
-        e["unidades_web"] += int(m.get("quantity") or 0)
+        e["unidades_web"] += qnum(m.get("quantity"))
         e["total"] = round(e["total"] + float(m.get("total") or 0), 2)
         e["ganancia"] = round(e["ganancia"] + float(m.get("profit") or 0), 2)
 
@@ -567,7 +609,7 @@ async def build_daily_close(date_str: str) -> dict:
         e = compras_det.setdefault(m["product_id"], {
             "product_id": m["product_id"], "name": m.get("product_name", ""),
             "unidades": 0, "total": 0.0})
-        e["unidades"] += int(m.get("quantity") or 0)
+        e["unidades"] += qnum(m.get("quantity"))
         e["total"] = round(e["total"] + float(m.get("total") or 0), 2)
 
     # iter240 — entregas en tienda del día (recogidas web confirmadas), para
@@ -581,7 +623,7 @@ async def build_daily_close(date_str: str) -> dict:
     pickups.sort(key=lambda p: p.get("delivered_at") or "")
     recogidas = {
         "num": len(pickups),
-        "unidades": sum(int(p.get("quantity") or 0) for p in pickups),
+        "unidades": round(sum(qnum(p.get("quantity")) for p in pickups), QTY_DECIMALS),
         "total_usdt": round(sum(float(p.get("total_usd") or 0)
                                 for p in pickups), 2),
         "detalle": pickups,
@@ -734,7 +776,7 @@ async def build_control_rows() -> list:
     rows = []
     for p in products:
         m = by_product.get(p["id"], {})
-        stock = int(p.get("stock") or 0)
+        stock = qnum(p.get("stock"))
         cost = float(p.get("cost_usd") or 0)
         threshold = effective_low_stock_threshold(p, global_threshold)
         if stock <= 0:
@@ -754,14 +796,15 @@ async def build_control_rows() -> list:
             "price_usd": float(p.get("price_usd") or 0),
             "cost_usd": cost,
             "stock": stock,
+            "unit": product_unit(p),
             "min_stock": p.get("min_stock"),
             "effective_min": threshold,
-            "entradas": int(m.get("entrada", 0)),
-            "ventas": int(m.get("venta", 0)),
-            "ajustes_pos": int(m.get("ajuste_pos", 0)),
-            "ajustes_neg": int(m.get("ajuste_neg", 0)),
+            "entradas": qnum(m.get("entrada", 0)),
+            "ventas": qnum(m.get("venta", 0)),
+            "ajustes_pos": qnum(m.get("ajuste_pos", 0)),
+            "ajustes_neg": qnum(m.get("ajuste_neg", 0)),
             "inventory_value": round(stock * cost, 2),
-            "sold_today": int(td.get("qty", 0)),
+            "sold_today": qnum(td.get("qty", 0)),
             "revenue_today": round(float(td.get("revenue", 0)), 2),
             "estado": estado,
             # IPV — conteo físico de hoy (None = SIN CONTEO).
@@ -803,7 +846,7 @@ async def build_rotation(start: str, end: str,
                             {"ref_id": {"$nin": list(refs)}}]}},
         {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"}}},
     ]).to_list(2000)
-    sold_by = {a["_id"]: int(a["qty"]) for a in sold_agg}
+    sold_by = {a["_id"]: qnum(a["qty"]) for a in sold_agg}
     entradas = await db.inventory_movements.find(
         {"type": "entrada", "product_id": {"$in": ids}},
         {"_id": 0, "product_id": 1, "created_at": 1}).sort("created_at", 1).to_list(20000)
@@ -814,7 +857,7 @@ async def build_rotation(start: str, end: str,
     rows = []
     for p in products:
         pid = p["id"]
-        stock = int(p.get("stock") or 0)
+        stock = qnum(p.get("stock"))
         sold = sold_by.get(pid, 0)
         daily = round(sold / days, 2) if days > 0 else 0.0
         sellout_days = round(stock / daily, 1) if daily > 0 and stock > 0 else None
@@ -856,6 +899,7 @@ async def build_rotation(start: str, end: str,
         rows.append({
             "product_id": pid,
             "name": p.get("name", ""),
+            "unit": product_unit(p),
             "stock": stock,
             "sold": sold,
             "daily_rate": daily,
@@ -900,7 +944,7 @@ async def build_dashboard(start: str, end: str,
               if not (m.get("source") == "marketplace"
                       and m.get("ref_id") in rejected_ids)]
     entradas = [m for m in movs if m["type"] == "entrada"]
-    units_sold = sum(m["quantity"] for m in ventas)
+    units_sold = round(sum(qnum(m.get("quantity")) for m in ventas), QTY_DECIMALS)
     revenue = round(sum(float(m.get("total") or 0) for m in ventas), 2)
     cogs = round(sum(float(m.get("cost_of_sale") or 0) for m in ventas), 2)
     profit = round(revenue - cogs, 2)
@@ -912,7 +956,7 @@ async def build_dashboard(start: str, end: str,
     inv_value = round(sum(
         float(p.get("stock") or 0) * float(p.get("cost_usd") or 0)
         for p in products), 2)
-    units_in_stock = int(sum(int(p.get("stock") or 0) for p in products))
+    units_in_stock = round(sum(qnum(p.get("stock")) for p in products), QTY_DECIMALS)
     # iter219 — ganancia por comisiones de ventas de productos VIP (global,
     # no aplica al filtro por producto de la empresa).
     vip_commission = None
@@ -933,7 +977,7 @@ async def build_dashboard(start: str, end: str,
         "end": end,
         "product_id": product_ids[0] if product_ids and len(product_ids) == 1 else "",
         "product_ids": product_ids or [],
-        "units_sold": int(units_sold),
+        "units_sold": units_sold,
         "sales_revenue": revenue,
         "cogs": cogs,
         "profit": profit,

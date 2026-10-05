@@ -200,9 +200,12 @@ class Product(BaseModel):
     image_url: str = ""
     price_usd: float
     cost_usd: float = 0.0
-    stock: int = 0
+    stock: float = 0
     category: str = "general"
     is_active: bool = True
+    # iter335 (IPV Fase 4) — unidad de medida: "unidad" (entero) o "libra"/"kg"
+    # (venta por fracción, 3 decimales). El stock se lleva en la propia unidad.
+    unit: Literal["unidad", "libra", "kg"] = "unidad"
     # iter217 — marketplace multivendedor: productos de clientes VIP.
     # owner_id vacío = producto de la empresa (entra al inventario físico).
     owner_id: str = ""
@@ -212,9 +215,9 @@ class Product(BaseModel):
     # iter236 — sucursales donde está disponible (vacío = todas).
     available_store_ids: list[str] = Field(default_factory=list)
     # iter332 (IPV Fase 2) — mínimo opcional por producto (None = usa global).
-    min_stock: int | None = None
+    min_stock: float | None = None
     # iter333 — nivel objetivo opcional (None = usa el mínimo como objetivo).
-    target_stock: int | None = None
+    target_stock: float | None = None
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
     # iter324 — oferta/liquidación visible en la tienda web.
     on_offer: bool = False
@@ -230,15 +233,17 @@ class ProductCreate(BaseModel):
     # iter247 — ge=0 bloquea precios/costos/stock negativos (corrupción contable).
     price_usd: float = Field(..., ge=0, le=1_000_000_000)
     cost_usd: float = Field(0.0, ge=0, le=1_000_000_000)
-    stock: int = Field(0, ge=0, le=1_000_000)
+    stock: float = Field(0, ge=0, le=1_000_000)
     category: str = "general"
     is_active: bool = True
+    # iter335 (IPV Fase 4) — unidad de medida elegible al crear el producto.
+    unit: Literal["unidad", "libra", "kg"] = "unidad"
     available_store_ids: list[str] = Field(default_factory=list)
     # iter332 (IPV Fase 2) — mínimo opcional por producto. None = usa el umbral
     # global de "stock bajo"; 0 = solo alerta al agotarse (distingue vacío de cero).
-    min_stock: int | None = Field(None, ge=0, le=1_000_000)
+    min_stock: float | None = Field(None, ge=0, le=1_000_000)
     # iter333 — nivel objetivo opcional para la sugerencia de reposición.
-    target_stock: int | None = Field(None, ge=0, le=1_000_000)
+    target_stock: float | None = Field(None, ge=0, le=1_000_000)
 
 
 # ============================================================
@@ -931,22 +936,31 @@ async def create_product(payload: ProductCreate, request: Request) -> Any:
             "Regístralo como Entrada (reponer existente) para sumar unidades "
             "y mantener sus estadísticas en el mismo producto."))
     p = Product(**payload.model_dump())
+    # iter335 (IPV Fase 4) — normaliza existencia/mínimo/objetivo a la unidad
+    # del producto (entero si se vende por unidad; 3 decimales si por fracción).
+    from services.inventory import norm_qty, qnum
+    _pu = p.model_dump()
+    p.stock = norm_qty(_pu, p.stock)
+    if p.min_stock is not None:
+        p.min_stock = norm_qty(_pu, p.min_stock)
+    if p.target_stock is not None:
+        p.target_stock = norm_qty(_pu, p.target_stock)
     # iter219 — la imagen puede llegar como data URL (subida directa) → R2.
     from services.proof_upload import maybe_upload_proof
     p.image_url = maybe_upload_proof(p.image_url, "products") or ""
     await db.products.insert_one(p.model_dump())
     # iter226 — el stock inicial queda auditado como Entrada en el registro.
-    if int(p.stock or 0) > 0:
+    if qnum(p.stock) > 0:
         try:
             from services.inventory import record_movement
             mov = await record_movement(
-                product=p.model_dump(), mtype="entrada", quantity=int(p.stock),
+                product=p.model_dump(), mtype="entrada", quantity=qnum(p.stock),
                 unit_cost=float(p.cost_usd or 0),
                 note="Stock inicial al crear el producto",
                 source="alta", actor=actor, apply_stock=False)
             # iter321 (IPV Fase 2) — el stock inicial es el primer LOTE.
             from services.inventory_lots import record_lot
-            await record_lot(p.model_dump(), int(p.stock), float(p.cost_usd or 0),
+            await record_lot(p.model_dump(), qnum(p.stock), float(p.cost_usd or 0),
                              (mov or {}).get("id", ""), source="alta", actor=actor)
         except Exception as e:  # noqa: BLE001
             logger.error(f"initial stock entrada failed: {e}")
@@ -966,6 +980,13 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
     image_changed = (payload.image_url or "") != (existing.get("image_url") or "")
     _check_employee_product_perms(actor, editing_price=price_changed, editing_image=image_changed)
     data = payload.model_dump()
+    # iter335 (IPV Fase 4) — normaliza cantidades a la unidad elegida.
+    from services.inventory import norm_qty
+    data["stock"] = norm_qty(data, data.get("stock"))
+    if data.get("min_stock") is not None:
+        data["min_stock"] = norm_qty(data, data["min_stock"])
+    if data.get("target_stock") is not None:
+        data["target_stock"] = norm_qty(data, data["target_stock"])
     from services.proof_upload import maybe_upload_proof
     data["image_url"] = maybe_upload_proof(data.get("image_url"), "products") or ""
     await db.products.update_one({"id": product_id}, {"$set": data})

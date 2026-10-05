@@ -117,7 +117,7 @@ async def my_products(request: Request) -> Any:
         stats = {a["_id"]: a for a in agg}
     for d in docs:
         st = stats.get(d["id"], {})
-        d["sold_qty"] = int(st.get("sold_qty", 0))
+        d["sold_qty"] = round(float(st.get("sold_qty", 0) or 0), 3)
         d["earned_usd"] = round(float(st.get("earned") or 0), 2)
     return docs
 

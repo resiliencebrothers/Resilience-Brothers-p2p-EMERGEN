@@ -22,15 +22,16 @@ from pymongo.errors import DuplicateKeyError
 from db_client import db
 from auth_utils import now_utc, iso
 from services.inventory import (record_movement, today_havana, _day_bounds,
-                                _COMPANY_FILTER, OUTPUT_TYPES)
+                                _COMPANY_FILTER, OUTPUT_TYPES, qnum,
+                                product_unit, norm_qty)
 
 logger = logging.getLogger(__name__)
 
 _COUNTS_INDEX_READY = False
 
 
-def _count_status(difference: int) -> str:
-    if difference == 0:
+def _count_status(difference: float) -> str:
+    if abs(difference) < 1e-9:
         return "cuadra"
     return "faltante" if difference < 0 else "sobrante"
 
@@ -43,7 +44,7 @@ async def _ensure_counts_index() -> None:
         _COUNTS_INDEX_READY = True
 
 
-async def record_physical_count(product: dict, counted_qty: int,
+async def record_physical_count(product: dict, counted_qty: float,
                                 actor: Optional[dict] = None,
                                 note: str = "") -> dict:
     """Registra/actualiza el conteo físico del día (hora de Cuba) de un
@@ -51,8 +52,9 @@ async def record_physical_count(product: dict, counted_qty: int,
     modifica el stock. Un conteo ya AUTORIZADO (ajustado) no se sobrescribe."""
     await _ensure_counts_index()
     day = today_havana()
-    theoretical = int(product.get("stock") or 0)
-    difference = int(counted_qty) - theoretical
+    theoretical = qnum(product.get("stock"))
+    counted_qty = norm_qty(product, counted_qty)
+    difference = round(counted_qty - theoretical, 3)
     existing = await db.inventory_counts.find_one(
         {"product_id": product["id"], "count_date": day}, {"_id": 0})
     if existing and existing.get("authorized"):
@@ -70,12 +72,12 @@ async def record_physical_count(product: dict, counted_qty: int,
         "product_id": product["id"],
         "product_name": product.get("name", ""),
         "count_date": day,
-        "counted_qty": int(counted_qty),
+        "counted_qty": counted_qty,
         "theoretical_stock": theoretical,
         "difference": difference,
         "difference_value": round(difference * ref_cost, 2),
         "reference_cost": ref_cost,
-        "unit": product.get("unit") or "u",
+        "unit": product_unit(product),
         "currency": "CUP",
         "valued_at": now,
         "status": _count_status(difference),
@@ -156,8 +158,8 @@ async def authorize_count_adjustment(count_id: str, document: str,
     if count.get("authorized"):
         raise HTTPException(status_code=409,
                             detail="Este conteo ya fue ajustado.")
-    diff = int(count.get("difference") or 0)
-    if diff == 0:
+    diff = qnum(count.get("difference"))
+    if abs(diff) < 1e-9:
         raise HTTPException(
             status_code=400,
             detail="El conteo cuadra (diferencia 0): no requiere ajuste.")
@@ -205,7 +207,7 @@ async def build_close_review(day: str) -> dict:
     sin_conteo = [{"product_id": p["id"], "name": p.get("name", "")}
                   for p in active if p["id"] not in counted_ids]
     diffs = [c for c in counts.values()
-             if int(c.get("difference") or 0) != 0 and not c.get("authorized")]
+             if abs(qnum(c.get("difference"))) > 1e-9 and not c.get("authorized")]
     # Salidas no-venta del día sin documento (nota vacía).
     start, end = _day_bounds(day)
     outs = await db.inventory_movements.find(
@@ -216,7 +218,7 @@ async def build_close_review(day: str) -> dict:
                  for t in OUTPUT_TYPES}
     for m in outs:
         b = breakdown[m["type"]]
-        b["unidades"] += int(m.get("quantity") or 0)
+        b["unidades"] += qnum(m.get("quantity"))
         b["valor_costo"] = round(b["valor_costo"] + float(m.get("total") or 0), 2)
         b["num"] += 1
     # iter327 (IPV-R04) — tres estados con prioridad a las ANOMALÍAS:
@@ -243,7 +245,8 @@ async def build_close_review(day: str) -> dict:
         "sin_conteo_sample": sin_conteo[:50],
         "diferencias": sorted(
             ({"product_id": c["product_id"], "name": c.get("product_name", ""),
-              "difference": int(c.get("difference") or 0),
+              "difference": qnum(c.get("difference")),
+              "unit": c.get("unit", "unidad"),
               "status": c.get("status"), "count_id": c.get("id")}
              for c in diffs), key=lambda x: x["difference"]),
         "salidas": {
@@ -265,7 +268,7 @@ async def build_count_sheet(day: str) -> dict:
     folio para rellenar el acta; si no, el PDF deja líneas para firmar a mano."""
     products = await db.products.find(
         _COMPANY_FILTER, {"_id": 0, "id": 1, "name": 1, "stock": 1,
-                          "category": 1, "is_active": 1}).to_list(5000)
+                          "category": 1, "is_active": 1, "unit": 1}).to_list(5000)
     active = [p for p in products if p.get("is_active", True)]
     counts = await list_counts(day)
     rows = []
@@ -275,16 +278,18 @@ async def build_count_sheet(day: str) -> dict:
             rows.append({
                 "name": p.get("name", ""),
                 "category": p.get("category", ""),
-                "theoretical": int(c.get("theoretical_stock") or 0),
+                "unit": c.get("unit", product_unit(p)),
+                "theoretical": qnum(c.get("theoretical_stock")),
                 "counted": c.get("counted_qty"),
-                "difference": int(c.get("difference") or 0),
+                "difference": qnum(c.get("difference")),
                 "status": c.get("status") or "sin_conteo",
             })
         else:
             rows.append({
                 "name": p.get("name", ""),
                 "category": p.get("category", ""),
-                "theoretical": int(p.get("stock") or 0),
+                "unit": product_unit(p),
+                "theoretical": qnum(p.get("stock")),
                 "counted": None,
                 "difference": None,
                 "status": "sin_conteo",

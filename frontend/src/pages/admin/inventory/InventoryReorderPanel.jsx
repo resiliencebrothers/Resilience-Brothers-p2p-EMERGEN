@@ -4,6 +4,7 @@ import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { PackagePlus, RefreshCw, AlertOctagon } from "lucide-react";
+import { fmtQty } from "@/utils/units";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -76,10 +77,10 @@ export default function InventoryReorderPanel() {
                     </span>
                   )}
                 </td>
-                <td className={`px-4 py-3 font-mono text-right ${r.out_of_stock ? "text-red-400" : "text-amber-300"}`}>{r.stock}</td>
-                <td className="px-4 py-3 font-mono text-right text-neutral-400">{r.min_stock}</td>
-                <td className="px-4 py-3 font-mono text-right text-neutral-400">{r.target}</td>
-                <td className="px-4 py-3 font-mono text-right text-[#8B5CF6]" data-testid={`reorder-suggested-${r.product_id}`}>+{r.suggested}</td>
+                <td className={`px-4 py-3 font-mono text-right ${r.out_of_stock ? "text-red-400" : "text-amber-300"}`}>{fmtQty(r.stock, r.unit)}</td>
+                <td className="px-4 py-3 font-mono text-right text-neutral-400">{fmtQty(r.min_stock, r.unit)}</td>
+                <td className="px-4 py-3 font-mono text-right text-neutral-400">{fmtQty(r.target, r.unit)}</td>
+                <td className="px-4 py-3 font-mono text-right text-[#8B5CF6]" data-testid={`reorder-suggested-${r.product_id}`}>+{fmtQty(r.suggested, r.unit)}</td>
                 <td className="px-4 py-3 font-mono text-right">{fmt(r.restock_cost)}</td>
               </tr>
             ))}

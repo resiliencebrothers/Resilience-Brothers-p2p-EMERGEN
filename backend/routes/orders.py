@@ -68,7 +68,8 @@ class Redemption(BaseModel):
     user_name: str
     product_id: str
     product_name: str
-    quantity: int
+    quantity: float
+    unit: str = "unidad"
     total_usd: float
     cost_usd: float = 0.0
     # iter254(R07) — moneda de liquidación del canje: 'USDT' para canjes
@@ -123,7 +124,8 @@ class Redemption(BaseModel):
 class RedemptionCreate(BaseModel):
     product_id: str
     # iter247 — gt=0 bloquea canjes con cantidad negativa (inflar saldo/stock).
-    quantity: int = Field(..., gt=0, le=1_000_000)
+    # iter335 (IPV Fase 4) — float para productos por fracción (lb/kg).
+    quantity: float = Field(..., gt=0, le=1_000_000)
     delivery_address: str = ""
     delivery_latitude: Optional[float] = Field(None, ge=-90, le=90)
     delivery_longitude: Optional[float] = Field(None, ge=-180, le=180)
@@ -395,6 +397,15 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     if product.get("owner_id") and \
             product.get("approval_status") not in (None, "approved"):
         raise HTTPException(status_code=400, detail="Producto no disponible")
+    # iter335 (IPV Fase 4) — cantidad válida según la unidad del producto.
+    from services.inventory import sells_fraction, norm_qty
+    if not sells_fraction(product) and float(payload.quantity) != int(payload.quantity):
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto se vende por unidad: elige una cantidad entera.")
+    payload.quantity = norm_qty(product, payload.quantity)
+    if payload.quantity <= 0:
+        raise HTTPException(status_code=400, detail="Cantidad inválida")
     if product["stock"] < payload.quantity:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
     # iter217 — un vendedor VIP no puede canjear su propio producto.
@@ -485,6 +496,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         product_id=product["id"],
         product_name=product["name"],
         quantity=payload.quantity,
+        unit=product.get("unit") or "unidad",
         total_usd=total,
         cost_usd=cost,
         delivery_address=payload.delivery_address,

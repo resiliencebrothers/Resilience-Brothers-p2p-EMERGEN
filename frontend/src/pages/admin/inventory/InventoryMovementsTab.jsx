@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
+import { fmtQty, qtyStep } from "@/utils/units";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -82,7 +83,7 @@ export default function InventoryMovementsTab() {
       const payload = {
         product_id: form.product_id,
         type: form.type,
-        quantity: parseInt(form.quantity) || 0,
+        quantity: parseFloat(form.quantity) || 0,
         note: form.note,
         photo_url: form.photo_url,
       };
@@ -159,7 +160,7 @@ export default function InventoryMovementsTab() {
                 <td className="px-4 py-3 text-xs text-neutral-500 whitespace-nowrap">{new Date(m.created_at).toLocaleString()}</td>
                 <td className={`px-4 py-3 text-xs uppercase tracking-wider ${TYPE_STYLES[m.type] || ""}`}>{displayLabel[m.type] || m.type}</td>
                 <td className="px-4 py-3">{m.product_name}</td>
-                <td className="px-4 py-3 font-mono text-right">{m.type === "precio" ? "—" : m.quantity}</td>
+                <td className="px-4 py-3 font-mono text-right">{m.type === "precio" ? "—" : fmtQty(m.quantity, m.unit)}</td>
                 <td className="px-4 py-3 font-mono text-right text-neutral-400">{fmt(m.type === "entrada" ? m.unit_cost : m.unit_price)}</td>
                 <td className="px-4 py-3 font-mono text-right">{m.type === "precio" ? "—" : fmt(m.total)}</td>
                 <td className={`px-4 py-3 font-mono text-right ${m.profit > 0 ? "text-emerald-400" : "text-neutral-500"}`}>{m.type === "venta" ? fmt(m.profit) : "—"}</td>
@@ -189,7 +190,7 @@ export default function InventoryMovementsTab() {
               <Label className="micro-label text-neutral-500">{t("inventory.movements.product")}</Label>
               <select data-testid="movement-product" value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value })} className={selectCls}>
                 <option value="">—</option>
-                {products.map((p) => <option key={p.product_id} value={p.product_id}>{`${p.name} (stock ${p.stock})`}</option>)}
+                {products.map((p) => <option key={p.product_id} value={p.product_id}>{`${p.name} (stock ${fmtQty(p.stock, p.unit)})`}</option>)}
               </select>
             </div>
             <div>
@@ -200,7 +201,7 @@ export default function InventoryMovementsTab() {
             </div>
             <div>
               <Label className="micro-label text-neutral-500">{t("inventory.movements.qty")}</Label>
-              <Input data-testid="movement-qty" type="number" min="1" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+              <Input data-testid="movement-qty" type="number" min="0" step={qtyStep(products.find((p) => p.product_id === form.product_id)?.unit)} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
             </div>
             {form.type === "venta" && (
               <div>

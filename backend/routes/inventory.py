@@ -18,7 +18,7 @@ from audit_log import log_action
 from services.inventory import (record_movement, record_price_change,
                                 _day_bounds, today_havana,
                                 build_control_rows, build_dashboard,
-                                build_rotation)
+                                build_rotation, qnum)
 from services.inventory_ipv import (record_physical_count, clear_physical_count,
                                      authorize_count_adjustment,
                                      build_close_review, save_close_review,
@@ -41,7 +41,7 @@ class MovementCreate(BaseModel):
     # salidas (traslado / devolución a proveedor).
     product_id: str
     type: Literal["entrada", "venta", "merma", "consumo", "otra_salida"]
-    quantity: int = Field(..., gt=0, le=1_000_000)
+    quantity: float = Field(..., gt=0, le=1_000_000)
     unit_price: Optional[float] = Field(None, ge=0)
     unit_cost: Optional[float] = Field(None, ge=0)
     # iter219 — en una Entrada permite actualizar el precio de venta del
@@ -92,6 +92,11 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
         raise HTTPException(
             status_code=400,
             detail="Los productos de vendedores VIP no entran al inventario de la empresa")
+    from services.inventory import sells_fraction
+    if not sells_fraction(product) and float(payload.quantity) != int(payload.quantity):
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto se vende por unidad: la cantidad debe ser un número entero.")
     photo = maybe_upload_proof(payload.photo_url, "inventory") or "" if payload.photo_url else ""
     doc = await record_movement(
         product=product, mtype=payload.type, quantity=payload.quantity,
@@ -172,7 +177,7 @@ async def _require_admin_products(request: Request) -> dict:
 
 class CountCreate(BaseModel):
     product_id: str
-    counted_qty: int = Field(..., ge=0, le=100_000_000)
+    counted_qty: float = Field(..., ge=0, le=100_000_000)
     note: str = Field("", max_length=300)
 
 
@@ -191,12 +196,13 @@ class CloseReviewSave(BaseModel):
 
 class MinStockUpdate(BaseModel):
     # iter332 (IPV Fase 2) — None limpia el mínimo propio (vuelve al global).
-    min_stock: int | None = Field(None, ge=0, le=1_000_000)
+    # iter335 (IPV Fase 4) — admite decimales para productos por fracción (lb/kg).
+    min_stock: float | None = Field(None, ge=0, le=1_000_000)
 
 
 class TargetStockUpdate(BaseModel):
     # iter333 — None limpia el objetivo (usa el mínimo como objetivo).
-    target_stock: int | None = Field(None, ge=0, le=1_000_000)
+    target_stock: float | None = Field(None, ge=0, le=1_000_000)
 
 
 class IncidentStatusUpdate(BaseModel):
@@ -216,6 +222,11 @@ async def create_count(payload: CountCreate, request: Request) -> Any:
         raise HTTPException(
             status_code=400,
             detail="Los productos de vendedores VIP no entran al inventario de la empresa")
+    from services.inventory import sells_fraction
+    if not sells_fraction(product) and float(payload.counted_qty) != int(payload.counted_qty):
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto se cuenta por unidad: usa un número entero.")
     doc = await record_physical_count(product, payload.counted_qty, actor,
                                       payload.note)
     await log_action(
@@ -451,11 +462,15 @@ async def set_product_min_stock(product_id: str, payload: MinStockUpdate,
     existing = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not existing or existing.get("owner_id"):
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    from services.inventory import sells_fraction
+    val = payload.min_stock
+    if val is not None:
+        val = qnum(val) if sells_fraction(existing) else float(round(qnum(val)))
     await db.products.update_one(
-        {"id": product_id}, {"$set": {"min_stock": payload.min_stock}})
+        {"id": product_id}, {"$set": {"min_stock": val}})
     from services.inventory import maybe_alert_low_stock
     await maybe_alert_low_stock(product_id)
-    return {"ok": True, "product_id": product_id, "min_stock": payload.min_stock}
+    return {"ok": True, "product_id": product_id, "min_stock": val}
 
 
 @router.get("/admin/inventory/close-snapshot")
@@ -492,7 +507,7 @@ async def inventory_reorder(request: Request) -> Any:
         "totals": {
             "num_products": len(rows),
             "out_of_stock": sum(1 for r in rows if r["out_of_stock"]),
-            "suggested_units": sum(r["suggested"] for r in rows),
+            "suggested_units": round(sum(r["suggested"] for r in rows), 3),
             "restock_cost": round(sum(r["restock_cost"] for r in rows), 2),
         },
     }
@@ -506,10 +521,14 @@ async def set_product_target_stock(product_id: str, payload: TargetStockUpdate,
     existing = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not existing or existing.get("owner_id"):
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    from services.inventory import sells_fraction
+    val = payload.target_stock
+    if val is not None:
+        val = qnum(val) if sells_fraction(existing) else float(round(qnum(val)))
     await db.products.update_one(
-        {"id": product_id}, {"$set": {"target_stock": payload.target_stock}})
+        {"id": product_id}, {"$set": {"target_stock": val}})
     return {"ok": True, "product_id": product_id,
-            "target_stock": payload.target_stock}
+            "target_stock": val}
 
 
 # ══════════════════ IPV Fase 3: incidencias del inventario ══════════════════
@@ -757,7 +776,8 @@ async def lookup_barcode(code: str, request: Request) -> Any:
         raise HTTPException(status_code=404,
                             detail="Código no vinculado a ningún producto")
     return {"product_id": p["id"], "name": p.get("name", ""),
-            "stock": int(p.get("stock") or 0),
+            "stock": qnum(p.get("stock")),
+            "unit": p.get("unit") or "unidad",
             "price_usd": float(p.get("price_usd") or 0),
             "cost_usd": float(p.get("cost_usd") or 0),
             "image_url": p.get("image_url", ""),

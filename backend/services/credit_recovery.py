@@ -174,7 +174,7 @@ async def ensure_company_sale_traces(r: dict) -> bool:
                     # y ciclo: creador y recuperador solapados escriben UNO.
                     await record_movement(
                         product=product, mtype="venta",
-                        quantity=int(r.get("quantity") or 0),
+                        quantity=round(float(r.get("quantity") or 0), 3),
                         note=f"Canje marketplace de {r.get('user_name', '')}",
                         source="marketplace", ref_id=rid,
                         actor={"user_id": r.get("user_id") or "",
@@ -321,7 +321,7 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         if stock_op:
             # DR04 — mismo patrón terminal para la reserva de stock.
             await burn_or_undo_stock(r["product_id"],
-                                     int(r.get("quantity") or 0), stock_op)
+                                     round(float(r.get("quantity") or 0), 3), stock_op)
         op = r.get("init_op_id") or ""
         amount = (float(r.get("total_usd") or 0)
                   + float(r.get("courier_fee_usd") or 0))
@@ -366,8 +366,8 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
                                      float(plan.get("amount") or 0), debit_op)
         if stock_op:
             await burn_or_undo_stock(r["product_id"],
-                                     int(plan.get("quantity")
-                                         or r.get("quantity") or 0), stock_op)
+                                     round(float(plan.get("quantity")
+                                           or r.get("quantity") or 0), 3), stock_op)
         await db.redemptions.update_one(
             {"id": r["id"], "reactivation_pending.stock_op": stock_op},
             {"$unset": {"reactivation_pending": ""}})
@@ -435,10 +435,10 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
          "stock_apply_failed": {"$ne": True},
          "created_at": {"$lt": cutoff}}, {"_id": 0}).to_list(200)
     for m in rows:
-        delta = movement_delta(m.get("type") or "", int(m.get("quantity") or 0))
+        delta = movement_delta(m.get("type") or "", round(float(m.get("quantity") or 0), 3))
         # iter327 (IPV-R02) — recuperar una ENTRADA funde el WAC igual que la
         # ruta normal (mismo op_id → idempotente y con el costo correcto).
-        cost_fold = (((int(m.get("quantity") or 0), float(m.get("unit_cost") or 0)))
+        cost_fold = (((round(float(m.get("quantity") or 0), 3), float(m.get("unit_cost") or 0)))
                      if (m.get("type") == "entrada") else None)
         st = await apply_stock_idempotent(m["product_id"], delta,
                                           f"invmov:{m['id']}",

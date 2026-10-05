@@ -3981,6 +3981,14 @@
       "finalizing": "finalizando"
     }
   },
+  "units": {
+    "label": "Unidad de medida",
+    "hint": "«Unidad» = venta por pieza (cantidades enteras). «Libra»/«Kilogramo» = venta por fracción (admite decimales).",
+    "unidad": "Unidad",
+    "libra": "Libra",
+    "kg": "Kilogramo",
+    "perUnit": "por {{unit}}"
+  },
   "inventory": {
     "eyebrow": "Tienda física",
     "title": "Control de Inventario",

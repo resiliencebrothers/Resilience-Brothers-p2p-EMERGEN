@@ -949,7 +949,7 @@ async def _claim_reactivation_plan(r: dict, rid: str, new_status: str,
     plan = {"stock_op": f"reactivate-stock:{rid}:{nonce}",
             "debit_op": f"reactivate-debit:{rid}:{nonce}",
             "amount": round(recharge, 8), "currency": settle_cur,
-            "quantity": int(r["quantity"]), "target": new_status,
+            "quantity": round(float(r["quantity"]), 3), "target": new_status,
             "at": iso(now_utc()), "by": actor.get("user_id", "")}
     claim0 = await db.redemptions.update_one(
         {"id": rid, "status": "rejected",
@@ -993,7 +993,7 @@ async def _abort_reactivation(r: dict, rid: str, plan: dict,
     await burn_or_undo_debit(r["user_id"], settle_cur,
                              float(plan.get("amount") or 0), plan["debit_op"])
     await burn_or_undo_stock(r["product_id"],
-                             int(plan.get("quantity") or r["quantity"]),
+                             round(float(plan.get("quantity") or r["quantity"]), 3),
                              plan["stock_op"])
     await db.redemptions.update_one(
         {"id": rid, "reactivation_pending.stock_op": plan["stock_op"]},
@@ -1005,7 +1005,7 @@ async def _reserve_reactivation_funds(r: dict, rid: str, plan: dict,
     """2) Reserva y cobro idempotentes (compensación si pierde)."""
     from services.balances import debit_balance_idempotent
     from services.inventory import apply_stock_idempotent
-    qty = int(plan.get("quantity") or r["quantity"])
+    qty = round(float(plan.get("quantity") or r["quantity"]), 3)
     recharge = float(plan.get("amount")
                      or (float(r["total_usd"])
                          + float(r.get("courier_fee_usd") or 0.0)))
@@ -1072,7 +1072,7 @@ async def _record_reactivation_traces(r: dict, rid: str, plan: dict,
     product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})
     if not product or product.get("owner_id"):
         return
-    qty = int(plan.get("quantity") or r["quantity"])
+    qty = round(float(plan.get("quantity") or r["quantity"]), 3)
     stock_op = plan["stock_op"]
     # el reverso del rechazo fue un ajuste_pos; la reactivación registra el
     # ajuste_neg espejo.
@@ -1167,7 +1167,7 @@ async def _on_redemption_rejected(r: dict, rid: str, actor: dict,
     cycle = int(fresh.get("rejection_cycle") or 1)
     # restitución de stock idempotente por ciclo de rechazo (antes: $inc a
     # secas — un reintento duplicaba unidades).
-    await apply_stock_idempotent(r["product_id"], int(r["quantity"]),
+    await apply_stock_idempotent(r["product_id"], round(float(r["quantity"]), 3),
                                  f"reject-stock:{rid}:c{cycle}",
                                  require_available=False)
     # iter217 — reverso de inventario (producto empresa) + reverso del

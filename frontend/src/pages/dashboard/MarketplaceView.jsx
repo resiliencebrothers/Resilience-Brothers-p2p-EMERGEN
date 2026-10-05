@@ -16,6 +16,7 @@ import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import CourierQuotePicker from "@/components/CourierQuotePicker";
 import { extractDetailMessage } from "@/utils/apiErrors";
+import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/units";
 
 export default function MarketplaceView() {
   const { refresh } = useAuth();
@@ -25,7 +26,7 @@ export default function MarketplaceView() {
   // iter285 — la cantidad vive como texto: el usuario puede borrar el «1»
   // inicial y escribir directamente el número (qtyNum = valor efectivo).
   const [qty, setQty] = useState("1");
-  const qtyNum = Math.max(0, parseInt(qty, 10) || 0);
+  const qtyNum = Math.max(0, parseFloat(qty) || 0);
   const [addr, setAddr] = useState("");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -117,7 +118,7 @@ export default function MarketplaceView() {
 
   const redeem = async () => {
     if (!open) return;
-    if (qtyNum < 1) return toast.error(t("marketplace.invalidQty"));
+    if (qtyNum <= 0) return toast.error(t("marketplace.invalidQty"));
     const pickup = fulfillment === "pickup";
     if (pickup && !storeId) return toast.error(t("marketplace.pickupStoreRequired"));
     if (!pickup && !addr) return toast.error(t("marketplace.addressRequired"));
@@ -277,7 +278,7 @@ export default function MarketplaceView() {
               <div className="mt-auto flex items-center justify-between">
                 <div>
                   <div className="font-display text-xl text-[#8B5CF6]" data-testid={`product-price-${p.id}`}>
-                    {p.price_usdt != null ? p.price_usdt : "—"} <span className="text-xs text-neutral-400">USDT</span>
+                    {p.price_usdt != null ? p.price_usdt : "—"} <span className="text-xs text-neutral-400">USDT{isFractionUnit(p.unit) ? `/${unitAbbr(p.unit)}` : ""}</span>
                     {p.on_offer && p.offer_original_price_usdt != null && (
                       <span className="ml-2 text-xs text-neutral-500 line-through font-normal" data-testid={`product-offer-old-${p.id}`}>
                         {p.offer_original_price_usdt} USDT
@@ -299,9 +300,9 @@ export default function MarketplaceView() {
                       ≈ {equivalents(p.price_usdt ?? p.price_usd)}
                     </div>
                   )}
-                  <div className="text-xs text-neutral-500">{t("marketplace.stock")} {p.stock}</div>
+                  <div className="text-xs text-neutral-500" data-testid={`product-stock-${p.id}`}>{t("marketplace.stock")} {fmtQty(p.stock, p.unit)}</div>
                 </div>
-                <Button data-testid={`redeem-${p.id}`} onClick={() => setOpen(p)} disabled={p.stock === 0 || p.price_usdt == null} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none">
+                <Button data-testid={`redeem-${p.id}`} onClick={() => setOpen(p)} disabled={p.stock <= 0 || p.price_usdt == null} className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none">
                   {t("marketplace.redeem")}
                 </Button>
               </div>
@@ -329,7 +330,7 @@ export default function MarketplaceView() {
               {history.map(h => (
                 <tr key={h.id} className="border-b border-white/5">
                   <td className="px-4 py-3">{h.product_name}</td>
-                  <td className="px-4 py-3 font-mono">{h.quantity}</td>
+                  <td className="px-4 py-3 font-mono">{fmtQty(h.quantity, h.unit)}</td>
                   <td className="px-4 py-3 font-mono text-[#8B5CF6]">${h.total_usd}</td>
                   <td className="px-4 py-3 text-xs" data-testid={`redemption-courier-${h.id}`}>
                     {h.fulfillment === "store_pickup" ? (
@@ -397,8 +398,8 @@ export default function MarketplaceView() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label className="micro-label text-neutral-500">{t("marketplace.redeemQuantity")}</Label>
-              <Input data-testid="redeem-qty" type="number" min="1" value={qty} onChange={e => setQty(e.target.value.replace(/[^0-9]/g, ""))} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12" />
+              <Label className="micro-label text-neutral-500">{t("marketplace.redeemQuantity")}{open && isFractionUnit(open.unit) ? ` (${unitAbbr(open.unit)})` : ""}</Label>
+              <Input data-testid="redeem-qty" type="number" min="0" step={qtyStep(open?.unit)} value={qty} onChange={e => setQty(sanitizeQty(e.target.value, open?.unit))} className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-12" />
             </div>
             {stores.length > 0 && (
               <div>
@@ -527,7 +528,7 @@ export default function MarketplaceView() {
                 {qrItem.pickup_code.slice(0, 3)}-{qrItem.pickup_code.slice(3)}
               </p>
               <p className="text-xs text-neutral-400">
-                {qrItem.quantity}× {qrItem.product_name}{qrItem.store_name ? ` — ${qrItem.store_name}` : ""}
+                {fmtQty(qrItem.quantity, qrItem.unit)}{isFractionUnit(qrItem.unit) ? " · " : "× "}{qrItem.product_name}{qrItem.store_name ? ` — ${qrItem.store_name}` : ""}
               </p>
               <p className="text-[0.65rem] text-neutral-500">{t("marketplace.qrHint")}</p>
             </div>

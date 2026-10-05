@@ -13,8 +13,9 @@ import AdminPageHeader from "@/components/AdminPageHeader";
 import VendorProductsSection from "@/pages/admin/products/VendorProductsSection";
 import { Plus, Edit2, Trash2, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
+import { UNIT_OPTIONS, unitAbbr, isFractionUnit, fmtQty } from "@/utils/units";
 
-const empty = { name: "", description: "", image_url: "", price_usd: 0, cost_usd: 0, stock: 0, category: "general", is_active: true, available_store_ids: [] };
+const empty = { name: "", description: "", image_url: "", price_usd: 0, cost_usd: 0, stock: 0, category: "general", unit: "unidad", is_active: true, available_store_ids: [] };
 
 export default function AdminProducts() {
   const { t } = useTranslation();
@@ -55,7 +56,8 @@ export default function AdminProducts() {
       ...form,
       price_usd: parseFloat(form.price_usd),
       cost_usd: parseFloat(form.cost_usd) || 0,
-      stock: parseInt(form.stock),
+      stock: parseFloat(form.stock) || 0,
+      unit: form.unit || "unidad",
       available_store_ids: form.available_store_ids || [],
     };
     try {
@@ -105,7 +107,7 @@ export default function AdminProducts() {
               <h3 className="font-display text-lg mt-1">{p.name}</h3>
               <div className="flex items-center justify-between mt-3">
                 <div>
-                  <div className="font-display text-xl text-[#8B5CF6]">{p.price_usd} <span className="text-xs text-neutral-500">{p.store_currency || "USDT"}</span></div>
+                  <div className="font-display text-xl text-[#8B5CF6]">{p.price_usd} <span className="text-xs text-neutral-500">{p.store_currency || "USDT"}{isFractionUnit(p.unit) ? `/${unitAbbr(p.unit)}` : ""}</span></div>
                   {p.store_currency && (
                     <div className="text-xs text-neutral-400 font-mono" data-testid={`product-usdt-equiv-${p.id}`}>
                       {p.price_usdt != null
@@ -113,7 +115,7 @@ export default function AdminProducts() {
                         : t("admin.products.webPriceMissing")}
                     </div>
                   )}
-                  <div className="text-xs text-neutral-500">{t("admin.products.stock")} {p.stock}</div>
+                  <div className="text-xs text-neutral-500" data-testid={`product-stock-${p.id}`}>{t("admin.products.stock")} {fmtQty(p.stock, p.unit)}</div>
                   {p.cost_usd > 0 && (
                     <div className="text-xs text-[#22C55E] mt-1">{t("admin.products.margin", { value: (p.price_usd - p.cost_usd).toFixed(2), currency: p.store_currency || "USDT" })}</div>
                   )}
@@ -231,7 +233,16 @@ export default function AdminProducts() {
                 {t("admin.products.priceNoPerm")}
               </p>
             )}
-            <div><Label className="micro-label text-neutral-500">{t("admin.products.stockLabel")}</Label><Input data-testid="prod-stock" type="number" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="micro-label text-neutral-500">{t("admin.products.stockLabel")}</Label><Input data-testid="prod-stock" type="number" step={isFractionUnit(form.unit) ? "0.001" : "1"} min="0" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" /></div>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("units.label")}</Label>
+                <select data-testid="prod-unit" value={form.unit || "unidad"} onChange={e => setForm({ ...form, unit: e.target.value })} className="w-full h-10 mt-1 bg-[#0a0a0a] border border-white/10 text-sm px-3 text-white">
+                  {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{t(`units.${u}`)}</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="text-[0.65rem] text-neutral-600 -mt-1" data-testid="prod-unit-hint">{t("units.hint")}</p>
             <div><Label className="micro-label text-neutral-500">{t("admin.products.category")}</Label><Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" /></div>
             {stores.length > 1 && (
               <div data-testid="prod-stores-availability">

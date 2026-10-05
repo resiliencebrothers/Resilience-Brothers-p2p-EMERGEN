@@ -3981,6 +3981,14 @@
       "finalizing": "finalizing"
     }
   },
+  "units": {
+    "label": "Unit of measure",
+    "hint": "\"Unit\" = sold per piece (whole numbers). \"Pound\"/\"Kilogram\" = sold by fraction (decimals allowed).",
+    "unidad": "Unit",
+    "libra": "Pound",
+    "kg": "Kilogram",
+    "perUnit": "per {{unit}}"
+  },
   "inventory": {
     "eyebrow": "Physical store",
     "title": "Inventory Control",

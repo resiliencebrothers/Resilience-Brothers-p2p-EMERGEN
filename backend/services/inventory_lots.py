@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _LOTS_INDEX_READY = False
 
 
-def compute_wac(old_stock: int, old_cost: float, qty: int,
+def compute_wac(old_stock: float, old_cost: float, qty: float,
                 entry_cost: float) -> float:
     """Costo promedio ponderado tras una entrada.
 
@@ -42,9 +42,9 @@ def compute_wac(old_stock: int, old_cost: float, qty: int,
 
     Si no había existencia (o era negativa por corrupción), el costo pasa a ser
     el de la compra nueva. Redondeo a 4 decimales para no acumular error de
-    centavos tras muchas entradas."""
-    base = max(int(old_stock or 0), 0)
-    q = int(qty or 0)
+    centavos tras muchas entradas. iter335 — soporta cantidades fraccionadas."""
+    base = max(round(float(old_stock or 0), 3), 0.0)
+    q = round(float(qty or 0), 3)
     oc = float(old_cost or 0)
     ec = float(entry_cost or 0)
     if q <= 0:
@@ -102,7 +102,7 @@ async def _ensure_lots_index() -> None:
         _LOTS_INDEX_READY = True
 
 
-async def record_lot(product: dict, qty: int, unit_cost: float,
+async def record_lot(product: dict, qty: float, unit_cost: float,
                      movement_id: str, source: str = "manual",
                      actor: Optional[dict] = None) -> Optional[dict]:
     """Registra un lote por cada entrada. Idempotente por `movement_id`."""
@@ -111,7 +111,8 @@ async def record_lot(product: dict, qty: int, unit_cost: float,
         "id": str(uuid.uuid4()),
         "product_id": product["id"],
         "product_name": product.get("name", ""),
-        "qty": int(qty),
+        "qty": round(float(qty or 0), 3),
+        "unit": (product.get("unit") or "unidad"),
         "unit_cost": round(float(unit_cost or 0), 4),
         "received_at": iso(now_utc()),
         "source": source,
@@ -186,7 +187,7 @@ async def build_valuation(window_days: int = 30) -> dict:
     tot_immob_count = 0
     tot_liq_recovery = 0.0
     for r in rows:
-        stock = int(r.get("stock") or 0)
+        stock = round(float(r.get("stock") or 0), 3)
         wac = float(r.get("cost_usd") or 0)
         price = float(r.get("price_usd") or 0)
         val_wac = round(stock * wac, 2)
@@ -195,7 +196,7 @@ async def build_valuation(window_days: int = 30) -> dict:
         remaining = stock
         alloc: dict = {}
         for lot in reversed(plist):
-            take = min(int(lot.get("qty") or 0), remaining) if remaining > 0 else 0
+            take = min(round(float(lot.get("qty") or 0), 3), remaining) if remaining > 0 else 0
             alloc[lot["id"]] = take
             remaining -= take
         lot_rows = []
@@ -210,7 +211,7 @@ async def build_valuation(window_days: int = 30) -> dict:
                 "id": lot["id"],
                 "received_at": lot.get("received_at"),
                 "unit_cost": lc,
-                "qty": int(lot.get("qty") or 0),
+                "qty": round(float(lot.get("qty") or 0), 3),
                 "remaining": rem,
                 "remaining_value": rv,
                 "margin_unit": margin_unit,
@@ -224,7 +225,7 @@ async def build_valuation(window_days: int = 30) -> dict:
         expected_margin = round(stock * margin_unit_wac, 2)
         # Rotación → clasificación de capital.
         rr = rot_by.get(r["product_id"], {})
-        sold = int(rr.get("sold") or 0)
+        sold = round(float(rr.get("sold") or 0), 3)
         sellout = rr.get("sellout_days")
         rotation = float(rr.get("rotation") or 0)
         daily = float(rr.get("daily_rate") or 0)
@@ -253,6 +254,7 @@ async def build_valuation(window_days: int = 30) -> dict:
             "product_id": r["product_id"],
             "name": r.get("name", ""),
             "category": r.get("category", ""),
+            "unit": r.get("unit", "unidad"),
             "is_active": bool(r.get("is_active", True)),
             "stock": stock,
             "price_usd": price,
@@ -290,7 +292,7 @@ async def build_valuation(window_days: int = 30) -> dict:
         "products": out,
         "window_days": wd,
         "totals": {
-            "units": tot_units,
+            "units": round(tot_units, 3),
             "value_wac": round(tot_val_wac, 2),
             "value_lots": round(tot_val_lots, 2),
             "num_products": len(out),

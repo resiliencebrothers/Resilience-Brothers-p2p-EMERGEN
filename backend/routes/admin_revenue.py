@@ -165,7 +165,7 @@ async def _compute_marketplace_revenue(days: Optional[int]) -> dict:
                 "cost_usd": 0.0, "profit_usd": 0.0, "redemptions": 0,
             }
         bp = by_product[key]
-        bp["units"] += int(r.get("quantity") or 0)
+        bp["units"] += round(float(r.get("quantity") or 0), 3)
         bp["revenue_usd"] += rev
         bp["cost_usd"] += cost
         bp["profit_usd"] += (rev - cost)
