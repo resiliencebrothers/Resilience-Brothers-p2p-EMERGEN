@@ -11,8 +11,9 @@ All three concerns are driven by env vars so production/preview can differ:
 iter47 — security hardening.
 """
 import os
+import re
 import logging
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Optional
 
 from fastapi import FastAPI, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,6 +31,32 @@ logger = logging.getLogger(__name__)
 
 def _parse_origins(raw: str) -> list[str]:
     return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+
+# Dominios preview de Emergent. El número de cluster (cluster-3 → cluster-9…)
+# lo reasigna la infra y rompería el allow-list estricto en cada barajeo.
+_PREVIEW_HOST_SUFFIXES = (".preview.emergentcf.cloud", ".preview.emergentagent.com")
+
+
+def _preview_origin_regex(origins: list[str]) -> Optional[str]:
+    """Construye un regex que acepta CUALQUIER variante de cluster del preview
+    de Emergent para el MISMO prefijo de app de los orígenes configurados.
+    Acotado al prefijo exacto (p.ej. `p2p-exchange-hub-2`) por seguridad: solo
+    varía el número de cluster, no el dominio ni la app."""
+    prefixes = set()
+    for o in origins:
+        host = o.split("://", 1)[-1].split("/", 1)[0].lower()
+        for suf in _PREVIEW_HOST_SUFFIXES:
+            if host.endswith(suf):
+                base = host[: -len(suf)]
+                base = re.sub(r"\.cluster-\d+$", "", base)  # quita .cluster-N
+                if base:
+                    prefixes.add(base)
+    if not prefixes:
+        return None
+    alt = "|".join(re.escape(p) for p in sorted(prefixes))
+    return (rf"^https://(?:{alt})(?:\.cluster-\d+)?"
+            rf"\.preview\.emergent(?:cf\.cloud|agent\.com)$")
 
 
 def configure_cors(app: FastAPI) -> None:
@@ -55,10 +82,14 @@ def configure_cors(app: FastAPI) -> None:
         origins = [preview_url, "http://localhost:3000"] if preview_url else ["http://localhost:3000"]
 
     logger.info(f"CORS allow_origins ({env}): {origins}")
+    origin_regex = _preview_origin_regex(origins)
+    if origin_regex:
+        logger.info(f"CORS allow_origin_regex (preview clusters): {origin_regex}")
     app.add_middleware(
         CORSMiddleware,
         allow_credentials=True,
         allow_origins=origins,
+        allow_origin_regex=origin_regex,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Requested-With", "Idempotency-Key"],
         expose_headers=["X-RateLimit-Remaining", "X-RateLimit-Reset"],
@@ -198,17 +229,21 @@ class OriginAllowlistMiddleware(BaseHTTPMiddleware):
 
     UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-    def __init__(self, app: FastAPI, allowed_origins: list[str]) -> None:
+    def __init__(self, app: FastAPI, allowed_origins: list[str],
+                 allowed_regex: Optional[str] = None) -> None:
         super().__init__(app)
         # Normalise (strip trailing slash + lower-case) once for O(1) checks.
         self.allowed = {o.rstrip("/").lower() for o in allowed_origins}
+        self.allowed_regex = re.compile(allowed_regex, re.I) if allowed_regex else None
 
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         if request.method in self.UNSAFE_METHODS:
             origin = (request.headers.get("origin") or "").rstrip("/").lower()
-            if origin and origin not in self.allowed:
+            allowed = (not origin) or (origin in self.allowed) or bool(
+                self.allowed_regex and self.allowed_regex.match(origin))
+            if origin and not allowed:
                 logger.warning(f"Blocked cross-origin {request.method} from {origin} to {request.url.path}")
                 # iter48 — log to security_events for the admin dashboard.
                 try:
@@ -243,7 +278,8 @@ def configure_origin_allowlist(app: FastAPI) -> None:
     if raw != "*":
         # Only enable the strict allow-list when CORS is configured; wildcard is
         # only ever legal in local dev.
-        app.add_middleware(OriginAllowlistMiddleware, allowed_origins=origins)
+        app.add_middleware(OriginAllowlistMiddleware, allowed_origins=origins,
+                           allowed_regex=_preview_origin_regex(origins))
 
 
 # ---------------------------------------------------------------------

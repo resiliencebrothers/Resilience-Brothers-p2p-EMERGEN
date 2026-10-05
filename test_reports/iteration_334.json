@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only validation of Admin Inventario → Incidencias tab. Navigation, data rendering, filters, UI testids and translations all pass. Lifecycle write actions (status transition + sync) fail with HTTP 403 due to backend origin allow-list rejecting the preview's cluster-9 origin — a CORS/allowlist drift rather than a UI bug.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/admin/inventory/incidents/{id}/status", "issue": "Returns 403 Forbidden. security_middleware logs: 'Blocked cross-origin POST from https://p2p-exchange-hub-2.cluster-9.preview.emergentcf.cloud'. CORS_ORIGINS in /app/backend/.env only lists cluster-3, not cluster-9. All write endpoints affected via this preview URL (incident status transition + sync).", "priority": "HIGH"},
+      {"endpoint": "POST /api/admin/inventory/incidents/sync", "issue": "Same 403 cross-origin block from cluster-9 origin. Frontend shows toast 'No se pudo sincronizar'.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Incident status transition (Marcar en revisión / Resolver)", "issue": "Confirming the inline note fires POST /status which backend rejects with 403; status badge remains 'Pendiente'. Caused by backend CORS allowlist (see backend_issues). The frontend DOES surface a 'Incidencia actualizada' toast optimistically — consider only showing success toast after 2xx response.", "affected_selectors": ["[data-testid=incident-confirm-{id}]", "[data-testid=incident-status-{id}]"]},
+      {"flow": "Incidents sync", "issue": "POST /incidents/sync returns 403; UI shows red error toast 'No se pudo sincronizar' (good error handling).", "affected_selectors": ["[data-testid=incidents-sync-btn]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Update backend/.env CORS_ORIGINS to include the current preview cluster origin: https://p2p-exchange-hub-2.cluster-9.preview.emergentcf.cloud (currently only cluster-3 is whitelisted). After update, run sudo supervisorctl restart backend and re-test POST /admin/inventory/incidents/{id}/status + /sync.",
+    "(Optional) Make the success toast in InventoryIncidentsTab fire only on 2xx response rather than optimistically — currently 'Incidencia actualizada' shows even when the PATCH fails."
+  ],
+  "critical_code_review_comments": [
+    "Success toast on incident status update appears to be optimistic — it fires regardless of API response (observed: toast present while backend returned 403 and status badge did not change).",
+    "Origin allowlist drift: CORS_ORIGINS lists cluster-3 but Emergent is now serving the preview from cluster-9; keep this env var in sync with the active ingress origin."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only test)", "frontend": "90% (all read + UI render + filters + regression pass; writes blocked by backend 403)"},
+  "test_credentials": "Cookie session_token=smoke_session_admin_forkp3 for p2p-exchange-hub-2.preview.emergentagent.com (admin user_test_admin01).",
+  "seed_data_creation": "None. Used existing data: 2 reorder products, 48 open conteo_pendiente incidents.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Read endpoints work fine (GET reorder=2 products, GET incidents=48 open). Only writes blocked. Verified pass: inventory-tab-incidents, inventory-incidents-view, inventory-reorder-panel, reorder-summary (2/0/5/5), reorder-table (2 rows: Aceite Vegetal +4, Test Product iter205 +1), reorder-refresh-btn, incidents-summary (48/48/0/0), incidents-list (48 rows), incidents-filter-status filter (Resuelta→empty state visible, Pendiente→48), incidents-filter-type options correct, incident-review-{id} reveals incident-note-{id} + incident-confirm-{id}, Control tab regression (Spanish headers Producto/Existencia/Mín./Objetivo/..., 48 inventory-target-input-{id} + 48 inventory-min-input-{id}), zero i18n key leaks. After CORS fix, re-test status transition + sync lifecycle.",
+  "rca of the issue": "Playwright → emergent infra reroutes/sets Origin to https://p2p-exchange-hub-2.cluster-9.preview.emergentcf.cloud on write requests. backend/.env CORS_ORIGINS whitelist contains cluster-3 but not cluster-9, so OriginAllowlistMiddleware (security_middleware.py) returns 403 for POST. Fix: add cluster-9 origin to CORS_ORIGINS (and ideally cover both). Reproduction: with provided cookie, click Incidencias tab → Marcar en revisión on any incident → confirm. Observe backend log 'Blocked cross-origin POST from ...cluster-9...' and UI status stays Pendiente."
+}
