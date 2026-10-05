@@ -86,19 +86,25 @@ async def record_physical_count(product: dict, counted_qty: float,
         "counted_by_email": (actor or {}).get("email", ""),
         "counted_at": now,
         "authorized": False,
+        "auth_state": "idle",
         "adjustment_movement_id": None,
         "updated_at": now,
     }
     # iter327 (IPV-R03) — escritura CONDICIONADA a que el conteo NO esté
-    # autorizado: si una autorización concurrente lo marcó entre la lectura y
-    # esta escritura, el filtro no casa el doc autorizado y el upsert intenta
-    # insertar → DuplicateKeyError (índice único product_id+count_date) → 409.
-    # Así un recuento atrasado nunca sobrescribe ni desautoriza un ajuste.
+    # autorizado NI con una autorización en curso (auth_state="claiming"): si
+    # una autorización concurrente lo reclamó/marcó entre la lectura y esta
+    # escritura, el filtro no casa y el upsert intenta insertar →
+    # DuplicateKeyError (índice único product_id+count_date) → 409. Así un
+    # recuento atrasado nunca sobrescribe ni desautoriza un ajuste.
+    # iter336 (IPV-R03-A) — `version` se incrementa en CADA cambio de contenido;
+    # la autorización la reclama de forma atómica, de modo que un recuento
+    # concurrente invalida una autorización que leyó una versión anterior.
     try:
         await db.inventory_counts.update_one(
             {"product_id": product["id"], "count_date": day,
-             "authorized": {"$ne": True}},
-            {"$set": doc, "$setOnInsert": {"created_at": now}}, upsert=True)
+             "authorized": {"$ne": True}, "auth_state": {"$ne": "claiming"}},
+            {"$set": doc, "$inc": {"version": 1},
+             "$setOnInsert": {"created_at": now}}, upsert=True)
     except DuplicateKeyError:
         raise HTTPException(
             status_code=409,
@@ -126,13 +132,14 @@ async def clear_physical_count(product_id: str, day: Optional[str] = None) -> No
         raise HTTPException(
             status_code=409,
             detail="No se puede borrar un conteo con ajuste autorizado.")
-    # iter327 (IPV-R03) — borrado CONDICIONADO a authorized!=true: si una
-    # autorización concurrente marcó el conteo entre la lectura anterior y este
+    # iter327 (IPV-R03) — borrado CONDICIONADO a authorized!=true Y sin
+    # autorización en curso (auth_state!="claiming"): si una autorización
+    # concurrente reclamó/marcó el conteo entre la lectura anterior y este
     # borrado, el filtro no casa (deleted_count==0) → 409 y la evidencia
-    # autorizada se preserva. Evita la micro-ventana de carrera read-then-delete.
+    # autorizada se preserva. Evita la micro-ventana read-then-delete (R03-B).
     res = await db.inventory_counts.delete_one(
         {"product_id": product_id, "count_date": day,
-         "authorized": {"$ne": True}})
+         "authorized": {"$ne": True}, "auth_state": {"$ne": "claiming"}})
     if res.deleted_count == 0:
         raise HTTPException(
             status_code=409,
@@ -168,16 +175,37 @@ async def authorize_count_adjustment(count_id: str, document: str,
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     mtype = "ajuste_pos" if diff > 0 else "ajuste_neg"
+    # iter336 (IPV-R03-A/B) — RECLAMAR atómicamente la versión del contenido
+    # ANTES de aplicar el movimiento. El claim casa solo si la versión que
+    # leímos sigue vigente y el conteo no está autorizado. Si un recuento
+    # concurrente cambió el contenido (version++) o un borrado eliminó el doc,
+    # matched_count==0 → 409 y NO se aplica ningún ajuste. Mientras dura el
+    # claim (auth_state="claiming"), recuentos y borrados quedan bloqueados.
+    version = count.get("version")
+    now = iso(now_utc())
+    claim = await db.inventory_counts.update_one(
+        {"id": count_id, "version": version, "authorized": {"$ne": True}},
+        {"$set": {"auth_state": "claiming",
+                  "claimed_by": actor.get("user_id", ""),
+                  "claimed_at": now}})
+    if claim.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El conteo cambió o fue autorizado mientras se procesaba. "
+                   "Recarga el conteo y vuelve a intentarlo.")
     reason = (f"Ajuste por conteo físico {count['count_date']} · doc: "
               f"{document.strip()}" + (f" · {note.strip()}" if note else ""))
+    # Idempotencia del movimiento LIGADA a la versión aprobada (recuperable:
+    # un reintento tras interrupción reclama la misma versión y reaplica sin
+    # duplicar el ajuste).
     mov = await record_movement(
         product=product, mtype=mtype, quantity=abs(diff), note=reason,
         source="conteo", ref_id=count_id, actor=actor,
-        dedupe_key=f"count-adjust:{count_id}")
-    now = iso(now_utc())
+        dedupe_key=f"count-adjust:{count_id}:v{version}")
     await db.inventory_counts.update_one(
-        {"id": count_id, "authorized": {"$ne": True}},
+        {"id": count_id, "version": version, "auth_state": "claiming"},
         {"$set": {"authorized": True, "status": "ajustado",
+                  "auth_state": "authorized", "authorized_version": version,
                   "adjustment_movement_id": mov["id"],
                   "adjustment_document": document.strip(),
                   "adjustment_note": note or "",

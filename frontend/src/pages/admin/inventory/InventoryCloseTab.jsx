@@ -81,6 +81,21 @@ export default function InventoryCloseTab() {
   }, [date]);
   useEffect(() => { load(); }, [load]);
 
+  // iter336 (IPV-R04) — si el día tiene un cierre PENDIENTE (guardado sin
+  // revisor), precarga el formulario para que el admin pueda completarlo y
+  // finalizarlo desde la pantalla (no solo por API).
+  useEffect(() => {
+    const c = review?.close;
+    if (c && !(c.resultado === "cuadra" && (c.revisado_por || "").trim())) {
+      setSign({
+        responsable: c.responsable || "",
+        revisado_por: c.revisado_por || "",
+        folio: c.folio || "",
+        note: c.note || "",
+      });
+    }
+  }, [review?.close?.close_date, review?.close?.resultado, review?.close?.snapshot_version]);
+
   const saveReview = async () => {
     if (!sign.responsable.trim()) return toast.error(t("inventory.close.respRequired"));
     setSavingClose(true);
@@ -105,6 +120,18 @@ export default function InventoryCloseTab() {
   const cur = data.store_currency;
   const empty = fisica.num_ventas === 0 && fisica.num_compras === 0 && web.num_ventas === 0 && recogidas.num === 0;
 
+  // iter336 (IPV-R04) — distingue el RESULTADO NUMÉRICO del inventario
+  // (review.resultado_sugerido) del ESTADO DE REVISIÓN del cierre guardado
+  // (review.close.resultado). Un cierre solo es FINAL (solo lectura) si quedó
+  // 'cuadra' Y con revisor; si no, sigue PENDIENTE y se puede completar.
+  const closeDoc = review?.close || null;
+  const closeFinal = !!closeDoc && closeDoc.resultado === "cuadra" && (closeDoc.revisado_por || "").trim();
+  const closePending = !!closeDoc && !closeFinal;
+  const closeStateLabel = (r) => r === "cuadra" ? t("inventory.close.stateRevisado")
+    : r === "descuadra" ? t("inventory.close.resDescuadra") : t("inventory.close.resPendiente");
+  const closeStateCls = (r) => r === "cuadra" ? "text-emerald-400 border-emerald-500/30"
+    : r === "descuadra" ? "text-amber-300 border-amber-500/30" : "text-sky-300 border-sky-500/30";
+
   const kpi = (testid, Icon, label, value, sub, color) => (
     <div className="tactile-card p-4" data-testid={testid}>
       <div className="flex items-center gap-2 micro-label text-neutral-500"><Icon className="w-3.5 h-3.5" /> {label}</div>
@@ -112,6 +139,45 @@ export default function InventoryCloseTab() {
       <p className="text-[0.65rem] text-neutral-500">{sub}</p>
     </div>
   );
+
+  const doneBlock = closeDoc ? (
+    <div className="border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-1" data-testid="close-review-done">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="micro-label text-neutral-500">{t("inventory.close.closeState")}:</span>
+        <span data-testid="close-state-badge"
+          className={`text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border ${closeStateCls(closeDoc.resultado)}`}>
+          {closeStateLabel(closeDoc.resultado)}
+        </span>
+      </div>
+      <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.responsable")}:</span> {closeDoc.responsable || "—"}</p>
+      <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.revisadoPor")}:</span> {closeDoc.revisado_por || "—"}</p>
+      <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.folio")}:</span> {closeDoc.folio || "—"}</p>
+      {closeDoc.note && (
+        <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.obs")}:</span> {closeDoc.note}</p>
+      )}
+      {closeDoc.value_cup != null && (
+        <div className="mt-2 pt-2 border-t border-emerald-500/20" data-testid="close-frozen-acta">
+          <p className="micro-label text-neutral-500 flex items-center gap-1 mb-1">
+            <Lock className="w-3 h-3 text-emerald-400" />
+            {t("inventory.close.actaTitle", { v: closeDoc.snapshot_version || 1 })}
+          </p>
+          <p className="text-sm font-mono">
+            <span className="text-[#8B5CF6]">{fmt(closeDoc.value_cup)} {cur}</span>
+            {closeDoc.value_usdt != null && (
+              <span className="text-sky-300"> · ≈ {fmt(closeDoc.value_usdt)} USDT</span>
+            )}
+          </p>
+          <p className="text-[0.65rem] text-neutral-500">
+            {t("inventory.close.actaRate", { rate: fmt(closeDoc.fx_rate_vip) })}
+          </p>
+        </div>
+      )}
+      <p className="text-[0.65rem] text-neutral-500 pt-1">
+        {t("inventory.close.closedBy", { email: closeDoc.closed_by_email || "—" })}
+        {closeDoc.closed_at ? ` · ${new Date(closeDoc.closed_at).toLocaleString()}` : ""}
+      </p>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-4" data-testid="inventory-close-tab">
@@ -321,70 +387,60 @@ export default function InventoryCloseTab() {
             </div>
           </div>
 
-          {review.close ? (
-            <div className="border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-1" data-testid="close-review-done">
-              <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.responsable")}:</span> {review.close.responsable || "—"}</p>
-              <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.revisadoPor")}:</span> {review.close.revisado_por || "—"}</p>
-              <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.folio")}:</span> {review.close.folio || "—"}</p>
-              {review.close.note && (
-                <p className="text-sm"><span className="text-neutral-500">{t("inventory.close.obs")}:</span> {review.close.note}</p>
-              )}
-              {review.close.value_cup != null && (
-                <div className="mt-2 pt-2 border-t border-emerald-500/20" data-testid="close-frozen-acta">
-                  <p className="micro-label text-neutral-500 flex items-center gap-1 mb-1">
-                    <Lock className="w-3 h-3 text-emerald-400" />
-                    {t("inventory.close.actaTitle", { v: review.close.snapshot_version || 1 })}
-                  </p>
-                  <p className="text-sm font-mono">
-                    <span className="text-[#8B5CF6]">{fmt(review.close.value_cup)} {cur}</span>
-                    {review.close.value_usdt != null && (
-                      <span className="text-sky-300"> · ≈ {fmt(review.close.value_usdt)} USDT</span>
-                    )}
-                  </p>
-                  <p className="text-[0.65rem] text-neutral-500">
-                    {t("inventory.close.actaRate", { rate: fmt(review.close.fx_rate_vip) })}
-                  </p>
-                </div>
-              )}
-              <p className="text-[0.65rem] text-neutral-500 pt-1">
-                {t("inventory.close.closedBy", { email: review.close.closed_by_email || "—" })}
-                {review.close.closed_at ? ` · ${new Date(review.close.closed_at).toLocaleString()}` : ""}
-              </p>
-            </div>
+          {closeFinal ? (
+            doneBlock
           ) : isAdmin ? (
-            <div className="border border-white/10 p-4 space-y-3" data-testid="close-review-form">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <Label className="micro-label text-neutral-500">{t("inventory.close.responsable")}</Label>
-                  <Input data-testid="close-responsable" value={sign.responsable}
-                    onChange={(e) => setSign({ ...sign, responsable: e.target.value })}
-                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+            <div className="space-y-3">
+              {closePending && (
+                <div className="border border-sky-500/20 bg-sky-500/5 p-3" data-testid="close-pending-banner">
+                  <p className="text-sm text-sky-300 flex items-center gap-2">
+                    <ClipboardCheck className="w-4 h-4" /> {t("inventory.close.pendingTitle")}
+                    <span data-testid="close-pending-state"
+                      className={`ml-auto text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${closeStateCls(closeDoc.resultado)}`}>
+                      {closeStateLabel(closeDoc.resultado)}
+                    </span>
+                  </p>
+                  <p className="text-[0.65rem] text-neutral-400 mt-1">{t("inventory.close.pendingHint")}</p>
                 </div>
-                <div>
-                  <Label className="micro-label text-neutral-500">{t("inventory.close.revisadoPor")}</Label>
-                  <Input data-testid="close-revisado-por" value={sign.revisado_por}
-                    onChange={(e) => setSign({ ...sign, revisado_por: e.target.value })}
-                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+              )}
+              <div className="border border-white/10 p-4 space-y-3" data-testid="close-review-form">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="micro-label text-neutral-500">{t("inventory.close.responsable")}</Label>
+                    <Input data-testid="close-responsable" value={sign.responsable}
+                      onChange={(e) => setSign({ ...sign, responsable: e.target.value })}
+                      className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+                  </div>
+                  <div>
+                    <Label className="micro-label text-neutral-500">{t("inventory.close.revisadoPor")}</Label>
+                    <Input data-testid="close-revisado-por" value={sign.revisado_por}
+                      onChange={(e) => setSign({ ...sign, revisado_por: e.target.value })}
+                      className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+                  </div>
+                  <div>
+                    <Label className="micro-label text-neutral-500">{t("inventory.close.folio")}</Label>
+                    <Input data-testid="close-folio" value={sign.folio}
+                      onChange={(e) => setSign({ ...sign, folio: e.target.value })}
+                      className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+                  </div>
+                  <div>
+                    <Label className="micro-label text-neutral-500">{t("inventory.close.obs")}</Label>
+                    <Input data-testid="close-note" value={sign.note}
+                      onChange={(e) => setSign({ ...sign, note: e.target.value })}
+                      className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+                  </div>
                 </div>
-                <div>
-                  <Label className="micro-label text-neutral-500">{t("inventory.close.folio")}</Label>
-                  <Input data-testid="close-folio" value={sign.folio}
-                    onChange={(e) => setSign({ ...sign, folio: e.target.value })}
-                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
-                </div>
-                <div>
-                  <Label className="micro-label text-neutral-500">{t("inventory.close.obs")}</Label>
-                  <Input data-testid="close-note" value={sign.note}
-                    onChange={(e) => setSign({ ...sign, note: e.target.value })}
-                    className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
-                </div>
+                <Button data-testid="close-review-save" onClick={saveReview} disabled={savingClose}
+                  className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-10">
+                  <ClipboardCheck className="w-4 h-4 mr-1" /> {savingClose ? "…" : (closePending ? t("inventory.close.completeBtn") : t("inventory.close.reviewBtn"))}
+                </Button>
+                <p className="text-[0.65rem] text-neutral-500" data-testid="close-no-close">
+                  {closePending ? t("inventory.close.completeHint") : t("inventory.close.noClose")}
+                </p>
               </div>
-              <Button data-testid="close-review-save" onClick={saveReview} disabled={savingClose}
-                className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-10">
-                <ClipboardCheck className="w-4 h-4 mr-1" /> {savingClose ? "…" : t("inventory.close.reviewBtn")}
-              </Button>
-              <p className="text-[0.65rem] text-neutral-500" data-testid="close-no-close">{t("inventory.close.noClose")}</p>
             </div>
+          ) : closeDoc ? (
+            doneBlock
           ) : (
             <p className="text-xs text-neutral-500" data-testid="close-review-admin-only">{t("inventory.close.adminOnly")}</p>
           )}
