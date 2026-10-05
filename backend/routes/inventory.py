@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from db_client import db
-from auth_utils import require_permission, now_utc, iso
+from auth_utils import require_permission, now_utc, iso, _enforce_totp_step_up
 from audit_log import log_action
 from services.inventory import (record_movement, record_price_change,
                                 _day_bounds, today_havana,
@@ -493,6 +493,51 @@ async def inventory_close_snapshot(request: Request, date: Optional[str] = None,
          "frozen_by_email": 1, "responsable": 1, "revisado_por": 1,
          "totals": 1, "fx": 1}).sort("version", -1).to_list(100)
     return {"date": day, "snapshot": snap, "versions": versions}
+
+
+# ═══════════ IPV H04 — Apertura auditada de base legacy sin documentar ══════
+class OpeningRegister(BaseModel):
+    cost_usd: Optional[float] = Field(None, ge=0, le=100_000_000)
+    note: str = Field("", max_length=300)
+
+
+class OpeningBulk(BaseModel):
+    totp_code: Optional[str] = Field(None, max_length=11)
+
+
+@router.post("/admin/inventory/products/{product_id}/register-opening")
+async def register_opening(product_id: str, payload: OpeningRegister,
+                           request: Request) -> Any:
+    """IPV (H04) — documenta la existencia inicial de un producto legacy cuyo
+    stock no estaba respaldado por movimientos (corte lo marcaba PARCIAL)."""
+    actor = await require_permission(request, "products")
+    from services.inventory_ipv import register_audited_opening
+    res = await register_audited_opening(
+        product_id, payload.cost_usd, payload.note, actor)
+    await log_action(
+        db, actor, "inventory.audited_opening", "product", product_id,
+        summary=(f"Apertura auditada {res['name']}: {res['opening_qty']} "
+                 f"{res['unit']} @ {res['cost_usd']} ({res['value_cup']} CUP)"),
+        details=res)
+    return res
+
+
+@router.post("/admin/inventory/register-openings-bulk")
+async def register_openings_bulk(payload: OpeningBulk, request: Request) -> Any:
+    """IPV (H04) — registra la apertura auditada de TODOS los productos de la
+    empresa con base sin documentar. Requiere 2FA (acción masiva sensible)."""
+    actor = await require_permission(request, "products")
+    await _enforce_totp_step_up(
+        actor, payload.totp_code,
+        action_label="registrar aperturas auditadas en bloque")
+    from services.inventory_ipv import register_audited_openings_bulk
+    res = await register_audited_openings_bulk(actor)
+    await log_action(
+        db, actor, "inventory.audited_opening_bulk", "inventory", "bulk",
+        summary=(f"Aperturas auditadas en bloque: {res['processed']} "
+                 f"productos ({res['value_cup']} CUP)"),
+        details={"processed": res["processed"], "value_cup": res["value_cup"]})
+    return res
 
 
 # ══════════════════ IPV Fase 2+: reposición y nivel objetivo ════════════════

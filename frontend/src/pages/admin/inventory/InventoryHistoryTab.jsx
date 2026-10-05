@@ -5,8 +5,12 @@ import { useTranslation } from "react-i18next";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { CalendarClock, Download, Boxes, Coins, AlertTriangle, ScanLine } from "lucide-react";
+import { CalendarClock, Download, Boxes, Coins, AlertTriangle, ScanLine, FileCheck2 } from "lucide-react";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const qty = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 3 });
@@ -25,6 +29,13 @@ export default function InventoryHistoryTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [opening, setOpening] = useState(null);        // fila en diálogo apertura
+  const [openCost, setOpenCost] = useState("");
+  const [openNote, setOpenNote] = useState("");
+  const [savingOpen, setSavingOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkTotp, setBulkTotp] = useState("");
+  const [bulkSaving, setBulkSaving] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -62,6 +73,43 @@ export default function InventoryHistoryTab() {
 
   const tot = data?.totals;
   const cur = data?.currency || "CUP";
+  const undocCount = (data?.products || []).filter((p) => p.undocumented_base).length;
+
+  const submitOpening = async () => {
+    if (!opening) return;
+    setSavingOpen(true);
+    try {
+      const body = { note: openNote };
+      if (openCost !== "" && !Number.isNaN(Number(openCost))) body.cost_usd = Number(openCost);
+      await axios.post(
+        `${API}/admin/inventory/products/${opening.product_id}/register-opening`,
+        body, { withCredentials: true });
+      toast.success(t("inventory.history.openingDone"));
+      setOpening(null);
+      load();
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error((d && (d.message || d)) || t("inventory.history.openingError"));
+    } finally { setSavingOpen(false); }
+  };
+
+  const submitBulk = async () => {
+    setBulkSaving(true);
+    try {
+      const r = await axios.post(
+        `${API}/admin/inventory/register-openings-bulk`,
+        { totp_code: bulkTotp || undefined }, { withCredentials: true });
+      const n = r.data?.processed || 0;
+      toast.success(n > 0
+        ? t("inventory.history.openingAllDone", { n, value: fmt(r.data?.value_cup) })
+        : t("inventory.history.openingNone"));
+      setBulkOpen(false); setBulkTotp("");
+      load();
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      toast.error((d && (d.message || d)) || t("inventory.history.openingError"));
+    } finally { setBulkSaving(false); }
+  };
 
   return (
     <div className="space-y-5" data-testid="inventory-history-tab">
@@ -135,13 +183,20 @@ export default function InventoryHistoryTab() {
 
       {/* Aviso de cobertura parcial */}
       {tot?.partial_count > 0 && (
-        <div className="flex items-start gap-2 border border-amber-500/30 bg-amber-500/5 px-3 py-2"
+        <div className="flex items-center gap-2 border border-amber-500/30 bg-amber-500/5 px-3 py-2"
           data-testid="history-partial-warning">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
           <p className="text-[0.7rem] text-amber-200/90">
             {t("inventory.history.partialWarn", { n: tot.partial_count })}
             {data?.coverage_from && " " + t("inventory.history.coverageFrom", { date: data.coverage_from })}
           </p>
+          {undocCount > 0 && (
+            <Button size="sm" onClick={() => setBulkOpen(true)}
+              data-testid="history-open-base-all-btn"
+              className="ml-auto shrink-0 bg-emerald-700 hover:bg-emerald-600 text-white rounded-none text-[0.65rem]">
+              <FileCheck2 className="w-3.5 h-3.5 mr-1" /> {t("inventory.history.openingAll")}
+            </Button>
+          )}
         </div>
       )}
 
@@ -184,6 +239,13 @@ export default function InventoryHistoryTab() {
                         {t("inventory.history.inactiveTag")}
                       </span>
                     )}
+                    {p.undocumented_base && (
+                      <button type="button" onClick={() => { setOpening(p); setOpenCost(""); setOpenNote(""); }}
+                        data-testid={`history-open-base-${p.product_id}`}
+                        className="text-[0.55rem] uppercase px-1.5 py-0.5 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 transition-colors">
+                        {t("inventory.history.openingBtn")}
+                      </button>
+                    )}
                   </div>
                   {p.category && <span className="text-[0.6rem] text-neutral-500">{p.category}</span>}
                 </td>
@@ -216,6 +278,73 @@ export default function InventoryHistoryTab() {
           </tbody>
         </table>
       </div>
+
+      {/* Diálogo: apertura auditada por producto */}
+      <Dialog open={!!opening} onOpenChange={(o) => !o && setOpening(null)}>
+        <DialogContent data-testid="opening-dialog" className="bg-[#14122A] border-white/10 text-white rounded-none">
+          <DialogHeader>
+            <DialogTitle>{t("inventory.history.openingTitle")}</DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              {t("inventory.history.openingDesc", { name: opening?.name || "" })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {opening?.base_gap != null && (
+              <div className="flex items-center justify-between text-sm border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                <span className="text-neutral-400">{t("inventory.history.openingGap")}</span>
+                <span className="font-semibold text-emerald-300" data-testid="opening-gap">{qty(opening.base_gap)}</span>
+              </div>
+            )}
+            <div>
+              <Label className="micro-label text-neutral-500">{t("inventory.history.openingCost")}</Label>
+              <Input type="number" min="0" step="0.0001" value={openCost}
+                onChange={(e) => setOpenCost(e.target.value)}
+                data-testid="opening-cost-input"
+                className="bg-[#0F0E20] border-white/10 text-white rounded-none" />
+              <p className="text-[0.6rem] text-neutral-500 mt-1">{t("inventory.history.openingCostHint")}</p>
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">{t("inventory.history.openingNote")}</Label>
+              <Textarea value={openNote} onChange={(e) => setOpenNote(e.target.value)}
+                data-testid="opening-note-input" rows={2}
+                className="bg-[#0F0E20] border-white/10 text-white rounded-none" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button disabled={savingOpen} onClick={submitOpening}
+              data-testid="opening-submit-btn"
+              className="bg-emerald-700 hover:bg-emerald-600 text-white rounded-none">
+              <FileCheck2 className="w-4 h-4 mr-1" /> {t("inventory.history.openingConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo: documentar todas las bases (bloque, 2FA) */}
+      <Dialog open={bulkOpen} onOpenChange={(o) => { if (!o) { setBulkOpen(false); setBulkTotp(""); } }}>
+        <DialogContent data-testid="opening-bulk-dialog" className="bg-[#14122A] border-white/10 text-white rounded-none">
+          <DialogHeader>
+            <DialogTitle>{t("inventory.history.openingAllTitle")}</DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              {t("inventory.history.openingAllDesc")}
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label className="micro-label text-neutral-500">{t("inventory.history.totpLabel")}</Label>
+            <Input value={bulkTotp} onChange={(e) => setBulkTotp(e.target.value)}
+              inputMode="numeric" autoComplete="one-time-code" maxLength={11}
+              data-testid="opening-bulk-totp-input"
+              className="bg-[#0F0E20] border-white/10 text-white rounded-none tracking-widest" />
+          </div>
+          <DialogFooter>
+            <Button disabled={bulkSaving} onClick={submitBulk}
+              data-testid="opening-bulk-submit-btn"
+              className="bg-emerald-700 hover:bg-emerald-600 text-white rounded-none">
+              <FileCheck2 className="w-4 h-4 mr-1" /> {t("inventory.history.openingAllConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

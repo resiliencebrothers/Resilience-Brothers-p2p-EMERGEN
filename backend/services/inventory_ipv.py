@@ -22,8 +22,8 @@ from pymongo.errors import DuplicateKeyError
 from db_client import db
 from auth_utils import now_utc, iso
 from services.inventory import (record_movement, today_havana, _day_bounds,
-                                _COMPANY_FILTER, OUTPUT_TYPES, qnum,
-                                product_unit, norm_qty)
+                                _COMPANY_FILTER, OUTPUT_TYPES, MOVEMENT_TYPES,
+                                qnum, product_unit, norm_qty)
 
 logger = logging.getLogger(__name__)
 
@@ -438,3 +438,97 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
                   "value_usdt": acta["totals"]["value_usdt"],
                   "fx_rate_vip": acta["fx"]["rate_vip"]}})
     return await db.inventory_closes.find_one({"close_date": day}, {"_id": 0})
+
+
+
+# ═══════════════ IPV H04 — Apertura auditada de base legacy ═══════════════
+async def _documented_stock_delta(product_id: str) -> float:
+    """iter341 (H04) — suma de deltas de TODOS los movimientos de stock
+    CONFIRMADOS del producto (incluida la 'alta'). Mide cuánta existencia está
+    DOCUMENTADA por el log; la diferencia con el stock real es la base SIN
+    documentar que la apertura auditada viene a registrar."""
+    pipe = [
+        {"$match": {"product_id": product_id,
+                    "type": {"$in": list(MOVEMENT_TYPES)},
+                    "$or": [{"needs_stock": {"$ne": True}},
+                            {"stock_applied": True}]}},
+        {"$group": {"_id": None, "delta": {"$sum": {"$switch": {
+            "branches": [{"case": {"$in": ["$type", ["entrada", "ajuste_pos"]]},
+                          "then": {"$ifNull": ["$quantity", 0]}}],
+            "default": {"$multiply": [{"$ifNull": ["$quantity", 0]}, -1]}}}}}},
+    ]
+    rows = await db.inventory_movements.aggregate(pipe).to_list(1)
+    return round(float(rows[0]["delta"]) if rows else 0.0, 3)
+
+
+async def _undocumented_gap(product: dict) -> float:
+    """Existencia real − existencia documentada (≥0 cuando falta base)."""
+    documented = await _documented_stock_delta(product["id"])
+    return round(qnum(product.get("stock")) - documented, 3)
+
+
+async def register_audited_opening(product_id: str,
+                                   cost_usd: Optional[float] = None,
+                                   note: str = "",
+                                   actor: Optional[dict] = None) -> dict:
+    """iter341 (H04) — Registra una APERTURA AUDITADA que documenta la base sin
+    documentar de un producto legacy (existencia real sin movimiento de origen).
+    Crea un movimiento 'entrada' (source='apertura_auditada', apply_stock=False:
+    el stock YA existe) y su lote, SIN tocar el fondo de la empresa. Tras esto, el
+    stock real queda explicado por el log y el corte deja de marcarlo parcial."""
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if product.get("owner_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo los productos de la empresa admiten apertura auditada.")
+    gap = await _undocumented_gap(product)
+    if abs(gap) < 0.001:
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto ya tiene su existencia documentada; no "
+                   "requiere apertura auditada.")
+    if gap < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="La existencia documentada supera a la real; revisa los "
+                   "movimientos antes de registrar una apertura.")
+    cost = float(cost_usd if cost_usd is not None
+                 else (product.get("cost_usd") or 0))
+    mov = await record_movement(
+        product=product, mtype="entrada", quantity=gap, unit_cost=cost,
+        note=((note or "").strip()
+              or "Apertura auditada: existencia inicial sin movimiento de origen."),
+        source="apertura_auditada", actor=actor, apply_stock=False)
+    from services.inventory_lots import record_lot
+    await record_lot(product, gap, cost, (mov or {}).get("id", ""),
+                     source="apertura_auditada", actor=actor)
+    return {
+        "product_id": product_id, "name": product.get("name", ""),
+        "opening_qty": gap, "unit": product_unit(product),
+        "cost_usd": round(cost, 4), "value_cup": round(gap * cost, 2),
+        "movement_id": (mov or {}).get("id", ""),
+    }
+
+
+async def register_audited_openings_bulk(actor: Optional[dict] = None) -> dict:
+    """Registra la apertura auditada de TODOS los productos de la empresa con
+    base sin documentar. Idempotente: los ya documentados se omiten."""
+    products = await db.products.find(
+        _COMPANY_FILTER,
+        {"_id": 0, "id": 1, "name": 1, "stock": 1, "cost_usd": 1,
+         "owner_id": 1, "unit": 1}).to_list(5000)
+    items = []
+    total_cup = 0.0
+    for p in products:
+        if p.get("owner_id"):
+            continue
+        try:
+            r = await register_audited_opening(p["id"], None, "", actor)
+        except HTTPException:
+            continue  # ya documentado / gap inválido
+        items.append(r)
+        total_cup += r["value_cup"]
+    return {"processed": len(items), "value_cup": round(total_cup, 2),
+            "items": items}
