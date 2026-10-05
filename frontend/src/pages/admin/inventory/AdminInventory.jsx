@@ -14,11 +14,14 @@ import InventoryCloseTab from "./InventoryCloseTab";
 import InventoryValuationTab from "./InventoryValuationTab";
 import InventoryHistoryTab from "./InventoryHistoryTab";
 import InventoryStoresTab from "./InventoryStoresTab";
+import InventoryIncidentsTab from "./InventoryIncidentsTab";
+import InventoryReorderPanel from "./InventoryReorderPanel";
 import LabelsDialog from "./LabelsDialog";
 
 // iter217 — Control de flujo de inventario de la tienda física (réplica del
 // Excel del operador: Control Inventario + Movimientos + Dashboard).
-const TABS = ["control", "scan", "movements", "close", "valuation", "history", "stores", "dashboard"];
+// iter333 (IPV Fase 3) — pestaña "incidents": reposición + seguimiento de incidencias.
+const TABS = ["control", "scan", "movements", "close", "valuation", "history", "stores", "dashboard", "incidents"];
 
 export default function AdminInventory() {
   const { t } = useTranslation();
@@ -102,6 +105,12 @@ export default function AdminInventory() {
       {tab === "history" && <InventoryHistoryTab />}
       {tab === "stores" && <InventoryStoresTab />}
       {tab === "dashboard" && <InventoryDashboardTab />}
+      {tab === "incidents" && (
+        <div className="space-y-10" data-testid="inventory-incidents-view">
+          <InventoryReorderPanel />
+          <InventoryIncidentsTab />
+        </div>
+      )}
       <LabelsDialog open={labelsOpen} onOpenChange={setLabelsOpen} />
     </div>
   );

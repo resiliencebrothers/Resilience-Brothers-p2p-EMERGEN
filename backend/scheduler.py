@@ -361,6 +361,41 @@ async def run_daily_fx_snapshot(db):
         logger.error(f"[fx-snapshot] failed: {e}")
 
 
+async def run_daily_incident_sync(db):
+    """iter333 — genera/resuelve incidencias de 'conteo pendiente' del día
+    (productos activos de la empresa sin conteo). 23:30 America/Havana."""
+    try:
+        from services.inventory_incidents import sync_pending_count_incidents
+        res = await sync_pending_count_incidents()
+        logger.info("[incident-sync] %s created=%s resolved=%s",
+                    res["date"], res["created"], res["resolved"])
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[incident-sync] failed: {e}")
+
+
+async def run_daily_reorder_digest(db):
+    """iter333 — avisa a los admins con la lista de productos bajo su mínimo y
+    la cantidad sugerida de reposición. 07:45 America/Havana."""
+    try:
+        from services.inventory import build_reorder_list
+        rows = await build_reorder_list()
+        if not rows:
+            return
+        out = sum(1 for r in rows if r["out_of_stock"])
+        top = ", ".join(
+            f"{r['name']} ({r['stock']}→+{r['suggested']})" for r in rows[:6])
+        body = (f"{len(rows)} producto(s) en o bajo su mínimo"
+                + (f", {out} agotado(s)" if out else "") + ". "
+                + f"Reponer: {top}" + ("…" if len(rows) > 6 else "") + ".")
+        from admin_alerts import notify_all_admins
+        await notify_all_admins(
+            db, title="Reposición de inventario sugerida", body=body,
+            url_path="/admin/inventory")
+        logger.info("[reorder-digest] notified: %s products", len(rows))
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[reorder-digest] failed: {e}")
+
+
 
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
@@ -511,6 +546,26 @@ def start_scheduler(db, build_timeseries):
         misfire_grace_time=3600,
         coalesce=True,
         next_run_time=datetime.now(timezone.utc),
+    )
+    # iter333 — sync diario de incidencias de conteo pendiente (23:30 Cuba).
+    _scheduler.add_job(
+        run_daily_incident_sync,
+        CronTrigger(hour=23, minute=30, timezone="America/Havana"),
+        kwargs={"db": db},
+        id="daily_incident_sync",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    # iter333 — digest diario de reposición a admins (07:45 Cuba).
+    _scheduler.add_job(
+        run_daily_reorder_digest,
+        CronTrigger(hour=7, minute=45, timezone="America/Havana"),
+        kwargs={"db": db},
+        id="daily_reorder_digest",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
     )
     _scheduler.start()
     logger.info(

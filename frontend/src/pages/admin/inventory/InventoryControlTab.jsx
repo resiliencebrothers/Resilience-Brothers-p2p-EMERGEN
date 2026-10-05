@@ -32,7 +32,7 @@ export default function InventoryControlTab() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   // iter223 — alta de productos directo desde el control de inventario.
-  const emptyProduct = { name: "", category: "mercadito", price_usd: "", cost_usd: "", stock: 0, min_stock: "", image_url: "", is_active: true };
+  const emptyProduct = { name: "", category: "mercadito", price_usd: "", cost_usd: "", stock: 0, min_stock: "", target_stock: "", image_url: "", is_active: true };
   // iter226 — modo doble: crear producto nuevo o reponer uno existente.
   const emptyRestock = { product_id: "", quantity: 1, unit_cost: "", sale_price: "", note: "" };
   const [addOpen, setAddOpen] = useState(false);
@@ -50,6 +50,7 @@ export default function InventoryControlTab() {
   // iter320 (IPV) — conteo físico inline + ajuste autorizado (admin).
   const [countDraft, setCountDraft] = useState({});
   const [minDraft, setMinDraft] = useState({});
+  const [targetDraft, setTargetDraft] = useState({});
   const [adjust, setAdjust] = useState(null);
   const [adjustBusy, setAdjustBusy] = useState(false);
 
@@ -109,6 +110,19 @@ export default function InventoryControlTab() {
         { min_stock: val }, { withCredentials: true });
       toast.success(t("inventory.control.minSaved"));
       setMinDraft((d) => { const nd = { ...d }; delete nd[r.product_id]; return nd; });
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+  };
+
+  const saveTargetStock = async (r) => {
+    const raw = targetDraft[r.product_id];
+    const n = parseInt(raw);
+    const val = (raw === "" || raw === undefined || isNaN(n)) ? null : Math.max(0, n);
+    try {
+      await axios.patch(`${API}/admin/inventory/products/${r.product_id}/target-stock`,
+        { target_stock: val }, { withCredentials: true });
+      toast.success(t("inventory.control.targetSaved"));
+      setTargetDraft((d) => { const nd = { ...d }; delete nd[r.product_id]; return nd; });
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
   };
@@ -176,6 +190,7 @@ export default function InventoryControlTab() {
         category: prod.category.trim() || "mercadito",
         is_active: prod.is_active,
         min_stock: prod.min_stock === "" ? null : (parseInt(prod.min_stock) >= 0 ? parseInt(prod.min_stock) : null),
+        target_stock: prod.target_stock === "" ? null : (parseInt(prod.target_stock) >= 0 ? parseInt(prod.target_stock) : null),
       }, { withCredentials: true });
       toast.success(t("inventory.control.productCreated"));
       setAddOpen(false); setProd(emptyProduct);
@@ -279,6 +294,7 @@ export default function InventoryControlTab() {
             <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.control.product")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.stock")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.colMin")}</th>
+            <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.colTarget")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.price")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.cost")}</th>
             <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.control.entries")}</th>
@@ -294,13 +310,13 @@ export default function InventoryControlTab() {
         </thead>
         <tbody>
           {loading && (
-            <tr><td colSpan="14" className="text-center text-neutral-500 py-8">…</td></tr>
+            <tr><td colSpan="15" className="text-center text-neutral-500 py-8">…</td></tr>
           )}
           {!loading && rows.length === 0 && (
-            <tr><td colSpan="14" className="text-center text-neutral-500 py-8">{t("inventory.control.empty")}</td></tr>
+            <tr><td colSpan="15" className="text-center text-neutral-500 py-8">{t("inventory.control.empty")}</td></tr>
           )}
           {!loading && rows.length > 0 && visible.length === 0 && (
-            <tr><td colSpan="14" className="text-center text-neutral-500 py-8" data-testid="inventory-search-empty">{t("inventory.control.searchEmpty")}</td></tr>
+            <tr><td colSpan="15" className="text-center text-neutral-500 py-8" data-testid="inventory-search-empty">{t("inventory.control.searchEmpty")}</td></tr>
           )}
           {visible.map((r) => (
             <tr key={r.product_id} className="border-b border-white/5" data-testid={`inventory-row-${r.product_id}`}>
@@ -318,6 +334,17 @@ export default function InventoryControlTab() {
                   onBlur={() => { if (minDraft[r.product_id] !== undefined) saveMinStock(r); }}
                   placeholder={String(threshold || 5)}
                   title={t("inventory.control.minHint")}
+                  className="w-16 h-8 bg-[#0a0a0a] border border-white/10 text-sm px-2 text-white font-mono text-right" />
+              </td>
+              <td className="px-4 py-3 text-right" data-testid={`inventory-target-cell-${r.product_id}`}>
+                <input type="number" min="0"
+                  data-testid={`inventory-target-input-${r.product_id}`}
+                  value={targetDraft[r.product_id] !== undefined ? targetDraft[r.product_id] : (r.target_stock ?? "")}
+                  onChange={(e) => setTargetDraft((d) => ({ ...d, [r.product_id]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveTargetStock(r); }}
+                  onBlur={() => { if (targetDraft[r.product_id] !== undefined) saveTargetStock(r); }}
+                  placeholder="—"
+                  title={t("inventory.control.targetHint")}
                   className="w-16 h-8 bg-[#0a0a0a] border border-white/10 text-sm px-2 text-white font-mono text-right" />
               </td>
               <td className="px-4 py-3 font-mono text-right text-[#8B5CF6]">{fmt(r.price_usd)}</td>
@@ -515,6 +542,13 @@ export default function InventoryControlTab() {
               <Input data-testid="inv-product-min-stock" type="number" min="0" value={prod.min_stock}
                 onChange={(e) => setProd({ ...prod, min_stock: e.target.value })}
                 placeholder={t("inventory.control.formMinStockHint")}
+                className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">{t("inventory.control.formTargetStock")}</Label>
+              <Input data-testid="inv-product-target-stock" type="number" min="0" value={prod.target_stock}
+                onChange={(e) => setProd({ ...prod, target_stock: e.target.value })}
+                placeholder={t("inventory.control.formTargetStockHint")}
                 className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
             </div>
             <div>

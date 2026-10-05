@@ -102,6 +102,13 @@ async def record_physical_count(product: dict, counted_qty: int,
             status_code=409,
             detail="Este conteo ya tiene un ajuste autorizado; no puede "
                    "modificarse. Vuelve a contar en otra jornada si procede.")
+    # iter333 (IPV Fase 3) — sincroniza incidencias: resuelve el conteo
+    # pendiente y crea/resuelve la diferencia según el descuadre.
+    try:
+        from services.inventory_incidents import on_count_recorded
+        await on_count_recorded(doc)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"incident on_count_recorded failed: {e}")
     return doc
 
 
@@ -175,6 +182,12 @@ async def authorize_count_adjustment(count_id: str, document: str,
                   "authorized_by": actor.get("user_id", ""),
                   "authorized_by_email": actor.get("email", ""),
                   "authorized_at": now, "updated_at": now}})
+    # iter333 (IPV Fase 3) — la diferencia quedó ajustada → resolver incidencia.
+    try:
+        from services.inventory_incidents import on_count_authorized
+        await on_count_authorized(count_id)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"incident on_count_authorized failed: {e}")
     return await db.inventory_counts.find_one({"id": count_id}, {"_id": 0})
 
 

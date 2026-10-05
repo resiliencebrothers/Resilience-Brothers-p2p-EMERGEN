@@ -295,6 +295,38 @@ def effective_low_stock_threshold(product: dict, global_threshold: int) -> int:
         return global_threshold
 
 
+async def build_reorder_list() -> list:
+    """iter333 — productos de la empresa en o por debajo de su mínimo efectivo,
+    con la cantidad SUGERIDA para volver al nivel objetivo (`target_stock` si
+    está configurado, o el mínimo). Ordenado: agotados primero, luego mayor
+    faltante respecto al mínimo."""
+    global_threshold = await get_low_stock_threshold()
+    products = await db.products.find(
+        {**_COMPANY_FILTER, "is_active": {"$ne": False}}, {"_id": 0}).to_list(2000)
+    rows = []
+    for p in products:
+        stock = int(p.get("stock") or 0)
+        min_eff = effective_low_stock_threshold(p, global_threshold)
+        if stock > min_eff:
+            continue
+        ts = p.get("target_stock")
+        target = int(ts) if ts is not None else min_eff
+        if target < min_eff:
+            target = min_eff
+        suggested = max(0, target - stock)
+        cost = float(p.get("cost_usd") or 0)
+        rows.append({
+            "product_id": p["id"], "name": p.get("name", ""),
+            "category": p.get("category", ""), "stock": stock,
+            "min_stock": min_eff, "target": target, "suggested": suggested,
+            "out_of_stock": stock <= 0,
+            "restock_cost": round(suggested * cost, 2),
+        })
+    rows.sort(key=lambda r: (not r["out_of_stock"],
+                             -(r["min_stock"] - r["stock"])))
+    return rows
+
+
 async def maybe_alert_low_stock(product_id: str) -> None:
     """iter218 — avisa a los admins (push + email + campana in-app) cuando un
     producto de la empresa cae al umbral de stock bajo o se agota.
@@ -462,6 +494,13 @@ async def record_movement(*, product: dict, mtype: str, quantity: int,
             return doc  # R04 — otro ejecutor ya registró este movimiento
     await _record_fund_flow(doc)
     await maybe_alert_low_stock(product["id"])
+    # iter333 (IPV Fase 3) — venta por debajo del costo → incidencia.
+    if mtype == "venta":
+        try:
+            from services.inventory_incidents import on_sale_below_cost
+            await on_sale_below_cost(doc)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"incident venta_bajo_costo failed: {e}")
     return doc
 
 

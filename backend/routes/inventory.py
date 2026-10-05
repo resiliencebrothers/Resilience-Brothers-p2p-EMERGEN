@@ -194,6 +194,16 @@ class MinStockUpdate(BaseModel):
     min_stock: int | None = Field(None, ge=0, le=1_000_000)
 
 
+class TargetStockUpdate(BaseModel):
+    # iter333 — None limpia el objetivo (usa el mínimo como objetivo).
+    target_stock: int | None = Field(None, ge=0, le=1_000_000)
+
+
+class IncidentStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(pendiente|en_revision|resuelta)$")
+    note: str = Field("", max_length=400)
+
+
 @router.post("/admin/inventory/counts")
 async def create_count(payload: CountCreate, request: Request) -> Any:
     """Registra/actualiza el conteo físico de hoy de un producto (staff con
@@ -467,6 +477,74 @@ async def inventory_close_snapshot(request: Request, date: Optional[str] = None,
          "frozen_by_email": 1, "responsable": 1, "revisado_por": 1,
          "totals": 1, "fx": 1}).sort("version", -1).to_list(100)
     return {"date": day, "snapshot": snap, "versions": versions}
+
+
+# ══════════════════ IPV Fase 2+: reposición y nivel objetivo ════════════════
+@router.get("/admin/inventory/reorder")
+async def inventory_reorder(request: Request) -> Any:
+    """IPV — lista de reposición: productos en/bajo su mínimo con la cantidad
+    sugerida para volver al nivel objetivo."""
+    await require_permission(request, "products")
+    from services.inventory import build_reorder_list
+    rows = await build_reorder_list()
+    return {
+        "products": rows,
+        "totals": {
+            "num_products": len(rows),
+            "out_of_stock": sum(1 for r in rows if r["out_of_stock"]),
+            "suggested_units": sum(r["suggested"] for r in rows),
+            "restock_cost": round(sum(r["restock_cost"] for r in rows), 2),
+        },
+    }
+
+
+@router.patch("/admin/inventory/products/{product_id}/target-stock")
+async def set_product_target_stock(product_id: str, payload: TargetStockUpdate,
+                                   request: Request) -> Any:
+    """IPV — fija (o limpia con null) el nivel objetivo de reposición."""
+    await require_permission(request, "products")
+    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not existing or existing.get("owner_id"):
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    await db.products.update_one(
+        {"id": product_id}, {"$set": {"target_stock": payload.target_stock}})
+    return {"ok": True, "product_id": product_id,
+            "target_stock": payload.target_stock}
+
+
+# ══════════════════ IPV Fase 3: incidencias del inventario ══════════════════
+@router.get("/admin/inventory/incidents")
+async def inventory_incidents(request: Request, status: Optional[str] = None,
+                              type: Optional[str] = None) -> Any:
+    """IPV Fase 3 — listado de incidencias (conteo pendiente, diferencia, venta
+    bajo costo) con filtros por estado/tipo + resumen."""
+    await require_permission(request, "products")
+    from services.inventory_incidents import list_incidents, incident_summary
+    rows = await list_incidents(status=status, itype=type)
+    summary = await incident_summary()
+    return {"incidents": rows, "summary": summary}
+
+
+@router.post("/admin/inventory/incidents/{incident_id}/status")
+async def inventory_incident_status(incident_id: str,
+                                    payload: IncidentStatusUpdate,
+                                    request: Request) -> Any:
+    """IPV Fase 3 — cambia el estado de una incidencia (ciclo pendiente →
+    en_revision → resuelta) dejando traza de autor y nota."""
+    actor = await require_permission(request, "products")
+    from services.inventory_incidents import transition_incident
+    return await transition_incident(incident_id, payload.status,
+                                     payload.note, actor)
+
+
+@router.post("/admin/inventory/incidents/sync")
+async def inventory_incidents_sync(request: Request,
+                                   date: Optional[str] = None) -> Any:
+    """IPV Fase 3 — sincroniza las incidencias de 'conteo pendiente' del día."""
+    await require_permission(request, "products")
+    from services.inventory_incidents import sync_pending_count_incidents
+    day = _valid_day(date or today_havana(), "date")
+    return await sync_pending_count_incidents(day)
 
 
 
