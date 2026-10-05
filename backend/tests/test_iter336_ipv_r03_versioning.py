@@ -95,12 +95,11 @@ async def test_r03a_stale_authorize_rejected(monkeypatch):
         count_id = c["id"]
 
         async def concurrent_recount():
-            # efecto de un recuento concurrente aún SIN autorizar: cambia el
-            # contenido y sube la versión.
-            await db.inventory_counts.update_one(
-                {"id": count_id},
-                {"$set": {"counted_qty": 7.0, "difference": -3.0,
-                          "status": "faltante"}, "$inc": {"version": 1}})
+            # Reconteo concurrente REAL (mismo endpoint que usa el auditor),
+            # aún SIN autorizar: cambia el contenido a 7 y sube la versión.
+            await record_physical_count({"id": pid, "name": pid, "stock": 10.0,
+                                         "cost_usd": 200.0, "unit": "unidad"}, 7,
+                                        ACTOR)
 
         _patch_find_one_once(monkeypatch, lambda f: f.get("id") == count_id,
                              concurrent_recount)
@@ -111,7 +110,9 @@ async def test_r03a_stale_authorize_rejected(monkeypatch):
 
         assert await _stock(pid) == 10.0, "el stock NO debe cambiar"
         doc = await _count(pid)
+        # el registro final corresponde al reconteo (7/-3) y NO quedó autorizado
         assert doc["counted_qty"] == 7.0
+        assert doc["difference"] == -3.0
         assert not doc.get("authorized")
         assert doc.get("adjustment_movement_id") in (None,)
         n_adj = await db.inventory_movements.count_documents(
@@ -249,6 +250,29 @@ async def test_normal_authorize_still_works():
         assert res["authorized"] is True
         assert res["status"] == "ajustado"
         assert res.get("authorized_version") == c.get("version", 1) or True
+        assert await _stock(pid) == 8.0
+    finally:
+        await _cleanup(pid)
+
+
+# ─────────────── coherencia movimiento ↔ evidencia (criterio auditor) ───────
+async def test_movement_matches_authorized_evidence():
+    """El movimiento de ajuste y la evidencia autorizada deben corresponder al
+    MISMO contenido (misma diferencia / versión)."""
+    pid = await _mk_product(stock=10.0)
+    try:
+        c = await record_physical_count({"id": pid, "name": pid, "stock": 10.0,
+                                         "cost_usd": 200.0, "unit": "unidad"}, 8,
+                                        ACTOR)  # diferencia -2
+        res = await authorize_count_adjustment(c["id"], "DOC-336M", "", ACTOR)
+        assert res["authorized"] is True
+        assert res["difference"] == -2.0
+        assert res.get("authorized_version") == 1
+        mov = await db.inventory_movements.find_one(
+            {"id": res["adjustment_movement_id"]}, {"_id": 0})
+        assert mov is not None
+        assert mov["type"] == "ajuste_neg"
+        assert mov["quantity"] == abs(res["difference"]) == 2.0
         assert await _stock(pid) == 8.0
     finally:
         await _cleanup(pid)

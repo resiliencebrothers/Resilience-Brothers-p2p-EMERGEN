@@ -2375,3 +2375,10 @@ Documento de verificación del auditor (4 oct 2026) señalaba 4 pendientes de la
 - **Esquema**: `inventory_counts` gana `version` (int, `$inc`), `auth_state` ("idle"|"claiming"|"authorized"), `authorized_version`, `claimed_by`, `claimed_at`.
 - **Archivos**: `backend/services/inventory_ipv.py` (versión+claim), `frontend/src/pages/admin/inventory/InventoryCloseTab.jsx` (UI cierre pendiente), `backend/Makefile` (CI), tests iter335/336.
 - **Status**: en preview, verificado. Pendiente re-despliegue a producción.
+
+### iter336b — Re-confirmación H01/R03-A (auditor 5 oct)
+El auditor re-reportó H01 (=R03-A) como ALTA. Verificado que el fix de iter336 YA está en el código del preview y es correcto:
+- Prueba reforzada `test_r03a_stale_authorize_rejected` ahora usa el ENDPOINT REAL `record_physical_count` para el reconteo intercalado (idéntico a la reproducción del auditor) → 409, stock intacto (10), registro final = reconteo (7/-3) NO autorizado, 0 movimientos de ajuste. Añadido `test_movement_matches_authorized_evidence` (movimiento ↔ evidencia = mismo contenido). 8/8 verdes con MongoDB real.
+- Confirmado LIVE en preview por HTTP: un conteo recién creado trae `version:1` y `auth_state:"idle"` (campos que solo existen en el código nuevo).
+- La conducta que observa el auditor (stock 8 por dif -2 pero registro 7/dif -3 autorizado) solo es posible en un build SIN el fix → probó PRODUCCIÓN, que aún NO se ha re-desplegado. Debe re-verificar tras **Deploy**.
+- Ruta de ajuste: `POST /api/admin/inventory/counts/{id}/adjust`.
