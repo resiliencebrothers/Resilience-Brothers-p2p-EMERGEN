@@ -333,41 +333,51 @@ async def build_count_sheet(day: str) -> dict:
 
 
 async def _build_close_acta(day: str, review: dict) -> dict:
-    """iter332 — datos del acta de cierre: valoración VIVA al cerrar (stock ×
-    costo WAC) en CUP + equivalente USDT a la tasa VIP del día, con una fila por
-    producto de la empresa. Es la fotografía del inventario al momento de cerrar."""
-    products = await db.products.find(
-        _COMPANY_FILTER,
-        {"_id": 0, "id": 1, "name": 1, "category": 1, "stock": 1,
-         "cost_usd": 1, "is_active": 1}).to_list(5000)
-    from services.fx_history import get_fx_at
-    fx = await get_fx_at(day)
-    rate = float(fx.get("rate_vip") or 0)
+    """iter340 (H05) — datos del acta de cierre BASADOS EN LA RECONSTRUCCIÓN
+    HISTÓRICA del día `day` (no en el stock/costo VIVO de hoy). Antes leía
+    `products` en el presente, de modo que el acta de una fecha pasada congelaba
+    la existencia/WAC actuales y no coincidía con el corte histórico de ese día.
+    Ahora toma existencia, costo WAC, valor CUP/USDT y tasa de la fecha efectiva
+    del corte, para que pantalla histórica, exportación y acta concuerden."""
+    from services.inventory_history import build_cutoff_report
+    rep = await build_cutoff_report(day)
+    fxr = rep.get("fx") or {}
+    rate = float(fxr.get("rate") or 0)
     rows = []
     tot_cup = 0.0
     units = 0.0
-    for p in products:
-        stock = float(p.get("stock") or 0)
-        cost = float(p.get("cost_usd") or 0)
-        val = round(stock * cost, 2)
+    partials = 0
+    for p in rep.get("products", []):
+        stock = float(p.get("final_stock") or 0)
+        cost = float(p.get("wac") or 0)
+        val = float(p.get("value") or 0)
         if stock == 0 and val == 0:
             continue
+        if p.get("coverage") == "parcial":
+            partials += 1
         rows.append({
-            "product_id": p["id"], "name": p.get("name", ""),
+            "product_id": p["product_id"], "name": p.get("name", ""),
             "category": p.get("category", ""), "stock": stock,
             "cost_usd": round(cost, 4), "value_cup": val,
-            "value_usdt": round(val / rate, 2) if rate > 0 else None,
+            "value_usdt": p.get("value_usdt"),
+            "coverage": p.get("coverage", "completa"),
+            "undocumented_base": bool(p.get("undocumented_base")),
         })
         tot_cup += val
-        units += stock
+        units += stock if stock > 0 else 0
     rows.sort(key=lambda r: -r["value_cup"])
     return {
-        "fx": {"rate_vip": rate, "rate_date": fx.get("rate_date"),
-               "estimated": bool(fx.get("estimated"))},
+        # Fecha EFECTIVA del corte (lo que valora el acta) vs momento de captura
+        # (frozen_at del snapshot): el acta refleja la situación de `day`.
+        "cutoff": day,
+        "basis": "historico",
+        "fx": {"rate_vip": rate, "rate_date": fxr.get("rate_date"),
+               "estimated": bool(fxr.get("estimated"))},
         "totals": {
             "num_products": len(rows), "units": round(units, 3),
             "value_cup": round(tot_cup, 2),
             "value_usdt": round(tot_cup / rate, 2) if rate > 0 else None,
+            "partial_count": partials,
         },
         "products": rows,
         "alerts_snapshot": review["alerts"],
@@ -413,6 +423,7 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
         "id": str(uuid.uuid4()), "close_date": day, "version": version,
         "responsable": doc["responsable"], "revisado_por": doc["revisado_por"],
         "folio": doc["folio"], "note": doc["note"], "resultado": resultado,
+        "cutoff": acta.get("cutoff"), "basis": acta.get("basis"),
         "fx": acta["fx"], "totals": acta["totals"], "products": acta["products"],
         "alerts_snapshot": acta["alerts_snapshot"],
         "frozen_by": actor.get("user_id", ""),
