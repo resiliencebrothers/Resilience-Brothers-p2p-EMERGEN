@@ -1,0 +1,29 @@
+{
+  "summary": "IPV Fase 4 (unidades + fracción) frontend+integration smoke on preview. Admin: created fraction product (unit=libra, stock 10.5), stock cell = '10.5 lb', min/target inputs step=0.001. Entrada 2.25 lb -> stock 12.75 lb (no float drift). Count 12.5 -> badge 'FALTANTE -0.25'. Unit product rejects qty 2.5 with 400 and 'por unidad' toast; qty 3 accepted. Reorder panel loads with fmtQty-formatted rows (test fraction product correctly not listed because stock 11.25 > min 4). Client (VIP): marketplace shows price '5 USDT/lb' and stock '12.75 lb'; redeem dialog qty step=0.001; redeeming 1.5 lb with store pickup succeeded, history row shows '1.5 lb', stock decremented to '11.25 lb'. No raw i18n keys ('units.*') leaked in admin or client. All 10 test items from the request verified green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AdminProducts / Inventory dialogs", "issues": ["Several Radix DialogContent components missing aria-describedby/Description (a11y warnings in console on add-product, add-movement, redeem dialogs)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Optional, a11y) Add DialogDescription/aria-describedby to add-product, add-movement, and redeem DialogContent to silence Radix warnings."
+  ],
+  "critical_code_review_comments": [
+    "fmtQty + unitAbbr correctly applied across InventoryControlTab (stock cell), InventoryMovementsTab (qty cell), and MarketplaceView (price suffix, stock, history). No fallback 'units.xxx' leaks observed.",
+    "qtyStep(unit) wired to all decimal-aware number inputs (inv-product-stock, inventory-min/target-input-*, movement-qty, restock-qty, redeem-qty) — step=0.001 for libra/kg confirmed in DOM.",
+    "Reorder panel filter is 'stock <= min_stock' (strict) — the request wording 'stock below target' is actually only enforced via target in the suggested-qty calc, which is correct and matches existing Fase 3 behavior.",
+    "Floating-point idempotency verified end-to-end: 10.5 + 2.25 -> exactly 12.75 displayed; after redeem of 1.5 -> exactly 11.25 (no 12.749999... drift)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (curl-smoke pre-verified + fraction/unit paths exercised via UI)", "frontend": "100%"},
+  "test_credentials": "cookie session_token=smoke_fp4_admin (admin), smoke_fp4_vip (VIP)",
+  "seed_data_creation": "Created 2 TEST_ products via UI: TEST_Arroz FP4 <ts> (unit=libra, stock finished at 11.25 lb) and TEST_Unidad FP4 <ts> (unit=unidad, stock after +3 entrada). Both can be deactivated/cleaned by prefix TEST_.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "FP4 unit/fraction wiring verified end-to-end in preview. Admin flows: /admin/inventory tabs control/movements/incidents. Client flow: /dashboard/marketplace -> redeem-<pid> -> redeem-qty (step=0.001) -> fulfillment-pickup-btn + pickup-store-option-* -> confirm-redeem. The reorder panel uses stock<=min filter; to see a fraction product there seed with stock <= min.",
+  "rca of the issue": "N/A — no failures observed."
+}
