@@ -36,47 +36,86 @@ async def _ensure_index() -> None:
             "dedupe_key", unique=True, sparse=True)
         await db.inventory_incidents.create_index(
             [("status", 1), ("type", 1), ("created_at", -1)])
+        await db.inventory_incidents.create_index(
+            [("base_key", 1), ("episode", -1)])
+        # iter343 (H07) — backfill una vez de las incidencias heredadas al modelo
+        # de episodios: su `dedupe_key` plano pasa a ser también `base_key` con
+        # episode 1. Así `_latest_episode` las encuentra y NO se duplica un
+        # abierto ya existente al introducir los episodios sucesores.
+        await db.inventory_incidents.update_many(
+            {"base_key": {"$exists": False},
+             "dedupe_key": {"$exists": True, "$ne": None}},
+            [{"$set": {"base_key": "$dedupe_key", "episode": 1}}])
         _INDEX_READY = True
+
+
+async def _latest_episode(base_key: str) -> Optional[dict]:
+    """Última incidencia (episodio más reciente) que comparte la causa."""
+    return await db.inventory_incidents.find_one(
+        {"base_key": base_key}, {"_id": 0},
+        sort=[("episode", -1), ("created_at", -1)])
 
 
 async def _upsert_incident(*, itype: str, product_id: str, product_name: str,
                            detail: str, amount: float, ref_id: str,
-                           ref_date: str, dedupe_key: str) -> str:
-    """Crea la incidencia (pendiente) si no existe. Si existe abierta, refresca
-    detalle/monto. Si ya está resuelta, NO la reabre."""
+                           ref_date: str, base_key: str) -> str:
+    """Registra la incidencia de una causa (identificada por `base_key`).
+
+    iter343 (H07) — modelo de EPISODIOS para dar continuidad cuando una causa
+    vuelve a aparecer:
+      - Sin episodios previos → crea el episodio 1 (pendiente).
+      - Episodio abierto en curso → refresca detalle/monto y deja constancia de
+        la nueva observación (sin duplicar la incidencia ni el impacto).
+      - Último episodio YA RESUELTO y la causa reaparece → crea un episodio
+        SUCESOR abierto, enlazado al anterior (predecessor_id), conservando la
+        evidencia de la resolución previa como constancia histórica.
+    """
     await _ensure_index()
     now = iso(now_utc())
-    existing = await db.inventory_incidents.find_one(
-        {"dedupe_key": dedupe_key}, {"_id": 0})
-    if existing:
-        if existing["status"] != "resuelta":
-            await db.inventory_incidents.update_one(
-                {"id": existing["id"]},
-                {"$set": {"detail": detail, "amount": round(float(amount or 0), 2),
-                          "updated_at": now}})
-        return existing["id"]
+    amt = round(float(amount or 0), 2)
+    latest = await _latest_episode(base_key)
+    if latest and latest["status"] != "resuelta":
+        changed = (latest.get("detail") != detail
+                   or round(float(latest.get("amount") or 0), 2) != amt)
+        upd: dict = {"$set": {"detail": detail, "amount": amt, "ref_id": ref_id,
+                              "ref_date": ref_date, "updated_at": now}}
+        if changed:
+            # continuidad de observaciones dentro del episodio abierto
+            upd["$push"] = {"history": {
+                "status": latest["status"], "note": f"Nueva observación: {detail}",
+                "by": "", "by_email": "sistema", "at": now}}
+        await db.inventory_incidents.update_one({"id": latest["id"]}, upd)
+        return latest["id"]
+    episode = (int(latest.get("episode") or 1) + 1) if latest else 1
+    predecessor_id = latest["id"] if latest else None
+    if predecessor_id:
+        note0 = (f"Reaparece la causa: episodio #{episode} sucesor de "
+                 f"{predecessor_id} (resuelto {latest.get('resolved_at', '')[:10]}).")
+    else:
+        note0 = "Generada automáticamente"
     doc = {
         "id": str(uuid.uuid4()), "type": itype, "product_id": product_id,
         "product_name": product_name, "status": "pendiente", "detail": detail,
-        "amount": round(float(amount or 0), 2), "ref_id": ref_id,
-        "ref_date": ref_date, "dedupe_key": dedupe_key, "source": "auto",
+        "amount": amt, "ref_id": ref_id, "ref_date": ref_date,
+        "base_key": base_key, "dedupe_key": f"{base_key}#ep{episode}",
+        "episode": episode, "predecessor_id": predecessor_id, "source": "auto",
         "created_at": now, "updated_at": now, "auto_resolved": False,
-        "history": [{"status": "pendiente", "note": "Generada automáticamente",
-                     "by": "", "by_email": "sistema", "at": now}],
+        "history": [{"status": "pendiente", "note": note0, "by": "",
+                     "by_email": "sistema", "at": now}],
     }
     try:
         await db.inventory_incidents.insert_one({**doc})
     except DuplicateKeyError:
         found = await db.inventory_incidents.find_one(
-            {"dedupe_key": dedupe_key}, {"_id": 0})
+            {"dedupe_key": doc["dedupe_key"]}, {"_id": 0})
         return found["id"] if found else doc["id"]
     return doc["id"]
 
 
-async def _auto_resolve(dedupe_key: str, note: str) -> None:
+async def _auto_resolve(base_key: str, note: str) -> None:
+    """Resuelve el episodio ABIERTO más reciente de la causa (si lo hay)."""
     now = iso(now_utc())
-    inc = await db.inventory_incidents.find_one(
-        {"dedupe_key": dedupe_key}, {"_id": 0})
+    inc = await _latest_episode(base_key)
     if not inc or inc["status"] == "resuelta":
         return
     await db.inventory_incidents.update_one(
@@ -106,7 +145,7 @@ async def on_sale_below_cost(movement: dict) -> None:
                 f"({movement.get('quantity')} ud) · pérdida {loss} CUP."),
         amount=loss, ref_id=movement.get("id", ""),
         ref_date=(movement.get("created_at") or "")[:10],
-        dedupe_key=f"venta_bajo_costo:{movement.get('id', '')}")
+        base_key=f"venta_bajo_costo:{movement.get('id', '')}")
 
 
 async def on_count_recorded(count: dict) -> None:
@@ -130,7 +169,7 @@ async def on_count_recorded(count: dict) -> None:
                     f"{count.get('counted_qty')} vs teórico "
                     f"{count.get('theoretical_stock')})."),
             amount=count.get("difference_value") or 0,
-            ref_id=count.get("id", ""), ref_date=day, dedupe_key=dk)
+            ref_id=count.get("id", ""), ref_date=day, base_key=dk)
     else:
         await _auto_resolve(dk, "El conteo quedó sin diferencia.")
 
@@ -156,20 +195,18 @@ async def sync_pending_count_incidents(day: Optional[str] = None) -> dict:
     for p in products:
         dk = f"conteo_pendiente:{p['id']}:{d}"
         if p["id"] in counted:
-            inc = await db.inventory_incidents.find_one(
-                {"dedupe_key": dk}, {"_id": 0, "status": 1})
+            inc = await _latest_episode(dk)
             if inc and inc["status"] != "resuelta":
                 await _auto_resolve(dk, "El producto fue contado en la jornada.")
                 resolved += 1
         else:
-            before = await db.inventory_incidents.find_one(
-                {"dedupe_key": dk}, {"_id": 0, "id": 1})
+            before = await _latest_episode(dk)
             await _upsert_incident(
                 itype="conteo_pendiente", product_id=p["id"],
                 product_name=p.get("name", ""),
                 detail=f"Producto activo sin conteo en la jornada {d}.",
-                amount=0, ref_id="", ref_date=d, dedupe_key=dk)
-            if not before:
+                amount=0, ref_id="", ref_date=d, base_key=dk)
+            if not before or before["status"] == "resuelta":
                 created += 1
     return {"date": d, "created": created, "resolved": resolved}
 

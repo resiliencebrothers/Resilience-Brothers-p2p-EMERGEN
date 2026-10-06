@@ -4383,7 +4383,9 @@
       "notePlaceholder": "Nota (opcional)…",
       "cancel": "Cancelar",
       "toReview": "Marcar en revisión",
-      "toResolve": "Resolver"
+      "toResolve": "Resolver",
+      "episode": "Reaparición #{{n}}",
+      "episodeTitle": "La causa ya se había resuelto antes; este es un seguimiento sucesor que conserva la evidencia anterior."
     },
     "export": {
       "controlCsv": "CSV Control",

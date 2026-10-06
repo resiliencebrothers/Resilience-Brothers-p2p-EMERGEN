@@ -123,6 +123,13 @@ export default function InventoryIncidentsTab() {
                   <Icon className="w-3 h-3" /> {t(`inventory.incidents.type_${i.type}`)}
                 </span>
                 <span className="text-sm text-white">{i.product_name || "—"}</span>
+                {i.episode > 1 ? (
+                  <span data-testid={`incident-episode-${i.id}`}
+                    title={t("inventory.incidents.episodeTitle")}
+                    className="text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border border-fuchsia-500/30 text-fuchsia-300">
+                    {t("inventory.incidents.episode", { n: i.episode })}
+                  </span>
+                ) : null}
                 {i.amount ? <span className="text-xs font-mono text-red-400">{fmt(i.amount)} CUP</span> : null}
                 <span className={`ml-auto text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${STATUS_CLS[i.status]}`}
                   data-testid={`incident-status-${i.id}`}>

@@ -4383,7 +4383,9 @@
       "notePlaceholder": "Note (optional)…",
       "cancel": "Cancel",
       "toReview": "Mark in review",
-      "toResolve": "Resolve"
+      "toResolve": "Resolve",
+      "episode": "Recurrence #{{n}}",
+      "episodeTitle": "This cause was resolved before; this is a successor follow-up that preserves the earlier evidence."
     },
     "export": {
       "controlCsv": "Control CSV",
