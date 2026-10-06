@@ -22,6 +22,19 @@ from services.inventory_history import build_cutoff_report
 
 _db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
+_LOOP = None
+
+
+def _loop():
+    # iter342: loop cacheado y siempre fijado como actual. Evita el
+    # RuntimeError "no current event loop" en py3.11 cuando un archivo async
+    # (pytest-asyncio) cerró su loop antes de este test síncrono.
+    global _LOOP
+    if _LOOP is None or _LOOP.is_closed():
+        _LOOP = asyncio.new_event_loop()
+    asyncio.set_event_loop(_LOOP)
+    return _LOOP
+
 
 def _mov(pid, name, mtype, qty, created_at, unit_cost=0.0, unit_price=0.0):
     return {
@@ -65,7 +78,7 @@ class TestCutoffReport:
             _mov(pid, name, "precio", 0, "2026-09-20T12:05:00+00:00", unit_price=99.0))
 
         # Corte en D1: 12 uds, WAC 20, valor 240 (la compra de D2 NO lo altera).
-        rep = asyncio.get_event_loop().run_until_complete(
+        rep = _loop().run_until_complete(
             build_cutoff_report("2026-09-10"))
         r = _row(rep, pid)
         assert r is not None
@@ -75,7 +88,7 @@ class TestCutoffReport:
         assert r["coverage"] == "completa"
 
         # Corte en D2: 20 uds, WAC = (12*20 + 8*50)/20 = 32, valor 640.
-        rep2 = asyncio.get_event_loop().run_until_complete(
+        rep2 = _loop().run_until_complete(
             build_cutoff_report("2026-09-20"))
         r2 = _row(rep2, pid)
         assert r2["final_stock"] == 20
@@ -91,7 +104,7 @@ class TestCutoffReport:
         _db.inventory_movements.insert_one(
             _mov(pid, name, "merma", 1, "2026-09-16T12:00:00+00:00", unit_cost=20.0))
         # Período [2026-09-14, 2026-09-20]: inicial 12, ventas 3, merma 1, final 8.
-        rep = asyncio.get_event_loop().run_until_complete(
+        rep = _loop().run_until_complete(
             build_cutoff_report("2026-09-20", start="2026-09-14"))
         r = _row(rep, pid)
         assert r["opening"] == 12
@@ -115,7 +128,7 @@ class TestCutoffReport:
             "unit": "u", "currency": "CUP", "status": "faltante",
             "authorized": False,
         })
-        rep = asyncio.get_event_loop().run_until_complete(
+        rep = _loop().run_until_complete(
             build_cutoff_report("2026-09-10"))
         r = _row(rep, pid)
         assert r["count"] is not None
@@ -125,7 +138,7 @@ class TestCutoffReport:
 
         # Un costo POSTERIOR del producto no cambia la evidencia del conteo.
         _db.products.update_one({"id": pid}, {"$set": {"cost_usd": 50.0}})
-        rep2 = asyncio.get_event_loop().run_until_complete(
+        rep2 = _loop().run_until_complete(
             build_cutoff_report("2026-09-10"))
         r2 = _row(rep2, pid)
         assert r2["count"]["difference_value"] == -60.0  # sigue a costo 20
@@ -135,7 +148,7 @@ class TestCutoffReport:
         # Solo una venta, sin entrada previa → existencia reconstruida negativa.
         _db.inventory_movements.insert_one(
             _mov(pid, name, "venta", 5, "2026-09-10T12:00:00+00:00", unit_price=35.0))
-        rep = asyncio.get_event_loop().run_until_complete(
+        rep = _loop().run_until_complete(
             build_cutoff_report("2026-09-10"))
         r = _row(rep, pid)
         assert r is not None

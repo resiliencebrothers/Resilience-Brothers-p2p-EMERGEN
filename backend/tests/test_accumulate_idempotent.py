@@ -132,11 +132,10 @@ class TestAccumulateOnAnyMoneySettled:
         from services.balances import accumulate_vip_balance
         oid = _plant_pending_accumulate_order(fresh_normal_user, amount_to=42.0)
         db = MongoClient(MONGO_URL)[DB_NAME]
+        # EX02: el helper solo acredita si la orden YA está en un estado
+        # liquidado (approved/completed). Lo fijamos para la prueba directa.
+        db.orders.update_one({"id": oid}, {"$set": {"status": "approved"}})
         order = db.orders.find_one({"id": oid}, {"_id": 0})
-        # First call credits
-        applied_1 = asyncio.get_event_loop().run_until_complete(
-            accumulate_vip_balance(order)
-        ) if False else None
         # Use a fresh event loop because motor's client binds to a loop
         loop = asyncio.new_event_loop()
         try:

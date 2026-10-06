@@ -93,8 +93,9 @@ class TestDailyClose:
         assert row["unidades"] == 2
         assert row["unidades_web"] == 1
         assert row["total"] == 2400.0          # 1600 física + 800 web
-        # la entrada a 550 actualiza el costo del producto → web (800−550)=250
-        assert row["ganancia"] == 850.0        # 600 física + 250 web
+        # iter327: la entrada 4×550 funde el WAC con las 8 existentes:
+        # (8×500 + 4×550)/12 = 516.67 → ganancia web (800−516.67)=283.33
+        assert row["ganancia"] == 883.33       # 600 física + 283.33 web
         compra = next(x for x in body["compras_detalle"] if x["product_id"] == pid)
         assert compra["unidades"] == 14        # 10 alta + 4 manual
         assert compra["total"] == 7200.0       # 5000 + 2200

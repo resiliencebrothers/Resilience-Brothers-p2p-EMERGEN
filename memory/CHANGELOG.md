@@ -1660,3 +1660,30 @@ Archivos: `services/reconciliation_parser.py`, `services/reconciliation_matcher.
 - **Criterio cumplido**: pantalla histórica, exportación (CSV de corte) y acta del mismo corte concuerdan en cantidades, costo, moneda y valoración.
 - **Tests**: `tests/test_iter340_ipv_h05_historical_acta.py` (acta de fecha pasada = 240, no 360; concuerda con el corte histórico; basis/cutoff correctos). Verificado HTTP en preview: POST close-review(2025-02-10) → snapshot basis=historico, cutoff=2025-02-10, fila stock=12/cost=20/value_cup=240. Regresión: iter332 cierre/min-stock 10/10 (aislado), iter321 phase2, iter339 H04. Sin regresiones.
 - **Status**: en preview. Re-desplegar (Deploy) para producción.
+
+
+## 2026-10-06 · iter342 — Tarea 1 verificada (Base Auditada) + limpieza de suite CI (Tareas 2 y 3)
+
+**Tarea 1 — Apertura Auditada (H04 seguimiento): VERIFICADA E2E.**
+- Flujo individual («Documentar base») y en bloque (con TOTP step-up) probados end-to-end (frontend + backend) por el testing agent (iter341) con 3 productos legacy sembrados. Fracciones exactas (30 / 12,5 / 8,75), sin tocar el fondo de la empresa, idempotente (400 en 2º intento), bulk sin TOTP → 401. El residual 0,5 que reportó el agente fue contaminación por correr navegador + pytest en paralelo; la reproducción limpia confirma 12,5 exacto (sin bug de backend). Productos de prueba eliminados del preview tras verificar.
+
+**Tarea 2 — Tests obsoletos actualizados a la lógica vigente (no eran fallos de producto):**
+- WAC iter327: `test_iter219` (costo fundido 6,375, auditoría «Costo promedio ponderado»), `test_iter230` (ganancia web 883,33 por WAC 516,67).
+- 2FA obligatorio al cambiar tasa existente (FX01): `test_employee_and_revenue`, `test_iter55_push_notifications`, `test_p2p_backend` (añadido `totp_code`).
+- Forma de respuesta de convert: `test_iter77_fee_model` (campo nuevo `conversion_id`).
+- Modelo compra/venta iter287 en /vip/convert: `test_iter101` (directa normal → rate_normal; inversa → effective_sell_rate), `test_vip_convert` (normal → rate_normal 380; USD→CUP requiere ruta de valoración USDT sembrada por el guard de mínimo iter77).
+- iter285: `test_p2p_backend::test_normal_can_redeem_role_allowed` (normales SÍ canjean, 400 por saldo no 403 por rol); `test_iter55_15` (retiros de empresa PENDIENTES ahora aparecen marcados «pending»).
+- Helper accumulate EX02: `test_accumulate_idempotent` (el helper solo acredita en estado liquidado).
+
+**Tarea 3 — Aislamiento de la suite (py3.11 + hermeticidad de datos):**
+- `asyncio.get_event_loop()` → patrón de loop cacheado y fijado como actual (evita `RuntimeError: no current event loop` cuando un archivo pytest-asyncio cierra su loop antes de un test síncrono): `test_iter328/330/332/333`, inline en `test_iter308` y `test_accumulate`; `test_iter305` usa `get_running_loop()`.
+- **Culpable principal del «401 a mitad de suite»**: `test_iter27_auth_refactor._cleanup` hacía `user_sessions.delete_many({})` arrasando TODAS las sesiones sembradas (test_session_admin_X, smoke_*). Acotado al `user_id` del test → las sesiones globales sobreviven.
+- Hermeticidad de datos: `test_iter78`/`test_iter79` limpian también `db.conversions` y la acción `vip.convert.dust`; `test_iter75` (limpieza previa idempotente + quitar fila duplicada que violaba el índice único de `rates`); `test_iter320` (cierre diario comparado por DELTA, no valor absoluto global); `test_admin_users_multicurrency` (fija tasas USDT→USD/CUP deterministas y quita rutas directas que las ensombrezcan, con restauración en teardown).
+
+**Resultado suite CI**: de 22 failed + 3 errors (pre-fork) → tras las correcciones los fallos restantes conocidos son `test_iter204_cuban_geocoding` (3), dependiente del servicio externo Nominatim/OSM que hace rate-limit bajo la carga de la suite — pasan en aislamiento; NO es un problema de hermeticidad de datos (mockearlo anularía el propósito del test de integración viva).
+
+## 2026-10-06 · iter343 — Últimos 2 fallos CI verdes (fork)
+Tras la estabilización de iter342 (25→2 fallos), aislados y corregidos los 2 restantes. Ninguno era bug de producción; ambos eran fragilidad del test frente a estado compartido/zona horaria.
+- **`test_iter338_http_csv.py` (flake de zona horaria)**: el seed usaba `utcnow()` para `date`/`count_date` del conteo, pero `build_cutoff_report` corta por fecha de La Habana (`today_havana`). En la madrugada UTC (UTC va un día por delante de Cuba) el conteo no casaba con el corte y la columna «Diferencia» salía vacía (`assert '' == '-0.75'`). Fix: sembrar la fecha del conteo con `ZoneInfo("America/Havana")`. El código CSV de producción ya stringifica `difference` correctamente.
+- **`test_iter269::TestV03AccountIdentity::test_renamed_account_keeps_mirroring` (cross-pollución)**: la cuenta de caja canónica `company_cash` (USD) arrastra saldo asignado negativo (p. ej. −62) por retiros pagados de OTROS tests que persisten en la DB; el aporte fijo de +100 la dejaba en 38 y pagar 40 chocaba legítimamente con el guard «Saldo insuficiente en la cuenta de origen» (`_validate_paid_from_balance`). Fix: nuevos helpers `_cash_account_assigned` + `_ensure_cash_account_available` que calculan el saldo asignado real y recargan billetes de $20 dinámicamente (cubre a la vez el guard de saldo de origen y el de inventario de billetes), antes de la foto base para que el delta siga midiendo −40. El guard de producción es correcto y queda intacto.
+- **Verificación**: ambos verdes en aislamiento (3/3). iter269 completo 12/12 + iter338 2/2 = 14/14. Robustez bajo pollución confirmada: `iter279 + iter277 + iter269` juntos → 37/37 (iter269 sobrevive al residuo de caja que dejan los vecinos). No se corrió la suite completa de 27 min para preservar contexto.

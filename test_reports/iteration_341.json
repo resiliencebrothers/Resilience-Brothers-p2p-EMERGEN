@@ -1,0 +1,40 @@
+{
+  "summary": "iter341 Task 1 (Apertura Auditada) end-to-end verified. Frontend E2E passed on both flujos (single ARROZ + bulk con TOTP), y backend contract tests pasaron (idempotencia 400, bulk sin TOTP 401, apertura NO toca company_fund_adjustments). Un hallazgo menor: tras el bulk, SEED_LEGACY_ACEITE conservó un gap residual de 0.5 (undocumented_base sigue true), que requiere análisis del main agent.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/admin/inventory/register-openings-bulk",
+        "issue": "Después del bulk, SEED_LEGACY_ACEITE sigue con undocumented_base=true y base_gap=0.5 (de un gap inicial de 12.5). Los otros dos seeds (ARROZ via single, POLLO via bulk) quedaron coverage='completa', gap=0. Toast de UI reportó '2 apertura(s) auditada(s) · 1,006.25 CUP' confirmando que ACEITE sí fue procesado por el bulk. Posible causa: el stock teórico de ACEITE creció 0.5 unidades entre la captura inicial del gap y la ejecución del opening (movimiento/concurrencia), dejando un pequeño remanente no documentado. Reproducir corriendo el bulk con un snapshot fresco."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter341_audited_opening_e2e.py",
+    "/app/test_reports/pytest/iter341_e2e.xml"
+  ],
+  "action_items": [
+    "Investigar por qué SEED_LEGACY_ACEITE queda con base_gap=0.5 tras el bulk (posible race con otro movimiento o cálculo de gap con stock al momento de registrar). Verificar que _undocumented_gap no deje remanente si el stock se actualiza entre el snapshot y la escritura.",
+    "Considerar refrescar el cutoff-report desde el frontend después del bulk-submit (observé que la fila de ACEITE todavía mostraba el botón 'Documentar base' justo después, hasta un reload — el testid history-open-base-SEED_LEGACY_ACEITE seguía en el DOM)."
+  ],
+  "critical_code_review_comments": [
+    "El endpoint single (/products/{id}/register-opening) NO exige TOTP, lo cual coincide con la especificación. Correcto que solo el bulk pida 2FA.",
+    "Verificado que services/inventory_ipv.register_audited_opening crea 1 movimiento 'entrada' source='apertura_auditada' y 1 lote en inventory_lots sin tocar company_fund_adjustments (consulta directa a Mongo: 0 ajustes con source='apertura_auditada').",
+    "El toast de resultado del bulk ('2 apertura(s) auditada(s) · 1,006.25 CUP') es claro y accionable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter341_audited_opening_e2e.py"
+  ],
+  "success_rate": {"backend": "100% (2/2 ejecutados; 1 skip porque /api/admin/company-fund/adjustments no existe — verificación hecha por consulta Mongo directa, confirmó 0 ajustes)", "frontend": "100% (single ARROZ + bulk TOTP completados con éxito; toast de confirmación recibido)"},
+  "test_credentials": "Cookie session_token=test_session_admin_X; TOTP secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+  "seed_data_creation": "Usé los seeds pre-sembrados (SEED_LEGACY_ARROZ/ACEITE/POLLO). TRAS ESTE TEST YA FUERON CONSUMIDOS: ARROZ completo, POLLO completo, ACEITE con remanente de 0.5. El main agent debe re-sembrarlos si se requiere re-test.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Los 3 seeds ya fueron consumidos por este iteration. Si vuelves a probar, re-siembra: SEED_LEGACY_ARROZ (30 unidad, base_gap 30), SEED_LEGACY_ACEITE (12.5 litro), SEED_LEGACY_POLLO (8.75 libra), todos owner_id vacío y sin movimientos de origen. El flujo frontend funciona 1:1 con los data-testid especificados (history-open-base-{pid}, opening-dialog, opening-gap, opening-cost-input, opening-note-input, opening-submit-btn, history-open-base-all-btn, opening-bulk-dialog, opening-bulk-totp-input, opening-bulk-submit-btn, history-partial-warning).",
+  "rca of the issue": "ACEITE residual gap=0.5: la hipótesis más plausible es que durante los ~2s entre que el fronted abrió el bulk-dialog, el servicio calculó opening_qty como 'stock_actual - sum(movimientos_de_origen)' y en ese preciso instante el stock de ACEITE pasó de 12.5 a 13.0 (0.5 más entró por otro camino, p.ej. una corrida previa de test o un movimiento concurrente), pero el opening se registró con qty=12.5 (el gap previo cacheado) dejando 0.5 unidades sin movimiento de origen. Mitigación: recalcular el gap al momento de la escritura (no antes) y/o lockear el producto, o aceptar current_stock como opening_qty."
+}

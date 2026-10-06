@@ -67,8 +67,9 @@ class TestRatesRealRate:
         assert r.status_code == 200
 
     def test_employee_can_create_rate_with_real_rate(self):
+        # iter327/FX01: si el par ya existe, cambiar sus valores exige 2FA.
         payload = {"from_code": "USDT", "to_code": "BRL", "rate_normal": 4.8,
-                   "rate_vip": 4.95, "real_rate": 5.1}
+                   "rate_vip": 4.95, "real_rate": 5.1, "totp_code": make_employee_totp()}
         r = requests.post(f"{BASE_URL}/api/admin/rates", json=payload, headers=_h(EMP))
         assert r.status_code in (200, 201), r.text
         rid = r.json()["id"]
@@ -82,8 +83,9 @@ class TestRatesRealRate:
         requests.delete(f"{BASE_URL}/api/admin/rates/{rid}", headers=_h(ADMIN))
 
     def test_real_rate_null_persists_as_null(self):
+        # iter327/FX01: cambiar una tasa existente exige 2FA por cualquier vía.
         payload = {"from_code": "USDT", "to_code": "MXN", "rate_normal": 17.0,
-                   "rate_vip": 17.4, "real_rate": None}
+                   "rate_vip": 17.4, "real_rate": None, "totp_code": make_admin_totp()}
         r = requests.post(f"{BASE_URL}/api/admin/rates", json=payload, headers=_h(ADMIN))
         assert r.status_code in (200, 201), r.text
         rid = r.json()["id"]

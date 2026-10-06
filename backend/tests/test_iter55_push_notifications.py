@@ -140,7 +140,7 @@ class TestRateChangeFanoutIntegration:
         button in the admin UI when the pair already exists). This path was
         NOT triggering push fanout, causing operator-reported issue."""
         import requests
-        from tests.conftest import BASE_URL, ADMIN_TOKEN
+        from tests.conftest import BASE_URL, ADMIN_TOKEN, make_admin_totp
 
         r = requests.get(f"{BASE_URL}/api/rates", timeout=10)
         rate = r.json()[0]  # existing rate
@@ -152,6 +152,7 @@ class TestRateChangeFanoutIntegration:
                 "rate_normal": float(rate["rate_normal"]) + 0.001,
                 "rate_vip": float(rate.get("rate_vip") or rate["rate_normal"]) + 0.001,
                 "real_rate": float(rate.get("real_rate") or rate["rate_normal"]),
+                "totp_code": make_admin_totp(),  # iter327/FX01: cambio de tasa exige 2FA
             },
             headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
             timeout=15,

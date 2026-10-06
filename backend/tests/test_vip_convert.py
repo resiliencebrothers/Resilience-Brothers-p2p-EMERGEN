@@ -177,9 +177,19 @@ class TestVipConvert:
             )
 
     def test_usd_to_cup_via_inverse_rate(self):
-        """USD→CUP is direct (rate_vip=395). Requires 0.01 USDT balance for the fee."""
+        """USD→CUP es directa (rate_vip=395). Requiere 0.01 USDT para el fee y
+        una ruta de valoración USDT para USD (guard de mínimo iter77)."""
         db = MongoClient(MONGO_URL)[DB_NAME]
         uid = "user_test_vip01"
+        # iter342: el guard de mínimo valora el origen en USDT; sin una fila
+        # USD↔USDT no hay ruta → sembramos USD→USDT 1:1 solo para la prueba.
+        db.rates.update_one(
+            {"from_code": "USD", "to_code": "USDT"},
+            {"$set": {"id": "test_usd_usdt_valuation", "from_code": "USD",
+                      "to_code": "USDT", "rate_normal": 1.0, "rate_vip": 1.0,
+                      "real_rate": 1.0}},
+            upsert=True,
+        )
         db.users.update_one(
             {"user_id": uid},
             {"$set": {"vip_balances.USD": 10.0, "vip_balances.CUP": 0.0,
@@ -198,6 +208,7 @@ class TestVipConvert:
             # iter77 — Full equivalent, no fee subtracted from destination.
             assert body["amount_to"] == 3950.0
         finally:
+            db.rates.delete_one({"from_code": "USD", "to_code": "USDT"})
             db.users.update_one(
                 {"user_id": uid},
                 {"$unset": {"vip_balances.USD": "",
@@ -205,11 +216,11 @@ class TestVipConvert:
                             "vip_balances.USDT": ""}},
             )
 
-    def test_normal_role_can_convert_uses_real_rate(self):
-        """iter50 — normal users (non-VIP) are also allowed to convert.
-        iter101 — TIER pricing: normals convert at `real_rate` (the
-        operator's true market exit rate), NOT `rate_normal`; fallback to
-        `rate_normal` only when the row lacks `real_rate`."""
+    def test_normal_role_can_convert_uses_rate_normal(self):
+        """iter50 — los usuarios normales también pueden convertir.
+        iter287 — modelo COMPRA/VENTA: en conversión DIRECTA la empresa COMPRA
+        `from_code` al cliente a su tasa por nivel; para normal → `rate_normal`
+        (NO `real_rate`, que quedó obsoleto en /vip/convert desde iter287)."""
         db = MongoClient(MONGO_URL)[DB_NAME]
         uid = "user_test_normal01"
         # Pin the rate row so the assertion doesn't depend on ambient state.
@@ -232,11 +243,10 @@ class TestVipConvert:
             )
             assert r.status_code == 200, r.text
             body = r.json()
-            # real_rate=410 (vs rate_vip=395 / rate_normal=380) — normals
-            # convert at the operator's real market rate since iter101.
-            # iter77 — Full equivalent delivered; fee 0.01 USDT charged separately.
-            assert body["rate"] == 410.0
-            assert body["amount_to"] == 410.0
+            # iter287 — normal convierte a rate_normal=380 (compra del operador),
+            # no a real_rate. iter77 — importe completo, fee 0.01 USDT aparte.
+            assert body["rate"] == 380.0
+            assert body["amount_to"] == 380.0
         finally:
             if prev_rate is not None:
                 db.rates.update_one(

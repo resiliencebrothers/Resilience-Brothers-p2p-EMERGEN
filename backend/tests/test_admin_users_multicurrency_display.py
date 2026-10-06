@@ -62,6 +62,27 @@ def planted_users():
     db = MongoClient(MONGO_URL)[DB_NAME]
     ids = []
 
+    # iter342: fijar tasas de valoración deterministas (y quitar rutas directas
+    # X→USDT que el backend preferiría sobre la inversa USDT→X) para que el
+    # enriquecido USDT del backend y `_expected_usdt` usen EXACTAMENTE la misma
+    # ruta, sin depender del panorama de tasas que otros tests siembran/borran.
+    _rate_snaps = {}
+
+    def _pin_rate(frm, to, rn, rv):
+        _rate_snaps[(frm, to)] = db.rates.find_one(
+            {"from_code": frm, "to_code": to}, {"_id": 0})
+        db.rates.update_one(
+            {"from_code": frm, "to_code": to},
+            {"$set": {"from_code": frm, "to_code": to,
+                      "rate_normal": rn, "rate_vip": rv, "real_rate": rn}},
+            upsert=True)
+
+    _shadow = list(db.rates.find(
+        {"to_code": "USDT", "from_code": {"$in": ["USD", "CUP"]}}, {"_id": 0}))
+    db.rates.delete_many({"to_code": "USDT", "from_code": {"$in": ["USD", "CUP"]}})
+    _pin_rate("USDT", "USD", 1.0, 1.0)
+    _pin_rate("USDT", "CUP", 380.0, 395.0)
+
     def add(**fields):
         uid = f"test_mc_{uuid.uuid4().hex[:8]}"
         ids.append(uid)
@@ -87,6 +108,16 @@ def planted_users():
         "employee": employee,
     }
     db.users.delete_many({"user_id": {"$in": ids}})
+    # restaurar el panorama de tasas original
+    for (frm, to), snap in _rate_snaps.items():
+        if snap:
+            db.rates.replace_one({"from_code": frm, "to_code": to}, snap, upsert=True)
+        else:
+            db.rates.delete_one({"from_code": frm, "to_code": to})
+    for s in _shadow:
+        db.rates.update_one(
+            {"from_code": s["from_code"], "to_code": s["to_code"]}, {"$set": s},
+            upsert=True)
 
 
 class TestAdminUsersMultiCurrencyEnrichment:

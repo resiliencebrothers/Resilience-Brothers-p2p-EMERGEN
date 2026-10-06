@@ -2382,3 +2382,9 @@ El auditor re-reportó H01 (=R03-A) como ALTA. Verificado que el fix de iter336 
 - Confirmado LIVE en preview por HTTP: un conteo recién creado trae `version:1` y `auth_state:"idle"` (campos que solo existen en el código nuevo).
 - La conducta que observa el auditor (stock 8 por dif -2 pero registro 7/dif -3 autorizado) solo es posible en un build SIN el fix → probó PRODUCCIÓN, que aún NO se ha re-desplegado. Debe re-verificar tras **Deploy**.
 - Ruta de ajuste: `POST /api/admin/inventory/counts/{id}/adjust`.
+
+### iter343 — Suite CI 100% verde (fork, 6 oct 2026)
+Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de test (no bugs de producción):
+- `test_iter338_http_csv.py`: flake de zona horaria (conteo sembrado con `utcnow()` vs corte en hora de Cuba). Fix: sembrar la fecha del conteo con `ZoneInfo("America/Havana")`.
+- `test_iter269::TestV03AccountIdentity::test_renamed_account_keeps_mirroring`: cross-pollución de la cuenta canónica `company_cash` (saldo asignado residual negativo por retiros de otros tests). Fix: helpers `_cash_account_assigned` + `_ensure_cash_account_available` recargan billetes de $20 dinámicamente antes de pagar. El guard «Saldo insuficiente» de producción queda intacto.
+- Verificado: 14/14 en aislamiento; 37/37 con vecinos cash (iter279/277/269) confirmando robustez bajo pollución.

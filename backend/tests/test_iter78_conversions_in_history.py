@@ -42,17 +42,24 @@ def _reset_balances(**bals):
 
 @pytest.fixture
 def clean_conversions():
-    """Wipe any leftover vip.convert audit rows for this user so the row
-    count is deterministic. Snapshot + restore balances."""
+    """Wipe any leftover vip.convert audit rows AND durable conversion records
+    for this user so the row count is deterministic. Snapshot + restore
+    balances. iter342: /me/transactions lee las conversiones de `db.conversions`
+    (registro durable), no solo de audit_log — hay que limpiar ambas o las
+    conversiones de corridas previas se acumulan (85/100 filas)."""
     db = _db()
     original = db.users.find_one({"user_id": VIP_UID}, {"_id": 0, "vip_balances": 1})
-    db.audit_log.delete_many({"actor_id": VIP_UID, "action": "vip.convert"})
+    db.audit_log.delete_many({"actor_id": VIP_UID,
+                              "action": {"$in": ["vip.convert", "vip.convert.dust"]}})
+    db.conversions.delete_many({"user_id": VIP_UID})
     yield
     db.users.update_one(
         {"user_id": VIP_UID},
         {"$set": {"vip_balances": (original or {}).get("vip_balances", {})}},
     )
-    db.audit_log.delete_many({"actor_id": VIP_UID, "action": "vip.convert"})
+    db.audit_log.delete_many({"actor_id": VIP_UID,
+                              "action": {"$in": ["vip.convert", "vip.convert.dust"]}})
+    db.conversions.delete_many({"user_id": VIP_UID})
 
 
 def _headers():

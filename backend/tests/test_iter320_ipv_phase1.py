@@ -241,8 +241,12 @@ class TestNonSaleOutputs:
     def test_output_decreases_stock_without_revenue(self, company_product, mtype):
         pid = company_product["id"]
         day = today_havana()
-        # fondo antes
+        # fondo + cierre ANTES — deltas hermeticos: no asumimos un día limpio
+        # (otros tests pueden tener ventas físicas del mismo día en la DB).
         fund_before = _db().company_fund_adjustments.count_documents({})
+        dc_before = requests.get(f"{API}/admin/inventory/daily-close",
+                                 params={"date": day},
+                                 headers=_auth(ADMIN_TOKEN)).json()
 
         r = requests.post(f"{API}/admin/inventory/movements",
                           json={"product_id": pid, "type": mtype,
@@ -261,13 +265,13 @@ class TestNonSaleOutputs:
         fund_after = _db().company_fund_adjustments.count_documents({})
         assert fund_after == fund_before, "Salida no-venta no debe crear fondo"
 
-        # daily-close no incluye estas unidades en ventas
+        # daily-close: una salida no-venta NO cambia ventas/caja/ganancia físicas
         dc = requests.get(f"{API}/admin/inventory/daily-close",
                           params={"date": day},
                           headers=_auth(ADMIN_TOKEN)).json()
-        assert dc["fisica"]["ventas"] == 0
-        assert dc["fisica"]["caja_neta"] == 0
-        assert dc["fisica"]["ganancia"] == 0
+        assert dc["fisica"]["ventas"] == dc_before["fisica"]["ventas"]
+        assert dc["fisica"]["caja_neta"] == dc_before["fisica"]["caja_neta"]
+        assert dc["fisica"]["ganancia"] == dc_before["fisica"]["ganancia"]
         assert dc["salidas"][mtype]["unidades"] >= 3
         # El movimiento aparece en GET movements
         lst = requests.get(f"{API}/admin/inventory/movements",

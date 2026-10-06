@@ -226,4 +226,6 @@ def test_response_shape_removes_legacy_fields(clean_vip):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body.keys()) == {"ok", "from_code", "to_code", "amount_from", "amount_to", "usdt_fee", "rate"}
+    # iter327+: la respuesta incluye conversion_id (traza del movimiento).
+    assert set(body.keys()) == {"ok", "from_code", "to_code", "amount_from",
+                                "amount_to", "usdt_fee", "rate", "conversion_id"}

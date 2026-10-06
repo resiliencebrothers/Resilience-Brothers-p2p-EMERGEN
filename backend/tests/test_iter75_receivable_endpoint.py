@@ -54,6 +54,15 @@ def sample_pair(db):
     dst_c = f"{PREFIX}DC"
     dst_inverse = f"{PREFIX}INV"
 
+    # iter342: limpieza previa idempotente — si una corrida anterior se
+    # interrumpió antes del teardown, estos códigos quedan y el índice único
+    # `code` rechaza el insert (11000). Borramos cualquier remanente primero.
+    db.rates.delete_many({"$or": [
+        {"from_code": {"$regex": f"^{PREFIX}"}},
+        {"to_code": {"$regex": f"^{PREFIX}"}},
+    ]})
+    db.currencies.delete_many({"code": {"$regex": f"^{PREFIX}"}})
+
     def _cur(code, name):
         return {"id": uuid.uuid4().hex, "code": code, "name": name,
                 "type": "fiat", "is_active": True}
@@ -72,9 +81,9 @@ def sample_pair(db):
          "rate_normal": 2.0, "rate_vip": 2.0},
         {"id": uuid.uuid4().hex, "from_code": src_code, "to_code": dst_c,
          "rate_normal": 3.0, "rate_vip": 3.0},
-        # duplicate to check dedup (should not happen in practice but be safe)
-        {"id": uuid.uuid4().hex, "from_code": src_code, "to_code": dst_a,
-         "rate_normal": 1.5, "rate_vip": 1.5},
+        # iter342: se eliminó la fila duplicada SRC→DA — la colección `rates`
+        # tiene índice único (from_code, to_code), así que un duplicado ya no
+        # puede existir (antes rompía el insert_many con 11000).
         # inverse-only pair — must NOT appear in the response
         {"id": uuid.uuid4().hex, "from_code": dst_inverse, "to_code": src_code,
          "rate_normal": 4.0, "rate_vip": 4.0},

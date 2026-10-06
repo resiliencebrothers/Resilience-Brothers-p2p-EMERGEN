@@ -180,6 +180,34 @@ def _ensure_usd_available(needed: float):
         assert r.status_code == 200, r.text
 
 
+def _cash_account_assigned(acc_id, code="USD"):
+    """Saldo asignado REAL de la cuenta de caja canónica, inmune al residuo
+    acumulado por otros tests (retiros pagados que la dejan negativa)."""
+    async def _f():
+        from services.fund_accounts import account_assigned_balances
+        return float((await account_assigned_balances(code)).get(acc_id, 0.0))
+    return _run(_f)
+
+
+def _ensure_cash_account_available(acc_id, needed, pad=40.0, code="USD"):
+    """Garantiza disponible físico suficiente EN la cuenta de caja canónica
+    recargando billetes de $20 según el residual real (en vez de un aporte
+    fijo). El mismo aporte en efectivo sube el saldo asignado y los billetes
+    de $20, así que ambos guardas del pago (saldo de origen + inventario de
+    billetes) quedan cubiertos pase lo que pase la suite antes."""
+    import math
+    cur = _cash_account_assigned(acc_id, code)
+    target = needed + pad
+    if cur >= target:
+        return
+    k = int(math.ceil((target - cur) / 20.0))
+    r = _adjust({"adjustment_type": "inflow", "currency": code,
+                 "amount": k * 20, "method": "cash",
+                 "source_name": f"{MARK} topup caja",
+                 "denominations": {"20": k}})
+    assert r.status_code == 200, r.text
+
+
 def _mk_box():
     r = requests.post(f"{API}/cashbox/boxes", headers=_hdr(ADMIN_TOKEN),
                       json={"name": f"{MARK} {uuid.uuid4().hex[:6]}",
@@ -412,6 +440,10 @@ class TestV03AccountIdentity:
         acc = _cash_account("USD")
         assert acc, "la cuenta de caja USD debe existir"
         original_name = acc.get("name") or "Fondo Resilience"
+        # La cuenta canónica acumula residuo de otros tests (saldo asignado
+        # negativo); asegurar disponible físico suficiente ANTES de la foto
+        # base para que el delta solo refleje el pago de 40.
+        _ensure_cash_account_available(acc["id"], 40)
         box = _auto_box()
         base_movs = _usd_fund_movs(box["id"], "USD")
         _ensure_usd_available(45)

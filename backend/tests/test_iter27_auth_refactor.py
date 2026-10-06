@@ -19,8 +19,13 @@ def _unique_email():
 
 
 def _cleanup(email):
+    # iter342: borrar SOLO las sesiones del usuario de este test (por user_id),
+    # nunca delete_many({}) — eso arrasaba las sesiones sembradas globales
+    # (test_session_admin_X, smoke_*) y rompía los HTTP tests posteriores con 401.
+    u = _mongo.users.find_one({"email": email}, {"_id": 0, "user_id": 1})
+    if u and u.get("user_id"):
+        _mongo.user_sessions.delete_many({"user_id": u["user_id"]})
     _mongo.users.delete_many({"email": email})
-    _mongo.user_sessions.delete_many({})
     _mongo.login_attempts.delete_many({"identifier": email})
 
 

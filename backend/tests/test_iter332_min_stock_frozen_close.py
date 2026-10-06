@@ -23,8 +23,16 @@ ADMIN = {"session_token": "test_session_admin_X"}
 VIP = {"session_token": "test_session_vip_X"}
 
 
+_LOOP = None
+
+
 def _loop():
-    return asyncio.get_event_loop()
+    # iter342: loop cacheado y siempre fijado como actual (ver test_iter330).
+    global _LOOP
+    if _LOOP is None or _LOOP.is_closed():
+        _LOOP = asyncio.new_event_loop()
+    asyncio.set_event_loop(_LOOP)
+    return _LOOP
 
 
 @pytest.fixture

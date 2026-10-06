@@ -37,14 +37,16 @@ def _reset_balances(**bals):
 
 @pytest.fixture
 def clean_ledger():
-    """Snapshot balances and wipe any leftover convert audit rows for the
-    user so counts are deterministic."""
+    """Snapshot balances and wipe any leftover convert audit rows AND durable
+    conversion records for the user so counts are deterministic. iter342:
+    /me/transactions lee de `db.conversions` — limpiar ambas colecciones."""
     db = _db()
     original = db.users.find_one({"user_id": VIP_UID}, {"_id": 0, "vip_balances": 1})
     db.audit_log.delete_many({
         "actor_id": VIP_UID,
         "action": {"$in": ["vip.convert", "vip.convert.dust"]},
     })
+    db.conversions.delete_many({"user_id": VIP_UID})
     yield
     db.users.update_one(
         {"user_id": VIP_UID},
@@ -54,6 +56,7 @@ def clean_ledger():
         "actor_id": VIP_UID,
         "action": {"$in": ["vip.convert", "vip.convert.dust"]},
     })
+    db.conversions.delete_many({"user_id": VIP_UID})
 
 
 def _h(token=VIP_TOKEN):

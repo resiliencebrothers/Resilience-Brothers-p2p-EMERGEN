@@ -288,13 +288,15 @@ class TestMovementExtras:
         db = _db()
         doc = db.products.find_one({"id": p["id"]}, {"_id": 0})
         assert doc["price_usd"] == 12.5
-        assert doc["cost_usd"] == 7.0
+        # iter327: la entrada funde el costo al WAC → (5×6 + 3×7)/8 = 6.375
+        assert doc["cost_usd"] == 6.375
         assert doc["stock"] == 8
         audits = list(db.inventory_movements.find(
             {"product_id": p["id"], "type": "precio"}, {"_id": 0}))
         notes = {a["note"] for a in audits}
         assert any("Precio venta: 10 → 12.5" in n for n in notes)
-        assert any("Costo unitario: 6 → 7" in n for n in notes)
+        # iter327: la auditoría de costo ahora registra el WAC resultante.
+        assert any("Costo promedio ponderado: 6 → 6.375" in n for n in notes)
         assert all(a["actor_email"] for a in audits)
 
     def test_movement_with_photo_uploaded(self):

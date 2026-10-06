@@ -87,7 +87,12 @@ class TestNameRuleExamples:
                 return "ok"
             except HTTPException as ex:
                 return ex.status_code
-        assert asyncio.get_event_loop().run_until_complete(run()) == 409
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            assert loop.run_until_complete(run()) == 409
+        finally:
+            asyncio.set_event_loop(asyncio.new_event_loop())
 
     def test_ex8_dual_function_surname_as_last_token_autovalidates(self):
         # 'León' es apellido (último token): no debe bloquearse por poder ser

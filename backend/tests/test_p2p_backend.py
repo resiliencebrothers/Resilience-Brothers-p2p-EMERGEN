@@ -85,6 +85,12 @@ class TestSeed:
 # ----- Currency CRUD -----
 class TestCurrencyCRUD:
     def test_currency_crud(self):
+        # iter342: limpieza previa idempotente — una corrida anterior pudo
+        # dejar TEST_X y el POST daría 409 (código duplicado).
+        for c in requests.get(f"{BASE_URL}/api/currencies").json():
+            if c.get("code") == "TEST_X":
+                requests.delete(f"{BASE_URL}/api/admin/currencies/{c['id']}",
+                                headers=_h(ADMIN_TOKEN))
         payload = {"code": "TEST_X", "name": "Test Currency", "type": "fiat", "symbol": "T",
                    "country": "TT", "is_active": True, "payment_account": ""}
         r = requests.post(f"{BASE_URL}/api/admin/currencies", headers=_h(ADMIN_TOKEN), json=payload)
@@ -244,13 +250,17 @@ class TestWithdrawals:
 
 # ----- Redemptions -----
 class TestRedemptions:
-    def test_normal_cannot_redeem(self):
+    def test_normal_can_redeem_role_allowed(self):
+        """iter285 — los clientes NORMALES también canjean su saldo (antes era
+        exclusivo VIP). Un normal pasa el control de rol: sin saldo falla con
+        400 (saldo insuficiente), NUNCA con 403 por rol."""
         prods = requests.get(f"{BASE_URL}/api/products").json()
         if not prods:
             pytest.skip("no products")
         r = requests.post(f"{BASE_URL}/api/vip/redeem", headers=_h(NORMAL_TOKEN),
                           json={"product_id": prods[0]["id"], "quantity": 1, "delivery_address": "x"})
-        assert r.status_code == 403
+        assert r.status_code != 403, r.text
+        assert r.status_code in (200, 400), r.text
 
     def test_vip_redeem_and_reject_refunds(self):
         # iter254(R07) — el marketplace liquida en USDT: seed y lecturas en

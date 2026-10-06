@@ -27,7 +27,11 @@ def seeded_lb_product():
     dbh = cli[os.environ["DB_NAME"]]
     pid = f"TEST_IPV338CSV_{uuid.uuid4().hex[:6]}"
     pname = pid
-    today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    # El reporte usa la fecha de corte en hora de Cuba (today_havana); sembrar
+    # el conteo con utcnow() lo descuadra cuando UTC va un día por delante de
+    # La Habana (madrugada), dejando la Diferencia vacía en el CSV.
+    from zoneinfo import ZoneInfo
+    today = _dt.datetime.now(ZoneInfo("America/Havana")).strftime("%Y-%m-%d")
     now_iso = _dt.datetime.utcnow().isoformat() + "+00:00"
 
     dbh.products.insert_one({

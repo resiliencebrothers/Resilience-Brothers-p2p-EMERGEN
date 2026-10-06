@@ -434,7 +434,7 @@ class TestDR09StaleReleaseNeverBoth:
                 _db().deliveries.update_one(
                     {"id": dvid},
                     {"$set": {"origin_cancel_intent.at": _old(3)}})
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 cr = await loop.run_in_executor(None, lambda: _cancel(wid))
                 dr = await loop.run_in_executor(None, lambda: _seal_delivered(dvid))
                 commit_gate.set()

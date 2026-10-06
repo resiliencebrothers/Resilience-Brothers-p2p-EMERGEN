@@ -176,12 +176,15 @@ def test_company_withdrawal_shows_as_salida():
 
 
 # ============================================================
-# 4. Pending company_withdrawals must NOT show (only approved/paid do)
+# 4. Pending company_withdrawals ahora SÍ aparecen (marcados «pendiente»)
 # ============================================================
 
-def test_pending_company_withdrawal_hidden():
+def test_pending_company_withdrawal_shows_as_pending():
+    """iter285 — los retiros del fondo PENDIENTES ahora aparecen en el
+    registro marcados con su estado «pending» (antes se ocultaban), para que
+    un retiro comprometido-pero-no-pagado nunca parezca dinero desaparecido."""
     _cleanup()
-    _plant_company_withdrawal("EUR", 999.0, "Should Not Appear", status="pending")
+    _plant_company_withdrawal("EUR", 999.0, "Should Appear Pending", status="pending")
 
     r = requests.get(
         f"{API}/admin/transactions",
@@ -191,8 +194,10 @@ def test_pending_company_withdrawal_hidden():
     assert r.status_code == 200
     d = r.json()
     hits = [t for t in d["items"]
-            if t["ref_type"] == "company_withdrawal" and t["holder_name"] == "Should Not Appear"]
-    assert len(hits) == 0, "pending company_withdrawals must NOT show in the register"
+            if t["ref_type"] == "company_withdrawal" and t["holder_name"] == "Should Appear Pending"]
+    assert len(hits) == 1, "pending company_withdrawals deben aparecer (iter285)"
+    assert hits[0]["status"] == "pending"
+    _cleanup()
 
 
 # ============================================================
