@@ -272,6 +272,74 @@ class TestApplyLiquidation:
             params={"window": 30}, headers=_auth(ADMIN_TOKEN))
         assert r.status_code == 404, r.text
 
+    def test_apply_fractional_stock_h08(self):
+        """H08 (iter343) — producto en libras con stock FRACCIONARIO (10.5),
+        costo 200, precio 500 y sugerencia válida: la primera solicitud aplica
+        UNA vez (antes daba 409 espurio por truncar 10.5→10 en la guarda). El
+        stock fraccionario se conserva y el reintento sigue protegido (409)."""
+        name = f"TEST_LIQ_H08_{uuid.uuid4().hex[:8]}"
+        r = requests.post(f"{API}/admin/products",
+                          json={"name": name, "category": "test",
+                                "price_usd": 500.0, "cost_usd": 200.0,
+                                "stock": 10.5, "unit": "libra"},
+                          headers=_auth(ADMIN_TOKEN))
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        try:
+            data = _get_val()
+            row = _find(data, pid)
+            assert row and row["liquidation"] and not row["liquidation"]["loss"]
+            assert float(row["liquidation"]["discount_pct"]) > 0
+            assert abs(float(row["stock"]) - 10.5) < 1e-6
+
+            # primera solicitud válida → aplica una sola vez, sin 409 espurio
+            r1 = requests.post(
+                f"{API}/admin/inventory/products/{pid}/apply-liquidation",
+                params={"window": 30}, headers=_auth(ADMIN_TOKEN))
+            assert r1.status_code == 200, r1.text
+            assert r1.json()["applied"] is True
+
+            # el stock fraccionario queda intacto tras la liquidación
+            prod = _db().products.find_one({"id": pid}, {"_id": 0})
+            assert abs(float(prod["stock"]) - 10.5) < 1e-6
+            assert prod["on_offer"] is True
+
+            # reintento sigue protegido (producto ya en oferta → 409)
+            r2 = requests.post(
+                f"{API}/admin/inventory/products/{pid}/apply-liquidation",
+                params={"window": 30}, headers=_auth(ADMIN_TOKEN))
+            assert r2.status_code == 409, r2.text
+        finally:
+            _delete_product(pid)
+
+    def test_concurrency_guard_matches_fractional_h08(self):
+        """H08 — la guarda de concurrencia con cantidad fraccionaria encuentra
+        el doc EXACTO y deja de aplicar si el stock cambia (reintentos y
+        modificaciones concurrentes siguen protegidos)."""
+        db = _db()
+        pid = f"TEST_LIQ_H08C_{uuid.uuid4().hex[:8]}"
+        db.products.insert_one({"id": pid, "name": pid, "category": "test",
+                                "stock": 10.5, "unit": "libra",
+                                "price_usd": 500.0, "cost_usd": 200.0,
+                                "on_offer": False})
+        try:
+            base_stock = db.products.find_one({"id": pid})["stock"]
+            ok = db.products.update_one(
+                {"id": pid, "on_offer": {"$ne": True}, "price_usd": 500.0,
+                 "cost_usd": 200.0, "stock": base_stock},
+                {"$set": {"on_offer": True}})
+            assert ok.modified_count == 1, "coincide con el stock fraccionario"
+            # un cambio concurrente del stock invalida la guarda con el valor viejo
+            db.products.update_one(
+                {"id": pid}, {"$set": {"on_offer": False, "stock": 9.25}})
+            stale = db.products.update_one(
+                {"id": pid, "on_offer": {"$ne": True}, "price_usd": 500.0,
+                 "cost_usd": 200.0, "stock": 10.5},
+                {"$set": {"on_offer": True}})
+            assert stale.modified_count == 0, "estado cambiado → no aplica"
+        finally:
+            db.products.delete_one({"id": pid})
+
 
 # ────────────────── Permisos del endpoint mutante ──────────────────
 class TestApplyLiquidationPermissions:

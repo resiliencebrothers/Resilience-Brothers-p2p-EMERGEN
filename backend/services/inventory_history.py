@@ -86,6 +86,7 @@ async def build_cutoff_report(cutoff: str,
          "type": {"$in": [*_STOCK_TYPES, "precio"]}},
         {"_id": 0, "product_id": 1, "product_name": 1, "type": 1,
          "quantity": 1, "unit_cost": 1, "unit_price": 1,
+         "change_kind": 1, "note": 1,
          "created_at": 1, "applied_at": 1,
          "needs_stock": 1, "stock_applied": 1}).to_list(500000)
     by_prod: dict = {}
@@ -142,6 +143,15 @@ async def build_cutoff_report(cutoff: str,
                 opening = stock
                 opening_captured = True
             if t == "precio":
+                # H09 (iter343) — una auditoría de COSTO/WAC ('cost', o legado
+                # con nota «Costo…») NO es un cambio de precio de venta: se
+                # ignora para conservar el precio histórico vigente.
+                kind = m.get("change_kind")
+                is_cost = (kind == "cost" or
+                           (kind is None and
+                            (m.get("note") or "").startswith("Costo")))
+                if is_cost:
+                    continue
                 price = float(m.get("unit_price") or 0)
                 continue
             q = float(m.get("quantity") or 0)

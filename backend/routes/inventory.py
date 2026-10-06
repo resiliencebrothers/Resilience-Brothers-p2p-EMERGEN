@@ -142,7 +142,7 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
         if abs(new_wac - old_cost) > 1e-9:
             await record_price_change(
                 product=product, field_label="Costo promedio ponderado",
-                old=old_cost, new=new_wac, actor=actor)
+                old=old_cost, new=new_wac, actor=actor, change_kind="cost")
         try:
             await record_lot(product, payload.quantity, entry_cost, doc["id"],
                              source=doc.get("source") or "manual", actor=actor)
@@ -693,7 +693,12 @@ async def apply_liquidation(product_id: str, request: Request,
             detail="El producto ya está en oferta; quítala antes de aplicar otra liquidación.")
     base_price = float(product.get("price_usd") or 0)
     base_cost = float(product.get("cost_usd") or 0)
-    base_stock = int(product.get("stock") or 0)
+    # H08 (iter343) — conservar la cantidad EXACTA tal como está almacenada
+    # (puede ser fraccionaria, p. ej. 10.5 lb). Truncar a entero rompía la
+    # escritura condicionada: buscaba stock=10 cuando seguía siendo 10.5 y
+    # devolvía 409 aunque nada hubiera cambiado. `base_stock` solo se usa como
+    # guarda de concurrencia, por lo que debe igualar el valor normalizado.
+    base_stock = product.get("stock") or 0
     data = await build_valuation(window_days=window)
     row = next((p for p in data["products"]
                 if p["product_id"] == product_id), None)

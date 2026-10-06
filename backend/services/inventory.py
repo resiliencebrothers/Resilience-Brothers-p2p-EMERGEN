@@ -724,17 +724,24 @@ async def _record_fund_flow(mov: dict) -> None:
 async def record_price_change(*, product: dict, field_label: str,
                               old: float, new: float,
                               actor: Optional[dict] = None,
-                              source: str = "manual") -> None:
+                              source: str = "manual",
+                              change_kind: str = "price") -> None:
     """iter219 — auditoría de cambios de precio/costo en el registro de
-    movimientos (tipo 'precio', cantidad 0, no afecta stock ni KPIs)."""
+    movimientos (tipo 'precio', cantidad 0, no afecta stock ni KPIs).
+
+    iter343 (H09) — `change_kind` distingue explícitamente un cambio de PRECIO
+    de venta ('price') de una auditoría de COSTO/WAC ('cost'). Sin esta marca el
+    histórico confundía la auditoría «Costo promedio ponderado» con un cambio de
+    precio y sobreescribía el precio de venta con el WAC."""
     doc = {
         "id": str(uuid.uuid4()),
         "product_id": product["id"],
         "product_name": product.get("name", ""),
         "type": "precio",
+        "change_kind": change_kind,
         "quantity": 0,
         "unit_price": float(new),
-        "unit_cost": 0.0,
+        "unit_cost": float(new) if change_kind == "cost" else 0.0,
         "total": 0.0,
         "cost_of_sale": 0.0,
         "profit": 0.0,

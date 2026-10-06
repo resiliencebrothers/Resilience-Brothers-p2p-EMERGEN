@@ -108,9 +108,14 @@ def teardown_module(module):
 
 def test_available_queue_reserved_first_then_oldest():
     uid = _vip_uid()
-    old_id, _ = _plant(minutes_ago=180)
-    mid_id, _ = _plant(minutes_ago=60)
-    new_id, _ = _plant(minutes_ago=1)
+    # La cola libre se devuelve por antigüedad ASC y con tope de 50 (prod). Para
+    # que la aserción sea estable frente a entregas `available` residuales que
+    # otros tests dejan en la colección (pueden superar el tope), se plantan las
+    # tres libres con fechas fijas MUY antiguas y ordenadas: así ocupan siempre
+    # las primeras posiciones de la ventana, conservando el orden a verificar.
+    old_id, _ = _plant(extra={"created_at": "2020-01-01T00:00:00+00:00"})
+    mid_id, _ = _plant(extra={"created_at": "2020-01-02T00:00:00+00:00"})
+    new_id, _ = _plant(extra={"created_at": "2020-01-03T00:00:00+00:00"})
     res_id, _ = _plant(assigned_to=uid, minutes_ago=2)
     try:
         data = requests.get(f"{API}/courier/deliveries",

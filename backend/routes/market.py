@@ -1011,7 +1011,8 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
             old_cost = float(existing.get("cost_usd") or 0)
             if new_cost != old_cost:
                 await record_price_change(product=existing, field_label="Costo unitario",
-                                          old=old_cost, new=new_cost, actor=actor)
+                                          old=old_cost, new=new_cost, actor=actor,
+                                          change_kind="cost")
             await maybe_alert_low_stock(product_id)
         except Exception as e:
             logger.error(f"price audit/low stock check after edit failed: {e}")

@@ -2395,3 +2395,9 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter343c — H07 corregido (6 oct 2026)
 - H07 (ALTA): incidencia de 'diferencia' ahora sigue un modelo de EPISODIOS (`base_key` estable + `dedupe_key` `{base_key}#ep{N}`). Cuando una causa resuelta reaparece se crea un episodio SUCESOR abierto enlazado (`predecessor_id`), conservando la evidencia anterior; el faltante vuelve a quedar pendiente sin duplicar el impacto. `_auto_resolve` cierra el episodio abierto más reciente; backfill de incidencias heredadas. UI: badge «Reaparición #N». Tests: `test_iter343b_incident_reappear.py` (3/3) + regresión dirigida 176/176.
+
+### iter343d/e — H08, H09 corregidos + suite CERTIFICADA (6 oct 2026)
+- H08 (MEDIA): `apply_liquidation` ya no trunca el stock a entero en la guarda de concurrencia → aplica una vez con stock fraccionario (10.5); reintentos/concurrencia protegidos. Tests en `test_iter323_liquidation.py`.
+- H09 (MEDIA): `record_price_change` distingue `change_kind` price/cost y el histórico (`inventory_history`) ignora las auditorías de costo al fijar el precio → histórico muestra precio 550 y costo 220. Tests: `test_iter343d_history_cost_vs_price.py`.
+- Estabilidad: `test_iter290` robustecido frente a entregas `available` residuales (tope de 50).
+- **Suite CI completa CERTIFICADA: 2587 passed, 8 skipped, 0 failed (27:48).**
