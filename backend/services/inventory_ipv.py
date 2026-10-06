@@ -17,7 +17,7 @@ import uuid
 from typing import Optional
 
 from fastapi import HTTPException
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from db_client import db
 from auth_utils import now_utc, iso
@@ -28,6 +28,7 @@ from services.inventory import (record_movement, today_havana, _day_bounds,
 logger = logging.getLogger(__name__)
 
 _COUNTS_INDEX_READY = False
+_SNAP_INDEX_READY = False
 
 
 def _count_status(difference: float) -> str:
@@ -42,6 +43,51 @@ async def _ensure_counts_index() -> None:
         await db.inventory_counts.create_index(
             [("product_id", 1), ("count_date", 1)], unique=True)
         _COUNTS_INDEX_READY = True
+
+
+async def _dedupe_close_snapshots() -> None:
+    """iter343 (H06) — red de seguridad para datos heredados del bug: si ya
+    existen versiones duplicadas por fecha (p. ej. [1, 1] de dos cierres
+    concurrentes), se renumeran por orden cronológico de congelación
+    conservando TODAS las actas (evidencia inmutable, sin pérdida) para que el
+    índice único pueda crearse. La referencia de `inventory_closes` se re-apunta
+    al acta de mayor versión resultante."""
+    pipe = [{"$group": {"_id": {"d": "$close_date", "v": "$version"},
+                        "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gt": 1}}},
+            {"$group": {"_id": "$_id.d"}}]
+    dirty_days = [r["_id"] async for r in
+                  db.inventory_close_snapshots.aggregate(pipe)]
+    for day in dirty_days:
+        snaps = await db.inventory_close_snapshots.find(
+            {"close_date": day}, {"_id": 0, "id": 1, "version": 1,
+                                  "frozen_at": 1}).to_list(10000)
+        snaps.sort(key=lambda s: (s.get("frozen_at") or "",
+                                  s.get("version") or 0, s.get("id") or ""))
+        last_id, last_ver = "", 0
+        for i, s in enumerate(snaps, start=1):
+            if s.get("version") != i:
+                await db.inventory_close_snapshots.update_one(
+                    {"id": s["id"]}, {"$set": {"version": i}})
+            last_id, last_ver = s["id"], i
+        if last_id:
+            await db.inventory_closes.update_one(
+                {"close_date": day},
+                {"$set": {"snapshot_version": last_ver, "snapshot_id": last_id}})
+
+
+async def _ensure_close_snapshot_index() -> None:
+    global _SNAP_INDEX_READY
+    if _SNAP_INDEX_READY:
+        return
+    try:
+        await db.inventory_close_snapshots.create_index(
+            [("close_date", 1), ("version", 1)], unique=True)
+    except (DuplicateKeyError, OperationFailure):
+        await _dedupe_close_snapshots()
+        await db.inventory_close_snapshots.create_index(
+            [("close_date", 1), ("version", 1)], unique=True)
+    _SNAP_INDEX_READY = True
 
 
 async def record_physical_count(product: dict, counted_qty: float,
@@ -416,23 +462,49 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
     # cambien datos. Una corrección posterior crea una NUEVA versión preservando
     # la anterior como evidencia (trazabilidad de revisiones).
     acta = await _build_close_acta(day, review)
-    last = await db.inventory_close_snapshots.find_one(
-        {"close_date": day}, {"_id": 0, "version": 1}, sort=[("version", -1)])
-    version = ((last or {}).get("version") or 0) + 1
-    snap = {
-        "id": str(uuid.uuid4()), "close_date": day, "version": version,
-        "responsable": doc["responsable"], "revisado_por": doc["revisado_por"],
-        "folio": doc["folio"], "note": doc["note"], "resultado": resultado,
-        "cutoff": acta.get("cutoff"), "basis": acta.get("basis"),
-        "fx": acta["fx"], "totals": acta["totals"], "products": acta["products"],
-        "alerts_snapshot": acta["alerts_snapshot"],
-        "frozen_by": actor.get("user_id", ""),
-        "frozen_by_email": actor.get("email", ""),
-        "frozen_at": now, "immutable": True,
-    }
-    await db.inventory_close_snapshots.insert_one(snap)
+    # iter343 (H06) — asignación ATÓMICA de versión por fecha. El índice único
+    # (close_date, version) arbitra: si dos cierres concurrentes calculan la
+    # misma versión, solo uno inserta y el perdedor REINTENTA con la siguiente,
+    # de modo que ambas actas quedan con versiones inequívocas (nunca [1,1]).
+    await _ensure_close_snapshot_index()
+    snap_id = str(uuid.uuid4())
+    version = 0
+    snap: dict = {}
+    for _ in range(50):
+        last = await db.inventory_close_snapshots.find_one(
+            {"close_date": day}, {"_id": 0, "version": 1},
+            sort=[("version", -1)])
+        version = ((last or {}).get("version") or 0) + 1
+        snap = {
+            "id": snap_id, "close_date": day, "version": version,
+            "responsable": doc["responsable"],
+            "revisado_por": doc["revisado_por"],
+            "folio": doc["folio"], "note": doc["note"], "resultado": resultado,
+            "cutoff": acta.get("cutoff"), "basis": acta.get("basis"),
+            "fx": acta["fx"], "totals": acta["totals"],
+            "products": acta["products"],
+            "alerts_snapshot": acta["alerts_snapshot"],
+            "frozen_by": actor.get("user_id", ""),
+            "frozen_by_email": actor.get("email", ""),
+            "frozen_at": now, "immutable": True,
+        }
+        try:
+            await db.inventory_close_snapshots.insert_one(snap)
+            break
+        except DuplicateKeyError:
+            continue
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail=("No se pudo asignar una versión única del acta por "
+                    "concurrencia; vuelve a intentarlo."))
+    # iter343 (H06) — la referencia de `inventory_closes` solo avanza: una
+    # operación atrasada (versión menor) NUNCA sustituye el puntero a una
+    # revisión posterior ya registrada; su acta queda archivada igual.
     await db.inventory_closes.update_one(
-        {"close_date": day},
+        {"close_date": day,
+         "$or": [{"snapshot_version": {"$exists": False}},
+                 {"snapshot_version": {"$lt": version}}]},
         {"$set": {"snapshot_version": version, "snapshot_id": snap["id"],
                   "value_cup": acta["totals"]["value_cup"],
                   "value_usdt": acta["totals"]["value_usdt"],

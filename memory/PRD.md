@@ -2388,3 +2388,7 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - `test_iter338_http_csv.py`: flake de zona horaria (conteo sembrado con `utcnow()` vs corte en hora de Cuba). Fix: sembrar la fecha del conteo con `ZoneInfo("America/Havana")`.
 - `test_iter269::TestV03AccountIdentity::test_renamed_account_keeps_mirroring`: cross-pollución de la cuenta canónica `company_cash` (saldo asignado residual negativo por retiros de otros tests). Fix: helpers `_cash_account_assigned` + `_ensure_cash_account_available` recargan billetes de $20 dinámicamente antes de pagar. El guard «Saldo insuficiente» de producción queda intacto.
 - Verificado: 14/14 en aislamiento; 37/37 con vecinos cash (iter279/277/269) confirmando robustez bajo pollución.
+
+### iter343b — H06 corregido + suite CI 100% verde (6 oct 2026)
+- H06 (MEDIA): versión de acta de cierre ahora atómica (índice único `(close_date, version)` + reintento) → cierres concurrentes dan versiones inequívocas, nunca [1,1]. Referencia en `inventory_closes` monotónica (una operación atrasada no degrada el puntero). Motivo/autor preservados por acta. Tests: `test_iter343_concurrent_close_version.py` (4/4).
+- Suite CI completa verificada: 2580 passed, 8 skipped, 0 failed (26 min).
