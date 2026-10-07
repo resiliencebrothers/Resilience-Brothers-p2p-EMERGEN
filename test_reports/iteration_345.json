@@ -1,0 +1,43 @@
+{
+  "summary": "H12 frontend verification PASSED. Both Valoración and Histórico tabs render per-unit breakdowns for the 'Unidades' totals, and per-row unit abbreviations (u/lb/kg) are shown. Mixed-unit seeded products H12UI_Arroz (lb), H12UI_Pollo (kg), H12UI_Refresco (u) all display correctly without unit mixing. Mobile viewport (390x844) also renders breakdown correctly. No console errors observed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_evidence": {
+    "valuation_tab": {
+      "valuation-total-units": "' Unidades22,333 u · 25.5 lb · 8 kg' (per-unit breakdown, PASS)",
+      "valuation-stock-H12UI_Arroz_a9200": "'25.5 lb'",
+      "valuation-stock-H12UI_Pollo_15cef": "'8 kg'",
+      "valuation-stock-H12UI_Refresco_d5578": "'40 u'"
+    },
+    "history_tab": {
+      "history-summary.Unidades": "'22,324 u · 8 kg · 25.5 lb' (per-unit breakdown, PASS)",
+      "history-table_headers": ["Producto","Unidad","Inicial","Entradas","Ventas","Merma","Consumo","Otras","Ajuste","Final","Costo WAC","Valor","Valor USDT","Dif. conteo","Valor dif."],
+      "history-unit-H12UI_Arroz_a9200": "'lb'",
+      "history-unit-H12UI_Pollo_15cef": "'kg'",
+      "history-unit-H12UI_Refresco_d5578": "'u'"
+    },
+    "mobile_390x844": "history-summary shows '22,324 u · 8 kg · 25.5 lb' - breakdown preserved",
+    "csv_buttons": {
+      "history-export-csv-btn": "PRESENT (count=1)",
+      "valuation-csv-btn": "NOT FOUND via data-testid (count=0). A 'CSV Valoración' button is visibly rendered on the Valoración tab but it is missing the expected data-testid='valuation-csv-btn' attribute."
+    }
+  },
+  "test_report_links": [],
+  "action_items": [
+    "MINOR: Add data-testid='valuation-csv-btn' to the 'CSV Valoración' export button on the Valoración tab (currently rendered without the testid). The button exists and is visible, but the testid specified in the review request is absent. CSV content itself was not verified due to missing testid; main agent should add the testid so this can be exercised in future regression."
+  ],
+  "critical_code_review_comments": [
+    "Minor consistency: Valoración KPI uses order 'u · lb · kg' while Histórico summary uses 'u · kg · lb'. Consider sorting unit keys consistently in fmtUnitsBreakdown for identical ordering across tabs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% on required testids; 1 optional testid missing (valuation-csv-btn)"},
+  "test_credentials": "Cookie session_token=smoke_h12_admin on p2p-exchange-hub-2.preview.emergentagent.com (admin role user_test_admin01).",
+  "seed_data_creation": "None (used pre-seeded H12UI_* products).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "H12 UI per-unit breakdown is fully functional. Only remaining nit: valuation-csv-btn data-testid missing on the visible 'CSV Valoración' button. If main agent adds the testid, CSV content verification (Unidad column + TOTALES row with per-unit breakdown string) can be done in a subsequent pass."
+}

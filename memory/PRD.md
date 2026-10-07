@@ -2409,3 +2409,8 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 ### iter343h — H11 corregido + suite re-certificada (7 oct 2026)
 - H11 (MEDIA, IPV-R04): InventoryCloseTab.jsx ahora distingue el resultado NUMÉRICO del inventario (insignia «Inventario: …») del ESTADO DE REVISIÓN guardado (insignia «Revisión: …»), y permite crear una CORRECCIÓN trazable sobre un cierre final (botón «Crear corrección» → nueva versión del acta). Verificado en navegador por testing_agent (5/5) con el escenario «conteos completos y revisor vacío».
 - Suite CI completa re-certificada: 2589 passed, 8 skipped, 0 failed (29:38), con H10 incluido.
+
+### iter345 — H12: totales físicos por unidad (7 oct 2026)
+- H12 (MEDIA, IPV Fase 4): el corte histórico, el acta de cierre y la valoración por lotes ya no mezclan cantidades de unidades distintas. Cada fila conserva su `unit` y el total físico se desglosa en `totals.units_by_unit` ({unidad, libra, kg}); el valor monetario se mantiene sumado en CUP/USDT. Decisión del usuario: opción (a) desglosar por unidad.
+- Backend: `inventory_history.build_cutoff_report`, `inventory_ipv._build_close_acta`, `inventory_lots.build_valuation`. CSV de corte y de valoración con columna «Unidad»; TOTALES del corte muestra el desglose. Frontend: helper `fmtUnitsBreakdown` (orden unidad→libra→kg) + columna/abreviatura por fila en Histórico y Valoración.
+- Verificado: `test_iter345_h12_units_by_unit.py` (1/1) + regresiones afines (iter329/321/338) + testing_agent frontend (100%, desktop+móvil). Suite completa NO re-ejecutada en esta sesión (fork); cambios aislados y cubiertos por tests unitarios/HTTP afines verdes.

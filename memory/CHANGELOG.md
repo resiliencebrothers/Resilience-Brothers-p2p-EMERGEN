@@ -1734,3 +1734,12 @@ Auditor (Fase 0 / revisión del cierre, InventoryCloseTab.jsx): la insignia prin
 
 ## 2026-10-07 · iter343h — Suite CI completa re-certificada con H10
 `2589 passed, 8 skipped, 0 failed` (29:38). 100% verde con H06/H07/H08/H09/H10 incluidos.
+
+## 2026-10-07 · iter345 — H12 (MEDIA, IPV Fase 4): los totales físicos ya no mezclan unidades (u/lb/kg)
+Auditor: el corte histórico, el acta de cierre y la valoración por lotes sumaban cantidades físicas de productos con unidades distintas en un único `units` sin significado; además, las filas del histórico y del acta no conservaban su `unit` para poder interpretar las cantidades. El valor monetario sí es sumable en CUP.
+- **Decisión del usuario (opción a)**: DESGLOSAR el total físico por unidad (`units_by_unit = {unidad: N, libra: N, kg: N}`) y conservar `unit` por fila. El valor monetario (CUP/USDT) se mantiene sumado.
+- **Backend**: `services/inventory_history.py` (`build_cutoff_report`) proyecta `unit`, añade `unit` por fila y emite `totals.units_by_unit`; `services/inventory_ipv.py` (`_build_close_acta`) conserva `unit` por fila y `totals.units_by_unit` (congelado en el snapshot); `services/inventory_lots.py` (`build_valuation`) emite `totals.units_by_unit` (las filas ya traían `unit`).
+- **CSV** (`routes/inventory.py`): corte histórico añade columna «Unidad» (unidad del producto) y renombra la del conteo a «Unidad (conteo)»; la fila TOTALES muestra el desglose por unidad (p. ej. «120 u · 45.5 lb · 12 kg»). Valoración añade columna «Unidad».
+- **Frontend**: nuevo helper `fmtUnitsBreakdown(byUnit)` en `utils/units.js` (orden canónico unidad→libra→kg). `InventoryHistoryTab.jsx`: tarjeta «Unidades» con desglose + nueva columna «Unidad» por fila (`history-unit-<id>`). `InventoryValuationTab.jsx`: KPI «Unidades» con desglose + abreviatura por fila en la columna de existencia (`valuation-stock-<id>`). i18n es/en: `inventory.history.colUnit`.
+- **Tests**: nuevo `test_iter345_h12_units_by_unit.py` (1/1) — tres productos (unidad/libra/kg) en el mismo inventario → corte, acta (snapshot) y valoración exponen `units_by_unit` correcto y `unit` por fila, sin clave `units` mezclada. Regresiones actualizadas: `test_iter329_cutoff_api.py` y `test_iter321_ipv_phase2.py` (nueva clave), `test_iter338_http_csv.py` (columna «Unidad (conteo)»). HTTP CSV + IPV afines 42/42 verde.
+- **Verificación en navegador** (testing_agent, frontend-only): 100% — ambas pestañas muestran el desglose por unidad y la abreviatura por fila (u/lb/kg) en desktop y móvil, sin errores de consola.

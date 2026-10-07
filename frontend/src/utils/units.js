@@ -24,10 +24,16 @@ export const qtyStep = (unit) => (isFractionUnit(unit) ? "0.001" : "1");
 
 // H12 — Desglosa un mapa {unidad: n, libra: n, kg: n} en texto legible:
 // "120 u · 45.5 lb · 12 kg". Las cantidades físicas NO se suman entre unidades
-// distintas, así que el total se presenta agregado por unidad.
+// distintas, así que el total se presenta agregado por unidad. El orden es
+// canónico (unidad → libra → kg) para que todas las pantallas coincidan.
+const _UNIT_ORDER = { unidad: 0, libra: 1, kg: 2 };
 export const fmtUnitsBreakdown = (byUnit) => {
   const entries = Object.entries(byUnit || {});
   if (!entries.length) return "0";
+  entries.sort(
+    ([a], [b]) =>
+      (_UNIT_ORDER[a] ?? 99) - (_UNIT_ORDER[b] ?? 99) || a.localeCompare(b),
+  );
   return entries
     .map(([u, v]) => {
       const n = Number(v ?? 0).toLocaleString(undefined, {
