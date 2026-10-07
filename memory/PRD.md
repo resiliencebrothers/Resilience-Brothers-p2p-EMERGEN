@@ -2405,3 +2405,7 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 ### iter343f/g — H10 + panel de incidencias enlazado (7 oct 2026)
 - H10 (MEDIA): borrado de producto con movimientos/conteos BLOQUEADO (409, exige desactivar) para no perder el saldo histórico; sin movimientos sigue siendo borrable. Política confirmada por el usuario. Tests: `test_iter343f_h10_delete_protection.py` (2/2) + fix de regresión en `test_p2p_backend.py`.
 - UX: panel de incidencias con «Línea de tiempo» desplegable (observaciones del historial) y «Episodios relacionados» (chips predecesor/sucesor por `base_key`, salto con resaltado). Verificado por testing_agent (2/2 frontend).
+
+### iter343h — H11 corregido + suite re-certificada (7 oct 2026)
+- H11 (MEDIA, IPV-R04): InventoryCloseTab.jsx ahora distingue el resultado NUMÉRICO del inventario (insignia «Inventario: …») del ESTADO DE REVISIÓN guardado (insignia «Revisión: …»), y permite crear una CORRECCIÓN trazable sobre un cierre final (botón «Crear corrección» → nueva versión del acta). Verificado en navegador por testing_agent (5/5) con el escenario «conteos completos y revisor vacío».
+- Suite CI completa re-certificada: 2589 passed, 8 skipped, 0 failed (29:38), con H10 incluido.

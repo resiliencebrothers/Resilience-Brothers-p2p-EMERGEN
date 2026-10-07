@@ -1,0 +1,22 @@
+{
+  "summary": "H11 (IPV-R04) frontend verification completed via Playwright on live preview URL with session_token=smoke_h11_admin. All five test steps from the review request passed: (1) empty-review state shows two distinct badges — close-review-result 'Inventario: CUADRA' and close-review-state-badge 'Revisión: SIN REVISAR'; (2) saving with reviewer empty keeps numeric CUADRA but flips state to 'Revisión: PENDIENTE', shows close-pending-banner and save button label 'Completar y finalizar cierre'; (3) adding Luis Pérez and saving finalizes the close — state 'Revisión: REVISADO' and close-review-done block visible; (4) 'Crear corrección' button triggers close-correction-banner with form prefilled (Ana Gómez / Luis Pérez / F-001), close-cancel-correction visible, save label becomes 'Guardar corrección'; (5) changing folio to F-002 and saving shows toast 'Corrección registrada como nueva versión' and increments close-frozen-acta version (observed v3 since prior iterations seeded v1/v2). Spanish UI confirmed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_344.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InventoryCloseTab.jsx is ~508 lines — approaching the 700-line threshold; consider extracting the review/correction section into its own component for future maintainability.",
+    "closeFinal check uses `(closeDoc.revisado_por || '').trim()` as truthy — fine, but documenting the invariant (cuadra + non-empty reviewer == FINAL) near the state constant would help future readers."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "100%"},
+  "test_credentials": "session_token cookie smoke_h11_admin (user_test_admin01) on preview URL",
+  "seed_data_creation": "Deleted pre-existing inventory_closes/inventory_close_snapshots for date 2026-06-02 before the run to start from a clean 'cuadra + no close saved' state. After the run, a FINAL close with snapshot_version=3 remains for 2026-06-02 (main agent can clean up as noted in the request).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "H11 numeric-vs-review-state distinction, pending completion flow and traceable correction (new acta version) all work in the browser against the live preview. If re-running, first delete inventory_closes & inventory_close_snapshots for close_date='2026-06-02' to reset the acta version counter back to v1 before asserting; otherwise expect v>=2 after each correction cycle."
+}
