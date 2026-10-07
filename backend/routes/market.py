@@ -1024,5 +1024,21 @@ async def delete_product(product_id: str, request: Request) -> Any:
     actor = await require_permission(request, "products")
     if actor.get("role") != "admin" and not actor.get("can_delete_products"):
         raise HTTPException(status_code=403, detail="No tienes permiso para eliminar productos")
+    # H10 (iter343) — un producto con movimientos de inventario (o conteos)
+    # forma parte de cortes históricos documentados. Borrar su ficha físicamente
+    # haría desaparecer ese saldo del histórico sin rastro. Política del equipo:
+    # NO se permite el borrado físico cuando existen movimientos/conteos; hay que
+    # DESACTIVARLO (soft delete) para conservar la identidad histórica. Regla
+    # visible y trazable (mensaje explícito al operador).
+    has_movements = await db.inventory_movements.count_documents(
+        {"product_id": product_id}, limit=1)
+    has_counts = await db.inventory_counts.count_documents(
+        {"product_id": product_id}, limit=1)
+    if has_movements or has_counts:
+        raise HTTPException(
+            status_code=409,
+            detail=("No se puede eliminar: el producto tiene movimientos de "
+                    "inventario y aparece en cortes históricos. Desactívalo en "
+                    "su lugar para conservar el saldo histórico documentado."))
     await db.products.delete_one({"id": product_id})
     return {"ok": True}

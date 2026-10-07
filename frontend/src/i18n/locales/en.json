@@ -4385,7 +4385,13 @@
       "toReview": "Mark in review",
       "toResolve": "Resolve",
       "episode": "Recurrence #{{n}}",
-      "episodeTitle": "This cause was resolved before; this is a successor follow-up that preserves the earlier evidence."
+      "episodeTitle": "This cause was resolved before; this is a successor follow-up that preserves the earlier evidence.",
+      "episodeShort": "Ep. {{n}}",
+      "timeline": "Timeline",
+      "relatedEpisodes": "Related episodes",
+      "observations": "Observations",
+      "successorOf": "Successor follow-up of an earlier resolved episode of the same cause.",
+      "noHistory": "No observations recorded."
     },
     "export": {
       "controlCsv": "Control CSV",

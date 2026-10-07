@@ -307,7 +307,7 @@ class TestRedemptions:
 class TestProductsCRUD:
     def test_product_crud(self):
         payload = {"name": "TEST_Prod", "description": "d", "image_url": "", "price_usd": 50,
-                   "stock": 3, "category": "test", "is_active": True}
+                   "stock": 0, "category": "test", "is_active": True}
         r = requests.post(f"{BASE_URL}/api/admin/products", headers=_h(ADMIN_TOKEN), json=payload)
         assert r.status_code == 200
         pid = r.json()["id"]
