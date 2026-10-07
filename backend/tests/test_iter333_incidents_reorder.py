@@ -142,9 +142,11 @@ class TestTransition:
             inc["id"], "en_revision", "revisando", ACTOR))
         assert upd["status"] == "en_revision"
         upd2 = _loop().run_until_complete(transition_incident(
-            inc["id"], "resuelta", "justificada (promo)", ACTOR))
+            inc["id"], "resuelta", "justificada (promo autorizada)", ACTOR,
+            evidence="MOV-123 autorización gerencia"))
         assert upd2["status"] == "resuelta"
         assert upd2["auto_resolved"] is False
+        assert upd2["resolution_evidence"] == "MOV-123 autorización gerencia"
         assert any(h["status"] == "en_revision" for h in upd2["history"])
 
 

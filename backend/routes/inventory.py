@@ -208,6 +208,11 @@ class TargetStockUpdate(BaseModel):
 class IncidentStatusUpdate(BaseModel):
     status: str = Field(..., pattern="^(pendiente|en_revision|resuelta)$")
     note: str = Field("", max_length=400)
+    evidence: str = Field("", max_length=300)
+
+
+class IncidentAssign(BaseModel):
+    assignee_id: str = Field(..., min_length=1, max_length=100)
 
 
 @router.post("/admin/inventory/counts")
@@ -586,14 +591,27 @@ async def set_product_target_stock(product_id: str, payload: TargetStockUpdate,
 # ══════════════════ IPV Fase 3: incidencias del inventario ══════════════════
 @router.get("/admin/inventory/incidents")
 async def inventory_incidents(request: Request, status: Optional[str] = None,
-                              type: Optional[str] = None) -> Any:
+                              type: Optional[str] = None,
+                              date_from: Optional[str] = None,
+                              date_to: Optional[str] = None,
+                              product_q: Optional[str] = None) -> Any:
     """IPV Fase 3 — listado de incidencias (conteo pendiente, diferencia, venta
-    bajo costo) con filtros por estado/tipo + resumen."""
+    bajo costo, costo pendiente, documento faltante) con filtros por
+    estado/tipo/fecha/producto + resumen."""
     await require_permission(request, "products")
     from services.inventory_incidents import list_incidents, incident_summary
-    rows = await list_incidents(status=status, itype=type)
+    rows = await list_incidents(status=status, itype=type, date_from=date_from,
+                                date_to=date_to, product_q=product_q)
     summary = await incident_summary()
     return {"incidents": rows, "summary": summary}
+
+
+@router.get("/admin/inventory/incidents/assignees")
+async def inventory_incident_assignees(request: Request) -> Any:
+    """IPV Fase 3 (H13) — usuarios admin/staff asignables como responsables."""
+    await require_permission(request, "products")
+    from services.inventory_incidents import list_assignees
+    return {"assignees": await list_assignees()}
 
 
 @router.post("/admin/inventory/incidents/{incident_id}/status")
@@ -601,17 +619,28 @@ async def inventory_incident_status(incident_id: str,
                                     payload: IncidentStatusUpdate,
                                     request: Request) -> Any:
     """IPV Fase 3 — cambia el estado de una incidencia (ciclo pendiente →
-    en_revision → resuelta) dejando traza de autor y nota."""
+    en_revision → resuelta) dejando traza de autor y nota. La resolución manual
+    exige explicación + evidencia acorde al tipo (H13)."""
     actor = await require_permission(request, "products")
     from services.inventory_incidents import transition_incident
     return await transition_incident(incident_id, payload.status,
-                                     payload.note, actor)
+                                     payload.note, actor, payload.evidence)
+
+
+@router.post("/admin/inventory/incidents/{incident_id}/assign")
+async def inventory_incident_assign(incident_id: str, payload: IncidentAssign,
+                                    request: Request) -> Any:
+    """IPV Fase 3 (H13) — asigna un responsable (admin/staff) a la incidencia."""
+    actor = await require_permission(request, "products")
+    from services.inventory_incidents import assign_incident
+    return await assign_incident(incident_id, payload.assignee_id, actor)
 
 
 @router.post("/admin/inventory/incidents/sync")
 async def inventory_incidents_sync(request: Request,
                                    date: Optional[str] = None) -> Any:
-    """IPV Fase 3 — sincroniza las incidencias de 'conteo pendiente' del día."""
+    """IPV Fase 3 — sincroniza las incidencias auto-detectadas del día (conteo
+    pendiente, costo pendiente y documento faltante)."""
     await require_permission(request, "products")
     from services.inventory_incidents import sync_pending_count_incidents
     day = _valid_day(date or today_havana(), "date")

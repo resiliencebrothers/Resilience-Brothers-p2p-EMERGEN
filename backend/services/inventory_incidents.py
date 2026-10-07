@@ -13,6 +13,7 @@ reabre: queda como constancia histórica.
 """
 import uuid
 import logging
+import re
 from typing import Optional
 
 from fastapi import HTTPException
@@ -25,8 +26,22 @@ from services.inventory import _COMPANY_FILTER, today_havana, UNIT_ABBR
 logger = logging.getLogger(__name__)
 
 STATUSES = ("pendiente", "en_revision", "resuelta")
-TYPES = ("conteo_pendiente", "diferencia", "venta_bajo_costo")
+# iter346 (H13) — alcance completo de la Fase 3: además de conteo pendiente,
+# diferencia y venta bajo costo, se siguen 'costo pendiente' (existencia sin
+# costo, no valorable) y 'documento faltante' (base sin documentar).
+TYPES = ("conteo_pendiente", "diferencia", "venta_bajo_costo",
+         "costo_pendiente", "documento_faltante")
 _INDEX_READY = False
+
+# iter346 (H13) — evidencia mínima exigida por tipo al RESOLVER manualmente.
+_MIN_RESOLUTION_NOTE = 10
+_RESOLVE_EVIDENCE_HINT = {
+    "diferencia": "Referencia del conteo autorizado o del ajuste que corrige el descuadre.",
+    "venta_bajo_costo": "Referencia del documento o autorización que justifica la venta bajo costo.",
+    "costo_pendiente": "Costo asignado o referencia del documento de compra que fija el costo.",
+    "documento_faltante": "Referencia de la apertura auditada o del documento que respalda la existencia.",
+    "conteo_pendiente": "Motivo o documento que justifica cerrar el conteo pendiente.",
+}
 
 
 async def _ensure_index() -> None:
@@ -180,14 +195,73 @@ async def on_count_authorized(count_id: str) -> None:
                         "Diferencia ajustada y autorizada.")
 
 
+async def _sync_costo_pendiente(products: list, day: str) -> tuple:
+    """iter346 (H13) — producto activo con existencia pero SIN costo asignado
+    (cost_usd = 0): no puede valorarse. Se auto-resuelve al asignarle costo o
+    al quedar sin existencia."""
+    created = resolved = 0
+    for p in products:
+        stock = round(float(p.get("stock") or 0), 3)
+        cost = float(p.get("cost_usd") or 0)
+        unit = UNIT_ABBR.get(p.get("unit") or "", p.get("unit") or "ud")
+        dk = f"costo_pendiente:{p['id']}"
+        inc = await _latest_episode(dk)
+        if stock > 1e-9 and cost <= 0:
+            await _upsert_incident(
+                itype="costo_pendiente", product_id=p["id"],
+                product_name=p.get("name", ""),
+                detail=(f"Existencia de {stock:g} {unit} sin costo asignado; "
+                        f"no puede valorarse en el inventario."),
+                amount=0, ref_id="", ref_date=day, base_key=dk)
+            if not inc or inc["status"] == "resuelta":
+                created += 1
+        elif inc and inc["status"] != "resuelta":
+            await _auto_resolve(
+                dk, "Se asignó costo al producto o quedó sin existencia.")
+            resolved += 1
+    return created, resolved
+
+
+async def _sync_documento_faltante(products: list, day: str) -> tuple:
+    """iter346 (H13) — producto de la empresa con existencia SIN DOCUMENTAR (el
+    'gap' de apertura auditada ya detectado por el sistema). Se auto-resuelve al
+    registrar la apertura auditada que documenta la base."""
+    from services.inventory_ipv import _undocumented_gap
+    created = resolved = 0
+    for p in products:
+        if p.get("owner_id"):
+            continue
+        unit = UNIT_ABBR.get(p.get("unit") or "", p.get("unit") or "ud")
+        dk = f"documento_faltante:{p['id']}"
+        inc = await _latest_episode(dk)
+        gap = await _undocumented_gap(p)
+        if gap > 0.001:
+            await _upsert_incident(
+                itype="documento_faltante", product_id=p["id"],
+                product_name=p.get("name", ""),
+                detail=(f"Existencia sin documentar: {gap:g} {unit} sin "
+                        f"movimiento de origen. Registra la apertura auditada."),
+                amount=0, ref_id="", ref_date=day, base_key=dk)
+            if not inc or inc["status"] == "resuelta":
+                created += 1
+        elif inc and inc["status"] != "resuelta":
+            await _auto_resolve(
+                dk, "La base quedó documentada (apertura auditada registrada).")
+            resolved += 1
+    return created, resolved
+
+
 async def sync_pending_count_incidents(day: Optional[str] = None) -> dict:
-    """Sincroniza incidencias 'conteo_pendiente' de una jornada: crea una por
-    cada producto activo de la empresa SIN conteo ese día y resuelve las de los
-    que ya se contaron. Pensada para correr a diario (y bajo demanda)."""
+    """Sincroniza las incidencias auto-detectadas por producto de una jornada:
+    conteo pendiente, costo pendiente (iter346/H13) y documento faltante
+    (iter346/H13). Crea una por cada producto activo de la empresa que aplique y
+    resuelve las de los que dejaron de cumplir la causa. Pensada para correr a
+    diario (y bajo demanda)."""
     d = (day or today_havana())[:10]
     products = await db.products.find(
         {**_COMPANY_FILTER, "is_active": {"$ne": False}},
-        {"_id": 0, "id": 1, "name": 1}).to_list(5000)
+        {"_id": 0, "id": 1, "name": 1, "stock": 1, "cost_usd": 1,
+         "owner_id": 1, "unit": 1}).to_list(5000)
     counted = {c["product_id"] for c in await db.inventory_counts.find(
         {"count_date": d}, {"_id": 0, "product_id": 1}).to_list(50000)}
     created = 0
@@ -208,39 +282,120 @@ async def sync_pending_count_incidents(day: Optional[str] = None) -> dict:
                 amount=0, ref_id="", ref_date=d, base_key=dk)
             if not before or before["status"] == "resuelta":
                 created += 1
-    return {"date": d, "created": created, "resolved": resolved}
+    c2, r2 = await _sync_costo_pendiente(products, d)
+    c3, r3 = await _sync_documento_faltante(products, d)
+    return {"date": d, "created": created + c2 + c3,
+            "resolved": resolved + r2 + r3}
 
 
 # ───────────────────────── ciclo de vida / consulta ──────────────────────
 async def transition_incident(incident_id: str, status: str, note: str,
-                              actor: dict) -> dict:
+                              actor: dict, evidence: str = "") -> dict:
     if status not in STATUSES:
         raise HTTPException(status_code=400, detail="Estado inválido")
     inc = await db.inventory_incidents.find_one({"id": incident_id}, {"_id": 0})
     if not inc:
         raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    note = (note or "").strip()
+    evidence = (evidence or "").strip()
     now = iso(now_utc())
     upd = {"status": status, "updated_at": now}
+    hist_note = note
     if status == "resuelta":
+        # iter346 (H13) — la resolución manual EXIGE una explicación y una
+        # evidencia acorde al tipo; ya no se admite cerrar con nota vacía.
+        if len(note) < _MIN_RESOLUTION_NOTE:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"La resolución exige una explicación de al menos "
+                        f"{_MIN_RESOLUTION_NOTE} caracteres."))
+        if not evidence:
+            hint = _RESOLVE_EVIDENCE_HINT.get(inc.get("type"), "")
+            raise HTTPException(
+                status_code=400,
+                detail=("Indica la evidencia que justifica la resolución. "
+                        + hint).strip())
         upd.update({"resolved_at": now, "resolved_by": actor.get("user_id", ""),
                     "resolved_by_email": actor.get("email", ""),
-                    "resolution_note": note or "", "auto_resolved": False})
+                    "resolution_note": note, "resolution_evidence": evidence,
+                    "auto_resolved": False})
+        hist_note = f"{note} · Evidencia: {evidence}"
     await db.inventory_incidents.update_one(
         {"id": incident_id},
         {"$set": upd,
-         "$push": {"history": {"status": status, "note": note or "",
+         "$push": {"history": {"status": status, "note": hist_note,
                                "by": actor.get("user_id", ""),
                                "by_email": actor.get("email", ""), "at": now}}})
     return await db.inventory_incidents.find_one({"id": incident_id}, {"_id": 0})
 
 
+async def assign_incident(incident_id: str, assignee_id: str,
+                          actor: dict) -> dict:
+    """iter346 (H13) — asigna un RESPONSABLE (admin/staff) a la incidencia. El
+    responsable es DISTINTO del autor de los cambios y queda registrado en el
+    historial para auditoría."""
+    inc = await db.inventory_incidents.find_one({"id": incident_id}, {"_id": 0})
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incidencia no encontrada")
+    user = await db.users.find_one(
+        {"user_id": assignee_id},
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1})
+    if not user or user.get("role") not in ("admin", "employee"):
+        raise HTTPException(
+            status_code=400,
+            detail="El responsable debe ser un usuario admin o staff.")
+    now = iso(now_utc())
+    name = user.get("name") or user.get("email") or assignee_id
+    await db.inventory_incidents.update_one(
+        {"id": incident_id},
+        {"$set": {"assignee_id": assignee_id, "assignee_name": name,
+                  "assignee_email": user.get("email", ""),
+                  "assigned_by": actor.get("user_id", ""),
+                  "assigned_by_email": actor.get("email", ""),
+                  "assigned_at": now, "updated_at": now},
+         "$push": {"history": {
+             "status": inc["status"],
+             "note": f"Responsable asignado: {name}",
+             "by": actor.get("user_id", ""),
+             "by_email": actor.get("email", ""), "at": now}}})
+    return await db.inventory_incidents.find_one({"id": incident_id}, {"_id": 0})
+
+
+async def list_assignees() -> list:
+    """iter346 (H13) — usuarios admin/staff que pueden ser responsables."""
+    users = await db.users.find(
+        {"role": {"$in": ["admin", "employee"]}},
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1}
+    ).sort("name", 1).to_list(200)
+    return [{"id": u["user_id"],
+             "name": u.get("name") or u.get("email") or u["user_id"],
+             "email": u.get("email", ""), "role": u.get("role", "")}
+            for u in users]
+
+
 async def list_incidents(status: Optional[str] = None,
-                         itype: Optional[str] = None, limit: int = 500) -> list:
+                         itype: Optional[str] = None,
+                         date_from: Optional[str] = None,
+                         date_to: Optional[str] = None,
+                         product_q: Optional[str] = None,
+                         limit: int = 500) -> list:
     q: dict = {}
     if status:
         q["status"] = status
     if itype:
         q["type"] = itype
+    # iter346 (H13) — filtros por fecha (sobre ref_date de la incidencia)...
+    if date_from or date_to:
+        rng: dict = {}
+        if date_from:
+            rng["$gte"] = date_from[:10]
+        if date_to:
+            rng["$lte"] = date_to[:10]
+        q["ref_date"] = rng
+    # ...y por producto (coincidencia parcial sobre el nombre).
+    if product_q and product_q.strip():
+        q["product_name"] = {"$regex": re.escape(product_q.strip()),
+                             "$options": "i"}
     return await db.inventory_incidents.find(
         q, {"_id": 0}).sort([("status", 1), ("created_at", -1)]).to_list(limit)
 
