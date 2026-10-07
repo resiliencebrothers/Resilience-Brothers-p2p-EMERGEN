@@ -2401,3 +2401,7 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - H09 (MEDIA): `record_price_change` distingue `change_kind` price/cost y el histórico (`inventory_history`) ignora las auditorías de costo al fijar el precio → histórico muestra precio 550 y costo 220. Tests: `test_iter343d_history_cost_vs_price.py`.
 - Estabilidad: `test_iter290` robustecido frente a entregas `available` residuales (tope de 50).
 - **Suite CI completa CERTIFICADA: 2587 passed, 8 skipped, 0 failed (27:48).**
+
+### iter343f/g — H10 + panel de incidencias enlazado (7 oct 2026)
+- H10 (MEDIA): borrado de producto con movimientos/conteos BLOQUEADO (409, exige desactivar) para no perder el saldo histórico; sin movimientos sigue siendo borrable. Política confirmada por el usuario. Tests: `test_iter343f_h10_delete_protection.py` (2/2) + fix de regresión en `test_p2p_backend.py`.
+- UX: panel de incidencias con «Línea de tiempo» desplegable (observaciones del historial) y «Episodios relacionados» (chips predecesor/sucesor por `base_key`, salto con resaltado). Verificado por testing_agent (2/2 frontend).

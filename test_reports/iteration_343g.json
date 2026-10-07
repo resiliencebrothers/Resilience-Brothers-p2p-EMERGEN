@@ -1,0 +1,46 @@
+{
+  "summary": "Frontend-only verification of (A) Inventory Incidents timeline + related-episode linking and (B) H10 product-delete protection (409 → error toast). Both features work exactly as specified. Auth via session_token=smoke_h10_admin cookie attached successfully.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "tests_executed": {
+    "incidents_timeline": {
+      "navigated_to": "/admin/inventory → tab 'Incidencias' (data-testid=inventory-tab-incidents)",
+      "filter_applied": "incidents-filter-type = 'diferencia'",
+      "ep2_row_id": "7d97fed7-f7e1-4bdc-9b15-9279d27aa51b",
+      "ep1_row_id": "1bd79c4a-818d-44c8-a550-ea6acdf5f416",
+      "episode_badge_text": "REAPARICIÓN #2 (data-testid incident-episode-<id> rendered)",
+      "timeline_toggle_label": "LÍNEA DE TIEMPO · 2 (incident-timeline-toggle-<id> clicked, panel incident-timeline-<id> expanded)",
+      "related_chips": "related-episode-<id>-1 and related-episode-<id>-2 both present and labeled 'Ep. 1' / 'Ep. 2'",
+      "observations_rendered": "'Reaparece la causa: episodio #2 sucesor de 1bd79c4a-... (resuelto 2026-10-07).' listed under OBSERVACIONES",
+      "jump_to_ep1": "Clicking Ep.1 chip scrolled and applied class 'bg-fuchsia-500/10 ring-1 ring-fuchsia-500/40' on ep1 row (highlight present=True)",
+      "result": "PASS"
+    },
+    "h10_delete_protection": {
+      "navigated_to": "/admin/products (data-testid=admin-products)",
+      "product_with_movements_id": "df80d628-a495-4ae2-a964-76f44af3b426 (TEST_H10_WithMov, stock=5)",
+      "product_without_movements_id": "6a716cb6-0d20-4d26-acd0-0d1b555a9845 (TEST_H10_NoMov, stock=0)",
+      "block_toast": "'No se puede eliminar: el producto tiene movimientos de inventario y aparece en cortes históricos. Desactívalo en su lugar para conservar el saldo histórico documentado.' (contains 'No se puede eliminar' and 'Desactívalo')",
+      "block_product_remained_in_list": true,
+      "success_toast": "'Eliminado' shown after deleting the stock=0 product; card disappeared from grid",
+      "result": "PASS"
+    }
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InventoryIncidentsTab.jsx (286 lines) is approaching the 300-line comfort threshold — consider extracting the row renderer and timeline panel into subcomponents for maintainability.",
+    "The successor note branch (lines 211-215) only shows when related.length <= 1, but if a predecessor_id exists we would normally expect its chain to be in relatedByKey; verify this is still reachable or remove dead branch.",
+    "AdminProducts.remove() depends on backend 409 detail for the toast — the error path is working but note it leaks server-side wording directly; acceptable here since UX text is already Spanish and user-facing."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "100% (2/2 flows)"},
+  "test_credentials": "Admin session cookie session_token=smoke_h10_admin (also works as Authorization: Bearer smoke_h10_admin). Confirmed valid.",
+  "seed_data_creation": "Created two test products via POST /api/admin/products for the H10 flow: TEST_H10_NoMov (stock=0, deleted during test) and TEST_H10_WithMov (stock=5, remains, delete blocked). Pre-seeded 'Café en grano (demo)' incident chain (ep1 resuelta + ep2 pendiente) was already present and used as-is.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both FRONTEND features in iter343 (incidents timeline/related-episode linking and H10 delete protection) are verified end-to-end in the preview UI. Leftover: TEST_H10_WithMov_1791359621 product remains in /admin/products as it is intentionally undeletable; main agent may deactivate it via the toggle button if cleanup is desired."
+}

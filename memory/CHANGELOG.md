@@ -1713,3 +1713,15 @@ Auditor (Fase 1): tanto el cambio de PRECIO de venta como la auditoría del COST
 
 ## 2026-10-06 · iter343 — Suite CI completa CERTIFICADA 100% verde
 `2587 passed, 8 skipped, 0 failed` en 27:48, con H06 (versión atómica de acta), H07 (episodios de incidencia), H08 (liquidación con stock fraccionario), H09 (costo vs precio en histórico) y el arreglo de estabilidad de iter290. Los 8 skips son esperados (rate-limit off, condicionales).
+
+## 2026-10-07 · iter343f — H10 (MEDIA): borrar un producto ya no elimina su saldo histórico
+Auditor (Fase 1): `DELETE /admin/products/{id}` borraba la ficha físicamente aunque tuviera movimientos; como `build_cutoff_report` solo admite productos existentes o con conteo en la fecha, el corte perdía la fila y el saldo documentado (p. ej. 12 @ 20 = 240 CUP) desaparecía sin rastro.
+- **Política adoptada por el equipo (opción a, confirmada por el usuario)**: NO se permite el borrado físico cuando existen `inventory_movements` o `inventory_counts`; hay que DESACTIVAR el producto (soft delete, ya existe vía `toggle-active`). Regla visible y trazable.
+- **Fix**: `delete_product` (routes/market.py) devuelve 409 con detalle «No se puede eliminar: … Desactívalo … para conservar el saldo histórico documentado.» cuando hay movimientos/conteos. Un producto nuevo sin movimientos (stock 0) sí se borra. El frontend ya muestra `error.response.data.detail` como toast (AdminProducts/InventoryControl).
+- **Regresión corregida**: `test_p2p_backend.py::test_product_crud` creaba el producto con `stock:3` (genera entrada de apertura) y asumía borrado 200 → ahora usa `stock:0`. Los teardowns de iter321/322/324/325/326 ya eran best-effort (409 ignorado + limpieza DB).
+- **Tests**: nuevo `test_iter343f_h10_delete_protection.py` (2/2): borrado bloqueado con saldo 240 intacto + desactivación lo conserva en el histórico; borrado permitido sin movimientos. Regresión de borrado de productos 69/69 verde.
+
+## 2026-10-07 · iter343g — Mejora UX: panel de incidencias enlaza episodios relacionados
+Sobre el modelo de episodios de H07, el panel ahora da continuidad visual a la MISMA causa (predecesor/sucesor):
+- **`InventoryIncidentsTab.jsx`**: por incidencia, toggle «Línea de tiempo» (`incident-timeline-toggle-<id>`) que despliega (`incident-timeline-<id>`): (a) «Episodios relacionados» — cadena de chips clicables `related-episode-<id>-<ep>` (agrupados por `base_key`) que al pulsar resaltan/desplazan al episodio objetivo; (b) «Observaciones» — línea de tiempo del `history` de la incidencia. Badge «Reaparición #N» para sucesores. i18n es/en (`timeline`, `relatedEpisodes`, `observations`, `episodeShort`, `successorOf`, `noHistory`).
+- **Verificación**: testing_agent (frontend-only) → 100% (2/2): timeline + chips + salto-resaltado y el toast 409 de H10. Sin bugs.
