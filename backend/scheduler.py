@@ -336,6 +336,19 @@ async def run_credit_recovery():
         logger.error(f"[credit-recovery] failed: {e}")
 
 
+async def run_ipv_count_recovery():
+    """iter350 — Recuperador Automático de ajustes de conteo físico (IPV) que
+    quedaron a medio aplicar tras una interrupción. Idempotente por dedupe_key
+    del movimiento; nunca duplica el ajuste."""
+    try:
+        from services.inventory_ipv import recover_pending_count_adjustments
+        n = await recover_pending_count_adjustments()
+        if n:
+            logger.info("[ipv-recover] %s ajuste(s) de conteo completados", n)
+    except Exception as e:
+        logger.error(f"[ipv-recover] failed: {e}")
+
+
 async def run_delivery_attention():
     """iter290 (Mejora #4) — alerta reservas de mensajería sin respuesta y
     trabajos detenidos; una sola alerta por entrega y condición."""
@@ -525,6 +538,17 @@ def start_scheduler(db, build_timeseries):
         replace_existing=True,
         misfire_grace_time=60,
         coalesce=True,
+    )
+    # iter350 — Recuperador Automático de ajustes de conteo IPV (cada 2 min +
+    # al arrancar), mismo patrón que run_credit_recovery.
+    _scheduler.add_job(
+        run_ipv_count_recovery,
+        IntervalTrigger(seconds=120),
+        id="ipv_count_recovery",
+        replace_existing=True,
+        misfire_grace_time=120,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
     )
     # iter290 (Mejora #4) — vigilancia del despacho cada 10 min.
     _scheduler.add_job(

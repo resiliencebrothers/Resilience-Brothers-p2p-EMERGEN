@@ -13,6 +13,7 @@ import logging
 from typing import Optional, Any
 
 from fastapi import HTTPException
+from pymongo import ReturnDocument
 
 from db_client import db
 from auth_utils import now_utc, iso
@@ -119,6 +120,11 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
         filt.update(extra_filter)
     if delta_qty < 0 and require_available:
         filt["stock"] = {"$gte": -delta_qty}
+    # iter349 (RV-02/H03) — secuencia efectiva por producto asignada en la MISMA
+    # escritura atómica que altera stock/WAC: es el ORDEN REAL de los efectos
+    # que el histórico debe consumir, independiente de cuándo se selle applied_at
+    # (que puede retrasarse en un reintento/recuperación).
+    _seq_expr = {"effect_seq": {"$add": [{"$ifNull": ["$effect_seq", 0]}, 1]}}
     if cost_fold is not None:
         # iter327 (IPV-R02) — WAC atómico: cost_usd y stock se calculan en el
         # mismo $set a partir del documento de entrada (valores PREVIOS), por lo
@@ -126,7 +132,7 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
         q, entry_cost = cost_fold
         base_stock = {"$ifNull": ["$stock", 0]}
         new_stock_expr = {"$round": [{"$add": [base_stock, delta_qty]}, QTY_DECIMALS]}
-        res = await db.products.update_one(filt, [{"$set": {
+        res = await db.products.find_one_and_update(filt, [{"$set": {
             "cost_usd": {"$round": [{"$cond": [
                 {"$gt": [new_stock_expr, 0]},
                 {"$divide": [
@@ -138,9 +144,11 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
             "stock": new_stock_expr,
             "applied_stock_ops": {"$concatArrays": [
                 {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
-        }}])
+            **_seq_expr,
+        }}], projection={"_id": 0, "effect_seq": 1},
+            return_document=ReturnDocument.AFTER)
     else:
-        res = await db.products.update_one(
+        res = await db.products.find_one_and_update(
             filt,
             # iter257(D06) — SIN $slice: un op solo sale del registro embebido
             # cuando su log duradero está 'applied' (compact_stock_registries).
@@ -152,10 +160,13 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
                     QTY_DECIMALS]},
                 "applied_stock_ops": {"$concatArrays": [
                     {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
+                **_seq_expr,
             }}],
+            projection={"_id": 0, "effect_seq": 1},
+            return_document=ReturnDocument.AFTER,
         )
-    if res.matched_count:
-        await _stock_ops_mark_applied(op_id)
+    if res is not None:
+        await _stock_ops_mark_applied(op_id, effect_seq=res.get("effect_seq"))
         return "applied"
     if await db.products.find_one(
             {"id": product_id,
@@ -198,11 +209,28 @@ async def _stock_ops_ensure(op_id: str, product_id: str, delta_qty: float) -> st
         "applied", "burned", "undone") else "pending"
 
 
-async def _stock_ops_mark_applied(op_id: str) -> None:
+async def _stock_ops_mark_applied(op_id: str, effect_seq: Optional[int] = None) -> None:
     # iter261(F01) — nunca pisar una decisión terminal de aborto.
+    # iter349 (RV-02/H03) — persistimos la secuencia efectiva para poder sellarla
+    # en el movimiento aunque la respuesta se retrase o deba recuperarse.
+    upd: dict = {"state": "applied", "applied_at": iso(now_utc())}
+    if effect_seq is not None:
+        upd["effect_seq"] = effect_seq
     await db.stock_ops.update_one(
         {"op_id": op_id, "state": {"$nin": ["burned", "undone"]}},
-        {"$set": {"state": "applied", "applied_at": iso(now_utc())}})
+        {"$set": upd})
+
+
+async def _next_effect_seq(product_id: str) -> Optional[int]:
+    """iter349 (RV-02/H03) — reserva la siguiente secuencia efectiva por producto
+    para movimientos cuyo stock ya se aplicó fuera de aquí (apply_stock=False:
+    aperturas, canjes). Atómico; preserva el orden real de los efectos."""
+    doc = await db.products.find_one_and_update(
+        {"id": product_id},
+        [{"$set": {"effect_seq": {"$add": [{"$ifNull": ["$effect_seq", 0]}, 1]}}}],
+        projection={"_id": 0, "effect_seq": 1},
+        return_document=ReturnDocument.AFTER)
+    return (doc or {}).get("effect_seq")
 
 
 async def burn_or_undo_stock(product_id: str, quantity: float, op_id: str) -> str:
@@ -464,11 +492,18 @@ async def _complete_pending_stock(mov: dict) -> dict:
         require_available=(delta < 0), cost_fold=cost_fold)
     if status == "insufficient":
         return mov
+    # iter349 (RV-02/H03) — sella la secuencia efectiva (orden REAL del efecto)
+    # asignada en la aplicación atómica, recuperada del log duradero.
+    op_rec = await db.stock_ops.find_one(
+        {"op_id": f"invmov:{mov['id']}"}, {"_id": 0, "effect_seq": 1})
+    effect_seq = (op_rec or {}).get("effect_seq")
     applied_ts = iso(now_utc())
     await db.inventory_movements.update_one(
         {"id": mov["id"]},
-        {"$set": {"stock_applied": True, "applied_at": applied_ts}})
-    return {**mov, "stock_applied": True, "applied_at": applied_ts}
+        {"$set": {"stock_applied": True, "applied_at": applied_ts,
+                  "effect_seq": effect_seq}})
+    return {**mov, "stock_applied": True, "applied_at": applied_ts,
+            "effect_seq": effect_seq}
 
 
 async def record_movement(*, product: dict, mtype: str, quantity: float,
@@ -562,18 +597,33 @@ async def record_movement(*, product: dict, mtype: str, quantity: float,
                                 detail="Stock insuficiente para este movimiento")
         # iter338 (H03) — se sella el INSTANTE EFECTIVO en que el stock/WAC
         # cambió realmente (puede ser posterior al created_at si la aplicación
-        # se retrasó/recuperó). El histórico reconstruye por este orden, no por
-        # el de registro.
+        # se retrasó/recuperó). iter349 (RV-02/H03) — además se sella la
+        # SECUENCIA EFECTIVA por producto (orden real del efecto), asignada en la
+        # escritura atómica y recuperada del log duradero; el histórico ordena
+        # por ella (no por applied_at, que puede sellarse fuera de orden).
         applied_ts = iso(now_utc())
+        op_rec = await db.stock_ops.find_one(
+            {"op_id": f"invmov:{doc['id']}"}, {"_id": 0, "effect_seq": 1})
+        effect_seq = (op_rec or {}).get("effect_seq")
         await db.inventory_movements.update_one(
             {"id": doc["id"]},
-            {"$set": {"stock_applied": True, "applied_at": applied_ts}})
+            {"$set": {"stock_applied": True, "applied_at": applied_ts,
+                      "effect_seq": effect_seq}})
         doc["stock_applied"] = True
         doc["applied_at"] = applied_ts
+        doc["effect_seq"] = effect_seq
     else:
         doc, created = await _insert_movement(doc)
         if not created:
             return doc  # R04 — otro ejecutor ya registró este movimiento
+        # iter349 (RV-02/H03) — el stock ya se tocó fuera de aquí (apertura/canje);
+        # igual reservamos una secuencia efectiva para preservar el orden real
+        # frente a entradas/ventas en la reconstrucción del histórico.
+        if delta != 0:
+            effect_seq = await _next_effect_seq(product["id"])
+            await db.inventory_movements.update_one(
+                {"id": doc["id"]}, {"$set": {"effect_seq": effect_seq}})
+            doc["effect_seq"] = effect_seq
     await _record_fund_flow(doc)
     await maybe_alert_low_stock(product["id"])
     # iter333 (IPV Fase 3) — venta por debajo del costo → incidencia.

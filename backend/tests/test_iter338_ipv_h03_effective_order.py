@@ -89,14 +89,20 @@ async def test_history_matches_effective_moving_cost_after_interruption():
         assert (await _p(pid))["stock"] == 4.0
 
         # 5) Se completa la entrada: aplica stock + WAC (como el healer/ruta
-        #    normal) y sella applied_at AHORA (posterior a la venta).
+        #    normal) y sella applied_at AHORA (posterior a la venta). iter349
+        #    (RV-02/H03) — como hace _complete_pending_stock, sella la SECUENCIA
+        #    EFECTIVA asignada en esta aplicación (posterior a la venta), que es
+        #    el orden real que el histórico debe consumir.
         st = await apply_stock_idempotent(pid, 2.0, f"invmov:{entry_id}",
                                           require_available=False,
                                           cost_fold=(2.0, 500.0))
         assert st == "applied"
+        op_rec = await db.stock_ops.find_one(
+            {"op_id": f"invmov:{entry_id}"}, {"_id": 0, "effect_seq": 1})
         await db.inventory_movements.update_one(
             {"id": entry_id},
-            {"$set": {"stock_applied": True, "applied_at": iso(now_utc())}})
+            {"$set": {"stock_applied": True, "applied_at": iso(now_utc()),
+                      "effect_seq": (op_rec or {}).get("effect_seq")}})
 
         # Estado real del producto: stock 6, WAC 300, valor 1.800.
         p = await _p(pid)

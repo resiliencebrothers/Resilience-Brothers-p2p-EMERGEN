@@ -233,7 +233,12 @@ async def authorize_count_adjustment(count_id: str, document: str,
         {"id": count_id, "version": version, "authorized": {"$ne": True}},
         {"$set": {"auth_state": "claiming",
                   "claimed_by": actor.get("user_id", ""),
-                  "claimed_at": now}})
+                  "claimed_at": now,
+                  # iter349 — persistimos el respaldo para que el RECUPERADOR
+                  # automático pueda completar un ajuste interrumpido con el
+                  # mismo documento, sin esperar a que un admin reintente.
+                  "adjustment_document": (document or "").strip(),
+                  "adjustment_note": note or ""}})
     if claim.matched_count == 0:
         raise HTTPException(
             status_code=409,
@@ -280,6 +285,104 @@ async def authorize_count_adjustment(count_id: str, document: str,
     except Exception as e:  # noqa: BLE001
         logger.error(f"incident on_count_authorized failed: {e}")
     return await db.inventory_counts.find_one({"id": count_id}, {"_id": 0})
+
+
+async def _recover_one_count(count: dict) -> bool:
+    """Completa, de forma idempotente, UN conteo cuyo ajuste quedó a medias.
+
+    Reusa el mismo `dedupe_key` del movimiento (identidad única y persistente del
+    efecto) y el `adjustment_document` ya guardado en el claim, por lo que puede
+    invocarse cualquier número de veces sin duplicar el ajuste. Devuelve True si
+    el conteo quedó finalmente AUTORIZADO (stock aplicado)."""
+    count_id = count["id"]
+    version = count.get("version")
+    document = (count.get("adjustment_document") or "").strip()
+    note = count.get("adjustment_note") or ""
+    # Sin el respaldo persistido (claims anteriores a iter349) no podemos
+    # completar el ajuste automáticamente; se deja para reintento manual.
+    if not document:
+        return False
+    diff = qnum(count.get("difference"))
+    if abs(diff) < 1e-9:
+        return False
+    product = await db.products.find_one({"id": count["product_id"]}, {"_id": 0})
+    if not product:
+        return False
+    mtype = "ajuste_pos" if diff > 0 else "ajuste_neg"
+    actor = {"user_id": count.get("claimed_by") or "system.recoverer",
+             "email": count.get("authorized_by_email")
+             or "system@resiliencebrothers.com"}
+    reason = (f"Ajuste por conteo físico {count['count_date']} · doc: "
+              f"{document}" + (f" · {note.strip()}" if note else ""))
+    mov = await record_movement(
+        product=product, mtype=mtype, quantity=abs(diff), note=reason,
+        source="conteo", ref_id=count_id, actor=actor,
+        dedupe_key=f"count-adjust:{count_id}:v{version}")
+    now = iso(now_utc())
+    if not mov.get("stock_applied"):
+        # Aún no se pudo aplicar (p.ej. stock insuficiente ahora mismo): se deja
+        # PENDIENTE para el siguiente ciclo del recuperador.
+        await db.inventory_counts.update_one(
+            {"id": count_id, "version": version, "authorized": {"$ne": True}},
+            {"$set": {"auth_state": "pending_apply",
+                      "adjustment_movement_id": mov["id"],
+                      "updated_at": now}})
+        return False
+    res = await db.inventory_counts.update_one(
+        {"id": count_id, "version": version, "authorized": {"$ne": True}},
+        {"$set": {"authorized": True, "status": "ajustado",
+                  "auth_state": "authorized", "authorized_version": version,
+                  "adjustment_movement_id": mov["id"],
+                  "adjustment_document": document,
+                  "adjustment_note": note,
+                  "authorized_by": actor["user_id"],
+                  "authorized_by_email": actor["email"],
+                  "recovered_at": now, "authorized_at": now, "updated_at": now}})
+    if not res.modified_count:
+        return False
+    # La diferencia quedó ajustada → resolver la incidencia asociada.
+    try:
+        from services.inventory_incidents import on_count_authorized
+        await on_count_authorized(count_id)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"incident on_count_authorized (recover) failed: {e}")
+    return True
+
+
+async def recover_pending_count_adjustments(stale_seconds: int = 60) -> int:
+    """RECUPERADOR AUTOMÁTICO (iter350) — completa ajustes de conteo físico que
+    quedaron a medio aplicar tras una interrupción (crash entre el claim/registro
+    del movimiento y la aplicación del stock), sin esperar a que un admin
+    reintente manualmente.
+
+    Busca conteos NO autorizados en dos estados:
+    - `pending_apply`: el movimiento ya se registró pero el stock no se aplicó;
+      se procesa de inmediato (la petición del admin ya devolvió 409).
+    - `claiming` estancado (claim más viejo que `stale_seconds`): el claim quedó
+      colgado; se completa sin competir con una autorización de admin en curso.
+
+    Idempotente por `dedupe_key` del movimiento: nunca duplica el ajuste.
+    Devuelve el número de conteos sanados."""
+    from datetime import timedelta
+    cutoff = iso(now_utc() - timedelta(seconds=stale_seconds))
+    stuck = await db.inventory_counts.find(
+        {"authorized": {"$ne": True},
+         "$or": [
+             {"auth_state": "pending_apply"},
+             {"auth_state": "claiming", "claimed_at": {"$lt": cutoff}},
+         ]},
+        {"_id": 0}).to_list(500)
+    healed = 0
+    for count in stuck:
+        try:
+            if await _recover_one_count(count):
+                healed += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[ipv-recover] conteo {count.get('id')} falló: {e}")
+    if healed:
+        logger.info("[ipv-recover] %s ajuste(s) de conteo completados", healed)
+    return healed
+
 
 
 async def build_close_review(day: str) -> dict:

@@ -43,6 +43,19 @@ def _r(n: float, d: int = 2) -> float:
     return 0.0 if v == 0 else v
 
 
+def _effect_order_key(m: dict) -> tuple:
+    """iter349 (RV-02/H03) — orden REAL de aplicación de los efectos: la
+    SECUENCIA EFECTIVA por producto (`effect_seq`), asignada ATÓMICAMENTE junto
+    al cambio de stock/WAC, manda sobre cualquier marca de tiempo (`applied_at`
+    puede sellarse fuera de orden en un reintento/recuperación). Los movimientos
+    heredados sin secuencia se ordenan por su instante efectivo y van ANTES de
+    los que ya llevan secuencia (ocurrieron antes de esta mejora)."""
+    seq = m.get("effect_seq")
+    if seq is not None:
+        return (1, int(seq), "")
+    return (0, 0, m.get("_eff") or m.get("created_at") or "")
+
+
 async def build_cutoff_report(cutoff: str,
                               start: Optional[str] = None) -> dict:
     """Reporte de inventario a la FECHA DE CORTE `cutoff` (YYYY-MM-DD, hora de
@@ -87,7 +100,7 @@ async def build_cutoff_report(cutoff: str,
         {"_id": 0, "product_id": 1, "product_name": 1, "type": 1,
          "quantity": 1, "unit_cost": 1, "unit_price": 1,
          "change_kind": 1, "note": 1,
-         "created_at": 1, "applied_at": 1,
+         "created_at": 1, "applied_at": 1, "effect_seq": 1,
          "needs_stock": 1, "stock_applied": 1}).to_list(500000)
     by_prod: dict = {}
     for m in movs:
@@ -103,7 +116,7 @@ async def build_cutoff_report(cutoff: str,
         m["_eff"] = eff
         by_prod.setdefault(m["product_id"], []).append(m)
     for lst in by_prod.values():
-        lst.sort(key=lambda x: (x["_eff"], x["created_at"]))
+        lst.sort(key=_effect_order_key)
 
     pids = allowed
 
