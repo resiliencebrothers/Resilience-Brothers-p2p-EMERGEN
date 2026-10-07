@@ -60,7 +60,7 @@ async def build_cutoff_report(cutoff: str,
     products = await db.products.find(
         _COMPANY_FILTER,
         {"_id": 0, "id": 1, "name": 1, "category": 1,
-         "is_active": 1, "stock": 1}).to_list(5000)
+         "is_active": 1, "stock": 1, "unit": 1}).to_list(5000)
     pmap = {p["id"]: p for p in products}
 
     # Conteos físicos del día de corte (para valorar diferencias).
@@ -116,7 +116,9 @@ async def build_cutoff_report(cutoff: str,
     rows = []
     coverage_from = None
     tot_value = 0.0
-    tot_units = 0.0
+    # H12 (iter345) — las cantidades físicas NO se suman entre unidades distintas
+    # (u/lb/kg): se agregan por unidad para no mezclar magnitudes sin sentido.
+    units_by_unit: dict = {}
     tot_diff_value = 0.0
     partials = 0
     undoc_count = 0
@@ -186,6 +188,10 @@ async def build_cutoff_report(cutoff: str,
         # base sin documentar que haya que señalar (H04).
         has_flow = any(flows[k] for k in _FLOW_KEYS)
         c = counts.get(pid)
+        # H12 (iter345) — unidad de la fila para interpretar sus cantidades
+        # físicas (del producto; si fue borrado, del conteo del día).
+        row_unit = (pmap.get(pid, {}).get("unit")
+                    or (c.get("unit") if c else None) or "unidad")
         if (_r(final_stock, 3) == 0 and not has_flow and not c
                 and not undocumented):
             continue
@@ -220,6 +226,7 @@ async def build_cutoff_report(cutoff: str,
         rows.append({
             "product_id": pid,
             "name": name,
+            "unit": row_unit,
             "category": pmap.get(pid, {}).get("category", ""),
             "is_active": bool(pmap.get(pid, {}).get("is_active", True)),
             "exists": pid in pmap,
@@ -242,7 +249,8 @@ async def build_cutoff_report(cutoff: str,
             "count": count_block,
         })
         tot_value += value
-        tot_units += final_stock if final_stock > 0 else 0
+        if final_stock > 0:
+            units_by_unit[row_unit] = units_by_unit.get(row_unit, 0.0) + final_stock
     rows.sort(key=lambda r: (-r["value"], r["name"].lower()))
     return {
         "cutoff": cutoff,
@@ -260,7 +268,7 @@ async def build_cutoff_report(cutoff: str,
         "products": rows,
         "totals": {
             "num_products": len(rows),
-            "units": _r(tot_units, 3),
+            "units_by_unit": {u: _r(v, 3) for u, v in units_by_unit.items()},
             "value": _r(tot_value, 2),
             "value_usdt": _r(tot_value / rate_vip, 2) if rate_vip > 0 else None,
             "diff_value": _r(tot_diff_value, 2),

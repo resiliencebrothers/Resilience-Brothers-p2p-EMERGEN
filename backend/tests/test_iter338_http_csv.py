@@ -78,7 +78,11 @@ def test_csv_unidad_column_and_libra_row(seeded_lb_product):
     header = rows[header_idx]
     assert "Unidad" in header, header
     i_diff = header.index("Diferencia")
-    i_unit = header.index("Unidad")
+    # H12 (iter345) — ahora hay DOS columnas de unidad: la del producto
+    # («Unidad», posición temprana) y la del conteo físico («Unidad (conteo)»,
+    # junto a la Diferencia). Esta prueba valida la alineación del conteo.
+    i_prod_unit = header.index("Unidad")
+    i_unit = header.index("Unidad (conteo)")
     i_cost = header.index("Costo ref.")
     i_val = header.index("Valor diferencia")
     assert i_unit == i_diff + 1
@@ -88,6 +92,7 @@ def test_csv_unidad_column_and_libra_row(seeded_lb_product):
     assert prod_row is not None, f"product {pname} missing from CSV"
     assert prod_row[i_diff] == "-0.75"
     assert prod_row[i_unit] == "lb"
+    assert prod_row[i_prod_unit] == "lb"   # unidad del producto (H12)
     assert prod_row[i_cost] == "20.0"
     assert prod_row[i_val] == "-15.0"
 

@@ -22,6 +22,22 @@ export const fmtQty = (n, unit) => {
 // Paso del <input type="number"> según la unidad.
 export const qtyStep = (unit) => (isFractionUnit(unit) ? "0.001" : "1");
 
+// H12 — Desglosa un mapa {unidad: n, libra: n, kg: n} en texto legible:
+// "120 u · 45.5 lb · 12 kg". Las cantidades físicas NO se suman entre unidades
+// distintas, así que el total se presenta agregado por unidad.
+export const fmtUnitsBreakdown = (byUnit) => {
+  const entries = Object.entries(byUnit || {});
+  if (!entries.length) return "0";
+  return entries
+    .map(([u, v]) => {
+      const n = Number(v ?? 0).toLocaleString(undefined, {
+        maximumFractionDigits: isFractionUnit(u) ? 3 : 0,
+      });
+      return `${n} ${unitAbbr(u)}`;
+    })
+    .join(" · ");
+};
+
 // Normaliza el texto de un input de cantidad: solo dígitos para "unidad";
 // dígitos + un punto decimal para fracciones.
 export const sanitizeQty = (raw, unit) => {

@@ -4018,6 +4018,7 @@
       "partialTag": "Parcial",
       "inactiveTag": "Inactivo",
       "colProduct": "Producto",
+      "colUnit": "Unidad",
       "colOpening": "Inicial",
       "colIn": "Entradas",
       "colSales": "Ventas",

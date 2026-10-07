@@ -9,6 +9,7 @@ import {
   ChevronDown, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { fmtUnitsBreakdown, unitAbbr } from "@/utils/units";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const WINDOWS = [30, 60, 90];
@@ -122,7 +123,7 @@ export default function InventoryValuationTab() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {kpi("valuation-total-products", Package, t("inventory.valuation.totProducts"), totals.num_products)}
-        {kpi("valuation-total-units", Layers, t("inventory.valuation.totUnits"), totals.units)}
+        {kpi("valuation-total-units", Layers, t("inventory.valuation.totUnits"), fmtUnitsBreakdown(totals.units_by_unit))}
         {kpi("valuation-total-wac", Coins, t("inventory.valuation.totWac"), fmt(totals.value_wac), "text-emerald-400")}
         {kpi("valuation-total-lots", Coins, t("inventory.valuation.totLots"), fmt(totals.value_lots), "text-[#8B5CF6]")}
         {kpi("valuation-total-margin", Percent, t("inventory.valuation.totMargin"), fmt(totals.expected_margin), "text-emerald-300")}
@@ -195,7 +196,7 @@ export default function InventoryValuationTab() {
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-3 font-mono text-right">{p.stock}</td>
+                    <td className="px-3 py-3 font-mono text-right" data-testid={`valuation-stock-${p.product_id}`}>{p.stock} <span className="text-[0.6rem] text-neutral-500">{unitAbbr(p.unit)}</span></td>
                     <td className="px-3 py-3 font-mono text-right text-neutral-300" data-testid={`valuation-wac-${p.product_id}`}>{fmt(p.wac)}</td>
                     <td className="px-3 py-3 font-mono text-right text-emerald-300">{p.margin_pct_wac != null ? `${fmt(p.margin_pct_wac)}%` : "—"}</td>
                     <td className="px-3 py-3 font-mono text-right text-emerald-400">{fmt(p.inventory_value_wac)}</td>

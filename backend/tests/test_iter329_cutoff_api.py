@@ -118,7 +118,7 @@ class TestReportShape:
         assert data["cutoff"] == "2026-09-10"
         assert data["currency"] == "CUP"
         assert "totals" in data
-        for k in ("num_products", "units", "value", "diff_value",
+        for k in ("num_products", "units_by_unit", "value", "diff_value",
                   "partial_count"):
             assert k in data["totals"]
         # Rows for both products present with expected fields

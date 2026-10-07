@@ -180,7 +180,8 @@ async def build_valuation(window_days: int = 30) -> dict:
     out = []
     tot_val_wac = 0.0
     tot_val_lots = 0.0
-    tot_units = 0
+    # H12 (iter345) — existencias agregadas por unidad (u/lb/kg), sin mezclar.
+    units_by_unit: dict = {}
     tot_sin_lote = 0
     tot_expected_margin = 0.0
     tot_immob_value = 0.0
@@ -279,7 +280,8 @@ async def build_valuation(window_days: int = 30) -> dict:
         })
         tot_val_wac += val_wac
         tot_val_lots += val_lots
-        tot_units += stock
+        _u = r.get("unit", "unidad")
+        units_by_unit[_u] = units_by_unit.get(_u, 0.0) + stock
         tot_sin_lote += sin_lote
         tot_expected_margin += expected_margin
         if immobilized:
@@ -292,7 +294,7 @@ async def build_valuation(window_days: int = 30) -> dict:
         "products": out,
         "window_days": wd,
         "totals": {
-            "units": round(tot_units, 3),
+            "units_by_unit": {u: round(v, 3) for u, v in units_by_unit.items()},
             "value_wac": round(tot_val_wac, 2),
             "value_lots": round(tot_val_lots, 2),
             "num_products": len(out),

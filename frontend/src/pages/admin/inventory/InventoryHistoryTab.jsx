@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { CalendarClock, Download, Boxes, Coins, AlertTriangle, ScanLine, FileCheck2 } from "lucide-react";
+import { fmtUnitsBreakdown, unitAbbr } from "@/utils/units";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const qty = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 3 });
@@ -171,7 +172,7 @@ export default function InventoryHistoryTab() {
       {tot && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="history-summary">
           <Card icon={Boxes} label={t("inventory.history.sumProducts")} value={tot.num_products} />
-          <Card icon={ScanLine} label={t("inventory.history.sumUnits")} value={qty(tot.units)} />
+          <Card icon={ScanLine} label={t("inventory.history.sumUnits")} value={fmtUnitsBreakdown(tot.units_by_unit)} />
           <Card icon={Coins} label={t("inventory.history.sumValue", { cur })} value={fmt(tot.value)} accent />
           <Card icon={Coins} label={t("inventory.history.sumValueUsdt")}
             value={tot.value_usdt != null ? fmt(tot.value_usdt) : "—"} accent />
@@ -206,6 +207,7 @@ export default function InventoryHistoryTab() {
           <thead>
             <tr className="bg-white/5 text-neutral-400 uppercase tracking-wider text-[0.6rem]">
               <th className="text-left px-3 py-2">{t("inventory.history.colProduct")}</th>
+              <th className="text-left px-2 py-2">{t("inventory.history.colUnit")}</th>
               <th className="text-right px-2 py-2">{t("inventory.history.colOpening")}</th>
               <th className="text-right px-2 py-2">{t("inventory.history.colIn")}</th>
               <th className="text-right px-2 py-2">{t("inventory.history.colSales")}</th>
@@ -249,6 +251,7 @@ export default function InventoryHistoryTab() {
                   </div>
                   {p.category && <span className="text-[0.6rem] text-neutral-500">{p.category}</span>}
                 </td>
+                <td className="px-2 py-2 text-neutral-400 uppercase text-[0.6rem]" data-testid={`history-unit-${p.product_id}`}>{unitAbbr(p.unit)}</td>
                 <td className="text-right px-2 py-2 text-neutral-400">{qty(p.opening)}</td>
                 <td className="text-right px-2 py-2 text-emerald-400/80">{p.entradas ? "+" + qty(p.entradas) : "—"}</td>
                 <td className="text-right px-2 py-2 text-neutral-300">{p.ventas ? "−" + qty(p.ventas) : "—"}</td>
@@ -269,11 +272,11 @@ export default function InventoryHistoryTab() {
               </tr>
             ))}
             {!loading && !(data?.products || []).length && (
-              <tr><td colSpan={14} className="px-3 py-8 text-center text-neutral-500"
+              <tr><td colSpan={15} className="px-3 py-8 text-center text-neutral-500"
                 data-testid="history-empty">{t("inventory.history.empty")}</td></tr>
             )}
             {loading && (
-              <tr><td colSpan={14} className="px-3 py-8 text-center text-neutral-500">{t("inventory.history.loading")}</td></tr>
+              <tr><td colSpan={15} className="px-3 py-8 text-center text-neutral-500">{t("inventory.history.loading")}</td></tr>
             )}
           </tbody>
         </table>

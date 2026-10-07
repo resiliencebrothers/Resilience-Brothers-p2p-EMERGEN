@@ -391,7 +391,9 @@ async def _build_close_acta(day: str, review: dict) -> dict:
     rate = float(fxr.get("rate") or 0)
     rows = []
     tot_cup = 0.0
-    units = 0.0
+    # H12 (iter345) — cantidades físicas agregadas por unidad (u/lb/kg), nunca
+    # mezcladas en un único número sin significado.
+    units_by_unit: dict = {}
     partials = 0
     for p in rep.get("products", []):
         stock = float(p.get("final_stock") or 0)
@@ -401,16 +403,18 @@ async def _build_close_acta(day: str, review: dict) -> dict:
             continue
         if p.get("coverage") == "parcial":
             partials += 1
+        unit = p.get("unit", "unidad")
         rows.append({
             "product_id": p["product_id"], "name": p.get("name", ""),
-            "category": p.get("category", ""), "stock": stock,
+            "category": p.get("category", ""), "stock": stock, "unit": unit,
             "cost_usd": round(cost, 4), "value_cup": val,
             "value_usdt": p.get("value_usdt"),
             "coverage": p.get("coverage", "completa"),
             "undocumented_base": bool(p.get("undocumented_base")),
         })
         tot_cup += val
-        units += stock if stock > 0 else 0
+        if stock > 0:
+            units_by_unit[unit] = units_by_unit.get(unit, 0.0) + stock
     rows.sort(key=lambda r: -r["value_cup"])
     return {
         # Fecha EFECTIVA del corte (lo que valora el acta) vs momento de captura
@@ -420,7 +424,8 @@ async def _build_close_acta(day: str, review: dict) -> dict:
         "fx": {"rate_vip": rate, "rate_date": fxr.get("rate_date"),
                "estimated": bool(fxr.get("estimated"))},
         "totals": {
-            "num_products": len(rows), "units": round(units, 3),
+            "num_products": len(rows),
+            "units_by_unit": {u: round(v, 3) for u, v in units_by_unit.items()},
             "value_cup": round(tot_cup, 2),
             "value_usdt": round(tot_cup / rate, 2) if rate > 0 else None,
             "partial_count": partials,

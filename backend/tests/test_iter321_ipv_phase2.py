@@ -157,7 +157,7 @@ class TestValuationFIFO:
         assert r.status_code == 200, r.text
         data = r.json()
         assert "products" in data and "totals" in data
-        for key in ("units", "value_wac", "value_lots",
+        for key in ("units_by_unit", "value_wac", "value_lots",
                     "num_products", "stock_sin_lote"):
             assert key in data["totals"], f"Falta totals.{key}"
 

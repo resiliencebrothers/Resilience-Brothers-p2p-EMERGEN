@@ -363,16 +363,17 @@ async def inventory_cutoff_report_csv(request: Request,
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
     writer.writerow([
-        "Producto", "Categoría", "Activo", "Existencia inicial", "Entradas",
-        "Ventas", "Merma", "Consumo", "Otras salidas", "Ajuste neto",
+        "Producto", "Categoría", "Activo", "Unidad", "Existencia inicial",
+        "Entradas", "Ventas", "Merma", "Consumo", "Otras salidas", "Ajuste neto",
         "Existencia final", f"Costo WAC ({data['currency']})",
         f"Valor ({data['currency']})", "Valor (USDT)", "Cobertura",
-        "Conteo físico", "Teórico", "Diferencia", "Unidad", "Costo ref.",
+        "Conteo físico", "Teórico", "Diferencia", "Unidad (conteo)", "Costo ref.",
         "Valor diferencia", "Autorizado"])
     for p in data["products"]:
         c = p.get("count") or {}
         writer.writerow([
             p["name"], p["category"], "Sí" if p["is_active"] else "No",
+            UNIT_ABBR.get(p.get("unit", ""), p.get("unit", "")),
             p["opening"], p["entradas"], p["ventas"], p["merma"], p["consumo"],
             p["otra_salida"], p["ajuste_neto"], p["final_stock"], p["wac"],
             p["value"], p.get("value_usdt", "") if p.get("value_usdt") is not None else "",
@@ -385,9 +386,14 @@ async def inventory_cutoff_report_csv(request: Request,
             c.get("difference_value", "") if c else "",
             ("Sí" if c.get("authorized") else "No") if c else ""])
     t = data["totals"]
+    # H12 (iter345) — el total físico se desglosa por unidad (u/lb/kg); mezclarlas
+    # en un solo número no tendría significado contable.
+    units_str = " · ".join(
+        f"{('%g' % v)} {UNIT_ABBR.get(u, u)}"
+        for u, v in (t.get("units_by_unit") or {}).items()) or "—"
     writer.writerow([])
-    writer.writerow(["TOTALES", "", "", "", "", "", "", "", "", "",
-                     t["units"], "", t["value"],
+    writer.writerow(["TOTALES", "", "", "", "", "", "", "", "", "", "",
+                     units_str, "", t["value"],
                      t.get("value_usdt", "") if t.get("value_usdt") is not None else "",
                      f"{t['partial_count']} parcial(es)",
                      "", "", "", "", "", t["diff_value"], ""])
@@ -638,7 +644,7 @@ async def inventory_valuation_csv(request: Request, window: int = 30) -> Any:
     data = await build_valuation(window_days=window)
     text_buf = io.StringIO()
     writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
-    writer.writerow(["Producto", "Categoría", "Existencia", "WAC (costo prom.)",
+    writer.writerow(["Producto", "Categoría", "Unidad", "Existencia", "WAC (costo prom.)",
                      "Precio venta", "Margen %", "Valor WAC", "Valor por lotes",
                      "Margen esperado", "Stock sin lote", "Vendidas (período)",
                      "Días p/agotar", "Estado capital", "Lote fecha",
@@ -648,7 +654,9 @@ async def inventory_valuation_csv(request: Request, window: int = 30) -> Any:
     cap_es = {"activo": "Activo", "lento": "Lento", "sin_ventas": "Sin ventas",
               "vacio": "Sin stock"}
     for p in data["products"]:
-        base = [p["name"], p["category"], p["stock"], p["wac"], p["price_usd"],
+        base = [p["name"], p["category"],
+                UNIT_ABBR.get(p.get("unit", ""), p.get("unit", "")),
+                p["stock"], p["wac"], p["price_usd"],
                 p["margin_pct_wac"] if p["margin_pct_wac"] is not None else "",
                 p["inventory_value_wac"], p["inventory_value_lots"],
                 p["expected_margin"], p["stock_sin_lote"], p["sold_window"],
