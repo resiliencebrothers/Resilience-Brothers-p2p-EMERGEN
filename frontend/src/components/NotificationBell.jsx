@@ -1,6 +1,6 @@
 import { useAuth } from "@/context/AuthContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink, Landmark } from "lucide-react";
+import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink, Landmark, FileCheck2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -11,6 +11,7 @@ const TYPE_ICON = {
   phone_rejected: { Icon: UserX, color: "text-[#EF4444]" },
   payment_account_changed: { Icon: Landmark, color: "text-amber-400" },
   payment_account_unavailable: { Icon: Landmark, color: "text-[#EF4444]" },
+  reconciliation_done: { Icon: FileCheck2, color: "text-[#22C55E]" },
   info: { Icon: BellRing, color: "text-neutral-400" },
 };
 

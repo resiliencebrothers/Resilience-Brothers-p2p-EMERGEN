@@ -306,6 +306,19 @@ async def process_import(import_id: str, data: bytes, ext: str) -> None:
             }, roles=("admin", "employee"))
         except Exception:
             pass
+        # iter347 — Aviso Conciliación: avisa a los admins (push + email +
+        # campana) con el resumen de identificados al terminar con resultado.
+        if status in ("processed", "partially_processed"):
+            try:
+                from services.reconciliation_alerts import notify_reconciliation_done
+                await notify_reconciliation_done(
+                    imp, status=status, detected=len(tx_docs),
+                    auto=counts["auto"], review=counts["review"],
+                    unmatched=counts["unmatched"],
+                    duplicates=duplicates + counts.get("duplicate", 0),
+                    notes=notes or "")
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"reconciliation done alert failed: {e}")
     except Exception as e:
         logger.exception(f"reconciliation import {import_id} failed")
         await db.bank_statement_imports.update_one(
