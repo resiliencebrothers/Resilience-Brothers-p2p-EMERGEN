@@ -30,6 +30,9 @@ export default function InventoryCloseTab() {
   const emptySign = { responsable: "", revisado_por: "", folio: "", note: "" };
   const [sign, setSign] = useState(emptySign);
   const [savingClose, setSavingClose] = useState(false);
+  // iter343 (H11/IPV-R04) — modo "corrección": permite crear una nueva revisión
+  // trazable (nueva versión del acta) incluso sobre un cierre ya FINAL.
+  const [correcting, setCorrecting] = useState(false);
 
   const downloadPdf = async () => {
     setDownloading(true);
@@ -107,8 +110,9 @@ export default function InventoryCloseTab() {
         folio: sign.folio.trim(),
         note: sign.note.trim(),
       }, { withCredentials: true });
-      toast.success(t("inventory.close.reviewSaved"));
+      toast.success(correcting ? t("inventory.close.correctionSaved") : t("inventory.close.reviewSaved"));
       setSign(emptySign);
+      setCorrecting(false);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || t("inventory.close.reviewError")); }
     finally { setSavingClose(false); }
@@ -321,23 +325,36 @@ export default function InventoryCloseTab() {
           <div className="flex items-center gap-2 flex-wrap">
             <ClipboardCheck className="w-4 h-4 text-[#8B5CF6]" />
             <h3 className="font-display text-base">{t("inventory.close.ipvTitle")}</h3>
-            <span
-              data-testid="close-review-result"
-              className={`ml-auto text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border whitespace-nowrap ${
-                review.resultado_sugerido === "cuadra"
-                  ? "text-emerald-400 border-emerald-500/30"
-                  : review.resultado_sugerido === "pendiente"
-                  ? "text-sky-300 border-sky-500/30"
-                  : "text-amber-300 border-amber-500/30"
-              }`}
-            >
-              {t("inventory.close.resultado")}: {
-                review.resultado_sugerido === "cuadra"
-                  ? t("inventory.close.resCuadra")
-                  : review.resultado_sugerido === "pendiente"
-                  ? t("inventory.close.resPendiente")
-                  : t("inventory.close.resDescuadra")}
-            </span>
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <span
+                data-testid="close-review-result"
+                className={`text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border whitespace-nowrap ${
+                  review.resultado_sugerido === "cuadra"
+                    ? "text-emerald-400 border-emerald-500/30"
+                    : review.resultado_sugerido === "pendiente"
+                    ? "text-sky-300 border-sky-500/30"
+                    : "text-amber-300 border-amber-500/30"
+                }`}
+              >
+                {t("inventory.close.numericResult")}: {
+                  review.resultado_sugerido === "cuadra"
+                    ? t("inventory.close.resCuadra")
+                    : review.resultado_sugerido === "pendiente"
+                    ? t("inventory.close.resPendiente")
+                    : t("inventory.close.resDescuadra")}
+              </span>
+              {/* H11 — estado de REVISIÓN guardado, distinto del resultado numérico:
+                  un inventario que "cuadra" puede seguir con la revisión PENDIENTE. */}
+              <span
+                data-testid="close-review-state-badge"
+                className={`text-[0.65rem] uppercase tracking-wider px-2 py-0.5 border whitespace-nowrap ${
+                  closeDoc ? closeStateCls(closeDoc.resultado) : "text-neutral-500 border-white/10"
+                }`}
+              >
+                {t("inventory.close.reviewState")}: {
+                  !closeDoc ? t("inventory.close.stateSinRevisar") : closeStateLabel(closeDoc.resultado)}
+              </span>
+            </div>
           </div>
           <p className="text-[0.65rem] text-neutral-500">{t("inventory.close.ipvHint")}</p>
 
@@ -387,11 +404,41 @@ export default function InventoryCloseTab() {
             </div>
           </div>
 
-          {closeFinal ? (
-            doneBlock
+          {closeFinal && !correcting ? (
+            <div className="space-y-3">
+              {doneBlock}
+              {isAdmin && (
+                <Button data-testid="close-create-correction" variant="outline" size="sm"
+                  onClick={() => {
+                    setSign({
+                      responsable: closeDoc.responsable || "",
+                      revisado_por: closeDoc.revisado_por || "",
+                      folio: closeDoc.folio || "",
+                      note: closeDoc.note || "",
+                    });
+                    setCorrecting(true);
+                  }}
+                  className="rounded-none border-white/10 text-xs">
+                  <ClipboardCheck className="w-3.5 h-3.5 mr-1" /> {t("inventory.close.createCorrection")}
+                </Button>
+              )}
+            </div>
           ) : isAdmin ? (
             <div className="space-y-3">
-              {closePending && (
+              {correcting ? (
+                <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-3" data-testid="close-correction-banner">
+                  <p className="text-sm text-[#A78BFA] flex items-center gap-2">
+                    <ClipboardCheck className="w-4 h-4" /> {t("inventory.close.correctionTitle")}
+                    {closeDoc && (
+                      <span data-testid="close-correction-prev-version"
+                        className="ml-auto text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border border-white/10 text-neutral-400">
+                        v{closeDoc.snapshot_version || 1}
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-[0.65rem] text-neutral-400 mt-1">{t("inventory.close.correctionHint")}</p>
+                </div>
+              ) : closePending && (
                 <div className="border border-sky-500/20 bg-sky-500/5 p-3" data-testid="close-pending-banner">
                   <p className="text-sm text-sky-300 flex items-center gap-2">
                     <ClipboardCheck className="w-4 h-4" /> {t("inventory.close.pendingTitle")}
@@ -430,12 +477,21 @@ export default function InventoryCloseTab() {
                       className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
                   </div>
                 </div>
-                <Button data-testid="close-review-save" onClick={saveReview} disabled={savingClose}
-                  className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-10">
-                  <ClipboardCheck className="w-4 h-4 mr-1" /> {savingClose ? "…" : (closePending ? t("inventory.close.completeBtn") : t("inventory.close.reviewBtn"))}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button data-testid="close-review-save" onClick={saveReview} disabled={savingClose}
+                    className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none h-10">
+                    <ClipboardCheck className="w-4 h-4 mr-1" /> {savingClose ? "…" : (correcting ? t("inventory.close.correctionBtn") : closePending ? t("inventory.close.completeBtn") : t("inventory.close.reviewBtn"))}
+                  </Button>
+                  {correcting && (
+                    <Button data-testid="close-cancel-correction" variant="outline" size="sm"
+                      onClick={() => { setCorrecting(false); setSign(emptySign); }}
+                      className="rounded-none border-white/10 text-xs h-10">
+                      {t("inventory.close.cancelCorrection")}
+                    </Button>
+                  )}
+                </div>
                 <p className="text-[0.65rem] text-neutral-500" data-testid="close-no-close">
-                  {closePending ? t("inventory.close.completeHint") : t("inventory.close.noClose")}
+                  {correcting ? t("inventory.close.correctionHint") : closePending ? t("inventory.close.completeHint") : t("inventory.close.noClose")}
                 </p>
               </div>
             </div>

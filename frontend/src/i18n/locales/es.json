@@ -4462,7 +4462,16 @@
       "respRequired": "Indica el responsable del cierre",
       "countSheetPdf": "Acta de conteo (PDF)",
       "countSheetDone": "Acta de conteo descargada",
-      "countSheetError": "No se pudo generar el acta"
+      "countSheetError": "No se pudo generar el acta",
+      "numericResult": "Inventario",
+      "reviewState": "Revisión",
+      "stateSinRevisar": "SIN REVISAR",
+      "createCorrection": "Crear corrección",
+      "correctionTitle": "Corrección de cierre",
+      "correctionHint": "Crearás una nueva versión del acta conservando la anterior como evidencia (trazable).",
+      "correctionBtn": "Guardar corrección",
+      "correctionSaved": "Corrección registrada como nueva versión",
+      "cancelCorrection": "Cancelar"
     },
     "valuation": {
       "title": "Valoración de inventario",

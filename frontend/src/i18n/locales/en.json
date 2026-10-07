@@ -4462,7 +4462,16 @@
       "respRequired": "Enter the closing preparer",
       "countSheetPdf": "Count sheet (PDF)",
       "countSheetDone": "Count sheet downloaded",
-      "countSheetError": "Could not generate the count sheet"
+      "countSheetError": "Could not generate the count sheet",
+      "numericResult": "Inventory",
+      "reviewState": "Review",
+      "stateSinRevisar": "NOT REVIEWED",
+      "createCorrection": "Create correction",
+      "correctionTitle": "Close correction",
+      "correctionHint": "You will create a new version of the record, keeping the previous one as evidence (traceable).",
+      "correctionBtn": "Save correction",
+      "correctionSaved": "Correction recorded as a new version",
+      "cancelCorrection": "Cancel"
     },
     "valuation": {
       "title": "Inventory valuation",
