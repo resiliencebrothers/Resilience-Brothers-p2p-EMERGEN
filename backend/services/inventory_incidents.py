@@ -103,7 +103,7 @@ async def _upsert_incident(*, itype: str, product_id: str, product_name: str,
         return latest["id"]
     episode = (int(latest.get("episode") or 1) + 1) if latest else 1
     predecessor_id = latest["id"] if latest else None
-    if predecessor_id:
+    if latest:
         note0 = (f"Reaparece la causa: episodio #{episode} sucesor de "
                  f"{predecessor_id} (resuelto {latest.get('resolved_at', '')[:10]}).")
     else:

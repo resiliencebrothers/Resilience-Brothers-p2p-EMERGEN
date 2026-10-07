@@ -10,7 +10,7 @@ vendedores VIP no entran al inventario físico de la compañía.
 """
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import HTTPException
 
@@ -34,7 +34,7 @@ FRACTION_UNITS = ("libra", "kg")
 UNIT_ABBR = {"unidad": "u", "libra": "lb", "kg": "kg"}
 
 
-def qnum(v) -> float:
+def qnum(v: Any) -> float:
     """Cantidad normalizada a 3 decimales (soporta fracciones lb/kg).
     Sustituye los int() defensivos que truncaban la fracción."""
     try:
@@ -52,7 +52,7 @@ def sells_fraction(product: dict) -> bool:
     return product_unit(product) in FRACTION_UNITS
 
 
-def norm_qty(product: dict, qty) -> float:
+def norm_qty(product: dict, qty: Any) -> float:
     """Redondea a 3 decimales; fuerza entero si el producto se vende por unidad."""
     q = qnum(qty)
     return q if sells_fraction(product) else float(round(q))
@@ -321,10 +321,11 @@ async def get_low_stock_threshold() -> int:
         return LOW_STOCK_THRESHOLD
 
 
-def effective_low_stock_threshold(product: dict, global_threshold: int) -> int:
+def effective_low_stock_threshold(product: dict, global_threshold: int) -> float:
     """iter332 (IPV Fase 2) — umbral efectivo de un producto: su `min_stock`
     si está configurado (incluye 0 = solo avisa al agotarse), o el umbral
-    global si está vacío/None (sin mínimo propio)."""
+    global si está vacío/None (sin mínimo propio). iter347 (H14) — devuelve
+    float para admitir mínimos fraccionarios (lb/kg)."""
     ms = product.get("min_stock")
     if ms is None:
         return global_threshold

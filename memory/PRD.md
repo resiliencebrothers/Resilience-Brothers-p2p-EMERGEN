@@ -2422,3 +2422,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter347 — Aviso Conciliación (7 oct 2026)
 - Pedido del usuario (backlog P3): al terminar de procesarse un extracto bancario (processed/partially_processed), los admins reciben aviso (push + email + campana) con el resumen de identificados (conciliados automáticamente + por revisar) vs. no identificados. `services/reconciliation_alerts.py` cableado en `process_import`; `NotificationBell.jsx` con icono dedicado. Tests iter347 (2/2) + regresión iter167 (5/5) + verificación en vivo. **Backlog P3 «Aviso Conciliación Lista» → HECHO.**
+
+### iter347b — H14: CI verde (mypy + cobertura obligatoria) (7 oct 2026)
+- H14 (MEDIA, bloqueaba CI): corregidos los 5 errores de mypy (anotaciones de qnum/norm_qty, retorno float de effective_low_stock_threshold, acumulador tot_sin_lote float, estrechamiento de None en _upsert_incident) y 2 errores de ESLint (DialogContent sin max-h en InventoryHistoryTab). Ampliado `test-critical` con incidencias (343b, 346), fracciones (337_h02, 338_h03) y escenarios H04-H13 + H12/Aviso Conciliación (339/340/341/343/343d/343f/345/347). Verificado localmente: mypy 110/110, test-critical 1026 passed, ESLint 0 errores. **Pendiente del usuario: push vía "Save to GitHub" para el run oficial de CI.**

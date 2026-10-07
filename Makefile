@@ -13,7 +13,7 @@ smoke: ## Run the 6 drift-guarded smoke tests (~15s) — same as pre-commit
 		tests/test_iter55_19g_notification_explorer_link.py \
 		-q
 
-test-critical: ## Run critical regression subset (~5 min, ~270 tests incl. IPV iter320-326) — pre-commit safety net
+test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV Fase 1-4 iter320-347: fracciones, incidencias, cortes, cierres, valoración, conciliación) — pre-commit safety net
 	cd backend && python -m pytest \
 		tests/test_iter55_16_permissions.py \
 		tests/test_iter55_16b_audit_perm_snapshot.py \
@@ -105,6 +105,18 @@ test-critical: ## Run critical regression subset (~5 min, ~270 tests incl. IPV i
 		tests/test_iter333_incidents_reorder.py \
 		tests/test_iter335_fraction_units.py \
 		tests/test_iter336_ipv_r03_versioning.py \
+		tests/test_iter337_ipv_h02_fraction_diff.py \
+		tests/test_iter338_ipv_h03_effective_order.py \
+		tests/test_iter339_ipv_h04_coverage.py \
+		tests/test_iter340_ipv_h05_historical_acta.py \
+		tests/test_iter341_ipv_h04_audited_opening.py \
+		tests/test_iter343_concurrent_close_version.py \
+		tests/test_iter343b_incident_reappear.py \
+		tests/test_iter343d_history_cost_vs_price.py \
+		tests/test_iter343f_h10_delete_protection.py \
+		tests/test_iter345_h12_units_by_unit.py \
+		tests/test_iter346_h13_incidents_scope.py \
+		tests/test_iter347_reconciliation_alert.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

@@ -284,7 +284,7 @@ export default function InventoryHistoryTab() {
 
       {/* Diálogo: apertura auditada por producto */}
       <Dialog open={!!opening} onOpenChange={(o) => !o && setOpening(null)}>
-        <DialogContent data-testid="opening-dialog" className="bg-[#14122A] border-white/10 text-white rounded-none">
+        <DialogContent data-testid="opening-dialog" className="bg-[#14122A] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("inventory.history.openingTitle")}</DialogTitle>
             <DialogDescription className="text-neutral-400">
@@ -325,7 +325,7 @@ export default function InventoryHistoryTab() {
 
       {/* Diálogo: documentar todas las bases (bloque, 2FA) */}
       <Dialog open={bulkOpen} onOpenChange={(o) => { if (!o) { setBulkOpen(false); setBulkTotp(""); } }}>
-        <DialogContent data-testid="opening-bulk-dialog" className="bg-[#14122A] border-white/10 text-white rounded-none">
+        <DialogContent data-testid="opening-bulk-dialog" className="bg-[#14122A] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("inventory.history.openingAllTitle")}</DialogTitle>
             <DialogDescription className="text-neutral-400">

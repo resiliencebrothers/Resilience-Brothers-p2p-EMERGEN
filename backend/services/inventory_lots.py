@@ -182,7 +182,7 @@ async def build_valuation(window_days: int = 30) -> dict:
     tot_val_lots = 0.0
     # H12 (iter345) — existencias agregadas por unidad (u/lb/kg), sin mezclar.
     units_by_unit: dict = {}
-    tot_sin_lote = 0
+    tot_sin_lote = 0.0
     tot_expected_margin = 0.0
     tot_immob_value = 0.0
     tot_immob_count = 0
