@@ -287,6 +287,50 @@ async def authorize_count_adjustment(count_id: str, document: str,
     return await db.inventory_counts.find_one({"id": count_id}, {"_id": 0})
 
 
+async def _notify_count_recovered(product: dict, count: dict, diff: float,
+                                  document: str) -> None:
+    """iter350b — avisa a los admins (campana + push) que el Recuperador
+    Automático completó un ajuste de conteo tras una interrupción. Sin email
+    para no generar ruido: es un evento de sanación operativa, no una alerta."""
+    name = product.get("name") or product.get("id")
+    unit = product_unit(product)
+    sign = "+" if diff > 0 else "−"
+    qty = abs(round(diff, 3))
+    title = "Ajuste de conteo recuperado"
+    body = (f"El ajuste del conteo físico de «{name}» "
+            f"({count.get('count_date')}) se aplicó automáticamente tras una "
+            f"interrupción: {sign}{qty} {unit} · doc: {document}.")
+    url_path = "/admin/inventory"
+    admins = await db.users.find({"role": "admin"}, {"_id": 0}).to_list(50)
+    if not admins:
+        return
+    try:
+        from admin_alerts import APP_URL, _push_fanout_to_admins
+        target_url = f"{APP_URL}{url_path}" if APP_URL else url_path
+        payload = {"title": title, "body": body,
+                   "icon": "/icons/icon-192.png",
+                   "badge": "/icons/icon-192.png",
+                   "tag": f"ipv-recover-{(count.get('id') or '')[:20]}",
+                   "url": target_url}
+        _, dead_ids = await _push_fanout_to_admins(db, admins, payload)
+        if dead_ids:
+            await db.push_subscriptions.delete_many({"id": {"$in": dead_ids}})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ipv-recover] push a admins falló: {e}")
+    try:
+        from routes.notifications import _insert_notification
+        for a in admins:
+            await _insert_notification(
+                recipient_user_id=a["user_id"], type="ipv_count_recovered",
+                title=title, message=body,
+                data={"product_id": product.get("id"),
+                      "count_id": count.get("id"),
+                      "count_date": count.get("count_date"),
+                      "difference": round(diff, 3), "document": document})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ipv-recover] campana a admins falló: {e}")
+
+
 async def _recover_one_count(count: dict) -> bool:
     """Completa, de forma idempotente, UN conteo cuyo ajuste quedó a medias.
 
@@ -346,6 +390,11 @@ async def _recover_one_count(count: dict) -> bool:
         await on_count_authorized(count_id)
     except Exception as e:  # noqa: BLE001
         logger.error(f"incident on_count_authorized (recover) failed: {e}")
+    # Aviso a los admins (campana + push) de que la red de seguridad actuó.
+    try:
+        await _notify_count_recovered(product, count, diff, document)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[ipv-recover] aviso a admins falló: {e}")
     return True
 
 

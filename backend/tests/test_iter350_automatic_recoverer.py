@@ -207,6 +207,38 @@ async def test_idempotent_second_run_noop():
         await _cleanup(pid)
 
 
+async def test_recovery_notifies_admins():
+    """Al sanar un conteo, los admins reciben un aviso en la campana
+    (type=ipv_count_recovered) con el producto y el documento."""
+    pid = await _mk_product(stock=10.0)
+    c_id = None
+    try:
+        c = await _mk_counted(pid)
+        c_id = c["id"]
+        mov_id = await _inject_movement(pid, c_id, c["version"],
+                                        applied_stock=False)
+        await db.inventory_counts.update_one(
+            {"id": c_id},
+            {"$set": {"auth_state": "pending_apply",
+                      "adjustment_document": "DOC-350N",
+                      "adjustment_movement_id": mov_id,
+                      "claimed_by": ACTOR["user_id"]}})
+
+        healed = await recover_pending_count_adjustments()
+        assert healed >= 1
+
+        notif = await db.notifications.find_one(
+            {"type": "ipv_count_recovered", "data.count_id": c_id}, {"_id": 0})
+        assert notif is not None, "debe crearse el aviso de campana para el admin"
+        assert notif["data"]["product_id"] == pid
+        assert notif["data"]["document"] == "DOC-350N"
+        assert "recuper" in notif["title"].lower()
+    finally:
+        if c_id:
+            await db.notifications.delete_many({"data.count_id": c_id})
+        await _cleanup(pid)
+
+
 async def test_stays_pending_when_stock_insufficient():
     """Si el stock es insuficiente al recuperar un ajuste YA registrado
     (pending_apply), el conteo sigue pendiente (no se marca ajustado) para el

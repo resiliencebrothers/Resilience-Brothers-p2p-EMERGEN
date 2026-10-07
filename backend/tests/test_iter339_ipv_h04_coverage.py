@@ -103,17 +103,22 @@ async def test_documented_opening_is_complete():
         await _cleanup(pid)
 
 
-async def test_past_cutoff_not_flagged():
-    """Un corte PASADO no se contrasta contra la existencia actual (no
-    verificable) → no se marca parcial por este criterio."""
+async def test_past_cutoff_with_undocumented_base_is_partial():
+    """iter350b (RV-03/H04) — un corte PASADO con base sin documentar debe
+    seguir PARCIAL: la integridad de la base es invariante en el tiempo y el
+    paso de jornada no puede convertir un corte incompleto en completo.
+    (Antes este caso se daba por 'completa', consolidando el residual.)"""
     pid = await _mk(stock=10)
     try:
-        # movimiento en el pasado para que el producto aparezca en ese corte
+        # Entrada de 4 documentada en el pasado; faltan 6 de base sin origen.
         await _mov(pid, "entrada", 4, unit_cost=20.0,
                    created_at="2026-01-10T12:00:00+00:00")
         row = await _row(pid, cutoff="2026-01-10")
         assert row is not None
-        assert row["undocumented_base"] is False
-        assert row["coverage"] == "completa"
+        assert row["undocumented_base"] is True
+        assert row["coverage"] == "parcial"
+        assert row["base_gap"] == 6.0
+        assert row["final_stock"] == 4.0  # no se rellena con la existencia de hoy
+        assert row["reliable_from"] is None
     finally:
         await _cleanup(pid)

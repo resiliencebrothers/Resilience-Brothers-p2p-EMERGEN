@@ -76,6 +76,9 @@ class TestCutoffReport:
             _mov(pid, name, "entrada", 8, "2026-09-20T12:00:00+00:00", unit_cost=50.0))
         _db.inventory_movements.insert_one(
             _mov(pid, name, "precio", 0, "2026-09-20T12:05:00+00:00", unit_price=99.0))
+        # Existencia real consistente con lo documentado (12 + 8, sin salidas):
+        # así la base está totalmente documentada y el corte es 'completa'.
+        _db.products.update_one({"id": pid}, {"$set": {"stock": 20}})
 
         # Corte en D1: 12 uds, WAC 20, valor 240 (la compra de D2 NO lo altera).
         rep = _loop().run_until_complete(

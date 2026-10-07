@@ -26,7 +26,6 @@ sin rellenarlo con el stock/costo de hoy.
 from typing import Optional
 
 from services.inventory import (_COMPANY_FILTER, _day_bounds, OUTPUT_TYPES)
-from auth_utils import now_utc, iso
 from db_client import db
 
 STORE_CURRENCY = "CUP"
@@ -56,6 +55,63 @@ def _effect_order_key(m: dict) -> tuple:
     return (0, 0, m.get("_eff") or m.get("created_at") or "")
 
 
+async def _documented_totals(pids: list) -> dict:
+    """iter350b (RV-03/H04) — delta de stock DOCUMENTADO (neto) de TODOS los
+    movimientos confirmados por producto, SIN filtro de fecha. Replica el cálculo
+    de services.inventory_ipv._documented_stock_delta pero agrupado: la base sin
+    documentar es un INVARIANTE = existencia_real − este total (no depende de la
+    fecha del corte)."""
+    if not pids:
+        return {}
+    pipe = [
+        {"$match": {"product_id": {"$in": pids},
+                    "type": {"$in": list(_STOCK_TYPES)},
+                    "$or": [{"needs_stock": {"$ne": True}},
+                            {"stock_applied": True}]}},
+        {"$group": {"_id": "$product_id", "delta": {"$sum": {"$switch": {
+            "branches": [{"case": {"$in": ["$type", ["entrada", "ajuste_pos"]]},
+                          "then": {"$ifNull": ["$quantity", 0]}}],
+            "default": {"$multiply": [{"$ifNull": ["$quantity", 0]}, -1]}}}}}},
+    ]
+    rows = await db.inventory_movements.aggregate(pipe).to_list(500000)
+    return {r["_id"]: round(float(r["delta"] or 0), 3) for r in rows}
+
+
+async def _audited_openings_after(pids: list, cutoff_end: str) -> dict:
+    """iter350b (RV-03/H04) — cantidad de APERTURAS AUDITADAS
+    (source='apertura_auditada') cuyo efecto cae DESPUÉS del corte
+    (created_at ≥ cutoff_end). En esa fecha esa base aún no estaba documentada,
+    así que se reintegra al hueco: el histórico ANTERIOR a la apertura no es
+    fiable y debe seguir marcándose parcial."""
+    if not pids:
+        return {}
+    pipe = [
+        {"$match": {"product_id": {"$in": pids},
+                    "source": "apertura_auditada",
+                    "created_at": {"$gte": cutoff_end},
+                    "$or": [{"needs_stock": {"$ne": True}},
+                            {"stock_applied": True}]}},
+        {"$group": {"_id": "$product_id",
+                    "qty": {"$sum": {"$ifNull": ["$quantity", 0]}}}},
+    ]
+    rows = await db.inventory_movements.aggregate(pipe).to_list(500000)
+    return {r["_id"]: round(float(r["qty"] or 0), 3) for r in rows}
+
+
+async def _audited_opening_dates(pids: list) -> dict:
+    """iter350b (RV-03/H04) — fecha (YYYY-MM-DD) de la PRIMERA apertura auditada
+    por producto; desde ella el histórico queda documentado y es fiable."""
+    if not pids:
+        return {}
+    pipe = [
+        {"$match": {"product_id": {"$in": pids},
+                    "source": "apertura_auditada"}},
+        {"$group": {"_id": "$product_id", "first": {"$min": "$created_at"}}},
+    ]
+    rows = await db.inventory_movements.aggregate(pipe).to_list(500000)
+    return {r["_id"]: (r["first"] or "")[:10] for r in rows if r.get("first")}
+
+
 async def build_cutoff_report(cutoff: str,
                               start: Optional[str] = None) -> dict:
     """Reporte de inventario a la FECHA DE CORTE `cutoff` (YYYY-MM-DD, hora de
@@ -64,9 +120,6 @@ async def build_cutoff_report(cutoff: str,
     si no, la inicial es 0 y todo el histórico es flujo."""
     _, cutoff_end = _day_bounds(cutoff)          # fin EXCLUSIVO del día de corte
     period_start = _day_bounds(start)[0] if start else None  # inicio del período
-    # iter339 (H04) — un corte es VIGENTE si abarca el presente (hoy/futuro). Solo
-    # entonces la existencia reconstruida puede contrastarse con la real actual.
-    is_current_cutoff = cutoff_end > iso(now_utc())
 
     # Productos de la empresa (incluye inactivos: un producto desactivado tras
     # el corte sigue en su reporte histórico).
@@ -119,6 +172,13 @@ async def build_cutoff_report(cutoff: str,
         lst.sort(key=_effect_order_key)
 
     pids = allowed
+
+    # iter350b (RV-03/H04) — datos de integridad de base (INVARIANTE en el
+    # tiempo): el total documentado, las aperturas auditadas posteriores al corte
+    # y la fecha de la primera apertura auditada por producto.
+    documented_totals = await _documented_totals(list(allowed))
+    openings_after = await _audited_openings_after(list(allowed), cutoff_end)
+    opening_dates = await _audited_opening_dates(list(allowed))
 
     # iter329 — tasa USDT→CUP vigente a la fecha de corte (VIP) para valorar el
     # inventario también en USDT de forma reproducible.
@@ -186,16 +246,35 @@ async def build_cutoff_report(cutoff: str,
         if period_start is not None and not opening_captured:
             opening = stock  # el período empieza tras el último movimiento
         final_stock = stock
-        # iter339 (H04) — Integridad de la base: en un corte VIGENTE (incluye el
-        # presente) la existencia reconstruida debe igualar la existencia REAL
-        # del producto. Si no coincide, hay una base SIN DOCUMENTAR (p. ej. stock
-        # cargado antes de la Fase 2, sin movimiento de apertura) y el histórico
-        # de ese producto NO es fiable → PARCIAL. La ausencia de saldo negativo
-        # no prueba integridad; y NO se rellena el pasado con la existencia de hoy.
+        # iter339 (H04) + iter350b (RV-03/H04) — Integridad de la base. La base
+        # SIN DOCUMENTAR es un INVARIANTE del producto en el tiempo:
+        #     base_gap = existencia_real − existencia_documentada_total
+        # (cada movimiento real suma por igual a la existencia y a lo documentado,
+        # así que su diferencia no cambia con el paso de los días). NO depende de
+        # que el corte sea "vigente": por eso avanzar el reloj NO puede borrar la
+        # marca de parcial de un corte pasado. Para un corte PASADO, una apertura
+        # auditada registrada DESPUÉS todavía no documentaba la base en esa fecha,
+        # así que se reintegra al hueco (el período anterior a la apertura sigue
+        # sin base fiable). Un producto BORRADO (sin existencia real consultable)
+        # no se puede verificar por este criterio → base_gap 0.
         current_stock = _r(float(pmap.get(pid, {}).get("stock") or 0), 3)
-        base_gap = (_r(current_stock - final_stock, 3)
-                    if (is_current_cutoff and pid in pmap) else 0.0)
+        if pid in pmap:
+            base_gap = _r(current_stock - documented_totals.get(pid, 0.0)
+                          + openings_after.get(pid, 0.0), 3)
+        else:
+            base_gap = 0.0
         undocumented = abs(base_gap) > 1e-9
+        # Desde cuándo es fiable el histórico de este producto: tras una apertura
+        # auditada, desde su fecha; si nunca hubo hueco, desde su primer
+        # movimiento; si aún hay base sin documentar en este corte, no es fiable.
+        if undocumented:
+            reliable_from = None
+        elif pid in opening_dates:
+            reliable_from = opening_dates[pid]
+        elif mlist:
+            reliable_from = mlist[0]["created_at"][:10]
+        else:
+            reliable_from = None
         value = _r(final_stock * wac, 2)
         # Incluir solo filas con actividad/saldo, con conteo del día, o con una
         # base sin documentar que haya que señalar (H04).
@@ -259,6 +338,7 @@ async def build_cutoff_report(cutoff: str,
             "coverage": "parcial" if partial else "completa",
             "undocumented_base": undocumented,
             "base_gap": base_gap,
+            "reliable_from": reliable_from,
             "count": count_block,
         })
         tot_value += value
