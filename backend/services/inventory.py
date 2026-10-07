@@ -445,6 +445,32 @@ async def _insert_movement(doc: dict) -> tuple[dict, bool]:
     return doc, True
 
 
+async def _complete_pending_stock(mov: dict) -> dict:
+    """R03/H01 (RV-01) — completa, de forma IDEMPOTENTE, la aplicación de stock
+    de un movimiento YA registrado cuyo efecto quedó pendiente
+    (stock_applied=False) tras una interrupción entre el log y la aplicación.
+    Reusa el mismo op_id `invmov:{id}`, por lo que es seguro invocarla cualquier
+    número de veces. Si el stock es insuficiente ahora, lo deja PENDIENTE (no
+    marca stock_applied) para que un reintento/recuperador lo complete."""
+    mtype = mov.get("type")
+    qty = qnum(mov.get("quantity"))
+    delta = qty if mtype in ("entrada", "ajuste_pos") else -qty
+    if delta == 0:
+        return mov
+    cost_fold = ((qty, float(mov.get("unit_cost") or 0))
+                 if mtype == "entrada" else None)
+    status = await apply_stock_idempotent(
+        mov["product_id"], delta, f"invmov:{mov['id']}",
+        require_available=(delta < 0), cost_fold=cost_fold)
+    if status == "insufficient":
+        return mov
+    applied_ts = iso(now_utc())
+    await db.inventory_movements.update_one(
+        {"id": mov["id"]},
+        {"$set": {"stock_applied": True, "applied_at": applied_ts}})
+    return {**mov, "stock_applied": True, "applied_at": applied_ts}
+
+
 async def record_movement(*, product: dict, mtype: str, quantity: float,
                           unit_price: Optional[float] = None,
                           unit_cost: Optional[float] = None,
@@ -517,6 +543,12 @@ async def record_movement(*, product: dict, mtype: str, quantity: float,
         doc["stock_applied"] = False
         doc, created = await _insert_movement(doc)
         if not created:
+            # R04/H01 (RV-01) — este efecto ya se registró (otro ejecutor o un
+            # intento interrumpido). Si su stock quedó PENDIENTE, lo completamos
+            # de forma idempotente (mismo op_id) antes de devolverlo: nunca
+            # damos por bueno un movimiento cuyo stock no se aplicó.
+            if doc.get("needs_stock") and not doc.get("stock_applied"):
+                doc = await _complete_pending_stock(doc)
             return doc  # R04 — otro ejecutor ya registró este movimiento
         # iter327 (IPV-R02) — en una ENTRADA, el stock y el WAC se funden en una
         # sola escritura atómica (cost_fold). El healer usa el mismo op_id.

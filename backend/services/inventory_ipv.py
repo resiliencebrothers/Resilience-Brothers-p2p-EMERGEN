@@ -248,6 +248,21 @@ async def authorize_count_adjustment(count_id: str, document: str,
         product=product, mtype=mtype, quantity=abs(diff), note=reason,
         source="conteo", ref_id=count_id, actor=actor,
         dedupe_key=f"count-adjust:{count_id}:v{version}")
+    # H01 (RV-01) — NUNCA finalizar como 'ajustado' si el stock no se aplicó.
+    # record_movement ya completa de forma idempotente un ajuste interrumpido;
+    # si aun así sigue pendiente (p.ej. stock insuficiente ahora mismo), dejamos
+    # el conteo EN CURSO (recuperable) y devolvemos 409 para reintentar, en vez
+    # de dar por resuelta una diferencia todavía no aplicada.
+    if not mov.get("stock_applied"):
+        await db.inventory_counts.update_one(
+            {"id": count_id, "version": version, "auth_state": "claiming"},
+            {"$set": {"auth_state": "pending_apply",
+                      "adjustment_movement_id": mov["id"],
+                      "updated_at": iso(now_utc())}})
+        raise HTTPException(
+            status_code=409,
+            detail="El ajuste quedó pendiente de aplicarse al stock. "
+                   "Reintenta en unos segundos.")
     await db.inventory_counts.update_one(
         {"id": count_id, "version": version, "auth_state": "claiming"},
         {"$set": {"authorized": True, "status": "ajustado",
