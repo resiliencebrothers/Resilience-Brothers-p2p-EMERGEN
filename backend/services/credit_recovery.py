@@ -452,11 +452,21 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         else:
             # iter338 (H03) — el healer también sella el instante efectivo de
             # aplicación para que la reconstrucción histórica respete el orden
-            # real (no el de registro) tras una recuperación.
+            # real (no el de registro) tras una recuperación. iter351 (RV-02/H03,
+            # Fallo B) — además SELLA la SECUENCIA EFECTIVA: antes el recuperador
+            # general marcaba stock_applied=True pero NO copiaba effect_seq, con
+            # lo que el histórico lo trataba como heredado (infravaloración).
+            from services.inventory import _effect_seq_for_op
+            seq = await _effect_seq_for_op(m["product_id"], f"invmov:{m['id']}")
+            upd = {"stock_applied": True,
+                   "applied_at": datetime.now(timezone.utc).isoformat(),
+                   "effect_seq": seq}
+            if seq is None:
+                upd["effect_seq_uncertain"] = True
+                logger.warning("movimiento %s recuperado SIN secuencia efectiva "
+                               "(orden incierto)", m["id"])
             await db.inventory_movements.update_one(
-                {"id": m["id"]},
-                {"$set": {"stock_applied": True,
-                          "applied_at": datetime.now(timezone.utc).isoformat()}})
+                {"id": m["id"]}, {"$set": upd})
             # iter256(S10) — completar también el asiento contable del fondo
             # (idempotente por flag fund_flow_recorded).
             try:

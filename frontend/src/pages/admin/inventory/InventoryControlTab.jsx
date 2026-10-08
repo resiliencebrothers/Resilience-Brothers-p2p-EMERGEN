@@ -10,11 +10,15 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import TotpPromptDialog from "@/components/TotpPromptDialog";
-import { BellRing, Search, Plus, Eye, EyeOff, Trash2, Check, X, Wrench } from "lucide-react";
+import { BellRing, Search, Plus, Eye, EyeOff, Trash2, Check, X, Wrench, ArrowLeftRight } from "lucide-react";
 import { toast } from "sonner";
-import { UNIT_OPTIONS, isFractionUnit, fmtQty, qtyStep } from "@/utils/units";
+import { UNIT_OPTIONS, isFractionUnit, fmtQty, qtyStep, unitAbbr } from "@/utils/units";
 
 const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+// iter350f — factores de equivalencia sugeridos (1 origen = N destino).
+const UNIT_FACTORS = { "libra:kg": 0.45359237, "kg:libra": 2.20462262 };
+const suggestFactor = (from, to) => UNIT_FACTORS[`${from}:${to}`] || "";
 
 const STATUS_STYLES = {
   ok: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
@@ -54,6 +58,8 @@ export default function InventoryControlTab() {
   const [targetDraft, setTargetDraft] = useState({});
   const [adjust, setAdjust] = useState(null);
   const [adjustBusy, setAdjustBusy] = useState(false);
+  const [conv, setConv] = useState(null);
+  const [convBusy, setConvBusy] = useState(false);
 
   const load = useCallback(() => {
     axios.get(`${API}/admin/inventory/control`, { withCredentials: true })
@@ -161,6 +167,32 @@ export default function InventoryControlTab() {
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
     finally { setAdjustBusy(false); }
+  };
+
+  // iter350f — conversión de unidad (preserva el pasado; equivalencia y vigencia).
+  const openConvert = (r) => {
+    const to = UNIT_OPTIONS.find((u) => u !== r.unit) || "unidad";
+    setConv({ row: r, to_unit: to, factor: suggestFactor(r.unit, to) || 1,
+      effective_date: new Date().toISOString().slice(0, 10), document: "", reason: "" });
+  };
+  const doConvert = async () => {
+    if (!conv) return;
+    if (conv.to_unit === conv.row.unit) return toast.error(t("inventory.control.convSameUnit"));
+    if (!conv.document || conv.document.trim().length < 2) return toast.error(t("inventory.control.adjustDocHint"));
+    const factor = parseFloat(conv.factor);
+    if (!(factor > 0)) return toast.error(t("inventory.control.convFactor", { from: unitAbbr(conv.row.unit), to: unitAbbr(conv.to_unit) }));
+    setConvBusy(true);
+    try {
+      await axios.post(`${API}/admin/inventory/convert-unit`, {
+        product_id: conv.row.product_id, to_unit: conv.to_unit, factor,
+        effective_date: conv.effective_date, document: conv.document.trim(),
+        reason: conv.reason || "",
+      }, { withCredentials: true });
+      toast.success(t("inventory.control.convDone", { from: unitAbbr(conv.row.unit), to: unitAbbr(conv.to_unit) }));
+      setConv(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+    finally { setConvBusy(false); }
   };
 
   const onProductPhoto = (file) => {
@@ -409,6 +441,16 @@ export default function InventoryControlTab() {
                       <Wrench className="w-4 h-4" />
                     </button>
                   )}
+                  {isAdmin && (
+                    <button
+                      onClick={() => openConvert(r)}
+                      data-testid={`inventory-convert-${r.product_id}`}
+                      className="text-neutral-400 hover:text-indigo-300"
+                      title={t("inventory.control.convAction")}
+                    >
+                      <ArrowLeftRight className="w-4 h-4" />
+                    </button>
+                  )}
                   <button
                     onClick={() => toggleActive(r)}
                     data-testid={`inventory-toggle-${r.product_id}`}
@@ -604,6 +646,70 @@ export default function InventoryControlTab() {
               <Button data-testid="count-adjust-confirm" onClick={doAdjust} disabled={adjustBusy}
                 className="w-full bg-sky-700 hover:bg-sky-600 text-white font-bold rounded-none h-11">
                 {adjustBusy ? "…" : t("inventory.control.adjustConfirm")}
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!conv} onOpenChange={(v) => !v && setConv(null)}>
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto" data-testid="unit-convert-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display">{t("inventory.control.convTitle")}</DialogTitle>
+          </DialogHeader>
+          {conv && (
+            <div className="space-y-3">
+              <p className="text-xs text-neutral-400">{t("inventory.control.convDesc", { name: conv.row.name })}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="micro-label text-neutral-500">{t("inventory.control.convFrom")}</Label>
+                  <div className="mt-1 h-10 flex items-center px-3 bg-[#0a0a0a] border border-white/10 text-sm font-mono" data-testid="unit-convert-from">{unitAbbr(conv.row.unit)}</div>
+                </div>
+                <div>
+                  <Label className="micro-label text-neutral-500">{t("inventory.control.convTo")}</Label>
+                  <select data-testid="unit-convert-to" value={conv.to_unit}
+                    onChange={(e) => { const to = e.target.value; setConv((c) => ({ ...c, to_unit: to, factor: suggestFactor(c.row.unit, to) || c.factor })); }}
+                    className="w-full h-10 mt-1 bg-[#0a0a0a] border border-white/10 text-sm px-3 text-white">
+                    {UNIT_OPTIONS.filter((u) => u !== conv.row.unit).map((u) => <option key={u} value={u}>{t(`units.${u}`)}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("inventory.control.convFactor", { from: unitAbbr(conv.row.unit), to: unitAbbr(conv.to_unit) })}</Label>
+                <Input data-testid="unit-convert-factor" type="number" step="0.000001" min="0" value={conv.factor}
+                  onChange={(e) => setConv((c) => ({ ...c, factor: e.target.value }))}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                <p className="text-[0.65rem] text-neutral-600 mt-1">{t("inventory.control.convFactorHint")}</p>
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("inventory.control.convEffective")}</Label>
+                <Input data-testid="unit-convert-date" type="date" value={conv.effective_date}
+                  onChange={(e) => setConv((c) => ({ ...c, effective_date: e.target.value }))}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("inventory.control.convDoc")}</Label>
+                <Input data-testid="unit-convert-document" value={conv.document}
+                  onChange={(e) => setConv((c) => ({ ...c, document: e.target.value }))}
+                  placeholder={t("inventory.control.adjustDocHint")}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">{t("inventory.control.convReason")}</Label>
+                <Input data-testid="unit-convert-reason" value={conv.reason}
+                  onChange={(e) => setConv((c) => ({ ...c, reason: e.target.value }))}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+              </div>
+              {(() => {
+                const f = parseFloat(conv.factor);
+                if (!(f > 0)) return null;
+                const newStock = Math.round(Number(conv.row.stock || 0) * f * 1000) / 1000;
+                const newCost = Math.round((Number(conv.row.cost_usd || 0) / f) * 10000) / 10000;
+                return <p className="text-xs text-indigo-300 font-mono" data-testid="unit-convert-preview">{t("inventory.control.convPreview", { oldStock: fmtQty(conv.row.stock, conv.row.unit), from: unitAbbr(conv.row.unit), newStock, to: unitAbbr(conv.to_unit), oldCost: fmt(conv.row.cost_usd), newCost })}</p>;
+              })()}
+              <Button data-testid="unit-convert-confirm" onClick={doConvert} disabled={convBusy}
+                className="w-full bg-indigo-700 hover:bg-indigo-600 text-white font-bold rounded-none h-11">
+                {convBusy ? "…" : t("inventory.control.convConfirm")}
               </Button>
             </div>
           )}

@@ -119,6 +119,14 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_iter347_reconciliation_alert.py \
 		tests/test_iter348_h01_retry_pending_stock.py \
 		tests/test_iter349_h03_effect_seq_order.py \
+		tests/test_iter350_automatic_recoverer.py \
+		tests/test_iter350b_rv03_coverage_time_invariant.py \
+		tests/test_iter350c_h06_header_matches_snapshot.py \
+		tests/test_iter350c_h12_unit_immutable.py \
+		tests/test_iter350d_h01_recover_version_protection.py \
+		tests/test_iter350e_orphan_cleanup.py \
+		tests/test_iter350f_unit_conversion.py \
+		tests/test_iter351_rv02_effect_seq_recovery.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

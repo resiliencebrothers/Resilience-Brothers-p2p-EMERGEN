@@ -26,6 +26,13 @@ OUTPUT_TYPES = ("merma", "consumo", "otra_salida")
 MOVEMENT_TYPES = ("entrada", "venta", "ajuste_pos", "ajuste_neg", *OUTPUT_TYPES)
 LOW_STOCK_THRESHOLD = 5
 
+# iter351 (RV-02/H03) — tamaño del mapa op→secuencia embebido en el producto.
+# Se escribe en la MISMA transacción atómica que asigna la secuencia, de modo
+# que la relación op→seq sea RECUPERABLE aunque el sellado posterior en
+# stock_ops se interrumpa. Capado por $slice: holgadísimo frente a la ventana
+# de recuperación (segundos/minutos), nunca evicta un par aún no sellado.
+EFFECT_SEQ_LOG_CAP = 1000
+
 # iter335 (IPV Fase 4) — unidades de medida + venta por fracción.
 # "unidad" = venta por pieza (cantidades enteras). "libra"/"kg" = venta por
 # fracción (decimales a 3 posiciones). El stock se lleva en la propia unidad.
@@ -97,6 +104,30 @@ def movement_delta(mtype: str, quantity: float) -> float:
     return qnum(quantity)
 
 
+def _seq_log_expr(op_id: str) -> dict:
+    """iter351 (RV-02/H03) — expresión de pipeline que AÑADE el par op→secuencia
+    al log embebido del producto, referenciando `$effect_seq` YA incrementado en
+    la etapa previa del mismo pipeline. Así la relación op→seq se persiste en el
+    mismo commit atómico que aplica el efecto (recuperable tras una caída)."""
+    return {"$slice": [
+        {"$concatArrays": [
+            {"$ifNull": ["$effect_seq_log", []]},
+            [{"op": op_id, "seq": "$effect_seq"}]]},
+        -EFFECT_SEQ_LOG_CAP]}
+
+
+def _seq_from_log(product_doc: dict, op_id: str) -> Optional[int]:
+    """Busca (del más reciente al más viejo) la secuencia asignada a `op_id` en
+    el log embebido del producto. None si no está (evicción improbable)."""
+    for e in reversed((product_doc or {}).get("effect_seq_log") or []):
+        if e.get("op") == op_id:
+            try:
+                return int(e.get("seq"))
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
                                  require_available: bool = True,
                                  extra_filter: Optional[dict] = None,
@@ -129,23 +160,29 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
         # iter327 (IPV-R02) — WAC atómico: cost_usd y stock se calculan en el
         # mismo $set a partir del documento de entrada (valores PREVIOS), por lo
         # que el promedio es correcto e independiente del orden entre entradas.
+        # iter351 (RV-02/H03) — pipeline en 2 etapas: (1) asigna la secuencia,
+        # (2) aplica stock/WAC y persiste el par op→seq (que ya referencia la
+        # secuencia nueva) en el MISMO commit. `$stock`/`$cost_usd` en la etapa 2
+        # siguen siendo los valores PREVIOS (la etapa 1 solo tocó effect_seq).
         q, entry_cost = cost_fold
         base_stock = {"$ifNull": ["$stock", 0]}
         new_stock_expr = {"$round": [{"$add": [base_stock, delta_qty]}, QTY_DECIMALS]}
-        res = await db.products.find_one_and_update(filt, [{"$set": {
-            "cost_usd": {"$round": [{"$cond": [
-                {"$gt": [new_stock_expr, 0]},
-                {"$divide": [
-                    {"$add": [
-                        {"$multiply": [base_stock, {"$ifNull": ["$cost_usd", 0]}]},
-                        float(q) * float(entry_cost)]},
-                    new_stock_expr]},
-                float(entry_cost)]}, 4]},
-            "stock": new_stock_expr,
-            "applied_stock_ops": {"$concatArrays": [
-                {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
-            **_seq_expr,
-        }}], projection={"_id": 0, "effect_seq": 1},
+        res = await db.products.find_one_and_update(filt, [
+            {"$set": _seq_expr},
+            {"$set": {
+                "cost_usd": {"$round": [{"$cond": [
+                    {"$gt": [new_stock_expr, 0]},
+                    {"$divide": [
+                        {"$add": [
+                            {"$multiply": [base_stock, {"$ifNull": ["$cost_usd", 0]}]},
+                            float(q) * float(entry_cost)]},
+                        new_stock_expr]},
+                    float(entry_cost)]}, 4]},
+                "stock": new_stock_expr,
+                "applied_stock_ops": {"$concatArrays": [
+                    {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
+                "effect_seq_log": _seq_log_expr(op_id),
+            }}], projection={"_id": 0, "effect_seq": 1},
             return_document=ReturnDocument.AFTER)
     else:
         res = await db.products.find_one_and_update(
@@ -154,25 +191,35 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
             # cuando su log duradero está 'applied' (compact_stock_registries).
             # iter335 (IPV Fase 4) — pipeline con $round a 3 decimales para
             # soportar fracciones (lb/kg) sin acumular error de coma flotante.
-            [{"$set": {
-                "stock": {"$round": [
-                    {"$add": [{"$ifNull": ["$stock", 0]}, delta_qty]},
-                    QTY_DECIMALS]},
-                "applied_stock_ops": {"$concatArrays": [
-                    {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
-                **_seq_expr,
-            }}],
+            # iter351 (RV-02/H03) — 2 etapas: asigna secuencia y persiste el par
+            # op→seq en el mismo commit atómico.
+            [
+                {"$set": _seq_expr},
+                {"$set": {
+                    "stock": {"$round": [
+                        {"$add": [{"$ifNull": ["$stock", 0]}, delta_qty]},
+                        QTY_DECIMALS]},
+                    "applied_stock_ops": {"$concatArrays": [
+                        {"$ifNull": ["$applied_stock_ops", []]}, [op_id]]},
+                    "effect_seq_log": _seq_log_expr(op_id),
+                }},
+            ],
             projection={"_id": 0, "effect_seq": 1},
             return_document=ReturnDocument.AFTER,
         )
     if res is not None:
         await _stock_ops_mark_applied(op_id, effect_seq=res.get("effect_seq"))
         return "applied"
-    if await db.products.find_one(
-            {"id": product_id,
-             "applied_stock_ops": {"$in": [op_id, f"{op_id}:burn"]}},
-            {"_id": 1}):
-        await _stock_ops_mark_applied(op_id)
+    # iter351 (RV-02/H03) — el op YA estaba aplicado en el producto (la escritura
+    # atómica ocurrió, pero el sellado en stock_ops se interrumpió). Recuperamos
+    # su secuencia del log embebido y la sellamos: el movimiento no queda sin
+    # orden (el bug de infravaloración residual).
+    dup = await db.products.find_one(
+        {"id": product_id,
+         "applied_stock_ops": {"$in": [op_id, f"{op_id}:burn"]}},
+        {"_id": 0, "effect_seq_log": 1})
+    if dup is not None:
+        await _stock_ops_mark_applied(op_id, effect_seq=_seq_from_log(dup, op_id))
         return "duplicate"
     # insuficiente: liberar el intento pendiente del log duradero.
     await db.stock_ops.delete_one({"op_id": op_id, "state": "pending"})
@@ -231,6 +278,24 @@ async def _next_effect_seq(product_id: str) -> Optional[int]:
         projection={"_id": 0, "effect_seq": 1},
         return_document=ReturnDocument.AFTER)
     return (doc or {}).get("effect_seq")
+
+
+async def _effect_seq_for_op(product_id: str, op_id: str) -> Optional[int]:
+    """iter351 (RV-02/H03) — secuencia efectiva de un op, de la fuente más
+    fiable disponible:
+    1) el log duradero stock_ops (sellado en la ruta normal), y si no,
+    2) el mapa atómico op→seq embebido en el producto (fallback cuando la
+       respuesta/sellado se interrumpió entre la escritura del producto y
+       stock_ops).
+    Devuelve None solo si no queda evidencia reconstruible del orden."""
+    rec = await db.stock_ops.find_one({"op_id": op_id},
+                                      {"_id": 0, "effect_seq": 1})
+    seq = (rec or {}).get("effect_seq")
+    if seq is not None:
+        return int(seq)
+    prod = await db.products.find_one(
+        {"id": product_id}, {"_id": 0, "effect_seq_log": 1})
+    return _seq_from_log(prod or {}, op_id)
 
 
 async def burn_or_undo_stock(product_id: str, quantity: float, op_id: str) -> str:
@@ -493,17 +558,20 @@ async def _complete_pending_stock(mov: dict) -> dict:
     if status == "insufficient":
         return mov
     # iter349 (RV-02/H03) — sella la secuencia efectiva (orden REAL del efecto)
-    # asignada en la aplicación atómica, recuperada del log duradero.
-    op_rec = await db.stock_ops.find_one(
-        {"op_id": f"invmov:{mov['id']}"}, {"_id": 0, "effect_seq": 1})
-    effect_seq = (op_rec or {}).get("effect_seq")
+    # asignada en la aplicación atómica. iter351 — recuperada de la fuente más
+    # fiable (stock_ops → log embebido del producto). Si no hay evidencia del
+    # orden, se marca la INCERTIDUMBRE en vez de anteponerlo a todo.
+    effect_seq = await _effect_seq_for_op(mov["product_id"], f"invmov:{mov['id']}")
     applied_ts = iso(now_utc())
+    upd: dict = {"stock_applied": True, "applied_at": applied_ts,
+                 "effect_seq": effect_seq}
+    if effect_seq is None:
+        upd["effect_seq_uncertain"] = True
+        logger.warning("movimiento %s recuperado SIN secuencia efectiva "
+                       "reconstruible (orden incierto)", mov["id"])
     await db.inventory_movements.update_one(
-        {"id": mov["id"]},
-        {"$set": {"stock_applied": True, "applied_at": applied_ts,
-                  "effect_seq": effect_seq}})
-    return {**mov, "stock_applied": True, "applied_at": applied_ts,
-            "effect_seq": effect_seq}
+        {"id": mov["id"]}, {"$set": upd})
+    return {**mov, **upd}
 
 
 async def record_movement(*, product: dict, mtype: str, quantity: float,
@@ -602,16 +670,14 @@ async def record_movement(*, product: dict, mtype: str, quantity: float,
         # escritura atómica y recuperada del log duradero; el histórico ordena
         # por ella (no por applied_at, que puede sellarse fuera de orden).
         applied_ts = iso(now_utc())
-        op_rec = await db.stock_ops.find_one(
-            {"op_id": f"invmov:{doc['id']}"}, {"_id": 0, "effect_seq": 1})
-        effect_seq = (op_rec or {}).get("effect_seq")
+        effect_seq = await _effect_seq_for_op(product["id"], f"invmov:{doc['id']}")
+        upd: dict = {"stock_applied": True, "applied_at": applied_ts,
+                     "effect_seq": effect_seq}
+        if effect_seq is None:
+            upd["effect_seq_uncertain"] = True
         await db.inventory_movements.update_one(
-            {"id": doc["id"]},
-            {"$set": {"stock_applied": True, "applied_at": applied_ts,
-                      "effect_seq": effect_seq}})
-        doc["stock_applied"] = True
-        doc["applied_at"] = applied_ts
-        doc["effect_seq"] = effect_seq
+            {"id": doc["id"]}, {"$set": upd})
+        doc.update(upd)
     else:
         doc, created = await _insert_movement(doc)
         if not created:

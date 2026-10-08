@@ -470,6 +470,174 @@ async def recover_pending_count_adjustments(stale_seconds: int = 60) -> int:
     return healed
 
 
+async def cleanup_orphan_count_adjustments(stale_minutes: int = 30) -> int:
+    """LIMPIEZA DE HUÉRFANOS (iter350e) — barrido programado que elimina los
+    movimientos de ajuste de conteo que quedaron NO aplicados y cuyo conteo de
+    respaldo YA NO está vigente (fue superado por un recuento o borrado). Respeta
+    los movimientos recientes (más nuevos que `stale_minutes`) para no competir
+    con una autorización/recuperación en curso. Complementa la invalidación EN
+    LÍNEA de record_physical_count/clear_physical_count (cubre huérfanos previos
+    a iter350d o de cualquier ruta que no la ejecutara). Devuelve cuántos borró."""
+    from datetime import timedelta
+    cutoff = iso(now_utc() - timedelta(minutes=stale_minutes))
+    cand = await db.inventory_movements.find(
+        {"source": "conteo", "type": {"$in": ["ajuste_pos", "ajuste_neg"]},
+         "stock_applied": {"$ne": True}, "created_at": {"$lt": cutoff}},
+        {"_id": 0, "id": 1, "ref_id": 1, "dedupe_key": 1}).to_list(5000)
+    removed = 0
+    for m in cand:
+        # La versión del ajuste va codificada en el dedupe_key count-adjust:{id}:v{N}.
+        ver = None
+        dk = m.get("dedupe_key") or ""
+        if ":v" in dk:
+            try:
+                ver = int(dk.rsplit(":v", 1)[1])
+            except (ValueError, IndexError):
+                ver = None
+        count = await db.inventory_counts.find_one(
+            {"id": m.get("ref_id")},
+            {"_id": 0, "version": 1, "auth_state": 1, "authorized": 1})
+        # VIVO (recuperable) solo si el conteo existe en la MISMA versión y sigue
+        # pendiente/en reclamo SIN autorizar. En cualquier otro caso es huérfano.
+        live = (bool(count) and count.get("authorized") is not True
+                and count.get("auth_state") in ("pending_apply", "claiming")
+                and count.get("version") == ver)
+        if live:
+            continue
+        # Reconfirma !aplicado en el borrado por si un recuperador lo completó
+        # en la micro-ventana entre la lectura y aquí.
+        r = await db.inventory_movements.delete_one(
+            {"id": m["id"], "stock_applied": {"$ne": True}})
+        removed += r.deleted_count
+    if removed:
+        logger.info("[ipv-orphan-cleanup] %s huérfano(s) eliminados", removed)
+    return removed
+
+
+
+async def _last_activity_date(product_id: str) -> Optional[str]:
+    """Fecha (YYYY-MM-DD) de la última actividad del producto: su movimiento más
+    reciente o su conteo más reciente. None si no tiene historial."""
+    mov = await db.inventory_movements.find_one(
+        {"product_id": product_id}, {"_id": 0, "created_at": 1},
+        sort=[("created_at", -1)])
+    cnt = await db.inventory_counts.find_one(
+        {"product_id": product_id}, {"_id": 0, "count_date": 1},
+        sort=[("count_date", -1)])
+    dates = []
+    if mov and mov.get("created_at"):
+        dates.append(mov["created_at"][:10])
+    if cnt and cnt.get("count_date"):
+        dates.append(cnt["count_date"][:10])
+    return max(dates) if dates else None
+
+
+async def convert_product_unit(product_id: str, to_unit: str, factor: float,
+                               effective_date: Optional[str], document: str,
+                               reason: str, actor: dict) -> dict:
+    """CONVERSIÓN DE UNIDAD (iter350f) — cambia la unidad de medida de un producto
+    CON historial SIN reinterpretar los datos pasados.
+
+    Se modela como un corte explícito con equivalencia y vigencia: una SALIDA por
+    conversión (unidad vieja, lleva la existencia a 0) seguida de una ENTRADA de
+    apertura por conversión (unidad nueva, con el costo convertido). Ambas se
+    fechan en la VIGENCIA y obtienen la secuencia de efecto más alta, de modo que:
+    - Los cortes ANTERIORES a la vigencia conservan la unidad y las cantidades
+      originales (no se tocan los movimientos viejos).
+    - Desde la vigencia, el producto opera en la unidad nueva.
+    El VALOR total se preserva (stock×costo): stock_nuevo = stock×factor y
+    costo_nuevo = costo÷factor. `source='conversion'` → no mueve el fondo de la
+    empresa. Requiere documento de respaldo."""
+    if not (document or "").strip():
+        raise HTTPException(status_code=400,
+                            detail="La conversión exige un documento de respaldo.")
+    if to_unit not in ("unidad", "libra", "kg"):
+        raise HTTPException(status_code=400, detail="Unidad destino inválida.")
+    factor = round(float(factor or 0), 6)
+    if factor <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="El factor de equivalencia debe ser mayor que 0.")
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    from_unit = product_unit(product)
+    if to_unit == from_unit:
+        raise HTTPException(status_code=400,
+                            detail="El producto ya está en esa unidad.")
+    # Vigencia: por defecto hoy. Debe ser POSTERIOR o igual a la última actividad
+    # (no se puede convertir hacia un período que ya tiene movimientos en la
+    # unidad vieja, pues quedarían mal interpretados) y nunca una fecha futura.
+    from datetime import datetime
+    today = today_havana()
+    eff = (effective_date or today)[:10]
+    try:
+        datetime.strptime(eff, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400,
+                            detail="Fecha de vigencia inválida (YYYY-MM-DD).")
+    if eff > today:
+        raise HTTPException(status_code=400,
+                            detail="La vigencia no puede ser una fecha futura.")
+    last_act = await _last_activity_date(product_id)
+    if last_act and eff < last_act:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"La vigencia debe ser igual o posterior a la última "
+                    f"actividad del producto ({last_act})."))
+    old_stock = qnum(product.get("stock"))
+    old_cost = round(float(product.get("cost_usd") or 0), 4)
+    new_stock = round(old_stock * factor, 3)
+    new_cost = round(old_cost / factor, 4)
+    conv_id = str(uuid.uuid4())
+    eff_ts = f"{eff}T12:00:00+00:00"
+    note = (f"Conversión de unidad {from_unit}→{to_unit} (×{factor}) · doc: "
+            f"{document.strip()}" + (f" · {reason.strip()}" if (reason or "").strip()
+                                     else ""))
+    # 1) SALIDA por conversión (unidad vieja): lleva la existencia a 0.
+    out_mov_id = None
+    if old_stock > 1e-9:
+        mo = await record_movement(
+            product=product, mtype="ajuste_neg", quantity=old_stock, note=note,
+            source="conversion", ref_id=conv_id, actor=actor,
+            dedupe_key=f"unit-convert-out:{conv_id}")
+        out_mov_id = mo["id"]
+        await db.inventory_movements.update_one(
+            {"id": mo["id"]},
+            {"$set": {"created_at": eff_ts, "applied_at": eff_ts}})
+    # 2) La ficha pasa a la unidad nueva (el costo se refunde con la entrada; se
+    #    fija también explícitamente por si no hay existencia que reabrir).
+    await db.products.update_one(
+        {"id": product_id}, {"$set": {"unit": to_unit, "cost_usd": new_cost}})
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    # 3) ENTRADA de apertura por conversión (unidad nueva, costo convertido).
+    in_mov_id = None
+    if new_stock > 1e-9:
+        mi = await record_movement(
+            product=product, mtype="entrada", quantity=new_stock,
+            unit_cost=new_cost, note=note, source="conversion", ref_id=conv_id,
+            actor=actor, dedupe_key=f"unit-convert-in:{conv_id}")
+        in_mov_id = mi["id"]
+        await db.inventory_movements.update_one(
+            {"id": mi["id"]},
+            {"$set": {"created_at": eff_ts, "applied_at": eff_ts}})
+    # 4) Registro de auditoría de la conversión.
+    rec = {
+        "id": conv_id, "product_id": product_id,
+        "product_name": product.get("name", ""),
+        "from_unit": from_unit, "to_unit": to_unit, "factor": factor,
+        "old_stock": old_stock, "new_stock": new_stock,
+        "old_cost": old_cost, "new_cost": new_cost,
+        "effective_date": eff, "document": document.strip(),
+        "reason": (reason or "").strip(),
+        "out_movement_id": out_mov_id, "in_movement_id": in_mov_id,
+        "actor_id": actor.get("user_id", ""),
+        "actor_email": actor.get("email", ""),
+        "created_at": iso(now_utc()),
+    }
+    await db.unit_conversions.insert_one(dict(rec))
+    return rec
+
 
 async def build_close_review(day: str) -> dict:
     """Resumen de revisión del cierre del día: alertas (SIN CONTEO,

@@ -52,7 +52,16 @@ def _effect_order_key(m: dict) -> tuple:
     seq = m.get("effect_seq")
     if seq is not None:
         return (1, int(seq), "")
-    return (0, 0, m.get("_eff") or m.get("created_at") or "")
+    eff = m.get("_eff") or m.get("applied_at") or m.get("created_at") or ""
+    # iter351 (RV-02/H03) — un movimiento YA aplicado cuya secuencia no pudo
+    # reconstruirse (incertidumbre señalada por el recuperador) NO es heredado:
+    # anteponerlo a los secuenciados provocaría infravaloración. Se ordena al
+    # FINAL por su instante efectivo (conservador + evidencia de la caída).
+    if m.get("effect_seq_uncertain"):
+        return (2, 0, eff)
+    # Movimiento heredado real (anterior a la secuencia efectiva) → va ANTES,
+    # ordenado por su instante efectivo (ocurrió antes de esta mejora).
+    return (0, 0, eff)
 
 
 async def _documented_totals(pids: list) -> dict:
@@ -154,6 +163,7 @@ async def build_cutoff_report(cutoff: str,
          "quantity": 1, "unit_cost": 1, "unit_price": 1, "unit": 1,
          "change_kind": 1, "note": 1,
          "created_at": 1, "applied_at": 1, "effect_seq": 1,
+         "effect_seq_uncertain": 1,
          "needs_stock": 1, "stock_applied": 1}).to_list(500000)
     by_prod: dict = {}
     for m in movs:

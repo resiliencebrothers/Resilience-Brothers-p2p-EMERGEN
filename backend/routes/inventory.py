@@ -21,6 +21,7 @@ from services.inventory import (record_movement, record_price_change,
                                 build_rotation, qnum, UNIT_ABBR)
 from services.inventory_ipv import (record_physical_count, clear_physical_count,
                                      authorize_count_adjustment,
+                                     convert_product_unit,
                                      build_close_review, save_close_review,
                                      build_count_sheet)
 from services.proof_upload import maybe_upload_proof
@@ -186,6 +187,17 @@ class CountAdjust(BaseModel):
     note: str = Field("", max_length=300)
 
 
+class UnitConversionIn(BaseModel):
+    # iter350f — conversión explícita de unidad de medida (con equivalencia y
+    # vigencia) para productos con historial, sin reinterpretar el pasado.
+    product_id: str
+    to_unit: Literal["unidad", "libra", "kg"]
+    factor: float = Field(..., gt=0, le=1_000_000)
+    effective_date: Optional[str] = Field(None, min_length=10, max_length=10)
+    document: str = Field(..., min_length=2, max_length=300)
+    reason: str = Field("", max_length=300)
+
+
 class CloseReviewSave(BaseModel):
     date: str = Field(..., min_length=10, max_length=10)
     responsable: str = Field("", max_length=120)
@@ -274,6 +286,28 @@ async def adjust_count(count_id: str, payload: CountAdjust,
     except Exception as e:  # noqa: BLE001
         logger.error(f"products_changed publish failed: {e}")
     return doc
+
+
+@router.post("/admin/inventory/convert-unit")
+async def convert_unit(payload: UnitConversionIn, request: Request) -> Any:
+    """ADMIN — convierte la unidad de medida de un producto CON historial,
+    preservando el pasado (corte explícito con equivalencia y vigencia)."""
+    actor = await _require_admin_products(request)
+    res = await convert_product_unit(
+        payload.product_id, payload.to_unit, payload.factor,
+        payload.effective_date, payload.document, payload.reason or "", actor)
+    await log_action(
+        db, actor, "inventory.unit_convert", "product", payload.product_id,
+        summary=(f"Conversión {res['from_unit']}→{res['to_unit']} "
+                 f"(×{res['factor']}): {res['old_stock']} {res['from_unit']} → "
+                 f"{res['new_stock']} {res['to_unit']}"),
+        details=res)
+    try:
+        from services.live_bus import publish
+        await publish("products_changed", {"product_id": payload.product_id})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"products_changed publish failed: {e}")
+    return res
 
 
 @router.get("/admin/inventory/close-review")

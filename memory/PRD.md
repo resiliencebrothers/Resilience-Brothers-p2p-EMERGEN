@@ -2428,3 +2428,20 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter348 — RV-01/H01: confirmación de ajuste solo con stock aplicado (7 oct 2026)
 - H01 (ALTA): se elimina la confirmación prematura de un ajuste de conteo cuando el stock quedó pendiente tras una interrupción. `record_movement` completa idempotentemente el efecto en el reintento (`_complete_pending_stock`, mismo op_id) y `authorize_count_adjustment` nunca finaliza como "ajustado" si `stock_applied` es False (queda `pending_apply` + 409 recuperable; la incidencia se resuelve solo al confirmar). Verificado: `test_iter348` (3/3) + regresión amplia de idempotencia/concurrencia/IPV + mypy 110/110. Añadido a `test-critical`.
+
+---
+## Actualización 2026-10-08 (iter350b–f)
+- **RV-03/H04** (ALTA): corte incompleto ya no se vuelve completo por el paso del tiempo (base_gap invariante). Campo `reliable_from`.
+- **RV-04/H06** (MEDIA): cabecera del cierre siempre concuerda con el snapshot referenciado (derivada bajo el guard de avance).
+- **RV-05/H12** (MEDIA): la unidad histórica no se reinterpreta; `update_product` rechaza cambios simples de unidad con historial.
+- **RV-01/H01** (ALTA, residual): recuperador reclama versión atómicamente antes de aplicar stock; invalidación de huérfanos en línea + barrido programado (`cleanup_orphan_count_adjustments`, cada 30 min).
+- **Conversión de Unidad** (iter350f): procedimiento explícito (equivalencia + vigencia) in-place, preserva el pasado y el valor; UI en módulo de Inventario (`POST /admin/inventory/convert-unit`, colección `unit_conversions`).
+- Estado: backend sano, mypy CI 110/110, regresión verde. Todos los tests iter350* en verde.
+
+
+---
+## Actualización 2026-10-08 (iter351)
+- **RV-02/H03** (ALTA, residual): recuperación segura de la SECUENCIA EFECTIVA tras interrupciones. La relación `op_id → effect_seq` ahora se persiste en el MISMO commit atómico que altera stock/WAC (log embebido `effect_seq_log` en el producto, capado a 1000), recuperable por `_effect_seq_for_op` (stock_ops → fallback al log del producto). El reintento del mismo movimiento (Fallo A) y el recuperador general `heal_initializing_ops` (Fallo B) sellan la secuencia; sin evidencia reconstruible se marca `effect_seq_uncertain=True` y el histórico lo ordena al final (nunca antes de lo secuenciado). Se preservan los dos controles del auditor (6/300/1.800 y 6/260/1.560).
+- **Tests**: `test_iter351_rv02_effect_seq_recovery.py` (6/6), añadidos a `test-critical` junto a toda la familia iter350*.
+- **CI**: `make test-critical` → 1070 passed / 0 failed. ruff limpio. Backend sano.
+- Estado: fix en preview; pendiente de re-despliegue a producción.

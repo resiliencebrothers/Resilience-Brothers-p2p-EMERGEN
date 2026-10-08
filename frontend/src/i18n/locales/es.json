@@ -4242,7 +4242,21 @@
       "adjustNote": "Nota (opcional)",
       "adjustConfirm": "Aplicar ajuste autorizado",
       "adjustDone": "Ajuste aplicado: stock corregido",
-      "countAdminOnly": "Solo un administrador puede autorizar el ajuste"
+      "countAdminOnly": "Solo un administrador puede autorizar el ajuste",
+      "convAction": "Convertir unidad",
+      "convTitle": "Convertir unidad de medida",
+      "convDesc": "Cambia la unidad de «{{name}}» sin reinterpretar el pasado: los cortes anteriores a la vigencia conservan su unidad y cantidad; desde la vigencia el producto opera en la unidad nueva. El valor se preserva.",
+      "convFrom": "Unidad actual",
+      "convTo": "Unidad nueva",
+      "convFactor": "Factor de equivalencia (1 {{from}} = N {{to}})",
+      "convFactorHint": "Se sugiere automático para lb↔kg; edítalo si procede",
+      "convEffective": "Fecha de vigencia",
+      "convDoc": "Documento de respaldo",
+      "convReason": "Motivo (opcional)",
+      "convPreview": "{{oldStock}} {{from}} → {{newStock}} {{to}} · costo {{oldCost}} → {{newCost}}",
+      "convConfirm": "Convertir unidad",
+      "convDone": "Unidad convertida: {{from}} → {{to}}",
+      "convSameUnit": "Elige una unidad distinta a la actual"
     },
     "movements": {
       "newBtn": "Registrar movimiento",

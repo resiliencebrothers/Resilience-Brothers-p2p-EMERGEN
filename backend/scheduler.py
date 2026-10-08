@@ -349,6 +349,18 @@ async def run_ipv_count_recovery():
         logger.error(f"[ipv-recover] failed: {e}")
 
 
+async def run_ipv_orphan_cleanup():
+    """iter350e — Limpieza de huérfanos: elimina movimientos de ajuste de conteo
+    NO aplicados cuyo conteo de respaldo ya no está vigente (superado/borrado)."""
+    try:
+        from services.inventory_ipv import cleanup_orphan_count_adjustments
+        n = await cleanup_orphan_count_adjustments()
+        if n:
+            logger.info("[ipv-orphan-cleanup] %s huérfano(s) eliminados", n)
+    except Exception as e:
+        logger.error(f"[ipv-orphan-cleanup] failed: {e}")
+
+
 async def run_delivery_attention():
     """iter290 (Mejora #4) — alerta reservas de mensajería sin respuesta y
     trabajos detenidos; una sola alerta por entrega y condición."""
@@ -547,6 +559,17 @@ def start_scheduler(db, build_timeseries):
         id="ipv_count_recovery",
         replace_existing=True,
         misfire_grace_time=120,
+        coalesce=True,
+        next_run_time=datetime.now(timezone.utc),
+    )
+    # iter350e — Limpieza de huérfanos de ajustes IPV no aplicados (cada 30 min
+    # + al arrancar); complementa la invalidación en línea.
+    _scheduler.add_job(
+        run_ipv_orphan_cleanup,
+        IntervalTrigger(minutes=30),
+        id="ipv_orphan_cleanup",
+        replace_existing=True,
+        misfire_grace_time=300,
         coalesce=True,
         next_run_time=datetime.now(timezone.utc),
     )

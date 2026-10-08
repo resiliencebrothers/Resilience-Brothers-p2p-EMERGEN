@@ -4242,7 +4242,21 @@
       "adjustNote": "Note (optional)",
       "adjustConfirm": "Apply authorized adjustment",
       "adjustDone": "Adjustment applied: stock corrected",
-      "countAdminOnly": "Only an administrator can authorize the adjustment"
+      "countAdminOnly": "Only an administrator can authorize the adjustment",
+      "convAction": "Convert unit",
+      "convTitle": "Convert unit of measure",
+      "convDesc": "Change the unit of «{{name}}» without reinterpreting the past: cutoffs before the effective date keep their unit and quantity; from the effective date the product operates in the new unit. Value is preserved.",
+      "convFrom": "Current unit",
+      "convTo": "New unit",
+      "convFactor": "Equivalence factor (1 {{from}} = N {{to}})",
+      "convFactorHint": "Auto-suggested for lb↔kg; edit if needed",
+      "convEffective": "Effective date",
+      "convDoc": "Supporting document",
+      "convReason": "Reason (optional)",
+      "convPreview": "{{oldStock}} {{from}} → {{newStock}} {{to}} · cost {{oldCost}} → {{newCost}}",
+      "convConfirm": "Convert unit",
+      "convDone": "Unit converted: {{from}} → {{to}}",
+      "convSameUnit": "Choose a unit different from the current one"
     },
     "movements": {
       "newBtn": "Record movement",

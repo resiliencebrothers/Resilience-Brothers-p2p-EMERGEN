@@ -989,9 +989,10 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
                 status_code=409,
                 detail=("No se puede cambiar la unidad de un producto con "
                         "movimientos o conteos históricos: las cantidades de "
-                        "cortes ya documentados quedarían reinterpretadas. "
-                        "Desactívalo y crea una ficha nueva con la unidad "
-                        "correcta."))
+                        "cortes ya documentados quedarían reinterpretadas. Usa "
+                        "«Convertir unidad» en el módulo de Inventario para "
+                        "cambiarla con equivalencia y vigencia, preservando el "
+                        "histórico."))
     price_changed = (
         float(payload.price_usd) != float(existing.get("price_usd", 0))
         or float(payload.cost_usd) != float(existing.get("cost_usd", 0))
