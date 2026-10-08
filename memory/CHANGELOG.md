@@ -1860,3 +1860,14 @@ Reporte del auditor: con el límite real `EFFECT_SEQ_LOG_CAP=1000`, una entrada 
 - **CI**: `make test-critical` → **1077 passed, 0 failed** (829s). ruff limpio. Backend sano (200), frontend compila y la landing carga.
 - **Estado**: fix en preview; pendiente de re-despliegue a producción.
 
+
+## 2026-10-08 · iter354 — Bandeja de Revisión: agrupar y RESOLVER movimientos con orden incierto
+Siguiente paso tras iter353: dar al equipo un lugar único para resolver los movimientos marcados `effect_seq_uncertain` y re-sellar su orden efectivo.
+- **Orden fraccional** (`services/inventory_history.py::_effect_order_key`): usa `float(seq)` (antes `int`) y desempata por instante efectivo, de modo que un movimiento incierto pueda reinsertarse ENTRE dos existentes con una secuencia fraccional (p. ej. 3.0 entre 2 y 4). No afecta el flujo normal (las secuencias siguen siendo enteras).
+- **Servicios nuevos** (`inventory_history.py`): `list_uncertain_movements()` (todos los inciertos agrupados por producto), `uncertain_movement_timeline(movement_id)` (línea de tiempo del producto en orden efectivo, marcando el objetivo y las filas ancla secuenciadas), `resolve_uncertain_order(movement_id, after_movement_id, actor)` (coloca el movimiento tras una fila secuenciada o al inicio → secuencia fraccional entre vecinos, limpia la marca de incertidumbre y audita quién/cuándo).
+- **Endpoints** (`routes/inventory.py`, permiso `products`): `GET /admin/inventory/uncertain`, `GET /admin/inventory/uncertain/{id}/timeline`, `POST /admin/inventory/uncertain/{id}/resolve` (admin + `log_action` + `publish('products_changed')`).
+- **Frontend**: nueva pestaña **Revisión** (`InventoryReviewTab.jsx`, `AdminInventory.jsx`): tray agrupado por producto con badge de conteo, estado vacío ("¡Todo en orden!"), y diálogo de resolución que muestra la línea de tiempo con botones "Insertar al inicio"/"Insertar aquí (después)". Claves i18n es/en bajo `inventory.tabs.review` e `inventory.review.*`.
+- **Tests**: `test_iter354_review_tray_uncertain_order.py` (5/5) — agrupación, timeline (objetivo/anclas), resolver tras referencia (valoración pasa de 1.600 incierta a 1.500 completa), resolver al inicio (secuencia 0.5), validaciones. Endpoints e2e verificados por curl (401 sin auth; con cookie de sesión devuelven los datos). Flujo de UI verificado por testing_agent (iteration_354.json): lista → diálogo → resolver → toast → estado vacío, 100% PASS (el banner del Historial no se revalidó porque el resolver consumió el dato demo; su render usa el mismo patrón condicional que el banner 'parcial' ya funcional).
+- **CI**: `make test-critical` (con iter354 añadido) → ver resultado abajo. ruff limpio.
+- **Estado**: feature en preview; pendiente de re-despliegue a producción.
+

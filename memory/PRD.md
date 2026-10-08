@@ -2462,3 +2462,10 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - **CI**: `make test-critical` → 1077 passed / 0 failed. ruff limpio. Backend sano, frontend carga.
 - Estado: fix en preview; pendiente de re-despliegue a producción.
 
+
+---
+## Actualización 2026-10-08 (iter354)
+- **Bandeja de Revisión**: nueva pestaña "Revisión" en el panel de Inventario que agrupa los movimientos con orden/valoración incierta (`effect_seq_uncertain`) y permite RESOLVERLOS re-sellando su secuencia efectiva (colocar tras una fila secuenciada o al inicio → secuencia fraccional). Endpoints `GET/POST /admin/inventory/uncertain[...]`; servicios en `inventory_history.py`; `_effect_order_key` ahora usa `float(seq)` para admitir reinserción fraccional.
+- **Tests**: `test_iter354_review_tray_uncertain_order.py` (5/5). Flujo de UI verificado por testing_agent (iteration_354.json, 100% PASS en el flujo probado).
+- Estado: feature en preview; pendiente de re-despliegue a producción.
+
