@@ -626,9 +626,14 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
         "closed_by_email": actor.get("email", ""),
         "closed_at": now,
     }
+    # iter350c (RV-04/H06) — garantiza que el documento del cierre EXISTE, pero
+    # NO publica todavía la cabecera: responsable/revisor/folio/nota/resultado se
+    # publican JUNTO al puntero del snapshot, bajo el guard de avance, para que
+    # SIEMPRE describan la MISMA versión a la que apunta el cierre (nunca firmas
+    # ni folio de un acta distinta de la referenciada tras un intercalado).
     await db.inventory_closes.update_one(
         {"close_date": day},
-        {"$set": doc, "$setOnInsert": {"created_at": now}}, upsert=True)
+        {"$setOnInsert": {"close_date": day, "created_at": now}}, upsert=True)
     # iter332 — ACTA CONGELADA inmutable y VERSIONADA: cada cierre deja una copia
     # (existencia + valor CUP/USDT + tasa + firmas) que no se altera aunque luego
     # cambien datos. Una corrección posterior crea una NUEVA versión preservando
@@ -678,9 +683,20 @@ async def save_close_review(day: str, responsable: str, revisado_por: str,
          "$or": [{"snapshot_version": {"$exists": False}},
                  {"snapshot_version": {"$lt": version}}]},
         {"$set": {"snapshot_version": version, "snapshot_id": snap["id"],
-                  "value_cup": acta["totals"]["value_cup"],
-                  "value_usdt": acta["totals"]["value_usdt"],
-                  "fx_rate_vip": acta["fx"]["rate_vip"]}})
+                  # iter350c (RV-04/H06) — cabecera DERIVADA del snapshot
+                  # seleccionado: firmas, folio, nota, resultado y valoración
+                  # CONCUERDAN siempre con el acta referenciada por snapshot_id.
+                  "responsable": snap["responsable"],
+                  "revisado_por": snap["revisado_por"],
+                  "folio": snap["folio"], "note": snap["note"],
+                  "resultado": snap["resultado"],
+                  "alerts_snapshot": snap["alerts_snapshot"],
+                  "closed_by": snap["frozen_by"],
+                  "closed_by_email": snap["frozen_by_email"],
+                  "closed_at": snap["frozen_at"],
+                  "value_cup": snap["totals"]["value_cup"],
+                  "value_usdt": snap["totals"]["value_usdt"],
+                  "fx_rate_vip": snap["fx"]["rate_vip"]}})
     return await db.inventory_closes.find_one({"close_date": day}, {"_id": 0})
 
 

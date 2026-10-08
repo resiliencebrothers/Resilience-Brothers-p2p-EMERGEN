@@ -973,6 +973,25 @@ async def update_product(product_id: str, payload: ProductCreate, request: Reque
     existing = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    # RV-05 (iter350c / H12) — la unidad queda CONGELADA en cada movimiento y
+    # conteo histórico. Cambiarla reinterpretaría cantidades de cortes ya
+    # documentados (p. ej. 10 lb se leerían como "10 kg", sin conversión). Si el
+    # producto YA tiene historial de inventario, se RECHAZA el cambio simple de
+    # unidad: hay que desactivarlo y crear una ficha nueva con la unidad correcta.
+    old_unit = existing.get("unit") or "unidad"
+    if (payload.unit or "unidad") != old_unit:
+        has_mov = await db.inventory_movements.count_documents(
+            {"product_id": product_id}, limit=1)
+        has_cnt = await db.inventory_counts.count_documents(
+            {"product_id": product_id}, limit=1)
+        if has_mov or has_cnt:
+            raise HTTPException(
+                status_code=409,
+                detail=("No se puede cambiar la unidad de un producto con "
+                        "movimientos o conteos históricos: las cantidades de "
+                        "cortes ya documentados quedarían reinterpretadas. "
+                        "Desactívalo y crea una ficha nueva con la unidad "
+                        "correcta."))
     price_changed = (
         float(payload.price_usd) != float(existing.get("price_usd", 0))
         or float(payload.cost_usd) != float(existing.get("cost_usd", 0))

@@ -151,7 +151,7 @@ async def build_cutoff_report(cutoff: str,
          "created_at": {"$lt": cutoff_end},
          "type": {"$in": [*_STOCK_TYPES, "precio"]}},
         {"_id": 0, "product_id": 1, "product_name": 1, "type": 1,
-         "quantity": 1, "unit_cost": 1, "unit_price": 1,
+         "quantity": 1, "unit_cost": 1, "unit_price": 1, "unit": 1,
          "change_kind": 1, "note": 1,
          "created_at": 1, "applied_at": 1, "effect_seq": 1,
          "needs_stock": 1, "stock_applied": 1}).to_list(500000)
@@ -280,10 +280,15 @@ async def build_cutoff_report(cutoff: str,
         # base sin documentar que haya que señalar (H04).
         has_flow = any(flows[k] for k in _FLOW_KEYS)
         c = counts.get(pid)
-        # H12 (iter345) — unidad de la fila para interpretar sus cantidades
-        # físicas (del producto; si fue borrado, del conteo del día).
-        row_unit = (pmap.get(pid, {}).get("unit")
-                    or (c.get("unit") if c else None) or "unidad")
+        # H12 (iter345) + RV-05 (iter350c) — unidad del PERÍODO a partir de
+        # evidencia HISTÓRICA (la unidad CONGELADA en los propios movimientos del
+        # período o en el conteo del día), NO de la ficha viva: editar la unidad
+        # del producto hoy NO debe reinterpretar cantidades de cortes pasados.
+        # La ficha solo se usa como respaldo para productos aún sin historial.
+        hist_unit = next(
+            (m.get("unit") for m in reversed(mlist) if m.get("unit")), None)
+        row_unit = (hist_unit or (c.get("unit") if c else None)
+                    or pmap.get(pid, {}).get("unit") or "unidad")
         if (_r(final_stock, 3) == 0 and not has_flow and not c
                 and not undocumented):
             continue
