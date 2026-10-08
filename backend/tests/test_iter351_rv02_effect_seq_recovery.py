@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import services.inventory as inv
 from db_client import db
 from auth_utils import now_utc, iso
 from services.inventory import (record_movement, today_havana,
@@ -105,22 +106,32 @@ async def test_failure_a_retry_recovers_sequence_from_product_log():
         entrada = await _insert_pending_entrada(pid, 2, 500)
         op = f"invmov:{entrada['id']}"
 
-        # Escritura atómica: stock 6, WAC 300, secuencia asignada + op→seq en
-        # el log embebido (mismo commit).
-        st = await apply_stock_idempotent(pid, 2.0, op, require_available=False,
-                                          cost_fold=(2.0, 500.0))
-        assert st == "applied"
+        # CAÍDA REAL en el punto de sellado: _stock_ops_mark_applied lanza, de
+        # modo que la escritura atómica del producto YA ocurrió (stock 6, WAC
+        # 300, par op→seq en el log embebido) pero stock_ops queda 'pending' y
+        # el log NO se poda (la poda va después del sellado).
+        real_mark = inv._stock_ops_mark_applied
+
+        async def _boom(o, effect_seq=None):
+            if o == op:
+                raise RuntimeError("caída simulada antes de sellar stock_ops")
+            return await real_mark(o, effect_seq=effect_seq)
+
+        inv._stock_ops_mark_applied = _boom
+        try:
+            with pytest.raises(RuntimeError):
+                await apply_stock_idempotent(pid, 2.0, op, require_available=False,
+                                             cost_fold=(2.0, 500.0))
+        finally:
+            inv._stock_ops_mark_applied = real_mark
+
         prod = await _p(pid)
         assert prod["stock"] == 6.0 and round(prod["cost_usd"], 2) == 300.0
         seq_original = _seq_from_log(prod, op)
-        assert seq_original is not None, "op→seq debe persistir en el commit atómico"
-
-        # SIMULAR LA CAÍDA antes de _stock_ops_mark_applied: stock_ops vuelve a
-        # 'pending' sin effect_seq ni applied_at (el sellado nunca ocurrió).
-        await db.stock_ops.update_one(
-            {"op_id": op},
-            {"$set": {"state": "pending"},
-             "$unset": {"effect_seq": "", "applied_at": ""}})
+        assert seq_original is not None, "op→seq sobrevive en el log (sin podar)"
+        rec = await db.stock_ops.find_one(
+            {"op_id": op}, {"_id": 0, "effect_seq": 1, "state": 1})
+        assert rec["state"] == "pending" and rec.get("effect_seq") is None
 
         # Operación POSTERIOR intercalada: venta de 1 (avanza el contador).
         await record_movement(product=await _p(pid), mtype="venta", quantity=1,
@@ -196,20 +207,40 @@ async def test_failure_b_general_recoverer_seals_sequence():
 
 
 # --------------------------------------------------------------------------
-# op→seq se persiste en el MISMO commit atómico
+# op→seq se persiste en el commit atómico y se PODA tras el sellado duradero
 # --------------------------------------------------------------------------
-async def test_op_seq_pair_persisted_in_same_atomic_commit():
+async def test_op_seq_pruned_after_durable_seal():
     pid = await _mk_product(stock=10, cost=200)
     try:
         op = f"test-op:{uuid.uuid4().hex[:8]}"
+        # Caso NORMAL (sin caída): tras sellar en stock_ops, el par op→seq se
+        # retira del log embebido (stock_ops es ya la fuente duradera).
+        real_mark = inv._stock_ops_mark_applied
+
+        async def _boom(o, effect_seq=None):
+            if o == op:
+                raise RuntimeError("caída antes de sellar")
+            return await real_mark(o, effect_seq=effect_seq)
+
+        # Primero demostramos que ANTES de sellar el par vive en el log.
+        inv._stock_ops_mark_applied = _boom
+        try:
+            with pytest.raises(RuntimeError):
+                await apply_stock_idempotent(pid, 3.0, op, require_available=False,
+                                             cost_fold=(3.0, 400.0))
+        finally:
+            inv._stock_ops_mark_applied = real_mark
+        prod = await _p(pid)
+        assert _seq_from_log(prod, op) == prod["effect_seq"], "vive en el log sin sellar"
+        assert await _effect_seq_for_op(pid, op) == prod["effect_seq"]
+
+        # Al reintentar (sella de forma duradera), el par se PODA del log.
         st = await apply_stock_idempotent(pid, 3.0, op, require_available=False,
                                           cost_fold=(3.0, 400.0))
-        assert st == "applied"
+        assert st == "duplicate"
         prod = await _p(pid)
-        # El par op→seq quedó en el producto, y coincide con su contador.
-        assert _seq_from_log(prod, op) == prod["effect_seq"]
-        # Recuperable aun si stock_ops pierde la secuencia.
-        await db.stock_ops.update_one({"op_id": op}, {"$unset": {"effect_seq": ""}})
+        assert _seq_from_log(prod, op) is None, "podado tras el sellado duradero"
+        # Sigue siendo recuperable desde stock_ops (fuente duradera).
         assert await _effect_seq_for_op(pid, op) == prod["effect_seq"]
     finally:
         await _cleanup(pid)

@@ -128,6 +128,16 @@ def _seq_from_log(product_doc: dict, op_id: str) -> Optional[int]:
     return None
 
 
+async def _prune_seq_log(product_id: str, op_id: str) -> None:
+    """iter353 (RV-02) — retira el par op→seq del log embebido una vez que la
+    secuencia quedó DURADERA en stock_ops (ya no hace falta como fallback). La
+    compactación del log se basa así en EVIDENCIA duradera, no en el número de
+    operaciones posteriores: nunca expulsa la secuencia de un op aún sin sellar."""
+    await db.products.update_one(
+        {"id": product_id},
+        {"$pull": {"effect_seq_log": {"op": op_id}}})
+
+
 async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
                                  require_available: bool = True,
                                  extra_filter: Optional[dict] = None,
@@ -209,6 +219,11 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
         )
     if res is not None:
         await _stock_ops_mark_applied(op_id, effect_seq=res.get("effect_seq"))
+        # iter353 (RV-02) — la secuencia ya es DURADERA en stock_ops: su par
+        # op→seq embebido deja de ser necesario y se retira. Así el log solo
+        # retiene secuencias AÚN NO selladas (en riesgo), y el $slice nunca
+        # expulsa evidencia pendiente aunque lleguen miles de ops posteriores.
+        await _prune_seq_log(product_id, op_id)
         return "applied"
     # iter351 (RV-02/H03) — el op YA estaba aplicado en el producto (la escritura
     # atómica ocurrió, pero el sellado en stock_ops se interrumpió). Recuperamos
@@ -219,7 +234,12 @@ async def apply_stock_idempotent(product_id: str, delta_qty: float, op_id: str,
          "applied_stock_ops": {"$in": [op_id, f"{op_id}:burn"]}},
         {"_id": 0, "effect_seq_log": 1})
     if dup is not None:
-        await _stock_ops_mark_applied(op_id, effect_seq=_seq_from_log(dup, op_id))
+        recovered = _seq_from_log(dup, op_id)
+        await _stock_ops_mark_applied(op_id, effect_seq=recovered)
+        if recovered is not None:
+            # iter353 (RV-02) — secuencia recuperada y sellada de forma duradera:
+            # ya se puede retirar del log embebido.
+            await _prune_seq_log(product_id, op_id)
         return "duplicate"
     # insuficiente: liberar el intento pendiente del log duradero.
     await db.stock_ops.delete_one({"op_id": op_id, "state": "pending"})

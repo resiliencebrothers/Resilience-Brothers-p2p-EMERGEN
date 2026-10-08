@@ -205,6 +205,7 @@ async def build_cutoff_report(cutoff: str,
     tot_diff_value = 0.0
     partials = 0
     undoc_count = 0
+    uncertain_count = 0
     for pid in pids:
         mlist = by_prod.get(pid, [])
         if mlist:
@@ -217,12 +218,18 @@ async def build_cutoff_report(cutoff: str,
         opening = 0.0
         opening_captured = period_start is None
         negative_seen = False
+        seq_uncertain = False  # iter353 (RV-02) — orden/valoración irreconstruible
         flows = {k: 0.0 for k in _FLOW_KEYS}
         name = pmap.get(pid, {}).get("name", "")
         for m in mlist:
             t = m["type"]
             created = m["_eff"]  # iter338 (H03) — orden/efecto por tiempo real
             name = m.get("product_name") or name
+            # iter353 (RV-02) — un movimiento ya aplicado cuya SECUENCIA no pudo
+            # reconstruirse: su posición en el orden efectivo es incierta, así que
+            # el WAC/valoración resultante es una ESTIMACIÓN, no una reconstrucción.
+            if m.get("effect_seq_uncertain"):
+                seq_uncertain = True
             if (period_start is not None and not opening_captured
                     and created >= period_start):
                 opening = stock
@@ -302,11 +309,13 @@ async def build_cutoff_report(cutoff: str,
         if (_r(final_stock, 3) == 0 and not has_flow and not c
                 and not undocumented):
             continue
-        partial = negative_seen or undocumented
+        partial = negative_seen or undocumented or seq_uncertain
         if partial:
             partials += 1
         if undocumented:
             undoc_count += 1
+        if seq_uncertain:
+            uncertain_count += 1
         count_block = None
         if c:
             # iter337 (H02) — conservar la precisión fraccionaria (lb/kg a 3
@@ -352,6 +361,7 @@ async def build_cutoff_report(cutoff: str,
             "currency": STORE_CURRENCY,
             "coverage": "parcial" if partial else "completa",
             "undocumented_base": undocumented,
+            "uncertain_valuation": seq_uncertain,
             "base_gap": base_gap,
             "reliable_from": reliable_from,
             "count": count_block,
@@ -383,5 +393,6 @@ async def build_cutoff_report(cutoff: str,
             "diff_value_usdt": _r(tot_diff_value / rate_vip, 2) if rate_vip > 0 else None,
             "partial_count": partials,
             "undocumented_count": undoc_count,
+            "uncertain_count": uncertain_count,
         },
     }

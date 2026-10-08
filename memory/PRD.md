@@ -2453,3 +2453,12 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - **CI**: `make test-critical` → 1075 passed / 0 failed. ruff limpio. Backend sano.
 - Estado: fix en preview; pendiente de re-despliegue a producción.
 
+
+---
+## Actualización 2026-10-08 (iter353)
+- **RV-02** (MEDIA, residual): (1) compactación del `effect_seq_log` por EVIDENCIA duradera — `_prune_seq_log` retira el par op→seq solo cuando ya está sellado en stock_ops, así el `$slice` (cap real 1000) nunca expulsa la secuencia de un op aún sin sellar aunque lleguen miles de operaciones (valor correcto 4×300=1.200). (2) La incertidumbre se EXPONE en el reporte: `coverage='parcial'`, fila con `uncertain_valuation` y totales con `uncertain_count`.
+- **Frontend**: panel de Inventario (Historial) muestra banner de **Alerta de Incertidumbre** (`history-uncertain-warning`) y etiqueta por fila "Incierto" (`history-uncertain-{id}`) para revisión manual del equipo. — cumple la petición "Alerta de Incertidumbre".
+- **Tests**: `test_iter353_rv02_seq_log_eviction_and_uncertainty.py` (2/2) con el límite real; 2 pruebas de iter351 ajustadas al nuevo invariante.
+- **CI**: `make test-critical` → 1077 passed / 0 failed. ruff limpio. Backend sano, frontend carga.
+- Estado: fix en preview; pendiente de re-despliegue a producción.
+

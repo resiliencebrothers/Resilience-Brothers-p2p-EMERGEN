@@ -201,6 +201,17 @@ export default function InventoryHistoryTab() {
         </div>
       )}
 
+      {/* Aviso de valoración incierta (RV-02) — requiere revisión manual */}
+      {tot?.uncertain_count > 0 && (
+        <div className="flex items-center gap-2 border border-rose-500/30 bg-rose-500/5 px-3 py-2"
+          data-testid="history-uncertain-warning">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <p className="text-[0.7rem] text-rose-200/90">
+            {t("inventory.history.uncertainWarn", { n: tot.uncertain_count })}
+          </p>
+        </div>
+      )}
+
       {/* Tabla */}
       <div className="overflow-x-auto border border-white/10">
         <table className="w-full text-xs" data-testid="history-table">
@@ -234,6 +245,13 @@ export default function InventoryHistoryTab() {
                       <span className="text-[0.55rem] uppercase px-1.5 py-0.5 border border-amber-500/30 text-amber-300"
                         data-testid={`history-partial-${p.product_id}`}>
                         {t("inventory.history.partialTag")}
+                      </span>
+                    )}
+                    {p.uncertain_valuation && (
+                      <span className="text-[0.55rem] uppercase px-1.5 py-0.5 border border-rose-500/40 text-rose-300"
+                        title={t("inventory.history.uncertainTitle")}
+                        data-testid={`history-uncertain-${p.product_id}`}>
+                        {t("inventory.history.uncertainTag")}
                       </span>
                     )}
                     {!p.is_active && (
