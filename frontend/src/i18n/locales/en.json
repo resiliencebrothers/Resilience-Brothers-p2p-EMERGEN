@@ -4001,7 +4001,33 @@
       "stores": "Stores",
       "valuation": "Valuation",
       "history": "Historical",
+      "review": "Review",
       "incidents": "Incidents"
+    },
+    "review": {
+      "title": "Review Tray",
+      "intro": "Movements whose exact order could not be reconstructed after an interruption: their historical cost/value is an estimate until the team confirms where they happened. Resolve them here by re-sealing their order.",
+      "empty": "No uncertain movements. All in order!",
+      "items": "movement(s)",
+      "resolve": "Resolve",
+      "refresh": "Refresh",
+      "loadError": "Could not load the review tray",
+      "resolveError": "Could not resolve the order",
+      "resolved": "Order re-sealed successfully",
+      "dialogTitle": "Re-seal the movement order",
+      "dialogDesc": "Choose where this movement actually happened within the product timeline. It will be inserted at that point and the valuation recalculated.",
+      "insertStart": "Insert at the beginning",
+      "insertAfter": "Insert here (after)",
+      "thisOne": "This one",
+      "types": {
+        "entrada": "Entry",
+        "venta": "Sale",
+        "ajuste_pos": "Adjust +",
+        "ajuste_neg": "Adjust −",
+        "merma": "Shrinkage",
+        "consumo": "Consumption",
+        "otra_salida": "Other outflow"
+      }
     },
     "history": {
       "cutoff": "Cut-off date",

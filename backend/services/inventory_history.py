@@ -49,19 +49,22 @@ def _effect_order_key(m: dict) -> tuple:
     puede sellarse fuera de orden en un reintento/recuperación). Los movimientos
     heredados sin secuencia se ordenan por su instante efectivo y van ANTES de
     los que ya llevan secuencia (ocurrieron antes de esta mejora)."""
+    eff = m.get("_eff") or m.get("applied_at") or m.get("created_at") or ""
     seq = m.get("effect_seq")
     if seq is not None:
-        return (1, int(seq), "")
-    eff = m.get("_eff") or m.get("applied_at") or m.get("created_at") or ""
+        # iter354 — float (no int): admite una secuencia FRACCIONAL asignada al
+        # reinsertar manualmente un movimiento incierto entre dos existentes
+        # (Bandeja de Revisión). El instante efectivo desempata secuencias iguales.
+        return (1, float(seq), eff)
     # iter351 (RV-02/H03) — un movimiento YA aplicado cuya secuencia no pudo
     # reconstruirse (incertidumbre señalada por el recuperador) NO es heredado:
     # anteponerlo a los secuenciados provocaría infravaloración. Se ordena al
     # FINAL por su instante efectivo (conservador + evidencia de la caída).
     if m.get("effect_seq_uncertain"):
-        return (2, 0, eff)
+        return (2, 0.0, eff)
     # Movimiento heredado real (anterior a la secuencia efectiva) → va ANTES,
     # ordenado por su instante efectivo (ocurrió antes de esta mejora).
-    return (0, 0, eff)
+    return (0, 0.0, eff)
 
 
 async def _documented_totals(pids: list) -> dict:
@@ -396,3 +399,126 @@ async def build_cutoff_report(cutoff: str,
             "uncertain_count": uncertain_count,
         },
     }
+
+
+
+# ══════════════ Bandeja de Revisión: orden/valoración incierta (iter354) ══════
+def _mov_card(m: dict) -> dict:
+    """Resumen presentable de un movimiento para la bandeja y la línea de tiempo."""
+    return {
+        "id": m.get("id"),
+        "product_id": m.get("product_id"),
+        "product_name": m.get("product_name") or "",
+        "type": m.get("type"),
+        "quantity": _r(m.get("quantity") or 0, 3),
+        "unit": m.get("unit") or "",
+        "unit_cost": _r(m.get("unit_cost") or 0, 4),
+        "note": m.get("note") or "",
+        "source": m.get("source") or "",
+        "created_at": m.get("created_at"),
+        "applied_at": m.get("applied_at"),
+        "effect_seq": m.get("effect_seq"),
+        "effect_seq_uncertain": bool(m.get("effect_seq_uncertain")),
+    }
+
+
+_REVIEW_PROJ = {
+    "_id": 0, "id": 1, "product_id": 1, "product_name": 1, "type": 1,
+    "quantity": 1, "unit": 1, "unit_cost": 1, "note": 1, "source": 1,
+    "created_at": 1, "applied_at": 1, "effect_seq": 1,
+    "effect_seq_uncertain": 1, "needs_stock": 1, "stock_applied": 1,
+}
+
+
+async def list_uncertain_movements() -> dict:
+    """iter354 — Bandeja de Revisión: TODOS los movimientos con orden/valoración
+    incierta (`effect_seq_uncertain`), agrupados por producto, para que el equipo
+    los resuelva y re-selle su orden en un solo lugar."""
+    rows = await db.inventory_movements.find(
+        {"effect_seq_uncertain": True}, _REVIEW_PROJ
+    ).sort("created_at", 1).to_list(1000)
+    groups: dict = {}
+    for m in rows:
+        pid = m.get("product_id")
+        g = groups.setdefault(pid, {
+            "product_id": pid,
+            "product_name": m.get("product_name") or pid,
+            "movements": []})
+        g["movements"].append(_mov_card(m))
+    return {"total": len(rows),
+            "products": sorted(groups.values(),
+                               key=lambda g: (g["product_name"] or "").lower())}
+
+
+async def uncertain_movement_timeline(movement_id: str) -> dict:
+    """iter354 — Línea de tiempo del producto (en ORDEN EFECTIVO actual) del
+    movimiento incierto, para que el admin elija dónde reinsertarlo. Marca el
+    objetivo y qué filas son anclas válidas (ya secuenciadas)."""
+    target = await db.inventory_movements.find_one({"id": movement_id}, {"_id": 0})
+    if not target:
+        return {"error": "not_found"}
+    pid = target["product_id"]
+    movs = await db.inventory_movements.find(
+        {"product_id": pid}, _REVIEW_PROJ).to_list(100000)
+    # Excluye movimientos aún sin aplicar (pendientes), salvo el propio objetivo.
+    movs = [m for m in movs
+            if m.get("id") == movement_id
+            or m.get("effect_seq") is not None
+            or m.get("effect_seq_uncertain")
+            or not m.get("needs_stock")
+            or m.get("stock_applied")]
+    movs.sort(key=_effect_order_key)
+    timeline = []
+    for m in movs:
+        card = _mov_card(m)
+        card["is_target"] = (m.get("id") == movement_id)
+        card["anchor_eligible"] = (m.get("effect_seq") is not None
+                                   and m.get("id") != movement_id)
+        timeline.append(card)
+    return {"movement_id": movement_id, "product_id": pid,
+            "product_name": target.get("product_name") or pid,
+            "timeline": timeline}
+
+
+async def resolve_uncertain_order(movement_id: str,
+                                  after_movement_id: Optional[str],
+                                  actor: dict) -> dict:
+    """iter354 — RESUELVE un movimiento incierto re-sellando su ORDEN: lo coloca
+    inmediatamente DESPUÉS de `after_movement_id` (una fila secuenciada del mismo
+    producto) o al INICIO si es None. Asigna una secuencia FRACCIONAL entre los
+    vecinos, limpia la marca de incertidumbre y deja constancia de quién/cuándo."""
+    from auth_utils import now_utc, iso
+    target = await db.inventory_movements.find_one({"id": movement_id}, {"_id": 0})
+    if not target:
+        raise ValueError("Movimiento no encontrado")
+    if not target.get("effect_seq_uncertain"):
+        raise ValueError("Este movimiento ya no está marcado como incierto")
+    pid = target["product_id"]
+    seqs = sorted(
+        float(m["effect_seq"])
+        for m in await db.inventory_movements.find(
+            {"product_id": pid, "effect_seq": {"$ne": None},
+             "id": {"$ne": movement_id}},
+            {"_id": 0, "effect_seq": 1}).to_list(100000)
+        if m.get("effect_seq") is not None)
+    if after_movement_id:
+        ref = await db.inventory_movements.find_one(
+            {"id": after_movement_id, "product_id": pid},
+            {"_id": 0, "effect_seq": 1})
+        if not ref or ref.get("effect_seq") is None:
+            raise ValueError("La referencia debe ser un movimiento del mismo "
+                             "producto con un orden ya definido")
+        sr = float(ref["effect_seq"])
+        nexts = [s for s in seqs if s > sr]
+        new_seq = (sr + nexts[0]) / 2 if nexts else sr + 0.5
+    else:
+        new_seq = (seqs[0] - 0.5) if seqs else 1.0
+    ts = iso(now_utc())
+    resolver = actor.get("email") or actor.get("user_id") or "admin"
+    await db.inventory_movements.update_one(
+        {"id": movement_id},
+        {"$set": {"effect_seq": new_seq, "effect_seq_uncertain": False,
+                  "effect_seq_resolved_by": resolver,
+                  "effect_seq_resolved_at": ts}})
+    return {"movement_id": movement_id, "product_id": pid,
+            "effect_seq": new_seq, "resolved_at": ts, "resolved_by": resolver}

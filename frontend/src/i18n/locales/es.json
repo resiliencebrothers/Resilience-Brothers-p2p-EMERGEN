@@ -4001,7 +4001,33 @@
       "stores": "Tiendas",
       "valuation": "Valoración",
       "history": "Histórico",
+      "review": "Revisión",
       "incidents": "Incidencias"
+    },
+    "review": {
+      "title": "Bandeja de Revisión",
+      "intro": "Movimientos cuyo orden exacto no pudo reconstruirse tras una interrupción: su costo/valor histórico es una estimación hasta que el equipo confirme dónde ocurrieron. Resuélvelos aquí re-sellando su orden.",
+      "empty": "No hay movimientos inciertos. ¡Todo en orden!",
+      "items": "movimiento(s)",
+      "resolve": "Resolver",
+      "refresh": "Actualizar",
+      "loadError": "No se pudo cargar la bandeja de revisión",
+      "resolveError": "No se pudo resolver el orden",
+      "resolved": "Orden re-sellado correctamente",
+      "dialogTitle": "Re-sellar el orden del movimiento",
+      "dialogDesc": "Elige dónde ocurrió realmente este movimiento dentro de la línea de tiempo del producto. Se insertará en ese punto y se recalculará la valoración.",
+      "insertStart": "Insertar al inicio",
+      "insertAfter": "Insertar aquí (después)",
+      "thisOne": "Este",
+      "types": {
+        "entrada": "Entrada",
+        "venta": "Venta",
+        "ajuste_pos": "Ajuste +",
+        "ajuste_neg": "Ajuste −",
+        "merma": "Merma",
+        "consumo": "Consumo",
+        "otra_salida": "Otra salida"
+      }
     },
     "history": {
       "cutoff": "Fecha de corte",

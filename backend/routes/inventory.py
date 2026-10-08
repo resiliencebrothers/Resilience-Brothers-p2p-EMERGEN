@@ -53,6 +53,13 @@ class MovementCreate(BaseModel):
     photo_url: str = ""
 
 
+class UncertainResolveIn(BaseModel):
+    # iter354 — Bandeja de Revisión: resolver el orden de un movimiento incierto.
+    # `after_movement_id` = colócalo justo DESPUÉS de esa fila (secuenciada) del
+    # mismo producto; None = colócalo al INICIO de la línea de tiempo.
+    after_movement_id: Optional[str] = None
+
+
 @router.get("/admin/inventory/control")
 async def inventory_control(request: Request) -> Any:
     await require_permission(request, "products")
@@ -378,6 +385,55 @@ async def inventory_cutoff_report(request: Request, date: Optional[str] = None,
         raise HTTPException(status_code=400,
                             detail="'start' no puede ser posterior a la fecha de corte")
     return await build_cutoff_report(cutoff, period)
+
+
+# ══════════════ Bandeja de Revisión: orden/valoración incierta (iter354) ══════
+@router.get("/admin/inventory/uncertain")
+async def inventory_uncertain(request: Request) -> Any:
+    """Bandeja de Revisión — movimientos con orden/valoración INCIERTA, agrupados
+    por producto, para que el equipo los resuelva en un solo lugar."""
+    await require_permission(request, "products")
+    from services.inventory_history import list_uncertain_movements
+    return await list_uncertain_movements()
+
+
+@router.get("/admin/inventory/uncertain/{movement_id}/timeline")
+async def inventory_uncertain_timeline(movement_id: str, request: Request) -> Any:
+    """Línea de tiempo (orden efectivo) del producto del movimiento incierto,
+    para elegir dónde reinsertarlo."""
+    await require_permission(request, "products")
+    from services.inventory_history import uncertain_movement_timeline
+    res = await uncertain_movement_timeline(movement_id)
+    if res.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    return res
+
+
+@router.post("/admin/inventory/uncertain/{movement_id}/resolve")
+async def inventory_uncertain_resolve(movement_id: str,
+                                      payload: UncertainResolveIn,
+                                      request: Request) -> Any:
+    """ADMIN — re-sella el ORDEN de un movimiento incierto (lo coloca tras una
+    fila secuenciada o al inicio) y limpia la marca de incertidumbre."""
+    actor = await _require_admin_products(request)
+    from services.inventory_history import resolve_uncertain_order
+    try:
+        res = await resolve_uncertain_order(
+            movement_id, payload.after_movement_id, actor)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await log_action(
+        db, actor, "inventory.uncertain_resolve", "inventory_movement",
+        movement_id,
+        summary=(f"Orden incierto resuelto · producto {res['product_id']} · "
+                 f"secuencia {res['effect_seq']}"),
+        details=res)
+    try:
+        from services.live_bus import publish
+        await publish("products_changed", {"product_id": res["product_id"]})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"products_changed publish failed: {e}")
+    return res
 
 
 @router.get("/admin/inventory/cutoff-report.csv")
