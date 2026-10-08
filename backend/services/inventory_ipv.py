@@ -156,6 +156,19 @@ async def record_physical_count(product: dict, counted_qty: float,
             status_code=409,
             detail="Este conteo ya tiene un ajuste autorizado; no puede "
                    "modificarse. Vuelve a contar en otra jornada si procede.")
+    # RV-01 (iter350d / H01) — si este recuento SUSTITUYE un conteo que tenía un
+    # ajuste PENDIENTE (pending_apply), INVALIDA el efecto antiguo: elimina el
+    # movimiento de ajuste aún NO aplicado (stock_applied!=True) de la versión
+    # anterior. El cambio de versión ya invalida a cualquier recuperador que lo
+    # haya leído (su reclamo atómico fallará); esto limpia el registro huérfano
+    # para que nunca pueda completarse más tarde. Seguro: si un recuperador
+    # hubiera reclamado el conteo (auth_state='claiming'), este upsert habría
+    # fallado arriba (409), así que aquí el movimiento nunca está aplicado.
+    if existing and existing.get("auth_state") == "pending_apply":
+        await db.inventory_movements.delete_many(
+            {"ref_id": existing["id"], "source": "conteo",
+             "type": {"$in": ["ajuste_pos", "ajuste_neg"]},
+             "stock_applied": {"$ne": True}})
     # iter333 (IPV Fase 3) — sincroniza incidencias: resuelve el conteo
     # pendiente y crea/resuelve la diferencia según el descuadre.
     try:
@@ -190,6 +203,16 @@ async def clear_physical_count(product_id: str, day: Optional[str] = None) -> No
         raise HTTPException(
             status_code=409,
             detail="No se puede borrar un conteo con ajuste autorizado.")
+    # RV-01 (iter350d / H01) — al borrar un conteo con ajuste PENDIENTE, invalida
+    # también el efecto antiguo (movimiento de ajuste NO aplicado): así ningún
+    # recuperador que lo haya leído podrá aplicarlo tras el borrado. Seguro: si
+    # un recuperador lo hubiera reclamado (auth_state='claiming'), el delete
+    # anterior habría fallado (409), así que el movimiento nunca está aplicado.
+    if existing.get("auth_state") == "pending_apply":
+        await db.inventory_movements.delete_many(
+            {"ref_id": existing["id"], "source": "conteo",
+             "type": {"$in": ["ajuste_pos", "ajuste_neg"]},
+             "stock_applied": {"$ne": True}})
 
 
 async def list_counts(day: str) -> dict:
@@ -358,6 +381,19 @@ async def _recover_one_count(count: dict) -> bool:
              or "system@resiliencebrothers.com"}
     reason = (f"Ajuste por conteo físico {count['count_date']} · doc: "
               f"{document}" + (f" · {note.strip()}" if note else ""))
+    # RV-01 (iter350d / H01) — RECLAMAR atómicamente la MISMA versión ANTES de
+    # tocar el stock. Entre que recover_pending_count_adjustments leyó este
+    # conteo y este punto, un RECUENTO pudo subir la versión o un BORRADO
+    # eliminar el doc. Si el claim no casa, perdimos la versión/el conteo → NO se
+    # aplica ningún efecto. Al pasar a 'claiming', recuentos y borrados quedan
+    # bloqueados durante el resto de la recuperación (mismo guard que el admin).
+    reclaim = await db.inventory_counts.update_one(
+        {"id": count_id, "version": version, "authorized": {"$ne": True},
+         "auth_state": {"$in": ["pending_apply", "claiming"]}},
+        {"$set": {"auth_state": "claiming", "claimed_at": iso(now_utc())}})
+    if reclaim.matched_count == 0:
+        return False
+    # Idempotencia del movimiento ligada a la versión reclamada.
     mov = await record_movement(
         product=product, mtype=mtype, quantity=abs(diff), note=reason,
         source="conteo", ref_id=count_id, actor=actor,
@@ -365,15 +401,16 @@ async def _recover_one_count(count: dict) -> bool:
     now = iso(now_utc())
     if not mov.get("stock_applied"):
         # Aún no se pudo aplicar (p.ej. stock insuficiente ahora mismo): se deja
-        # PENDIENTE para el siguiente ciclo del recuperador.
+        # PENDIENTE para el siguiente ciclo del recuperador. Condicionado a que
+        # sigamos dueños del claim (misma versión y auth_state='claiming').
         await db.inventory_counts.update_one(
-            {"id": count_id, "version": version, "authorized": {"$ne": True}},
+            {"id": count_id, "version": version, "auth_state": "claiming"},
             {"$set": {"auth_state": "pending_apply",
                       "adjustment_movement_id": mov["id"],
                       "updated_at": now}})
         return False
     res = await db.inventory_counts.update_one(
-        {"id": count_id, "version": version, "authorized": {"$ne": True}},
+        {"id": count_id, "version": version, "auth_state": "claiming"},
         {"$set": {"authorized": True, "status": "ajustado",
                   "auth_state": "authorized", "authorized_version": version,
                   "adjustment_movement_id": mov["id"],
