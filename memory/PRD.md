@@ -2445,3 +2445,11 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - **Tests**: `test_iter351_rv02_effect_seq_recovery.py` (6/6), añadidos a `test-critical` junto a toda la familia iter350*.
 - **CI**: `make test-critical` → 1070 passed / 0 failed. ruff limpio. Backend sano.
 - Estado: fix en preview; pendiente de re-despliegue a producción.
+
+---
+## Actualización 2026-10-08 (iter352)
+- **RV-01** (ALTA, residual): el recuperador GENERAL (`heal_initializing_ops`) ya no aplica ajustes de conteo físico (`source='conteo'`) sin protección de versión — se EXCLUYEN de su query y se DELEGAN por completo al recuperador IPV protegido (`_recover_one_count`, que re-reclama la versión atómicamente antes de tocar el stock). Cierra la ventana en la que el recuperador general aplicaba una copia en memoria de un ajuste ya invalidado por un recuento/borrado (efecto de stock fantasma).
+- **Tests**: `test_iter352_rv01_general_recoverer_conteo.py` (5/5) con compuerta (monkeypatch) para recuento y borrado + controles IPV/manual. Reproductor real: FALLA sin el fix.
+- **CI**: `make test-critical` → 1075 passed / 0 failed. ruff limpio. Backend sano.
+- Estado: fix en preview; pendiente de re-despliegue a producción.
+

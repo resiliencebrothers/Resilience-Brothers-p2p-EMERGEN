@@ -430,9 +430,17 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         logger.warning("settlement %s completado por el healer", s["id"])
 
     # --- movimientos de inventario sin stock aplicado ---------------------
+    # iter352 (RV-01, residual) — EXCLUIR los ajustes de conteo físico
+    # (source='conteo'). Esta vía aplica el efecto directamente SIN reclamar la
+    # versión del conteo ni comprobar su invalidación terminal, por lo que podía
+    # aplicar una copia ya leída de un ajuste que un recuento/borrado posterior
+    # invalidó (efecto de stock fantasma). La recuperación de ajustes de conteo
+    # queda DELEGADA por completo al recuperador IPV protegido
+    # (recover_pending_count_adjustments → _recover_one_count), que RECLAMA la
+    # versión atómicamente antes de tocar el stock (único ejecutor, sin ventana).
     rows = await db.inventory_movements.find(
         {"needs_stock": True, "stock_applied": {"$ne": True},
-         "stock_apply_failed": {"$ne": True},
+         "stock_apply_failed": {"$ne": True}, "source": {"$ne": "conteo"},
          "created_at": {"$lt": cutoff}}, {"_id": 0}).to_list(200)
     for m in rows:
         delta = movement_delta(m.get("type") or "", round(float(m.get("quantity") or 0), 3))
