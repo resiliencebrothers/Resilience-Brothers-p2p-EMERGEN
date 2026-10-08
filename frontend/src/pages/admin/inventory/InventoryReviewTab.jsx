@@ -146,7 +146,7 @@ export default function InventoryReviewTab() {
 
       {/* Diálogo de resolución: elegir dónde reinsertar el movimiento */}
       <Dialog open={!!target} onOpenChange={(o) => { if (!o && !saving) { setTarget(null); setTimeline(null); } }}>
-        <DialogContent className="bg-[#0d0d12] border-white/10 max-w-xl"
+        <DialogContent className="bg-[#0d0d12] border-white/10 max-w-xl max-h-[85vh] overflow-y-auto"
           data-testid="review-resolve-dialog">
           <DialogHeader>
             <DialogTitle className="text-white">{t("inventory.review.dialogTitle")}</DialogTitle>

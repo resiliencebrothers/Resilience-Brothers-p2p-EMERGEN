@@ -1871,3 +1871,16 @@ Siguiente paso tras iter353: dar al equipo un lugar único para resolver los mov
 - **CI**: `make test-critical` (con iter354 añadido) → ver resultado abajo. ruff limpio.
 - **Estado**: feature en preview; pendiente de re-despliegue a producción.
 
+
+## 2026-10-08 · iter355 — Fix CI ESLint (regla rb-local/no-dialog-without-scroll) + triaje de code review
+**Incidencia de CI (bloqueante)**: el job `frontend-lint` (`yarn lint`) fallaba por un ERROR en `InventoryReviewTab.jsx:149` — el `DialogContent` del diálogo de resolución tenía `bg/border/max-w-xl` pero carecía de `max-h-*`, incumpliendo la regla local `rb-local/no-dialog-without-scroll` (que previene modales que ocultan su contenido/botones en pantallas bajas; introducida feb-2026 tras un incidente real).
+- **Fix**: `DialogContent` ahora usa `className="bg-[#0d0d12] border-white/10 max-w-xl max-h-[85vh] overflow-y-auto"` — la convención del proyecto (46 diálogos usan `max-h-[85vh]`), garantizando scroll del contenedor exterior en viewports bajos. NO se desactivó la regla. `yarn lint` → **0 errors** (quedan 2 warnings preexistentes `react-hooks/exhaustive-deps` en InventoryCloseTab/InventoryIncidentsTab, no bloqueantes y ajenos a este cambio). Los 3 jobs de CI (backend pytest 1082✓, mypy✓, frontend-lint) quedan en verde en el nuevo commit.
+
+**Triaje del code review (8 puntos Python) — verificado con herramientas, SIN cambios de código**:
+- #1 Import circular `balances ↔ credit_markers`: ya resuelto por diseño (imports lazy a nivel de función, documentado en `credit_markers.py`); `import` de ambos módulos sin fallo. CERRADO.
+- #2 "Secretos hardcodeados" en tests: FALSO POSITIVO — son tokens de sesión de prueba (`it283_courier_session`), tokens aleatorios (`"tok_*"+secrets.token_hex(20)`) y un token deliberadamente inválido (`"XXXX.FORGED.TOKEN"`); los secretos reales están en `os.environ`; `conftest.py` ya lo documenta (review feb-2026). CERRADO.
+- #3 "68 variables indefinidas": FALSO POSITIVO — `ruff --select F821 .` → 0. CERRADO.
+- #7 "1.243 comparaciones con `is`": FALSO POSITIVO — `ruff --select F632 .` → 0; las líneas de `transactions_pdf.py` usan `is not None` (correcto PEP 8). CERRADO.
+- #8 Imports dinámicos en tests: patrón estándar (registro de handler / monkeypatch), sin riesgo de inyección. CERRADO.
+- #4/#5/#6 Complejidad/funciones largas/args en `admin_withdrawals.py` y `admin.py`: clasificados como OBSERVACIONES DE MANTENIMIENTO sin urgencia funcional. Por instrucción explícita del usuario ("no tocar retiros") y por riesgo en código financiero probado (1082/1082 tests), NO se refactorizan en esta revisión.
+
