@@ -73,10 +73,14 @@ export default function InventoryPrintTab() {
   const printSale = async (mv) => {
     setBusy(true);
     try {
+      // SUN-03-B: una reimpresión es una COPIA, no el evento de caja original.
+      // NUNCA abre la gaveta (ignora cfg.openDrawer y preferencias antiguas).
+      // Solo el botón manual "Abrir gaveta" —o, en el futuro, el cobro real—
+      // dispara el pulso. El ticket de prueba sí respeta su propio toggle.
       const payload = {
         business_name: cfg.business_name, business_line2: cfg.business_line2,
         business_line3: cfg.business_line3, footer: cfg.footer,
-        currency: cfg.currency, width: cfg.width, open_drawer: cfg.openDrawer,
+        currency: cfg.currency, width: cfg.width, open_drawer: false,
         print_logo: cfg.printLogo,
         ticket_no: String(mv.id).slice(0, 8).toUpperCase(),
         datetime: when(mv.created_at), cashier: mv.actor_email || "",

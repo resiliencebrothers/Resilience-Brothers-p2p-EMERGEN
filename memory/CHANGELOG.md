@@ -1909,3 +1909,10 @@ Petición del operador: *"Logo en el Ticket: imprime el logotipo del negocio en 
 - **Web/PWA/PDF**: el logo ya estaba integrado (assets idénticos) — sin cambios.
 - **Verificación**: `test_iter356_receipt_printing.py` 17/17; testing_agent iteration_357.json backend 100% / frontend 100% (5/5), 0 defectos; mypy OK; ESLint 0 errores; UI OK desktop+móvil (sin overflow).
 - **Pendiente físico**: impresora + gaveta + logo en la T1730 real (criterio de cierre).
+
+### iter357b — SUN-03-B: las reimpresiones nunca abren la gaveta
+Hallazgo del informe: `printSale` construía `open_drawer: cfg.openDrawer` para cada movimiento guardado, así que una COPIA abría la gaveta si el toggle (o una preferencia antigua) estaba en true.
+
+- `InventoryPrintTab.jsx::printSale` ahora fuerza `open_drawer: false` (una reimpresión es una copia, no el evento de caja original). Ignora `cfg.openDrawer` y preferencias antiguas.
+- El ticket de prueba (`printSample`) sigue respetando su toggle; el botón manual "Abrir gaveta" sigue disparando el pulso de forma explícita.
+- Verificado en UI: con la gaveta ACTIVADA, reimprimir un movimiento NO muestra la nota de gaveta (backend devuelve open_drawer=false, sin pulso); el ticket de prueba sí la respeta. ESLint 0 errores.

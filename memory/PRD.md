@@ -2490,3 +2490,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - **Logo web/PWA/PDF**: ya estaba integrado (assets byte-idénticos al logo adjunto en `public/branding/*`, `public/icons/*`, `backend/assets/logo*.png`) — no requirió cambios.
 - **Tests**: `test_iter356_receipt_printing.py` ampliado a 17/17 (gaveta OFF por defecto, anti-inyección, logo presente/ausente, flags de build_receipt, toggles del sample). testing_agent iteration_357.json → backend 100% (17/17), frontend 100% (5/5 flujos), 0 defectos. mypy OK, ESLint 0 errores.
 - Estado: en preview; **pendiente de verificación física** en la T1730 real (impresora + gaveta + logo) y de re-despliegue a producción.
+
+### iter357b (2026-10-09) — SUN-03-B
+- **Reimpresiones nunca abren la gaveta**: `InventoryPrintTab.jsx::printSale` fuerza `open_drawer: false` (una copia no es el evento de caja). Ignora el toggle y preferencias antiguas. Ticket de prueba y botón manual intactos. Verificado en UI (gaveta ON → reimpresión sin pulso; ticket de prueba sí respeta el toggle). ESLint 0 errores.
