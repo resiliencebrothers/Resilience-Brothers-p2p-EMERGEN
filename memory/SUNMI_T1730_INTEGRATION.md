@@ -20,19 +20,35 @@ T1730 real) queda pendiente y es el criterio de cierre.
 - **Frontend decide el TRANSPORTE** (`src/lib/receiptPrinter.js`) y la UI está en la
   pestaña **Inventario → Caja** (`InventoryPrintTab.jsx`):
   - `simulacion` — muestra el ticket y el volcado ESC/POS en pantalla. Sin hardware.
-  - `sunmi` — envía el ESC/POS al middleware local del equipo por WebSocket
-    (`ws://127.0.0.1:8080/` por defecto, configurable en la UI).
+  - `sunmi` — envía el ESC/POS por el **JS USDK OFICIAL de SUNMI** (`sunmi-js-sdk`,
+    puente JS → `printer.commandApi.sendEscCommand(['<hex>'])`). El SDK habla con el
+    servicio local del equipo (`ws://localhost:7070/ws`, lo instala la app "JS USDK"
+    de la Sunmi App Store y se lanza por el deep link `sunmi://com.sunmi:8888/websdk`).
+    SOLO reporta éxito ante un **ACK positivo (code===1)** del equipo; error, sin
+    respuesta o socket no conectado = fallo (timeout de seguridad en el cliente).
   - `navegador` — imprime el ticket por el servicio de impresión del sistema/Android.
+
+### Logo del negocio en la cabecera (iter357)
+- El ticket imprime el logo de Resilience Brothers como bitmap ESC/POS `GS v 0`
+  (raster), centrado en la cabecera. Origen: `backend/assets/logo_original_black_bg.png`
+  (claro sobre negro) → escala al ~70% del ancho del papel (múltiplo de 8, tope 190 px)
+  → se invierte + se trama (dithering) para que lo claro imprima como tinta.
+  Determinista y cacheado por ancho. Toggle "Imprimir logo en el ticket" (por defecto ON).
+- El nombre del negocio SIGUE imprimiéndose como texto nítido bajo el logo, así que
+  el logo funciona como marca aunque el wordmark se vea granulado en térmica.
 
 ### Comandos ESC/POS usados
 - `ESC @` (init), `ESC a` (alineación), `ESC E` (negrita), `GS !` (tamaño),
+- `GS v 0` **logo raster** del negocio en la cabecera (iter357),
 - `GS V 0` corte total (autocortador del modelo 80 mm),
 - **gaveta:** `ESC p 0 25 250` = `1b 70 00 19 fa` (pin 0, 25 ms on, 250 ms off),
-  añadido al final del ticket si "Abrir gaveta al imprimir" está activo, o por el
-  botón "Abrir gaveta".
+  añadido al final del ticket SOLO si "Abrir gaveta al imprimir" está activo
+  (**por defecto OFF** desde iter357), o por el botón "Abrir gaveta".
 - Ancho: 48 columnas (80 mm) / 32 columnas (58 mm).
-- **Texto ASCII-seguro:** los acentos/ñ/¡ se transliteran (Café→Cafe) para que el
-  PRIMER ticket físico salga legible sin depender de la página de códigos del equipo.
+- **Texto ASCII-seguro + anti-inyección (iter357):** los acentos/ñ/¡ se transliteran
+  (Café→Cafe) y se ELIMINAN los bytes de control (<0x20/0x7f) de todo texto de
+  usuario, de modo que ningún campo pueda inyectar comandos de impresora ni un
+  pulso de gaveta. Solo sobrevive ASCII imprimible (0x20–0x7e).
 
 ---
 
@@ -64,30 +80,31 @@ en la pestaña Caja (modo Simulación).
 
 1. **Preparar el transporte en el equipo.** La SUNMI D3 Mini trae SUNMI OS
    (Android 13, sin GMS). Instalar un navegador Chromium e instalar la app PWA.
-   Para imprimir desde la web hace falta un puente al servicio de impresión:
-   - Opción recomendada: middleware **SUNMI "JS USDK"** (WebSocket local). Instalarlo
-     desde la SUNMI App Store y anotar el **puerto/URL** real.
-   - Alternativa: app nativa puente (AIDL `woyou.aidlservice.jiuiv5.IWoyouService`,
-     método `sendRAWData(byte[])`), o esquema `sunmiprint://`.
-2. **Ajustar en la UI (pestaña Caja):** transporte = "SUNMI (equipo)" y la
-   **URL del servicio** (`ws://127.0.0.1:<puerto>/`) según el middleware instalado.
-3. **Confirmar la TRAMA del WebSocket.** `receiptPrinter.js::sendEscposToSunmi` envía
-   `{"type":"escpos","data":"<base64>"}`. Verificar que el JS USDK instalado espera
-   ese formato; si no, ajustar esa única función (y, si procede, enviar bytes crudos).
-4. **Imprimir "Ticket de prueba"** → confirmar que sale el ticket completo y que el
-   **autocortador** corta (modelo 80 mm).
+   Instalar la app **"JS USDK"** desde la SUNMI App Store: levanta el servicio
+   local `ws://localhost:7070/ws` con el que habla `sunmi-js-sdk`.
+2. **Ajustar en la UI (pestaña Caja):** transporte = "SUNMI (equipo)". No hay que
+   configurar URL: el JS USDK gestiona su propio socket. La app PWA debe lanzarse en
+   el propio equipo para que el deep link `sunmi://com.sunmi:8888/websdk` abra el servicio.
+3. **Protocolo (ya implementado con el SDK oficial).**
+   `receiptPrinter.js::sendEscposToSunmi` usa `new SUNMI()` → `init()` →
+   `launchPrinterService()` → `printer.commandApi.sendEscCommand(['<hex>'])`, donde
+   `<hex>` es el ESC/POS en hexadecimal. La promesa SOLO se resuelve con ACK `code===1`;
+   si el equipo no responde, el timeout de 8 s rechaza (no hay falsos "éxito").
+4. **Imprimir "Ticket de prueba"** → confirmar que sale el ticket completo CON LOGO y
+   que el **autocortador** corta (modelo 80 mm).
 5. **"Abrir gaveta"** → confirmar que la **gaveta** se abre con el pulso.
 6. **"Imprimir desde una venta reciente"** → confirmar ticket real correcto.
 7. **Página de códigos / acentos (opcional):** si se quieren acentos/ñ, fijar la
    codepage del equipo (p. ej. CP850) y sustituir la transliteración ASCII por el
    encoding correspondiente en `receipt_printing.py::_line`.
 8. **Modelo 58 mm vs 80 mm:** confirmar el ancho correcto (32/48) según la variante
-   comprada.
+   comprada. El logo escala automáticamente al ancho elegido.
 
 ### Checklist físico resumido
-- [ ] Middleware de impresión instalado y URL WebSocket anotada
+- [ ] App "JS USDK" instalada (servicio local ws://localhost:7070/ws)
 - [ ] Ticket de prueba impreso y cortado
-- [ ] Gaveta abre con el pulso
+- [ ] Logo del negocio visible y reconocible en la cabecera
+- [ ] Gaveta abre con el pulso (solo cuando el toggle está activo)
 - [ ] Ticket desde venta real correcto
 - [ ] (opcional) Acentos/codepage ajustados
 - [ ] Ancho de papel confirmado (80/58 mm)

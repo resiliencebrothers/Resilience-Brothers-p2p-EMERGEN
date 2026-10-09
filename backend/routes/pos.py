@@ -27,11 +27,18 @@ async def pos_build_receipt(payload: ReceiptPayload, request: Request) -> Any:
 
 
 @router.get("/admin/pos/receipt/sample")
-async def pos_sample_receipt(request: Request, width: int = 48) -> Any:
-    """Ticket de ejemplo (para la prueba de simulación)."""
+async def pos_sample_receipt(request: Request, width: int = 48,
+                             open_drawer: bool = False,
+                             print_logo: bool = True) -> Any:
+    """Ticket de ejemplo (para la prueba de simulación).
+
+    Respeta los toggles de la UI: la gaveta solo se incluye si `open_drawer`
+    es True; el logo solo si `print_logo` es True."""
     await require_permission(request, "products")
     p = sample_payload()
     p.width = 32 if int(width) == 32 else 48
+    p.open_drawer = bool(open_drawer)
+    p.print_logo = bool(print_logo)
     return {"payload": p.model_dump(), **build_receipt(p)}
 
 

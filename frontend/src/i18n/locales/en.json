@@ -4013,7 +4013,7 @@
       "tSunmi": "SUNMI (device)",
       "tBrowser": "Browser",
       "bannerSim": "SIMULATION mode: no hardware touched. The receipt and ESC/POS dump are shown on screen to validate the layout without the device.",
-      "bannerSunmi": "SUNMI mode: the receipt will be sent to the device printer over a local WebSocket. PENDING PHYSICAL VERIFICATION on the T1730 (printer + drawer).",
+      "bannerSunmi": "SUNMI mode: the receipt is sent to the device printer via the official SUNMI JS USDK (local service). Success is only reported on the device ACK. PENDING PHYSICAL VERIFICATION on the T1730 (printer + drawer).",
       "bannerBrowser": "BROWSER mode: the receipt prints via the system/Android print service.",
       "wsUrl": "SUNMI service URL (WebSocket)",
       "paper": "Paper width",
@@ -4036,7 +4036,10 @@
       "drawerSim": "Drawer (simulation): ESC/POS pulse generated",
       "drawerIncluded": "Includes a drawer-open pulse at the end of the receipt.",
       "escposDump": "Show ESC/POS dump",
-      "previewPaper": "Receipt"
+      "previewPaper": "Receipt",
+      "jsusdkNote": "Requires the 'JS USDK' app installed from the Sunmi App Store on the device (it runs the local service ws://localhost:7070/ws). Success is only reported on the device confirmation.",
+      "logoToggle": "Print logo on the receipt",
+      "logoIncluded": "Includes the business logo in the receipt header."
     },
     "review": {
       "title": "Review Tray",

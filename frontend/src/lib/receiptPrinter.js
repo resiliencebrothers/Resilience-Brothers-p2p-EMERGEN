@@ -1,22 +1,25 @@
-// iter356 — Transporte de impresión para SUNMI D3 Mini T1730.
+// iter356/iter357 — Transporte de impresión para SUNMI D3 Mini T1730.
 //
 // El backend genera el flujo ESC/POS (bytes estándar de impresora térmica).
 // Aquí decidimos CÓMO llega ese flujo a la impresora según el transporte:
 //
 //   • "simulacion" — no toca hardware: la UI muestra el ticket y el volcado
 //     ESC/POS. 100% verificable sin el equipo.
-//   • "sunmi"      — envía el ESC/POS al middleware SUNMI "JS USDK" por un
-//     WebSocket local del propio dispositivo (p. ej. ws://127.0.0.1:8080/).
-//     *** El formato de trama y el puerto deben confirmarse con el equipo real
-//         (ver /app/memory/SUNMI_T1730_INTEGRATION.md). ***
+//   • "sunmi"      — envía el ESC/POS por el JS USDK OFICIAL de SUNMI
+//     (puente JS → `sendEscCommand`). El SDK habla con el servicio local del
+//     equipo (ws://localhost:7070/ws) que instala la app "JS USDK" de la
+//     Sunmi App Store. Solo reporta éxito ante un ACK positivo del equipo.
 //   • "navegador"  — imprime el ticket en texto por el servicio de impresión
 //     de Android/Chromium (window.print). Útil como alternativa.
 
 export const DEFAULT_CONFIG = {
   transport: "simulacion",
-  sunmiWsUrl: "ws://127.0.0.1:8080/",
+  // El JS USDK oficial gestiona su propio socket (ws://localhost:7070/ws);
+  // este valor queda informativo.
+  sunmiWsUrl: "ws://localhost:7070/ws",
   width: 48, // 48 = 80mm · 32 = 58mm
-  openDrawer: true,
+  openDrawer: false,
+  printLogo: true,
   business_name: "Resilience Brothers",
   business_line2: "Mercado & Inventario",
   business_line3: "",
@@ -49,38 +52,93 @@ export function hexPreview(b64) {
   }
 }
 
-// Envía ESC/POS (base64) al middleware SUNMI por WebSocket. Resuelve al recibir
-// un ACK o al cerrarse correctamente; rechaza ante error o timeout.
-export function sendEscposToSunmi(b64, wsUrl, timeoutMs = 6000) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let ws;
-    const done = (fn, arg) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try { ws && ws.close(); } catch { /* noop */ }
-      fn(arg);
+function b64ToHex(b64) {
+  const bin = atob(b64);
+  let hex = "";
+  for (let i = 0; i < bin.length; i += 1) {
+    hex += bin.charCodeAt(i).toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+// ── JS USDK oficial de SUNMI ──────────────────────────────────────────────
+// El SDK abre su WebSocket al servicio local del equipo y expone
+// `printer.commandApi.sendEscCommand([hex])`, cuya promesa SOLO se resuelve
+// ante un ACK positivo (code===1); si no hay socket rechaza al instante, y si
+// el equipo responde otro código la promesa queda colgada → la cortamos con un
+// timeout. Así NUNCA reportamos éxito ante error/sin respuesta/cierre.
+let _sunmiSdkPromise = null;
+
+async function getSunmiSdk() {
+  if (!_sunmiSdkPromise) {
+    _sunmiSdkPromise = (async () => {
+      const mod = await import("sunmi-js-sdk");
+      const SUNMI = mod.default || mod;
+      const sdk = new SUNMI();
+      sdk.init(); // abre ws://localhost:7070/ws (servicio JS USDK del equipo)
+      try {
+        // Lanza la app de impresión por el deep link sunmi:// (puede no resolver
+        // fuera del equipo; no es bloqueante).
+        await sdk.launchPrinterService();
+      } catch {
+        /* noop */
+      }
+      return sdk;
+    })();
+  }
+  return _sunmiSdkPromise;
+}
+
+function sdkSocket(sdk) {
+  return sdk && sdk.printer && sdk.printer.commandApi && sdk.printer.commandApi.socket;
+}
+
+function waitForConnection(sdk, timeoutMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      const s = sdkSocket(sdk);
+      if (s && s.connected) return resolve(true);
+      if (Date.now() - start >= timeoutMs) return resolve(false);
+      setTimeout(tick, 150);
+      return undefined;
     };
-    const timer = setTimeout(
-      () => done(reject, new Error("Tiempo de espera agotado con el servicio SUNMI")),
-      timeoutMs,
-    );
-    try {
-      ws = new WebSocket(wsUrl);
-    } catch (e) {
-      return done(reject, e);
-    }
-    ws.onopen = () => {
-      // Trama documentada; AJUSTAR al protocolo del JS USDK instalado si difiere.
-      ws.send(JSON.stringify({ type: "escpos", data: b64 }));
-      // Algunos servicios no responden ACK: resolvemos poco después del envío.
-      setTimeout(() => done(resolve, { ok: true, via: "sunmi" }), 400);
-    };
-    ws.onmessage = () => done(resolve, { ok: true, via: "sunmi" });
-    ws.onerror = () =>
-      done(reject, new Error("No se pudo conectar con el servicio de impresión SUNMI"));
+    tick();
   });
+}
+
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    Promise.resolve(promise).then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e instanceof Error ? e : new Error(String(e))); },
+    );
+  });
+}
+
+// Envía ESC/POS (base64) al equipo SUNMI por el JS USDK oficial.
+export async function sendEscposToSunmi(b64, _opts, timeoutMs = 8000) {
+  let sdk;
+  try {
+    sdk = await getSunmiSdk();
+  } catch {
+    throw new Error("No se pudo cargar el SDK de SUNMI (JS USDK).");
+  }
+  const connected = await waitForConnection(sdk, 4000);
+  if (!connected) {
+    throw new Error(
+      "Sin conexión con el servicio de impresión SUNMI. Instala/abre la app 'JS USDK' (Sunmi App Store) en el equipo.",
+    );
+  }
+  const hex = b64ToHex(b64);
+  // sendEscCommand resuelve SOLO con ACK positivo (code===1) del equipo.
+  await withTimeout(
+    sdk.printer.commandApi.sendEscCommand([hex]),
+    timeoutMs,
+    "La impresora SUNMI no confirmó la impresión (sin ACK).",
+  );
+  return { ok: true, via: "sunmi" };
 }
 
 // Imprime el ticket en texto por el servicio de impresión del navegador.

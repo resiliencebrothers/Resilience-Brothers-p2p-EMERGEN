@@ -63,7 +63,8 @@ export default function InventoryPrintTab() {
     setBusy(true);
     try {
       const { data } = await axios.get(
-        `${API}/admin/pos/receipt/sample?width=${cfg.width}`, { withCredentials: true });
+        `${API}/admin/pos/receipt/sample?width=${cfg.width}&open_drawer=${cfg.openDrawer}&print_logo=${cfg.printLogo}`,
+        { withCredentials: true });
       await route(data, "sample");
     } catch (e) { toast.error(e.response?.data?.detail || e.message); }
     finally { setBusy(false); }
@@ -76,6 +77,7 @@ export default function InventoryPrintTab() {
         business_name: cfg.business_name, business_line2: cfg.business_line2,
         business_line3: cfg.business_line3, footer: cfg.footer,
         currency: cfg.currency, width: cfg.width, open_drawer: cfg.openDrawer,
+        print_logo: cfg.printLogo,
         ticket_no: String(mv.id).slice(0, 8).toUpperCase(),
         datetime: when(mv.created_at), cashier: mv.actor_email || "",
         items: [{
@@ -147,11 +149,9 @@ export default function InventoryPrintTab() {
         </div>
 
         {cfg.transport === "sunmi" && (
-          <div className="space-y-1">
-            <Label className="text-[0.65rem] text-neutral-400">{t("inventory.print.wsUrl")}</Label>
-            <Input value={cfg.sunmiWsUrl} onChange={(e) => set("sunmiWsUrl", e.target.value)}
-              data-testid="print-ws-url"
-              className="bg-black/30 border-white/10 text-sm rounded-none" />
+          <div className="text-[0.65rem] text-amber-200/90 bg-amber-500/5 border border-amber-500/20 px-3 py-2"
+            data-testid="print-jsusdk-note">
+            {t("inventory.print.jsusdkNote")}
           </div>
         )}
 
@@ -169,10 +169,17 @@ export default function InventoryPrintTab() {
               ))}
             </div>
           </div>
-          <div className="flex items-center justify-between sm:justify-start sm:gap-4 pt-5">
-            <Label className="text-[0.7rem] text-neutral-300">{t("inventory.print.openDrawerToggle")}</Label>
-            <Switch checked={cfg.openDrawer} onCheckedChange={(v) => set("openDrawer", v)}
-              data-testid="print-drawer-toggle" />
+          <div className="flex flex-col gap-3 pt-5">
+            <div className="flex items-center justify-between sm:justify-start sm:gap-4">
+              <Label className="text-[0.7rem] text-neutral-300">{t("inventory.print.openDrawerToggle")}</Label>
+              <Switch checked={cfg.openDrawer} onCheckedChange={(v) => set("openDrawer", v)}
+                data-testid="print-drawer-toggle" />
+            </div>
+            <div className="flex items-center justify-between sm:justify-start sm:gap-4">
+              <Label className="text-[0.7rem] text-neutral-300">{t("inventory.print.logoToggle")}</Label>
+              <Switch checked={cfg.printLogo} onCheckedChange={(v) => set("printLogo", v)}
+                data-testid="print-logo-toggle" />
+            </div>
           </div>
         </div>
 
@@ -267,6 +274,11 @@ export default function InventoryPrintTab() {
               {preview.open_drawer && (
                 <div className="text-[0.65rem] text-amber-300" data-testid="print-preview-drawer">
                   {t("inventory.print.drawerIncluded")}
+                </div>
+              )}
+              {preview.has_logo && (
+                <div className="text-[0.65rem] text-sky-300" data-testid="print-preview-logo">
+                  {t("inventory.print.logoIncluded")}
                 </div>
               )}
               <details className="text-[0.6rem] text-neutral-500">

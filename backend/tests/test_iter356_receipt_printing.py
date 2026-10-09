@@ -13,7 +13,7 @@ from tests.conftest import BASE_URL, ADMIN_TOKEN
 from services.receipt_printing import (
     ReceiptPayload, ReceiptItem, build_escpos, build_receipt,
     drawer_kick_escpos, render_plaintext, INIT, FULL_CUT, DRAWER_KICK,
-    WIDTH_80MM, WIDTH_58MM, sample_payload,
+    WIDTH_80MM, WIDTH_58MM, sample_payload, RASTER_HEADER, logo_raster,
 )
 
 API = f"{BASE_URL}/api"
@@ -80,7 +80,7 @@ def test_build_receipt_b64_decodes_to_escpos():
     p = _payload()
     res = build_receipt(p)
     assert res["width"] == WIDTH_80MM
-    assert res["open_drawer"] is True
+    assert res["open_drawer"] is False   # iter357: gaveta OFF por defecto
     assert base64.b64decode(res["escpos_b64"]) == build_escpos(p)
     assert res["escpos_len"] == len(build_escpos(p))
     assert "Café".encode("ascii", "ignore").decode() or True
@@ -138,4 +138,67 @@ def test_route_requires_auth():
 
 def test_sample_payload_shape():
     p = sample_payload()
-    assert p.items and p.total > 0 and p.open_drawer is True
+    assert p.items and p.total > 0 and p.open_drawer is False
+
+
+# ── iter357 — gaveta OFF por defecto, saneado anti-inyección y logo ────────
+def test_open_drawer_default_is_off():
+    """SEGURIDAD: por defecto NO se abre la gaveta (antes iba en True)."""
+    p = ReceiptPayload(total=10)
+    assert p.open_drawer is False
+    assert DRAWER_KICK not in build_escpos(p)
+
+
+def test_user_text_cannot_inject_printer_commands():
+    """Un campo de texto con comandos ESC/POS (incl. pulso de gaveta) NO debe
+    inyectar bytes de control ni abrir la gaveta cuando open_drawer=False."""
+    evil = "Tienda\x1bp\x00\x19\xfa\x1dV\x00 Hack"   # ESC p ... + GS V 0
+    p = _payload(business_name=evil, footer=evil, open_drawer=False,
+                 items=[ReceiptItem(name=evil, qty=1, unit=evil,
+                                    unit_price=1, total=1)])
+    data = build_escpos(p)
+    # El único corte permitido es el que añade build_escpos al final (1 vez).
+    assert data.count(FULL_CUT) == 1
+    # No se cuela ningún pulso de gaveta proveniente del texto del usuario.
+    assert DRAWER_KICK not in data
+    # El texto renderizado no contiene bytes de control.
+    txt = render_plaintext(p)
+    assert all(ord(c) >= 0x20 or c == "\n" for c in txt)
+
+
+def test_logo_raster_present_when_enabled_absent_when_disabled():
+    raster = logo_raster(WIDTH_80MM)
+    assert raster and raster.startswith(RASTER_HEADER), "debe existir el logo GS v 0"
+    with_logo = build_escpos(_payload(print_logo=True))
+    without_logo = build_escpos(_payload(print_logo=False))
+    assert RASTER_HEADER in with_logo
+    assert RASTER_HEADER not in without_logo
+    # La vista de simulación marca la presencia del logo.
+    assert "[ LOGO ]" in render_plaintext(_payload(print_logo=True))
+    assert "[ LOGO ]" not in render_plaintext(_payload(print_logo=False))
+
+
+def test_build_receipt_reports_logo_flags():
+    res = build_receipt(_payload(print_logo=True))
+    assert res["print_logo"] is True and res["has_logo"] is True
+    res2 = build_receipt(_payload(print_logo=False))
+    assert res2["print_logo"] is False and res2["has_logo"] is False
+
+
+def test_route_sample_respects_drawer_and_logo_toggles():
+    # Por defecto: sin gaveta, con logo.
+    r = requests.get(f"{API}/admin/pos/receipt/sample?width=48",
+                     headers=_hdr(ADMIN_TOKEN), timeout=30)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    data = base64.b64decode(d["escpos_b64"])
+    assert DRAWER_KICK not in data and d["open_drawer"] is False
+    assert RASTER_HEADER in data and d["has_logo"] is True
+    # Activando gaveta y desactivando logo.
+    r2 = requests.get(
+        f"{API}/admin/pos/receipt/sample?width=48&open_drawer=true&print_logo=false",
+        headers=_hdr(ADMIN_TOKEN), timeout=30)
+    d2 = r2.json()
+    data2 = base64.b64decode(d2["escpos_b64"])
+    assert DRAWER_KICK in data2 and d2["open_drawer"] is True
+    assert RASTER_HEADER not in data2 and d2["has_logo"] is False

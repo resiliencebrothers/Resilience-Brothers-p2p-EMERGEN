@@ -4013,7 +4013,7 @@
       "tSunmi": "SUNMI (equipo)",
       "tBrowser": "Navegador",
       "bannerSim": "Modo SIMULACIÓN: no se toca hardware. El ticket y el volcado ESC/POS se muestran en pantalla para validar el formato sin el equipo.",
-      "bannerSunmi": "Modo SUNMI: se enviará el ticket a la impresora del equipo por WebSocket local. PENDIENTE DE VERIFICACIÓN FÍSICA en la T1730 (impresora + gaveta).",
+      "bannerSunmi": "Modo SUNMI: el ticket se envía a la impresora del equipo por el JS USDK oficial de SUNMI (servicio local). Solo se confirma al recibir ACK del equipo. PENDIENTE DE VERIFICACIÓN FÍSICA en la T1730 (impresora + gaveta).",
       "bannerBrowser": "Modo NAVEGADOR: el ticket se imprime por el servicio de impresión del sistema/Android.",
       "wsUrl": "URL del servicio SUNMI (WebSocket)",
       "paper": "Ancho de papel",
@@ -4036,7 +4036,10 @@
       "drawerSim": "Gaveta (simulación): pulso ESC/POS generado",
       "drawerIncluded": "Incluye pulso de apertura de gaveta al final del ticket.",
       "escposDump": "Ver volcado ESC/POS",
-      "previewPaper": "Ticket"
+      "previewPaper": "Ticket",
+      "jsusdkNote": "Requiere la app 'JS USDK' instalada desde la Sunmi App Store en el equipo (gestiona el servicio local ws://localhost:7070/ws). Solo se reporta éxito con la confirmación del equipo.",
+      "logoToggle": "Imprimir logo en el ticket",
+      "logoIncluded": "Incluye el logo del negocio en la cabecera del ticket."
     },
     "review": {
       "title": "Bandeja de Revisión",
