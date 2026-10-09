@@ -5,9 +5,9 @@ solo GENERA el ESC/POS determinista; el frontend lo envía por el transporte
 elegido (simulación / SUNMI WebSocket / navegador). Ver doc de integración.
 """
 import logging
-from typing import Any, Optional
+from typing import Any, List
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from auth_utils import require_permission
@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["POS"])
 
 
-class CobroIn(BaseModel):
-    """Cobro real en Caja: registra la venta + imprime ticket + abre la gaveta."""
+class CobroLine(BaseModel):
     product_id: str
     quantity: float = Field(..., gt=0, le=1_000_000)
-    unit_price: Optional[float] = Field(None, ge=0)  # None → precio de venta del producto
+
+
+class CobroIn(BaseModel):
+    """Cobro real MULTI-LÍNEA en Caja: registra las ventas del carrito + imprime
+    UN ticket con total/pagado/cambio + abre la gaveta. Efectivo OBLIGATORIO."""
+    items: List[CobroLine] = Field(..., min_length=1)
+    paid: float = Field(..., ge=0)         # efectivo recibido (OBLIGATORIO)
     note: str = Field("", max_length=300)
     # Estilo del ticket (viene de la configuración de la pestaña Caja).
     business_name: str = "Resilience Brothers"
@@ -71,37 +76,102 @@ async def pos_open_drawer(request: Request) -> Any:
 
 @router.post("/admin/pos/cobro")
 async def pos_cobro(payload: CobroIn, request: Request) -> Any:
-    """COBRO REAL: registra la venta (descuenta stock atómicamente por el flujo
-    estándar de inventario), construye el ticket y ABRE SIEMPRE la gaveta.
+    """COBRO REAL multi-línea: registra todas las ventas del carrito (descuento
+    de stock ATÓMICO por línea), construye UN ticket con el total combinado, el
+    efectivo recibido y el cambio, y ABRE SIEMPRE la gaveta.
 
-    A diferencia de una reimpresión (que es una copia y NUNCA abre la gaveta),
-    este es el evento de caja original: la gaveta se abre siempre, sin depender
-    del toggle "Abrir gaveta al imprimir". Autorización: permiso de caja
-    'products' (lo valida `create_movement`), sin PIN adicional."""
-    # Reutiliza TODO el flujo transaccional/validación/auditoría de inventario
-    # (producto existe, no es de vendedor VIP, cantidad entera si no fracciona,
-    # descuento de stock atómico con control de stock insuficiente → 400).
+    Reglas:
+    - El efectivo recibido es OBLIGATORIO y debe cubrir el total (si no → 400).
+    - PRE-VALIDA todo el carrito (producto, VIP, cantidad entera, stock) ANTES de
+      registrar nada: si una línea falla, NO se cobra nada.
+    - Ante un fallo durante el registro (p.ej. carrera de stock), se REVIERTE el
+      stock de las líneas ya aplicadas para no dejar un cobro parcial.
+    - Reimpresión ≠ cobro: la gaveta se abre siempre aquí; en reimpresiones no.
+    Autorización: permiso de caja 'products', sin PIN."""
+    actor = await require_permission(request, "products")
     from routes.inventory import create_movement, MovementCreate
-    mc = MovementCreate.model_validate({
-        "product_id": payload.product_id, "type": "venta",
-        "quantity": payload.quantity, "unit_price": payload.unit_price,
-        "note": payload.note,
-    })
-    mov = await create_movement(mc, request)
+    from services.inventory import norm_qty, sells_fraction, qnum
+    from db_client import db
+
+    # ── 1) PRE-VALIDACIÓN de TODO el carrito (aún no registra nada) ──
+    lines: list = []
+    for ln in payload.items:
+        product = await db.products.find_one({"id": ln.product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=404,
+                                detail=f"Producto no encontrado: {ln.product_id}")
+        name = product.get("name", "")
+        if product.get("owner_id"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{name}' es de un vendedor VIP y no entra al inventario de la empresa")
+        raw_q = float(ln.quantity)
+        if raw_q <= 0:
+            raise HTTPException(status_code=400, detail=f"Cantidad inválida para '{name}'")
+        # La fracción se valida sobre la cantidad CRUDA (igual que create_movement):
+        # norm_qty redondearía 1.5→2 y ocultaría el error.
+        if not sells_fraction(product) and raw_q != int(raw_q):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{name}' se vende por unidad: la cantidad debe ser un número entero")
+        qty = norm_qty(product, raw_q)   # normalizada para comparar con el stock
+        stock = float(product.get("stock") or 0)
+        if qty > stock:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stock insuficiente de '{name}' (disponible {qnum(stock)}, pedido {qnum(qty)})")
+        lines.append((product, raw_q, qty))
+
+    # El efectivo recibido es OBLIGATORIO y debe cubrir el total estimado.
+    est_total = round(sum(float(p.get("price_usd") or 0) * q for p, _raw, q in lines), 2)
+    paid = round(float(payload.paid), 2)
+    if paid < est_total:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Efectivo insuficiente: recibido {paid:,.2f}, "
+                    f"total {est_total:,.2f} {payload.currency}"))
+
+    # ── 2) Registrar cada línea (stock atómico). Si una falla, se REVIERTE el
+    #       stock de las ya aplicadas (no deja un cobro parcial). ──
+    committed: list = []
+    try:
+        for product, raw_q, _qty in lines:
+            mc = MovementCreate.model_validate({
+                "product_id": product["id"], "type": "venta",
+                "quantity": raw_q, "note": payload.note})
+            mov = await create_movement(mc, request)
+            committed.append(mov)
+    except Exception:
+        from services.inventory import record_movement
+        for m in committed:
+            try:
+                prod = await db.products.find_one({"id": m["product_id"]}, {"_id": 0})
+                await record_movement(product=prod or {"id": m["product_id"]},
+                                      mtype="ajuste_pos", quantity=m["quantity"],
+                                      note="Reverso de cobro incompleto",
+                                      source="cobro_reversal", actor=actor)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"cobro reversal failed for {m.get('product_id')}: {e}")
+        raise
+
+    movs = committed
+    total = round(sum(float(m.get("total") or 0) for m in movs), 2)
+    change = round(paid - total, 2)
     rp = ReceiptPayload(
         business_name=payload.business_name, business_line2=payload.business_line2,
         business_line3=payload.business_line3, footer=payload.footer,
         currency=payload.currency,
         width=(32 if int(payload.width) == 32 else 48),
         print_logo=payload.print_logo,
-        ticket_no=str(mov["id"])[:8].upper(),
+        ticket_no=str(movs[0]["id"])[:8].upper(),
         datetime=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        cashier=mov.get("actor_email", ""),
+        cashier=(actor or {}).get("email", ""),
         items=[ReceiptItem(
-            name=mov.get("product_name") or mov["product_id"],
-            qty=mov["quantity"], unit=mov.get("unit", ""),
-            unit_price=mov.get("unit_price", 0), total=mov.get("total", 0))],
-        subtotal=mov.get("total", 0), total=mov.get("total", 0),
+            name=m.get("product_name") or m["product_id"],
+            qty=m["quantity"], unit=m.get("unit", ""),
+            unit_price=m.get("unit_price", 0), total=m.get("total", 0)) for m in movs],
+        subtotal=total, total=total, paid=paid, change=change,
         open_drawer=True,   # SIEMPRE en un cobro real (no respeta el toggle).
     )
-    return {"movement": mov, **build_receipt(rp)}
+    return {"movements": movs, "total": total, "paid": paid, "change": change,
+            **build_receipt(rp)}

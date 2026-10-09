@@ -4041,7 +4041,7 @@
       "logoToggle": "Print logo on the receipt",
       "logoIncluded": "Includes the business logo in the receipt header.",
       "cobroTitle": "Charge / Register sale",
-      "cobroHint": "Register a real sale: deducts stock, prints the receipt and OPENS THE DRAWER. Unlike a reprint, this is the original cash event.",
+      "cobroHint": "Add several products to the cart, enter the cash received and charge: deducts stock, computes change, prints ONE receipt and OPENS THE DRAWER. Unlike a reprint, this is the original sale.",
       "cobroProduct": "Product",
       "cobroSelect": "Select a product…",
       "cobroStock": "stock",
@@ -4049,7 +4049,12 @@
       "cobroBtn": "Charge",
       "cobroTotal": "Total to charge",
       "cobroOk": "Sale registered",
-      "cobroDrawerNote": "On a real sale the drawer always opens (independent of the toggle above)."
+      "cobroDrawerNote": "On a real sale the drawer always opens (independent of the toggle above).",
+      "cobroAdd": "Add",
+      "cobroCartEmpty": "The cart is empty. Add products to charge.",
+      "cobroPaid": "Cash received",
+      "cobroChange": "Change",
+      "cobroInsufficient": "insufficient cash"
     },
     "review": {
       "title": "Review Tray",

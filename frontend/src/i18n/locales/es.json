@@ -4041,7 +4041,7 @@
       "logoToggle": "Imprimir logo en el ticket",
       "logoIncluded": "Incluye el logo del negocio en la cabecera del ticket.",
       "cobroTitle": "Cobrar / Registrar venta",
-      "cobroHint": "Registra una venta real: descuenta el stock, imprime el ticket y ABRE LA GAVETA. A diferencia de reimprimir, esto es el cobro original.",
+      "cobroHint": "Agrega varios productos al carrito, ingresa el efectivo recibido y cobra: descuenta el stock, calcula el cambio, imprime UN ticket y ABRE LA GAVETA. A diferencia de reimprimir, esto es el cobro original.",
       "cobroProduct": "Producto",
       "cobroSelect": "Selecciona un producto…",
       "cobroStock": "stock",
@@ -4049,7 +4049,12 @@
       "cobroBtn": "Cobrar",
       "cobroTotal": "Total a cobrar",
       "cobroOk": "Venta registrada",
-      "cobroDrawerNote": "En un cobro real la gaveta se abre siempre (independiente del interruptor de arriba)."
+      "cobroDrawerNote": "En un cobro real la gaveta se abre siempre (independiente del interruptor de arriba).",
+      "cobroAdd": "Añadir",
+      "cobroCartEmpty": "El carrito está vacío. Añade productos para cobrar.",
+      "cobroPaid": "Efectivo recibido",
+      "cobroChange": "Cambio",
+      "cobroInsufficient": "efectivo insuficiente"
     },
     "review": {
       "title": "Bandeja de Revisión",
