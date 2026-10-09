@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import {
   Printer, Inbox, FlaskConical, Wifi, MonitorSmartphone, Receipt, Loader2,
+  ShoppingCart,
 } from "lucide-react";
 import {
   loadPrinterConfig, savePrinterConfig, sendEscposToSunmi,
@@ -26,6 +27,9 @@ export default function InventoryPrintTab() {
   const { t } = useTranslation();
   const [cfg, setCfg] = useState(loadPrinterConfig());
   const [sales, setSales] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [cobroProduct, setCobroProduct] = useState("");
+  const [cobroQty, setCobroQty] = useState("");
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
@@ -38,6 +42,15 @@ export default function InventoryPrintTab() {
       .catch(() => setSales([]));
   }, []);
   useEffect(() => { loadSales(); }, [loadSales]);
+
+  const loadProducts = useCallback(() => {
+    axios.get(`${API}/admin/inventory/control`, { withCredentials: true })
+      .then((r) => setProducts((r.data || []).filter((p) => p.is_active)))
+      .catch(() => setProducts([]));
+  }, []);
+  useEffect(() => { loadProducts(); }, [loadProducts]);
+
+  const selectedProduct = products.find((p) => p.product_id === cobroProduct);
 
   // Enruta el ESC/POS ya construido según el transporte configurado.
   const route = async (built, kind) => {
@@ -93,6 +106,28 @@ export default function InventoryPrintTab() {
       const { data } = await axios.post(
         `${API}/admin/pos/receipt/build`, payload, { withCredentials: true });
       await route(data, "sale");
+    } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    finally { setBusy(false); }
+  };
+
+  // COBRO REAL: registra la venta (descuenta stock), imprime el ticket y la
+  // gaveta se abre SIEMPRE (el backend fuerza open_drawer=true). No es una copia.
+  const cobrar = async () => {
+    if (!cobroProduct || !(Number(cobroQty) > 0)) return;
+    setBusy(true);
+    try {
+      const { data } = await axios.post(`${API}/admin/pos/cobro`, {
+        product_id: cobroProduct, quantity: Number(cobroQty), note: "",
+        business_name: cfg.business_name, business_line2: cfg.business_line2,
+        business_line3: cfg.business_line3, footer: cfg.footer,
+        currency: cfg.currency, width: cfg.width, print_logo: cfg.printLogo,
+      }, { withCredentials: true });
+      // La venta ya quedó registrada aunque la impresión falle (sin equipo).
+      toast.success(t("inventory.print.cobroOk"));
+      setCobroQty("");
+      loadSales();
+      loadProducts();
+      await route(data, "cobro");
     } catch (e) { toast.error(e.response?.data?.detail || e.message); }
     finally { setBusy(false); }
   };
@@ -214,6 +249,48 @@ export default function InventoryPrintTab() {
           className="border-white/10 text-neutral-200 rounded-none text-xs">
           <Inbox className="w-3.5 h-3.5 mr-1" /> {t("inventory.print.openDrawer")}
         </Button>
+      </div>
+
+      {/* Cobrar / Registrar venta — COBRO REAL (abre la gaveta siempre) */}
+      <div className="border border-emerald-500/20 bg-emerald-500/[0.03] p-4 space-y-3" data-testid="pos-cobro">
+        <div className="flex items-center gap-2">
+          <ShoppingCart className="w-4 h-4 text-emerald-400" />
+          <h4 className="text-sm text-white">{t("inventory.print.cobroTitle")}</h4>
+        </div>
+        <p className="text-[0.65rem] text-neutral-400 max-w-xl">{t("inventory.print.cobroHint")}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_6rem_auto] gap-3 sm:items-end">
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[0.65rem] text-neutral-400">{t("inventory.print.cobroProduct")}</Label>
+            <select value={cobroProduct} onChange={(e) => setCobroProduct(e.target.value)}
+              data-testid="cobro-product-select"
+              className="w-full bg-black/30 border border-white/10 text-sm rounded-none px-2 py-2 text-neutral-200">
+              <option value="">{t("inventory.print.cobroSelect")}</option>
+              {products.map((p) => (
+                <option key={p.product_id} value={p.product_id}>
+                  {p.name} — {money(p.price_usd, cfg.currency)} · {t("inventory.print.cobroStock")}: {p.stock} {p.unit}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[0.65rem] text-neutral-400">{t("inventory.print.cobroQty")}</Label>
+            <Input type="number" min="0" step="any" value={cobroQty}
+              onChange={(e) => setCobroQty(e.target.value)} data-testid="cobro-qty-input"
+              className="bg-black/30 border-white/10 text-sm rounded-none" />
+          </div>
+          <Button onClick={cobrar} disabled={busy || !cobroProduct || !(Number(cobroQty) > 0)}
+            data-testid="cobro-submit-btn"
+            className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-none text-xs">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5 mr-1" />}
+            {t("inventory.print.cobroBtn")}
+          </Button>
+        </div>
+        {selectedProduct && Number(cobroQty) > 0 && (
+          <div className="text-[0.75rem] text-emerald-300" data-testid="cobro-total">
+            {t("inventory.print.cobroTotal")}: {money(selectedProduct.price_usd * Number(cobroQty), cfg.currency)}
+          </div>
+        )}
+        <div className="text-[0.6rem] text-amber-300/80">{t("inventory.print.cobroDrawerNote")}</div>
       </div>
 
       {/* Imprimir desde una venta reciente */}

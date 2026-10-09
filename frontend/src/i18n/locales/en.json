@@ -4039,7 +4039,17 @@
       "previewPaper": "Receipt",
       "jsusdkNote": "Requires the 'JS USDK' app installed from the Sunmi App Store on the device (it runs the local service ws://localhost:7070/ws). Success is only reported on the device confirmation.",
       "logoToggle": "Print logo on the receipt",
-      "logoIncluded": "Includes the business logo in the receipt header."
+      "logoIncluded": "Includes the business logo in the receipt header.",
+      "cobroTitle": "Charge / Register sale",
+      "cobroHint": "Register a real sale: deducts stock, prints the receipt and OPENS THE DRAWER. Unlike a reprint, this is the original cash event.",
+      "cobroProduct": "Product",
+      "cobroSelect": "Select a product…",
+      "cobroStock": "stock",
+      "cobroQty": "Quantity",
+      "cobroBtn": "Charge",
+      "cobroTotal": "Total to charge",
+      "cobroOk": "Sale registered",
+      "cobroDrawerNote": "On a real sale the drawer always opens (independent of the toggle above)."
     },
     "review": {
       "title": "Review Tray",

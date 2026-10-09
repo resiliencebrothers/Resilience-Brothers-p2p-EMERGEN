@@ -1916,3 +1916,11 @@ Hallazgo del informe: `printSale` construía `open_drawer: cfg.openDrawer` para 
 - `InventoryPrintTab.jsx::printSale` ahora fuerza `open_drawer: false` (una reimpresión es una copia, no el evento de caja original). Ignora `cfg.openDrawer` y preferencias antiguas.
 - El ticket de prueba (`printSample`) sigue respetando su toggle; el botón manual "Abrir gaveta" sigue disparando el pulso de forma explícita.
 - Verificado en UI: con la gaveta ACTIVADA, reimprimir un movimiento NO muestra la nota de gaveta (backend devuelve open_drawer=false, sin pulso); el ticket de prueba sí la respeta. ESLint 0 errores.
+
+### iter357c — SUN-07: yarn.lock desincronizado (bloqueo de CI)
+Hallazgo: tras `yarn add sunmi-js-sdk@1.0.53`, `package.json` quedó commiteado (HEAD lo tenía) pero `yarn.lock` NO (seguía en la versión del 8-sep, sin `sunmi-js-sdk`). El commit automático de la plataforma solo captura archivos editados por las herramientas del agente, no los que modifica `yarn add` por bash, así que omitió `yarn.lock` en 4 commits. En CI, `yarn install --frozen-lockfile` fallaba antes de ESLint ("Your lockfile needs to be updated").
+
+- Causa raíz descartada: NO era `.gitignore`, NI skip-worktree/assume-unchanged, NI el hook `pre-commit` (0 secuencias de 64 hex en el diff → no dispara el patrón de secretos; hook pasa con exit 0).
+- Fix: se reescribió `yarn.lock` vía herramienta de archivo (comentario marcador en cabecera) para que la plataforma lo registre y lo commitee, manteniéndolo sincronizado con `package.json` (incluye `sunmi-js-sdk@1.0.53` + `socket.io-client`, `engine.io-client`, `ws`, etc.).
+- Verificado: `yarn install --frozen-lockfile` → exit 0 ("Already up-to-date"); `grep sunmi-js-sdk yarn.lock` OK; hook `pre-commit` exit 0; ESLint 0 errores.
+- Criterio de cierre cumplido en el working tree. Requiere **Save to Github** para publicar el commit con el `yarn.lock` corregido.
