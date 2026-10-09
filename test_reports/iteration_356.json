@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only SIMULATION-mode testing of SUNMI D3 Mini (iter356) 'Caja' tab in Admin Inventory. All 6 features verified end-to-end with cookie-based admin auth. No bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_features": [
+    "Caja tab (data-testid=inventory-tab-print) opens inventory-print-view with mode banner, config panel, test actions and recent-sales list.",
+    "Simulación mode: 'Ticket de prueba' -> POST /api/admin/pos/receipt/sample+build returns receipt; print-preview-dialog shows monospaced paper (809 chars) containing business name 'Resilience Brothers', items, and 'TOTAL'. Toast 'Ticket generado (simulación)' displayed.",
+    "ESC/POS hex dump (print-escpos-hex) renders inside expandable <details> (2393 chars, starts with '1b 40 1b 61 01 1b 45 01 1d 21 11 ...').",
+    "'Abrir gaveta' (print-open-drawer-btn) in simulation triggers toast 'Gaveta (simulación): pulso ESC/POS generado'.",
+    "SUNMI transport: print-ws-url input revealed; banner updates to 'Modo SUNMI: ... PENDIENTE DE VERIFICACIÓN FÍSICA en la T1730 (impresora + gaveta).' (did NOT trigger print as instructed).",
+    "Paper width 80mm/58mm and drawer toggle interactive; config persisted in localStorage key 'rb_printer_config_v1' and survives reload (58mm active class retained).",
+    "15 recent sales listed; clicking first print-sale-btn-* opened preview dialog with that sale's data (Audit prod_iter254_98a0dc59, qty 1x25 CUP, TOTAL 25.00 CUP)."
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InventoryPrintTab.jsx: print-escpos-hex is nested inside a <details> element (collapsed by default). The data-testid works but automated tests must expand the <details> first — fine, just noting."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Cookie session_token=test_session_admin_X (admin user_test_admin01)",
+  "seed_data_creation": "None (used existing 15 recent sales).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter356 SUNMI printing frontend is fully working in simulation mode. SUNMI mode UI (WS URL + pending banner) is correctly gated; physical device verification pending once hardware is purchased. Backend already covered by pytest (12/12)."
+}

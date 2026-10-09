@@ -2469,3 +2469,10 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - **Tests**: `test_iter354_review_tray_uncertain_order.py` (5/5). Flujo de UI verificado por testing_agent (iteration_354.json, 100% PASS en el flujo probado).
 - Estado: feature en preview; pendiente de re-despliegue a producción.
 
+
+---
+## Actualización 2026-10-09 (iter356)
+- **Caja SUNMI D3 Mini (T1730)**: integración de impresión de ticket + apertura de gaveta, DESARROLLADA y verificada por SIMULACIÓN antes de comprar el equipo. Backend genera ESC/POS determinista (`services/receipt_printing.py`, `routes/pos.py`); frontend pestaña "Caja" (`InventoryPrintTab.jsx`) con transportes simulación/SUNMI/navegador. Doc + checklist físico en `/app/memory/SUNMI_T1730_INTEGRATION.md`.
+- **Verificado (simulación)**: `test_iter356_receipt_printing.py` (12/12) + testing_agent (iteration_356.json, 100%). **Pendiente físico**: impresora + gaveta en la T1730 real (criterio de cierre).
+- Estado: en preview; pendiente de re-despliegue y verificación física.
+

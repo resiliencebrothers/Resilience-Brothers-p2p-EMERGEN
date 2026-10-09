@@ -1884,3 +1884,15 @@ Siguiente paso tras iter353: dar al equipo un lugar único para resolver los mov
 - #8 Imports dinámicos en tests: patrón estándar (registro de handler / monkeypatch), sin riesgo de inyección. CERRADO.
 - #4/#5/#6 Complejidad/funciones largas/args en `admin_withdrawals.py` y `admin.py`: clasificados como OBSERVACIONES DE MANTENIMIENTO sin urgencia funcional. Por instrucción explícita del usuario ("no tocar retiros") y por riesgo en código financiero probado (1082/1082 tests), NO se refactorizan en esta revisión.
 
+
+## 2026-10-09 · iter356 — Integración caja SUNMI D3 Mini (T1730): impresión de ticket + apertura de gaveta
+A petición del usuario: dejar la integración DESARROLLADA y verificada por SIMULACIÓN **antes de comprar el equipo**, con separación clara de lo pendiente de verificación física. Criterio de cierre: impresora + gaveta funcionando en la T1730 real.
+- **Backend** (`services/receipt_printing.py` + `routes/pos.py`, permiso `products`): genera ESC/POS determinista (estándar térmico) y testeable sin hardware.
+  - `POST /api/admin/pos/receipt/build` (payload → `{plaintext, escpos_b64, escpos_len, width, open_drawer}`), `GET /api/admin/pos/receipt/sample?width=48|32`, `GET /api/admin/pos/drawer/open` (pulso de gaveta `ESC p 0 25 250`). Router registrado en `server.py`.
+  - Corte total `GS V 0` (autocortador 80 mm), ancho 48 col (80 mm) / 32 col (58 mm), texto ASCII-seguro (Café→Cafe) para legibilidad en el primer ticket físico.
+- **Frontend**: nueva pestaña **Inventario → Caja** (`InventoryPrintTab.jsx` + `lib/receiptPrinter.js` + i18n es/en). Tres transportes: `simulacion` (muestra ticket + volcado ESC/POS, sin hardware), `sunmi` (envía ESC/POS por WebSocket local del equipo — JS USDK, URL configurable), `navegador` (window.print). Config persistida en localStorage. Acciones: "Ticket de prueba", "Abrir gaveta", "Imprimir desde una venta reciente". Banners de modo, incl. aviso de PENDIENTE DE VERIFICACIÓN FÍSICA en modo SUNMI.
+- **Verificado por SIMULACIÓN**: `test_iter356_receipt_printing.py` (12/12 — marcadores ESC/POS, pulso de gaveta on/off, anchos 48/32, transliteración ASCII, build↔base64, totales, y smoke de las 3 rutas vía API externa con auth). testing_agent (iteration_356.json) → **100%** del flujo UI en simulación (ticket de prueba, preview monoespaciado + hex ESC/POS, abrir gaveta, gating del modo SUNMI, persistencia, impresión desde venta real). Sin bugs.
+- **PENDIENTE de verificación FÍSICA** (documentado en `/app/memory/SUNMI_T1730_INTEGRATION.md`): instalar middleware de impresión (SUNMI JS USDK) + confirmar URL/puerto WebSocket y formato de trama, imprimir ticket de prueba (y autocorte), abrir gaveta, imprimir desde venta real, ajustar codepage/acentos y ancho 80/58 según el modelo comprado.
+- **No** se usaron API keys ni se modificó el flujo de venta (módulo aparte reutilizable).
+- **Estado**: en preview; pendiente de re-despliegue y de la verificación física cuando llegue el equipo.
+
