@@ -2493,3 +2493,7 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter357b (2026-10-09) — SUN-03-B
 - **Reimpresiones nunca abren la gaveta**: `InventoryPrintTab.jsx::printSale` fuerza `open_drawer: false` (una copia no es el evento de caja). Ignora el toggle y preferencias antiguas. Ticket de prueba y botón manual intactos. Verificado en UI (gaveta ON → reimpresión sin pulso; ticket de prueba sí respeta el toggle). ESLint 0 errores.
+
+### iter358 (2026-10-09) — Cobrar / Registrar venta (gaveta en el cobro)
+- Nueva acción de cobro real en Caja: `POST /admin/pos/cobro` registra la venta (descuento de stock atómico vía `create_movement`), imprime el ticket con logo y ABRE SIEMPRE la gaveta (forzado en backend; no respeta el toggle). Permiso 'products', sin PIN. UI: sección `pos-cobro` (selector de producto + cantidad + total + botón Cobrar). Reimpresiones siguen sin abrir la gaveta (SUN-03-B). Verificado: 23/23 pytest + testing_agent iteration_358.json (backend 6/6, frontend 9/9). Pendiente: verificación física T1730 + Save to Github + redeploy.
+- **SUN-07 CERRADO**: `yarn.lock` sincronizado y commiteado (incluye `sunmi-js-sdk`); `--frozen-lockfile` en verde.

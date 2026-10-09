@@ -1924,3 +1924,15 @@ Hallazgo: tras `yarn add sunmi-js-sdk@1.0.53`, `package.json` quedó commiteado 
 - Fix: se reescribió `yarn.lock` vía herramienta de archivo (comentario marcador en cabecera) para que la plataforma lo registre y lo commitee, manteniéndolo sincronizado con `package.json` (incluye `sunmi-js-sdk@1.0.53` + `socket.io-client`, `engine.io-client`, `ws`, etc.).
 - Verificado: `yarn install --frozen-lockfile` → exit 0 ("Already up-to-date"); `grep sunmi-js-sdk yarn.lock` OK; hook `pre-commit` exit 0; ESLint 0 errores.
 - Criterio de cierre cumplido en el working tree. Requiere **Save to Github** para publicar el commit con el `yarn.lock` corregido.
+
+### iter358 — "Cobrar / Registrar venta" en Caja (gaveta en el cobro real)
+Petición del usuario (aprobada): nueva acción de cobro en la pestaña Caja — elegir producto + cantidad → registra la venta, descuenta stock, imprime ticket y abre la gaveta en un paso. Autorización: permiso 'products' (sin PIN). La gaveta se abre SIEMPRE en un cobro real (no respeta el toggle).
+
+- Backend `POST /admin/pos/cobro` (modelo `CobroIn` en `routes/pos.py`): reutiliza `routes.inventory.create_movement` con `type='venta'` (descuento de stock ATÓMICO, validación producto/VIP/fracción, auditoría, publish), y construye el ticket con `open_drawer=True` SIEMPRE + logo. Devuelve `{movement, ...build_receipt}`. `unit_price` por defecto = precio de venta del producto (`price_usd`).
+- Frontend `InventoryPrintTab.jsx`: sección `pos-cobro` (verde) con selector de producto (carga de `GET /admin/inventory/control`), cantidad, "Total a cobrar" en vivo y botón "Cobrar". Al cobrar: toast "Venta registrada" → `route(data,'cobro')` → imprime por el transporte elegido; refresca ventas recientes y stock del selector. i18n ES/EN.
+- Enforcement: la gaveta en cobro se fuerza en el backend (`open_drawer=True`), no depende del front. La reimpresión (SUN-03-B) sigue forzando `open_drawer:false`.
+- Verificado: pytest `test_iter358_pos_cobro.py` 6/6 (+ `test_iter356` 17/17 = 23/23); testing_agent iteration_358.json backend 100% (6/6), frontend 100% (9/9); stock insuficiente→400 sin cambios, fracción→400, cobro descuenta stock, gaveta+logo en escpos, SUN-03-B intacto, SUNMI falla-cerrado. mypy OK, ESLint 0 errores, móvil sin overflow.
+- Nota: en un cobro por transporte SUNMI la venta queda registrada aunque la impresión falle (comportamiento intencional: el evento de caja ya ocurrió).
+
+### iter357c (cierre) — SUN-07 verificado y commiteado
+`frontend/yarn.lock` quedó commiteado (HEAD lo incluye con `sunmi-js-sdk`), sincronizado con `package.json`. `yarn install --frozen-lockfile` pasa. Pendiente solo el **Save to Github** del usuario para que el CI reciba el lockfile corregido.

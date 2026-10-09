@@ -1,0 +1,29 @@
+{
+  "summary": "iter358 Caja/POS COBRO testing complete. Backend pytest 6/6 PASS, frontend Playwright E2E PASS. Verified: new POST /admin/pos/cobro endpoint registers venta movement + atomically decrements stock + always sets open_drawer=true, ESC/POS contains drawer kick + logo raster, 400 on stock insuficiente (no stock change), 400 on fractional qty for unit product, unit_price override vs default price_usd, auth gating. Frontend: pos-cobro section lists products, cobro-total = price×qty, cobrar() → toast + preview dialog with [ LOGO ] + drawer note (always) + logo note, sales list and stock in select refresh after sale. SUN-03-B regression HOLDS: reprint of a saved sale with drawer toggle ON does NOT include drawer note; sample ticket DOES respect toggle. SUNMI transport correctly fails-closed with explicit JS USDK error, no false OK.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Caja tab (any dynamic list)", "issues": ["Pre-existing React hydration warning: visual-editor instrumentation injects <span> inside <option> for products in cobro-product-select (console warning only, not functional). Not a regression of this iter."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter358_pos_cobro.py",
+    "/app/test_reports/pytest/iter358_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/pos.py pos_cobro correctly reuses create_movement (atomic stock debit, audit, VIP/fraction validation) and forces open_drawer=True in the ReceiptPayload — the toggle cfg.openDrawer is intentionally NOT forwarded from the frontend cobrar() payload, consistent with the product rule.",
+    "Frontend cobrar() calls toast + loadSales() + loadProducts() BEFORE awaiting route(), so the sales list and select stock refresh regardless of transport outcome (good for SUNMI-fail-closed UX).",
+    "SUN-03-B invariant preserved in InventoryPrintTab.printSale(): forces open_drawer:false in the build payload, independent of cfg.openDrawer; verified in UI with toggle ON.",
+    "Side-effect semantics in SUNMI transport: a cobro in SUNMI already mutates stock before the print transport fails. This is the documented/intended behavior ('la venta ya quedó registrada aunque la impresión falle') — flagged here only for E1 awareness, not a bug."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (9/9 assertions)"},
+  "test_credentials": "Bearer test_session_admin_X (seeded admin via conftest, has 'products' permission); UI cookie session_token=smoke_caja_logo_iter357 as provided by E1.",
+  "seed_data_creation": "None. Used existing products (Agua pequeña, Arroz Guyanes). Backend tests consumed small amounts of Agua stock (3 units across 3 success tests); current stock remains well above zero.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Caja/POS cobro endpoint and UI section are stable. Testids: pos-cobro, cobro-product-select, cobro-qty-input, cobro-submit-btn, cobro-total; preview dialog has print-preview-paper (contains '[ LOGO ]' marker when logo ON), print-preview-drawer, print-preview-logo, print-result-ok/error. Recent sales rows carry print-sale-btn-<movementId>. SUNMI transport takes ~5-8s to surface print-result-error. Product option textContent format: 'Name — <price> <currency> · stock: <N> <unit>' (lowercase 'stock' — match case-insensitively). Agua pequeña stock has drifted during cobro tests; use current GET /api/admin/inventory/control to read live stock before asserting."
+}
