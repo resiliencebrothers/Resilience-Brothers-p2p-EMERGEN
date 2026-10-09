@@ -1936,3 +1936,12 @@ Petición del usuario (aprobada): nueva acción de cobro en la pestaña Caja —
 
 ### iter357c (cierre) — SUN-07 verificado y commiteado
 `frontend/yarn.lock` quedó commiteado (HEAD lo incluye con `sunmi-js-sdk`), sincronizado con `package.json`. `yarn install --frozen-lockfile` pasa. Pendiente solo el **Save to Github** del usuario para que el CI reciba el lockfile corregido.
+
+### iter358b — SUN-06 (ALTA): recuperación del socket SUNMI (JS USDK)
+Hallazgo: `receiptPrinter.js` cacheaba una ÚNICA instancia del SDK en `_sunmiSdkPromise` y ejecutaba `init()` antes de `launchPrinterService()`. Como el SDK 1.0.53 NO reconecta (`init()` no recrea un `socketManager` existente) y `waitForConnection` solo consultaba `connected`, un servicio caído/arrancado tras abrir la página o una desconexión dejaba la impresión y la gaveta inutilizables toda la sesión hasta recargar.
+
+- Rediseño del transporte: se cachea SOLO el import del módulo (`_sdkModulePromise`, y se limpia si el import falla); la instancia viva (`_sdk`) se **descarta y reconstruye** cuando su socket no está conectado (`isSdkConnected` comprueba `socketManager.connected` + `socket.readyState===OPEN`).
+- Coordinación arranque→conexión: `buildConnectedSdk` llama `launchPrinterService()` (deep link, ~3s) ANTES de `sdk.init()` (abre el WebSocket al servicio ya listo); limpia anclas `#sunmi-init-link` huérfanas; cierra el socket muerto con `disconnect()` antes de reconstruir.
+- Recuperación de init fallida: nunca se cachea una instancia/promesa rota (`_sdk=null` en error) → el PRÓXIMO intento reconstruye.
+- Sin reenvío silencioso: si el envío falla/expira (ACK perdido) se lanza el error y se descarta la instancia solo si el socket cayó; el reintento es una acción EXPLÍCITA del usuario (el ticket pudo imprimirse; la venta ya quedó registrada).
+- Verificado: Jest `src/lib/__tests__/receiptPrinter.sunmi.test.js` (3/3) con un mock fiel del contrato del SDK → (1) servicio apagado→recupera sin recargar, (2) caída tras envío correcto→reconstruye y obtiene ACK, (3) sin ACK→falla por timeout y `sendCalls===1` (no reenvía). En navegador real: dos intentos SUNMI seguidos fallan-cerrado limpiamente (reconstruyendo, no colgados). ESLint 0 errores.

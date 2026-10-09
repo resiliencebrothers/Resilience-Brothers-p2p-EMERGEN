@@ -2497,3 +2497,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 ### iter358 (2026-10-09) — Cobrar / Registrar venta (gaveta en el cobro)
 - Nueva acción de cobro real en Caja: `POST /admin/pos/cobro` registra la venta (descuento de stock atómico vía `create_movement`), imprime el ticket con logo y ABRE SIEMPRE la gaveta (forzado en backend; no respeta el toggle). Permiso 'products', sin PIN. UI: sección `pos-cobro` (selector de producto + cantidad + total + botón Cobrar). Reimpresiones siguen sin abrir la gaveta (SUN-03-B). Verificado: 23/23 pytest + testing_agent iteration_358.json (backend 6/6, frontend 9/9). Pendiente: verificación física T1730 + Save to Github + redeploy.
 - **SUN-07 CERRADO**: `yarn.lock` sincronizado y commiteado (incluye `sunmi-js-sdk`); `--frozen-lockfile` en verde.
+
+### iter358b (2026-10-09) — SUN-06 recuperación del socket SUNMI
+- Transporte JS USDK ahora descarta/reconstruye la instancia cuando el socket cae (el SDK no reconecta), arranca el servicio antes de abrir la conexión, recupera init fallida y no reenvía trabajos en silencio. Verificado con Jest 3/3 (mock del SDK) + navegador (fallo-cerrado en reintentos). Pendiente verificación física en la T1730.

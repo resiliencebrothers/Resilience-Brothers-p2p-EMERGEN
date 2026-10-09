@@ -26,6 +26,10 @@ T1730 real) queda pendiente y es el criterio de cierre.
     de la Sunmi App Store y se lanza por el deep link `sunmi://com.sunmi:8888/websdk`).
     SOLO reporta éxito ante un **ACK positivo (code===1)** del equipo; error, sin
     respuesta o socket no conectado = fallo (timeout de seguridad en el cliente).
+    SUN-06 — recuperación: el SDK no reconecta, así que en cada envío se verifica
+    el socket y, si cayó, se DESCARTA y reconstruye la instancia (arrancando el
+    servicio por el deep link ANTES de abrir la conexión). No se reenvían trabajos
+    en silencio: un reintento es siempre una acción explícita del usuario.
   - `navegador` — imprime el ticket por el servicio de impresión del sistema/Android.
 
 ### Logo del negocio en la cabecera (iter357)

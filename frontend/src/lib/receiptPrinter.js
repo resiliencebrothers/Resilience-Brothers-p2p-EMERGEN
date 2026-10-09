@@ -61,44 +61,52 @@ function b64ToHex(b64) {
   return hex;
 }
 
-// ── JS USDK oficial de SUNMI ──────────────────────────────────────────────
-// El SDK abre su WebSocket al servicio local del equipo y expone
-// `printer.commandApi.sendEscCommand([hex])`, cuya promesa SOLO se resuelve
-// ante un ACK positivo (code===1); si no hay socket rechaza al instante, y si
-// el equipo responde otro código la promesa queda colgada → la cortamos con un
-// timeout. Así NUNCA reportamos éxito ante error/sin respuesta/cierre.
-let _sunmiSdkPromise = null;
+// ── JS USDK oficial de SUNMI (con recuperación de conexión) ───────────────
+// El SDK expone `printer.commandApi.sendEscCommand([hex])`, cuya promesa SOLO
+// se resuelve ante un ACK positivo (code===1) del equipo; si el socket no está
+// conectado rechaza al instante, y si el equipo responde otro código la promesa
+// queda colgada → la cortamos con un timeout. Así NUNCA damos éxito ante
+// error/sin respuesta/cierre.
+//
+// SUN-06 — Recuperación del socket: el SDK NO reconecta (init() no recrea un
+// socketManager existente). Por eso NO cacheamos una instancia muerta: en cada
+// envío comprobamos la conexión y, si está cerrada/fallida, DESCARTAMOS la
+// instancia y reconstruimos una nueva, arrancando el servicio (deep link)
+// ANTES de abrir la conexión. No reenviamos trabajos automáticamente: un
+// reintento es siempre una acción EXPLÍCITA del usuario (la venta ya quedó
+// registrada; el ticket pudo imprimirse antes de perderse el ACK).
+let _sdkModulePromise = null;   // solo cacheamos el import del módulo (seguro)
+let _sdk = null;                // instancia viva actual (null = reconstruir)
 
-async function getSunmiSdk() {
-  if (!_sunmiSdkPromise) {
-    _sunmiSdkPromise = (async () => {
-      const mod = await import("sunmi-js-sdk");
-      const SUNMI = mod.default || mod;
-      const sdk = new SUNMI();
-      sdk.init(); // abre ws://localhost:7070/ws (servicio JS USDK del equipo)
-      try {
-        // Lanza la app de impresión por el deep link sunmi:// (puede no resolver
-        // fuera del equipo; no es bloqueante).
-        await sdk.launchPrinterService();
-      } catch {
-        /* noop */
-      }
-      return sdk;
-    })();
+async function loadSunmiClass() {
+  if (!_sdkModulePromise) _sdkModulePromise = import("sunmi-js-sdk");
+  try {
+    const mod = await _sdkModulePromise;
+    return mod.default || mod;
+  } catch (e) {
+    _sdkModulePromise = null;   // no cachear un import fallido (recuperable)
+    throw e;
   }
-  return _sunmiSdkPromise;
 }
 
-function sdkSocket(sdk) {
-  return sdk && sdk.printer && sdk.printer.commandApi && sdk.printer.commandApi.socket;
+function isSdkConnected(sdk) {
+  const sm = sdk && sdk.socketManager;
+  return !!(sm && sm.connected && sm.socket && sm.socket.readyState === 1); // 1 = OPEN
+}
+
+function disposeSdk(sdk) {
+  try {
+    const sm = sdk && sdk.socketManager;
+    if (sm && typeof sm.disconnect === "function") sm.disconnect();
+    else if (sm && sm.socket && typeof sm.socket.close === "function") sm.socket.close();
+  } catch { /* noop */ }
 }
 
 function waitForConnection(sdk, timeoutMs) {
   return new Promise((resolve) => {
     const start = Date.now();
     const tick = () => {
-      const s = sdkSocket(sdk);
-      if (s && s.connected) return resolve(true);
+      if (isSdkConnected(sdk)) return resolve(true);
       if (Date.now() - start >= timeoutMs) return resolve(false);
       setTimeout(tick, 150);
       return undefined;
@@ -117,27 +125,61 @@ function withTimeout(promise, ms, message) {
   });
 }
 
-// Envía ESC/POS (base64) al equipo SUNMI por el JS USDK oficial.
-export async function sendEscposToSunmi(b64, _opts, timeoutMs = 8000) {
-  let sdk;
-  try {
-    sdk = await getSunmiSdk();
-  } catch {
-    throw new Error("No se pudo cargar el SDK de SUNMI (JS USDK).");
-  }
-  const connected = await waitForConnection(sdk, 4000);
-  if (!connected) {
+// Construye una instancia NUEVA y CONECTADA: arranca el servicio ANTES de abrir
+// el socket (coordinación), luego init() abre la conexión al servicio ya listo.
+async function buildConnectedSdk(timeoutMs) {
+  const SUNMI = await loadSunmiClass();
+  // Limpia anclas sunmi:// huérfanas de intentos previos (evita ids duplicados).
+  document.querySelectorAll("#sunmi-init-link").forEach((n) => n.remove());
+  const sdk = new SUNMI();
+  // 1) Arranca la app/servicio JS USDK por el deep link y espera (~3s) a que
+  //    esté escuchando ANTES de abrir la conexión.
+  try { await sdk.launchPrinterService(); } catch { /* el deep link puede no resolver */ }
+  // 2) Abre el WebSocket al servicio ya disponible.
+  sdk.init();
+  // 3) Espera a que la conexión quede ABIERTA.
+  const ok = await waitForConnection(sdk, timeoutMs);
+  if (!ok) {
+    disposeSdk(sdk);
     throw new Error(
       "Sin conexión con el servicio de impresión SUNMI. Instala/abre la app 'JS USDK' (Sunmi App Store) en el equipo.",
     );
   }
+  return sdk;
+}
+
+// Devuelve una instancia conectada, reutilizándola solo si su socket sigue vivo.
+async function ensureConnectedSdk(timeoutMs) {
+  if (_sdk && isSdkConnected(_sdk)) return _sdk;
+  if (_sdk) { disposeSdk(_sdk); _sdk = null; }   // descartar la instancia muerta
+  _sdk = await buildConnectedSdk(timeoutMs);
+  return _sdk;
+}
+
+// Envía ESC/POS (base64) al equipo SUNMI por el JS USDK oficial.
+export async function sendEscposToSunmi(b64, _opts, timeoutMs = 8000) {
+  let sdk;
+  try {
+    sdk = await ensureConnectedSdk(4000);
+  } catch (e) {
+    _sdk = null;   // asegurar reconstrucción en el PRÓXIMO intento explícito
+    throw (e instanceof Error ? e : new Error(String(e)));
+  }
   const hex = b64ToHex(b64);
-  // sendEscCommand resuelve SOLO con ACK positivo (code===1) del equipo.
-  await withTimeout(
-    sdk.printer.commandApi.sendEscCommand([hex]),
-    timeoutMs,
-    "La impresora SUNMI no confirmó la impresión (sin ACK).",
-  );
+  try {
+    // sendEscCommand resuelve SOLO con ACK positivo (code===1) del equipo.
+    await withTimeout(
+      sdk.printer.commandApi.sendEscCommand([hex]),
+      timeoutMs,
+      "La impresora SUNMI no confirmó la impresión (sin ACK).",
+    );
+  } catch (e) {
+    // Si el socket cayó durante el envío, descarta la instancia para que el
+    // PRÓXIMO intento reconstruya la conexión. NO reenviamos aquí: el ticket
+    // pudo imprimirse antes de perderse el ACK; el reintento es explícito.
+    if (!isSdkConnected(sdk)) { disposeSdk(sdk); _sdk = null; }
+    throw (e instanceof Error ? e : new Error(String(e)));
+  }
   return { ok: true, via: "sunmi" };
 }
 
