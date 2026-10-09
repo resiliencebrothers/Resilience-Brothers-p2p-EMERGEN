@@ -14,6 +14,7 @@ import InventoryCloseTab from "./InventoryCloseTab";
 import InventoryValuationTab from "./InventoryValuationTab";
 import InventoryHistoryTab from "./InventoryHistoryTab";
 import InventoryReviewTab from "./InventoryReviewTab";
+import InventoryPrintTab from "./InventoryPrintTab";
 import InventoryStoresTab from "./InventoryStoresTab";
 import InventoryIncidentsTab from "./InventoryIncidentsTab";
 import InventoryReorderPanel from "./InventoryReorderPanel";
@@ -22,7 +23,7 @@ import LabelsDialog from "./LabelsDialog";
 // iter217 — Control de flujo de inventario de la tienda física (réplica del
 // Excel del operador: Control Inventario + Movimientos + Dashboard).
 // iter333 (IPV Fase 3) — pestaña "incidents": reposición + seguimiento de incidencias.
-const TABS = ["control", "scan", "movements", "close", "valuation", "history", "review", "stores", "dashboard", "incidents"];
+const TABS = ["control", "scan", "movements", "close", "valuation", "history", "review", "print", "stores", "dashboard", "incidents"];
 
 export default function AdminInventory() {
   const { t } = useTranslation();
@@ -105,6 +106,7 @@ export default function AdminInventory() {
       {tab === "valuation" && <InventoryValuationTab />}
       {tab === "history" && <InventoryHistoryTab />}
       {tab === "review" && <InventoryReviewTab />}
+      {tab === "print" && <InventoryPrintTab />}
       {tab === "stores" && <InventoryStoresTab />}
       {tab === "dashboard" && <InventoryDashboardTab />}
       {tab === "incidents" && (

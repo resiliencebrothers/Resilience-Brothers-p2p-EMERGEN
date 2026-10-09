@@ -64,6 +64,7 @@ from routes.ops_report import router as ops_report_router  # noqa: E402
 from routes.inventory import router as inventory_router  # noqa: E402
 from routes.stores import router as stores_router  # noqa: E402
 from routes.vendor_products import router as vendor_products_router  # noqa: E402
+from routes.pos import router as pos_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -126,6 +127,7 @@ api_router.include_router(ops_report_router)
 api_router.include_router(inventory_router)
 api_router.include_router(stores_router)
 api_router.include_router(vendor_products_router)
+api_router.include_router(pos_router)
 
 app.include_router(api_router)
 
