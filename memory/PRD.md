@@ -2476,3 +2476,17 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 - **Verificado (simulación)**: `test_iter356_receipt_printing.py` (12/12) + testing_agent (iteration_356.json, 100%). **Pendiente físico**: impresora + gaveta en la T1730 real (criterio de cierre).
 - Estado: en preview; pendiente de re-despliegue y verificación física.
 
+
+
+---
+## Actualización 2026-10-09 (iter357)
+- **Logo en el ticket (NUEVO)**: el ticket térmico imprime el logo de Resilience Brothers como bitmap ESC/POS `GS v 0` (raster) centrado en la cabecera. Origen `backend/assets/logo_original_black_bg.png` → escala al ~70% del ancho del papel (múltiplo de 8, tope 190 px) → invertido + tramado (dithering); determinista y cacheado por ancho. Toggle "Imprimir logo en el ticket" (por defecto ON). El nombre del negocio sigue imprimiéndose como texto nítido bajo el logo.
+- **Revisión del informe SUNMI (5 hallazgos corregidos)**:
+  1. (ALTA) Transporte "SUNMI" ahora usa el **JS USDK OFICIAL** (`sunmi-js-sdk`): `init()`+`launchPrinterService()`+`printer.commandApi.sendEscCommand(['<hex>'])` hacia `ws://localhost:7070/ws`. Se eliminó la trama WebSocket inventada `{type:escpos,data:b64}`.
+  2. (ALTA) Éxito SOLO con ACK positivo (`code===1`); error / sin respuesta / socket cerrado = fallo (timeout de 8 s en cliente). Verificado fail-closed en preview (sin equipo muestra error, nunca falso éxito).
+  3. (MEDIA) `open_drawer` por defecto **OFF** (modelo + UI + ticket de prueba + reimpresiones respetan el toggle).
+  4. (MEDIA) **Anti-inyección**: `_ascii` elimina bytes de control (<0x20/0x7f); ningún campo de texto puede inyectar comandos de impresora ni pulso de gaveta.
+  5. (MEDIA) **mypy** limpio en `receipt_printing.py` (variables de bucle renombradas; empaquetado del raster vía `tobytes()`).
+- **Logo web/PWA/PDF**: ya estaba integrado (assets byte-idénticos al logo adjunto en `public/branding/*`, `public/icons/*`, `backend/assets/logo*.png`) — no requirió cambios.
+- **Tests**: `test_iter356_receipt_printing.py` ampliado a 17/17 (gaveta OFF por defecto, anti-inyección, logo presente/ausente, flags de build_receipt, toggles del sample). testing_agent iteration_357.json → backend 100% (17/17), frontend 100% (5/5 flujos), 0 defectos. mypy OK, ESLint 0 errores.
+- Estado: en preview; **pendiente de verificación física** en la T1730 real (impresora + gaveta + logo) y de re-despliegue a producción.

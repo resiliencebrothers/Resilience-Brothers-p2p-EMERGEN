@@ -1,0 +1,35 @@
+{
+  "summary": "iter357 Caja/POS testing: backend pytest (17/17 passing) and frontend Playwright E2E on the Caja tab both PASS. Logo raster in ticket, drawer OFF by default, user-text sanitization (anti-injection), SUNMI JS USDK transport failing-closed with explicit error message, and Navegador path all verified. No defects found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter356_receipt_printing.py",
+    "/app/test_reports/pytest/iter357_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "receipt_printing.py _ascii() strips all control bytes (0x20-0x7e only) — correctly prevents ESC/GS injection from user text (H4 verified).",
+    "ReceiptPayload.open_drawer defaults to False (H3 verified).",
+    "receiptPrinter.js uses sunmi-js-sdk with sendEscCommand([hex]); resolves only on ACK, rejects on timeout/socket closed (H1+H2 verified).",
+    "Old print-ws-url input removed; replaced with print-jsusdk-note."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (5/5 flows)"},
+  "test_credentials": "Bearer smoke_caja_logo_iter357 for API; session_token cookie 'smoke_caja_logo_iter357' for UI (both resolve to admin via conftest/seed).",
+  "seed_data_creation": "None (used existing admin seed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Caja tab testids verified: inventory-tab-print, print-transport-{simulacion|sunmi|navegador}, print-logo-toggle (default ON), print-drawer-toggle (default OFF), print-sample-btn, print-preview-paper, print-preview-logo, print-preview-drawer, print-jsusdk-note, print-result-error, print-result-ok. SUNMI preview requires ~5-6s wait before error surfaces (waitForConnection=4s + overhead); use >=6s wait when asserting fail-closed behavior.",
+  "verified_scenarios": [
+    "GET /api/admin/pos/receipt/sample?width=48 → open_drawer=false, has_logo=true, ESC/POS starts with 1b40, contains GS v 0, no drawer kick.",
+    "GET /api/admin/pos/receipt/sample?width=48&open_drawer=true&print_logo=false → drawer kick present, GS v 0 absent.",
+    "POST /api/admin/pos/receipt/build with malicious ESC p bytes in business_name/footer/item fields → exactly one FULL_CUT, no DRAWER_KICK injected.",
+    "GET /api/admin/pos/drawer/open → returns INIT + DRAWER_KICK.",
+    "All /admin/pos/* routes return 401/403 without auth.",
+    "UI Simulación + logo ON (default) + drawer OFF (default): preview shows '[ LOGO ]' marker, logo note visible, drawer note hidden.",
+    "UI logo toggle OFF: '[ LOGO ]' marker and note disappear.",
+    "UI drawer toggle ON: preview-drawer note appears.",
+    "UI SUNMI transport: jsusdk-note visible, print-ws-url absent, Ticket de prueba fails with print-result-error 'Sin conexión con el servicio de impresión SUNMI...' + matching toast; NO print-result-ok shown (fail-closed confirmed).",
+    "UI Navegador transport: opens system print path without errors."
+  ]
+}

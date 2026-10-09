@@ -1896,3 +1896,16 @@ A petición del usuario: dejar la integración DESARROLLADA y verificada por SIM
 - **No** se usaron API keys ni se modificó el flujo de venta (módulo aparte reutilizable).
 - **Estado**: en preview; pendiente de re-despliegue y de la verificación física cuando llegue el equipo.
 
+
+### iter357 — Logo en el ticket (SUNMI) + revisión de 5 hallazgos
+Petición del operador: *"Logo en el Ticket: imprime el logotipo del negocio en la cabecera del ticket (bitmap ESC/POS)"* + informe de revisión `Revision_Integracion_SUNMI_T1730_09-10-2026.txt` con 5 hallazgos.
+
+- **Logo (NUEVO)**: `services/receipt_printing.py` rasteriza el logo a ESC/POS `GS v 0` (invertido + dithering, ~70% del ancho, tope 190 px, cacheado), centrado en cabecera. `ReceiptPayload.print_logo` (default True). `build_receipt` devuelve `print_logo`/`has_logo`. UI: toggle `print-logo-toggle` + nota `print-preview-logo`; la simulación muestra `[ LOGO ]`.
+- **H1 (Alta)**: `src/lib/receiptPrinter.js` usa el JS USDK oficial (`sunmi-js-sdk`): `init()`→`launchPrinterService()`→`printer.commandApi.sendEscCommand(['<hex>'])`. Fuera la trama WS inventada; se quitó el input `print-ws-url`, se añadió `print-jsusdk-note`.
+- **H2 (Alta)**: éxito solo con ACK `code===1`; `withTimeout` rechaza si no hay respuesta; socket no conectado = error. Fail-closed confirmado en preview.
+- **H3 (Media)**: `open_drawer` default False en modelo/UI/`DEFAULT_CONFIG`; `/receipt/sample` acepta `open_drawer`/`print_logo`; `printSample`/`printSale` pasan los toggles.
+- **H4 (Media)**: `_ascii` deja solo ASCII imprimible (0x20–0x7e) → sin inyección de comandos/gaveta desde texto de usuario.
+- **H5 (Media)**: mypy limpio (renombrado de variables de bucle; empaquetado del raster con `tobytes()^0xFF`).
+- **Web/PWA/PDF**: el logo ya estaba integrado (assets idénticos) — sin cambios.
+- **Verificación**: `test_iter356_receipt_printing.py` 17/17; testing_agent iteration_357.json backend 100% / frontend 100% (5/5), 0 defectos; mypy OK; ESLint 0 errores; UI OK desktop+móvil (sin overflow).
+- **Pendiente físico**: impresora + gaveta + logo en la T1730 real (criterio de cierre).
