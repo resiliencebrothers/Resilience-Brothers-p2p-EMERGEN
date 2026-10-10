@@ -2515,3 +2515,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter364 (2026-10-10) — SUN-08-R2 propiedad del cobro vs recuperador
 - Token `owner` + transiciones condicionales (CAS) en escritor y recuperador. El escritor verifica propiedad antes de cada efecto y en la confirmación final; el recuperador roba la propiedad de forma atómica (estado+antigüedad). Nunca coexisten un cobro 'reversed' y su confirmación; ningún éxito almacenado apunta a una venta anulada. Ver CHANGELOG. (Pendiente redeploy a producción.)
+
+### iter365 (2026-10-10) — SUN-08-R1 variante: ingreso tardío tras aborto
+- `_record_fund_flow` re-lee `cobro_aborted` desde la BD antes de insertar; `reconcile_aborted_cobro_funds` (en el barrido) compensa de forma durable e idempotente cualquier ingreso tardío que se cuele en una venta abortada (inflow presente + outflow ausente → publica outflow). Fondo neto de todo cobro abortado = 0, estable ante reejecuciones. Ver CHANGELOG. (Pendiente redeploy a producción.)

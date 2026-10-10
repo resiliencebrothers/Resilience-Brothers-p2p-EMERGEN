@@ -880,6 +880,15 @@ async def _record_fund_flow(mov: dict) -> None:
             note = f"Venta tienda física: {mov['quantity']}× {mov.get('product_name', '')}"
         else:
             return
+        # SUN-08-R1(v2) — RE-LEER la decisión TERMINAL desde la BD justo antes
+        # de insertar: no confiar en la copia en memoria, que un recuperador
+        # general pudo SELECCIONAR ANTES del aborto (la bandera `cobro_aborted`
+        # de esa copia está obsoleta). Esto cierra la ventana común
+        # lectura-del-recuperador → aborto → inserción tardía.
+        fresh = await db.inventory_movements.find_one(
+            {"id": mov["id"]}, {"_id": 0, "cobro_aborted": 1})
+        if fresh and fresh.get("cobro_aborted"):
+            return
         # iter257(D08) — primero el ASIENTO idempotente (dedupe por ref y por
         # clave), después la marca: un crash entre ambos ya no pierde dinero
         # contable, y el retry/healer no duplica.
@@ -1032,6 +1041,57 @@ async def heal_pending_cobros(cutoff_iso: str) -> int:
         except Exception as e:  # noqa: BLE001
             logger.error(f"heal_pending_cobros {c.get('id')} failed: {e}")
     return healed
+
+
+async def reconcile_aborted_cobro_funds(since_iso: Optional[str] = None) -> int:
+    """SUN-08-R1(v2) — compensación DURABLE e IDEMPOTENTE del INGRESO TARDÍO.
+
+    Como el ingreso (company_fund_adjustments) y la decisión de aborto
+    (inventory_movements) viven en colecciones distintas SIN transacción, un
+    recuperador general con una copia vieja del movimiento puede insertar el
+    inflow DESPUÉS del aborto (ventana entre re-leer la bandera e insertar en
+    otra escritura). Este reconciliador cierra el invariante: para TODA venta
+    ABORTADA cuyo INFLOW propio exista pero cuyo OUTFLOW de reversión falte,
+    publica el outflow compensatorio. Resuelve la inserción tardía ocurra
+    cuando ocurra, nunca crea una salida fantasma (solo compensa si el inflow
+    EXISTE) y es idempotente: ambos asientos son singletons por dedupe_key, así
+    que repetir la recuperación deja el neto en 0.
+
+    Acotado por recencia (`since_iso`): un inflow tardío solo puede aparecer
+    poco después del aborto (la copia del recuperador vive segundos)."""
+    q: dict = {"cobro_aborted": True, "type": "venta", "source": "manual",
+               "total": {"$gt": 0}}
+    if since_iso:
+        q["voided_at"] = {"$gte": since_iso}
+    rows = await db.inventory_movements.find(
+        q, {"_id": 0, "id": 1, "total": 1, "quantity": 1,
+            "product_name": 1}).to_list(500)
+    fixed = 0
+    for m in rows:
+        mid = m["id"]
+        inflow = await db.company_fund_adjustments.find_one(
+            {"dedupe_key": f"invmov-fund:{mid}", "adjustment_type": "inflow"},
+            {"_id": 1})
+        if not inflow:
+            continue   # nunca hubo ingreso → nada que compensar (sin fantasma)
+        outflow = await db.company_fund_adjustments.find_one(
+            {"dedupe_key": f"cobro-rev-fund:{mid}"}, {"_id": 1})
+        if outflow:
+            continue   # ya compensado (neto 0)
+        total = round(float(m.get("total") or 0), 2)
+        if total <= 0:
+            continue
+        from services.marketplace_fx import get_store_fx
+        from services.company_funds_common import record_auto_fund_adjustment
+        fx = await get_store_fx()
+        await record_auto_fund_adjustment(
+            adjustment_type="outflow", currency=fx["store_currency"],
+            amount=total, source_name="Inventario tienda física",
+            note=(f"Reverso cobro (ingreso tardío): {m.get('quantity')}× "
+                  f"{m.get('product_name', '')}"),
+            ref_id=mid, dedupe_key=f"cobro-rev-fund:{mid}")
+        fixed += 1
+    return fixed
 
 
 

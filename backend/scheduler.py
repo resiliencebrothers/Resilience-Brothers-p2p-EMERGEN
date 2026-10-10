@@ -328,10 +328,17 @@ async def run_credit_recovery():
         # evidencia (sustituye al viejo $slice ciego).
         from services.balances import compact_credit_registries
         from services.inventory import (compact_stock_registries,
-                                         heal_pending_cobros)
+                                         heal_pending_cobros,
+                                         reconcile_aborted_cobro_funds)
         from datetime import datetime, timezone, timedelta
         n += await compact_credit_registries()
         n += await compact_stock_registries()
+        # SUN-08-R1(v2) — compensa ingresos tardíos de cobros abortados
+        # (ventana recuperador→aborto→inserción). Ventana de recencia 24h:
+        # un inflow tardío solo aparece poco después del aborto.
+        fund_since = (datetime.now(timezone.utc)
+                      - timedelta(hours=24)).isoformat()
+        n += await reconcile_aborted_cobro_funds(fund_since)
         # SUN-08 — completa reversos de cobro POS interrumpidos (commit o
         # compensación a medias). Cutoff de 120s: nunca toca un cobro en vuelo.
         cobro_cutoff = (datetime.now(timezone.utc)
