@@ -1957,3 +1957,16 @@ Bug reportado: `POST /admin/pos/cobro` registraba cada línea con `create_moveme
 - `routes/inventory.py`: `create_movement` delega en `_create_movement_impl(..., cobro_id="")` reutilizable por el POS (sin exponer `cobro_id` en la API pública).
 - **Tests**: `tests/test_iter360_cobro_reversal.py` (4/4) — reverso neutraliza venta+ingreso+ganancia+stock con idempotencia (repetir la recuperación no duplica), fallo tras la 1ª línea revierte la operación entera, consolidación dentro de stock = 1 movimiento, líneas repetidas que exceden stock = rechazo limpio sin cobro parcial. Añadido a `make test-critical` junto con `test_iter358_pos_cobro.py`. **Suite crítica completa: 1110/1110 verde.**
 - Mantenimiento de fixtures: stock de AGUA/ARROZ repuesto a 100 (los tests de integración del POS asumen tienda recién sembrada).
+
+### iter361 (2026-10-10) — SUN-09 (ALTA): el cobro POS ahora es idempotente (reintento tras respuesta perdida no duplica)
+Bug reportado: `POST /admin/pos/cobro` no tenía identidad persistente ni clave de idempotencia; cada ejecución creaba movimientos con UUID nuevos. Si la venta se registraba pero la respuesta se perdía, la UI conservaba el carrito y liberaba el botón → un reintento registraba una SEGUNDA venta (stock −2, ingreso ×2) para la misma intención. No es doble cobro bancario: el endpoint registra una venta en efectivo.
+
+- **Clave de idempotencia cliente** (`CobroIn.idempotency_key`, `InventoryPrintTab.jsx`): el frontend genera un UUID al primer envío (`idemRef`), lo CONSERVA mientras el resultado sea desconocido (reintento del mismo carrito), lo limpia al éxito y lo regenera ante cualquier cambio de carrito/efectivo (`useEffect([cart, cobroPaid])`). En el `catch` NO se limpia → un reintento recupera sin duplicar.
+- **Registro único en backend** (`routes/pos.py`): índice único sparse sobre `pos_cobros.idempotency_key`. Huella SHA-256 del contenido (líneas consolidadas + efectivo + moneda). Protocolo reclamar-primero (insert) + `_resolve_existing_cobro`:
+  * `committed` con `result` cacheado → DEVUELVE exactamente la misma respuesta (recupera la respuesta perdida, mismo `movement_id`, sin re-cobrar).
+  * huella distinta con misma clave → **409 IDEMPOTENCY_KEY_CONFLICT**.
+  * `reversed` (intento anterior falló y se revirtió) → **409 COBRO_REVERSED** (no re-cobra).
+  * `committing`/`reversing` concurrente → espera breve (~10s) y devuelve el resultado del ganador; si no, **409 COBRO_IN_PROGRESS**. El índice único garantiza que dos concurrentes creen UNA sola venta.
+- El `result` (movements + total/paid/change + ticket ESC/POS) se cachea en `pos_cobros` en la misma escritura que marca `committed` → recuperación exacta. La reimpresión sigue usando `/admin/pos/receipt/build` (nunca cobra).
+- **Tests**: `tests/test_iter361_cobro_idempotency.py` (4/4) — consecutivas misma clave = 1 venta, concurrentes (asyncio.gather) misma clave = 1 venta, misma clave + contenido distinto = 409, reintento de cobro revertido = 409 sin re-cobrar. Smoke HTTP vía ingress real: req1==req2 (mismo mov_id, stock −1 una vez), req3 distinto = HTTP 409. Añadido a `make test-critical`.
+- Frontend lint 0 errores (los 2 warnings existentes están en otros archivos). El `catch` del cobro ahora muestra `detail.message` para los 409 estructurados (evita `toast.error(objeto)`).

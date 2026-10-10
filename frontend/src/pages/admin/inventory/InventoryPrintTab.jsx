@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useTranslation } from "react-i18next";
@@ -35,6 +35,12 @@ export default function InventoryPrintTab() {
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
+  // SUN-09 — clave de idempotencia del cobro. Se genera al primer envío y se
+  // CONSERVA mientras el resultado sea desconocido (reintento tras perder la
+  // respuesta → recupera sin duplicar). Cualquier cambio del carrito o del
+  // efectivo = nueva intención → nueva clave.
+  const idemRef = useRef("");
+  useEffect(() => { idemRef.current = ""; }, [cart, cobroPaid]);
 
   const set = (k, v) => setCfg((c) => { const n = { ...c, [k]: v }; savePrinterConfig(n); return n; });
 
@@ -140,22 +146,34 @@ export default function InventoryPrintTab() {
   // UN ticket con total/pagado/cambio y la gaveta se abre SIEMPRE (backend).
   const cobrar = async () => {
     if (!canCharge) return;
+    // SUN-09 — genera la clave sólo si aún no existe (un reintento del mismo
+    // carrito reutiliza la clave anterior y recupera sin volver a cobrar).
+    if (!idemRef.current) {
+      idemRef.current = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
     setBusy(true);
     try {
       const { data } = await axios.post(`${API}/admin/pos/cobro`, {
         items: cart.map((l) => ({ product_id: l.product_id, quantity: l.qty })),
-        paid: paidNum, note: "",
+        paid: paidNum, note: "", idempotency_key: idemRef.current,
         business_name: cfg.business_name, business_line2: cfg.business_line2,
         business_line3: cfg.business_line3, footer: cfg.footer,
         currency: cfg.currency, width: cfg.width, print_logo: cfg.printLogo,
       }, { withCredentials: true });
       // Las ventas ya quedaron registradas aunque la impresión falle (sin equipo).
+      idemRef.current = "";   // intención completada → la próxima genera otra
       toast.success(t("inventory.print.cobroOk"));
       setCart([]); setCobroPaid(""); setCobroProduct(""); setCobroQty("");
       loadSales();
       loadProducts();
       await route(data, "cobro");
-    } catch (e) { toast.error(e.response?.data?.detail || e.message); }
+    } catch (e) {
+      // NO limpiamos idemRef: si se perdió la respuesta, el próximo clic con el
+      // MISMO carrito reutiliza la clave y recupera el cobro sin duplicarlo.
+      toast.error(e.response?.data?.detail?.message || e.response?.data?.detail || e.message);
+    }
     finally { setBusy(false); }
   };
 

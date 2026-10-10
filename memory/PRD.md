@@ -2503,3 +2503,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter360 (2026-10-10) — SUN-08 reverso completo del cobro POS
 - El reverso de un cobro multi-línea fallido ahora anula la venta, compensa el ingreso al fondo y repone el stock (antes solo reponía stock, dejando ingreso/ganancia fantasma en el cierre). Consolidación de líneas repetidas + operación recuperable (`pos_cobros`) + healer idempotente. Ver CHANGELOG. Suite crítica 1110/1110 verde. (Pendiente redeploy a producción.)
+
+### iter361 (2026-10-10) — SUN-09 cobro POS idempotente
+- `POST /admin/pos/cobro` acepta `idempotency_key` del cliente; reintento tras respuesta perdida devuelve el resultado cacheado sin duplicar venta/ingreso/stock. Índice único + huella de contenido + estados committed/reversed/in-progress. Concurrentes con misma clave = 1 sola venta. Ver CHANGELOG. (Pendiente redeploy a producción.)

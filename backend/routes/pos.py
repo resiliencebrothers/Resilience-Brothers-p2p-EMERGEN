@@ -31,6 +31,11 @@ class CobroIn(BaseModel):
     items: List[CobroLine] = Field(..., min_length=1)
     paid: float = Field(..., ge=0)         # efectivo recibido (OBLIGATORIO)
     note: str = Field("", max_length=300)
+    # SUN-09 — identidad de cobro generada por el cliente ANTES del primer
+    # envío. Hace el cobro IDEMPOTENTE: un reintento tras perder la respuesta
+    # devuelve el resultado ya registrado en vez de volver a cobrar. Reusar la
+    # clave con un carrito distinto produce 409 (conflicto).
+    idempotency_key: str = Field("", max_length=80)
     # Estilo del ticket (viene de la configuración de la pestaña Caja).
     business_name: str = "Resilience Brothers"
     business_line2: str = ""
@@ -39,6 +44,69 @@ class CobroIn(BaseModel):
     currency: str = "CUP"
     width: int = 48
     print_logo: bool = True
+
+
+_POS_IDEM_INDEX_READY = False
+
+
+def _cobro_fingerprint(consolidated: list, paid: float, currency: str) -> str:
+    """SUN-09 — huella del CONTENIDO del cobro (líneas + efectivo + moneda).
+    Reusar la misma clave con otra huella = conflicto (409)."""
+    import hashlib
+    import json
+    canon = {
+        "items": sorted([[str(pid), round(float(q), 3)] for pid, q in consolidated]),
+        "paid": round(float(paid), 2),
+        "currency": (currency or "").upper(),
+    }
+    raw = json.dumps(canon, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def _ensure_idem_index(db: Any) -> None:
+    global _POS_IDEM_INDEX_READY
+    if not _POS_IDEM_INDEX_READY:
+        await db.pos_cobros.create_index("idempotency_key", unique=True,
+                                         sparse=True)
+        _POS_IDEM_INDEX_READY = True
+
+
+async def _resolve_existing_cobro(db: Any, idem: str, fp: str) -> Any:
+    """SUN-09 — resuelve un cobro que ya existe para esta clave:
+    - huella distinta → 409 (clave reusada con otro carrito).
+    - 'committed' con resultado → lo DEVUELVE (recupera la respuesta perdida).
+    - 'reversed' → 409 (el intento anterior no se completó; usa carrito nuevo).
+    - 'committing'/'reversing' (concurrente) → espera breve y, si no termina,
+      409 'en proceso'. Dos concurrentes con la misma clave => UNA sola venta.
+    """
+    import asyncio
+    existing = await db.pos_cobros.find_one({"idempotency_key": idem}, {"_id": 0})
+    for _ in range(26):   # ~10 s de espera para el perdedor de la carrera
+        if not existing:
+            break
+        if fp and existing.get("fingerprint") and existing["fingerprint"] != fp:
+            raise HTTPException(status_code=409, detail={
+                "code": "IDEMPOTENCY_KEY_CONFLICT",
+                "message": ("Esta clave de cobro ya se usó con un carrito "
+                            "distinto. Vacía el carrito y vuelve a intentar.")})
+        state = existing.get("state")
+        if state == "committed" and existing.get("result"):
+            return existing["result"]
+        if state == "reversed":
+            raise HTTPException(status_code=409, detail={
+                "code": "COBRO_REVERSED",
+                "message": (existing.get("reverse_reason")
+                            or "El cobro anterior con esta clave no se completó. "
+                               "Revisa el carrito e inténtalo de nuevo.")})
+        await asyncio.sleep(0.4)
+        existing = await db.pos_cobros.find_one(
+            {"idempotency_key": idem}, {"_id": 0})
+    raise HTTPException(status_code=409, detail={
+        "code": "COBRO_IN_PROGRESS",
+        "message": ("Un cobro con esta clave está en proceso. "
+                    "Reintenta en unos segundos.")})
+
+
 
 
 @router.post("/admin/pos/receipt/build")
@@ -93,6 +161,7 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
     from services.inventory import (norm_qty, sells_fraction, qnum,
                                      reverse_cobro)
     from db_client import db
+    from pymongo.errors import DuplicateKeyError
     import uuid
 
     # ── 0) CONSOLIDAR líneas repetidas del mismo producto (SUN-08) ──
@@ -107,6 +176,18 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             order.append(ln.product_id)
         agg[ln.product_id] += float(ln.quantity)
     consolidated = [(pid, agg[pid]) for pid in order]
+
+    # ── SUN-09: IDEMPOTENCIA. La huella del contenido + la clave del cliente
+    #   hacen que un reintento tras perder la respuesta devuelva el resultado
+    #   ya registrado (no vuelve a cobrar). Chequeo temprano: si la clave ya
+    #   existe, resolvemos SIN re-ejecutar la prevalidación (el stock pudo
+    #   cambiar; un cobro ya confirmado debe recuperarse igual). ──
+    idem = (payload.idempotency_key or "").strip()
+    fp = _cobro_fingerprint(consolidated, payload.paid, payload.currency)
+    if idem:
+        await _ensure_idem_index(db)
+        if await db.pos_cobros.find_one({"idempotency_key": idem}, {"_id": 1}):
+            return await _resolve_existing_cobro(db, idem, fp)
 
     # ── 1) PRE-VALIDACIÓN de TODO el carrito (aún no registra nada) ──
     lines: list = []
@@ -145,19 +226,28 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             detail=(f"Efectivo insuficiente: recibido {paid:,.2f}, "
                     f"total {est_total:,.2f} {payload.currency}"))
 
-    # ── 2) Registrar cada línea como una OPERACIÓN DE COBRO recuperable
-    #       (SUN-08). Si una línea falla, se revierte la operación ENTERA:
-    #       venta + ingreso al fondo + ganancia + stock de las ya aplicadas.
-    #       El cobro se registra en `pos_cobros` para que el healer complete
-    #       una compensación interrumpida. ──
+    # ── 2) RECLAMAR la operación de cobro (SUN-09). El índice único sobre
+    #   `idempotency_key` garantiza que dos envíos concurrentes con la misma
+    #   clave sólo creen UNA venta lógica: el ganador cobra, el perdedor
+    #   recupera su resultado. Sin clave (llamador directo de API) se registra
+    #   sin dedup. La operación es también recuperable ante fallos (SUN-08). ──
     cobro_id = str(uuid.uuid4())
-    await db.pos_cobros.insert_one({
-        "id": cobro_id, "state": "committing", "mov_ids": [],
-        "actor_id": (actor or {}).get("user_id", ""),
-        "actor_email": (actor or {}).get("email", ""),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {"id": cobro_id, "state": "committing", "mov_ids": [],
+           "fingerprint": fp,
+           "actor_id": (actor or {}).get("user_id", ""),
+           "actor_email": (actor or {}).get("email", ""),
+           "created_at": now_iso, "updated_at": now_iso}
+    if idem:
+        doc["idempotency_key"] = idem
+        try:
+            await db.pos_cobros.insert_one(doc)
+        except DuplicateKeyError:
+            # Carrera: otro envío con la misma clave ganó el reclamo.
+            return await _resolve_existing_cobro(db, idem, fp)
+    else:
+        await db.pos_cobros.insert_one(doc)
+
     committed: list = []
     try:
         for product, raw_q, _qty in lines:
@@ -171,11 +261,8 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
                 {"id": cobro_id},
                 {"$push": {"mov_ids": mov["id"]},
                  "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
-        await db.pos_cobros.update_one(
-            {"id": cobro_id},
-            {"$set": {"state": "committed",
-                      "updated_at": datetime.now(timezone.utc).isoformat()}})
-    except Exception:
+    except Exception as exc:
+        reason = str(getattr(exc, "detail", "") or exc)[:300]
         await db.pos_cobros.update_one(
             {"id": cobro_id},
             {"$set": {"state": "reversing",
@@ -184,7 +271,7 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             await reverse_cobro(cobro_id, actor)
             await db.pos_cobros.update_one(
                 {"id": cobro_id},
-                {"$set": {"state": "reversed",
+                {"$set": {"state": "reversed", "reverse_reason": reason,
                           "updated_at": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:  # noqa: BLE001
             # Compensación interrumpida: `heal_pending_cobros` la completará.
@@ -210,5 +297,13 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
         subtotal=total, total=total, paid=paid, change=change,
         open_drawer=True,   # SIEMPRE en un cobro real (no respeta el toggle).
     )
-    return {"movements": movs, "total": total, "paid": paid, "change": change,
-            **build_receipt(rp)}
+    result = {"movements": movs, "total": total, "paid": paid, "change": change,
+              **build_receipt(rp)}
+    # SUN-09 — marca 'committed' y CACHEA el resultado en una sola escritura
+    # durable: un reintento con la misma clave recupera exactamente esta
+    # respuesta sin volver a cobrar.
+    await db.pos_cobros.update_one(
+        {"id": cobro_id},
+        {"$set": {"state": "committed", "result": result,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return result
