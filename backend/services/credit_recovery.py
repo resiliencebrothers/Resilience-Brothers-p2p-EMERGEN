@@ -441,6 +441,7 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     rows = await db.inventory_movements.find(
         {"needs_stock": True, "stock_applied": {"$ne": True},
          "stock_apply_failed": {"$ne": True}, "source": {"$ne": "conteo"},
+         "cobro_aborted": {"$ne": True},
          "created_at": {"$lt": cutoff}}, {"_id": 0}).to_list(200)
     for m in rows:
         delta = movement_delta(m.get("type") or "", round(float(m.get("quantity") or 0), 3))
@@ -486,8 +487,12 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
         healed += 1
 
     # --- asientos contables de inventario perdidos (D08) --------------------
+    # SUN-08-R1 — EXCLUIR los cobros ABORTADOS: su ingreso NO debe reactivarse
+    # (una venta aplicada sin su inflow, luego abortada, no es un asiento
+    # perdido sino un ingreso que nunca debió existir).
     rows = await db.inventory_movements.find(
         {"stock_applied": True, "fund_flow_recorded": {"$ne": True},
+         "cobro_aborted": {"$ne": True},
          "created_at": {"$lt": cutoff}, "total": {"$gt": 0},
          "$or": [{"type": "venta", "source": "manual"},
                  {"type": "entrada", "source": {"$in": ["manual", "alta"]}}]},

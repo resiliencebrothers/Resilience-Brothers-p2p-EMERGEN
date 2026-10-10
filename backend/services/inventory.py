@@ -864,6 +864,10 @@ async def _record_fund_flow(mov: dict) -> None:
       de la tienda por el total cobrado.
     Las ventas web (source=marketplace) entran en USDT desde routes/orders."""
     try:
+        # SUN-08-R1 — un cobro ABORTADO NO genera ingreso: ningún ejecutor
+        # tardío (healer general) debe reactivarlo.
+        if mov.get("cobro_aborted"):
+            return
         mtype, source = mov["type"], mov.get("source", "")
         amount = float(mov.get("total") or 0)
         if amount <= 0:
@@ -879,8 +883,12 @@ async def _record_fund_flow(mov: dict) -> None:
         # iter257(D08) — primero el ASIENTO idempotente (dedupe por ref y por
         # clave), después la marca: un crash entre ambos ya no pierde dinero
         # contable, y el retry/healer no duplica.
+        # SUN-08-R1 — la dedup comprueba la IDENTIDAD PROPIA de este asiento (su
+        # dedupe_key), NO cualquier asiento con el mismo ref_id. Un asiento de
+        # REVERSIÓN (otro dedupe_key, sentido contrario) NO prueba que el ingreso
+        # original exista; antes lo enmascaraba y dejaba el fondo descuadrado.
         already = await db.company_fund_adjustments.find_one(
-            {"ref_id": mov["id"]}, {"_id": 1})
+            {"dedupe_key": f"invmov-fund:{mov['id']}"}, {"_id": 1})
         if not already:
             from services.marketplace_fx import get_store_fx
             from services.company_funds_common import record_auto_fund_adjustment
@@ -898,33 +906,64 @@ async def _record_fund_flow(mov: dict) -> None:
 
 # ══════════════════ SUN-08: reverso recuperable del cobro POS ═══════════════
 async def reverse_pos_sale(mov: dict, actor: Optional[dict] = None) -> None:
-    """SUN-08 — compensa UNA venta ya cobrada que pertenece a un cobro POS que
-    falló a mitad de camino. Neutraliza los TRES efectos de la venta, no solo
-    el stock:
+    """SUN-08 / SUN-08-R1 — compensa UNA venta de un cobro POS abortado SOLO por
+    los efectos que REALMENTE se aplicaron, resueltos desde evidencia DURABLE y
+    una decisión TERMINAL compartida con los recuperadores. Antes se revertían
+    a ciegas stock e ingreso que quizá nunca llegaron a aplicarse (stock 11,
+    fondo −100).
 
-    1) ANULA la venta (`voided=True`) para que deje de sumar ventas y ganancia
-       en el cierre diario / dashboard / control / rotación.
-    2) REVIERTE el ingreso al fondo de la empresa con un asiento `outflow`
-       idempotente (dedupe_key) que compensa exactamente el inflow registrado
-       por `_record_fund_flow`.
-    3) DEVUELVE el stock con un `ajuste_pos` idempotente (dedupe_key).
+    1) Marca la venta `voided` + `cobro_aborted` (decisión TERMINAL): los
+       recuperadores generales dejan de reactivar su stock o su ingreso.
+    2) STOCK — `burn_or_undo_stock` resuelve de forma ATÓMICA y terminal la
+       evidencia del op (`stock_ops` + `applied_stock_ops`), lo que cubre el
+       caso de un efecto aplicado cuya marca `stock_applied` aún no se escribió:
+         • 'undone'  → el descuento SÍ se aplicó y se revierte EXACTAMENTE una
+            vez en el stock real; se DOCUMENTA la reposición con un ajuste_pos
+            SIN volver a tocar el stock (apply_stock=False), para que la
+            reconstrucción por movimientos cuadre (venta −q + ajuste +q = 0).
+         • 'burned'  → el descuento NUNCA se aplicó y queda BLOQUEADO para
+            siempre (ningún ejecutor tardío puede aplicarlo); la venta se marca
+            `stock_apply_failed` para excluirla de la reconstrucción y del healer.
+    3) FONDO — revierte el ingreso SOLO si EXISTE su asiento INFLOW propio
+       (dedupe_key `invmov-fund:{mid}`). Consultar por esa identidad (no por el
+       ref_id) evita crear una salida fantasma cuando el ingreso nunca existió.
 
-    Cada paso es idempotente y está vinculado a la venta original (`ref_id`),
-    por lo que repetir la recuperación nunca duplica el reverso, y un fallo a
-    mitad de la compensación se completa de forma segura en el siguiente
-    intento (healer o reintento). El orden anula PRIMERO la venta para que un
-    crash intermedio nunca deje ingresos/ganancia de un cobro rechazado."""
+    Todo es idempotente y recuperable: repetir la compensación no duplica nada y
+    un fallo a mitad se completa en el siguiente intento (healer)."""
     mid = mov["id"]
-    # 1) Anular la venta (idempotente: solo marca si aún no estaba anulada).
+    pid = mov["product_id"]
+    qty = float(mov.get("quantity") or 0)
+    # 1) Decisión TERMINAL de aborto (compartida con los recuperadores).
     await db.inventory_movements.update_one(
-        {"id": mid, "voided": {"$ne": True}},
+        {"id": mid},
         {"$set": {"voided": True, "voided_at": iso(now_utc()),
                   "void_reason": "cobro_reversal",
-                  "void_cobro_id": mov.get("cobro_id", "")}})
-    # 2) Revertir el ingreso al fondo (solo ventas físicas registran inflow).
-    total = round(float(mov.get("total") or 0), 2)
-    if total > 0 and mov.get("source") == "manual" and mov.get("type") == "venta":
-        try:
+                  "void_cobro_id": mov.get("cobro_id", ""),
+                  "cobro_aborted": True}})
+    # 2) STOCK — compensar EXACTAMENTE lo aplicado (evidencia durable y terminal).
+    if qty > 0:
+        outcome = await burn_or_undo_stock(pid, qty, f"invmov:{mid}")
+        if outcome == "undone":
+            # El descuento se aplicó y ya se revirtió en el stock REAL (:undo).
+            # Documentamos la reposición SIN re-tocar stock → cuadra la
+            # reconstrucción por movimientos (venta −q + ajuste +q = 0).
+            prod = await db.products.find_one({"id": pid}, {"_id": 0}) or {"id": pid}
+            await record_movement(
+                product=prod, mtype="ajuste_pos", quantity=qty,
+                note="Reverso de cobro incompleto", source="cobro_reversal",
+                ref_id=mid, actor=actor, apply_stock=False,
+                dedupe_key=f"cobro-rev-stock:{mid}",
+                cobro_id=mov.get("cobro_id", ""))
+        else:  # 'burned' — nunca se aplicó: excluir de reconstrucción/healer.
+            await db.inventory_movements.update_one(
+                {"id": mid}, {"$set": {"stock_apply_failed": True}})
+    # 3) FONDO — revertir el ingreso SOLO si su INFLOW propio existe.
+    inflow = await db.company_fund_adjustments.find_one(
+        {"dedupe_key": f"invmov-fund:{mid}", "adjustment_type": "inflow"},
+        {"_id": 1})
+    if inflow:
+        total = round(float(mov.get("total") or 0), 2)
+        if total > 0:
             from services.marketplace_fx import get_store_fx
             from services.company_funds_common import record_auto_fund_adjustment
             fx = await get_store_fx()
@@ -934,17 +973,6 @@ async def reverse_pos_sale(mov: dict, actor: Optional[dict] = None) -> None:
                 note=(f"Reverso cobro incompleto: {mov.get('quantity')}× "
                       f"{mov.get('product_name', '')}"),
                 ref_id=mid, dedupe_key=f"cobro-rev-fund:{mid}")
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"cobro fund reversal failed for {mid}: {e}")
-            raise
-    # 3) Devolver el stock (ajuste_pos idempotente por dedupe_key).
-    prod = await db.products.find_one({"id": mov["product_id"]}, {"_id": 0}) \
-        or {"id": mov["product_id"]}
-    await record_movement(
-        product=prod, mtype="ajuste_pos", quantity=mov.get("quantity"),
-        note="Reverso de cobro incompleto", source="cobro_reversal",
-        ref_id=mid, actor=actor, dedupe_key=f"cobro-rev-stock:{mid}",
-        cobro_id=mov.get("cobro_id", ""))
 
 
 async def reverse_cobro(cobro_id: str, actor: Optional[dict] = None) -> int:

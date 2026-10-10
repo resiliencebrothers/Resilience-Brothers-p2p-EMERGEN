@@ -2509,3 +2509,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter362 (2026-10-10) — SUN-10 coherencia del total del cobro POS
 - `POST /admin/pos/cobro` fija precio/cantidad/importe por línea del lado servidor y usa una sola política de redondeo para validar, registrar y el ticket. Un cambio de precio concurrente no altera el total aprobado; el redondeo por línea evita el cambio negativo. paid>=total y change>=0 en todo cobro aprobado. Ver CHANGELOG. (Pendiente redeploy a producción.)
+
+### iter363 (2026-10-10) — SUN-08-R1 reverso del cobro por evidencia durable
+- `reverse_pos_sale` compensa stock e ingreso SOLO por lo realmente aplicado (burn/undo del op de stock + reversión del inflow solo si existe), con decisión terminal `cobro_aborted` que los recuperadores generales respetan. En todo cobro abortado: neto del fondo 0, stock como si la venta nunca ocurrió, reconstrucción por movimientos consistente. Ver CHANGELOG. (Pendiente redeploy a producción.)
