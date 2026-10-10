@@ -339,13 +339,36 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
         return result
     except Exception as exc:
         reason = str(getattr(exc, "detail", "") or exc)[:300]
-        # Resolvemos SIEMPRE nuestros efectos (idempotente). El estado sólo lo
-        # gestionamos si AÚN somos dueños; si el recuperador nos lo robó, él lo
-        # lleva a 'reversed'.
-        await db.pos_cobros.update_one(
+        # SUN-08-R2 (variante: CONFIRMACIÓN GUARDADA CON RESPUESTA PERDIDA) — un
+        # error de red al esperar el ACK NO prueba que la confirmación no se
+        # guardara. La doc de PyMongo es explícita: un NetworkTimeout durante una
+        # escritura no permite deducir, solo por la excepción, si la escritura se
+        # completó. Por eso NO interpretamos cualquier excepción como permiso
+        # para revertir: RECLAMAMOS atómicamente committing→reversing (CAS). Ese
+        # reclamo es la ÚNICA fuente de verdad — solo coincide si la confirmación
+        # NO persistió (seguíamos en 'committing' conservando la propiedad).
+        claim = await db.pos_cobros.update_one(
             {"id": cobro_id, "owner": owner, "state": "committing"},
             {"$set": {"state": "reversing",
                       "updated_at": datetime.now(timezone.utc).isoformat()}})
+        if claim.matched_count == 0:
+            # No pudimos reclamar el reverso: resolvemos el ESTADO REAL sin
+            # destruir los efectos de una confirmación posiblemente completada.
+            current = await db.pos_cobros.find_one({"id": cobro_id}, {"_id": 0})
+            state = (current or {}).get("state")
+            if state == "committed" and current.get("result"):
+                # La confirmación SÍ se guardó (solo se perdió la respuesta):
+                # conservamos los efectos y RECUPERAMOS la respuesta almacenada.
+                # Un único resultado coherente sobrevive.
+                return current["result"]
+            # El recuperador robó la operación (reversing/reversed) o el estado es
+            # indeterminado: NO compensamos nosotros (el dueño actual lo hace).
+            # Error coherente; el reintento idempotente resolverá el resultado.
+            raise HTTPException(status_code=409, detail={
+                "code": "COBRO_RECOVERED",
+                "message": ("El cobro fue recuperado por otro proceso y no se "
+                            "registró. Vuelve a intentarlo.")})
+        # Reclamo exitoso: SOMOS dueños del reverso → compensamos (idempotente).
         try:
             await reverse_cobro(cobro_id, actor)
             await db.pos_cobros.update_one(

@@ -2018,3 +2018,18 @@ Fix (`services/inventory.py`, `services/credit_recovery.py` ya excluía por quer
 - **`_record_fund_flow` RE-LEE la decisión terminal desde la BD** (`cobro_aborted`) justo ANTES de insertar, en vez de confiar en la copia en memoria del recuperador. Cierra la ventana común "recuperador lee → aborto → inserción tardía".
 - **`reconcile_aborted_cobro_funds` (reconciliador DURABLE e IDEMPOTENTE)**: como el ingreso (`company_fund_adjustments`) y el aborto (`inventory_movements`) viven en colecciones distintas SIN transacción, cualquier re-lectura+inserción deja una ventana microscópica. El reconciliador cierra el invariante: para toda venta ABORTADA con INFLOW propio presente pero OUTFLOW de reversión ausente, publica el outflow compensatorio. Nunca crea salida fantasma (solo compensa si el inflow existe) y es idempotente (ambos asientos singletons por dedupe_key). Acotado por recencia (24h). Cableado en el barrido `run_credit_recovery`.
 - **Tests**: `tests/test_iter365_late_inflow_reconcile.py` (3/3) — orden exacto recuperador→aborto→inserción tardía (re-check la omite; fondo 0; repetir no cambia), reconciliador compensa un ingreso tardío colado de forma idempotente, y sin ingreso NO crea salida fantasma. Regresión: 103 tests POS+recuperación+fondo+cierre verdes. mypy/ruff limpios. Añadido a `make test-critical`.
+
+### iter366 (2026-06 fork) — SUN-08-R2 variante: CONFIRMACIÓN GUARDADA CON RESPUESTA PERDIDA (CAS como fuente de verdad)
+Bug reportado (`routes/pos.py` ~333-363): la escritura final `committing→committed` (con `result`) vive dentro del `try`. Si Mongo GUARDA esa escritura pero el driver lanza un error de red al esperar el ACK, se ejecutaba el `except`, que reclamaba `committing→reversing` SIN verificar `matched_count` y llamaba igualmente a `reverse_cobro`. Resultado incoherente: `state=committed` + `result` exitoso apuntando a una venta ANULADA (stock restaurado, neto 0, `voided=True`/`cobro_aborted=True`). El reintento con la misma clave devolvía ese éxito falso.
+
+Fundamento (PyMongo): un `NetworkTimeout` durante una escritura NO permite deducir, solo por la excepción, si la escritura se completó. La app debe manejar el error recibido sin asumir que no hubo escritura.
+
+Fix (`routes/pos.py`, bloque `except` de `pos_cobro`):
+- El reclamo atómico `committing→reversing` (CAS) es ahora la ÚNICA fuente de verdad; solo coincide si la confirmación NO persistió (seguíamos en `committing` con nuestra propiedad).
+  - `matched_count == 1` → la confirmación no se guardó → compensamos con `reverse_cobro` (comportamiento previo, correcto).
+  - `matched_count == 0` → re-leemos el ESTADO REAL:
+    · `committed` + `result` → la confirmación SÍ persistió (solo se perdió la respuesta): CONSERVAMOS los efectos y RECUPERAMOS el `result` (lo devolvemos). NO se revierte.
+    · robado por el recuperador (`reversing`/`reversed`) o estado indeterminado → NO compensamos nosotros; `409 COBRO_RECOVERED` coherente; el reintento idempotente resuelve el resultado.
+- Se eliminó la reversión incondicional que destruía efectos de una confirmación ya completada.
+
+Tests: `tests/test_iter366_cobro_confirm_lost_response.py` (2/2) — (1) error DESPUÉS de persistir la confirmación → recupera el `result`, venta NO anulada, stock-1, neto +100, reintento devuelve el mismo resultado sin duplicar; (2) error ANTES de persistir → reverso íntegro (neto 0, `voided=True`), reintento reporta `409 COBRO_REVERSED`. Suite crítica completa **1127 passed** (incl. iter360-365 de cobro). ruff + mypy limpios. Añadido a `make test-critical`.
