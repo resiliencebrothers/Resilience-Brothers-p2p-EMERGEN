@@ -136,6 +136,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_iter361_cobro_idempotency.py \
 		tests/test_iter362_cobro_total_consistency.py \
 		tests/test_iter363_cobro_reversal_evidence.py \
+		tests/test_iter364_cobro_ownership_race.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

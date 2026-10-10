@@ -49,6 +49,11 @@ class CobroIn(BaseModel):
 _POS_IDEM_INDEX_READY = False
 
 
+class _OwnershipLost(Exception):
+    """SUN-08-R2 — el escritor perdió la propiedad del cobro (el recuperador lo
+    reclamó). No debe publicar más efectos ni confirmar; aborta y los resuelve."""
+
+
 def _cobro_fingerprint(consolidated: list, paid: float, currency: str) -> str:
     """SUN-09 — huella del CONTENIDO del cobro (líneas + efectivo + moneda).
     Reusar la misma clave con otra huella = conflicto (409)."""
@@ -243,10 +248,15 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
     #   clave sólo creen UNA venta lógica: el ganador cobra, el perdedor
     #   recupera su resultado. Sin clave (llamador directo de API) se registra
     #   sin dedup. La operación es también recuperable ante fallos (SUN-08). ──
+    #   SUN-08-R2 — `owner` es el token de PROPIEDAD/generación del escritor.
+    #   El escritor sólo publica efectos y confirma mientras conserve la
+    #   propiedad (transiciones condicionales); el recuperador la ROBA de forma
+    #   atómica. Así nunca coexisten un cobro 'reversed' y su confirmación.
     cobro_id = str(uuid.uuid4())
+    owner = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
     doc = {"id": cobro_id, "state": "committing", "mov_ids": [],
-           "fingerprint": fp,
+           "fingerprint": fp, "owner": owner,
            "actor_id": (actor or {}).get("user_id", ""),
            "actor_email": (actor or {}).get("email", ""),
            "created_at": now_iso, "updated_at": now_iso}
@@ -263,6 +273,15 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
     committed: list = []
     try:
         for product, qty, unit_price, _lt in lines:
+            # SUN-08-R2 — VERIFICAR la propiedad ANTES de publicar cada efecto
+            # (renovación condicional del lease). Si el recuperador robó la
+            # operación (cobro pausado/antiguo), esta renovación falla y NO se
+            # publica la línea: el escritor aborta y resuelve sus efectos.
+            lease = await db.pos_cobros.update_one(
+                {"id": cobro_id, "state": "committing", "owner": owner},
+                {"$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
+            if lease.matched_count == 0:
+                raise _OwnershipLost()
             # SUN-10 — pasa la cantidad normalizada Y el precio FIJADO: el total
             # de línea registrado = round(unit_price*qty,2) = importe validado.
             mc = MovementCreate.model_validate({
@@ -272,7 +291,7 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
                                               cobro_id=cobro_id)
             committed.append(mov)
             await db.pos_cobros.update_one(
-                {"id": cobro_id},
+                {"id": cobro_id, "owner": owner},
                 {"$push": {"mov_ids": mov["id"]},
                  "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
         # SUN-10 — verificación final de coherencia. Con precios fijados el total
@@ -284,49 +303,61 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             raise HTTPException(
                 status_code=409,
                 detail="El total cambió durante el registro; el cobro se revirtió. Reintenta.")
+
+        movs = committed
+        total = round(sum(float(m.get("total") or 0) for m in movs), 2)
+        change = round(paid - total, 2)
+        rp = ReceiptPayload(
+            business_name=payload.business_name, business_line2=payload.business_line2,
+            business_line3=payload.business_line3, footer=payload.footer,
+            currency=payload.currency,
+            width=(32 if int(payload.width) == 32 else 48),
+            print_logo=payload.print_logo,
+            ticket_no=str(movs[0]["id"])[:8].upper(),
+            datetime=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+            cashier=(actor or {}).get("email", ""),
+            items=[ReceiptItem(
+                name=m.get("product_name") or m["product_id"],
+                qty=m["quantity"], unit=m.get("unit", ""),
+                unit_price=m.get("unit_price", 0), total=m.get("total", 0)) for m in movs],
+            subtotal=total, total=total, paid=paid, change=change,
+            open_drawer=True,   # SIEMPRE en un cobro real (no respeta el toggle).
+        )
+        result = {"movements": movs, "total": total, "paid": paid, "change": change,
+                  **build_receipt(rp)}
+        # SUN-08-R2 / SUN-09 — CONFIRMACIÓN CONDICIONAL: sólo pasa a 'committed'
+        # (y cachea el resultado) si SEGUIMOS siendo dueños y el estado sigue en
+        # 'committing'. Si el recuperador ya lo revirtió, matched_count==0 →
+        # perdimos la propiedad → NO devolvemos un éxito que apunte a una venta
+        # anulada; abortamos y resolvemos los efectos.
+        confirm = await db.pos_cobros.update_one(
+            {"id": cobro_id, "state": "committing", "owner": owner},
+            {"$set": {"state": "committed", "result": result,
+                      "updated_at": datetime.now(timezone.utc).isoformat()}})
+        if confirm.matched_count == 0:
+            raise _OwnershipLost()
+        return result
     except Exception as exc:
         reason = str(getattr(exc, "detail", "") or exc)[:300]
+        # Resolvemos SIEMPRE nuestros efectos (idempotente). El estado sólo lo
+        # gestionamos si AÚN somos dueños; si el recuperador nos lo robó, él lo
+        # lleva a 'reversed'.
         await db.pos_cobros.update_one(
-            {"id": cobro_id},
+            {"id": cobro_id, "owner": owner, "state": "committing"},
             {"$set": {"state": "reversing",
                       "updated_at": datetime.now(timezone.utc).isoformat()}})
         try:
             await reverse_cobro(cobro_id, actor)
             await db.pos_cobros.update_one(
-                {"id": cobro_id},
+                {"id": cobro_id, "owner": owner, "state": "reversing"},
                 {"$set": {"state": "reversed", "reverse_reason": reason,
                           "updated_at": datetime.now(timezone.utc).isoformat()}})
         except Exception as e:  # noqa: BLE001
             # Compensación interrumpida: `heal_pending_cobros` la completará.
             logger.error(f"cobro {cobro_id} reversal incomplete: {e}")
+        if isinstance(exc, _OwnershipLost):
+            raise HTTPException(status_code=409, detail={
+                "code": "COBRO_RECOVERED",
+                "message": ("El cobro fue recuperado por otro proceso y no se "
+                            "registró. Vuelve a intentarlo.")})
         raise
-
-    movs = committed
-    total = round(sum(float(m.get("total") or 0) for m in movs), 2)
-    change = round(paid - total, 2)
-    rp = ReceiptPayload(
-        business_name=payload.business_name, business_line2=payload.business_line2,
-        business_line3=payload.business_line3, footer=payload.footer,
-        currency=payload.currency,
-        width=(32 if int(payload.width) == 32 else 48),
-        print_logo=payload.print_logo,
-        ticket_no=str(movs[0]["id"])[:8].upper(),
-        datetime=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-        cashier=(actor or {}).get("email", ""),
-        items=[ReceiptItem(
-            name=m.get("product_name") or m["product_id"],
-            qty=m["quantity"], unit=m.get("unit", ""),
-            unit_price=m.get("unit_price", 0), total=m.get("total", 0)) for m in movs],
-        subtotal=total, total=total, paid=paid, change=change,
-        open_drawer=True,   # SIEMPRE en un cobro real (no respeta el toggle).
-    )
-    result = {"movements": movs, "total": total, "paid": paid, "change": change,
-              **build_receipt(rp)}
-    # SUN-09 — marca 'committed' y CACHEA el resultado en una sola escritura
-    # durable: un reintento con la misma clave recupera exactamente esta
-    # respuesta sin volver a cobrar.
-    await db.pos_cobros.update_one(
-        {"id": cobro_id},
-        {"$set": {"state": "committed", "result": result,
-                  "updated_at": datetime.now(timezone.utc).isoformat()}})
-    return result

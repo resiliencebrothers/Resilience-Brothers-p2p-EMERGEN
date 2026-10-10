@@ -2512,3 +2512,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter363 (2026-10-10) — SUN-08-R1 reverso del cobro por evidencia durable
 - `reverse_pos_sale` compensa stock e ingreso SOLO por lo realmente aplicado (burn/undo del op de stock + reversión del inflow solo si existe), con decisión terminal `cobro_aborted` que los recuperadores generales respetan. En todo cobro abortado: neto del fondo 0, stock como si la venta nunca ocurrió, reconstrucción por movimientos consistente. Ver CHANGELOG. (Pendiente redeploy a producción.)
+
+### iter364 (2026-10-10) — SUN-08-R2 propiedad del cobro vs recuperador
+- Token `owner` + transiciones condicionales (CAS) en escritor y recuperador. El escritor verifica propiedad antes de cada efecto y en la confirmación final; el recuperador roba la propiedad de forma atómica (estado+antigüedad). Nunca coexisten un cobro 'reversed' y su confirmación; ningún éxito almacenado apunta a una venta anulada. Ver CHANGELOG. (Pendiente redeploy a producción.)

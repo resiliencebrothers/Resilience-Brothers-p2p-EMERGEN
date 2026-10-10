@@ -992,20 +992,41 @@ async def reverse_cobro(cobro_id: str, actor: Optional[dict] = None) -> int:
 
 
 async def heal_pending_cobros(cutoff_iso: str) -> int:
-    """SUN-08 — recuperador: completa cobros POS que quedaron a medias (el
-    proceso murió durante el commit o durante la propia compensación). Revierte
-    cualquier cobro atascado en 'committing'/'reversing' más viejo que el
-    cutoff. Un cobro exitoso llega a 'committed' en milisegundos, por lo que el
-    healer nunca toca una venta buena ni un cobro en vuelo."""
+    """SUN-08 / SUN-08-R2 — recuperador: completa cobros POS que quedaron a
+    medias (el proceso murió durante el commit o la compensación). Revierte los
+    cobros atascados en 'committing'/'reversing' más viejos que el cutoff.
+
+    SUN-08-R2 — RECLAMO ATÓMICO Y CONDICIONAL: antes de revertir, roba la
+    propiedad con un update condicionado al estado Y a la antigüedad observados
+    (CAS). Así:
+      • Si el escritor confirma primero (→ 'committed'), el reclamo NO coincide
+        y el recuperador NO toca un cobro bueno.
+      • Si el escritor renovó su lease (updated_at reciente), el reclamo NO
+        coincide y NO se le roba a un escritor en vuelo.
+      • Al robar la propiedad (`owner` nuevo), las transiciones condicionales
+        del escritor fallan → éste pierde la propiedad y resuelve sus efectos,
+        y NUNCA puede pasar tardíamente de 'reversed' a 'committed'.
+    Un cobro exitoso llega a 'committed' en milisegundos; el recuperador nunca
+    toca una venta buena ni un cobro en vuelo."""
     rows = await db.pos_cobros.find(
         {"state": {"$in": ["committing", "reversing"]},
-         "updated_at": {"$lt": cutoff_iso}}, {"_id": 0}).to_list(200)
+         "updated_at": {"$lt": cutoff_iso}}, {"_id": 0, "id": 1}).to_list(200)
     healed = 0
     for c in rows:
+        healer_owner = f"healer:{uuid.uuid4()}"
+        # Reclamo atómico: sólo si SIGUE atascado y antiguo (no se lo robamos
+        # a un escritor que acaba de confirmar o de renovar su lease).
+        claim = await db.pos_cobros.update_one(
+            {"id": c["id"], "state": {"$in": ["committing", "reversing"]},
+             "updated_at": {"$lt": cutoff_iso}},
+            {"$set": {"state": "reversing", "owner": healer_owner,
+                      "updated_at": iso(now_utc())}})
+        if claim.matched_count == 0:
+            continue   # otro ganó la propiedad (escritor confirmó/renovó)
         try:
             await reverse_cobro(c["id"], None)
             await db.pos_cobros.update_one(
-                {"id": c["id"]},
+                {"id": c["id"], "owner": healer_owner},
                 {"$set": {"state": "reversed", "updated_at": iso(now_utc())}})
             healed += 1
         except Exception as e:  # noqa: BLE001
