@@ -59,7 +59,12 @@ export default function InventoryPrintTab() {
   useEffect(() => { loadProducts(); }, [loadProducts]);
 
   // Carrito de cobro: varias líneas con su total combinado + efectivo/cambio.
-  const cartTotal = cart.reduce((s, l) => s + l.price * l.qty, 0);
+  // SUN-10 — MISMA política monetaria que el backend: se redondea el importe
+  // POR LÍNEA y luego se suma, para que el total mostrado/validado coincida
+  // EXACTAMENTE con el que registra el servidor (nada de cambio negativo).
+  const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const lineTotal = (l) => round2(l.price * l.qty);
+  const cartTotal = round2(cart.reduce((s, l) => s + lineTotal(l), 0));
   const paidNum = Number(cobroPaid);
   const changeDue = paidNum - cartTotal;
   const canCharge = cart.length > 0 && cobroPaid !== "" && paidNum >= cartTotal;
@@ -343,7 +348,7 @@ export default function InventoryPrintTab() {
                 <div className="text-[0.65rem] text-neutral-500">{l.qty} {l.unit} × {money(l.price, cfg.currency)}</div>
               </div>
               <div className="text-neutral-200 tabular-nums" data-testid={`cobro-line-total-${l.product_id}`}>
-                {money(l.price * l.qty, cfg.currency)}
+                {money(lineTotal(l), cfg.currency)}
               </div>
               <button type="button" onClick={() => removeLine(l.product_id)}
                 data-testid={`cobro-line-remove-${l.product_id}`}

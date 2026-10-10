@@ -2506,3 +2506,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter361 (2026-10-10) — SUN-09 cobro POS idempotente
 - `POST /admin/pos/cobro` acepta `idempotency_key` del cliente; reintento tras respuesta perdida devuelve el resultado cacheado sin duplicar venta/ingreso/stock. Índice único + huella de contenido + estados committed/reversed/in-progress. Concurrentes con misma clave = 1 sola venta. Ver CHANGELOG. (Pendiente redeploy a producción.)
+
+### iter362 (2026-10-10) — SUN-10 coherencia del total del cobro POS
+- `POST /admin/pos/cobro` fija precio/cantidad/importe por línea del lado servidor y usa una sola política de redondeo para validar, registrar y el ticket. Un cambio de precio concurrente no altera el total aprobado; el redondeo por línea evita el cambio negativo. paid>=total y change>=0 en todo cobro aprobado. Ver CHANGELOG. (Pendiente redeploy a producción.)

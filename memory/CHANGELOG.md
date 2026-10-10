@@ -1970,3 +1970,15 @@ Bug reportado: `POST /admin/pos/cobro` no tenía identidad persistente ni clave 
 - El `result` (movements + total/paid/change + ticket ESC/POS) se cachea en `pos_cobros` en la misma escritura que marca `committed` → recuperación exacta. La reimpresión sigue usando `/admin/pos/receipt/build` (nunca cobra).
 - **Tests**: `tests/test_iter361_cobro_idempotency.py` (4/4) — consecutivas misma clave = 1 venta, concurrentes (asyncio.gather) misma clave = 1 venta, misma clave + contenido distinto = 409, reintento de cobro revertido = 409 sin re-cobrar. Smoke HTTP vía ingress real: req1==req2 (mismo mov_id, stock −1 una vez), req3 distinto = HTTP 409. Añadido a `make test-critical`.
 - Frontend lint 0 errores (los 2 warnings existentes están en otros archivos). El `catch` del cobro ahora muestra `detail.message` para los 409 estructurados (evita `toast.error(objeto)`).
+
+### iter362 (2026-10-10) — SUN-10 (ALTA): el total validado es EXACTAMENTE el total registrado (nunca cambio negativo)
+Bug reportado: el efectivo se comparaba contra un total ESTIMADO en la prevalidación, pero el registro releía el precio del producto y redondeaba cada importe por separado. El total final podía ser mayor que el validado → el cobro devolvía éxito con cambio NEGATIVO.
+- **Caso A (precio concurrente)**: prevalida a 100 CUP con recibido 100; el precio sube a 200 antes de que `create_movement` relea → registraba ingreso 200, change=-100.
+- **Caso B (redondeo, sin concurrencia)**: dos productos por kg a 1,75/kg, 0,5 kg c/u. Validaba `round(0,875+0,875,2)=1,75` pero registraba `0,88+0,88=1,76` → change=-0,01.
+
+Fix (`routes/pos.py` + `InventoryPrintTab.jsx`):
+- **Precio, cantidad e importe FIJADOS del lado servidor** por línea en la prevalidación. El `unit_price` fijado se pasa a `record_movement` (vía `MovementCreate.unit_price`), por lo que el total de línea registrado = `round(unit_price*qty,2)` = importe validado. Un cambio de precio concurrente NO altera silenciosamente el total aprobado (Caso A resuelto).
+- **Una sola política monetaria** (redondeo POR LÍNEA, luego suma) para validar, registrar y el ticket. El efectivo se compara contra la suma de importes por línea ya redondeados → `paid >= total` garantiza `change >= 0` (Caso B: ahora exige 1,76, rechaza 1,75 ANTES de efectos).
+- **Verificación final de coherencia** tras el registro: si (defensivamente) `paid < total_reg`, se aborta dentro del `try` → dispara el REVERSO ENTERO (SUN-08, operación recuperable sin ventas parciales) en vez de un rechazo tardío que deje efectos.
+- **Frontend**: `cartTotal` y el total de línea usan la MISMA política (`round2` por línea) → el total mostrado/validado coincide con el del servidor; el `canCharge` ya no permite un pago que el backend rechazaría.
+- **Tests**: `tests/test_iter362_cobro_total_consistency.py` (3/3) — Caso A (monkeypatch de precio concurrente: registra el precio fijado 100, change 0), Caso B rechaza 1,75 antes de efectos, Caso B acepta 1,76 con change 0 y total registrado == validado. Smoke HTTP por ingress real: paid=1,75 → 400; paid=1,76 → total 1,76 change 0. Añadido a `make test-critical`. Frontend lint 0 errores.

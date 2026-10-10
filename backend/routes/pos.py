@@ -189,7 +189,14 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
         if await db.pos_cobros.find_one({"idempotency_key": idem}, {"_id": 1}):
             return await _resolve_existing_cobro(db, idem, fp)
 
-    # ── 1) PRE-VALIDACIÓN de TODO el carrito (aún no registra nada) ──
+    # ── 1) PRE-VALIDACIÓN + FIJADO del carrito (aún no registra nada).
+    #   SUN-10: fijamos del lado servidor el precio, la cantidad normalizada y
+    #   el importe de CADA línea, y usamos UNA sola política monetaria
+    #   (redondeo POR LÍNEA) para validar, registrar y el ticket. Así el total
+    #   validado es EXACTAMENTE el total registrado → paid >= total y
+    #   change >= 0 para todo cobro aprobado. El precio fijado se pasa a
+    #   record_movement, por lo que un cambio de precio concurrente NO altera
+    #   silenciosamente el total aprobado. ──
     lines: list = []
     for pid, raw_q in consolidated:
         product = await db.products.find_one({"id": pid}, {"_id": 0})
@@ -215,16 +222,21 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             raise HTTPException(
                 status_code=400,
                 detail=f"Stock insuficiente de '{name}' (disponible {qnum(stock)}, pedido {qnum(qty)})")
-        lines.append((product, raw_q, qty))
+        # Precio e importe FIJADOS: `unit_price` es el mismo valor que recibirá
+        # record_movement, así que su total de línea = round(unit_price*qty,2)
+        # coincide exactamente con el importe validado aquí.
+        unit_price = float(product.get("price_usd") or 0)
+        line_total = round(unit_price * qty, 2)
+        lines.append((product, qty, unit_price, line_total))
 
-    # El efectivo recibido es OBLIGATORIO y debe cubrir el total estimado.
-    est_total = round(sum(float(p.get("price_usd") or 0) * q for p, _raw, q in lines), 2)
+    # Total = suma de importes por línea YA redondeados (idéntico al registrado).
+    total = round(sum(lt for _p, _q, _up, lt in lines), 2)
     paid = round(float(payload.paid), 2)
-    if paid < est_total:
+    if paid < total:
         raise HTTPException(
             status_code=400,
             detail=(f"Efectivo insuficiente: recibido {paid:,.2f}, "
-                    f"total {est_total:,.2f} {payload.currency}"))
+                    f"total {total:,.2f} {payload.currency}"))
 
     # ── 2) RECLAMAR la operación de cobro (SUN-09). El índice único sobre
     #   `idempotency_key` garantiza que dos envíos concurrentes con la misma
@@ -250,10 +262,12 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
 
     committed: list = []
     try:
-        for product, raw_q, _qty in lines:
+        for product, qty, unit_price, _lt in lines:
+            # SUN-10 — pasa la cantidad normalizada Y el precio FIJADO: el total
+            # de línea registrado = round(unit_price*qty,2) = importe validado.
             mc = MovementCreate.model_validate({
                 "product_id": product["id"], "type": "venta",
-                "quantity": raw_q, "note": payload.note})
+                "quantity": qty, "unit_price": unit_price, "note": payload.note})
             mov = await _create_movement_impl(mc, request, actor,
                                               cobro_id=cobro_id)
             committed.append(mov)
@@ -261,6 +275,15 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
                 {"id": cobro_id},
                 {"$push": {"mov_ids": mov["id"]},
                  "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
+        # SUN-10 — verificación final de coherencia. Con precios fijados el total
+        # registrado == total validado; si por cualquier motivo NO lo fuera,
+        # abortamos aquí para disparar el REVERSO ENTERO (operación recuperable,
+        # sin ventas parciales) en vez de un rechazo tardío que deje efectos.
+        total_reg = round(sum(float(m.get("total") or 0) for m in committed), 2)
+        if paid < total_reg:
+            raise HTTPException(
+                status_code=409,
+                detail="El total cambió durante el registro; el cobro se revirtió. Reintenta.")
     except Exception as exc:
         reason = str(getattr(exc, "detail", "") or exc)[:300]
         await db.pos_cobros.update_one(
