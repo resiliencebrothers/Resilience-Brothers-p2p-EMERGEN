@@ -1,0 +1,29 @@
+{
+  "summary": "iter359 Caja/POS COBRO multi-línea + efectivo/cambio: FULL PASS. Backend pytest 7/7 (test_iter358_pos_cobro.py). Frontend Playwright E2E: carrito multi-línea, merge por producto, remove line, total/efectivo/cambio, submit habilitado solo con efectivo>=total, cobrar() dispara ticket con [LOGO]+Pagado+Cambio+nota de gaveta, carrito se vacía, stock descontado atómicamente por línea (verificado contra /api/admin/inventory/control). SUN-03-B regresión: reimprimir con toggle de gaveta ON NO abre la gaveta; ticket de prueba SÍ respeta el toggle (ON→nota visible, OFF→nota ausente).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "cobro-product-select", "issues": ["Pre-existente: visual-editor instrumentación inyecta <span> dentro de <option> (warning de hidratación de React en consola). No afecta funcionalidad; mismo issue reportado en iter358."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter358_pos_cobro.py",
+    "/app/test_reports/pytest/iter359_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/pos.py pos_cobro: PRE-VALIDACIÓN correcta sobre cantidad CRUDA (raw_q) para fracciones — evita que norm_qty redondee 1.5→2 y oculte el error. Verificado por test_cobro_fraccion_en_producto_por_unidad_400 y por pre-validación de carrito mixto (test_cobro_prevalida_carrito_no_cobra_parcial).",
+    "pos_cobro reversión parcial: si una línea falla a mitad del registro, revierte con ajuste_pos las ya aplicadas. Buen diseño defensivo aunque la pre-validación debería prevenirlo en la práctica.",
+    "InventoryPrintTab.cobrar() limpia el carrito y refresca sales/products ANTES de await route(), asegurando que la UI quede consistente aunque el transporte falle (SUNMI fail-closed).",
+    "SUN-03-B invariante preservado: printSale() fuerza open_drawer:false independientemente de cfg.openDrawer. Verificado en UI con toggle ON."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (12/12 assertions)"},
+  "test_credentials": "Bearer test_session_admin_X (backend tests via conftest); UI cookie session_token=smoke_caja_logo_iter357.",
+  "seed_data_creation": "Ninguno. Se consumió stock de Agua pequeña (-2) y Arroz Guyanes 1kg (-1) durante la verificación de cobro UI; stocks remanentes OK.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "El contrato POST /api/admin/pos/cobro es {items:[{product_id,quantity}], paid, ...}. Verificar siempre pre-validación: carrito con línea válida+línea inválida debe retornar 400 sin descontar nada. Testids clave: pos-cobro, cobro-product-select, cobro-qty-input, cobro-add-btn, cobro-line-<pid>, cobro-line-total-<pid>, cobro-line-remove-<pid>, cobro-total, cobro-paid-input, cobro-change, cobro-submit-btn, print-preview-paper/drawer/logo, print-sale-btn-<id>. Para toggle Radix usar data-state attr (checked/unchecked), no .checked."
+}
