@@ -93,6 +93,14 @@ async def list_movements(request: Request, product_id: Optional[str] = None,
 @router.post("/admin/inventory/movements")
 async def create_movement(payload: MovementCreate, request: Request) -> Any:
     actor = await require_permission(request, "products")
+    return await _create_movement_impl(payload, request, actor)
+
+
+async def _create_movement_impl(payload: MovementCreate, request: Request,
+                                 actor: dict, *, cobro_id: str = "") -> Any:
+    """Núcleo de alta de movimiento, reutilizable por el cobro POS multi-línea.
+    `cobro_id` (SUN-08) sella la venta a la operación de cobro para poder
+    revertirla ENTERA si el cobro falla a mitad de camino."""
     product = await db.products.find_one({"id": payload.product_id}, {"_id": 0})
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -109,7 +117,8 @@ async def create_movement(payload: MovementCreate, request: Request) -> Any:
     doc = await record_movement(
         product=product, mtype=payload.type, quantity=payload.quantity,
         unit_price=payload.unit_price, unit_cost=payload.unit_cost,
-        note=payload.note, source="manual", actor=actor, photo_url=photo)
+        note=payload.note, source="manual", actor=actor, photo_url=photo,
+        cobro_id=cobro_id)
     # iter219 — una Entrada puede actualizar el precio de venta del producto.
     # iter327 (IPV-R02) — el COSTO promedio (WAC) ya se funde ATÓMICAMENTE junto
     # con el stock dentro de record_movement (no se recalcula aquí con lecturas

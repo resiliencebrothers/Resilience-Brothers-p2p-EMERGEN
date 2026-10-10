@@ -601,12 +601,16 @@ async def record_movement(*, product: dict, mtype: str, quantity: float,
                           ref_id: str = "", actor: Optional[dict] = None,
                           apply_stock: bool = True,
                           photo_url: str = "",
-                          dedupe_key: str = "") -> dict:
+                          dedupe_key: str = "",
+                          cobro_id: str = "") -> dict:
     """Inserta un movimiento y (opcionalmente) aplica el delta al stock.
 
     `apply_stock=False` para flujos donde el stock ya fue tocado (canjes).
     `dedupe_key` (R04): identidad única y persistente del efecto — creador y
-    recuperador solapados jamás duplican la traza."""
+    recuperador solapados jamás duplican la traza.
+    `cobro_id` (SUN-08): vincula la venta a la operación de cobro del POS para
+    poder revertirla ENTERA (venta + ingreso + ganancia + stock) si el cobro
+    multi-línea falla a mitad de camino."""
     if mtype not in MOVEMENT_TYPES:
         raise HTTPException(status_code=400, detail="Tipo de movimiento inválido")
     quantity = norm_qty(product, quantity)
@@ -657,6 +661,8 @@ async def record_movement(*, product: dict, mtype: str, quantity: float,
     }
     if dedupe_key:
         doc["dedupe_key"] = dedupe_key
+    if cobro_id:
+        doc["cobro_id"] = cobro_id
     # iter254(R03) — registro-primero + aplicación de stock idempotente: si el
     # proceso muere entre el log y el stock, heal_initializing_ops completa la
     # aplicación (op_id determinista); nunca queda un cambio de stock sin su
@@ -739,9 +745,9 @@ async def build_daily_close(date_str: str) -> dict:
         {"created_at": {"$gte": start, "$lt": end}}, {"_id": 0}).to_list(20000)
 
     fis_v = [m for m in movs if m["type"] == "venta" and m.get("source") == "manual"
-             and not m.get("stock_apply_failed")]
+             and not m.get("stock_apply_failed") and not m.get("voided")]
     web_v = [m for m in movs if m["type"] == "venta" and m.get("source") == "marketplace"
-             and not m.get("stock_apply_failed")]
+             and not m.get("stock_apply_failed") and not m.get("voided")]
     compras = [m for m in movs if m["type"] == "entrada"
                and m.get("source") in ("manual", "alta")]
     # iter320 (IPV) — salidas no-venta del día (merma / consumo / otras): no
@@ -890,6 +896,96 @@ async def _record_fund_flow(mov: dict) -> None:
         logger.error(f"inventory fund flow failed: {e}")
 
 
+# ══════════════════ SUN-08: reverso recuperable del cobro POS ═══════════════
+async def reverse_pos_sale(mov: dict, actor: Optional[dict] = None) -> None:
+    """SUN-08 — compensa UNA venta ya cobrada que pertenece a un cobro POS que
+    falló a mitad de camino. Neutraliza los TRES efectos de la venta, no solo
+    el stock:
+
+    1) ANULA la venta (`voided=True`) para que deje de sumar ventas y ganancia
+       en el cierre diario / dashboard / control / rotación.
+    2) REVIERTE el ingreso al fondo de la empresa con un asiento `outflow`
+       idempotente (dedupe_key) que compensa exactamente el inflow registrado
+       por `_record_fund_flow`.
+    3) DEVUELVE el stock con un `ajuste_pos` idempotente (dedupe_key).
+
+    Cada paso es idempotente y está vinculado a la venta original (`ref_id`),
+    por lo que repetir la recuperación nunca duplica el reverso, y un fallo a
+    mitad de la compensación se completa de forma segura en el siguiente
+    intento (healer o reintento). El orden anula PRIMERO la venta para que un
+    crash intermedio nunca deje ingresos/ganancia de un cobro rechazado."""
+    mid = mov["id"]
+    # 1) Anular la venta (idempotente: solo marca si aún no estaba anulada).
+    await db.inventory_movements.update_one(
+        {"id": mid, "voided": {"$ne": True}},
+        {"$set": {"voided": True, "voided_at": iso(now_utc()),
+                  "void_reason": "cobro_reversal",
+                  "void_cobro_id": mov.get("cobro_id", "")}})
+    # 2) Revertir el ingreso al fondo (solo ventas físicas registran inflow).
+    total = round(float(mov.get("total") or 0), 2)
+    if total > 0 and mov.get("source") == "manual" and mov.get("type") == "venta":
+        try:
+            from services.marketplace_fx import get_store_fx
+            from services.company_funds_common import record_auto_fund_adjustment
+            fx = await get_store_fx()
+            await record_auto_fund_adjustment(
+                adjustment_type="outflow", currency=fx["store_currency"],
+                amount=total, source_name="Inventario tienda física",
+                note=(f"Reverso cobro incompleto: {mov.get('quantity')}× "
+                      f"{mov.get('product_name', '')}"),
+                ref_id=mid, dedupe_key=f"cobro-rev-fund:{mid}")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"cobro fund reversal failed for {mid}: {e}")
+            raise
+    # 3) Devolver el stock (ajuste_pos idempotente por dedupe_key).
+    prod = await db.products.find_one({"id": mov["product_id"]}, {"_id": 0}) \
+        or {"id": mov["product_id"]}
+    await record_movement(
+        product=prod, mtype="ajuste_pos", quantity=mov.get("quantity"),
+        note="Reverso de cobro incompleto", source="cobro_reversal",
+        ref_id=mid, actor=actor, dedupe_key=f"cobro-rev-stock:{mid}",
+        cobro_id=mov.get("cobro_id", ""))
+
+
+async def reverse_cobro(cobro_id: str, actor: Optional[dict] = None) -> int:
+    """SUN-08 — revierte TODAS las ventas ya cobradas de un cobro POS fallido.
+    La vinculación autoritativa es el `cobro_id` sellado en cada venta, así que
+    funciona aunque el proceso muriera antes de anotar la línea en `pos_cobros`.
+    Idempotente: una venta ya anulada se salta el re-marcado pero igual asegura
+    (idempotentemente) el reverso de fondo y stock."""
+    movs = await db.inventory_movements.find(
+        {"cobro_id": cobro_id, "type": "venta", "source": "manual"},
+        {"_id": 0}).to_list(1000)
+    n = 0
+    for mov in movs:
+        await reverse_pos_sale(mov, actor)
+        n += 1
+    return n
+
+
+async def heal_pending_cobros(cutoff_iso: str) -> int:
+    """SUN-08 — recuperador: completa cobros POS que quedaron a medias (el
+    proceso murió durante el commit o durante la propia compensación). Revierte
+    cualquier cobro atascado en 'committing'/'reversing' más viejo que el
+    cutoff. Un cobro exitoso llega a 'committed' en milisegundos, por lo que el
+    healer nunca toca una venta buena ni un cobro en vuelo."""
+    rows = await db.pos_cobros.find(
+        {"state": {"$in": ["committing", "reversing"]},
+         "updated_at": {"$lt": cutoff_iso}}, {"_id": 0}).to_list(200)
+    healed = 0
+    for c in rows:
+        try:
+            await reverse_cobro(c["id"], None)
+            await db.pos_cobros.update_one(
+                {"id": c["id"]},
+                {"$set": {"state": "reversed", "updated_at": iso(now_utc())}})
+            healed += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"heal_pending_cobros {c.get('id')} failed: {e}")
+    return healed
+
+
+
 async def record_price_change(*, product: dict, field_label: str,
                               old: float, new: float,
                               actor: Optional[dict] = None,
@@ -933,6 +1029,7 @@ async def build_control_rows() -> list:
     # excluir canjes rechazados (y sus reversos) y movimientos fallidos.
     refs = await _rejected_marketplace_refs()
     ok_match = {"stock_apply_failed": {"$ne": True},
+                "voided": {"$ne": True},
                 "$or": [{"source": {"$ne": "marketplace"}},
                         {"ref_id": {"$nin": list(refs)}}]}
     agg = await db.inventory_movements.aggregate([
@@ -1025,6 +1122,7 @@ async def build_rotation(start: str, end: str,
         {"$match": {"type": "venta", "product_id": {"$in": ids},
                     "created_at": {"$gte": s, "$lt": e},
                     "stock_apply_failed": {"$ne": True},
+                    "voided": {"$ne": True},
                     "$or": [{"source": {"$ne": "marketplace"}},
                             {"ref_id": {"$nin": list(refs)}}]}},
         {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"}}},
@@ -1110,9 +1208,10 @@ async def build_dashboard(start: str, end: str,
         match["product_id"] = {"$in": product_ids}
     movs = await db.inventory_movements.find(match, {"_id": 0}).to_list(20000)
     # iter256(S10) — un movimiento cuyo stock NO llegó a aplicarse (fallo en
-    # la recuperación) no cuenta como venta efectiva.
+    # la recuperación) no cuenta como venta efectiva. SUN-08 — tampoco una
+    # venta ANULADA por el reverso de un cobro POS incompleto.
     ventas = [m for m in movs if m["type"] == "venta"
-              and not m.get("stock_apply_failed")]
+              and not m.get("stock_apply_failed") and not m.get("voided")]
     # iter254(R09) — excluir ventas de canjes RECHAZADOS: el reverso ya
     # restituyó el stock, así que ingresos/ganancia no deben contarlas.
     red_ids = list({m.get("ref_id") for m in ventas

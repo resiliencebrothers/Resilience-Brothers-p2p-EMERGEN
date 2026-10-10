@@ -2500,3 +2500,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ### iter358b (2026-10-09) — SUN-06 recuperación del socket SUNMI
 - Transporte JS USDK ahora descarta/reconstruye la instancia cuando el socket cae (el SDK no reconecta), arranca el servicio antes de abrir la conexión, recupera init fallida y no reenvía trabajos en silencio. Verificado con Jest 3/3 (mock del SDK) + navegador (fallo-cerrado en reintentos). Pendiente verificación física en la T1730.
+
+### iter360 (2026-10-10) — SUN-08 reverso completo del cobro POS
+- El reverso de un cobro multi-línea fallido ahora anula la venta, compensa el ingreso al fondo y repone el stock (antes solo reponía stock, dejando ingreso/ganancia fantasma en el cierre). Consolidación de líneas repetidas + operación recuperable (`pos_cobros`) + healer idempotente. Ver CHANGELOG. Suite crítica 1110/1110 verde. (Pendiente redeploy a producción.)

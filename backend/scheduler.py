@@ -327,9 +327,16 @@ async def run_credit_recovery():
         # con log duradero confirmado; los 'pending' se conservan como
         # evidencia (sustituye al viejo $slice ciego).
         from services.balances import compact_credit_registries
-        from services.inventory import compact_stock_registries
+        from services.inventory import (compact_stock_registries,
+                                         heal_pending_cobros)
+        from datetime import datetime, timezone, timedelta
         n += await compact_credit_registries()
         n += await compact_stock_registries()
+        # SUN-08 — completa reversos de cobro POS interrumpidos (commit o
+        # compensación a medias). Cutoff de 120s: nunca toca un cobro en vuelo.
+        cobro_cutoff = (datetime.now(timezone.utc)
+                        - timedelta(seconds=120)).isoformat()
+        n += await heal_pending_cobros(cobro_cutoff)
         if n:
             logger.warning("[credit-recovery] %s operaciones pendientes sanadas", n)
     except Exception as e:

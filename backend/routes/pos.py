@@ -89,23 +89,37 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
     - Reimpresión ≠ cobro: la gaveta se abre siempre aquí; en reimpresiones no.
     Autorización: permiso de caja 'products', sin PIN."""
     actor = await require_permission(request, "products")
-    from routes.inventory import create_movement, MovementCreate
-    from services.inventory import norm_qty, sells_fraction, qnum
+    from routes.inventory import _create_movement_impl, MovementCreate
+    from services.inventory import (norm_qty, sells_fraction, qnum,
+                                     reverse_cobro)
     from db_client import db
+    import uuid
+
+    # ── 0) CONSOLIDAR líneas repetidas del mismo producto (SUN-08) ──
+    # La UI combina duplicados, pero la API no puede confiar en ello: dos
+    # líneas de 1u de un producto con stock=1 pasarían la prevalidación
+    # individual y dejarían un cobro parcial al fallar la segunda aplicación.
+    agg: dict = {}
+    order: list = []
+    for ln in payload.items:
+        if ln.product_id not in agg:
+            agg[ln.product_id] = 0.0
+            order.append(ln.product_id)
+        agg[ln.product_id] += float(ln.quantity)
+    consolidated = [(pid, agg[pid]) for pid in order]
 
     # ── 1) PRE-VALIDACIÓN de TODO el carrito (aún no registra nada) ──
     lines: list = []
-    for ln in payload.items:
-        product = await db.products.find_one({"id": ln.product_id}, {"_id": 0})
+    for pid, raw_q in consolidated:
+        product = await db.products.find_one({"id": pid}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404,
-                                detail=f"Producto no encontrado: {ln.product_id}")
+                                detail=f"Producto no encontrado: {pid}")
         name = product.get("name", "")
         if product.get("owner_id"):
             raise HTTPException(
                 status_code=400,
                 detail=f"'{name}' es de un vendedor VIP y no entra al inventario de la empresa")
-        raw_q = float(ln.quantity)
         if raw_q <= 0:
             raise HTTPException(status_code=400, detail=f"Cantidad inválida para '{name}'")
         # La fracción se valida sobre la cantidad CRUDA (igual que create_movement):
@@ -131,27 +145,50 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             detail=(f"Efectivo insuficiente: recibido {paid:,.2f}, "
                     f"total {est_total:,.2f} {payload.currency}"))
 
-    # ── 2) Registrar cada línea (stock atómico). Si una falla, se REVIERTE el
-    #       stock de las ya aplicadas (no deja un cobro parcial). ──
+    # ── 2) Registrar cada línea como una OPERACIÓN DE COBRO recuperable
+    #       (SUN-08). Si una línea falla, se revierte la operación ENTERA:
+    #       venta + ingreso al fondo + ganancia + stock de las ya aplicadas.
+    #       El cobro se registra en `pos_cobros` para que el healer complete
+    #       una compensación interrumpida. ──
+    cobro_id = str(uuid.uuid4())
+    await db.pos_cobros.insert_one({
+        "id": cobro_id, "state": "committing", "mov_ids": [],
+        "actor_id": (actor or {}).get("user_id", ""),
+        "actor_email": (actor or {}).get("email", ""),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
     committed: list = []
     try:
         for product, raw_q, _qty in lines:
             mc = MovementCreate.model_validate({
                 "product_id": product["id"], "type": "venta",
                 "quantity": raw_q, "note": payload.note})
-            mov = await create_movement(mc, request)
+            mov = await _create_movement_impl(mc, request, actor,
+                                              cobro_id=cobro_id)
             committed.append(mov)
+            await db.pos_cobros.update_one(
+                {"id": cobro_id},
+                {"$push": {"mov_ids": mov["id"]},
+                 "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}})
+        await db.pos_cobros.update_one(
+            {"id": cobro_id},
+            {"$set": {"state": "committed",
+                      "updated_at": datetime.now(timezone.utc).isoformat()}})
     except Exception:
-        from services.inventory import record_movement
-        for m in committed:
-            try:
-                prod = await db.products.find_one({"id": m["product_id"]}, {"_id": 0})
-                await record_movement(product=prod or {"id": m["product_id"]},
-                                      mtype="ajuste_pos", quantity=m["quantity"],
-                                      note="Reverso de cobro incompleto",
-                                      source="cobro_reversal", actor=actor)
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"cobro reversal failed for {m.get('product_id')}: {e}")
+        await db.pos_cobros.update_one(
+            {"id": cobro_id},
+            {"$set": {"state": "reversing",
+                      "updated_at": datetime.now(timezone.utc).isoformat()}})
+        try:
+            await reverse_cobro(cobro_id, actor)
+            await db.pos_cobros.update_one(
+                {"id": cobro_id},
+                {"$set": {"state": "reversed",
+                          "updated_at": datetime.now(timezone.utc).isoformat()}})
+        except Exception as e:  # noqa: BLE001
+            # Compensación interrumpida: `heal_pending_cobros` la completará.
+            logger.error(f"cobro {cobro_id} reversal incomplete: {e}")
         raise
 
     movs = committed
