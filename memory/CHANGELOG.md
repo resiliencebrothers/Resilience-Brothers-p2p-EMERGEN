@@ -2077,3 +2077,12 @@ Fix — separar la DECISIÓN de aborto de la EVIDENCIA de compensación terminad
 - Se conserva la decisión terminal de aborto (no reactiva ventas) y la protección de cobros committed. No se repitió el filtro de ventas activas ni se aumentó el lote.
 
 Tests: `tests/test_iter370_partial_compensation.py` (3/3, MongoDB real) — (1) interrupción tras `voided` antes de devolver stock vía RECONCILIADOR → parcial detectado por salud (healthy=False) y completado al reanudar (stock 10, fondo 0, reversal_done); (2) mismo vía PETICIÓN (escritor tardío + fallo en burn) → 409, parcial, completado por el reconciliador; (3) interrupción tras devolver stock y antes de documentar → reanudar NO duplica stock (sigue 10, no 11), escribe el doc y sella done. Regresiones corregidas previas (respuesta perdida, segunda línea, backlog >500, pendientes antiguos) siguen verdes. ruff + mypy limpios. Añadido a `make test-critical`.
+
+### iter371 (2026-06 fork) — CAUSA RAÍZ del fallo de CI: iter358 dependía de productos hardcodeados
+Los fallos de `make test-critical` en CI (runs 38130459843 y 38141072336) — no diagnosticables por log indescargable — se REPRODUJERON localmente montando una DB fresca idéntica a CI (`mongo:7`, DB_NAME nueva vacía, `seed_test_users.py` + `seed_test_rates.py`, uvicorn, `make test-critical`). Resultado: **6 fallos, todos en `tests/test_iter358_pos_cobro.py`**, con `AssertionError: product <uuid> not found` (línea 37), en ~596s (≈ los ~10 min del CI).
+
+Causa: `test_iter358_pos_cobro.py` (previo a este trabajo) usa IDs de producto FIJOS (`AGUA`, `ARROZ`) que existen en la DB local acumulada pero NO en la DB fresca de CI; el test no los creaba. Por eso pasaba en local y fallaba en CI. Mi DB local acumulada enmascaraba el fallo en todos los runs verdes locales (1140/1143).
+
+Fix: fixture `scope="module", autouse` en `test_iter358_pos_cobro.py` que siembra AGUA/ARROZ de forma NO destructiva (`$setOnInsert`, upsert): en Cial crea los productos con stock amplio; en la DB local (donde son productos reales) NO toca su stock ni su nombre. Sin `unit` → el POS los trata por unidad (rechaza fracciones), igual que los reales. Verificado: iter358 pasa 7/7 contra DB fresca; suite crítica completa re-ejecutada contra DB fresca (reproducción fiel de CI).
+
+Nota de método: a partir de ahora, validar los cambios de tests contra DB fresca (`backend/ci_repro.sh`) y no solo contra la DB local acumulada, para no volver a enmascarar dependencias de datos.

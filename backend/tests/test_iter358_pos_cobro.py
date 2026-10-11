@@ -12,13 +12,44 @@ Cobertura:
 - sin auth → 401/403.
 """
 import base64
+import os
+
+import pytest
 import requests
+from pymongo import MongoClient
 
 from tests.conftest import BASE_URL, ADMIN_TOKEN
 
 API = f"{BASE_URL}/api"
 AGUA = "cce2f679-3982-4cf0-9972-b25c56f47365"   # unidad, price 240
 ARROZ = "5e72a1b1-f95d-415e-900e-062f3c951355"  # unidad, price 800
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _seed_pos_products():
+    """iter358 fijó IDs de producto concretos (AGUA/ARROZ). En una DB fresca
+    (CI) no existen → el test fallaba con 'product not found'. Los sembramos de
+    forma NO destructiva: `$setOnInsert` solo crea el producto si falta, así que
+    en la DB local (donde son productos reales) NO se toca su stock/nombre y en
+    CI quedan listos con stock amplio. Sin `unit` → el POS los trata por unidad
+    (rechaza fracciones), igual que los productos reales."""
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    seed = {
+        AGUA: {"name": "Agua pequeña", "price_usd": 240.0, "cost_usd": 200.0},
+        ARROZ: {"name": "Arroz Guyanes 1kg", "price_usd": 800.0,
+                "cost_usd": 680.3},
+    }
+    for pid, extra in seed.items():
+        db.products.update_one(
+            {"id": pid},
+            {"$setOnInsert": {
+                "id": pid, "category": "mercadito", "is_active": True,
+                "stock": 1000.0, "approval_status": "approved",
+                "owner_id": "", "owner_name": "", "rejection_reason": "",
+                "description": "Semilla POS (iter358)", "effect_seq": 0,
+                "applied_stock_ops": [], "effect_seq_log": [], **extra}},
+            upsert=True)
+    yield
 
 DRAWER_PULSE_HEX = "1b700019fa"  # ESC p 0 25 250 (cash drawer kick)
 RASTER_HEADER_HEX = "1d7630"     # GS v 0 (raster bit image del logo)
