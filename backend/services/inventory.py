@@ -1165,6 +1165,82 @@ async def reconcile_reversed_cobro_effects(since_iso: Optional[str] = None) -> i
     return fixed
 
 
+async def reconciliation_health() -> dict:
+    """SUN-08-R1-REC — salud EN TIEMPO REAL de las colas de recuperación POS/fondo
+    (solo lectura, sin efectos). Cuenta las OBLIGACIONES pendientes de cada cola
+    con las MISMAS consultas que usan los reconciliadores del scheduler, para que
+    la supervisión vea exactamente lo que falta sanar si el scheduler se detuviera:
+
+    - aborted_cobro_funds  → ventas abortadas con INGRESO propio pero SIN su
+      salida de reversión (ingreso tardío por compensar).
+    - reversed_cobro_effects → cobros 'reversed' que AÚN tienen ≥1 venta activa
+      (venta tardía por anular).
+    - stuck_cobros → cobros POS en 'committing'/'reversing' más viejos que el
+      corte de 120s (reverso/commit interrumpido por completar).
+
+    `total_pending == 0` ⇒ `healthy=True`."""
+    from datetime import timedelta
+    # 1) Ingresos tardíos por compensar (misma selección que el reconciliador).
+    aborted_pipe = [
+        {"$match": {"cobro_aborted": True, "type": "venta", "source": "manual",
+                    "total": {"$gt": 0}}},
+        {"$addFields": {"_ik": {"$concat": ["invmov-fund:", "$id"]},
+                        "_ok": {"$concat": ["cobro-rev-fund:", "$id"]}}},
+        {"$lookup": {
+            "from": "company_fund_adjustments",
+            "let": {"ik": "$_ik", "ok": "$_ok"},
+            "pipeline": [
+                {"$match": {"$expr": {"$in": ["$dedupe_key", ["$$ik", "$$ok"]]}}},
+                {"$project": {"_id": 0, "dedupe_key": 1}}],
+            "as": "_adj"}},
+        {"$addFields": {"_keys": "$_adj.dedupe_key"}},
+        {"$match": {"$expr": {"$and": [
+            {"$in": ["$_ik", "$_keys"]},
+            {"$not": [{"$in": ["$_ok", "$_keys"]}]}]}}},
+        {"$count": "n"},
+    ]
+    r1 = await db.inventory_movements.aggregate(aborted_pipe).to_list(1)
+    aborted_pending = r1[0]["n"] if r1 else 0
+    # 2) Ventas tardías por anular en cobros reversados.
+    reversed_pipe = [
+        {"$match": {"state": "reversed"}},
+        {"$lookup": {
+            "from": "inventory_movements",
+            "let": {"cid": "$id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$cobro_id", "$$cid"]},
+                    {"$eq": ["$type", "venta"]},
+                    {"$eq": ["$source", "manual"]},
+                    {"$ne": ["$voided", True]}]}}},
+                {"$limit": 1}, {"$project": {"_id": 1}}],
+            "as": "_active"}},
+        {"$match": {"_active": {"$ne": []}}},
+        {"$count": "n"},
+    ]
+    r2 = await db.pos_cobros.aggregate(reversed_pipe).to_list(1)
+    reversed_pending = r2[0]["n"] if r2 else 0
+    # 3) Cobros POS interrumpidos (más viejos que el corte del healer).
+    cutoff = iso(now_utc() - timedelta(seconds=120))
+    stuck_cobros = await db.pos_cobros.count_documents(
+        {"state": {"$in": ["committing", "reversing"]},
+         "updated_at": {"$lt": cutoff}})
+    queues = {
+        "aborted_cobro_funds": {
+            "pending": int(aborted_pending),
+            "label": "Ingresos tardíos por compensar"},
+        "reversed_cobro_effects": {
+            "pending": int(reversed_pending),
+            "label": "Ventas tardías por anular"},
+        "stuck_cobros": {
+            "pending": int(stuck_cobros),
+            "label": "Cobros POS interrumpidos (>120s)"},
+    }
+    total = int(aborted_pending) + int(reversed_pending) + int(stuck_cobros)
+    return {"healthy": total == 0, "total_pending": total,
+            "checked_at": iso(now_utc()), "queues": queues}
+
+
 
 async def record_price_change(*, product: dict, field_label: str,
                               old: float, new: float,

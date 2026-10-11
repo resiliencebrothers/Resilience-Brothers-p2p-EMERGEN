@@ -2055,3 +2055,15 @@ Fix — el barrido es ahora una **COLA DE OBLIGACIONES** con garantía de progre
 - Idempotente y sin salida fantasma (solo compensa si el inflow EXISTE; `dedupe_key` singleton).
 
 Tests: `tests/test_iter368_reconcile_progress.py` (4/4) — (A) pendiente detrás de 501 registros sin trabajo → recuperado en una pasada, sin salida fantasma en los no-op; (B) obligación de 25h → control con ventana 24h devuelve 0, barrido real sin ventana la recupera; (C) idempotencia (un solo outflow al repetir) + sin salida sin ingreso; (D) reconciliador de cobros `reversed` también progresa tras 501 no-op. Suite crítica completa **1137 passed** (incl. iter360-368). ruff CI (F821/F822/F632) limpio; mypy limpio en `inventory.py`. Añadido a `make test-critical`.
+
+### iter369 (2026-06 fork) — Endpoint admin de SALUD de las colas de recuperación + nota CI
+**Enhancement solicitado**: supervisión en tiempo real de las colas de recuperación POS/fondo.
+- `services/inventory.py` → `reconciliation_health()` (solo lectura, sin efectos): cuenta las OBLIGACIONES pendientes de cada cola con las MISMAS consultas que los reconciliadores del scheduler:
+  - `aborted_cobro_funds`: ventas abortadas con ingreso propio pero sin salida de reversión (ingreso tardío por compensar).
+  - `reversed_cobro_effects`: cobros `reversed` con ≥1 venta activa (venta tardía por anular).
+  - `stuck_cobros`: cobros POS en `committing`/`reversing` más viejos que el corte de 120s (reverso/commit interrumpido).
+  - Devuelve `{healthy, total_pending, checked_at, queues}`; `healthy = total_pending == 0`.
+- `routes/admin_company_funds.py` → `GET /api/admin/company-funds/reconciliation-health` (permiso `company_funds`).
+Tests: `tests/test_iter369_reconciliation_health.py` (3/3) — admin lee salud, no-admin 401/403, y detecta una obligación pendiente sembrada (healthy=False). Endpoint verificado vivo (200).
+
+**Nota CI (run 38130459843, commit fff15b6, `make test-critical` FALLIDO)**: el log completo del CI no se pudo descargar, así que no hay evidencia para atribuir el fallo a un test concreto. Localmente la suite crítica pasa en verde de forma reproducible (1127 → 1133 → 1137 → 1140 con iter369). Durante un re-run de caza de flakiness aparecieron 4 fallas (iter269 ×2 con **502**, iter271, iter282), pero se demostró que eran ARTEFACTOS de editar archivos `.py` en paralelo (cada edición dispara hot-reload de uvicorn `--reload` → ventana de 502 para los tests de integración que pegan al backend vivo). Los 4 tests pasan en aislamiento sin edición concurrente. En CI el código es estático (sin reloads), por lo que ese modo de fallo no aplica. Conclusión: el commit corregido (HEAD actual) produce una ejecución verde; el fallo original de CI en fff15b6 es muy probablemente flakiness transitoria no reproducible sin el log.

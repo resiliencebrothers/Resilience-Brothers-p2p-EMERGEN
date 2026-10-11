@@ -557,6 +557,17 @@ async def admin_company_funds(request: Request) -> Any:
     return await _compute_company_funds(_actor_currency_scope(actor))
 
 
+@router.get("/admin/company-funds/reconciliation-health")
+async def admin_reconciliation_health(request: Request) -> Any:
+    """SUN-08-R1-REC — salud EN TIEMPO REAL de las colas de recuperación POS/fondo.
+    Solo lectura: NO sana nada, solo reporta cuántas obligaciones hay pendientes
+    en cada cola para supervisión (daría visibilidad inmediata si el scheduler se
+    detuviera, sin esperar al próximo barrido)."""
+    await require_permission(request, "company_funds")
+    from services.inventory import reconciliation_health
+    return await reconciliation_health()
+
+
 def _usdt_totals_and_breakdown(
     rows: List[dict], fx: dict,
 ) -> tuple[Dict[str, float], List[str], List[dict]]:

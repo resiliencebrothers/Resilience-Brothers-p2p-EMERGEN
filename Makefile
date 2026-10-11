@@ -141,6 +141,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_iter366_cobro_confirm_lost_response.py \
 		tests/test_iter367_cobro_late_writer_regression.py \
 		tests/test_iter368_reconcile_progress.py \
+		tests/test_iter369_reconciliation_health.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)
