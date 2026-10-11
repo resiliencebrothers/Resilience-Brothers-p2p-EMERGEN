@@ -533,6 +533,7 @@ async def maybe_alert_low_stock(product_id: str) -> None:
 
 
 _MOV_DEDUPE_INDEX_READY = False
+_ABORTED_IDX_READY = False
 
 
 async def _insert_movement(doc: dict) -> tuple[dict, bool]:
@@ -1044,40 +1045,64 @@ async def heal_pending_cobros(cutoff_iso: str) -> int:
 
 
 async def reconcile_aborted_cobro_funds(since_iso: Optional[str] = None) -> int:
-    """SUN-08-R1(v2) — compensación DURABLE e IDEMPOTENTE del INGRESO TARDÍO.
+    """SUN-08-R1(v2) / SUN-08-R1-REC — compensación DURABLE e IDEMPOTENTE del
+    INGRESO TARDÍO, con GARANTÍA DE PROGRESO sobre TODOS los pendientes.
 
     Como el ingreso (company_fund_adjustments) y la decisión de aborto
     (inventory_movements) viven en colecciones distintas SIN transacción, un
     recuperador general con una copia vieja del movimiento puede insertar el
-    inflow DESPUÉS del aborto (ventana entre re-leer la bandera e insertar en
-    otra escritura). Este reconciliador cierra el invariante: para TODA venta
-    ABORTADA cuyo INFLOW propio exista pero cuyo OUTFLOW de reversión falte,
-    publica el outflow compensatorio. Resuelve la inserción tardía ocurra
-    cuando ocurra, nunca crea una salida fantasma (solo compensa si el inflow
-    EXISTE) y es idempotente: ambos asientos son singletons por dedupe_key, así
-    que repetir la recuperación deja el neto en 0.
+    inflow DESPUÉS del aborto. Este reconciliador cierra el invariante: para TODA
+    venta ABORTADA cuyo INFLOW propio exista pero cuyo OUTFLOW de reversión falte,
+    publica el outflow compensatorio.
 
-    Acotado por recencia (`since_iso`): un inflow tardío solo puede aparecer
-    poco después del aborto (la copia del recuperador vive segundos)."""
-    q: dict = {"cobro_aborted": True, "type": "venta", "source": "manual",
-               "total": {"$gt": 0}}
+    SUN-08-R1-REC — el barrido es una COLA DE OBLIGACIONES, no un muestreo:
+    - La selección se hace por AGREGACIÓN que devuelve SOLO ítems con trabajo real
+      (inflow presente + outflow ausente), uniéndose a company_fund_adjustments
+      por `dedupe_key` (único). Las ventas abortadas SIN obligación ni siquiera
+      entran al lote, así que un lote inicial lleno de registros «sin nada que
+      reparar» NO puede ocultar un pendiente detrás de ellos: el límite de 500
+      aplica a OBLIGACIONES reales y repetir la tarea las agota (al compensar, el
+      outflow pasa a existir y el ítem sale de la selección).
+    - SIN exclusión por antigüedad: `since_iso` es un filtro OPCIONAL de alcance
+      (solo para pruebas); el scheduler NO lo pasa, de modo que una obligación
+      pendiente nunca se retira por ser vieja (p. ej. recuperador caído > ventana).
+
+    Nunca crea una salida fantasma (solo compensa si el inflow EXISTE) y es
+    idempotente: ambos asientos son singletons por `dedupe_key`."""
+    global _ABORTED_IDX_READY
+    if not _ABORTED_IDX_READY:
+        # índice sparse: solo indexa las (escasas) ventas abortadas → $match barato.
+        await db.inventory_movements.create_index("cobro_aborted", sparse=True)
+        _ABORTED_IDX_READY = True
+    match: dict = {"cobro_aborted": True, "type": "venta", "source": "manual",
+                   "total": {"$gt": 0}}
     if since_iso:
-        q["voided_at"] = {"$gte": since_iso}
-    rows = await db.inventory_movements.find(
-        q, {"_id": 0, "id": 1, "total": 1, "quantity": 1,
-            "product_name": 1}).to_list(500)
+        match["voided_at"] = {"$gte": since_iso}
+    pipeline = [
+        {"$match": match},
+        {"$addFields": {
+            "_ik": {"$concat": ["invmov-fund:", "$id"]},
+            "_ok": {"$concat": ["cobro-rev-fund:", "$id"]}}},
+        {"$lookup": {
+            "from": "company_fund_adjustments",
+            "let": {"ik": "$_ik", "ok": "$_ok"},
+            "pipeline": [
+                {"$match": {"$expr": {"$in": ["$dedupe_key", ["$$ik", "$$ok"]]}}},
+                {"$project": {"_id": 0, "dedupe_key": 1}}],
+            "as": "_adj"}},
+        {"$addFields": {"_keys": "$_adj.dedupe_key"}},
+        # Obligación pendiente: existe el inflow propio y NO existe el outflow.
+        {"$match": {"$expr": {"$and": [
+            {"$in": ["$_ik", "$_keys"]},
+            {"$not": [{"$in": ["$_ok", "$_keys"]}]}]}}},
+        {"$project": {"_id": 0, "id": 1, "total": 1, "quantity": 1,
+                      "product_name": 1}},
+        {"$limit": 500},
+    ]
+    rows = await db.inventory_movements.aggregate(pipeline).to_list(500)
     fixed = 0
     for m in rows:
         mid = m["id"]
-        inflow = await db.company_fund_adjustments.find_one(
-            {"dedupe_key": f"invmov-fund:{mid}", "adjustment_type": "inflow"},
-            {"_id": 1})
-        if not inflow:
-            continue   # nunca hubo ingreso → nada que compensar (sin fantasma)
-        outflow = await db.company_fund_adjustments.find_one(
-            {"dedupe_key": f"cobro-rev-fund:{mid}"}, {"_id": 1})
-        if outflow:
-            continue   # ya compensado (neto 0)
         total = round(float(m.get("total") or 0), 2)
         if total <= 0:
             continue
@@ -1095,8 +1120,8 @@ async def reconcile_aborted_cobro_funds(since_iso: Optional[str] = None) -> int:
 
 
 async def reconcile_reversed_cobro_effects(since_iso: Optional[str] = None) -> int:
-    """SUN-08-R2-REG — invariante DURABLE: toda venta cuyo cobro quedó en
-    'reversed' DEBE estar anulada. Cierra el hueco del ESCRITOR TARDÍO.
+    """SUN-08-R2-REG / SUN-08-R1-REC — invariante DURABLE: toda venta cuyo cobro
+    quedó en 'reversed' DEBE estar anulada. Cierra el hueco del ESCRITOR TARDÍO.
 
     La comprobación de propiedad (lease) del escritor y la publicación de la
     venta son escrituras SEPARADAS. Entre ambas, el recuperador puede robar la
@@ -1106,24 +1131,37 @@ async def reconcile_reversed_cobro_effects(since_iso: Optional[str] = None) -> i
     (solo mira committing/reversing) ni `reconcile_aborted_cobro_funds` (solo
     mira ventas ya `cobro_aborted`) la detectan.
 
-    Este reconciliador recorre los cobros 'reversed' y revierte (idempotente)
-    cualquier venta ACTIVA que aún cuelgue de ellos. Nunca toca un cobro
-    'committed' (sus ventas son legítimas) ni crea efectos de la nada: solo
-    anula ventas reales ya publicadas. Acotado por recencia (`since_iso`)."""
-    q: dict = {"state": "reversed"}
+    SUN-08-R1-REC — cola de obligaciones con GARANTÍA DE PROGRESO: una agregación
+    devuelve SOLO cobros reversados que AÚN tienen ≥1 venta activa (ítems con
+    trabajo real), así que el límite de 500 aplica a obligaciones reales y repetir
+    las agota (tras revertir, las ventas quedan `voided` y el cobro sale de la
+    selección). SIN exclusión por antigüedad (`since_iso` es filtro opcional de
+    alcance para pruebas; el scheduler no lo pasa)."""
+    match: dict = {"state": "reversed"}
     if since_iso:
-        q["updated_at"] = {"$gte": since_iso}
-    cobros = await db.pos_cobros.find(
-        q, {"_id": 0, "id": 1}).to_list(500)
+        match["updated_at"] = {"$gte": since_iso}
+    pipeline = [
+        {"$match": match},
+        {"$lookup": {
+            "from": "inventory_movements",
+            "let": {"cid": "$id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$cobro_id", "$$cid"]},
+                    {"$eq": ["$type", "venta"]},
+                    {"$eq": ["$source", "manual"]},
+                    {"$ne": ["$voided", True]}]}}},
+                {"$limit": 1},
+                {"$project": {"_id": 1}}],
+            "as": "_active"}},
+        {"$match": {"_active": {"$ne": []}}},
+        {"$project": {"_id": 0, "id": 1}},
+        {"$limit": 500},
+    ]
+    cobros = await db.pos_cobros.aggregate(pipeline).to_list(500)
     fixed = 0
     for c in cobros:
-        cid = c["id"]
-        active = await db.inventory_movements.find_one(
-            {"cobro_id": cid, "type": "venta", "source": "manual",
-             "voided": {"$ne": True}}, {"_id": 1})
-        if not active:
-            continue   # todas las ventas ya anuladas → nada que hacer
-        fixed += await reverse_cobro(cid, None)
+        fixed += await reverse_cobro(c["id"], None)
     return fixed
 
 

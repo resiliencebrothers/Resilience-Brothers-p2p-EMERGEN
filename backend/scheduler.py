@@ -331,19 +331,16 @@ async def run_credit_recovery():
                                          heal_pending_cobros,
                                          reconcile_aborted_cobro_funds,
                                          reconcile_reversed_cobro_effects)
-        from datetime import datetime, timezone, timedelta
         n += await compact_credit_registries()
         n += await compact_stock_registries()
-        # SUN-08-R1(v2) — compensa ingresos tardíos de cobros abortados
-        # (ventana recuperador→aborto→inserción). Ventana de recencia 24h:
-        # un inflow tardío solo aparece poco después del aborto.
-        fund_since = (datetime.now(timezone.utc)
-                      - timedelta(hours=24)).isoformat()
-        n += await reconcile_aborted_cobro_funds(fund_since)
-        # SUN-08-R2-REG — anula ventas TARDÍAS que un escritor publicó después
-        # de que el recuperador cerró el cobro (estado 'reversed'). Respaldo
-        # durable por si el escritor muere antes de compensar sus efectos.
-        n += await reconcile_reversed_cobro_effects(fund_since)
+        # SUN-08-R1-REC — barridos de OBLIGACIONES con garantía de progreso: la
+        # selección (agregación) devuelve SOLO ítems con trabajo real, así que
+        # NO se pasa ventana temporal — un pendiente nunca se retira por viejo ni
+        # queda oculto tras un lote sin trabajo. Repetir la tarea los agota.
+        # SUN-08-R1(v2): compensa ingresos tardíos de cobros abortados.
+        n += await reconcile_aborted_cobro_funds()
+        # SUN-08-R2-REG: anula ventas tardías colgando de cobros 'reversed'.
+        n += await reconcile_reversed_cobro_effects()
         # SUN-08 — completa reversos de cobro POS interrumpidos (commit o
         # compensación a medias). Cutoff de 120s: nunca toca un cobro en vuelo.
         cobro_cutoff = (datetime.now(timezone.utc)
