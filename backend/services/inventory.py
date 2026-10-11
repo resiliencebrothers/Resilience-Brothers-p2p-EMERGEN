@@ -983,6 +983,18 @@ async def reverse_pos_sale(mov: dict, actor: Optional[dict] = None) -> None:
                 note=(f"Reverso cobro incompleto: {mov.get('quantity')}× "
                       f"{mov.get('product_name', '')}"),
                 ref_id=mid, dedupe_key=f"cobro-rev-fund:{mid}")
+    # 4) EVIDENCIA de compensación COMPLETADA — SUN-08-R2-REC-INT.
+    #    `voided`/`cobro_aborted` (paso 1) es la decisión TERMINAL de aborto; NO
+    #    prueba que la compensación terminara. Solo AHORA, con stock, su doc de
+    #    reposición y el fondo garantizados, sellamos la obligación como hecha.
+    #    Hasta este flag la obligación SIGUE seleccionable aunque la venta ya esté
+    #    `voided`: un fallo tras el paso 1 (p. ej. en la frontera de persistencia,
+    #    antes de devolver stock) deja `reversal_done` sin poner y los
+    #    reconciliadores la retoman de forma IDEMPOTENTE (stock_ops, dedupe_keys y
+    #    este flag son terminales → repetir no duplica stock ni dinero).
+    await db.inventory_movements.update_one(
+        {"id": mid},
+        {"$set": {"reversal_done": True, "reversal_done_at": iso(now_utc())}})
 
 
 async def reverse_cobro(cobro_id: str, actor: Optional[dict] = None) -> int:
@@ -1120,23 +1132,31 @@ async def reconcile_aborted_cobro_funds(since_iso: Optional[str] = None) -> int:
 
 
 async def reconcile_reversed_cobro_effects(since_iso: Optional[str] = None) -> int:
-    """SUN-08-R2-REG / SUN-08-R1-REC — invariante DURABLE: toda venta cuyo cobro
-    quedó en 'reversed' DEBE estar anulada. Cierra el hueco del ESCRITOR TARDÍO.
+    """SUN-08-R2-REG / SUN-08-R1-REC / SUN-08-R2-REC-INT — invariante DURABLE:
+    toda venta de un cobro 'reversed' debe quedar COMPLETAMENTE compensada (stock
+    devuelto + su documentación + fondo), no solo marcada `voided`.
 
-    La comprobación de propiedad (lease) del escritor y la publicación de la
-    venta son escrituras SEPARADAS. Entre ambas, el recuperador puede robar la
-    propiedad y cerrar el cobro ('reversed') revirtiendo lo que existía (nada
-    aún). Si el escritor luego publica la venta y muere antes de compensar, la
-    venta queda ACTIVA colgando de un cobro reversado: ni `heal_pending_cobros`
-    (solo mira committing/reversing) ni `reconcile_aborted_cobro_funds` (solo
-    mira ventas ya `cobro_aborted`) la detectan.
+    Cubre dos huecos:
+    1) ESCRITOR TARDÍO — el lease del escritor y la publicación de la venta son
+       escrituras SEPARADAS; el recuperador puede cerrar el cobro ('reversed')
+       entre ambas y el escritor publicar luego la venta y morir sin compensar:
+       queda una venta ACTIVA colgando de un cobro reversado.
+    2) COMPENSACIÓN PARCIAL (SUN-08-R2-REC-INT) — `reverse_pos_sale` marca
+       `voided`/`cobro_aborted` (decisión TERMINAL) ANTES de devolver stock; si se
+       interrumpe en esa frontera, la venta queda `voided` pero con stock aún
+       debido. El filtro por «venta activa» (`voided!=True`) la PERDÍA. Ahora la
+       selección es por `reversal_done != True` (evidencia de compensación NO
+       terminada), así que la obligación sigue seleccionable aunque la venta ya
+       esté `voided`, hasta que `reverse_pos_sale` complete stock/doc/fondo y selle
+       `reversal_done=True` (reanudación idempotente). NO se reactivan ventas ni se
+       tocan cobros committed.
 
-    SUN-08-R1-REC — cola de obligaciones con GARANTÍA DE PROGRESO: una agregación
-    devuelve SOLO cobros reversados que AÚN tienen ≥1 venta activa (ítems con
-    trabajo real), así que el límite de 500 aplica a obligaciones reales y repetir
-    las agota (tras revertir, las ventas quedan `voided` y el cobro sale de la
-    selección). SIN exclusión por antigüedad (`since_iso` es filtro opcional de
-    alcance para pruebas; el scheduler no lo pasa)."""
+    Cola de obligaciones con GARANTÍA DE PROGRESO: la agregación devuelve SOLO
+    cobros reversados con ≥1 venta de compensación incompleta (ítems con trabajo
+    real), el límite de 500 aplica a obligaciones reales y repetir las agota
+    (tras completar, `reversal_done=True` y el cobro sale de la selección). SIN
+    exclusión por antigüedad (`since_iso` es filtro opcional de alcance de prueba;
+    el scheduler no lo pasa)."""
     match: dict = {"state": "reversed"}
     if since_iso:
         match["updated_at"] = {"$gte": since_iso}
@@ -1150,11 +1170,11 @@ async def reconcile_reversed_cobro_effects(since_iso: Optional[str] = None) -> i
                     {"$eq": ["$cobro_id", "$$cid"]},
                     {"$eq": ["$type", "venta"]},
                     {"$eq": ["$source", "manual"]},
-                    {"$ne": ["$voided", True]}]}}},
+                    {"$ne": ["$reversal_done", True]}]}}},
                 {"$limit": 1},
                 {"$project": {"_id": 1}}],
-            "as": "_active"}},
-        {"$match": {"_active": {"$ne": []}}},
+            "as": "_pending"}},
+        {"$match": {"_pending": {"$ne": []}}},
         {"$project": {"_id": 0, "id": 1}},
         {"$limit": 500},
     ]
@@ -1173,8 +1193,9 @@ async def reconciliation_health() -> dict:
 
     - aborted_cobro_funds  → ventas abortadas con INGRESO propio pero SIN su
       salida de reversión (ingreso tardío por compensar).
-    - reversed_cobro_effects → cobros 'reversed' que AÚN tienen ≥1 venta activa
-      (venta tardía por anular).
+    - reversed_cobro_effects → cobros 'reversed' con ≥1 venta cuya compensación
+      NO terminó (`reversal_done != True`): venta activa sin revertir o reverso
+      parcial (p. ej. `voided` pero con stock aún debido).
     - stuck_cobros → cobros POS en 'committing'/'reversing' más viejos que el
       corte de 120s (reverso/commit interrumpido por completar).
 
@@ -1212,10 +1233,10 @@ async def reconciliation_health() -> dict:
                     {"$eq": ["$cobro_id", "$$cid"]},
                     {"$eq": ["$type", "venta"]},
                     {"$eq": ["$source", "manual"]},
-                    {"$ne": ["$voided", True]}]}}},
+                    {"$ne": ["$reversal_done", True]}]}}},
                 {"$limit": 1}, {"$project": {"_id": 1}}],
-            "as": "_active"}},
-        {"$match": {"_active": {"$ne": []}}},
+            "as": "_pending"}},
+        {"$match": {"_pending": {"$ne": []}}},
         {"$count": "n"},
     ]
     r2 = await db.pos_cobros.aggregate(reversed_pipe).to_list(1)
@@ -1231,7 +1252,7 @@ async def reconciliation_health() -> dict:
             "label": "Ingresos tardíos por compensar"},
         "reversed_cobro_effects": {
             "pending": int(reversed_pending),
-            "label": "Ventas tardías por anular"},
+            "label": "Reverso de venta incompleto (stock/anulación por completar)"},
         "stuck_cobros": {
             "pending": int(stuck_cobros),
             "label": "Cobros POS interrumpidos (>120s)"},
