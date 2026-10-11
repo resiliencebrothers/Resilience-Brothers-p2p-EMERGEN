@@ -329,7 +329,8 @@ async def run_credit_recovery():
         from services.balances import compact_credit_registries
         from services.inventory import (compact_stock_registries,
                                          heal_pending_cobros,
-                                         reconcile_aborted_cobro_funds)
+                                         reconcile_aborted_cobro_funds,
+                                         reconcile_reversed_cobro_effects)
         from datetime import datetime, timezone, timedelta
         n += await compact_credit_registries()
         n += await compact_stock_registries()
@@ -339,6 +340,10 @@ async def run_credit_recovery():
         fund_since = (datetime.now(timezone.utc)
                       - timedelta(hours=24)).isoformat()
         n += await reconcile_aborted_cobro_funds(fund_since)
+        # SUN-08-R2-REG — anula ventas TARDÍAS que un escritor publicó después
+        # de que el recuperador cerró el cobro (estado 'reversed'). Respaldo
+        # durable por si el escritor muere antes de compensar sus efectos.
+        n += await reconcile_reversed_cobro_effects(fund_since)
         # SUN-08 — completa reversos de cobro POS interrumpidos (commit o
         # compensación a medias). Cutoff de 120s: nunca toca un cobro en vuelo.
         cobro_cutoff = (datetime.now(timezone.utc)

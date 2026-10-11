@@ -352,18 +352,34 @@ async def pos_cobro(payload: CobroIn, request: Request) -> Any:
             {"$set": {"state": "reversing",
                       "updated_at": datetime.now(timezone.utc).isoformat()}})
         if claim.matched_count == 0:
-            # No pudimos reclamar el reverso: resolvemos el ESTADO REAL sin
-            # destruir los efectos de una confirmación posiblemente completada.
+            # No pudimos reclamar el reverso: resolvemos el ESTADO REAL.
             current = await db.pos_cobros.find_one({"id": cobro_id}, {"_id": 0})
             state = (current or {}).get("state")
-            if state == "committed" and current.get("result"):
-                # La confirmación SÍ se guardó (solo se perdió la respuesta):
+            if state == "committed":
+                # SUN-08-R2 (respuesta perdida): la confirmación SÍ se guardó;
                 # conservamos los efectos y RECUPERAMOS la respuesta almacenada.
-                # Un único resultado coherente sobrevive.
-                return current["result"]
-            # El recuperador robó la operación (reversing/reversed) o el estado es
-            # indeterminado: NO compensamos nosotros (el dueño actual lo hace).
-            # Error coherente; el reintento idempotente resolverá el resultado.
+                # NUNCA revertimos un cobro committed (sus ventas son legítimas).
+                if current.get("result"):
+                    return current["result"]
+                raise HTTPException(status_code=409, detail={
+                    "code": "COBRO_RECOVERED",
+                    "message": ("El cobro fue recuperado por otro proceso y no "
+                                "se registró. Vuelve a intentarlo.")})
+            # SUN-08-R2-REG — perdimos la propiedad y el cobro NO está committed
+            # (el recuperador lo cerró en reversing/reversed). La comprobación de
+            # propiedad (lease) y la publicación de la venta son escrituras
+            # SEPARADAS: pudimos publicar la venta DESPUÉS de que el recuperador
+            # robó la propiedad y revirtió lo que existía (que entonces era nada).
+            # Compensamos NUESTROS efectos tardíos (reverse_cobro es idempotente)
+            # para no dejar una venta activa colgando de un cobro reversado. Si
+            # morimos aquí antes de compensar, el invariante durable lo cierra:
+            # `reconcile_reversed_cobro_effects` (scheduler) revierte cualquier
+            # venta activa de un cobro ya reversado.
+            try:
+                await reverse_cobro(cobro_id, actor)
+            except Exception as e:  # noqa: BLE001
+                logger.error(
+                    f"cobro {cobro_id} late-effect compensation incomplete: {e}")
             raise HTTPException(status_code=409, detail={
                 "code": "COBRO_RECOVERED",
                 "message": ("El cobro fue recuperado por otro proceso y no se "

@@ -1094,6 +1094,39 @@ async def reconcile_aborted_cobro_funds(since_iso: Optional[str] = None) -> int:
     return fixed
 
 
+async def reconcile_reversed_cobro_effects(since_iso: Optional[str] = None) -> int:
+    """SUN-08-R2-REG — invariante DURABLE: toda venta cuyo cobro quedó en
+    'reversed' DEBE estar anulada. Cierra el hueco del ESCRITOR TARDÍO.
+
+    La comprobación de propiedad (lease) del escritor y la publicación de la
+    venta son escrituras SEPARADAS. Entre ambas, el recuperador puede robar la
+    propiedad y cerrar el cobro ('reversed') revirtiendo lo que existía (nada
+    aún). Si el escritor luego publica la venta y muere antes de compensar, la
+    venta queda ACTIVA colgando de un cobro reversado: ni `heal_pending_cobros`
+    (solo mira committing/reversing) ni `reconcile_aborted_cobro_funds` (solo
+    mira ventas ya `cobro_aborted`) la detectan.
+
+    Este reconciliador recorre los cobros 'reversed' y revierte (idempotente)
+    cualquier venta ACTIVA que aún cuelgue de ellos. Nunca toca un cobro
+    'committed' (sus ventas son legítimas) ni crea efectos de la nada: solo
+    anula ventas reales ya publicadas. Acotado por recencia (`since_iso`)."""
+    q: dict = {"state": "reversed"}
+    if since_iso:
+        q["updated_at"] = {"$gte": since_iso}
+    cobros = await db.pos_cobros.find(
+        q, {"_id": 0, "id": 1}).to_list(500)
+    fixed = 0
+    for c in cobros:
+        cid = c["id"]
+        active = await db.inventory_movements.find_one(
+            {"cobro_id": cid, "type": "venta", "source": "manual",
+             "voided": {"$ne": True}}, {"_id": 1})
+        if not active:
+            continue   # todas las ventas ya anuladas → nada que hacer
+        fixed += await reverse_cobro(cid, None)
+    return fixed
+
+
 
 async def record_price_change(*, product: dict, field_label: str,
                               old: float, new: float,

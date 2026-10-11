@@ -2521,3 +2521,6 @@ Corregidos los 2 últimos fallos que dejó iter342. Ambos eran fragilidad de tes
 
 ## iter366 (fork 2026-06) — SUN-08-R2 variante: confirmación guardada con respuesta perdida
 Corregido en `routes/pos.py` (`pos_cobro`): el `except` ya no interpreta cualquier excepción de la confirmación como permiso para revertir. El reclamo CAS `committing→reversing` es la única fuente de verdad: si la confirmación persistió (respuesta de red perdida) se RECUPERA el `result` y se conservan los efectos; si no, se compensa o se devuelve `409 COBRO_RECOVERED`. Tests `test_iter366_cobro_confirm_lost_response.py` (2/2, inyecta error DESPUÉS y ANTES de persistir). Suite crítica 1127 passed. Detalle completo en CHANGELOG.md.
+
+## iter367 (fork 2026-06) — SUN-08-R2-REG: escritor tardío tras la reversión
+Regresión de iter366 corregida en dos niveles: (1) el `except` de `pos_cobro` compensa los efectos tardíos del escritor (`reverse_cobro` idempotente) cuando perdió la propiedad y el cobro NO está `committed`, sin tocar jamás un cobro bueno; (2) nuevo invariante durable `reconcile_reversed_cobro_effects` (scheduler `run_credit_recovery`) revierte cualquier venta activa que cuelgue de un cobro `reversed`, incluso si el escritor muere antes de compensar. Tests `test_iter367_cobro_late_writer_regression.py` (4/4). Suite crítica 1133 passed. Detalle en CHANGELOG.md.
