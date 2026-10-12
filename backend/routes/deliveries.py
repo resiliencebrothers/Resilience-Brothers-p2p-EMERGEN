@@ -17,7 +17,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from db_client import db
 from auth_utils import require_user, require_permission, _enforce_totp_step_up, iso, now_utc
@@ -151,6 +151,26 @@ async def courier_deliveries(request: Request) -> Any:
             "completed_count": completed_count,
         },
     }
+
+
+@router.get("/courier/deliveries/history")
+async def courier_delivery_history(request: Request, response: Response,
+                                    skip: int = 0, limit: int = 50) -> Any:
+    """MEN-04 — historial COMPLETO del mensajero (completadas + canceladas),
+    con paginación de servidor. El panel ya no se limita a las últimas 50."""
+    me = await _require_courier(request)
+    q = {"courier_id": me["user_id"],
+         "status": {"$in": ["confirmed", "cancelled"]}}
+    skip = max(0, skip)
+    limit = max(1, min(limit, 100))
+    total = await db.deliveries.count_documents(q)
+    response.headers["X-Total-Count"] = str(total)
+    rows = await db.deliveries.find(q, {"_id": 0}).sort(
+        "updated_at", -1).skip(skip).limit(limit).to_list(limit)
+    for d in rows:
+        _strip_courier_secret(d)
+    return rows
+
 
 
 @router.get("/admin/deliveries/summary")
@@ -1054,9 +1074,11 @@ async def admin_retry_sync(did: str, request: Request) -> Any:
 
 
 @router.get("/admin/deliveries")
-async def admin_list_deliveries(request: Request, status: Optional[str] = None,
+async def admin_list_deliveries(request: Request, response: Response,
+                                status: Optional[str] = None,
                                 courier_id: Optional[str] = None,
-                                incident: Optional[str] = None) -> Any:
+                                incident: Optional[str] = None,
+                                skip: int = 0, limit: int = 200) -> Any:
     await require_permission(request, "deliveries")
     q: dict = {}
     if status == "assigned":
@@ -1071,10 +1093,16 @@ async def admin_list_deliveries(request: Request, status: Optional[str] = None,
         q["$or"] = [{"assigned_to_courier_id": {"$in": [None, ""]}},
                     {"assigned_to_courier_id": {"$exists": False}}]
     elif status == "active":
-        # Historial separado — la vista activa EXCLUYE completadas/canceladas.
-        q["status"] = {"$nin": ["confirmed", "cancelled"]}
+        # MEN-04 — "Activas" = EN CURSO: excluye entregadas (pendientes de
+        # confirmación), confirmadas y canceladas.
+        q["status"] = {"$nin": ["delivered", "confirmed", "cancelled"]}
+    elif status == "pending_confirmation":
+        # MEN-04 — "Pendientes de confirmación": entregas ya realizadas que aún
+        # requieren confirmación y pago de comisión. Sacarlas de "Activas" NO
+        # ejecuta ninguna comisión; siguen visibles y accionables aquí.
+        q["status"] = "delivered"
     elif status == "history":
-        # Pestaña Historial — solo completadas (confirmadas) y canceladas.
+        # MEN-04 — "Historial": solo completadas (confirmadas) y canceladas.
         q["status"] = {"$in": ["confirmed", "cancelled"]}
     elif status:
         q["status"] = status
@@ -1082,7 +1110,14 @@ async def admin_list_deliveries(request: Request, status: Optional[str] = None,
         q["courier_id"] = courier_id
     if incident == "open":
         q["has_open_incident"] = True
-    rows = await db.deliveries.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # MEN-04 — paginación de SERVIDOR (no recortar en el frontend). Se expone el
+    # total vía cabecera X-Total-Count para los controles de página.
+    skip = max(0, skip)
+    limit = max(1, min(limit, 200))
+    total = await db.deliveries.count_documents(q)
+    response.headers["X-Total-Count"] = str(total)
+    rows = await db.deliveries.find(q, {"_id": 0}).sort(
+        "created_at", -1).skip(skip).limit(limit).to_list(limit)
     # MEN-02 — marcar el estado derivado y resolver el nombre del mensajero
     # reservado para las reservas ANTIGUAS que no lo tengan persistido.
     missing_ids = {d.get("assigned_to_courier_id") for d in rows

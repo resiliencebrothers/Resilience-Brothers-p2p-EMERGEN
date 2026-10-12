@@ -21,7 +21,7 @@ import CourierPanel from "@/pages/dashboard/CourierPanel";
 
 // Historial separado — la vista activa oculta completadas/canceladas; esas
 // viven en la pestaña "Historial".
-const ACTIVE_STATUSES = ["available", "assigned", "accepted", "on_the_way", "arrived", "delivered"];
+const ACTIVE_STATUSES = ["available", "assigned", "accepted", "on_the_way", "arrived"];
 const HISTORY_STATUSES = ["confirmed", "cancelled"];
 
 const STATUS_COLOR = {
@@ -64,9 +64,15 @@ function DeliveryEta({ d, t }) {
   );
 }
 
-function DeliveriesTab({ navigate, historyMode = false }) {
+function DeliveriesTab({ navigate, mode = "active" }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  // MEN-04 — tres vistas con consultas de servidor distintas:
+  //  active  → en curso (sin delivered/confirmed/cancelled)
+  //  pending → entregadas pendientes de confirmación y pago
+  //  history → completadas (confirmadas) y canceladas, paginadas
+  const isHistory = mode === "history";
+  const isPending = mode === "pending";
   // MEN-01 — asignar/reservar repartos exige el permiso EXPLÍCITO
   // `deliveries_assign`. Admin siempre; empleado solo si lo tiene concedido
   // en su lista (la lista vacía NO lo otorga). Un mensajero sin este permiso
@@ -91,24 +97,39 @@ function DeliveriesTab({ navigate, historyMode = false }) {
   const staleReservationIds = new Set(
     (attention?.unanswered_reservations || []).map((d) => d.id));
   const reservationMin = attention?.thresholds?.reservation_min;
+  // MEN-04 — paginación de servidor para las vistas que crecen (pendientes e
+  // historial). 50 por página; el total viene en la cabecera X-Total-Count.
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const paginated = isHistory || isPending;
 
   const load = useCallback(() => {
-    const params = statusFilter === "all"
-      ? { status: historyMode ? "history" : "active" }
-      : statusFilter === "incidents" ? { incident: "open" }
-      : { status: statusFilter };
+    const base = isPending ? { status: "pending_confirmation" }
+      : statusFilter === "all" ? { status: isHistory ? "history" : "active" }
+        : statusFilter === "incidents" ? { incident: "open" }
+          : { status: statusFilter };
+    const params = (isHistory || isPending)
+      ? { ...base, limit: PAGE_SIZE, skip: page * PAGE_SIZE }
+      : base;
     axios.get(`${API}/admin/deliveries`, { params, withCredentials: true })
-      .then((r) => setRows(r.data)).catch(() => setRows([]));
+      .then((r) => {
+        setRows(r.data);
+        setTotal(parseInt(r.headers["x-total-count"] || r.data.length, 10));
+      }).catch(() => { setRows([]); setTotal(0); });
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data)).catch(() => setCouriers([]));
-    if (!historyMode) {
+    if (mode === "active") {
       axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
         .then((r) => setAttention(r.data)).catch(() => {});
     }
-  }, [statusFilter, historyMode]);
+  }, [statusFilter, mode, isHistory, isPending, page]);
+
+  // Al cambiar de filtro, vuelve a la primera página.
+  useEffect(() => { setPage(0); }, [statusFilter, mode]);
 
   useEffect(() => {
-    if (historyMode) return undefined;
+    if (mode !== "active") return undefined;
     const fetchSummary = () =>
       axios.get(`${API}/admin/deliveries/summary`, {
         params: { date: summaryDate }, withCredentials: true,
@@ -116,7 +137,7 @@ function DeliveriesTab({ navigate, historyMode = false }) {
     fetchSummary();
     const iv = setInterval(fetchSummary, 20000);
     return () => clearInterval(iv);
-  }, [summaryDate, historyMode]);
+  }, [summaryDate, mode]);
 
   useEffect(() => {
     load();
@@ -268,6 +289,7 @@ function DeliveriesTab({ navigate, historyMode = false }) {
           </div>
         </div>
       )}
+      {!isPending && (
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setStatusFilter("all")}
@@ -276,7 +298,7 @@ function DeliveriesTab({ navigate, historyMode = false }) {
         >
           {t("admin.deliveries.filterAll")}
         </button>
-        {(historyMode ? HISTORY_STATUSES : ACTIVE_STATUSES).map((s) => (
+        {(isHistory ? HISTORY_STATUSES : ACTIVE_STATUSES).map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -286,7 +308,7 @@ function DeliveriesTab({ navigate, historyMode = false }) {
             {t(`courierPanel.status.${s}`)}
           </button>
         ))}
-        {!historyMode && (
+        {!isHistory && (
           <button
             onClick={() => setStatusFilter("incidents")}
             data-testid="deliveries-filter-incidents"
@@ -296,6 +318,17 @@ function DeliveriesTab({ navigate, historyMode = false }) {
           </button>
         )}
       </div>
+      )}
+      {isPending && (
+        <div className="tactile-card p-3 border border-amber-400/30 bg-amber-500/[0.05]" data-testid="pending-confirmation-notice">
+          <div className="text-xs text-amber-300 font-medium">
+            {t("admin.deliveries.pendingNoticeTitle")}
+          </div>
+          <div className="text-[0.7rem] text-neutral-400 mt-1">
+            {t("admin.deliveries.pendingNoticeBody")}
+          </div>
+        </div>
+      )}
 
       <div className="tactile-card overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
@@ -422,6 +455,36 @@ function DeliveriesTab({ navigate, historyMode = false }) {
           </tbody>
         </table>
       </div>
+
+      {paginated && total > PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-3 text-xs" data-testid="deliveries-pagination">
+          <span className="text-neutral-500" data-testid="deliveries-pagination-info">
+            {t("admin.deliveries.pageInfo", {
+              from: page * PAGE_SIZE + 1,
+              to: Math.min((page + 1) * PAGE_SIZE, total),
+              total,
+            })}
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              data-testid="deliveries-prev-page"
+              className="px-3 py-1.5 border border-white/10 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {t("admin.deliveries.prevPage")}
+            </button>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={(page + 1) * PAGE_SIZE >= total}
+              data-testid="deliveries-next-page"
+              className="px-3 py-1.5 border border-white/10 text-neutral-300 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {t("admin.deliveries.nextPage")}
+            </button>
+          </div>
+        </div>
+      )}
 
       <TotpPromptDialog
         open={!!pendingConfirm}
@@ -624,6 +687,21 @@ export default function AdminDeliveries() {
   // entregas" con el mismo flujo Aceptar/Rechazar del panel del mensajero.
   const [myCounts, setMyCounts] = useState({ reserved: 0, active: 0 });
   const autoOpened = useRef(false);
+  // MEN-04 — contador de "Pendientes de confirmación" (entregadas) para el
+  // badge de la pestaña. Se lee del header X-Total-Count.
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    const load = () =>
+      axios.get(`${API}/admin/deliveries`, {
+        params: { status: "pending_confirmation", limit: 1 },
+        withCredentials: true,
+      }).then((r) => setPendingCount(
+        parseInt(r.headers["x-total-count"] || 0, 10))).catch(() => {});
+    load();
+    const iv = setInterval(load, 25000);
+    return () => clearInterval(iv);
+  }, []);
 
   useEffect(() => {
     const load = () =>
@@ -661,6 +739,21 @@ export default function AdminDeliveries() {
           className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "deliveries" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
         >
           {t("admin.deliveries.tabDeliveries")}
+        </button>
+        <button
+          onClick={() => setTab("pending")}
+          data-testid="admin-tab-pending"
+          className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap flex items-center gap-2 ${tab === "pending" ? "border-amber-400 text-amber-300" : "border-transparent text-neutral-500 hover:text-white"}`}
+        >
+          {t("admin.deliveries.tabPending")}
+          {pendingCount > 0 && (
+            <span
+              data-testid="admin-tab-pending-badge"
+              className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold rounded-full bg-amber-400 text-black"
+            >
+              {pendingCount}
+            </span>
+          )}
         </button>
         <button
           onClick={() => setTab("my")}
@@ -717,7 +810,8 @@ export default function AdminDeliveries() {
       </div>
 
       {tab === "deliveries" ? <DeliveriesTab navigate={navigate} />
-        : tab === "history" ? <div data-testid="admin-deliveries-history"><DeliveriesTab navigate={navigate} historyMode /></div>
+        : tab === "pending" ? <div data-testid="admin-deliveries-pending"><DeliveriesTab navigate={navigate} mode="pending" /></div>
+        : tab === "history" ? <div data-testid="admin-deliveries-history"><DeliveriesTab navigate={navigate} mode="history" /></div>
         : tab === "my" ? <div data-testid="admin-my-deliveries"><CourierPanel embedded /></div>
         : tab === "rates" ? <MunicipalityRatesTab />
         : tab === "cash" ? <CourierCashTab />

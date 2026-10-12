@@ -241,6 +241,26 @@ export default function CourierPanel({ embedded = false }) {
   const deepLinkId = searchParams.get("delivery");
   const [highlightId, setHighlightId] = useState(null);
   const deepLinkHandledRef = useRef(false);
+  // MEN-04 — historial COMPLETO paginado del mensajero (ya no el tope de 50).
+  const [histItems, setHistItems] = useState(null);
+  const [histTotal, setHistTotal] = useState(0);
+  const [histLoading, setHistLoading] = useState(false);
+  const histPageRef = useRef(0);
+  const HIST_PAGE = 25;
+  const loadHistory = useCallback((reset) => {
+    const pg = reset ? 0 : histPageRef.current;
+    setHistLoading(true);
+    axios.get(`${API}/courier/deliveries/history`, {
+      params: { limit: HIST_PAGE, skip: pg * HIST_PAGE }, withCredentials: true,
+    }).then((r) => {
+      setHistTotal(parseInt(r.headers["x-total-count"] || 0, 10));
+      setHistItems((prev) => (reset || prev == null) ? r.data : [...prev, ...r.data]);
+      histPageRef.current = pg + 1;
+    }).catch(() => {}).finally(() => setHistLoading(false));
+  }, []);
+  useEffect(() => {
+    if (tab === "history" && histItems == null) loadHistory(true);
+  }, [tab, histItems, loadHistory]);
 
   const [sharing, setSharing] = useState(false);
   const [lastGpsAt, setLastGpsAt] = useState(null);
@@ -725,23 +745,49 @@ export default function CourierPanel({ embedded = false }) {
       )}
 
       {tab === "history" && (
-        <div className="grid sm:grid-cols-2 gap-4" data-testid="courier-history-list">
-          {data.history.length === 0 && (
-            <p className="text-neutral-500 col-span-full text-center py-10">{t("courierPanel.emptyHistory")}</p>
-          )}
-          {data.history.map((d) => (
-            <div key={d.id} className="tactile-card p-4 flex items-center justify-between gap-3" data-testid={`history-delivery-${d.id}`}>
-              <div className="min-w-0">
-                <div className="text-sm truncate">{d.client_name} — {d.amount_label}</div>
-                <div className="text-xs text-neutral-500">{new Date(d.updated_at).toLocaleString()}</div>
-              </div>
-              <div className="text-right shrink-0">
-                <div className="font-mono text-[#22C55E] text-sm flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" /> +{d.courier_share_paid_usdt ?? d.courier_share_usdt} USDT
+        <div className="space-y-4" data-testid="courier-history-list">
+          {(() => {
+            const list = histItems ?? data.history;
+            return (
+              <>
+                {list.length === 0 && (
+                  <p className="text-neutral-500 col-span-full text-center py-10">{t("courierPanel.emptyHistory")}</p>
+                )}
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {list.map((d) => (
+                    <div key={d.id} className={`tactile-card p-4 flex items-center justify-between gap-3 ${highlightId === d.id ? "ring-2 ring-[#EAB308]" : ""}`} data-testid={`history-delivery-${d.id}`}>
+                      <div className="min-w-0">
+                        <div className="text-sm truncate">{d.client_name} — {d.amount_label}</div>
+                        <div className="text-xs text-neutral-500">{new Date(d.updated_at).toLocaleString()}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {d.status === "cancelled" ? (
+                          <div className="font-mono text-[#EF4444] text-xs uppercase">{t("courierPanel.status.cancelled")}</div>
+                        ) : (
+                          <div className="font-mono text-[#22C55E] text-sm flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4" /> +{d.courier_share_paid_usdt ?? d.courier_share_usdt} USDT
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            </div>
-          ))}
+                {histItems != null && histItems.length < histTotal && (
+                  <div className="flex justify-center">
+                    <Button
+                      onClick={() => loadHistory(false)}
+                      disabled={histLoading}
+                      data-testid="courier-history-load-more"
+                      variant="outline"
+                      className="rounded-none border-white/10 text-neutral-300"
+                    >
+                      {histLoading ? t("courierPanel.loading") : t("courierPanel.loadMore", { shown: histItems.length, total: histTotal })}
+                    </Button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 

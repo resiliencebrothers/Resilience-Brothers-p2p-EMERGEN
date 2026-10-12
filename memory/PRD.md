@@ -2584,3 +2584,16 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 - **Verificado: un mensajero puede TOMAR una entrega disponible NO asignada** (cola libre → "Tomar entrega" → `POST /courier/deliveries/{id}/claim` → `accepted` a su nombre). Test `test_courier_can_claim_unassigned_available_delivery`.
 - **Tests**: `test_men03_*` ahora 5/5 (incluye claim-unassigned + detección de reserva lenta vía attention). ruff + mypy limpios. Smoke UI confirmado: badge en la reserva de 45 min, ausente en la reciente.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+---
+## MEN-04 (fork 2026-06) — Activas / Pendientes de confirmación / Historial + paginación de servidor
+- **Causa**: "Todas" devolvía todos los estados y la consulta se recortaba a 200 docs (una activa antigua podía quedar fuera si dominaban las confirmadas); el historial del mensajero estaba fijado a 50.
+- **Backend `routes/deliveries.py`**:
+  - `GET /admin/deliveries`: redefinido `status=active` = EN CURSO (`$nin [delivered, confirmed, cancelled]`); nuevo `status=pending_confirmation` = `delivered`; `status=history` = `confirmed+cancelled`. Paginación de servidor `skip`/`limit` (máx 200) + cabecera **`X-Total-Count`**. Enriquecimiento MEN-02 intacto.
+  - Nuevo `GET /courier/deliveries/history?skip=&limit=`: historial COMPLETO del mensajero (confirmed+cancelled) paginado + `X-Total-Count`.
+- **Frontend admin (`AdminDeliveries.jsx`)**: `DeliveriesTab` ahora con `mode` = active|pending|history. Nueva pestaña **"Por confirmar"** (`admin-tab-pending`) con badge de cantidad (lee X-Total-Count) + aviso de que confirmar ejecuta el pago (nada automático). Controles de paginación (`deliveries-prev/next-page`, `pageInfo`) en pending+history. `ACTIVE_STATUSES` ya no incluye `delivered`.
+- **Frontend mensajero (`CourierPanel.jsx`)**: la pestaña Historial carga del endpoint paginado con **"Cargar más"** (`courier-history-load-more`), sin el tope de 50; muestra también canceladas.
+- **delivered sigue accionable**: aparece en "Por confirmar" con el botón Confirmar; sacarla de "Activas" NO ejecuta ninguna comisión. Sin duplicar colecciones.
+- **Tests**: `test_men04_*` (4/4: active excluye delivered/history, pending solo delivered, paginación + X-Total-Count, historial del mensajero paginado). MEN-01/02/03 (24) + regresión mensajería = 74/74. ruff + mypy limpios. Smoke UI: Entregas excluye delivered; "Por confirmar" badge 62 + confirmar; Historial "1–50 de 385"→"51–100"; mensajero "Cargar más (25/55)"→50.
+- Estado: en preview; pendiente de re-despliegue a producción.
