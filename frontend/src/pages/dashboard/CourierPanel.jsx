@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
+import { useSearchParams } from "react-router-dom";
 import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -49,11 +50,22 @@ function fmtAge(iso, t) {
   return t("courierPanel.ageHours", { h: Math.floor(min / 60) });
 }
 
-function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reservedBadge, onReject, onChat, onIncident, showAge }) {
+function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reservedBadge, onReject, onChat, onIncident, showAge, highlight }) {
   const { t } = useTranslation();
+  const cardRef = useRef(null);
+  // MEN-03 — al abrir el aviso (in-app/push) la entrega concreta se resalta
+  // y se centra en pantalla. No ejecuta ninguna acción por sí sola.
+  useEffect(() => {
+    if (highlight && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlight]);
   return (
     <div
-      className={`tactile-card p-4 space-y-2 ${
+      ref={cardRef}
+      className={`tactile-card p-4 space-y-2 transition-shadow ${
+        highlight ? "ring-2 ring-[#EAB308] shadow-[0_0_24px_rgba(234,179,8,0.25)]" : ""
+      } ${
         reservedBadge ? "border border-[#8B5CF6]/60 shadow-[0_0_20px_rgba(139,92,246,0.15)]" : ""
       }`}
       data-testid={`delivery-card-${d.id}`}
@@ -203,10 +215,9 @@ function DeliveryCard({ d, actionLabel, onAction, actionTestId, waiting, reserve
               onClick={onReject}
               data-testid={`reject-reservation-${d.id}`}
               variant="outline"
-              className="rounded-none h-10 border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10"
-              title={t("courierPanel.rejectBtn")}
+              className="flex-1 rounded-none h-10 border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10 gap-1.5"
             >
-              <X className="w-4 h-4" />
+              <X className="w-4 h-4" /> {t("courierPanel.rejectDeliveryBtn")}
             </Button>
           )}
         </div>
@@ -225,6 +236,11 @@ export default function CourierPanel({ embedded = false }) {
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const [tab, setTab] = useState("mine");
+  // MEN-03 — deep-link del aviso: /dashboard/deliveries?delivery=<id>.
+  const [searchParams] = useSearchParams();
+  const deepLinkId = searchParams.get("delivery");
+  const [highlightId, setHighlightId] = useState(null);
+  const deepLinkHandledRef = useRef(false);
 
   const [sharing, setSharing] = useState(false);
   const [lastGpsAt, setLastGpsAt] = useState(null);
@@ -431,6 +447,31 @@ export default function CourierPanel({ embedded = false }) {
     if (reservedCount > 0) setTab("available");
   }, [reservedCount]);
 
+  // MEN-03 — al abrir un aviso (in-app o push) se navega a la entrega
+  // concreta: se COMPRUEBA su estado vigente con los datos frescos, se
+  // selecciona la pestaña correcta y se resalta la tarjeta. Si la entrega ya
+  // no está (tomada por otro, cancelada o ya confirmada) se avisa. Nunca se
+  // acepta automáticamente al abrir.
+  useEffect(() => {
+    if (!data || !deepLinkId || deepLinkHandledRef.current) return;
+    deepLinkHandledRef.current = true;
+    const inAvailable = data.available.some((d) => d.id === deepLinkId);
+    const inMine = data.mine.some((d) => d.id === deepLinkId);
+    const inHistory = data.history.some((d) => d.id === deepLinkId);
+    if (inAvailable) {
+      setTab("available");
+      setHighlightId(deepLinkId);
+    } else if (inMine) {
+      setTab("mine");
+      setHighlightId(deepLinkId);
+    } else if (inHistory) {
+      setTab("history");
+      setHighlightId(deepLinkId);
+    } else {
+      toast.info(t("courierPanel.deepLinkGone"));
+    }
+  }, [data, deepLinkId, t]);
+
   if (!data) {
     // MSG10 — error visible con reintento en vez de un spinner eterno.
     if (loadError) {
@@ -531,73 +572,98 @@ export default function CourierPanel({ embedded = false }) {
       </div>
 
       {tab === "available" && (
-        <div className="space-y-4" data-testid="courier-available-list">
-          {data.available.length === 0 && (
-            <p className="text-neutral-500 col-span-full text-center py-10">{t("courierPanel.emptyAvailable")}</p>
-          )}
+        <div className="space-y-6" data-testid="courier-available-list">
+          {/* MEN-03 — Sección "Asignadas a mí / Por aceptar": NO se filtra por
+              tipo ni zona (los filtros de abajo son solo para los trabajos
+              libres). Así una reserva nunca desaparece de la vista. */}
           {data.available.some((d) => d.reserved_for_me) && (
-            <div className="tactile-card p-3 border border-[#8B5CF6]/40 bg-[#8B5CF6]/5" data-testid="courier-reserved-notice">
-              <div className="text-xs text-[#A78BFA] font-medium flex items-center gap-2">
-                <Bike className="w-4 h-4" /> {t("courierPanel.reservedNoticeTitle")}
+            <div className="space-y-3" data-testid="courier-assigned-to-me">
+              <div className="tactile-card p-3 border border-[#8B5CF6]/40 bg-[#8B5CF6]/5" data-testid="courier-reserved-notice">
+                <div className="text-xs text-[#A78BFA] font-medium flex items-center gap-2">
+                  <Bike className="w-4 h-4" /> {t("courierPanel.assignedToMeTitle")}
+                </div>
+                <div className="text-[0.7rem] text-neutral-400 mt-1">
+                  {t("courierPanel.reservedNoticeBody")}
+                </div>
               </div>
-              <div className="text-[0.7rem] text-neutral-400 mt-1">
-                {t("courierPanel.reservedNoticeBody")}
+              <div className="grid sm:grid-cols-2 gap-4" data-testid="courier-assigned-list">
+                {data.available.filter((d) => d.reserved_for_me).map((d) => (
+                  <DeliveryCard
+                    key={d.id}
+                    d={d}
+                    showAge
+                    highlight={highlightId === d.id}
+                    reservedBadge
+                    actionLabel={t("courierPanel.acceptDeliveryBtn")}
+                    actionTestId={`claim-delivery-${d.id}`}
+                    onAction={() => claim(d)}
+                    onReject={() => { setRejecting(d); setRejectReason(""); }}
+                  />
+                ))}
               </div>
             </div>
           )}
-          {/* Mejora #4 — filtros por tipo y zona; atrasados primero */}
-          {data.available.length > 0 && (
-            <div className="flex flex-wrap gap-2" data-testid="courier-available-filters">
-              {["all", "deposit", "withdrawal", "redemption"].map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setKindFilter(k)}
-                  data-testid={`courier-filter-kind-${k}`}
-                  className={`px-2.5 py-1 text-[0.7rem] border ${
-                    kindFilter === k
-                      ? "border-[#8B5CF6] text-[#8B5CF6]"
-                      : "border-white/10 text-neutral-500"
-                  }`}
-                >
-                  {k === "all" ? t("courierPanel.filterAll")
-                    : t(k === "deposit" ? "courierPanel.kindDeposit"
-                      : k === "withdrawal" ? "courierPanel.kindWithdrawal"
-                      : "courierPanel.kindRedemption")}
-                </button>
-              ))}
-              {[...new Set(data.available.map((d) => d.province).filter(Boolean))].map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setZoneFilter(zoneFilter === p ? "all" : p)}
-                  data-testid={`courier-filter-zone-${p}`}
-                  className={`px-2.5 py-1 text-[0.7rem] border ${
-                    zoneFilter === p
-                      ? "border-[#22C55E] text-[#22C55E]"
-                      : "border-white/10 text-neutral-500"
-                  }`}
-                >
-                  {p}
-                </button>
+
+          {/* Trabajos libres (cola abierta): aquí SÍ aplican los filtros. */}
+          <div className="space-y-4">
+            <div className="micro-label text-neutral-500" data-testid="courier-free-jobs-title">
+              {t("courierPanel.freeJobsTitle")}
+            </div>
+            {data.available.filter((d) => !d.reserved_for_me).length === 0 && (
+              <p className="text-neutral-500 col-span-full text-center py-10">{t("courierPanel.emptyAvailable")}</p>
+            )}
+            {/* Mejora #4 — filtros por tipo y zona; atrasados primero */}
+            {data.available.filter((d) => !d.reserved_for_me).length > 0 && (
+              <div className="flex flex-wrap gap-2" data-testid="courier-available-filters">
+                {["all", "deposit", "withdrawal", "redemption"].map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setKindFilter(k)}
+                    data-testid={`courier-filter-kind-${k}`}
+                    className={`px-2.5 py-1 text-[0.7rem] border ${
+                      kindFilter === k
+                        ? "border-[#8B5CF6] text-[#8B5CF6]"
+                        : "border-white/10 text-neutral-500"
+                    }`}
+                  >
+                    {k === "all" ? t("courierPanel.filterAll")
+                      : t(k === "deposit" ? "courierPanel.kindDeposit"
+                        : k === "withdrawal" ? "courierPanel.kindWithdrawal"
+                        : "courierPanel.kindRedemption")}
+                  </button>
+                ))}
+                {[...new Set(data.available.filter((d) => !d.reserved_for_me).map((d) => d.province).filter(Boolean))].map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setZoneFilter(zoneFilter === p ? "all" : p)}
+                    data-testid={`courier-filter-zone-${p}`}
+                    className={`px-2.5 py-1 text-[0.7rem] border ${
+                      zoneFilter === p
+                        ? "border-[#22C55E] text-[#22C55E]"
+                        : "border-white/10 text-neutral-500"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="grid sm:grid-cols-2 gap-4">
+              {data.available.filter((d) => !d.reserved_for_me)
+                .filter((d) => kindFilter === "all" || d.kind === kindFilter)
+                .filter((d) => zoneFilter === "all" || d.province === zoneFilter)
+                .map((d) => (
+                <DeliveryCard
+                  key={d.id}
+                  d={d}
+                  showAge
+                  highlight={highlightId === d.id}
+                  actionLabel={t("courierPanel.claimBtn")}
+                  actionTestId={`claim-delivery-${d.id}`}
+                  onAction={() => claim(d)}
+                />
               ))}
             </div>
-          )}
-          <div className="grid sm:grid-cols-2 gap-4">
-            {[...data.available.filter((d) => d.reserved_for_me),
-              ...data.available.filter((d) => !d.reserved_for_me)]
-              .filter((d) => kindFilter === "all" || d.kind === kindFilter)
-              .filter((d) => zoneFilter === "all" || d.province === zoneFilter)
-              .map((d) => (
-              <DeliveryCard
-                key={d.id}
-                d={d}
-                showAge
-                reservedBadge={!!d.reserved_for_me}
-                actionLabel={d.reserved_for_me ? t("courierPanel.acceptBtn") : t("courierPanel.claimBtn")}
-                actionTestId={`claim-delivery-${d.id}`}
-                onAction={() => claim(d)}
-                onReject={d.reserved_for_me ? () => { setRejecting(d); setRejectReason(""); } : undefined}
-              />
-            ))}
           </div>
         </div>
       )}
@@ -645,6 +711,7 @@ export default function CourierPanel({ embedded = false }) {
             <DeliveryCard
               key={d.id}
               d={d}
+              highlight={highlightId === d.id}
               actionLabel={NEXT_ACTION[d.status] ? t(NEXT_ACTION[d.status].key) : null}
               actionTestId={`advance-delivery-${d.id}`}
               onAction={NEXT_ACTION[d.status] ? () => advance(d) : null}

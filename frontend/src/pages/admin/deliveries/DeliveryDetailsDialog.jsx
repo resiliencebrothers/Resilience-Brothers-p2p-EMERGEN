@@ -385,6 +385,11 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
                    value={d.assigned_to_courier_name || "—"} testid="dd-assigned-to" />
             )}
             <Row label="Courier ID" value={d.courier_id || d.assigned_to_courier_id || "—"} mono testid="dd-courier-id" />
+            {d.assigned_by_name && (
+              <Row label={t("admin.deliveries.assignedBy")}
+                   value={`${d.assigned_by_name}${d.assigned_at ? " · " + new Date(d.assigned_at).toLocaleString() : ""}`}
+                   testid="dd-assigned-by" />
+            )}
             {d.courier_location && (
               <Row label={t("admin.deliveries.detailsCourierLoc")}
                    value={`${d.courier_location.lat}, ${d.courier_location.lon}`}

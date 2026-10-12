@@ -1070,6 +1070,12 @@ async def admin_list_deliveries(request: Request, status: Optional[str] = None,
         q["status"] = "available"
         q["$or"] = [{"assigned_to_courier_id": {"$in": [None, ""]}},
                     {"assigned_to_courier_id": {"$exists": False}}]
+    elif status == "active":
+        # Historial separado — la vista activa EXCLUYE completadas/canceladas.
+        q["status"] = {"$nin": ["confirmed", "cancelled"]}
+    elif status == "history":
+        # Pestaña Historial — solo completadas (confirmadas) y canceladas.
+        q["status"] = {"$in": ["confirmed", "cancelled"]}
     elif status:
         q["status"] = status
     if courier_id:
@@ -1239,6 +1245,9 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
             "$set": {"status": "available",
                      "assigned_to_courier_id": courier_id,
                      "assigned_to_courier_name": courier_display,
+                     "assigned_by": actor["user_id"],
+                     "assigned_by_name": actor.get("name") or actor.get("email"),
+                     "assigned_at": now,
                      "courier_id": None,
                      "courier_name": None,
                      "updated_at": now},
@@ -1286,7 +1295,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
             )
             payload = build_generic_admin_alert_payload(
                 title=title, body=msg,
-                url="/dashboard/deliveries",
+                url=f"/dashboard/deliveries?delivery={did}",
                 tag=f"delivery-assigned-{did}",
             )
             await send_push_to_user(db, courier_id, payload)

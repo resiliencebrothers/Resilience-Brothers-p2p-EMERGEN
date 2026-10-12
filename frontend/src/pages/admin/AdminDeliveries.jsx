@@ -19,7 +19,10 @@ import CourierPanel from "@/pages/dashboard/CourierPanel";
 
 // iter199 — Admin: gestión de entregas de mensajería + alta de mensajeros.
 
-const STATUSES = ["available", "assigned", "accepted", "on_the_way", "arrived", "delivered", "confirmed", "cancelled"];
+// Historial separado — la vista activa oculta completadas/canceladas; esas
+// viven en la pestaña "Historial".
+const ACTIVE_STATUSES = ["available", "assigned", "accepted", "on_the_way", "arrived", "delivered"];
+const HISTORY_STATUSES = ["confirmed", "cancelled"];
 
 const STATUS_COLOR = {
   available: "text-neutral-400",
@@ -61,7 +64,7 @@ function DeliveryEta({ d, t }) {
   );
 }
 
-function DeliveriesTab({ navigate }) {
+function DeliveriesTab({ navigate, historyMode = false }) {
   const { t } = useTranslation();
   const { user } = useAuth();
   // MEN-01 — asignar/reservar repartos exige el permiso EXPLÍCITO
@@ -84,18 +87,22 @@ function DeliveriesTab({ navigate }) {
   const [attention, setAttention] = useState(null);
 
   const load = useCallback(() => {
-    const params = statusFilter === "all" ? {}
+    const params = statusFilter === "all"
+      ? { status: historyMode ? "history" : "active" }
       : statusFilter === "incidents" ? { incident: "open" }
       : { status: statusFilter };
     axios.get(`${API}/admin/deliveries`, { params, withCredentials: true })
       .then((r) => setRows(r.data)).catch(() => setRows([]));
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data)).catch(() => setCouriers([]));
-    axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
-      .then((r) => setAttention(r.data)).catch(() => {});
-  }, [statusFilter]);
+    if (!historyMode) {
+      axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
+        .then((r) => setAttention(r.data)).catch(() => {});
+    }
+  }, [statusFilter, historyMode]);
 
   useEffect(() => {
+    if (historyMode) return undefined;
     const fetchSummary = () =>
       axios.get(`${API}/admin/deliveries/summary`, {
         params: { date: summaryDate }, withCredentials: true,
@@ -103,7 +110,7 @@ function DeliveriesTab({ navigate }) {
     fetchSummary();
     const iv = setInterval(fetchSummary, 20000);
     return () => clearInterval(iv);
-  }, [summaryDate]);
+  }, [summaryDate, historyMode]);
 
   useEffect(() => {
     load();
@@ -263,7 +270,7 @@ function DeliveriesTab({ navigate }) {
         >
           {t("admin.deliveries.filterAll")}
         </button>
-        {STATUSES.map((s) => (
+        {(historyMode ? HISTORY_STATUSES : ACTIVE_STATUSES).map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -273,13 +280,15 @@ function DeliveriesTab({ navigate }) {
             {t(`courierPanel.status.${s}`)}
           </button>
         ))}
-        <button
-          onClick={() => setStatusFilter("incidents")}
-          data-testid="deliveries-filter-incidents"
-          className={`px-3 py-1.5 text-xs border ${statusFilter === "incidents" ? "border-amber-400 text-amber-300" : "border-amber-400/30 text-amber-300/60"}`}
-        >
-          ⚠ {t("admin.deliveries.filterIncidents")}
-        </button>
+        {!historyMode && (
+          <button
+            onClick={() => setStatusFilter("incidents")}
+            data-testid="deliveries-filter-incidents"
+            className={`px-3 py-1.5 text-xs border ${statusFilter === "incidents" ? "border-amber-400 text-amber-300" : "border-amber-400/30 text-amber-300/60"}`}
+          >
+            ⚠ {t("admin.deliveries.filterIncidents")}
+          </button>
+        )}
       </div>
 
       <div className="tactile-card overflow-x-auto">
@@ -655,6 +664,13 @@ export default function AdminDeliveries() {
           )}
         </button>
         <button
+          onClick={() => setTab("history")}
+          data-testid="admin-tab-history"
+          className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "history" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
+        >
+          {t("admin.deliveries.tabHistory")}
+        </button>
+        <button
           onClick={() => setTab("couriers")}
           data-testid="admin-tab-couriers"
           className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "couriers" ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-transparent text-neutral-500 hover:text-white"}`}
@@ -685,6 +701,7 @@ export default function AdminDeliveries() {
       </div>
 
       {tab === "deliveries" ? <DeliveriesTab navigate={navigate} />
+        : tab === "history" ? <div data-testid="admin-deliveries-history"><DeliveriesTab navigate={navigate} historyMode /></div>
         : tab === "my" ? <div data-testid="admin-my-deliveries"><CourierPanel embedded /></div>
         : tab === "rates" ? <MunicipalityRatesTab />
         : tab === "cash" ? <CourierCashTab />

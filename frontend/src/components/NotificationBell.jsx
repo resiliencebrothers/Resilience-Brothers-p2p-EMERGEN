@@ -1,4 +1,5 @@
 import { useAuth } from "@/context/AuthContext";
+import { useNavigate } from "react-router-dom";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Bell, CheckCheck, UserCheck, UserX, BellRing, X, Trash2, ExternalLink, Landmark, FileCheck2 } from "lucide-react";
 import { useState } from "react";
@@ -14,6 +15,28 @@ const TYPE_ICON = {
   reconciliation_done: { Icon: FileCheck2, color: "text-[#22C55E]" },
   info: { Icon: BellRing, color: "text-neutral-400" },
 };
+
+// MEN-03 — a dónde navega un aviso al tocarlo. Las notificaciones de
+// mensajería abren la entrega CONCRETA (deep-link). Devuelve null si el aviso
+// no tiene destino navegable (solo se marca como leído).
+function notificationTarget(item, user) {
+  const data = item.data || {};
+  const deliveryId = data.delivery_id;
+  switch (item.type) {
+    case "delivery_assigned":
+      return deliveryId
+        ? `/dashboard/deliveries?delivery=${deliveryId}`
+        : "/dashboard/deliveries";
+    case "delivery_rejected":
+      return "/admin/deliveries";
+    case "delivery_status":
+      return user?.is_courier && deliveryId
+        ? `/dashboard/deliveries?delivery=${deliveryId}`
+        : null;
+    default:
+      return null;
+  }
+}
 
 function useTimeAgo() {
   const { t } = useTranslation();
@@ -98,7 +121,7 @@ function NotificationList({ items, loading, onItemClick, onDelete }) {
     <NotificationRow
       key={it.id}
       item={it}
-      onClick={() => !it.read && onItemClick(it.id)}
+      onClick={() => onItemClick(it)}
       onDelete={onDelete}
     />
   ));
@@ -109,6 +132,7 @@ function NotificationList({ items, loading, onItemClick, onDelete }) {
 export default function NotificationBell() {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const {
     unreadCount, items, loading, loadList,
@@ -118,6 +142,18 @@ export default function NotificationBell() {
   const handleOpen = (next) => {
     setOpen(next);
     if (next) loadList();
+  };
+
+  // MEN-03 — tocar un aviso lo marca como leído (si no lo estaba) Y navega a
+  // su destino (p. ej. la entrega concreta). Un aviso YA leído también navega.
+  // Abrir el aviso nunca ejecuta acciones (no acepta ni rechaza nada).
+  const handleItemClick = (item) => {
+    if (!item.read) markRead(item.id);
+    const target = notificationTarget(item, user);
+    if (target) {
+      setOpen(false);
+      navigate(target);
+    }
   };
 
   if (!user) return null;
@@ -185,7 +221,7 @@ export default function NotificationBell() {
           className="max-h-[420px] overflow-y-auto notif-scroll"
           data-testid="notifications-scroll"
         >
-          <NotificationList items={items} loading={loading} onItemClick={markRead} onDelete={deleteOne} />
+          <NotificationList items={items} loading={loading} onItemClick={handleItemClick} onDelete={deleteOne} />
         </div>
       </PopoverContent>
     </Popover>
