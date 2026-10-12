@@ -54,6 +54,14 @@ PERMISSION_CATALOG: List[Dict[str, str]] = [
 
 VALID_CODES = {p["code"] for p in PERMISSION_CATALOG}
 
+# MEN-01 — Permisos SENSIBLES que NUNCA entran en el default de compatibilidad
+# "lista vacía = acceso total". Un empleado debe tenerlos concedidos de forma
+# EXPLÍCITA en su `allowed_permissions` (los admins siguen pasando siempre).
+# Esto separa "hacer entregas" (permiso `deliveries`) de "asignar/reservar
+# repartos a un mensajero" (`deliveries_assign`): un mensajero-empleado sin
+# concesión explícita NO debe poder autoasignarse ni delegar trabajos.
+EXPLICIT_GRANT_CODES = {"deliveries_assign"}
+
 
 def _has_permission(user: dict, code: str) -> bool:
     """Pure predicate — testable without HTTP context."""
@@ -62,10 +70,11 @@ def _has_permission(user: dict, code: str) -> bool:
         return True
     if role != "employee":
         return False
-    # Empty / missing list = "no restriction" (backward compatible default).
+    # Empty / missing list = "no restriction" (backward compatible default)…
     perms = user.get("allowed_permissions") or []
     if not perms:
-        return True
+        # …EXCEPTO los permisos sensibles que exigen concesión explícita (MEN-01).
+        return code not in EXPLICIT_GRANT_CODES
     return code in perms
 
 

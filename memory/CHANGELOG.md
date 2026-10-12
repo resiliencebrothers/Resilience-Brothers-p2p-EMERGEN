@@ -2086,3 +2086,13 @@ Causa: `test_iter358_pos_cobro.py` (previo a este trabajo) usa IDs de producto F
 Fix: fixture `scope="module", autouse` en `test_iter358_pos_cobro.py` que siembra AGUA/ARROZ de forma NO destructiva (`$setOnInsert`, upsert): en Cial crea los productos con stock amplio; en la DB local (donde son productos reales) NO toca su stock ni su nombre. Sin `unit` → el POS los trata por unidad (rechaza fracciones), igual que los reales. Verificado: iter358 pasa 7/7 contra DB fresca; suite crítica completa re-ejecutada contra DB fresca (reproducción fiel de CI).
 
 Nota de método: a partir de ahora, validar los cambios de tests contra DB fresca (`backend/ci_repro.sh`) y no solo contra la DB local acumulada, para no volver a enmascarar dependencias de datos.
+
+
+---
+## MEN-01 (fork 2026-06) — `deliveries_assign` exige concesión EXPLÍCITA (escalada de privilegios corregida)
+- **Causa raíz**: `services/permissions.py::_has_permission` otorgaba a los empleados con `allowed_permissions=[]` (o sin el campo) acceso TOTAL por compatibilidad hacia atrás — incluido `deliveries_assign`. Un mensajero-empleado sin concesión explícita podía asignar/reservar repartos (y el selector aparecía en la UI).
+- **Fix backend**: nuevo conjunto `EXPLICIT_GRANT_CODES = {"deliveries_assign"}`. La rama de lista vacía/ausente ahora devuelve `code not in EXPLICIT_GRANT_CODES`, así los permisos sensibles exigen concesión explícita mientras el resto de módulos conserva el default heredado. Admin pasa siempre; el panel personal del mensajero (`/courier/*`, gated por `_require_courier`/`is_courier`) no se toca.
+- **Fix frontend**: `AdminDeliveries.jsx::DeliveriesTab` calcula `canAssign = role==='admin' || allowed_permissions.includes('deliveries_assign')` y el selector de asignación (`assign-courier-{id}`) solo se renderiza si `canAssign`; en caso contrario muestra el destinatario en modo lectura. El empleado con lista vacía sigue viendo la página (permiso `deliveries`) pero sin el control de asignar.
+- **Tests**: `tests/test_men01_deliveries_assign_explicit_grant.py` (6/6: predicado puro para los 7 casos del informe + gate HTTP 403/400 sobre `/admin/deliveries/{id}/assign` para admin/empleado-vacío/empleado-solo-deliveries/empleado-con-grant/no-staff). Corregida la aserción obsoleta del catálogo en `test_iter55_16_permissions.py` (22→23, con `deliveries_assign`). ruff + mypy limpios.
+- **Verificación frontend**: smoke en `/admin/deliveries` — admin ve el selector "Asignar..."; empleado sin `deliveries_assign` ve "—" (solo lectura) y la página carga igual.
+- Estado: fix en preview; pendiente de re-despliegue a producción.

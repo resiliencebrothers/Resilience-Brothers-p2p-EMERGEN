@@ -82,13 +82,16 @@ def test_permissions_catalog_returns_13_items():
     # Baseline lifted from 18 → 19.
     # iter167 — `reconciliation` added for the bank reconciliation module.
     # Baseline lifted from 21 → 22 (iter202: deliveries/Mensajería).
+    # MEN-01 — `deliveries_assign` (separa asignar repartos de gestionarlos).
+    # Baseline lifted from 22 → 23.
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 22
+    assert len(items) == 23
     codes = {i["code"] for i in items}
     assert codes == {
-        "orders", "withdrawals", "deliveries", "kyc", "appeals", "products", "rates",
+        "orders", "withdrawals", "deliveries", "deliveries_assign", "kyc",
+        "appeals", "products", "rates",
         "currencies", "users", "company_funds", "blocked_contacts",
         "transactions", "quick_view", "profile_changes",
         "user_stats", "user_functions", "view_user_sensitive",

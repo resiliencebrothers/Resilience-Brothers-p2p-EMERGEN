@@ -3,6 +3,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
@@ -61,6 +62,13 @@ function DeliveryEta({ d, t }) {
 
 function DeliveriesTab({ navigate }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  // MEN-01 — asignar/reservar repartos exige el permiso EXPLÍCITO
+  // `deliveries_assign`. Admin siempre; empleado solo si lo tiene concedido
+  // en su lista (la lista vacía NO lo otorga). Un mensajero sin este permiso
+  // ve el destinatario en modo lectura, sin el selector de asignación.
+  const canAssign = user?.role === "admin"
+    || (user?.allowed_permissions || []).includes("deliveries_assign");
   const [rows, setRows] = useState([]);
   const [couriers, setCouriers] = useState([]);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -325,7 +333,7 @@ function DeliveriesTab({ navigate }) {
                   <div className="text-[0.6rem] text-[#22C55E]">{d.courier_share_usdt} / <span className="text-neutral-500">{d.platform_share_usdt}</span></div>
                 </td>
                 <td className="px-3 py-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                  {["available", "accepted"].includes(d.status) ? (
+                  {canAssign && ["available", "accepted"].includes(d.status) ? (
                     <Select value={d.courier_id || ""} onValueChange={(v) => assign(d, v)}>
                       <SelectTrigger className="h-8 w-[150px] rounded-none bg-[#0a0a0a] border-white/10 text-xs" data-testid={`assign-courier-${d.id}`}>
                         <SelectValue placeholder={t("admin.deliveries.assignPlaceholder")} />
