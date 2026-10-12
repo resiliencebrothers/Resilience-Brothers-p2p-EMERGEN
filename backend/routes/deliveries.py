@@ -1126,7 +1126,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     push, y luego tiene que tocar 'Aceptar' en su panel para pasar a
     `accepted`. Así el mensajero confirma antes de que la orden se le
     contabilice como en curso."""
-    actor = await require_permission(request, "deliveries")
+    actor = await require_permission(request, "deliveries_assign")
     courier_id = payload.get("courier_id")
     if not courier_id:
         raise HTTPException(status_code=400, detail="courier_id requerido")
@@ -1137,19 +1137,45 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     d = await db.deliveries.find_one({"id": did}, {"_id": 0})
     if not d:
         raise HTTPException(status_code=404, detail="No encontrado")
-    if d["status"] not in ("available", "accepted"):
+    # Mejora mensajería #2 — una entrega YA ACEPTADA por un mensajero no se
+    # reasigna: hay que cancelarla o esperar a que la rechace. Evita quitarle
+    # el trabajo a alguien que ya lo tomó.
+    if d["status"] == "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail=("Esta entrega ya fue aceptada por un mensajero. Para "
+                    "cambiarla, cancélala o espera a que la rechace."))
+    if d["status"] != "available":
         raise HTTPException(status_code=409,
-                            detail=f"No se puede reasignar en estado {d['status']}")
+                            detail=f"No se puede asignar en estado {d['status']}")
+    # Mejora mensajería #2 — si YA está reservada para otro mensajero (y aún no
+    # la rechazó), NO se puede reasignar a un tercero. El mensajero reservado
+    # debe rechazarla primero (o el admin cancelar la entrega).
+    current_reserved = d.get("assigned_to_courier_id")
+    if current_reserved and current_reserved != courier_id:
+        other = await db.users.find_one({"user_id": current_reserved},
+                                        {"_id": 0, "name": 1, "email": 1})
+        oname = (other or {}).get("name") or (other or {}).get("email") \
+            or "otro mensajero"
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Esta entrega ya está asignada a {oname}. Debe rechazarla "
+                    "antes de poder asignarla a otro mensajero."))
     now = iso(now_utc())
     courier_display = courier.get("name") or courier.get("email")
     # ME02 — reasignación condicionada al estado leído: no puede revivir
     # entregas canceladas/confirmadas que cambiaron entre lectura y escritura.
+    # Mejora mensajería #2 — el filtro ATÓMICO exige que la reserva siga libre
+    # o sea la del mismo mensajero: cierra la ventana de dos admins reservando
+    # a mensajeros distintos a la vez.
     # MSG08 — la ubicación GPS del mensajero anterior se INVALIDA al
     # reasignar: el nuevo mensajero no hereda coordenadas ajenas.
     res = await db.deliveries.update_one(
-        {"id": did, "status": {"$in": ["available", "accepted"]},
+        {"id": did, "status": "available",
          # MV02 — no reservar repartos pendientes de validar.
-         "needs_origin_check": {"$ne": True}}, {
+         "needs_origin_check": {"$ne": True},
+         "$or": [{"assigned_to_courier_id": {"$in": [None, "", courier_id]}},
+                 {"assigned_to_courier_id": {"$exists": False}}]}, {
             "$set": {"status": "available",
                      "assigned_to_courier_id": courier_id,
                      "courier_id": None,
@@ -1161,8 +1187,10 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
                                    "note": f"Reservada para {courier_display} — pendiente de aceptación"}},
         })
     if res.matched_count == 0:
-        raise HTTPException(status_code=409,
-                            detail="La entrega cambió de estado; recarga.")
+        raise HTTPException(
+            status_code=409,
+            detail=("La entrega cambió de estado o fue reservada para otro "
+                    "mensajero; recarga."))
     # MSG10 — el mensajero nuevo (y el anterior, si existía) ven el cambio
     # en vivo sin recargar el panel.
     try:
