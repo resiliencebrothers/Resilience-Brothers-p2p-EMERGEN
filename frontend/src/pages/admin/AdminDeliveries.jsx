@@ -19,10 +19,11 @@ import CourierPanel from "@/pages/dashboard/CourierPanel";
 
 // iter199 — Admin: gestión de entregas de mensajería + alta de mensajeros.
 
-const STATUSES = ["available", "accepted", "on_the_way", "arrived", "delivered", "confirmed", "cancelled"];
+const STATUSES = ["available", "assigned", "accepted", "on_the_way", "arrived", "delivered", "confirmed", "cancelled"];
 
 const STATUS_COLOR = {
   available: "text-neutral-400",
+  assigned: "text-[#EAB308]",
   accepted: "text-[#8B5CF6]",
   on_the_way: "text-amber-300",
   arrived: "text-sky-300",
@@ -246,6 +247,7 @@ function DeliveriesTab({ navigate }) {
             <div className="text-[0.65rem] text-neutral-500 mt-0.5">
               {t("admin.deliveries.summary.activeDetail", {
                 available: summary.available_count,
+                assigned: summary.assigned_count || 0,
                 pending: summary.delivered_pending_count,
               })}
             </div>
@@ -334,7 +336,7 @@ function DeliveriesTab({ navigate }) {
                 </td>
                 <td className="px-3 py-3 text-xs" onClick={(e) => e.stopPropagation()}>
                   {canAssign && ["available", "accepted"].includes(d.status) ? (
-                    <Select value={d.courier_id || ""} onValueChange={(v) => assign(d, v)}>
+                    <Select value={d.assigned_to_courier_id || d.courier_id || ""} onValueChange={(v) => assign(d, v)}>
                       <SelectTrigger className="h-8 w-[150px] rounded-none bg-[#0a0a0a] border-white/10 text-xs" data-testid={`assign-courier-${d.id}`}>
                         <SelectValue placeholder={t("admin.deliveries.assignPlaceholder")} />
                       </SelectTrigger>
@@ -344,10 +346,20 @@ function DeliveriesTab({ navigate }) {
                         ))}
                       </SelectContent>
                     </Select>
-                  ) : (d.courier_name || "—")}
+                  ) : (d.assigned_to_courier_name || d.courier_name || "—")}
                 </td>
-                <td className={`px-3 py-3 text-xs uppercase tracking-wider ${STATUS_COLOR[d.status] || ""}`}>
-                  {t(`courierPanel.status.${d.status}`)}
+                <td className={`px-3 py-3 text-xs uppercase tracking-wider ${STATUS_COLOR[d.display_status || d.status] || ""}`}>
+                  {d.display_status === "assigned"
+                    ? t("admin.deliveries.assignedPending")
+                    : t(`courierPanel.status.${d.status}`)}
+                  {d.display_status === "assigned" && (
+                    <div
+                      className="normal-case tracking-normal text-[0.65rem] text-[#EAB308] mt-1"
+                      data-testid={`admin-assigned-to-${d.id}`}
+                    >
+                      {t("admin.deliveries.assignedTo", { name: d.assigned_to_courier_name || "—" })}
+                    </div>
+                  )}
                   {d.has_open_incident && (
                     <div className="normal-case tracking-normal text-[0.65rem] text-amber-300 mt-1" data-testid={`admin-incident-badge-${d.id}`}>
                       ⚠ {t("admin.deliveries.openIncident")}

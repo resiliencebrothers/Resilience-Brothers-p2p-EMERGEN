@@ -17,6 +17,7 @@ import { MapPin, Truck, Clock, User, Package, DollarSign, Copy, KeyRound, AlertT
 
 const STATUS_COLOR = {
   available: "text-neutral-400",
+  assigned: "text-[#EAB308]",
   accepted: "text-[#8B5CF6]",
   on_the_way: "text-amber-300",
   arrived: "text-sky-300",
@@ -164,8 +165,10 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
           <DialogTitle className="flex items-center gap-2">
             <Truck className="w-5 h-5 text-[#8B5CF6]" />
             {t("admin.deliveries.detailsTitle")} · #{d.id?.slice(0, 8)}
-            <span className={`ml-2 text-[0.65rem] uppercase tracking-wider font-mono ${STATUS_COLOR[d.status] || ""}`}>
-              {t(`courierPanel.status.${d.status}`)}
+            <span className={`ml-2 text-[0.65rem] uppercase tracking-wider font-mono ${STATUS_COLOR[d.display_status || d.status] || ""}`}>
+              {d.display_status === "assigned"
+                ? t("admin.deliveries.assignedPending")
+                : t(`courierPanel.status.${d.status}`)}
             </span>
           </DialogTitle>
         </DialogHeader>
@@ -376,8 +379,12 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
 
           <Section icon={Truck} title={t("admin.deliveries.detailsCourier")}>
             <Row label={t("admin.deliveries.colCourier")}
-                 value={d.courier_name || "—"} testid="dd-courier-name" />
-            <Row label="Courier ID" value={d.courier_id || "—"} mono testid="dd-courier-id" />
+                 value={d.courier_name || d.assigned_to_courier_name || "—"} testid="dd-courier-name" />
+            {d.display_status === "assigned" && (
+              <Row label={t("admin.deliveries.assignedPending")}
+                   value={d.assigned_to_courier_name || "—"} testid="dd-assigned-to" />
+            )}
+            <Row label="Courier ID" value={d.courier_id || d.assigned_to_courier_id || "—"} mono testid="dd-courier-id" />
             {d.courier_location && (
               <Row label={t("admin.deliveries.detailsCourierLoc")}
                    value={`${d.courier_location.lat}, ${d.courier_location.lon}`}

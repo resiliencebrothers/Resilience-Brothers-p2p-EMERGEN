@@ -2546,3 +2546,14 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 - **Tests**: `tests/test_men01_deliveries_assign_explicit_grant.py` (6/6: predicado puro para los 7 casos del informe + gate HTTP 403/400 sobre `/admin/deliveries/{id}/assign` para admin/empleado-vacío/empleado-solo-deliveries/empleado-con-grant/no-staff). Corregida la aserción obsoleta del catálogo en `test_iter55_16_permissions.py` (22→23, con `deliveries_assign`). ruff + mypy limpios.
 - **Verificación frontend**: smoke en `/admin/deliveries` — admin ve el selector "Asignar..."; empleado sin `deliveries_assign` ve "—" (solo lectura) y la página carga igual.
 - Estado: fix en preview; pendiente de re-despliegue a producción.
+
+
+---
+## MEN-02 (fork 2026-06) — Estado derivado «ASIGNADA» (reservada, pendiente de aceptación)
+- **Causa**: al reservar una entrega para un mensajero quedaba `status=available` con `courier_id` vacío; el filtro admin «available» la seguía devolviendo, la tabla la mostraba como DISPONIBLE y no se veía el destinatario.
+- **Diseño**: estado DERIVADO (no se toca el `status` almacenado — el flujo aceptar/rechazar sigue operando sobre `available`). Una entrega es «assigned» cuando `status=available` + `assigned_to_courier_id` presente + `needs_origin_check != True` (mismo criterio que `find_attention_items` y la cola del mensajero).
+- **Backend (`routes/deliveries.py`)**: helpers `_is_reserved` / `_derive_display_status`; `GET /admin/deliveries` acepta `?status=assigned` (solo reservadas) y `?status=available` ahora excluye las reservadas, y enriquece cada fila con `display_status` + resuelve `assigned_to_courier_name` para reservas antiguas; `admin_assign_delivery` persiste `assigned_to_courier_name`; `claim`/`reject-reservation` lo limpian; `admin_deliveries_summary` separa `available_count` (libres) y nuevo `assigned_count`.
+- **Frontend (`AdminDeliveries.jsx` + `DeliveryDetailsDialog.jsx`)**: nuevo filtro «Asignada»; etiqueta «ASIGNADA — PENDIENTE DE ACEPTACIÓN» (amarillo) + sub-línea «Reservada para {name}» (`admin-assigned-to-{id}`); el selector resuelve `assigned_to_courier_id`; tarjeta resumen muestra «… · {{assigned}} asignadas · …». i18n es/en (`courierPanel.status.assigned`, `admin.deliveries.assignedPending/assignedTo`, `summary.activeDetail`).
+- **Conservado**: bloqueo de aceptación de terceros y de reasignación de una entrega ya aceptada/reservada-para-otro (409). Vuelve a `available` solo tras rechazo del mensajero.
+- **Tests**: `test_men02_assigned_display_state.py` (5/5: exclusión de libres + filtro assigned + display_status + destinatario + contadores + bloqueo tercero + rechazo→libre + resolución de nombre legacy). Actualizado `test_iter288::test_msg08` (stale: ahora refleja el bloqueo de reasignación + GPS limpiado al reservar una libre). Regresión mensajería 84/84. ruff + mypy limpios. Smoke UI verificado.
+- Estado: en preview; pendiente de re-despliegue a producción.

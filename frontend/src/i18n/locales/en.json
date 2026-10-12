@@ -688,7 +688,7 @@
         "platformEarnedOn": "Platform earned — {{d}}",
         "splitNote": "Company share (20%)",
         "activeNow": "Active right now",
-        "activeDetail": "{{available}} available · {{pending}} to confirm",
+        "activeDetail": "{{available}} available · {{assigned}} assigned · {{pending}} to confirm",
         "noneToday": "No confirmed deliveries today",
         "dateLabel": "Day",
         "todayBtn": "Back to today"
@@ -725,6 +725,8 @@
       "colCompleted": "Completed",
       "assignPlaceholder": "Assign…",
       "assigned": "Delivery assigned",
+      "assignedPending": "Assigned — awaiting acceptance",
+      "assignedTo": "Reserved for {{name}}",
       "confirmBtn": "Confirm",
       "confirmed": "Delivery confirmed — payout credited to courier",
       "cancelled": "Delivery cancelled",
@@ -2853,6 +2855,7 @@
     "kindDeposit": "Cash pickup",
     "status": {
       "available": "Available",
+      "assigned": "Assigned",
       "accepted": "Accepted",
       "on_the_way": "On the way",
       "arrived": "At location",

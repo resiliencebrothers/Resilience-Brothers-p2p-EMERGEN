@@ -688,7 +688,7 @@
         "platformEarnedOn": "Ganancia plataforma — {{d}}",
         "splitNote": "Parte de la empresa (20%)",
         "activeNow": "En curso ahora",
-        "activeDetail": "{{available}} disponibles · {{pending}} por confirmar",
+        "activeDetail": "{{available}} disponibles · {{assigned}} asignadas · {{pending}} por confirmar",
         "noneToday": "Sin entregas confirmadas hoy",
         "dateLabel": "Jornada",
         "todayBtn": "Volver a hoy"
@@ -725,6 +725,8 @@
       "colCompleted": "Completadas",
       "assignPlaceholder": "Asignar…",
       "assigned": "Entrega asignada",
+      "assignedPending": "Asignada — pendiente de aceptación",
+      "assignedTo": "Reservada para {{name}}",
       "confirmBtn": "Confirmar",
       "confirmed": "Entrega confirmada — pago acreditado al mensajero",
       "cancelled": "Entrega cancelada",
@@ -2853,6 +2855,7 @@
     "kindDeposit": "Recogida de efectivo",
     "status": {
       "available": "Disponible",
+      "assigned": "Asignada",
       "accepted": "Aceptada",
       "on_the_way": "En camino",
       "arrived": "En el punto",

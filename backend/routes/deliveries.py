@@ -53,6 +53,26 @@ def _strip_courier_secret(doc: Any) -> Any:
     return doc
 
 
+def _is_reserved(d: dict) -> bool:
+    """MEN-02 — una entrega `available` RESERVADA para un mensajero concreto
+    (tiene `assigned_to_courier_id`) y ya validada contra su origen. Es el
+    MISMO criterio que usa `find_attention_items` y la cola del mensajero."""
+    return bool(
+        d.get("status") == "available"
+        and (d.get("assigned_to_courier_id") or "")
+        and not d.get("needs_origin_check"))
+
+
+def _derive_display_status(d: dict) -> str:
+    """MEN-02 — estado DERIVADO para la UI del admin: una entrega reservada se
+    muestra como `assigned` (Asignada — pendiente de aceptación). NO cambia el
+    `status` almacenado: el flujo aceptar/rechazar sigue operando sobre
+    `available`, igual que antes."""
+    if _is_reserved(d):
+        return "assigned"
+    return d.get("status") or ""
+
+
 # ------------------------------------------------------------------
 # Courier endpoints
 # ------------------------------------------------------------------
@@ -169,6 +189,15 @@ async def admin_deliveries_summary(request: Request,
         {"$group": {"_id": "$status", "n": {"$sum": 1}}},
     ]).to_list(10)
     active_counts = {r["_id"]: r["n"] for r in active}
+    # MEN-02 — "disponible" se reparte en LIBRES vs RESERVADAS (asignadas,
+    # pendientes de aceptación). Mismo criterio que la cola y el listado.
+    free_count = await db.deliveries.count_documents({
+        "status": "available", "needs_origin_check": {"$ne": True},
+        "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
+                {"assigned_to_courier_id": {"$exists": False}}]})
+    assigned_count = await db.deliveries.count_documents({
+        "status": "available", "needs_origin_check": {"$ne": True},
+        "assigned_to_courier_id": {"$nin": [None, ""]}})
     rows = sorted(
         ({"courier_name": (g.get("courier_name") or "—").split(" ")[0],
           "count": int(g.get("count") or 0),
@@ -185,7 +214,8 @@ async def admin_deliveries_summary(request: Request,
                                           for g in groups), 2),
         "active_count": sum(active_counts.get(s, 0) for s in
                             ("accepted", "on_the_way", "arrived")),
-        "available_count": active_counts.get("available", 0),
+        "available_count": free_count,
+        "assigned_count": assigned_count,
         "delivered_pending_count": active_counts.get("delivered", 0),
         "by_courier": rows,
     }
@@ -348,6 +378,7 @@ async def claim_delivery(did: str, request: Request) -> Any:
         {"$set": {"status": "accepted", "courier_id": me["user_id"],
                   "courier_name": me.get("name") or me.get("email"),
                   "assigned_to_courier_id": None,
+                  "assigned_to_courier_name": None,
                   "updated_at": now},
          "$push": {"timeline": {"status": "accepted", "at": now,
                                 "by": me["user_id"]}}},
@@ -438,7 +469,8 @@ async def reject_reservation(did: str, payload: dict, request: Request) -> Any:
     res = await db.deliveries.update_one(
         {"id": did, "status": "available",
          "assigned_to_courier_id": me["user_id"]}, {
-            "$set": {"assigned_to_courier_id": None, "updated_at": now},
+            "$set": {"assigned_to_courier_id": None,
+                     "assigned_to_courier_name": None, "updated_at": now},
             "$push": {"timeline": {
                 "status": "available", "at": now, "by": me["user_id"],
                 "note": f"Reserva rechazada por {courier_name}: {reason}"}},
@@ -1027,13 +1059,41 @@ async def admin_list_deliveries(request: Request, status: Optional[str] = None,
                                 incident: Optional[str] = None) -> Any:
     await require_permission(request, "deliveries")
     q: dict = {}
-    if status:
+    if status == "assigned":
+        # MEN-02 — estado DERIVADO: reservadas pendientes de aceptación.
+        q["status"] = "available"
+        q["needs_origin_check"] = {"$ne": True}
+        q["assigned_to_courier_id"] = {"$nin": [None, ""]}
+    elif status == "available":
+        # MEN-02 — "Disponible" = SOLO las realmente libres (excluye las
+        # reservadas, que ahora viven en el filtro "Asignada").
+        q["status"] = "available"
+        q["$or"] = [{"assigned_to_courier_id": {"$in": [None, ""]}},
+                    {"assigned_to_courier_id": {"$exists": False}}]
+    elif status:
         q["status"] = status
     if courier_id:
         q["courier_id"] = courier_id
     if incident == "open":
         q["has_open_incident"] = True
     rows = await db.deliveries.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # MEN-02 — marcar el estado derivado y resolver el nombre del mensajero
+    # reservado para las reservas ANTIGUAS que no lo tengan persistido.
+    missing_ids = {d.get("assigned_to_courier_id") for d in rows
+                   if _is_reserved(d) and not d.get("assigned_to_courier_name")}
+    missing_ids.discard(None)
+    missing_ids.discard("")
+    name_by_id: dict = {}
+    if missing_ids:
+        async for u in db.users.find(
+                {"user_id": {"$in": list(missing_ids)}},
+                {"_id": 0, "user_id": 1, "name": 1, "email": 1}):
+            name_by_id[u["user_id"]] = u.get("name") or u.get("email")
+    for d in rows:
+        d["display_status"] = _derive_display_status(d)
+        if d["display_status"] == "assigned" and not d.get("assigned_to_courier_name"):
+            d["assigned_to_courier_name"] = name_by_id.get(
+                d.get("assigned_to_courier_id"))
     return rows
 
 
@@ -1178,6 +1238,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
                  {"assigned_to_courier_id": {"$exists": False}}]}, {
             "$set": {"status": "available",
                      "assigned_to_courier_id": courier_id,
+                     "assigned_to_courier_name": courier_display,
                      "courier_id": None,
                      "courier_name": None,
                      "updated_at": now},

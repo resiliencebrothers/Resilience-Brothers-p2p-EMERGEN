@@ -595,8 +595,28 @@ def test_msg07_old_reservation_survives_50_newer_open_jobs():
 # ============================================================
 
 def test_msg08_reassign_clears_previous_courier_location():
-    did, _ = _plant_delivery(
+    # MEN-02 — una entrega YA ACEPTADA no se reasigna directamente (hay que
+    # cancelarla o esperar el rechazo): la protección contra robo de trabajo
+    # se conserva. El admin recibe 409.
+    did_acc, _ = _plant_delivery(
         status="accepted", courier_id=COURIER_A,
+        extra={"courier_location": {"lat": 23.1, "lon": -82.3,
+                                    "updated_at": _iso()}})
+    r = requests.post(f"{API}/admin/deliveries/{did_acc}/assign", headers=_hdr(),
+                      json={"courier_id": COURIER_B}, timeout=15)
+    assert r.status_code == 409, r.text
+
+    # La reasignación a OTRO mensajero también está bloqueada mientras siga
+    # reservada (debe rechazarla primero): 409.
+    did_res, _ = _plant_delivery(status="available", assigned_to=COURIER_A)
+    r = requests.post(f"{API}/admin/deliveries/{did_res}/assign", headers=_hdr(),
+                      json={"courier_id": COURIER_B}, timeout=15)
+    assert r.status_code == 409, r.text
+
+    # MSG08: al RESERVAR una entrega libre con ubicación GPS residual, se
+    # limpia la ubicación del mensajero anterior.
+    did, _ = _plant_delivery(
+        status="available",
         extra={"courier_location": {"lat": 23.1, "lon": -82.3,
                                     "updated_at": _iso()}})
     r = requests.post(f"{API}/admin/deliveries/{did}/assign", headers=_hdr(),
