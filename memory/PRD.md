@@ -2557,3 +2557,22 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 - **Conservado**: bloqueo de aceptación de terceros y de reasignación de una entrega ya aceptada/reservada-para-otro (409). Vuelve a `available` solo tras rechazo del mensajero.
 - **Tests**: `test_men02_assigned_display_state.py` (5/5: exclusión de libres + filtro assigned + display_status + destinatario + contadores + bloqueo tercero + rechazo→libre + resolución de nombre legacy). Actualizado `test_iter288::test_msg08` (stale: ahora refleja el bloqueo de reasignación + GPS limpiado al reservar una libre). Regresión mensajería 84/84. ruff + mypy limpios. Smoke UI verificado.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+---
+## MEN-03 + Historial + Auditoría (fork 2026-06) — Mensajería: recorrido del aviso, sección propia y trazabilidad
+**MEN-03 — Panel del Mensajero (`CourierPanel.jsx`)**
+- Nueva sección **"Asignadas a mí — por aceptar"** (`courier-assigned-to-me`) separada de "Trabajos libres" (`courier-free-jobs-title`). Las reservas propias YA NO se ocultan con los filtros de tipo/zona (esos filtros ahora aplican solo a la cola libre). Corrige el bug: una reserva en La Habana desaparecía al filtrar por depósitos/Matanzas.
+- Botones de TEXTO claros en la tarjeta reservada: **"Aceptar entrega"** (`claim-delivery-{id}`) + **"Rechazar entrega"** (`reject-reservation-{id}`), en vez del icono X.
+- **Deep-link del aviso**: `/dashboard/deliveries?delivery=<id>` abre el panel, comprueba el estado vigente con datos frescos, selecciona la pestaña correcta y RESALTA la tarjeta (anillo amarillo). Si ya no existe/ya se gestionó → toast `courierPanel.deepLinkGone`. Abrir NUNCA acepta automáticamente.
+- **`NotificationBell.jsx`**: tocar un aviso ahora (a) lo marca leído si procede y (b) NAVEGA a su destino (`delivery_assigned` → `/dashboard/deliveries?delivery=<id>`). Un aviso YA leído también navega (antes no hacía nada). Helper `notificationTarget(item,user)`.
+- **Backend `routes/deliveries.py`**: el push de asignación ahora apunta a `/dashboard/deliveries?delivery=<did>`.
+
+**Historial Separado (`AdminDeliveries.jsx`)**
+- `DeliveriesTab` parametrizado con `historyMode`. Nueva pestaña **"Historial"** (`admin-tab-history`): la vista "Entregas" usa `status=active` (excluye confirmadas/canceladas) y el Historial usa `status=history` (solo confirmadas/canceladas). Backend: `GET /admin/deliveries?status=active|history`.
+
+**Auditoría de Asignación (`DeliveryDetailsDialog.jsx`)**
+- El detalle muestra **"Asignada por {nombre} · {fecha}"** (`dd-assigned-by`). Backend: `admin_assign_delivery` persiste `assigned_by` / `assigned_by_name` / `assigned_at`.
+
+**Tests**: `test_men03_assign_audit_and_history_filter.py` (3/3: auditoría + filtros active/history) + MEN-01/02 (12) = 15/15. Regresión mensajería 93/93. ruff + mypy limpios. **testing_agent frontend 8/8 PASS (100%)** (iteration_360.json): sección aislada de filtros, botones texto, deep-link highlight + toast, campana navega (leídos y no leídos), Historial segregado, auditoría visible, MEN-01/02 sin regresión. i18n es/en.
+- Estado: en preview; pendiente de re-despliegue a producción.

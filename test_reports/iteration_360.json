@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend regression for MEN-03 (CourierPanel) + Historial Separado + Auditoría de Asignación + MEN-01/MEN-02 visual regression. All 8 verification points PASS. Tested with session_token=men03_vip (VIP mensajero) and session_token=men03_admin (admin) on desktop 1920x1080.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "MEN-03_courier_assigned_section": "PASS - [data-testid=courier-assigned-to-me] present; reserved card [data-testid=delivery-card-men03smoke_res] visible alongside [data-testid=courier-free-jobs-title].",
+    "MEN-03_text_buttons": "PASS - 'Aceptar entrega' ([data-testid=claim-delivery-men03smoke_res]) and 'Rechazar entrega' ([data-testid=reject-reservation-men03smoke_res]) are visible text buttons on the reserved card.",
+    "MEN-03_filter_isolation": "PASS - Applying 'Retiro en efectivo' kind filter on Trabajos libres hid the free (Recogida/deposit) card but KEPT the reserved card visible. Applying 'Matanzas' zone filter kept both visible (reserved is La Habana → in Asignadas a mí section which is NOT filtered; free is Matanzas).",
+    "MEN-03_deep_link_highlight": "PASS - /dashboard/deliveries?delivery=men03smoke_res opens with the card classes containing 'ring-2 ring-[#EAB308] shadow-[0_0_24px_rgba(234,179,8,0.25)]' (yellow ring). Opening the deep link did NOT auto-accept the delivery.",
+    "MEN-03_deep_link_gone_toast": "PASS - /dashboard/deliveries?delivery=nonexistent_xxx shows Sonner toast 'Esta entrega ya no está disponible o ya fue gestionada.' (courierPanel.deepLinkGone i18n).",
+    "MEN-03_notification_bell": "PASS - Clicking a 'Nueva entrega asignada' notification item ([data-testid=notification-item-<id>]) navigates to /dashboard/deliveries?delivery=<delivery_id>. When the referenced delivery no longer exists, the deepLinkGone toast is shown (expected). Both read and unread items navigate.",
+    "Historial_Separado": "PASS - [data-testid=admin-tab-deliveries] and [data-testid=admin-tab-history] both present. Entregas tab shows 'Reservada Smoke' (reserved/active) and does NOT show 'Confirmada Smoke' / 'Cancelada Smoke'. Historial tab shows the confirmed and cancelled entries with filter chips 'Todas / Confirmada / Cancelada', and does NOT include the reserved entry.",
+    "Auditoria_asignacion": "PASS - Clicking a reserved delivery row opens [data-testid=delivery-details-dialog]; the fila [data-testid=dd-assigned-by] shows 'ASIGNADA POR Admin Test · 10/12/2026, 4:06:55 PM'.",
+    "MEN-02_visual_regression": "PASS - Reserved delivery row shows 'ASIGNADA — PENDIENTE DE ACEPTACIÓN' badge with sub-line 'Reservada para VIP Test' ([data-testid=admin-assigned-to-men03smoke_res]); filter [data-testid=deliveries-filter-assigned] present.",
+    "MEN-01_visual_regression": "PASS - Admin sees [data-testid=assign-courier-men03smoke_free] selector on the free delivery row."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped (per request)", "frontend": "100% (8/8 verification points)"},
+  "test_credentials": "Cookie session_token=men03_vip (user_test_vip01, courier), session_token=men03_admin (user_test_admin01, admin). Both work via withCredentials.",
+  "seed_data_creation": "No new seed data created; used pre-seeded men03smoke_res / men03smoke_free / men03smoke_done / men03smoke_cxl.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "MEN-03 frontend fully green. CourierPanel section 'Asignadas a mí' is isolated from kind/zone filters as designed. Deep-link highlight + gone-toast work. NotificationBell navigates for both delivery_assigned (new behavior) and already-read items. Admin Historial tab is correctly segregated from Entregas. dd-assigned-by audit row renders name + localized date."
+}
