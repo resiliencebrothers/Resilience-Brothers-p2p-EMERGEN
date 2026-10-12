@@ -2126,3 +2126,11 @@ Nota de método: a partir de ahora, validar los cambios de tests contra DB fresc
 
 **Tests**: `test_men03_assign_audit_and_history_filter.py` (3/3: auditoría + filtros active/history) + MEN-01/02 (12) = 15/15. Regresión mensajería 93/93. ruff + mypy limpios. **testing_agent frontend 8/8 PASS (100%)** (iteration_360.json): sección aislada de filtros, botones texto, deep-link highlight + toast, campana navega (leídos y no leídos), Historial segregado, auditoría visible, MEN-01/02 sin regresión. i18n es/en.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+---
+## Aviso de Reserva Lenta + verificación "tomar disponible" (fork 2026-06)
+- **Aviso de reserva lenta (admin `AdminDeliveries.jsx`)**: en la vista activa (incl. filtro "Asignada") las reservas que el mensajero no acepta hace > `RESERVATION_STALL_MIN` (30 min) se RESALTAN: badge ámbar "⏰ Sin aceptar hace +{min} min" (`admin-stale-reservation-{id}`) bajo "Reservada para {name}" + acento ámbar en la fila. Reutiliza `/admin/deliveries/attention` (`find_attention_items.unanswered_reservations` + `thresholds.reservation_min`) ya consumido por el tab. Sin cambios de backend.
+- **Verificado: un mensajero puede TOMAR una entrega disponible NO asignada** (cola libre → "Tomar entrega" → `POST /courier/deliveries/{id}/claim` → `accepted` a su nombre). Test `test_courier_can_claim_unassigned_available_delivery`.
+- **Tests**: `test_men03_*` ahora 5/5 (incluye claim-unassigned + detección de reserva lenta vía attention). ruff + mypy limpios. Smoke UI confirmado: badge en la reserva de 45 min, ausente en la reciente.
+- Estado: en preview; pendiente de re-despliegue a producción.

@@ -729,6 +729,7 @@
       "assignedPending": "Asignada — pendiente de aceptación",
       "assignedTo": "Reservada para {{name}}",
       "assignedBy": "Asignada por",
+      "staleReservation": "Sin aceptar hace +{{min}} min",
       "confirmBtn": "Confirmar",
       "confirmed": "Entrega confirmada — pago acreditado al mensajero",
       "cancelled": "Entrega cancelada",

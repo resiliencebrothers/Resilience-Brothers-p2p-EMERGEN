@@ -729,6 +729,7 @@
       "assignedPending": "Assigned — awaiting acceptance",
       "assignedTo": "Reserved for {{name}}",
       "assignedBy": "Assigned by",
+      "staleReservation": "Unaccepted for +{{min}} min",
       "confirmBtn": "Confirm",
       "confirmed": "Delivery confirmed — payout credited to courier",
       "cancelled": "Delivery cancelled",

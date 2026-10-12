@@ -109,3 +109,40 @@ def test_history_filter_returns_only_completed_and_cancelled():
     finally:
         _db().deliveries.delete_many(
             {"id": {"$in": [did_active, did_done, did_cancel]}})
+
+
+def test_courier_can_claim_unassigned_available_delivery():
+    """Un mensajero puede TOMAR una entrega disponible que aún NO está
+    asignada a nadie (cola libre). Pasa a 'accepted' a su nombre."""
+    from tests.conftest import VIP_TOKEN
+    _ensure_vip_courier()
+    did = _mk_delivery(status="available")  # sin assigned_to_courier_id
+    try:
+        r = requests.post(f"{API}/courier/deliveries/{did}/claim",
+                          headers=_hdr(VIP_TOKEN), timeout=15)
+        assert r.status_code == 200, r.text
+        doc = _db().deliveries.find_one({"id": did})
+        assert doc["status"] == "accepted"
+        assert doc["courier_id"] == VIP_ID
+    finally:
+        _db().deliveries.delete_one({"id": did})
+
+
+def test_attention_flags_stale_reservation():
+    """Aviso de reserva lenta: una reserva sin aceptar hace > 30 min aparece
+    en unanswered_reservations del endpoint /admin/deliveries/attention."""
+    from datetime import timedelta
+    _ensure_vip_courier()
+    old = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+    did = _mk_delivery(status="available", assigned_to_courier_id=VIP_ID,
+                       assigned_to_courier_name="VIP Test", updated_at=old)
+    try:
+        r = requests.get(f"{API}/admin/deliveries/attention",
+                         headers=_hdr(ADMIN_TOKEN), timeout=15)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        ids = {x["id"] for x in body.get("unanswered_reservations", [])}
+        assert did in ids
+        assert body["thresholds"]["reservation_min"] == 30
+    finally:
+        _db().deliveries.delete_one({"id": did})

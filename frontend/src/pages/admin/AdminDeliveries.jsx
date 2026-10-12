@@ -85,6 +85,12 @@ function DeliveriesTab({ navigate, historyMode = false }) {
   const [summaryDate, setSummaryDate] = useState(todayStr);
   // Mejora #4 — reservas sin respuesta y trabajos detenidos.
   const [attention, setAttention] = useState(null);
+  // "Aviso de reserva lenta" — reservas asignadas que el mensajero no acepta
+  // hace más de X min (el backend las detecta en find_attention_items). Se
+  // resaltan en la vista (sobre todo en el filtro "Asignada").
+  const staleReservationIds = new Set(
+    (attention?.unanswered_reservations || []).map((d) => d.id));
+  const reservationMin = attention?.thresholds?.reservation_min;
 
   const load = useCallback(() => {
     const params = statusFilter === "all"
@@ -311,7 +317,9 @@ function DeliveriesTab({ navigate, historyMode = false }) {
             {rows.map((d) => (
               <tr
                 key={d.id}
-                className="border-b border-white/5 hover:bg-white/[0.02] cursor-pointer transition-colors"
+                className={`border-b border-white/5 hover:bg-white/[0.02] cursor-pointer transition-colors ${
+                  staleReservationIds.has(d.id) ? "bg-amber-500/[0.06] border-l-2 border-l-amber-400" : ""
+                }`}
                 data-testid={`delivery-row-${d.id}`}
                 onClick={() => setDetailsRow(d)}
               >
@@ -367,6 +375,14 @@ function DeliveriesTab({ navigate, historyMode = false }) {
                       data-testid={`admin-assigned-to-${d.id}`}
                     >
                       {t("admin.deliveries.assignedTo", { name: d.assigned_to_courier_name || "—" })}
+                    </div>
+                  )}
+                  {d.display_status === "assigned" && staleReservationIds.has(d.id) && (
+                    <div
+                      className="normal-case tracking-normal text-[0.65rem] text-amber-300 mt-1 inline-flex items-center gap-1 animate-pulse"
+                      data-testid={`admin-stale-reservation-${d.id}`}
+                    >
+                      ⏰ {t("admin.deliveries.staleReservation", { min: reservationMin })}
                     </div>
                   )}
                   {d.has_open_incident && (
