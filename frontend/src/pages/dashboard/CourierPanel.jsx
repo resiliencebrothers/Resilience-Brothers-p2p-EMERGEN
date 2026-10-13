@@ -250,17 +250,31 @@ export default function CourierPanel({ embedded = false }) {
   const [histTotal, setHistTotal] = useState(0);
   const [histLoading, setHistLoading] = useState(false);
   const histPageRef = useRef(0);
+  const histReqRef = useRef(0);
   const HIST_PAGE = 25;
   const loadHistory = useCallback((reset) => {
     const pg = reset ? 0 : histPageRef.current;
+    const seq = ++histReqRef.current;
     setHistLoading(true);
     axios.get(`${API}/courier/deliveries/history`, {
       params: { limit: HIST_PAGE, skip: pg * HIST_PAGE }, withCredentials: true,
     }).then((r) => {
+      // M03 — descarta respuestas ATRASADAS: solo aplica la ÚLTIMA petición.
+      // Evita que un refresco en vivo que resetea (página 0) y un «Cargar más»
+      // en vuelo se mezclen y dejen lista/total/páginas incoherentes.
+      if (seq !== histReqRef.current) return;
       setHistTotal(parseInt(r.headers["x-total-count"] || 0, 10));
-      setHistItems((prev) => (reset || prev == null) ? r.data : [...prev, ...r.data]);
+      setHistItems((prev) => {
+        if (reset || prev == null) return r.data;
+        // Dedup por id: una confirmación nueva al tope desplaza la ventana y
+        // podría repetir un registro entre páginas.
+        const seen = new Set(prev.map((x) => x.id));
+        return [...prev, ...r.data.filter((x) => !seen.has(x.id))];
+      });
       histPageRef.current = pg + 1;
-    }).catch(() => {}).finally(() => setHistLoading(false));
+    }).catch(() => {}).finally(() => {
+      if (seq === histReqRef.current) setHistLoading(false);
+    });
   }, []);
   // M03 fix — al ABRIR la pestaña Historial siempre se recarga (página 0) para
   // reflejar entregas recién confirmadas; ya no se queda con la primera copia.

@@ -180,3 +180,23 @@ def test_legacy_reservation_without_uid_can_be_rejected():
         assert _doc(did)["assigned_to_courier_id"] is None
     finally:
         _cleanup(did)
+
+
+def test_claim_blocked_during_origin_cancel_intent_M01():
+    """M01 — un ACEPTAR que llega mientras el cliente cancela su operación de
+    origen (`origin_cancel_intent`) pierde con 409; no toma algo que se anula.
+    El sello 'delivered' ya estaba protegido, la aceptación también debe serlo.
+    """
+    did = _mk_free()
+    try:
+        _db().deliveries.update_one({"id": did}, {"$set": {
+            "assigned_to_courier_id": A_ID,
+            "assignment_uid": "uidcancel123",
+            "origin_cancel_intent": {"at": _now(), "by": "client",
+                                     "token": "t1"}}})
+        r = _claim(did, VIP_TOKEN, "uidcancel123")
+        assert r.status_code == 409, r.text
+        assert "cancel" in r.json().get("detail", "").lower()
+        assert _doc(did)["status"] == "available"  # no aceptada
+    finally:
+        _cleanup(did)

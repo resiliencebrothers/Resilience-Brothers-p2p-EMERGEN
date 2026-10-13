@@ -143,6 +143,13 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_iter368_reconcile_progress.py \
 		tests/test_iter369_reconciliation_health.py \
 		tests/test_iter370_partial_compensation.py \
+		tests/test_men01_deliveries_assign_explicit_grant.py \
+		tests/test_men02_assigned_display_state.py \
+		tests/test_men03_assign_audit_and_history_filter.py \
+		tests/test_men04_active_pending_history_pagination.py \
+		tests/test_men05_reject_notifies_authorized_staff.py \
+		tests/test_men06_dispatch_alerts_and_history_search.py \
+		tests/test_men11_assignment_uid_aba.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

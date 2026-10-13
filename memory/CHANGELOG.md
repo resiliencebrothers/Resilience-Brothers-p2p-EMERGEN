@@ -2238,3 +2238,13 @@ Bug de concurrencia (alta prioridad operativa). El rechazo/aceptación casaban p
 
 - **Pruebas**: regresión mensajería 25/25 (men11/men02/iter199/iter208) tras reinicio; ruff + mypy limpios. Smokes UI 1920: migración (sellado), historial en vivo (2º GET), M02 repeat-nav (resalte se mueve). Datos de prueba limpiados.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-13 (fork 2026-06) — Asignación en vivo + robustez del historial del mensajero + CI obligatorio
+**A) Nueva asignación en vivo** (verificación): `admin_assign_delivery` YA publicaba `delivery_changed` al mensajero (líneas 1371-1374). Tras el arreglo de SSE de MEN-12 (reenvío de `delivery_changed`), una reserva recién asignada aparece sola en "Asignadas a mí — por aceptar" SIN recargar. Verificado e2e (1920): la tarjeta pasa de ausente → presente con 0 navegaciones de página tras el assign del admin; el badge "Disponibles" también se actualiza en vivo.
+
+**B) Robustez del historial del mensajero (M03)** (`CourierPanel.jsx::loadHistory`): la recarga al abrir la pestaña y ante eventos en vivo ya estaba (MEN-10/12); se añadió control de **respuestas atrasadas** (contador de secuencia `histReqRef`: solo aplica la última petición, descarta las que llegan tarde) y **dedup por id** al combinar refresco (reset a página 0) con «Cargar más» en vuelo. Así lista/total/páginas quedan coherentes aunque un `delivery_changed` resetee mientras se paginaba. El botón «Cargar más» ya estaba deshabilitado durante la carga.
+
+**C) CI obligatorio (CI01)** (`Makefile`): los seis `test_men01..06` + `test_men11_assignment_uid_aba` se añadieron al objetivo `test-critical` (el que corre `.github/workflows/ci.yml` en push/PR). Antes no estaban en el recorrido obligatorio. Añadida además una regresión backend de **M01** (aceptar bloqueado durante `origin_cancel_intent`) dentro de `test_men11`. `test_iter288`/`iter290`/`iter293` (mensajería) ya estaban en la lista.
+
+- **Pruebas**: `test_men01..06 + men11` = **33/33** juntos; ruff limpio. Smokes UI 1920: asignación en vivo (tarjeta aparece sin recargar). Datos de prueba limpiados. Nota: las pruebas de navegador para aviso/historial se validan con el tool de screenshots (no hay harness Playwright en el CI de pytest).
+- Estado: en preview; pendiente de re-despliegue a producción.

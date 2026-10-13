@@ -2652,3 +2652,9 @@ Cada asignación lleva `assignment_uid` (estable en reintentos de la misma, nuev
 - **B**: BUG RAÍZ — `delivery_changed` no se reenviaba por SSE (`useLiveStream.jsx`); añadido a la lista. Ahora confirmar/reasignar/cancelar refresca el historial del mensajero en vivo (sin cambiar de pestaña) vía `onLiveChange`.
 - **C**: resolución del deep-link reescrita para resolver contra datos frescos del propio fetch (sin carreras con el polling); cubre A→B sin recarga, asignación nueva antes del refresco, y entrega realmente cancelada/reasignada.
 - Verificado: regresión 25/25, 3 smokes UI. Estado: en preview; pendiente de re-despliegue.
+
+## MEN-13 (fork 2026-06) — Asignación en vivo + robustez historial mensajero + CI obligatorio
+- **A**: `assign` ya publicaba `delivery_changed`; con el reenvío SSE de MEN-12 la reserva nueva aparece en "Asignadas a mí" sin recargar (verificado e2e, 0 navegaciones).
+- **B**: `loadHistory` endurecido — guard de secuencia (descarta respuestas atrasadas) + dedup por id al combinar refresco/«Cargar más»; recarga al entrar y en vivo ya estaban.
+- **C**: `test_men01..06` + `test_men11` añadidos a `test-critical` (CI push/PR obligatorio); nueva regresión M01 (origin_cancel_intent bloquea aceptar) en `test_men11`. 33/33.
+- Estado: en preview; pendiente de re-despliegue.
