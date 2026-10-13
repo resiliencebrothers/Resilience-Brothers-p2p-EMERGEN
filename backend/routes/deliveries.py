@@ -394,6 +394,12 @@ async def claim_delivery(did: str, request: Request) -> Any:
          # MV02 — un reparto pendiente de validar contra su origen NO es
          # aceptable: podría llevar una tarifa ya anulada.
          "needs_origin_check": {"$ne": True},
+         # M01 — protección ante una petición atrasada: si el CLIENTE está
+         # cancelando su operación de origen (DR09 marca `origin_cancel_intent`
+         # en la entrega), un «Aceptar» que llega tarde NO debe ganar. El filtro
+         # atómico lo excluye; el sello 'delivered' ya estaba protegido, pero la
+         # aceptación también debe perder aquí para no tomar algo que se anula.
+         "origin_cancel_intent": {"$exists": False},
          "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
                  {"assigned_to_courier_id": me["user_id"]}]},
         {"$set": {"status": "accepted", "courier_id": me["user_id"],
@@ -409,12 +415,20 @@ async def claim_delivery(did: str, request: Request) -> Any:
     if not updated:
         fresh = await db.deliveries.find_one(
             {"id": did}, {"_id": 0, "status": 1, "assigned_to_courier_id": 1,
-                          "needs_origin_check": 1})
+                          "needs_origin_check": 1, "origin_cancel_intent": 1})
         if (fresh or {}).get("needs_origin_check"):
             raise HTTPException(
                 status_code=409,
                 detail=("Esta entrega está pendiente de validación — "
                         "inténtalo de nuevo en unos segundos."))
+        if (fresh or {}).get("origin_cancel_intent") \
+                and (fresh or {}).get("status") not in ("delivered",
+                                                        "confirmed"):
+            raise HTTPException(
+                status_code=409,
+                detail=("El cliente está cancelando esta operación — no "
+                        "puedes aceptarla ahora. Si persiste, contacta a la "
+                        "administración."))
         reserved = (fresh or {}).get("assigned_to_courier_id")
         if (fresh or {}).get("status") == "available" and reserved \
                 and reserved != me["user_id"]:

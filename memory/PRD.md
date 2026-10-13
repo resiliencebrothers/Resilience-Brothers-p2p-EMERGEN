@@ -2633,3 +2633,8 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 ## MEN-08 (fork 2026-06) — "Reasignar sin cancelar" entregas aceptadas
 Nuevo `POST /admin/deliveries/{id}/reassign` (permiso `deliveries_assign`, sin 2FA): reasigna una entrega ya `accepted` SIN cancelar la operación. Dos modos: sin `courier_id` → libera a DISPONIBLE libre; con `courier_id` → re-reserva a otro mensajero (pendiente de aceptación). Solo estado `accepted` (resto → 409); mismo mensajero → 400. Motivo OPCIONAL en timeline + auditoría; avisa (in-app + push) al mensajero anterior y al nuevo. Guardado atómico condicionado al estado/mensajero leídos.
 Frontend: botón "Reasignar" en filas `accepted` + `ReassignDialog` (liberar / elegir mensajero / motivo opcional). i18n es/en `reassign*`. Verificado por curl (5 casos) + smoke UI. Estado: en preview; pendiente de re-despliegue.
+
+## MEN-09 (fork 2026-06) — Cierre MEN-03: navegación de avisos (M02) + aceptación ante petición atrasada (M01)
+- **M02**: el deep-link del aviso (`CourierPanel.jsx`) ya no es de un solo uso — cada aviso DISTINTO navega y mueve el resalte (reescrito a id-pendiente + load fresco + resolución contra datos frescos). Verificado por el camino real NotificationBell (nav SPA sin recarga).
+- **M01**: `claim_delivery` excluye en su filtro atómico las entregas con `origin_cancel_intent` (cliente cancelando el origen); un aceptar atrasado pierde con 409 claro, igual que el sello 'delivered'.
+- Verificado por curl (409 con intent / accepted sin intent) + smoke UI. Estado: en preview; pendiente de re-despliegue.

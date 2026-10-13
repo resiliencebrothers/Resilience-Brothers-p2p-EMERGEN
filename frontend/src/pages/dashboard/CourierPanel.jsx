@@ -240,7 +240,11 @@ export default function CourierPanel({ embedded = false }) {
   const [searchParams] = useSearchParams();
   const deepLinkId = searchParams.get("delivery");
   const [highlightId, setHighlightId] = useState(null);
-  const deepLinkHandledRef = useRef(false);
+  // MEN-03 fix (M02): el deep-link del aviso debe resolverse en CADA aviso
+  // DISTINTO, no solo el primero. Guardamos el id pendiente de resolver; así
+  // un refresco de polling con el mismo id no re-navega, pero tocar otro aviso
+  // (otro `delivery=<id>`) sí navega y resalta la nueva tarjeta.
+  const pendingDeepLinkRef = useRef(null);
   // MEN-04 — historial COMPLETO paginado del mensajero (ya no el tope de 50).
   const [histItems, setHistItems] = useState(null);
   const [histTotal, setHistTotal] = useState(0);
@@ -467,30 +471,39 @@ export default function CourierPanel({ embedded = false }) {
     if (reservedCount > 0) setTab("available");
   }, [reservedCount]);
 
-  // MEN-03 — al abrir un aviso (in-app o push) se navega a la entrega
-  // concreta: se COMPRUEBA su estado vigente con los datos frescos, se
-  // selecciona la pestaña correcta y se resalta la tarjeta. Si la entrega ya
-  // no está (tomada por otro, cancelada o ya confirmada) se avisa. Nunca se
-  // acepta automáticamente al abrir.
+  // MEN-03 (M02) — al abrir un aviso (in-app o push) se navega a la entrega
+  // concreta. Dos pasos para cubrir TODOS los avisos, no solo el primero:
+  //  1) cuando llega un aviso nuevo/distinto, marca el id pendiente y pide
+  //     datos FRESCOS (una asignación recién creada puede no estar aún en
+  //     `data`); un mismo id repetido por el polling no vuelve a disparar.
+  //  2) al llegar esos datos frescos, resuelve el pendiente: selecciona la
+  //     pestaña correcta y RESALTA la tarjeta; si de verdad ya no está
+  //     (tomada por otro, cancelada o ya confirmada) avisa. Nunca acepta solo.
   useEffect(() => {
-    if (!data || !deepLinkId || deepLinkHandledRef.current) return;
-    deepLinkHandledRef.current = true;
-    const inAvailable = data.available.some((d) => d.id === deepLinkId);
-    const inMine = data.mine.some((d) => d.id === deepLinkId);
-    const inHistory = data.history.some((d) => d.id === deepLinkId);
-    if (inAvailable) {
+    if (!deepLinkId) return;
+    if (pendingDeepLinkRef.current === deepLinkId) return;
+    pendingDeepLinkRef.current = deepLinkId;
+    load();
+  }, [deepLinkId, load]);
+
+  useEffect(() => {
+    const target = pendingDeepLinkRef.current;
+    if (!data || !target) return;
+    pendingDeepLinkRef.current = null;
+    if (data.available.some((d) => d.id === target)) {
       setTab("available");
-      setHighlightId(deepLinkId);
-    } else if (inMine) {
+      setHighlightId(target);
+    } else if (data.mine.some((d) => d.id === target)) {
       setTab("mine");
-      setHighlightId(deepLinkId);
-    } else if (inHistory) {
+      setHighlightId(target);
+    } else if (data.history.some((d) => d.id === target)) {
       setTab("history");
-      setHighlightId(deepLinkId);
+      setHighlightId(target);
     } else {
+      setHighlightId(null);
       toast.info(t("courierPanel.deepLinkGone"));
     }
-  }, [data, deepLinkId, t]);
+  }, [data, t]);
 
   if (!data) {
     // MSG10 — error visible con reintento en vez de un spinner eterno.

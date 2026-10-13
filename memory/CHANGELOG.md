@@ -2197,3 +2197,13 @@ Acción pedida tras MEN-07: una entrega ya `accepted` solo podía cambiarse canc
 
 - **Verificación**: curl — liberar→`available`/sin courier; re-reservar→`available`+`assigned_to` nuevo; `on_the_way`→409; no-aceptada→409; mismo mensajero→400. Smoke UI 1920: botón Reasignar en fila ACEPTADA; diálogo abre con "Liberar…" + mensajeros (excluye al actual). ruff + mypy limpios; JSON es/en válido. Datos de prueba limpiados.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-09 (fork 2026-06) — MEN-03 cierre: navegación de avisos (M02) + protección de aceptación ante petición atrasada (M01)
+Auditoría tras MEN-03: la 1ª apertura del aviso funcionaba, pero quedaban dos huecos.
+
+**M02 — navegación de avisos (`CourierPanel.jsx`)**: el deep-link usaba un `deepLinkHandledRef` booleano de UN SOLO USO → tocar un SEGUNDO aviso (otro `?delivery=<id>`, ya dentro del panel) no navegaba ni movía el resalte. Reescrito en dos efectos: (1) cuando llega un aviso DISTINTO se marca el id pendiente y se pide `load()` fresco (una asignación recién creada puede no estar aún en `data`); un mismo id repetido por el polling NO re-dispara; (2) con datos frescos se resuelve el pendiente → pestaña correcta + resalte (anillo ámbar), o aviso `deepLinkGone` si de verdad ya no está. Verificado e2e por el camino real (NotificationBell → navegación SPA sin recarga): tocar aviso1 resalta card1; tocar aviso2 mueve el resalte a card2 (card1 deja de estar resaltada).
+
+**M01 — aceptar ante petición atrasada (`routes/deliveries.py::claim_delivery`)**: el filtro atómico de aceptación NO excluía una entrega cuyo CLIENTE está cancelando el origen (DR09 marca `origin_cancel_intent`). Un «Aceptar» atrasado ganaba y tomaba algo que se está anulando (el sello 'delivered' ya estaba protegido, pero la aceptación no). Añadido `"origin_cancel_intent": {"$exists": False}` al `find_one_and_update` + rama de 409 específica ("El cliente está cancelando esta operación — no puedes aceptarla ahora") en el branch no-actualizado. El frontend ya refresca y muestra el detalle del 409.
+
+- **Verificación**: curl — claim con `origin_cancel_intent` → 409 con el mensaje nuevo; claim sin intent → `accepted`. Smoke UI 1920 (camino real del aviso): aviso1→card1 resaltada; aviso2→card2 resaltada y card1 ya no. ruff + mypy limpios. Datos de prueba limpiados.
+- Estado: en preview; pendiente de re-despliegue a producción.
