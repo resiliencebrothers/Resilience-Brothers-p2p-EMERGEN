@@ -695,6 +695,12 @@
       "reassignCancelBtn": "Cancel",
       "reassignOk": "Delivery reassigned — pending acceptance",
       "reassignFreedOk": "Delivery released — available to couriers",
+      "reassignAuditReassignedLabel": "Reassignment",
+      "reassignAuditFreedLabel": "Release",
+      "reassignAuditReassigned": "Reassigned: {{from}} → {{to}} (pending acceptance)",
+      "reassignAuditFreed": "Released to available (was accepted by {{from}})",
+      "reassignAuditBy": "By {{by}} · {{at}}",
+      "reassignAuditReason": "Reason: {{reason}}",
       "tabCouriers": "Couriers",
       "tabMuniRates": "Municipality rates",
       "summary": {

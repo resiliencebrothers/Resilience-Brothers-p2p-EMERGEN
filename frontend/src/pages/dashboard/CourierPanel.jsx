@@ -262,9 +262,11 @@ export default function CourierPanel({ embedded = false }) {
       histPageRef.current = pg + 1;
     }).catch(() => {}).finally(() => setHistLoading(false));
   }, []);
+  // M03 fix — al ABRIR la pestaña Historial siempre se recarga (página 0) para
+  // reflejar entregas recién confirmadas; ya no se queda con la primera copia.
   useEffect(() => {
-    if (tab === "history" && histItems == null) loadHistory(true);
-  }, [tab, histItems, loadHistory]);
+    if (tab === "history") loadHistory(true);
+  }, [tab, loadHistory]);
 
   const [sharing, setSharing] = useState(false);
   const [lastGpsAt, setLastGpsAt] = useState(null);
@@ -318,9 +320,19 @@ export default function CourierPanel({ embedded = false }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // M03 fix — el historial del mensajero debe REFRESCARSE: un evento en vivo
+  // (p. ej. el admin confirma una entrega entregada) recarga la página 0 del
+  // historial si esa pestaña está abierta, además del resumen.
+  const tabRef = useRef(tab);
+  useEffect(() => { tabRef.current = tab; }, [tab]);
+  const onLiveChange = useCallback(() => {
+    load();
+    if (tabRef.current === "history") loadHistory(true);
+  }, [load, loadHistory]);
+
   // MSG10 — refresco por eventos en vivo + respaldo por intervalo y al
   // recuperar el foco: una asignación externa aparece sin recarga manual.
-  useLiveEvent("delivery_changed", load);
+  useLiveEvent("delivery_changed", onLiveChange);
   useEffect(() => {
     const iv = setInterval(load, 30000);
     const onVis = () => { if (!document.hidden) load(); };

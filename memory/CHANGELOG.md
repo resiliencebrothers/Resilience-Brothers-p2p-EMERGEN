@@ -2207,3 +2207,11 @@ Auditoría tras MEN-03: la 1ª apertura del aviso funcionaba, pero quedaban dos 
 
 - **Verificación**: curl — claim con `origin_cancel_intent` → 409 con el mensaje nuevo; claim sin intent → `accepted`. Smoke UI 1920 (camino real del aviso): aviso1→card1 resaltada; aviso2→card2 resaltada y card1 ya no. ruff + mypy limpios. Datos de prueba limpiados.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-10 (fork 2026-06) — Auditoría de reasignación (cierre MEN-08) + refresco del historial del mensajero (M03 de MEN-04)
+**A) Auditoría de reasignación/liberación (`routes/deliveries.py` + `DeliveryDetailsDialog.jsx`)**: `admin_reassign_delivery` ahora persiste un objeto `reassign_audit` en la entrega (ambos modos) = `{mode: "reassigned"|"freed", by, by_name, at, from_courier_id/name, to_courier_id/name, reason}`. El detalle de la entrega muestra un bloque dedicado (`dd-reassign-audit`): "LIBERACIÓN / REASIGNACIÓN", "Liberada a disponible (estaba aceptada por X)" o "Reasignada: X → Y (pendiente de aceptación)", "Por {admin} · {fecha}" y el motivo si lo hay. Cierra la trazabilidad de MEN-08 (antes solo quedaba en el timeline/log_action). i18n es/en `reassignAudit*`.
+
+**B) Refresco del historial del mensajero (`CourierPanel.jsx`)**: `histItems` ya NO se cachea para siempre. (1) al ABRIR la pestaña Historial siempre se recarga la página 0 (antes solo si `histItems==null` → una entrega recién confirmada no aparecía hasta recargar la página); (2) un evento en vivo `delivery_changed` (p. ej. el admin confirma) recarga la página 0 del historial si esa pestaña está abierta, vía nuevo `onLiveChange` (+`tabRef`). El intervalo de 30s sigue refrescando solo el resumen para no resetear la paginación "Cargar más".
+
+- **Verificación**: curl — reasignar FREE → `reassign_audit.mode="freed"` con motivo; reasignar a nuevo → `mode="reassigned"` con from/to. Smoke UI 1920: el detalle muestra "LIBERACIÓN … Por Admin Test · … Motivo: mensajero no responde"; contador de red confirma que re-entrar a Historial dispara un 2º GET `/courier/deliveries/history` (antes 1, cacheado). ruff + mypy limpios; JSON es/en válido. Datos de prueba limpiados.
+- Estado: en preview; pendiente de re-despliegue a producción.

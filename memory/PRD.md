@@ -2638,3 +2638,8 @@ Frontend: botón "Reasignar" en filas `accepted` + `ReassignDialog` (liberar / e
 - **M02**: el deep-link del aviso (`CourierPanel.jsx`) ya no es de un solo uso — cada aviso DISTINTO navega y mueve el resalte (reescrito a id-pendiente + load fresco + resolución contra datos frescos). Verificado por el camino real NotificationBell (nav SPA sin recarga).
 - **M01**: `claim_delivery` excluye en su filtro atómico las entregas con `origin_cancel_intent` (cliente cancelando el origen); un aceptar atrasado pierde con 409 claro, igual que el sello 'delivered'.
 - Verificado por curl (409 con intent / accepted sin intent) + smoke UI. Estado: en preview; pendiente de re-despliegue.
+
+## MEN-10 (fork 2026-06) — Auditoría de reasignación (cierre MEN-08) + refresco del historial del mensajero (M03)
+- **A**: `admin_reassign_delivery` persiste `reassign_audit` {mode, by/by_name, at, from/to courier, reason}; el detalle de la entrega muestra quién liberó/reasignó, cuándo, de quién a quién y el motivo (`dd-reassign-audit`). i18n es/en.
+- **B**: el historial del mensajero (`CourierPanel.jsx`) se refresca — recarga al abrir la pestaña Historial y ante eventos en vivo (`delivery_changed`); ya no queda cacheado con la primera copia.
+- Verificado por curl (reassign_audit freed/reassigned) + smoke UI (bloque de auditoría visible; 2º GET de history al re-entrar). Estado: en preview; pendiente de re-despliegue.

@@ -390,6 +390,34 @@ export default function DeliveryDetailsDialog({ delivery, open, onClose, onChang
                    value={`${d.assigned_by_name}${d.assigned_at ? " · " + new Date(d.assigned_at).toLocaleString() : ""}`}
                    testid="dd-assigned-by" />
             )}
+            {d.reassign_audit && (
+              <div className="sm:col-span-2 py-1.5" data-testid="dd-reassign-audit">
+                <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 font-mono mb-1">
+                  {d.reassign_audit.mode === "freed"
+                    ? t("admin.deliveries.reassignAuditFreedLabel")
+                    : t("admin.deliveries.reassignAuditReassignedLabel")}
+                </div>
+                <div className="text-sm text-white">
+                  {d.reassign_audit.mode === "freed"
+                    ? t("admin.deliveries.reassignAuditFreed", { from: d.reassign_audit.from_courier_name || "—" })
+                    : t("admin.deliveries.reassignAuditReassigned", {
+                        from: d.reassign_audit.from_courier_name || "—",
+                        to: d.reassign_audit.to_courier_name || "—",
+                      })}
+                </div>
+                <div className="text-[0.65rem] text-neutral-500">
+                  {t("admin.deliveries.reassignAuditBy", {
+                    by: d.reassign_audit.by_name || "—",
+                    at: fmtDate(d.reassign_audit.at),
+                  })}
+                </div>
+                {d.reassign_audit.reason && (
+                  <div className="text-[0.7rem] text-amber-300 italic" data-testid="dd-reassign-reason">
+                    {t("admin.deliveries.reassignAuditReason", { reason: d.reassign_audit.reason })}
+                  </div>
+                )}
+              </div>
+            )}
             {d.courier_location && (
               <Row label={t("admin.deliveries.detailsCourierLoc")}
                    value={`${d.courier_location.lat}, ${d.courier_location.lon}`}

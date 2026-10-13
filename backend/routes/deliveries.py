@@ -1417,8 +1417,23 @@ async def admin_reassign_delivery(did: str, payload: dict,
         new_display = new_courier.get("name") or new_courier.get("email")
     now = iso(now_utc())
     reason_suffix = f" Motivo: {reason}" if reason else ""
+    # Auditoría de reasignación (cierre MEN-08): el detalle muestra quién
+    # liberó/reasignó, cuándo, de quién a quién y el motivo. Se guarda SIEMPRE
+    # (ambos modos) en el documento para trazabilidad, además del timeline.
+    reassign_audit = {
+        "mode": "reassigned" if new_courier_id else "freed",
+        "by": actor["user_id"],
+        "by_name": actor.get("name") or actor.get("email"),
+        "at": now,
+        "from_courier_id": prev_courier_id,
+        "from_courier_name": prev_courier_name,
+        "to_courier_id": new_courier_id,
+        "to_courier_name": new_display,
+        "reason": reason or None,
+    }
     set_doc: Dict[str, Any] = {"status": "available", "courier_id": None,
-                               "courier_name": None, "updated_at": now}
+                               "courier_name": None, "updated_at": now,
+                               "reassign_audit": reassign_audit}
     unset_doc: Dict[str, Any] = {"courier_location": ""}
     if new_courier_id:
         set_doc.update({"assigned_to_courier_id": new_courier_id,

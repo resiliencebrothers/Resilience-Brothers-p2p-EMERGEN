@@ -695,6 +695,12 @@
       "reassignCancelBtn": "Cancelar",
       "reassignOk": "Entrega reasignada — pendiente de aceptación",
       "reassignFreedOk": "Entrega liberada — disponible para mensajeros",
+      "reassignAuditReassignedLabel": "Reasignación",
+      "reassignAuditFreedLabel": "Liberación",
+      "reassignAuditReassigned": "Reasignada: {{from}} → {{to}} (pendiente de aceptación)",
+      "reassignAuditFreed": "Liberada a disponible (estaba aceptada por {{from}})",
+      "reassignAuditBy": "Por {{by}} · {{at}}",
+      "reassignAuditReason": "Motivo: {{reason}}",
       "tabCouriers": "Mensajeros",
       "tabMuniRates": "Tarifas municipio",
       "summary": {
