@@ -2183,3 +2183,17 @@ Nota de método: a partir de ahora, validar los cambios de tests contra DB fresc
 
 - **Verificación**: curl — `active&search=ZULU` y `pending_confirmation&search=ZULU` filtran a 1; `search=men07refA` casa por `ref_id`; assign a entrega `accepted` → 409 con el mensaje nuevo nombrando al mensajero. Smoke UI (1920): buscador presente en Entregas y Por confirmar; "ZULU" filtra a 1 y oculta el resto; fila ACEPTADA sin selector (mensajero en lectura). ruff + mypy limpios; JSON es/en válido.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-08 (fork 2026-06) — "Reasignar sin cancelar" entregas aceptadas
+Acción pedida tras MEN-07: una entrega ya `accepted` solo podía cambiarse cancelándola por completo. Ahora se puede reasignar sin destruir la operación.
+
+**Backend (`routes/deliveries.py::admin_reassign_delivery`)** — `POST /admin/deliveries/{id}/reassign`:
+- Solo aplica a estado `accepted` (si está `on_the_way`/`arrived`/otro → 409 "usa cancelar").
+- Dos modos en el mismo endpoint: **sin `courier_id`** → libera a DISPONIBLE libre (`$unset` de `assigned_to_*`/`assigned_by*`, `courier_id=None`, status `available`); **con `courier_id`** → RE-RESERVA al mensajero elegido (`assigned_to_courier_id`, pendiente de que acepte). Reasignar al MISMO mensajero que la aceptó → 400.
+- Motivo OPCIONAL (máx 300), guardado en `timeline` + `log_action("delivery.reassign")`. Guardado ATÓMICO condicionado a `{status:"accepted", courier_id:prev}` (carrera con un avance/cancelación pierde 409). Invalida `courier_location` del mensajero anterior.
+- Permiso `deliveries_assign` (mismo que asignar); **sin 2FA** (decisión del usuario). Avisos: in-app + push al mensajero ANTERIOR (`delivery_reassigned`) y, si se re-reserva, al NUEVO (`delivery_assigned`, deep-link). `publish_delivery_event` refresca paneles en vivo.
+
+**Frontend (`AdminDeliveries.jsx`)**: botón "Reasignar" en filas `accepted` (solo con `canAssign`); nuevo `ReassignDialog` (shadcn Dialog + Select + Textarea) con opción "Liberar — disponible para todos" + lista de mensajeros (excluye al actual) + motivo opcional. testids: `reassign-delivery-{id}`, `reassign-dialog`, `reassign-target-select`, `reassign-opt-free`, `reassign-reason-input`, `reassign-confirm-btn`, `reassign-cancel-btn`. i18n es/en (`reassign*`).
+
+- **Verificación**: curl — liberar→`available`/sin courier; re-reservar→`available`+`assigned_to` nuevo; `on_the_way`→409; no-aceptada→409; mismo mensajero→400. Smoke UI 1920: botón Reasignar en fila ACEPTADA; diálogo abre con "Liberar…" + mensajeros (excluye al actual). ruff + mypy limpios; JSON es/en válido. Datos de prueba limpiados.
+- Estado: en preview; pendiente de re-despliegue a producción.

@@ -7,6 +7,8 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { Truck, Search, X } from "lucide-react";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
@@ -64,6 +66,95 @@ function DeliveryEta({ d, t }) {
   );
 }
 
+// Reasignar SIN cancelar — libera una entrega ya ACEPTADA y la devuelve a
+// disponible (libre) o la re-reserva a otro mensajero, sin destruir la
+// operación. Motivo opcional; se avisa al mensajero anterior (y al nuevo).
+function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
+  const { t } = useTranslation();
+  const [target, setTarget] = useState("__free__");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setTarget("__free__"); setReason(""); } }, [open]);
+  if (!delivery) return null;
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const body = { reason: reason.trim() };
+      if (target !== "__free__") body.courier_id = target;
+      await axios.post(`${API}/admin/deliveries/${delivery.id}/reassign`,
+        body, { withCredentials: true });
+      toast.success(target === "__free__"
+        ? t("admin.deliveries.reassignFreedOk")
+        : t("admin.deliveries.reassignOk"));
+      onDone();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="bg-[#14111f] border-white/10 text-white" data-testid="reassign-dialog">
+        <DialogHeader>
+          <DialogTitle>{t("admin.deliveries.reassignTitle")}</DialogTitle>
+          <DialogDescription className="text-neutral-400">
+            {t("admin.deliveries.reassignDesc", {
+              courier: delivery.courier_name || "—",
+              client: delivery.client_name || "",
+            })}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="micro-label text-neutral-500">{t("admin.deliveries.reassignTargetLabel")}</label>
+            <Select value={target} onValueChange={setTarget}>
+              <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 text-sm" data-testid="reassign-target-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#1A1730] border-white/10 text-white max-h-64">
+                <SelectItem value="__free__" data-testid="reassign-opt-free">
+                  {t("admin.deliveries.reassignFreeOption")}
+                </SelectItem>
+                {couriers.filter((c) => c.user_id !== delivery.courier_id).map((c) => (
+                  <SelectItem key={c.user_id} value={c.user_id}>{c.name || c.email}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="micro-label text-neutral-500">{t("admin.deliveries.reassignReasonLabel")}</label>
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={300}
+              placeholder={t("admin.deliveries.reassignReasonPlaceholder")}
+              data-testid="reassign-reason-input"
+              className="rounded-none bg-[#0a0a0a] border-white/10 text-sm min-h-[70px]"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={onClose}
+            data-testid="reassign-cancel-btn"
+            className="rounded-none border-white/15 text-neutral-300"
+          >
+            {t("admin.deliveries.reassignCancelBtn")}
+          </Button>
+          <Button
+            onClick={submit}
+            disabled={busy}
+            data-testid="reassign-confirm-btn"
+            className="rounded-none bg-[#8B5CF6] text-white"
+          >
+            {t("admin.deliveries.reassignConfirmBtn")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DeliveriesTab({ navigate, mode = "active" }) {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -84,6 +175,7 @@ function DeliveriesTab({ navigate, mode = "active" }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [pendingConfirm, setPendingConfirm] = useState(null);
   const [detailsRow, setDetailsRow] = useState(null);
+  const [reassignRow, setReassignRow] = useState(null);
   // iter216 — resumen del día de TODO el equipo.
   // iter217 — con selector de fecha para revisar jornadas pasadas.
   const [summary, setSummary] = useState(null);
@@ -470,6 +562,17 @@ function DeliveriesTab({ navigate, mode = "active" }) {
                         {t("admin.deliveries.confirmBtn")}
                       </Button>
                     )}
+                    {canAssign && d.status === "accepted" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setReassignRow(d)}
+                        data-testid={`reassign-delivery-${d.id}`}
+                        className="border-[#8B5CF6]/40 text-[#8B5CF6] rounded-none h-7 text-xs hover:bg-[#8B5CF6]/10"
+                      >
+                        {t("admin.deliveries.reassignBtn")}
+                      </Button>
+                    )}
                     {!["confirmed", "cancelled"].includes(d.status) && (
                       <Button
                         size="sm"
@@ -537,6 +640,14 @@ function DeliveriesTab({ navigate, mode = "active" }) {
         open={!!detailsRow}
         onClose={() => setDetailsRow(null)}
         onChanged={load}
+      />
+
+      <ReassignDialog
+        delivery={reassignRow}
+        couriers={couriers}
+        open={!!reassignRow}
+        onClose={() => setReassignRow(null)}
+        onDone={() => { setReassignRow(null); load(); }}
       />
     </div>
   );

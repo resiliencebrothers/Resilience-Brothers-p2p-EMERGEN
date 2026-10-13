@@ -2629,3 +2629,7 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 - **Verificación**: curl (search en active/pending + por `ref_id`, assign a `accepted` → 409 nuevo) + smoke UI 1920 (buscador en Entregas y Por confirmar, filtra a 1, fila ACEPTADA sin selector). ruff + mypy limpios; JSON es/en válido.
 - Estado: en preview; pendiente de re-despliegue a producción.
 
+
+## MEN-08 (fork 2026-06) — "Reasignar sin cancelar" entregas aceptadas
+Nuevo `POST /admin/deliveries/{id}/reassign` (permiso `deliveries_assign`, sin 2FA): reasigna una entrega ya `accepted` SIN cancelar la operación. Dos modos: sin `courier_id` → libera a DISPONIBLE libre; con `courier_id` → re-reserva a otro mensajero (pendiente de aceptación). Solo estado `accepted` (resto → 409); mismo mensajero → 400. Motivo OPCIONAL en timeline + auditoría; avisa (in-app + push) al mensajero anterior y al nuevo. Guardado atómico condicionado al estado/mensajero leídos.
+Frontend: botón "Reasignar" en filas `accepted` + `ReassignDialog` (liberar / elegir mensajero / motivo opcional). i18n es/en `reassign*`. Verificado por curl (5 casos) + smoke UI. Estado: en preview; pendiente de re-despliegue.

@@ -1361,6 +1361,142 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     return await db.deliveries.find_one({"id": did}, {"_id": 0})
 
 
+@router.post("/admin/deliveries/{did}/reassign")
+async def admin_reassign_delivery(did: str, payload: dict,
+                                  request: Request) -> Any:
+    """Reasignar SIN cancelar — libera una entrega ya ACEPTADA sin destruir la
+    operación de origen. Dos modos en el mismo paso:
+      - sin `courier_id` → vuelve a DISPONIBLE libre (cualquier mensajero la toma)
+      - con `courier_id`  → se RE-RESERVA al mensajero elegido (pendiente de que
+        él acepte, igual que una asignación normal)
+    Solo aplica a `accepted` (aún no salió). El motivo es OPCIONAL y queda en el
+    timeline + auditoría; se avisa al mensajero anterior (y al nuevo si procede).
+    Mismo permiso que asignar (`deliveries_assign`); no requiere 2FA."""
+    actor = await require_permission(request, "deliveries_assign")
+    reason = (payload.get("reason") or "").strip()[:300]
+    new_courier_id = (payload.get("courier_id") or "").strip() or None
+    d = await db.deliveries.find_one({"id": did}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=404, detail="No encontrada.")
+    if d.get("status") != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail=("Solo se puede reasignar sin cancelar una entrega ya "
+                    "ACEPTADA que aún no salió. Si ya está en camino o "
+                    "entregada, usa cancelar."))
+    prev_courier_id = d.get("courier_id")
+    prev_courier_name = d.get("courier_name") or "el mensajero anterior"
+    new_display = None
+    if new_courier_id:
+        if new_courier_id == prev_courier_id:
+            raise HTTPException(
+                status_code=400,
+                detail=("Ya está aceptada por ese mensajero; elige otro o "
+                        "libérala a disponible."))
+        new_courier = await db.users.find_one({"user_id": new_courier_id},
+                                              {"_id": 0})
+        if not new_courier or not (new_courier.get("is_courier")
+                                   or new_courier.get("role")
+                                   in ("admin", "employee")):
+            raise HTTPException(status_code=400,
+                                detail="Ese usuario no es mensajero")
+        new_display = new_courier.get("name") or new_courier.get("email")
+    now = iso(now_utc())
+    reason_suffix = f" Motivo: {reason}" if reason else ""
+    set_doc: Dict[str, Any] = {"status": "available", "courier_id": None,
+                               "courier_name": None, "updated_at": now}
+    unset_doc: Dict[str, Any] = {"courier_location": ""}
+    if new_courier_id:
+        set_doc.update({"assigned_to_courier_id": new_courier_id,
+                        "assigned_to_courier_name": new_display,
+                        "assigned_by": actor["user_id"],
+                        "assigned_by_name": actor.get("name")
+                        or actor.get("email"),
+                        "assigned_at": now})
+        note = (f"Reasignada de {prev_courier_name} a {new_display} — "
+                f"pendiente de aceptación.{reason_suffix}")
+    else:
+        unset_doc.update({"assigned_to_courier_id": "",
+                          "assigned_to_courier_name": "",
+                          "assigned_by": "", "assigned_by_name": "",
+                          "assigned_at": ""})
+        note = (f"Liberada (estaba aceptada por {prev_courier_name}) a "
+                f"DISPONIBLE por el equipo.{reason_suffix}")
+    # Guardado ATÓMICO condicionado al estado y mensajero leídos: una petición
+    # atrasada (el mensajero avanzó a on_the_way, o ya se canceló) pierde 409.
+    res = await db.deliveries.update_one(
+        {"id": did, "status": "accepted", "courier_id": prev_courier_id},
+        {"$set": set_doc, "$unset": unset_doc,
+         "$push": {"timeline": {"status": "available", "at": now,
+                                "by": actor["user_id"], "note": note}}})
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("La entrega cambió de estado o de mensajero mientras "
+                    "reasignabas — recarga tu panel."))
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(
+            did, "available",
+            courier_ids=None if not new_courier_id
+            else [prev_courier_id, new_courier_id])
+    except Exception:
+        pass
+    # Aviso al mensajero ANTERIOR (perdió el trabajo).
+    if prev_courier_id:
+        try:
+            from routes.notifications import _insert_notification
+            from push_service import (send_push_to_user,
+                                      build_generic_admin_alert_payload)
+            title = "La entrega fue reasignada"
+            body = (f"La entrega de {d.get('client_name', '')} "
+                    f"({d.get('amount_label', '')}) fue reasignada por el "
+                    f"equipo.{reason_suffix}")
+            await _insert_notification(
+                recipient_user_id=prev_courier_id, type="delivery_reassigned",
+                title=title, message=body, data={"delivery_id": did})
+            await send_push_to_user(
+                db, prev_courier_id,
+                build_generic_admin_alert_payload(
+                    title=title, body=body, url="/dashboard/deliveries",
+                    tag=f"delivery-reassigned-{did}"))
+        except Exception as e:
+            logger.error(f"reassign prev-courier notify failed: {e}")
+    # Aviso al mensajero NUEVO (si se re-reservó) — mismo copy que una asignación.
+    if new_courier_id:
+        try:
+            from routes.notifications import _insert_notification
+            from push_service import (send_push_to_user,
+                                      build_generic_admin_alert_payload)
+            is_pickup = d.get("kind") == "deposit"
+            title = ("Nueva recogida asignada" if is_pickup
+                     else "Nueva entrega asignada")
+            verb = "recoger" if is_pickup else "entregar"
+            share = float(d.get("courier_share_usdt") or 0)
+            share_line = f" Tu parte: {share} USDT." if share > 0 else ""
+            msg = (f"Te asignaron {verb} para {d.get('client_name', '')} "
+                   f"({d.get('amount_label', '')}).{share_line}")
+            await _insert_notification(
+                recipient_user_id=new_courier_id, type="delivery_assigned",
+                title=title, message=msg,
+                data={"delivery_id": did, "kind": d.get("kind")})
+            await send_push_to_user(
+                db, new_courier_id,
+                build_generic_admin_alert_payload(
+                    title=title, body=msg,
+                    url=f"/dashboard/deliveries?delivery={did}",
+                    tag=f"delivery-assigned-{did}"))
+        except Exception as e:
+            logger.error(f"reassign new-courier notify failed: {e}")
+    await log_action(
+        db, actor, "delivery.reassign", "delivery", did,
+        summary=(f"Reasignada {did[:8]} "
+                 + (f"a {new_display}" if new_display else "a disponible")),
+        details={"from_courier_id": prev_courier_id,
+                 "to_courier_id": new_courier_id, "reason": reason or None})
+    return await db.deliveries.find_one({"id": did}, {"_id": 0})
+
+
 @router.post("/admin/deliveries/{did}/confirm")
 async def admin_confirm_delivery(did: str, payload: dict, request: Request) -> Any:
     """Staff seal after the courier marks `delivered`: credits the courier's
