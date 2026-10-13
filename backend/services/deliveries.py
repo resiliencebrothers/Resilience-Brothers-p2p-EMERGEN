@@ -212,6 +212,41 @@ async def find_attention_items() -> dict:
                            "active_min": ACTIVE_STALL_MIN}}
 
 
+async def _notify_dispatchers(*, title: str, body: str, ntype: str,
+                              delivery_id: str) -> None:
+    """Avisos a DESPACHADORES: admins + empleados autorizados a despachar
+    (`deliveries_assign`, criterio MEN-01 sobre `allowed_permissions`).
+    Los admins ya reciben push+email vía `notify_all_admins`; aquí se añade el
+    aviso in-app (campana, con deep-link) para TODOS los despachadores y el push
+    para los empleados autorizados (sin duplicar el push de los admins)."""
+    try:
+        from routes.notifications import _insert_notification
+        from services.permissions import _has_permission
+        from push_service import (
+            send_push_to_user, build_generic_admin_alert_payload,
+        )
+    except Exception:
+        return
+    recipients = await db.users.find(
+        {"$or": [{"role": "admin"}, {"role": "employee"}]},
+        {"_id": 0, "user_id": 1, "role": 1, "allowed_permissions": 1},
+    ).to_list(300)
+    push_payload = build_generic_admin_alert_payload(
+        title=title, body=body, url="/admin/deliveries",
+        tag=f"{ntype}-{delivery_id}")
+    for u in recipients:
+        if not _has_permission(u, "deliveries_assign"):
+            continue
+        try:
+            await _insert_notification(
+                recipient_user_id=u["user_id"], type=ntype,
+                title=title, message=body, data={"delivery_id": delivery_id})
+            if u.get("role") != "admin":
+                await send_push_to_user(db, u["user_id"], push_payload)
+        except Exception:
+            pass
+
+
 async def alert_attention_items() -> int:
     """Mejora #4 — alerta a los admins UNA sola vez por entrega y condición
     (claim atómico por flag); corre en el scheduler cada 10 min."""
@@ -235,6 +270,12 @@ async def alert_attention_items() -> int:
                           f"lleva más de {RESERVATION_STALL_MIN} min reservada "
                           "sin que el mensajero la acepte. Reasígnala o libérala."),
                     url_path="/admin/deliveries")
+                await _notify_dispatchers(
+                    ntype="delivery_stale", delivery_id=d["id"],
+                    title="⏰ Reserva de mensajería sin respuesta",
+                    body=(f"La entrega #{d['id'][:8]} de {d.get('client_name', '')} "
+                          f"lleva más de {RESERVATION_STALL_MIN} min reservada "
+                          "sin que el mensajero la acepte. Reasígnala o libérala."))
             except Exception as e:
                 logger.error(f"reservation alert failed: {e}")
             n += 1
@@ -252,6 +293,13 @@ async def alert_attention_items() -> int:
                           f"{ACTIVE_STALL_MIN} min sin avanzar de "
                           f"«{d.get('status')}». Contacta al mensajero."),
                     url_path="/admin/deliveries")
+                await _notify_dispatchers(
+                    ntype="delivery_stalled", delivery_id=d["id"],
+                    title="🛑 Entrega detenida",
+                    body=(f"La entrega #{d['id'][:8]} de {d.get('client_name', '')} "
+                          f"({d.get('courier_name') or 'sin nombre'}) lleva más de "
+                          f"{ACTIVE_STALL_MIN} min sin avanzar de "
+                          f"«{d.get('status')}». Contacta al mensajero."))
             except Exception as e:
                 logger.error(f"stall alert failed: {e}")
             n += 1

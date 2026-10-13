@@ -683,6 +683,7 @@
       "pageInfo": "{{from}}–{{to}} de {{total}}",
       "prevPage": "Anterior",
       "nextPage": "Siguiente",
+      "searchPlaceholder": "Buscar por cliente, mensajero o fecha…",
       "tabCouriers": "Mensajeros",
       "tabMuniRates": "Tarifas municipio",
       "summary": {

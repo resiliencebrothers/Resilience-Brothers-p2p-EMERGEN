@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Truck, Search } from "lucide-react";
+import { Truck, Search, X } from "lucide-react";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { etaFromDelivery } from "@/services/deliveryEta";
 import DeliveryDetailsDialog from "./deliveries/DeliveryDetailsDialog";
@@ -103,12 +103,20 @@ function DeliveriesTab({ navigate, mode = "active" }) {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const paginated = isHistory || isPending;
+  // Buscador del Historial — por cliente, mensajero, referencia o fecha.
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const tmr = setTimeout(() => setSearch(searchInput.trim()), 400);
+    return () => clearTimeout(tmr);
+  }, [searchInput]);
 
   const load = useCallback(() => {
     const base = isPending ? { status: "pending_confirmation" }
       : statusFilter === "all" ? { status: isHistory ? "history" : "active" }
         : statusFilter === "incidents" ? { incident: "open" }
           : { status: statusFilter };
+    if (isHistory && search) base.search = search;
     const params = (isHistory || isPending)
       ? { ...base, limit: PAGE_SIZE, skip: page * PAGE_SIZE }
       : base;
@@ -123,10 +131,10 @@ function DeliveriesTab({ navigate, mode = "active" }) {
       axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
         .then((r) => setAttention(r.data)).catch(() => {});
     }
-  }, [statusFilter, mode, isHistory, isPending, page]);
+  }, [statusFilter, mode, isHistory, isPending, page, search]);
 
-  // Al cambiar de filtro, vuelve a la primera página.
-  useEffect(() => { setPage(0); }, [statusFilter, mode]);
+  // Al cambiar de filtro o búsqueda, vuelve a la primera página.
+  useEffect(() => { setPage(0); }, [statusFilter, mode, search]);
 
   useEffect(() => {
     if (mode !== "active") return undefined;
@@ -287,6 +295,27 @@ function DeliveriesTab({ navigate, mode = "active" }) {
             </div>
           </div>
           </div>
+        </div>
+      )}
+      {isHistory && (
+        <div className="relative max-w-sm" data-testid="history-search">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={t("admin.deliveries.searchPlaceholder")}
+            data-testid="history-search-input"
+            className="w-full pl-9 pr-8 py-2 text-sm bg-[#0a0a0a] border border-white/10 text-white placeholder:text-neutral-600 focus:border-[#8B5CF6] focus:outline-none"
+          />
+          {searchInput && (
+            <button
+              onClick={() => setSearchInput("")}
+              data-testid="history-search-clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
       {!isPending && (

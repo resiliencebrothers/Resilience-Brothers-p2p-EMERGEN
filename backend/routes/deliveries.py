@@ -14,6 +14,7 @@ Admin-facing (permission `withdrawals`):
 - POST /admin/deliveries/{id}/cancel
 """
 import logging
+import re
 import uuid
 from typing import Any, Dict, Optional
 
@@ -1080,6 +1081,7 @@ async def admin_list_deliveries(request: Request, response: Response,
                                 status: Optional[str] = None,
                                 courier_id: Optional[str] = None,
                                 incident: Optional[str] = None,
+                                search: Optional[str] = None,
                                 skip: int = 0, limit: int = 200) -> Any:
     await require_permission(request, "deliveries")
     q: dict = {}
@@ -1112,6 +1114,15 @@ async def admin_list_deliveries(request: Request, response: Response,
         q["courier_id"] = courier_id
     if incident == "open":
         q["has_open_incident"] = True
+    # Buscador — por cliente, mensajero, referencia o fecha (YYYY-MM[-DD]).
+    term = (search or "").strip()
+    if term:
+        rx = {"$regex": re.escape(term), "$options": "i"}
+        search_or = [{"client_name": rx}, {"courier_name": rx},
+                     {"assigned_to_courier_name": rx}, {"ref_id": rx}]
+        if re.match(r"^\d{4}-\d{2}(-\d{2})?$", term):
+            search_or.append({"created_at": {"$regex": "^" + re.escape(term)}})
+        q = {"$and": [q, {"$or": search_or}]} if q else {"$or": search_or}
     # MEN-04 — paginación de SERVIDOR (no recortar en el frontend). Se expone el
     # total vía cabecera X-Total-Count para los controles de página.
     skip = max(0, skip)

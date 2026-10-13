@@ -683,6 +683,7 @@
       "pageInfo": "{{from}}–{{to}} of {{total}}",
       "prevPage": "Previous",
       "nextPage": "Next",
+      "searchPlaceholder": "Search by client, courier or date…",
       "tabCouriers": "Couriers",
       "tabMuniRates": "Municipality rates",
       "summary": {

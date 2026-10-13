@@ -29,6 +29,9 @@ function notificationTarget(item, user) {
         : "/dashboard/deliveries";
     case "delivery_rejected":
       return "/admin/deliveries";
+    case "delivery_stale":
+    case "delivery_stalled":
+      return "/admin/deliveries";
     case "delivery_status":
       return user?.is_courier && deliveryId
         ? `/dashboard/deliveries?delivery=${deliveryId}`

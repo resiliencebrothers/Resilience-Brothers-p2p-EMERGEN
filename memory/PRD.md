@@ -2606,3 +2606,17 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 - **Tests**: `test_men05_*` (3/3: admin+empleado-autorizado reciben; empleado solo-`deliveries` excluido; empleado lista-vacía excluido). Regresión reject/mensajería = 68/68. ruff + mypy limpios. (El aviso `delivery_rejected` ya navega a `/admin/deliveries` desde el trabajo MEN-03 de NotificationBell.)
 - Nota: `notify_all_admins` (usado por las alertas de reserva lenta / entrega detenida) sigue dirigiéndose solo a `role=admin`; si se quiere extender a empleados con despacho, es un cambio aparte no solicitado en MEN-05.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+---
+## MEN-06 (fork 2026-06) — Alertas de mensajería a despachadores + buscador del Historial
+**1) Alertas a despachadores (`services/deliveries.py`)**
+- Las alertas de "reserva sin respuesta" (reserva lenta) y "entrega detenida" ahora llegan también a los EMPLEADOS autorizados a despachar (`deliveries_assign`), no solo a los admins. Nuevo helper `_notify_dispatchers(...)`: inserta aviso in-app (campana, con deep-link) para TODOS los despachadores (admins + empleados autorizados) y push para los empleados autorizados; los admins conservan su push+email vía `notify_all_admins` sin doble push. Tipos de aviso: `delivery_stale` / `delivery_stalled` (NotificationBell los navega a `/admin/deliveries`).
+- Usa el criterio MEN-01 (`_has_permission(u, "deliveries_assign")` sobre `allowed_permissions`). Idempotencia de alerta (claim atómico por flag) intacta.
+
+**2) Buscador del Historial (`routes/deliveries.py` + `AdminDeliveries.jsx`)**
+- `GET /admin/deliveries` acepta `search`: regex case-insensitive sobre `client_name`, `courier_name`, `assigned_to_courier_name`, `ref_id`; y si el término es `YYYY-MM[-DD]`, por prefijo de `created_at`. Combina con el filtro de estado vía `$and` (no pisa el `$or` de "disponible").
+- Frontend: input de búsqueda con debounce (400 ms) en la pestaña Historial (`history-search-input`), icono + botón limpiar; resetea a la página 1; se integra con la paginación de servidor.
+
+- **Tests**: `test_men06_*` (dispatch alert a empleado autorizado + admin; excluye no autorizado; búsqueda por cliente/mensajero/fecha). Regresión: `test_iter290` (alertas una-sola-vez) sigue 100%; MEN-05 intacto. ruff + mypy limpios. Smoke UI: búsqueda "ZEBRAUNICORN" filtra a 1 resultado.
+- Estado: en preview; pendiente de re-despliegue a producción.
