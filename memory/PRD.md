@@ -2597,3 +2597,12 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 - **delivered sigue accionable**: aparece en "Por confirmar" con el botón Confirmar; sacarla de "Activas" NO ejecuta ninguna comisión. Sin duplicar colecciones.
 - **Tests**: `test_men04_*` (4/4: active excluye delivered/history, pending solo delivered, paginación + X-Total-Count, historial del mensajero paginado). MEN-01/02/03 (24) + regresión mensajería = 74/74. ruff + mypy limpios. Smoke UI: Entregas excluye delivered; "Por confirmar" badge 62 + confirmar; Historial "1–50 de 385"→"51–100"; mensajero "Cargar más (25/55)"→50.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+---
+## MEN-05 (fork 2026-06) — Aviso de rechazo de reserva a empleados autorizados
+- **Causa**: `reject_reservation` seleccionaba destinatarios usando el campo inexistente `permissions` (proyección y comprobación), y filtraba por `"deliveries"`. Resultado: el empleado con `allowed_permissions=["deliveries","deliveries_assign"]` quedaba OMITIDO; solo avisaba al admin.
+- **Fix (`routes/deliveries.py::reject_reservation`)**: la fan-out lee la FUENTE REAL `allowed_permissions` y filtra con el predicado de MEN-01 `_has_permission(a, "deliveries_assign")` (criterio de despacho). Así reciben el aviso in-app + push: admins y empleados AUTORIZADOS a despachar. Un empleado con solo `deliveries` o con lista vacía queda excluido (coherente con MEN-01).
+- **Tests**: `test_men05_*` (3/3: admin+empleado-autorizado reciben; empleado solo-`deliveries` excluido; empleado lista-vacía excluido). Regresión reject/mensajería = 68/68. ruff + mypy limpios. (El aviso `delivery_rejected` ya navega a `/admin/deliveries` desde el trabajo MEN-03 de NotificationBell.)
+- Nota: `notify_all_admins` (usado por las alertas de reserva lenta / entrega detenida) sigue dirigiéndose solo a `role=admin`; si se quiere extender a empleados con despacho, es un cambio aparte no solicitado en MEN-05.
+- Estado: en preview; pendiente de re-despliegue a producción.

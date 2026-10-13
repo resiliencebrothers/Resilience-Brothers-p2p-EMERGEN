@@ -505,28 +505,30 @@ async def reject_reservation(did: str, payload: dict, request: Request) -> Any:
         await publish_delivery_event(did, "available")
     except Exception:
         pass
-    # Alertar a admins/staff con permiso de deliveries.
+    # Alertar a admins y EMPLEADOS AUTORIZADOS a despachar (MEN-05): el aviso
+    # se dirige a quien puede reasignar/liberar, usando la FUENTE REAL de
+    # permisos (`allowed_permissions`) y el criterio de despacho de MEN-01
+    # (`deliveries_assign`), no el campo inexistente `permissions`.
     try:
         from routes.notifications import _insert_notification
+        from services.permissions import _has_permission
         from push_service import (
             send_push_to_user, build_generic_admin_alert_payload,
         )
         title = "🛵 Mensajero rechazó una reserva"
         body = (f"{courier_name} rechazó la entrega de {d.get('client_name','')} "
                 f"({d.get('amount_label','')}). Motivo: {reason}")
-        admins = await db.users.find(
+        recipients = await db.users.find(
             {"$or": [{"role": "admin"}, {"role": "employee"}]},
-            {"_id": 0, "user_id": 1, "permissions": 1, "role": 1},
+            {"_id": 0, "user_id": 1, "allowed_permissions": 1, "role": 1},
         ).to_list(200)
         payload_push = build_generic_admin_alert_payload(
             title=title, body=body,
             url="/admin/deliveries",
             tag=f"delivery-rejected-{did}",
         )
-        for a in admins:
-            has_perm = (a.get("role") == "admin" or
-                        "deliveries" in (a.get("permissions") or []))
-            if not has_perm:
+        for a in recipients:
+            if not _has_permission(a, "deliveries_assign"):
                 continue
             try:
                 await _insert_notification(
