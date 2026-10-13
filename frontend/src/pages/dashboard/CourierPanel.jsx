@@ -345,7 +345,9 @@ export default function CourierPanel({ embedded = false }) {
 
   const claim = async (d) => {
     try {
-      await axios.post(`${API}/courier/deliveries/${d.id}/claim`, {}, { withCredentials: true });
+      // ABA (A08) — aceptar se ata a la asignación mostrada (si es una reserva).
+      await axios.post(`${API}/courier/deliveries/${d.id}/claim`,
+        { assignment_uid: d.assignment_uid }, { withCredentials: true });
       toast.success(t("courierPanel.claimed"));
       setTab("mine");
       load();
@@ -461,7 +463,8 @@ export default function CourierPanel({ embedded = false }) {
     setRejectBusy(true);
     try {
       await axios.post(`${API}/courier/deliveries/${rejecting.id}/reject-reservation`,
-        { reason: rejectReason.trim() }, { withCredentials: true });
+        { reason: rejectReason.trim(), assignment_uid: rejecting.assignment_uid },
+        { withCredentials: true });
       toast.success(t("courierPanel.rejectedOk"));
       setRejecting(null);
       setRejectReason("");

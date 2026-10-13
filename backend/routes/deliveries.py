@@ -361,9 +361,12 @@ async def admin_deliveries_metrics(request: Request,
 
 
 @router.post("/courier/deliveries/{did}/claim")
-async def claim_delivery(did: str, request: Request) -> Any:
+async def claim_delivery(did: str, request: Request,
+                         payload: Optional[dict] = None) -> Any:
     me = await _require_courier(request)
     now = iso(now_utc())
+    # ABA (A08) — aceptar se ata a la IDENTIDAD de la asignación mostrada.
+    uid = (payload or {}).get("assignment_uid")
     existing = await db.deliveries.find_one({"id": did}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="No encontrada.")
@@ -386,9 +389,17 @@ async def claim_delivery(did: str, request: Request) -> Any:
                 status_code=409,
                 detail=("La operación de origen fue rechazada/cancelada — "
                         "esta entrega ya no está disponible."))
-    # iter208/ME02 — la reserva del admin se respeta DENTRO del filtro
-    # atómico: una reserva escrita entre la lectura y la aceptación ya no
-    # puede ser borrada por un mensajero que llegó tarde.
+    # iter208/ME02/ABA — la reserva del admin se respeta DENTRO del filtro
+    # atómico. Si se envía `assignment_uid`, aceptar casa SOLO esa reserva
+    # concreta (su ciclo vigente); así un «Aceptar» de un ciclo anterior no
+    # revive. Sin uid: toma de un trabajo realmente libre o reserva heredada.
+    if uid:
+        accept_or = [{"assigned_to_courier_id": me["user_id"],
+                      "assignment_uid": uid}]
+    else:
+        accept_or = [{"assigned_to_courier_id": {"$in": [None, ""]}},
+                     {"assigned_to_courier_id": me["user_id"],
+                      "assignment_uid": {"$exists": False}}]
     updated = await db.deliveries.find_one_and_update(
         {"id": did, "status": "available",
          # MV02 — un reparto pendiente de validar contra su origen NO es
@@ -400,13 +411,13 @@ async def claim_delivery(did: str, request: Request) -> Any:
          # atómico lo excluye; el sello 'delivered' ya estaba protegido, pero la
          # aceptación también debe perder aquí para no tomar algo que se anula.
          "origin_cancel_intent": {"$exists": False},
-         "$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
-                 {"assigned_to_courier_id": me["user_id"]}]},
+         "$or": accept_or},
         {"$set": {"status": "accepted", "courier_id": me["user_id"],
                   "courier_name": me.get("name") or me.get("email"),
                   "assigned_to_courier_id": None,
                   "assigned_to_courier_name": None,
                   "updated_at": now},
+         "$unset": {"assignment_uid": ""},
          "$push": {"timeline": {"status": "accepted", "at": now,
                                 "by": me["user_id"]}}},
         projection={"_id": 0},
@@ -415,7 +426,8 @@ async def claim_delivery(did: str, request: Request) -> Any:
     if not updated:
         fresh = await db.deliveries.find_one(
             {"id": did}, {"_id": 0, "status": 1, "assigned_to_courier_id": 1,
-                          "needs_origin_check": 1, "origin_cancel_intent": 1})
+                          "needs_origin_check": 1, "origin_cancel_intent": 1,
+                          "assignment_uid": 1})
         if (fresh or {}).get("needs_origin_check"):
             raise HTTPException(
                 status_code=409,
@@ -429,6 +441,13 @@ async def claim_delivery(did: str, request: Request) -> Any:
                 detail=("El cliente está cancelando esta operación — no "
                         "puedes aceptarla ahora. Si persiste, contacta a la "
                         "administración."))
+        # ABA — aceptaste una reserva que ya no es la vigente (ciclo nuevo).
+        if uid and (fresh or {}).get("status") == "available" \
+                and (fresh or {}).get("assignment_uid") != uid:
+            raise HTTPException(
+                status_code=409,
+                detail=("La asignación cambió — recarga tu panel y vuelve a "
+                        "intentarlo."))
         reserved = (fresh or {}).get("assigned_to_courier_id")
         if (fresh or {}).get("status") == "available" and reserved \
                 and reserved != me["user_id"]:
@@ -499,22 +518,29 @@ async def reject_reservation(did: str, payload: dict, request: Request) -> Any:
             detail=f"No se puede rechazar en estado {d['status']}.")
     now = iso(now_utc())
     courier_name = me.get("name") or me.get("email") or "El mensajero"
-    # MSG06 — la liberación exige que la reserva LEÍDA siga vigente: un
-    # rechazo atrasado de A jamás borra la reserva nueva de B.
-    res = await db.deliveries.update_one(
-        {"id": did, "status": "available",
-         "assigned_to_courier_id": me["user_id"]}, {
-            "$set": {"assigned_to_courier_id": None,
-                     "assigned_to_courier_name": None, "updated_at": now},
-            "$push": {"timeline": {
-                "status": "available", "at": now, "by": me["user_id"],
-                "note": f"Reserva rechazada por {courier_name}: {reason}"}},
-        })
+    # MSG06 + ABA (A08) — la liberación exige que la reserva LEÍDA siga vigente:
+    # un rechazo atrasado jamás borra una reserva posterior, ni de OTRO mensajero
+    # ni del MISMO en un ciclo nuevo (A -> B -> A). El filtro ata el rechazo a la
+    # IDENTIDAD de la asignación mostrada (`assignment_uid`); si el cliente no
+    # envía uid (reserva heredada sin uid) solo casa reservas sin uid.
+    uid = payload.get("assignment_uid")
+    filt: Dict[str, Any] = {"id": did, "status": "available",
+                            "assigned_to_courier_id": me["user_id"],
+                            "assignment_uid": uid if uid else {"$exists": False}}
+    res = await db.deliveries.update_one(filt, {
+        "$set": {"assigned_to_courier_id": None,
+                 "assigned_to_courier_name": None, "updated_at": now},
+        "$unset": {"assignment_uid": ""},
+        "$push": {"timeline": {
+            "status": "available", "at": now, "by": me["user_id"],
+            "note": f"Reserva rechazada por {courier_name}: {reason}"}},
+    })
     if res.matched_count == 0:
         raise HTTPException(
             status_code=409,
-            detail=("La reserva cambió (ya no está asignada a ti o la "
-                    "entrega cambió de estado); recarga tu panel."))
+            detail=("La reserva cambió (ya no está asignada a ti, cambió de "
+                    "estado o fue reasignada en un ciclo nuevo); recarga tu "
+                    "panel."))
     try:
         from services.deliveries import publish_delivery_event
         await publish_delivery_event(did, "available")
@@ -1298,6 +1324,13 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
                     "antes de poder asignarla a otro mensajero."))
     now = iso(now_utc())
     courier_display = courier.get("name") or courier.get("email")
+    # ABA (A08) — identidad de ESTE ciclo de asignación. Estable en reintentos
+    # al MISMO mensajero (no invalida su vista); NUEVA en cada ciclo distinto,
+    # para que un aceptar/rechazar atrasado de un ciclo anterior no case con una
+    # reserva posterior (caso A -> B -> A que volvía a casar por propietario).
+    assignment_uid = d.get("assignment_uid")
+    if current_reserved != courier_id or not assignment_uid:
+        assignment_uid = uuid.uuid4().hex
     # ME02 — reasignación condicionada al estado leído: no puede revivir
     # entregas canceladas/confirmadas que cambiaron entre lectura y escritura.
     # Mejora mensajería #2 — el filtro ATÓMICO exige que la reserva siga libre
@@ -1314,6 +1347,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
             "$set": {"status": "available",
                      "assigned_to_courier_id": courier_id,
                      "assigned_to_courier_name": courier_display,
+                     "assignment_uid": assignment_uid,
                      "assigned_by": actor["user_id"],
                      "assigned_by_name": actor.get("name") or actor.get("email"),
                      "assigned_at": now,
@@ -1438,6 +1472,8 @@ async def admin_reassign_delivery(did: str, payload: dict,
     if new_courier_id:
         set_doc.update({"assigned_to_courier_id": new_courier_id,
                         "assigned_to_courier_name": new_display,
+                        # ABA (A08) — ciclo de asignación NUEVO: uid nuevo.
+                        "assignment_uid": uuid.uuid4().hex,
                         "assigned_by": actor["user_id"],
                         "assigned_by_name": actor.get("name")
                         or actor.get("email"),
@@ -1447,6 +1483,8 @@ async def admin_reassign_delivery(did: str, payload: dict,
     else:
         unset_doc.update({"assigned_to_courier_id": "",
                           "assigned_to_courier_name": "",
+                          # ABA (A08) — liberada: sin ciclo de asignación activo.
+                          "assignment_uid": "",
                           "assigned_by": "", "assigned_by_name": "",
                           "assigned_at": ""})
         note = (f"Liberada (estaba aceptada por {prev_courier_name}) a "

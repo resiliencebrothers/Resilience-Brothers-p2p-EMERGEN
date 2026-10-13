@@ -2215,3 +2215,16 @@ Auditoría tras MEN-03: la 1ª apertura del aviso funcionaba, pero quedaban dos 
 
 - **Verificación**: curl — reasignar FREE → `reassign_audit.mode="freed"` con motivo; reasignar a nuevo → `mode="reassigned"` con from/to. Smoke UI 1920: el detalle muestra "LIBERACIÓN … Por Admin Test · … Motivo: mensajero no responde"; contador de red confirma que re-entrar a Historial dispara un 2º GET `/courier/deliveries/history` (antes 1, cacheado). ruff + mypy limpios; JSON es/en válido. Datos de prueba limpiados.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-11 (fork 2026-06) — ABA (A08): un aceptar/rechazar ATRASADO ya no borra ni acepta una asignación posterior
+Bug de concurrencia (alta prioridad operativa). El rechazo/aceptación casaban por `{id, status:"available", assigned_to_courier_id}`, sin identificar el CICLO de asignación. En A -> B -> A, una petición antigua de A volvía a casar con el propietario/estado actuales (misma A, mismo estado), y un rechazo atrasado dejaba `assigned_to_courier_id=None` borrando la NUEVA reserva. `assigned_at` era solo auditoría, no participaba en el control.
+
+**Corrección (`routes/deliveries.py` + `CourierPanel.jsx`)** — identidad de asignación `assignment_uid`:
+- `admin_assign_delivery`: genera `assignment_uid` por ciclo — ESTABLE en reintentos al mismo mensajero (no invalida su vista), NUEVO en cada ciclo distinto.
+- `admin_reassign_delivery` (MEN-08): re-reserva → uid nuevo; liberar → uid eliminado.
+- `reject_reservation`: el filtro atómico exige `assignment_uid` == el mostrado (o `$exists:false` para reservas heredadas). Un rechazo con uid viejo → 409, reserva nueva intacta.
+- `claim_delivery`: acepta `assignment_uid` en el body; aceptar una RESERVA casa solo ese uid; tomar un trabajo realmente LIBRE o una reserva heredada sigue sin uid. Aceptar con uid viejo → 409 "La asignación cambió". Al aceptar, se consume el uid.
+- Frontend: el panel del mensajero envía `assignment_uid` (de la tarjeta mostrada) al aceptar y al rechazar.
+
+- **Pruebas obligatorias (nuevo `tests/test_men11_assignment_uid_aba.py`)**: A->B->A rechazo atrasado no borra la reserva nueva; A->A aceptar atrasado pierde (409) y con uid vigente acepta; reintento a mismo mensajero mantiene uid estable; toma de libre sin uid funciona; reserva heredada sin uid se puede rechazar. **69/69** en la regresión de mensajería (men01-06,11 + iter199/208/209/288). Ajustado `test_men02` (rechazo tras assign ahora envía uid) sin tocar el estado compartido de otros usuarios de prueba. ruff + mypy limpios. Smoke UI: aceptar una reserva desde el panel (frontend manda uid) → claim 200, pasa a Mis entregas. Datos de prueba limpiados.
+- Estado: en preview; pendiente de re-despliegue a producción.

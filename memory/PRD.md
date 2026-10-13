@@ -2643,3 +2643,6 @@ Frontend: botón "Reasignar" en filas `accepted` + `ReassignDialog` (liberar / e
 - **A**: `admin_reassign_delivery` persiste `reassign_audit` {mode, by/by_name, at, from/to courier, reason}; el detalle de la entrega muestra quién liberó/reasignó, cuándo, de quién a quién y el motivo (`dd-reassign-audit`). i18n es/en.
 - **B**: el historial del mensajero (`CourierPanel.jsx`) se refresca — recarga al abrir la pestaña Historial y ante eventos en vivo (`delivery_changed`); ya no queda cacheado con la primera copia.
 - Verificado por curl (reassign_audit freed/reassigned) + smoke UI (bloque de auditoría visible; 2º GET de history al re-entrar). Estado: en preview; pendiente de re-despliegue.
+
+## MEN-11 (fork 2026-06) — ABA (A08): aceptar/rechazar atados a la identidad de la asignación
+Cada asignación lleva `assignment_uid` (estable en reintentos de la misma, nuevo por ciclo). `reject_reservation` y `claim_delivery` casan ese uid en su filtro atómico; una petición de un ciclo anterior (A->B->A) pierde con 409 y no borra/acepta la reserva nueva. Compatible con trabajos libres (sin uid) y reservas heredadas (`$exists:false`). Frontend envía el uid mostrado. Test obligatorio `test_men11_assignment_uid_aba.py`; 69/69 regresión mensajería; smoke UI OK. Estado: en preview; pendiente de re-despliegue.

@@ -136,10 +136,14 @@ def test_reject_returns_delivery_to_available():
         requests.post(f"{API}/admin/deliveries/{did}/assign",
                       headers=_hdr(ADMIN_TOKEN),
                       json={"courier_id": VIP_ID}, timeout=15)
+        # ABA (A08) — el rechazo se ata a la identidad de la asignación mostrada.
+        uid = _db().deliveries.find_one({"id": did}, {"_id": 0}).get(
+            "assignment_uid")
         # El mensajero reservado rechaza → vuelve a libre.
         r = requests.post(f"{API}/courier/deliveries/{did}/reject-reservation",
                           headers=_hdr(VIP_TOKEN),
-                          json={"reason": "No puedo ahora mismo"}, timeout=15)
+                          json={"reason": "No puedo ahora mismo",
+                                "assignment_uid": uid}, timeout=15)
         assert r.status_code == 200, r.text
         assert did in _ids(_list("available"))
         assert did not in _ids(_list("assigned"))
