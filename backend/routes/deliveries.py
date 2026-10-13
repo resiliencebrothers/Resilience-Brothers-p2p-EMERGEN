@@ -1252,13 +1252,20 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     if not d:
         raise HTTPException(status_code=404, detail="No encontrado")
     # Mejora mensajería #2 — una entrega YA ACEPTADA por un mensajero no se
-    # reasigna: hay que cancelarla o esperar a que la rechace. Evita quitarle
-    # el trabajo a alguien que ya lo tomó.
+    # reasigna (ni siquiera por un admin): un mensajero no puede «rechazar» lo
+    # que ya aceptó (`reject_reservation` solo opera sobre reservas `available`
+    # propias), así que la ÚNICA vía para cambiarla es cancelarla por completo.
+    # Evita quitarle el trabajo a alguien que ya lo tomó.
     if d["status"] == "accepted":
+        cname = d.get("courier_name") or "un mensajero"
         raise HTTPException(
             status_code=409,
-            detail=("Esta entrega ya fue aceptada por un mensajero. Para "
-                    "cambiarla, cancélala o espera a que la rechace."))
+            detail=(f"Esta entrega ya fue aceptada por {cname}. Un mensajero "
+                    "no puede «rechazar» una entrega que ya aceptó, por lo que "
+                    "no es posible reasignarla directamente. Si de verdad "
+                    "necesitas cambiar de mensajero, debes cancelar la entrega "
+                    "por completo: quedará cancelada, se avisará al mensajero y "
+                    "tendrás que crearla de nuevo."))
     if d["status"] != "available":
         raise HTTPException(status_code=409,
                             detail=f"No se puede asignar en estado {d['status']}")

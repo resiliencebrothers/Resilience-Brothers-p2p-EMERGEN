@@ -103,7 +103,9 @@ function DeliveriesTab({ navigate, mode = "active" }) {
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const paginated = isHistory || isPending;
-  // Buscador del Historial — por cliente, mensajero, referencia o fecha.
+  // Buscador — por cliente, mensajero, referencia o fecha. Se aplica a las
+  // tres vistas (Entregas, Por confirmar e Historial) como consulta de
+  // servidor, combinándose con el bucket/estado activo.
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   useEffect(() => {
@@ -116,7 +118,7 @@ function DeliveriesTab({ navigate, mode = "active" }) {
       : statusFilter === "all" ? { status: isHistory ? "history" : "active" }
         : statusFilter === "incidents" ? { incident: "open" }
           : { status: statusFilter };
-    if (isHistory && search) base.search = search;
+    if (search) base.search = search;
     const params = (isHistory || isPending)
       ? { ...base, limit: PAGE_SIZE, skip: page * PAGE_SIZE }
       : base;
@@ -297,27 +299,25 @@ function DeliveriesTab({ navigate, mode = "active" }) {
           </div>
         </div>
       )}
-      {isHistory && (
-        <div className="relative max-w-sm" data-testid="history-search">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-          <input
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder={t("admin.deliveries.searchPlaceholder")}
-            data-testid="history-search-input"
-            className="w-full pl-9 pr-8 py-2 text-sm bg-[#0a0a0a] border border-white/10 text-white placeholder:text-neutral-600 focus:border-[#8B5CF6] focus:outline-none"
-          />
-          {searchInput && (
-            <button
-              onClick={() => setSearchInput("")}
-              data-testid="history-search-clear"
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      )}
+      <div className="relative max-w-sm" data-testid="deliveries-search">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+        <input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder={t("admin.deliveries.searchDeliveriesPlaceholder")}
+          data-testid="deliveries-search-input"
+          className="w-full pl-9 pr-8 py-2 text-sm bg-[#0a0a0a] border border-white/10 text-white placeholder:text-neutral-600 focus:border-[#8B5CF6] focus:outline-none"
+        />
+        {searchInput && (
+          <button
+            onClick={() => setSearchInput("")}
+            data-testid="deliveries-search-clear"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
       {!isPending && (
       <div className="flex flex-wrap gap-2">
         <button
@@ -414,7 +414,11 @@ function DeliveriesTab({ navigate, mode = "active" }) {
                   <div className="text-[0.6rem] text-[#22C55E]">{d.courier_share_usdt} / <span className="text-neutral-500">{d.platform_share_usdt}</span></div>
                 </td>
                 <td className="px-3 py-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                  {canAssign && ["available", "accepted"].includes(d.status) ? (
+                  {/* Solo se puede (re)asignar mientras la entrega sigue
+                      `available` (libre o reservada pendiente de aceptación).
+                      Una entrega ya ACEPTADA no se reasigna: coherente con el
+                      bloqueo del backend, se muestra el mensajero en lectura. */}
+                  {canAssign && d.status === "available" ? (
                     <Select value={d.assigned_to_courier_id || d.courier_id || ""} onValueChange={(v) => assign(d, v)}>
                       <SelectTrigger className="h-8 w-[150px] rounded-none bg-[#0a0a0a] border-white/10 text-xs" data-testid={`assign-courier-${d.id}`}>
                         <SelectValue placeholder={t("admin.deliveries.assignPlaceholder")} />

@@ -2620,3 +2620,12 @@ El fallo de `make test-critical` en CI se reprodujo con DB fresca (igual que CI)
 
 - **Tests**: `test_men06_*` (dispatch alert a empleado autorizado + admin; excluye no autorizado; búsqueda por cliente/mensajero/fecha). Regresión: `test_iter290` (alertas una-sola-vez) sigue 100%; MEN-05 intacto. ruff + mypy limpios. Smoke UI: búsqueda "ZEBRAUNICORN" filtra a 1 resultado.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-07 (fork 2026-06) — Buscador en Activas/Por confirmar + coherencia del bloqueo de reasignación
+**1) Buscar en todas las vistas (`AdminDeliveries.jsx`)**: el buscador pasa de estar solo en Historial a mostrarse también en **Entregas** (`active`) y **Por confirmar** (`pending_confirmation`); envía `search` en las tres (el backend ya lo combinaba con cualquier bucket vía `$and`). Nueva clave i18n `searchDeliveriesPlaceholder` y corrección de la clave `searchPlaceholder` que estaba DUPLICADA bajo `admin.deliveries` (es/en), lo que shadoweaba el placeholder del buscador de entregas con el del buscador de usuarios de "Mensajeros". testids: `deliveries-search(-input/-clear)`.
+
+**2) Coherencia del bloqueo de reasignación**: la UI ya no ofrece el selector de (re)asignación para entregas `accepted` (solo `available`); se muestra el mensajero en lectura. El mensaje 409 del backend para `accepted` ya no sugiere "espera a que la rechace" (acción inexistente para entregas aceptadas): ahora nombra al mensajero, aclara que no puede «rechazar» lo ya aceptado y explica la consecuencia de cancelar sin recomendarlo por rutina. No afecta a MEN-02 (el display "ASIGNADA" sigue siendo para reservadas `available`).
+
+- **Verificación**: curl (search en active/pending + por `ref_id`, assign a `accepted` → 409 nuevo) + smoke UI 1920 (buscador en Entregas y Por confirmar, filtra a 1, fila ACEPTADA sin selector). ruff + mypy limpios; JSON es/en válido.
+- Estado: en preview; pendiente de re-despliegue a producción.
+

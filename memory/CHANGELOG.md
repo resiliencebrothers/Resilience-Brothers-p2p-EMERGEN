@@ -2170,3 +2170,16 @@ Nota de método: a partir de ahora, validar los cambios de tests contra DB fresc
 
 - **Tests**: `test_men06_*` (dispatch alert a empleado autorizado + admin; excluye no autorizado; búsqueda por cliente/mensajero/fecha). Regresión: `test_iter290` (alertas una-sola-vez) sigue 100%; MEN-05 intacto. ruff + mypy limpios. Smoke UI: búsqueda "ZEBRAUNICORN" filtra a 1 resultado.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## MEN-07 (fork 2026-06) — Buscador en Activas/Por confirmar + coherencia del bloqueo de reasignación
+**1) Buscar en todas las vistas (`AdminDeliveries.jsx`)**
+- El buscador (antes solo en Historial) ahora se muestra en las TRES vistas: **Entregas** (`active`), **Por confirmar** (`pending_confirmation`) e **Historial**. El parámetro `search` se envía en todas; el backend ya lo combinaba con cualquier bucket vía `$and` (sin cambios de servidor).
+- i18n: nueva clave `admin.deliveries.searchDeliveriesPlaceholder` ("Buscar por cliente, mensajero, referencia o fecha…"). **Bug corregido**: `searchPlaceholder` estaba DUPLICADo en `admin.deliveries` (es/en) — la clave del buscador de entregas quedaba shadoweada por la del buscador de usuarios de "Mensajeros"; ahora son claves distintas. testids renombrados a `deliveries-search(-input/-clear)`.
+
+**2) Coherencia del bloqueo de reasignación (`AdminDeliveries.jsx` + `routes/deliveries.py`)**
+- UI: el selector de (re)asignación ya NO se ofrece para entregas `accepted` (solo `available`: libre o reservada pendiente). Coherente con el backend, que bloquea reasignar una entrega ya aceptada; ahora se muestra el mensajero en modo lectura.
+- Backend (`admin_assign_delivery`): el mensaje 409 para `accepted` dejó de sugerir "espera a que la rechace" (acción inexistente: `reject_reservation` solo opera sobre reservas `available` propias, y al aceptar se borra `assigned_to_courier_id`). Nuevo texto: nombra al mensajero, explica que un mensajero no puede «rechazar» lo ya aceptado y describe la consecuencia operativa de cancelar (queda cancelada, se avisa al mensajero, hay que crearla de nuevo) sin recomendarlo por rutina. (Nota: esto NO cambia MEN-02; el display "ASIGNADA" sigue siendo para reservadas `available`.)
+
+- **Verificación**: curl — `active&search=ZULU` y `pending_confirmation&search=ZULU` filtran a 1; `search=men07refA` casa por `ref_id`; assign a entrega `accepted` → 409 con el mensaje nuevo nombrando al mensajero. Smoke UI (1920): buscador presente en Entregas y Por confirmar; "ZULU" filtra a 1 y oculta el resto; fila ACEPTADA sin selector (mensajero en lectura). ruff + mypy limpios; JSON es/en válido.
+- Estado: en preview; pendiente de re-despliegue a producción.
