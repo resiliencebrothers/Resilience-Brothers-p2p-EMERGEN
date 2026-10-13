@@ -313,9 +313,9 @@ export default function CourierPanel({ embedded = false }) {
   useEffect(() => () => stopSharing(), [stopSharing]);
 
   const load = useCallback(() => {
-    axios.get(`${API}/courier/deliveries`, { withCredentials: true })
-      .then((r) => { setData(r.data); setLoadError(false); })
-      .catch(() => setLoadError(true));
+    return axios.get(`${API}/courier/deliveries`, { withCredentials: true })
+      .then((r) => { setData(r.data); setLoadError(false); return r.data; })
+      .catch(() => { setLoadError(true); return null; });
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -487,38 +487,41 @@ export default function CourierPanel({ embedded = false }) {
   }, [reservedCount]);
 
   // MEN-03 (M02) — al abrir un aviso (in-app o push) se navega a la entrega
-  // concreta. Dos pasos para cubrir TODOS los avisos, no solo el primero:
-  //  1) cuando llega un aviso nuevo/distinto, marca el id pendiente y pide
-  //     datos FRESCOS (una asignación recién creada puede no estar aún en
-  //     `data`); un mismo id repetido por el polling no vuelve a disparar.
-  //  2) al llegar esos datos frescos, resuelve el pendiente: selecciona la
-  //     pestaña correcta y RESALTA la tarjeta; si de verdad ya no está
-  //     (tomada por otro, cancelada o ya confirmada) avisa. Nunca acepta solo.
+  // concreta. Se reprocesa CADA aviso DISTINTO (no solo el primero) y se
+  // resuelve SIEMPRE contra datos FRESCOS pedidos para ESE aviso:
+  //  - cambiar solo `?delivery=` mantiene el panel montado → este efecto
+  //    vuelve a correr porque `deepLinkId` cambia (A -> B sin recarga).
+  //  - una asignación recién creada que aún no está en el estado local NO se
+  //    declara "desaparecida": esperamos al fetch que disparamos aquí, no a una
+  //    lista desactualizada ni a un refresco de polling en vuelo (sin carreras).
+  //  - si el último aviso cambió mientras cargábamos, gana el último.
+  //  - si de verdad ya no está (tomada por otro, cancelada o reasignada) se
+  //    informa. Nunca se acepta automáticamente: solo navega y resalta.
   useEffect(() => {
     if (!deepLinkId) return;
     if (pendingDeepLinkRef.current === deepLinkId) return;
     pendingDeepLinkRef.current = deepLinkId;
-    load();
-  }, [deepLinkId, load]);
-
-  useEffect(() => {
-    const target = pendingDeepLinkRef.current;
-    if (!data || !target) return;
-    pendingDeepLinkRef.current = null;
-    if (data.available.some((d) => d.id === target)) {
-      setTab("available");
-      setHighlightId(target);
-    } else if (data.mine.some((d) => d.id === target)) {
-      setTab("mine");
-      setHighlightId(target);
-    } else if (data.history.some((d) => d.id === target)) {
-      setTab("history");
-      setHighlightId(target);
-    } else {
-      setHighlightId(null);
-      toast.info(t("courierPanel.deepLinkGone"));
-    }
-  }, [data, t]);
+    let cancelled = false;
+    (async () => {
+      const fresh = await load();
+      if (cancelled || !fresh) return;
+      if (pendingDeepLinkRef.current !== deepLinkId) return;
+      if ((fresh.available || []).some((d) => d.id === deepLinkId)) {
+        setTab("available");
+        setHighlightId(deepLinkId);
+      } else if ((fresh.mine || []).some((d) => d.id === deepLinkId)) {
+        setTab("mine");
+        setHighlightId(deepLinkId);
+      } else if ((fresh.history || []).some((d) => d.id === deepLinkId)) {
+        setTab("history");
+        setHighlightId(deepLinkId);
+      } else {
+        setHighlightId(null);
+        toast.info(t("courierPanel.deepLinkGone"));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [deepLinkId, load, t]);
 
   if (!data) {
     // MSG10 — error visible con reintento en vez de un spinner eterno.

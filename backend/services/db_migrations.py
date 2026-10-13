@@ -130,3 +130,28 @@ async def migrate_split_sell_rates_to_single(db: Any) -> int:
         await db.rates.update_one({"id": d["id"]}, update)
         n += 1
     return n
+
+
+async def migrate_assignment_uid_for_existing_reservations(db: Any) -> int:
+    """ABA (A08) — sella con `assignment_uid` las reservas `available` YA
+    existentes (asignadas a un mensajero pero sin uid) para que el blindaje
+    contra peticiones atrasadas (aceptar/rechazar de un ciclo anterior) cubra
+    también los datos previos, no solo las asignaciones nuevas. Idempotente:
+    solo toca reservas vivas sin uid y cada una recibe un uid único; una
+    segunda ejecución no vuelve a tocarlas."""
+    import uuid as _uuid
+
+    n = 0
+    rows = await db.deliveries.find(
+        {"status": "available",
+         "assigned_to_courier_id": {"$nin": [None, ""]},
+         "assignment_uid": {"$exists": False}},
+        {"_id": 0, "id": 1}).to_list(5000)
+    for d in rows:
+        res = await db.deliveries.update_one(
+            {"id": d["id"], "assignment_uid": {"$exists": False}},
+            {"$set": {"assignment_uid": _uuid.uuid4().hex}})
+        n += res.modified_count
+    if n:
+        logger.info(f"Sealed assignment_uid on {n} legacy reservations (A08)")
+    return n

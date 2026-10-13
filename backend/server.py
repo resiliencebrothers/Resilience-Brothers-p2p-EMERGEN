@@ -210,6 +210,15 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"Single sell-rate migration failed: {e}")
 
+    # ABA (A08) — sella assignment_uid en reservas heredadas vivas para que el
+    # blindaje contra aceptar/rechazar atrasados cubra también los datos previos.
+    try:
+        from services.db_migrations import (
+            migrate_assignment_uid_for_existing_reservations)
+        await migrate_assignment_uid_for_existing_reservations(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"assignment_uid migration failed: {e}")
+
     # iter48 — security_events collection indexes (idempotent).
     try:
         await security_events_indexes()

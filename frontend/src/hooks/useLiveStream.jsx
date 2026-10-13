@@ -106,6 +106,11 @@ export function LiveStreamProvider({ children, enabled = true }) {
       "ledger_changed",
       // iter210 — chat cliente ↔ mensajero en vivo.
       "delivery_chat_message",
+      // MSG10/MEN — refresco en vivo de los paneles de mensajería (admin y
+      // mensajero): asignación, aceptación, avance, reasignación/liberación,
+      // cancelación y CONFIRMACIÓN. Sin esto los `useLiveEvent("delivery_changed")`
+      // nunca disparaban y el historial del mensajero no se refrescaba solo.
+      "delivery_changed",
     ].forEach((t) => es.addEventListener(t, forward(t)));
 
     es.addEventListener("error", () => {

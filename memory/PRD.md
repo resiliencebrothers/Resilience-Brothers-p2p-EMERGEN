@@ -2646,3 +2646,9 @@ Frontend: botón "Reasignar" en filas `accepted` + `ReassignDialog` (liberar / e
 
 ## MEN-11 (fork 2026-06) — ABA (A08): aceptar/rechazar atados a la identidad de la asignación
 Cada asignación lleva `assignment_uid` (estable en reintentos de la misma, nuevo por ciclo). `reject_reservation` y `claim_delivery` casan ese uid en su filtro atómico; una petición de un ciclo anterior (A->B->A) pierde con 409 y no borra/acepta la reserva nueva. Compatible con trabajos libres (sin uid) y reservas heredadas (`$exists:false`). Frontend envía el uid mostrado. Test obligatorio `test_men11_assignment_uid_aba.py`; 69/69 regresión mensajería; smoke UI OK. Estado: en preview; pendiente de re-despliegue.
+
+## MEN-12 (fork 2026-06) — Migración assignment_uid + refresco en vivo del historial + M02 sin carreras
+- **A**: migración idempotente de arranque que sella `assignment_uid` en reservas `available` heredadas (blindaje ABA también para datos previos).
+- **B**: BUG RAÍZ — `delivery_changed` no se reenviaba por SSE (`useLiveStream.jsx`); añadido a la lista. Ahora confirmar/reasignar/cancelar refresca el historial del mensajero en vivo (sin cambiar de pestaña) vía `onLiveChange`.
+- **C**: resolución del deep-link reescrita para resolver contra datos frescos del propio fetch (sin carreras con el polling); cubre A→B sin recarga, asignación nueva antes del refresco, y entrega realmente cancelada/reasignada.
+- Verificado: regresión 25/25, 3 smokes UI. Estado: en preview; pendiente de re-despliegue.
