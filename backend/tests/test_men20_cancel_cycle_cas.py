@@ -169,3 +169,28 @@ def test_payout_protection_preserved():
         assert _doc(did)["status"] == "delivered"
     finally:
         _cleanup(did)
+
+
+# ---------------------------------------------------------------------------
+# MEN22 — el endpoint EXIGE declarar lo observado; omitir los campos es 400.
+# Cierra el hueco por el que un cliente podía saltarse el CAS por omisión.
+
+def test_cancel_requires_expected_status():
+    did = _mk_reservation("U1")
+    try:
+        r = _cancel(did, expected_status=None, expected_uid="U1")  # falta status
+        assert r.status_code == 400, r.text
+        assert _doc(did)["status"] == "available"  # no se tocó
+    finally:
+        _cleanup(did)
+
+
+def test_cancel_requires_expected_uid_key():
+    did = _mk_reservation("U1")
+    try:
+        # La clave expected_uid está AUSENTE (distinto de null) → 400.
+        r = _cancel(did, expected_status="available", expected_uid="__omit__")
+        assert r.status_code == 400, r.text
+        assert _doc(did)["status"] == "available"  # no se tocó
+    finally:
+        _cleanup(did)

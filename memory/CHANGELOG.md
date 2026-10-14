@@ -2363,3 +2363,20 @@ Frontend: pestaña "Inventario" en `/company` (`CompanyInventoryView`) — por p
 Pruebas: `tests/test_empresa_phase2.py` 2/2 (ciclo completo recibir→distribuir→409 sobre-distribución→devolver→409→borrar tienda devuelve al central→log; + validación de pertenencia). En `test-critical`. mypy 114 OK. Smoke UI e2e: recibir 100→central 100, distribuir 30→central 70 + chip tienda, log correcto, sin overflow.
 - Pendiente Fases 3-4: sub-saldo/liquidación; solicitar mensajería. Nota: la venta por recogida en tienda para productos Empresa (decremento por tienda en la venta) queda como mejora futura; hoy la venta decrementa el TOTAL (central disponible) sin elegir tienda.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## MEN22 (fork 2026-06) — Cancelación admin: campos CAS obligatorios (cierre de OP01)
+`POST /admin/deliveries/{id}/cancel` ahora EXIGE declarar lo observado; antes se podía omitir y saltar el CAS:
+- `expected_status` ausente/vacío → 400. Antes caía al estado leído por el servidor.
+- clave `expected_uid` ausente → 400 (null SÍ es válido: entrega sin ciclo). Antes, si faltaba, no se filtraba por ciclo.
+- El filtro atómico usa SIEMPRE ambos (status observado + assignment_uid o {$exists:false}); 409 si el ciclo/estado cambió; se conserva la protección `payout_credited`.
+- `backend/routes/deliveries.py:1688+`. El frontend (`AdminDeliveries.jsx:492+`) ya enviaba ambos ⇒ sin cambios de UI.
+- Pruebas: `tests/test_men20_cancel_cycle_cas.py` 8/8 (+2 MEN22: falta status→400, falta clave uid→400).
+
+## EMP-03 (fork 2026-06) — Fase 3 Empresa: sub-saldo propio (depósitos/retiros/liquidación)
+La Empresa reutiliza la MISMA billetera que VIP y clientes normales (sin cambios de backend: los endpoints solo bloquean a `employee`, y la venta acredita al dueño del producto `vendor_owner_id` vía `admin.py`, regardless de rol):
+- Lectura de saldo: `GET /vip/balances` (empresa pasa el gate). Depósitos: `POST /deposits`. Retiros/liquidación: `POST /vip/withdraw` (requiere verificación completa + TOTP, igual que clientes).
+- Las ventas del marketplace acreditan el neto (tras comisión de Resilience) al `vip_balances` de la Empresa; el RETIRO es la liquidación con Resilience (aprobada por el admin en el flujo de withdrawals existente).
+- Frontend: nueva pestaña "Saldo" en `/company` (`CompanyWalletView`) — saldo total + por moneda, y hub Depositar/Retirar-Liquidar/Convertir reutilizando `MethodPicker`, `DepositForm`, `VipWithdrawalForm`, `BalanceConverterCard`, `VerificationGateBanner`.
+- Pruebas: `tests/test_empresa_phase3.py` 2/2 (lee su sub-saldo; billetera no bloqueada por rol). Smoke UI e2e: total 1.523,48 USDT, tarjetas por moneda, picker de método, sin overflow.
+- Estado: en preview; pendiente de re-despliegue a producción.

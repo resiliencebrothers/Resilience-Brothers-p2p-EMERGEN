@@ -1694,24 +1694,34 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
     if d["status"] in ("confirmed", "cancelled"):
         raise HTTPException(status_code=409, detail=f"Ya está {d['status']}")
     now = iso(now_utc())
-    # OP01 — la cancelación debe ligarse al CICLO y ESTADO que VIO el operador,
-    # no solo al estado que lee el servidor. Una reasignación de reserva conserva
-    # status=available pero cambia `assignment_uid`; y una aceptación cambia el
-    # estado conservando el uid. Por eso condicionamos atómicamente a ambos:
+    # OP01/MEN22 — la cancelación debe ligarse al CICLO y ESTADO que VIO el
+    # operador, no al que lee el servidor. Por eso AMBOS campos son OBLIGATORIOS:
     #  - `expected_status`: el estado observado en la tarjeta (p. ej. available).
-    #  - `expected_uid`: el ciclo observado. Si el operador vio una entrega SIN
-    #    ciclo (dato heredado/libre), solo puede cancelarse si SIGUE sin ciclo;
-    #    la ausencia NO autoriza a anular un ciclo nuevo.
+    #  - `expected_uid`: el ciclo observado (puede ser null si la entrega no
+    #    tenía ciclo). La AUSENCIA de la clave NO es válida: sin declarar lo que
+    #    se vio no se puede autorizar una escritura condicionada. Esto cierra el
+    #    hueco por el que un cliente podía omitir los campos y saltarse el CAS.
+    # Una reasignación de reserva conserva status=available pero cambia
+    # `assignment_uid`; y una aceptación cambia el estado conservando el uid.
     # Se conserva la protección contra confirmación/comisión (`payout_credited`).
     expected_status = payload.get("expected_status")
+    if not expected_status:
+        raise HTTPException(
+            status_code=400,
+            detail=("Falta expected_status: la cancelación debe declarar el "
+                    "estado observado en la tarjeta."))
+    if "expected_uid" not in payload:
+        raise HTTPException(
+            status_code=400,
+            detail=("Falta expected_uid: la cancelación debe declarar el ciclo "
+                    "observado (o null si la entrega no tenía ciclo)."))
+    euid = payload.get("expected_uid")
     flt: Dict[str, Any] = {
         "id": did,
-        "status": expected_status if expected_status else d["status"],
+        "status": expected_status,
         "payout_credited": {"$ne": True},
+        "assignment_uid": euid if euid else {"$exists": False},
     }
-    if "expected_uid" in payload:
-        euid = payload.get("expected_uid")
-        flt["assignment_uid"] = euid if euid else {"$exists": False}
     res = await db.deliveries.update_one(
         flt, {
             "$set": {"status": "cancelled", "updated_at": now},
