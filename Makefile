@@ -160,6 +160,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_empresa_phase3.py \
 		tests/test_empresa_phase4.py \
 		tests/test_empresa_f201_sales.py \
+		tests/test_empresa_f202_idempotency.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

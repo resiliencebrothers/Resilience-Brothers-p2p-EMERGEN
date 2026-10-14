@@ -2733,3 +2733,13 @@ La Empresa PIDE un envío; Resilience asigna el mensajero. La Empresa NO elige n
 - Pruebas: `tests/test_empresa_phase4.py` 4/4 (entra al pool sin mensajero; despacho desde tienda descuenta y cancelar devuelve, idempotente; cancelación por admin reconciliada en lectura; Empresa no puede asignar → 403). Smoke UI e2e: solicitud con despacho desde tienda, badge "en espera de mensajero", sin overflow.
 - Nota facturación: el envío se crea con fee 0 (coste/facturación Empresa↔Resilience queda como mejora futura). Billing y recogida-en-tienda para VENTAS del marketplace siguen pendientes.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## F2-02 (fork 2026-06) — Reintentos de inventario Empresa ahora IDEMPOTENTES (clave estable)
+Bug ALTA: receive/distribute/return generaban un UUID NUEVO por llamada ⇒ un reintento HTTP de la MISMA operación lógica duplicaba el efecto (recibir 100 dos veces → 200; distribuir 30 dos veces → tienda 60). El guard `inv_ops` (tope 1000) no es evidencia duradera.
+Fix:
+- `services/company_inventory.py` — nueva idempotencia DURADERA `_run_idempotent`: registro permanente en `company_inventory_ops` (único por `company_id`+`op_key`). Misma clave + mismo payload ⇒ devuelve el resultado ya calculado SIN reaplicar (aunque `inv_ops` ya haya rotado el id); misma clave + payload DISTINTO ⇒ `conflict` (409). El guard `inv_ops` queda solo como exactamente-una-mutación en la ventana de concurrencia. Maneja carrera de inserción (`DuplicateKeyError`). receive/distribute/return aceptan `op_key` (opcional: si falta se genera uno legado, no deduplica); dispatch_from_store/return_dispatch usan su `op_id` estable (Fase 4: `cdeliv:{reqid}`). El movimiento se registra una sola vez (índice único `op_id`).
+- `routes/company.py` — payloads de inventario aceptan `op_id`; `conflict` ⇒ 409 "clave usada con datos distintos".
+- `frontend/CompanyInventoryView.jsx` — genera un `op_id` estable por operación y lo CONSERVA en un reintento automático ante pérdida de respuesta (sin respuesta del servidor), para que el servidor deduplique.
+- Pruebas: `tests/test_empresa_f202_idempotency.py` 7/7 — recibir/distribuir/devolver con misma clave aplican una sola vez (y un solo movimiento); claves distintas aplican ambas; misma clave + payload distinto ⇒ conflict sin efecto; DURABILIDAD: tras vaciar `inv_ops` (simular rotación) un reintento con la misma clave NO reaplica; 3 llamadas CONCURRENTES (`asyncio.gather`) con la misma clave ⇒ un único incremento y un único movimiento.
+- Estado: en preview; pendiente de re-despliegue a producción.

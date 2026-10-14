@@ -296,12 +296,15 @@ async def delete_my_product(pid: str, request: Request) -> Any:
 class InvReceivePayload(BaseModel):
     product_id: str
     qty: float = Field(..., gt=0)
+    # F2-02 — clave estable de operación (el cliente la conserva en reintentos).
+    op_id: Optional[str] = Field(None, max_length=80)
 
 
 class InvMovePayload(BaseModel):
     product_id: str
     store_id: str
     qty: float = Field(..., gt=0)
+    op_id: Optional[str] = Field(None, max_length=80)
 
 
 @router.get("/inventory")
@@ -335,7 +338,12 @@ async def inventory_receive(payload: InvReceivePayload, request: Request) -> Any
     user = await require_company(request)
     await _ensure_owned_product(payload.product_id, user["user_id"])
     status = await company_inventory.receive_central(
-        user["user_id"], payload.product_id, payload.qty, actor=user)
+        user["user_id"], payload.product_id, payload.qty,
+        op_key=payload.op_id, actor=user)
+    if status == "conflict":
+        raise HTTPException(
+            status_code=409,
+            detail="La clave de operación ya se usó con datos distintos.")
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo recibir el stock")
     return {"ok": True}
@@ -347,7 +355,12 @@ async def inventory_distribute(payload: InvMovePayload, request: Request) -> Any
     await _ensure_owned_product(payload.product_id, user["user_id"])
     await _ensure_owned_store(payload.store_id, user["user_id"])
     status = await company_inventory.distribute(
-        user["user_id"], payload.product_id, payload.store_id, payload.qty, actor=user)
+        user["user_id"], payload.product_id, payload.store_id, payload.qty,
+        op_key=payload.op_id, actor=user)
+    if status == "conflict":
+        raise HTTPException(
+            status_code=409,
+            detail="La clave de operación ya se usó con datos distintos.")
     if status == "insufficient":
         raise HTTPException(
             status_code=409,
@@ -363,7 +376,12 @@ async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
     await _ensure_owned_product(payload.product_id, user["user_id"])
     await _ensure_owned_store(payload.store_id, user["user_id"])
     status = await company_inventory.return_to_central(
-        user["user_id"], payload.product_id, payload.store_id, payload.qty, actor=user)
+        user["user_id"], payload.product_id, payload.store_id, payload.qty,
+        op_key=payload.op_id, actor=user)
+    if status == "conflict":
+        raise HTTPException(
+            status_code=409,
+            detail="La clave de operación ya se usó con datos distintos.")
     if status == "insufficient":
         raise HTTPException(
             status_code=409,

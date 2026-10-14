@@ -41,12 +41,22 @@ export default function CompanyInventoryView() {
     const { mode, product } = dialog;
     if ((mode === "distribute" || mode === "return") && !storeId) return toast.error("Elige una tienda");
     setBusy(true);
+    // F2-02 — clave estable de operación: se genera UNA vez y se conserva en el
+    // reintento por pérdida de respuesta, para que el servidor deduplique.
+    const opId = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
     const body = mode === "receive"
-      ? { product_id: product.product_id, qty: n }
-      : { product_id: product.product_id, store_id: storeId, qty: n };
+      ? { product_id: product.product_id, qty: n, op_id: opId }
+      : { product_id: product.product_id, store_id: storeId, qty: n, op_id: opId };
+    const okMsg = mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : "Devuelto al central";
+    const doPost = () => axios.post(`${API}/company/inventory/${mode}`, body, { withCredentials: true });
     try {
-      await axios.post(`${API}/company/inventory/${mode}`, body, { withCredentials: true });
-      toast.success(mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : "Devuelto al central");
+      try {
+        await doPost();
+      } catch (e1) {
+        // Sin respuesta del servidor (red) → reintenta UNA vez con la MISMA clave.
+        if (!e1.response) { await doPost(); } else { throw e1; }
+      }
+      toast.success(okMsg);
       setDialog(null); load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "No se pudo completar la operación");

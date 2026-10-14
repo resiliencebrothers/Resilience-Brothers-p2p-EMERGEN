@@ -18,10 +18,13 @@ No toca `products.stock` en distribute/return (solo reubica), por lo que NUNCA
 entra en conflicto con el decremento de stock de una venta.
 """
 import uuid
+import json
+import hashlib
 import logging
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import now_utc, iso
@@ -29,8 +32,9 @@ from auth_utils import now_utc, iso
 logger = logging.getLogger(__name__)
 
 QTY_DECIMALS = 3
-INV_OPS_CAP = 1000  # tope del guard embebido de idempotencia
+INV_OPS_CAP = 1000  # tope del guard embebido (ventana de concurrencia, NO durable)
 _MOVES_IDX_READY = False
+_OPS_IDX_READY = False
 
 
 def _q(v: Any) -> float:
@@ -71,88 +75,167 @@ async def _log_move(company_id: str, product: dict, mtype: str, qty: float,
         pass  # dedupe por op_id — el movimiento ya quedó registrado
 
 
+def _payload_hash(op_type: str, payload: dict) -> str:
+    raw = json.dumps({"t": op_type, "p": payload}, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+async def _run_idempotent(company_id: str, op_key: Optional[str], op_type: str,
+                          payload: dict,
+                          apply_fn: "Callable[[str], Awaitable[str]]") -> str:
+    """Idempotencia DURADERA por clave estable de operación (F2-02).
+
+    - `company_inventory_ops` (único por empresa+clave) es la evidencia PERMANENTE:
+      misma clave + mismo payload ⇒ devuelve el resultado ya calculado SIN
+      reaplicar (aunque el tope de `inv_ops` ya haya rotado el id antiguo);
+      misma clave + payload DISTINTO ⇒ 'conflict'.
+    - El guard `inv_ops` del documento del producto garantiza, además,
+      exactamente-UNA mutación en la ventana de concurrencia.
+    - Si `op_key` falta, se genera uno (camino legado: no deduplica reintentos).
+    - Dos operaciones DISTINTAS con mismo producto/cantidad usan claves distintas,
+      por lo que ambas se aplican (no se confunden).
+    """
+    global _OPS_IDX_READY
+    if not _OPS_IDX_READY:
+        await db.company_inventory_ops.create_index(
+            [("company_id", 1), ("op_key", 1)], unique=True)
+        _OPS_IDX_READY = True
+    oid = op_key or f"auto:{uuid.uuid4().hex}"
+    phash = _payload_hash(op_type, payload)
+    try:
+        prior = await db.company_inventory_ops.find_one_and_update(
+            {"company_id": company_id, "op_key": oid},
+            {"$setOnInsert": {"company_id": company_id, "op_key": oid,
+                              "op_type": op_type, "payload_hash": phash,
+                              "status": "pending", "created_at": iso(now_utc())}},
+            upsert=True, return_document=ReturnDocument.BEFORE)
+    except DuplicateKeyError:
+        # Carrera de inserción concurrente: el registro ya existe → trátalo como previo.
+        prior = await db.company_inventory_ops.find_one(
+            {"company_id": company_id, "op_key": oid})
+    if prior is not None:
+        if prior.get("payload_hash") != phash:
+            return "conflict"
+        if prior.get("status") == "done":
+            return prior.get("result", "applied")
+        # 'pending': intento previo incompleto o concurrente → se sigue a apply;
+        # el guard inv_ops impide una segunda mutación.
+    result = await apply_fn(oid)
+    await db.company_inventory_ops.update_one(
+        {"company_id": company_id, "op_key": oid},
+        {"$set": {"status": "done", "result": result, "done_at": iso(now_utc())}})
+    return result
+
+
 async def receive_central(company_id: str, product_id: str, qty: float,
+                          op_key: Optional[str] = None,
                           actor: Optional[dict] = None) -> str:
     """Recibe mercancía en el almacén central (incrementa el stock total)."""
     qty = _q(qty)
     if qty <= 0:
         return "invalid"
-    op_id = f"recv:{uuid.uuid4().hex}"
-    res = await db.products.find_one_and_update(
-        {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [op_id]}},
-        [{"$set": {
-            "stock": {"$round": [{"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
-            "inv_ops": _slice_concat("inv_ops", op_id),
-        }}],
-        projection={"_id": 0, "id": 1, "name": 1},
-        return_document=ReturnDocument.AFTER)
-    if res is None:
-        return "not_found"
-    await _log_move(company_id, res, "receive", qty, op_id, actor=actor)
-    return "applied"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [oid]}},
+            [{"$set": {
+                "stock": {"$round": [{"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            await _log_move(company_id, res, "receive", qty, oid, actor=actor)
+            return "applied"
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        return "applied" if dup else "not_found"
+
+    return await _run_idempotent(company_id, op_key, "receive",
+                                 {"product_id": product_id, "qty": qty}, _apply)
 
 
 async def distribute(company_id: str, product_id: str, store_id: str, qty: float,
+                     op_key: Optional[str] = None,
                      actor: Optional[dict] = None) -> str:
     """Mueve `qty` del almacén central a una tienda. Atómico en un solo doc.
     Exige central (= stock − distributed) ≥ qty, si no devuelve 'insufficient'."""
     qty = _q(qty)
     if qty <= 0:
         return "invalid"
-    op_id = f"dist:{uuid.uuid4().hex}"
-    res = await db.products.find_one_and_update(
-        {"id": product_id, "company_id": company_id,
-         "inv_ops": {"$nin": [op_id]},
-         "$expr": {"$gte": [
-             {"$subtract": [{"$ifNull": ["$stock", 0]}, {"$ifNull": ["$distributed", 0]}]},
-             qty]}},
-        [{"$set": {
-            f"by_store.{store_id}": {"$round": [
-                {"$add": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
-            "distributed": {"$round": [
-                {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
-            "inv_ops": _slice_concat("inv_ops", op_id),
-        }}],
-        projection={"_id": 0, "id": 1, "name": 1},
-        return_document=ReturnDocument.AFTER)
-    if res is not None:
-        store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
-        await _log_move(company_id, res, "distribute", qty, op_id,
-                        store_id=store_id, store_name=store.get("name", ""), actor=actor)
-        return "applied"
-    exists = await db.products.find_one(
-        {"id": product_id, "company_id": company_id}, {"_id": 1})
-    return "insufficient" if exists else "not_found"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id,
+             "inv_ops": {"$nin": [oid]},
+             "$expr": {"$gte": [
+                 {"$subtract": [{"$ifNull": ["$stock", 0]}, {"$ifNull": ["$distributed", 0]}]},
+                 qty]}},
+            [{"$set": {
+                f"by_store.{store_id}": {"$round": [
+                    {"$add": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+                "distributed": {"$round": [
+                    {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+            await _log_move(company_id, res, "distribute", qty, oid,
+                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            return "applied"
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        if dup:
+            return "applied"
+        exists = await db.products.find_one(
+            {"id": product_id, "company_id": company_id}, {"_id": 1})
+        return "insufficient" if exists else "not_found"
+
+    return await _run_idempotent(
+        company_id, op_key, "distribute",
+        {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
 async def return_to_central(company_id: str, product_id: str, store_id: str,
-                            qty: float, actor: Optional[dict] = None) -> str:
+                            qty: float, op_key: Optional[str] = None,
+                            actor: Optional[dict] = None) -> str:
     """Devuelve `qty` de una tienda al almacén central."""
     qty = _q(qty)
     if qty <= 0:
         return "invalid"
-    op_id = f"ret:{uuid.uuid4().hex}"
-    res = await db.products.find_one_and_update(
-        {"id": product_id, "company_id": company_id,
-         "inv_ops": {"$nin": [op_id]},
-         "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
-        [{"$set": {
-            f"by_store.{store_id}": {"$round": [
-                {"$subtract": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
-            "distributed": {"$round": [
-                {"$subtract": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
-            "inv_ops": _slice_concat("inv_ops", op_id),
-        }}],
-        projection={"_id": 0, "id": 1, "name": 1},
-        return_document=ReturnDocument.AFTER)
-    if res is not None:
-        store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
-        await _log_move(company_id, res, "return", qty, op_id,
-                        store_id=store_id, store_name=store.get("name", ""), actor=actor)
-        return "applied"
-    exists = await db.products.find_one(
-        {"id": product_id, "company_id": company_id}, {"_id": 1})
-    return "insufficient" if exists else "not_found"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id,
+             "inv_ops": {"$nin": [oid]},
+             "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
+            [{"$set": {
+                f"by_store.{store_id}": {"$round": [
+                    {"$subtract": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+                "distributed": {"$round": [
+                    {"$subtract": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+            await _log_move(company_id, res, "return", qty, oid,
+                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            return "applied"
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        if dup:
+            return "applied"
+        exists = await db.products.find_one(
+            {"id": product_id, "company_id": company_id}, {"_id": 1})
+        return "insufficient" if exists else "not_found"
+
+    return await _run_idempotent(
+        company_id, op_key, "return",
+        {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
 async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
@@ -160,70 +243,81 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
                               actor: Optional[dict] = None) -> str:
     """Despacha `qty` DESDE una tienda (venta/envío con origen en tienda):
     descuenta total + tienda + distributed en UNA escritura atómica. Exige
-    by_store[sid] ≥ qty. IDEMPOTENTE por op_id (un reintento no reaplica).
-    Usado por la solicitud de mensajería con origen en una tienda (Fase 4)."""
+    by_store[sid] ≥ qty. IDEMPOTENTE y DURADERA por `op_id` (un reintento no
+    reaplica, ni siquiera tras rotar `inv_ops`)."""
     qty = _q(qty)
     if qty <= 0:
         return "invalid"
-    res = await db.products.find_one_and_update(
-        {"id": product_id, "company_id": company_id,
-         "inv_ops": {"$nin": [op_id]},
-         "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
-        [{"$set": {
-            "stock": {"$round": [
-                {"$subtract": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
-            f"by_store.{store_id}": {"$round": [
-                {"$subtract": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
-            "distributed": {"$round": [
-                {"$subtract": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
-            "inv_ops": _slice_concat("inv_ops", op_id),
-        }}],
-        projection={"_id": 0, "id": 1, "name": 1},
-        return_document=ReturnDocument.AFTER)
-    if res is not None:
-        store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
-        await _log_move(company_id, res, "dispatch", qty, op_id,
-                        store_id=store_id, store_name=store.get("name", ""), actor=actor)
-        return "applied"
-    # idempotencia: si el op ya quedó aplicado → duplicado (éxito, sin reaplicar).
-    dup = await db.products.find_one(
-        {"id": product_id, "company_id": company_id, "inv_ops": op_id}, {"_id": 1})
-    if dup:
-        return "applied"
-    exists = await db.products.find_one(
-        {"id": product_id, "company_id": company_id}, {"_id": 1})
-    return "insufficient" if exists else "not_found"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id,
+             "inv_ops": {"$nin": [oid]},
+             "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
+            [{"$set": {
+                "stock": {"$round": [
+                    {"$subtract": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
+                f"by_store.{store_id}": {"$round": [
+                    {"$subtract": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+                "distributed": {"$round": [
+                    {"$subtract": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+            await _log_move(company_id, res, "dispatch", qty, oid,
+                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            return "applied"
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        if dup:
+            return "applied"
+        exists = await db.products.find_one(
+            {"id": product_id, "company_id": company_id}, {"_id": 1})
+        return "insufficient" if exists else "not_found"
+
+    return await _run_idempotent(
+        company_id, op_id, "dispatch",
+        {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
 async def return_dispatch(company_id: str, product_id: str, store_id: str,
                           qty: float, op_id: str,
                           actor: Optional[dict] = None) -> str:
     """Reverso de dispatch_from_store (cancelación/rechazo): devuelve total +
-    tienda + distributed. IDEMPOTENTE por op_id (devuelve exactamente una vez)."""
+    tienda + distributed. IDEMPOTENTE y DURADERA por `op_id` (exactamente una vez)."""
     qty = _q(qty)
     if qty <= 0:
         return "invalid"
-    res = await db.products.find_one_and_update(
-        {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [op_id]}},
-        [{"$set": {
-            "stock": {"$round": [
-                {"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
-            f"by_store.{store_id}": {"$round": [
-                {"$add": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
-            "distributed": {"$round": [
-                {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
-            "inv_ops": _slice_concat("inv_ops", op_id),
-        }}],
-        projection={"_id": 0, "id": 1, "name": 1},
-        return_document=ReturnDocument.AFTER)
-    if res is not None:
-        store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
-        await _log_move(company_id, res, "dispatch_return", qty, op_id,
-                        store_id=store_id, store_name=store.get("name", ""), actor=actor)
-        return "applied"
-    dup = await db.products.find_one(
-        {"id": product_id, "company_id": company_id, "inv_ops": op_id}, {"_id": 1})
-    return "applied" if dup else "not_found"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [oid]}},
+            [{"$set": {
+                "stock": {"$round": [
+                    {"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
+                f"by_store.{store_id}": {"$round": [
+                    {"$add": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+                "distributed": {"$round": [
+                    {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+            await _log_move(company_id, res, "dispatch_return", qty, oid,
+                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            return "applied"
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        return "applied" if dup else "not_found"
+
+    return await _run_idempotent(
+        company_id, op_id, "dispatch_return",
+        {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
 
