@@ -12,7 +12,7 @@ solicitud de mensajería.
 """
 import uuid
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel, Field
@@ -147,21 +147,36 @@ class CompanyProductCreate(BaseModel):
     description: str = Field("", max_length=500)
     image_url: str = ""
     price_usd: float = Field(..., gt=0)
-    stock: int = Field(0, ge=0)
+    # F2-04 — el stock es DECIMAL de extremo a extremo (coherente con el
+    # inventario Fase 2). El stock inicial se registra como un movimiento
+    # auditado 'receive' (no un $set silencioso).
+    stock: float = Field(0, ge=0)
+    # F2-04 — unidad de medida: "unidad" NO admite fracciones; "libra"/"kg" sí.
+    unit: Literal["unidad", "libra", "kg"] = "unidad"
     category: str = Field("general", max_length=40)
     is_active: bool = True
     available_store_ids: list[str] = Field(default_factory=list)
 
 
 class CompanyProductUpdate(BaseModel):
+    # F2-04 — SOLO metadatos. El `stock` NUNCA se edita por aquí (lo gestionan
+    # los movimientos auditados de inventario: recibir/distribuir/devolver/ajustar),
+    # para no sobrescribir el stock vigente ni perder decimales.
     name: Optional[str] = Field(None, min_length=2, max_length=80)
     description: Optional[str] = Field(None, max_length=500)
     image_url: Optional[str] = None
     price_usd: Optional[float] = Field(None, gt=0)
-    stock: Optional[int] = Field(None, ge=0)
     category: Optional[str] = Field(None, max_length=40)
     is_active: Optional[bool] = None
     available_store_ids: Optional[list[str]] = None
+
+
+def _reject_fraction(unit: str, qty: float) -> None:
+    """F2-04 — coherencia de unidades: un producto 'unidad' no admite fracciones."""
+    if unit == "unidad" and not float(qty).is_integer():
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto se maneja por unidades enteras (sin fracciones).")
 
 
 async def _validate_store_ids(ids: list[str], company_id: str) -> list[str]:
@@ -220,6 +235,7 @@ async def create_my_product(payload: CompanyProductCreate,
         raise HTTPException(
             status_code=400,
             detail=f"Límite de {MAX_PRODUCTS_PER_VENDOR} productos alcanzado")
+    _reject_fraction(payload.unit, payload.stock)
     store_ids = await _validate_store_ids(
         payload.available_store_ids, user["user_id"])
     image = maybe_upload_proof(payload.image_url, "products") or ""
@@ -229,7 +245,8 @@ async def create_my_product(payload: CompanyProductCreate,
         image_url=image,
         price_usd=round(float(payload.price_usd), 2),
         cost_usd=0.0,
-        stock=payload.stock,
+        stock=0.0,  # el stock inicial entra como movimiento auditado (abajo)
+        unit=payload.unit,
         category=payload.category.strip() or "general",
         is_active=payload.is_active,
         owner_id=user["user_id"],
@@ -240,6 +257,13 @@ async def create_my_product(payload: CompanyProductCreate,
     doc = p.model_dump()
     doc["company_id"] = user["user_id"]
     await db.products.insert_one(doc)
+    # F2-04 — el stock inicial se registra como una entrada auditada en el
+    # almacén central (traza en movimientos), nunca como un valor crudo.
+    if payload.stock > 0:
+        await company_inventory.receive_central(
+            user["user_id"], p.id, payload.stock,
+            op_key=f"init:{p.id}", actor=user)
+        doc["stock"] = company_inventory._q(payload.stock)
     try:
         await notify_all_admins(
             db,
@@ -317,6 +341,14 @@ class InvMovePayload(BaseModel):
     op_id: Optional[str] = Field(None, max_length=80)
 
 
+class InvAdjustPayload(BaseModel):
+    product_id: str
+    new_total: float = Field(..., ge=0)
+    # CAS: total que el cliente VE al ajustar (control de versión F2-04).
+    expected_total: float = Field(..., ge=0)
+    op_id: Optional[str] = Field(None, max_length=80)
+
+
 @router.get("/inventory")
 async def get_inventory(request: Request) -> Any:
     user = await require_company(request)
@@ -329,11 +361,12 @@ async def get_inventory_moves(request: Request) -> Any:
     return await company_inventory.list_moves(user["user_id"])
 
 
-async def _ensure_owned_product(pid: str, company_id: str) -> None:
+async def _ensure_owned_product(pid: str, company_id: str) -> dict:
     doc = await db.products.find_one(
-        {"id": pid, "company_id": company_id}, {"_id": 1})
+        {"id": pid, "company_id": company_id}, {"_id": 0, "id": 1, "unit": 1})
     if not doc:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return doc
 
 
 async def _ensure_owned_store(sid: str, company_id: str) -> None:
@@ -351,7 +384,8 @@ async def _ensure_owned_store(sid: str, company_id: str) -> None:
 @router.post("/inventory/receive")
 async def inventory_receive(payload: InvReceivePayload, request: Request) -> Any:
     user = await require_company(request)
-    await _ensure_owned_product(payload.product_id, user["user_id"])
+    prod = await _ensure_owned_product(payload.product_id, user["user_id"])
+    _reject_fraction(prod.get("unit", "unidad"), payload.qty)
     status = await company_inventory.receive_central(
         user["user_id"], payload.product_id, payload.qty,
         op_key=payload.op_id, actor=user)
@@ -367,7 +401,8 @@ async def inventory_receive(payload: InvReceivePayload, request: Request) -> Any
 @router.post("/inventory/distribute")
 async def inventory_distribute(payload: InvMovePayload, request: Request) -> Any:
     user = await require_company(request)
-    await _ensure_owned_product(payload.product_id, user["user_id"])
+    prod = await _ensure_owned_product(payload.product_id, user["user_id"])
+    _reject_fraction(prod.get("unit", "unidad"), payload.qty)
     await _ensure_owned_store(payload.store_id, user["user_id"])
     status = await company_inventory.distribute(
         user["user_id"], payload.product_id, payload.store_id, payload.qty,
@@ -388,7 +423,8 @@ async def inventory_distribute(payload: InvMovePayload, request: Request) -> Any
 @router.post("/inventory/return")
 async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
     user = await require_company(request)
-    await _ensure_owned_product(payload.product_id, user["user_id"])
+    prod = await _ensure_owned_product(payload.product_id, user["user_id"])
+    _reject_fraction(prod.get("unit", "unidad"), payload.qty)
     await _ensure_owned_store(payload.store_id, user["user_id"])
     status = await company_inventory.return_to_central(
         user["user_id"], payload.product_id, payload.store_id, payload.qty,
@@ -403,6 +439,32 @@ async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
             detail="La tienda no tiene esa cantidad para devolver al central.")
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo devolver el stock")
+    return {"ok": True}
+
+
+@router.post("/inventory/adjust")
+async def inventory_adjust(payload: InvAdjustPayload, request: Request) -> Any:
+    """F2-04 — ajuste ABSOLUTO del total con control de versión y traza."""
+    user = await require_company(request)
+    prod = await _ensure_owned_product(payload.product_id, user["user_id"])
+    _reject_fraction(prod.get("unit", "unidad"), payload.new_total)
+    status = await company_inventory.adjust_total(
+        user["user_id"], payload.product_id, payload.new_total,
+        payload.expected_total, op_key=payload.op_id, actor=user)
+    if status == "conflict":
+        raise HTTPException(
+            status_code=409,
+            detail="La clave de operación ya se usó con datos distintos.")
+    if status == "stale":
+        raise HTTPException(
+            status_code=409,
+            detail="El stock cambió mientras ajustabas; recarga y vuelve a intentarlo.")
+    if status == "below_distributed":
+        raise HTTPException(
+            status_code=409,
+            detail="El total no puede ser menor que lo ya distribuido a tus tiendas.")
+    if status != "applied":
+        raise HTTPException(status_code=400, detail="No se pudo ajustar el stock")
     return {"ok": True}
 
 
@@ -462,6 +524,7 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
             {"id": pid_, "company_id": user["user_id"]}, {"_id": 0})
         if not prod:
             raise HTTPException(status_code=404, detail="Producto no encontrado")
+        _reject_fraction(prod.get("unit", "unidad"), qty_)
         await _ensure_owned_store(sid_, user["user_id"])
         status = await company_inventory.dispatch_from_store(
             user["user_id"], pid_, sid_, qty_,

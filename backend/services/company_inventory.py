@@ -238,6 +238,61 @@ async def return_to_central(company_id: str, product_id: str, store_id: str,
         {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
+async def adjust_total(company_id: str, product_id: str, new_total: float,
+                       expected_total: float, op_key: Optional[str] = None,
+                       actor: Optional[dict] = None) -> str:
+    """Ajuste ABSOLUTO del total (stock) con control de versión y traza (F2-04).
+
+    - CAS: el `stock` actual debe ser EXACTAMENTE `expected_total`; si una venta
+      o recepción concurrente lo cambió, devuelve 'stale' (el cliente recarga).
+    - No puede dejar el total por debajo de lo ya distribuido a tiendas
+      (`new_total >= distributed`), si no devuelve 'below_distributed'.
+    - Registra un movimiento 'adjust' con el delta (firmado). IDEMPOTENTE y
+      DURADERO por `op_id` (un reintento no reaplica)."""
+    new_total = _q(new_total)
+    expected_total = _q(expected_total)
+    if new_total < 0:
+        return "invalid"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id,
+             "inv_ops": {"$nin": [oid]},
+             "$expr": {"$and": [
+                 {"$eq": [{"$round": [{"$ifNull": ["$stock", 0]}, QTY_DECIMALS]},
+                          expected_total]},
+                 {"$gte": [new_total, {"$ifNull": ["$distributed", 0]}]},
+             ]}},
+            [{"$set": {
+                "stock": new_total,
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            delta = round(new_total - expected_total, QTY_DECIMALS)
+            if delta != 0:
+                await _log_move(company_id, res, "adjust", delta, oid, actor=actor)
+            return "applied"
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        if dup:
+            return "applied"
+        cur = await db.products.find_one(
+            {"id": product_id, "company_id": company_id},
+            {"_id": 0, "stock": 1, "distributed": 1})
+        if not cur:
+            return "not_found"
+        if _q(cur.get("stock")) != expected_total:
+            return "stale"
+        return "below_distributed"
+
+    return await _run_idempotent(
+        company_id, op_key, "adjust",
+        {"product_id": product_id, "new_total": new_total,
+         "expected_total": expected_total}, _apply)
+
+
 async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
                               qty: float, op_id: str,
                               actor: Optional[dict] = None) -> str:

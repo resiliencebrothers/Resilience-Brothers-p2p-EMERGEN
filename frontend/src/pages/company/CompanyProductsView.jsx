@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Boxes, Plus, Edit2, Trash2, Package } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,8 +22,8 @@ const STATUS_BADGE = {
 const STATUS_LABEL = { pending: "Pendiente", approved: "Aprobado", rejected: "Rechazado" };
 
 const emptyForm = {
-  name: "", description: "", image_url: "", price_usd: "", stock: 0,
-  category: "general", is_active: true, available_store_ids: [],
+  name: "", description: "", image_url: "", price_usd: "", stock: "",
+  unit: "unidad", category: "general", is_active: true, available_store_ids: [],
 };
 
 export default function CompanyProductsView({ onChanged }) {
@@ -67,21 +68,24 @@ export default function CompanyProductsView({ onChanged }) {
     const price = parseFloat(form.price_usd);
     if (!price || price <= 0) return toast.error("El precio debe ser mayor a 0");
     setBusy(true);
-    const payload = {
+    // F2-04 — el stock NO es metadato. En edición se envían SOLO metadatos; el
+    // stock se gestiona en la pestaña Inventario (recibir/ajustar auditados),
+    // para no sobrescribir el stock vigente ni perder decimales.
+    const base = {
       name: form.name.trim(),
       description: form.description,
       image_url: form.image_url,
       price_usd: price,
-      stock: parseInt(form.stock) || 0,
       category: form.category || "general",
       is_active: form.is_active,
       available_store_ids: form.available_store_ids || [],
     };
     try {
       if (editing) {
-        await axios.put(`${API}/company/products/${editing.id}`, payload, { withCredentials: true });
+        await axios.put(`${API}/company/products/${editing.id}`, base, { withCredentials: true });
         toast.success("Producto actualizado");
       } else {
+        const payload = { ...base, stock: parseFloat(form.stock) || 0, unit: form.unit };
         await axios.post(`${API}/company/products`, payload, { withCredentials: true });
         toast.success("Producto enviado a aprobación");
       }
@@ -193,11 +197,33 @@ export default function CompanyProductsView({ onChanged }) {
                 <Label className="micro-label text-neutral-500">Precio (USDT)</Label>
                 <Input data-testid="company-product-price" type="number" step="any" min="0" value={form.price_usd} onChange={(e) => setForm({ ...form, price_usd: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
               </div>
-              <div>
-                <Label className="micro-label text-neutral-500">Stock</Label>
-                <Input data-testid="company-product-stock" type="number" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
-              </div>
+              {!editing && (
+                <div>
+                  <Label className="micro-label text-neutral-500">Unidad</Label>
+                  <Select value={form.unit} onValueChange={(v) => setForm({ ...form, unit: v })}>
+                    <SelectTrigger data-testid="company-product-unit" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#1A1730] border-white/10 text-white">
+                      <SelectItem value="unidad" data-testid="company-product-unit-unidad">Unidad (entero)</SelectItem>
+                      <SelectItem value="libra" data-testid="company-product-unit-libra">Libra (decimal)</SelectItem>
+                      <SelectItem value="kg" data-testid="company-product-unit-kg">Kg (decimal)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
+            {!editing ? (
+              <div>
+                <Label className="micro-label text-neutral-500">Stock inicial</Label>
+                <Input data-testid="company-product-stock" type="number" step={form.unit === "unidad" ? "1" : "any"} min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                <p className="text-xs text-neutral-500 mt-1">Entra como una recepción auditada en el almacén central.</p>
+              </div>
+            ) : (
+              <div className="border-l-4 border-[#8B5CF6]/40 bg-[#8B5CF6]/5 px-3 py-2 text-xs text-neutral-400" data-testid="company-product-stock-note">
+                El stock se gestiona en la pestaña <span className="text-[#8B5CF6]">Inventario</span> (recibir, distribuir, devolver o ajustar). Editar aquí no cambia el stock.
+              </div>
+            )}
             <div>
               <Label className="micro-label text-neutral-500">Categoría</Label>
               <Input data-testid="company-product-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />

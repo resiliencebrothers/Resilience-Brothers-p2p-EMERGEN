@@ -6,11 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { Warehouse, Store, ArrowRightLeft, PackagePlus, Undo2, History } from "lucide-react";
+import { Warehouse, Store, ArrowRightLeft, PackagePlus, Undo2, History, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 
 // Inventario por ubicación: almacén central (= total − distribuido) + tiendas.
-const MOVE_LABEL = { receive: "Recibido en central", distribute: "Distribuido a tienda", return: "Devuelto al central", dispatch: "Despachado (envío)", dispatch_return: "Devuelto (envío cancelado)" };
+const MOVE_LABEL = { receive: "Recibido en central", distribute: "Distribuido a tienda", return: "Devuelto al central", dispatch: "Despachado (envío)", dispatch_return: "Devuelto (envío cancelado)", adjust: "Ajuste de total", release: "Devuelto por cierre de tienda" };
 
 export default function CompanyInventoryView() {
   const [rows, setRows] = useState([]);
@@ -32,22 +32,29 @@ export default function CompanyInventoryView() {
   }, [load]);
 
   const openDialog = (mode, product, preStore = "") => {
-    setDialog({ mode, product }); setQty(""); setStoreId(preStore);
+    setDialog({ mode, product });
+    setQty(mode === "adjust" ? String(product.total) : "");
+    setStoreId(preStore);
   };
 
   const submit = async () => {
     const n = parseFloat(qty);
-    if (!n || n <= 0) return toast.error("Cantidad inválida");
     const { mode, product } = dialog;
+    if (mode === "adjust") {
+      if (isNaN(n) || n < 0) return toast.error("Total inválido");
+    } else if (!n || n <= 0) {
+      return toast.error("Cantidad inválida");
+    }
     if ((mode === "distribute" || mode === "return") && !storeId) return toast.error("Elige una tienda");
     setBusy(true);
     // F2-02 — clave estable de operación: se genera UNA vez y se conserva en el
     // reintento por pérdida de respuesta, para que el servidor deduplique.
     const opId = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
-    const body = mode === "receive"
-      ? { product_id: product.product_id, qty: n, op_id: opId }
-      : { product_id: product.product_id, store_id: storeId, qty: n, op_id: opId };
-    const okMsg = mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : "Devuelto al central";
+    let body;
+    if (mode === "receive") body = { product_id: product.product_id, qty: n, op_id: opId };
+    else if (mode === "adjust") body = { product_id: product.product_id, new_total: n, expected_total: product.total, op_id: opId };
+    else body = { product_id: product.product_id, store_id: storeId, qty: n, op_id: opId };
+    const okMsg = mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : mode === "return" ? "Devuelto al central" : "Stock ajustado";
     const doPost = () => axios.post(`${API}/company/inventory/${mode}`, body, { withCredentials: true });
     try {
       try {
@@ -64,7 +71,9 @@ export default function CompanyInventoryView() {
   };
 
   const title = dialog?.mode === "receive" ? "Recibir en almacén central"
-    : dialog?.mode === "distribute" ? "Distribuir a una tienda" : "Devolver al almacén central";
+    : dialog?.mode === "distribute" ? "Distribuir a una tienda"
+    : dialog?.mode === "adjust" ? "Ajustar total (inventario físico)"
+    : "Devolver al almacén central";
 
   return (
     <div className="space-y-6" data-testid="company-inventory-view">
@@ -106,6 +115,11 @@ export default function CompanyInventoryView() {
                   onClick={() => openDialog("distribute", p)}
                   className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white">
                   <ArrowRightLeft className="w-4 h-4 mr-1" /> Distribuir
+                </Button>
+                <Button data-testid={`company-inv-adjust-${p.product_id}`} size="sm" variant="outline"
+                  onClick={() => openDialog("adjust", p)}
+                  className="rounded-none border-white/15 hover:border-amber-400 text-white">
+                  <SlidersHorizontal className="w-4 h-4 mr-1" /> Ajustar
                 </Button>
               </div>
             </div>
@@ -151,7 +165,11 @@ export default function CompanyInventoryView() {
           <DialogHeader><DialogTitle className="font-display">{title}</DialogTitle></DialogHeader>
           {dialog && (
             <div className="space-y-3">
-              <p className="text-sm text-neutral-400">{dialog.product.name} · central disponible: <span className="font-mono text-white">{dialog.product.central}</span></p>
+              {dialog.mode === "adjust" ? (
+                <p className="text-sm text-neutral-400">{dialog.product.name} · total actual: <span className="font-mono text-white">{dialog.product.total}</span> · distribuido: <span className="font-mono text-white">{dialog.product.distributed}</span></p>
+              ) : (
+                <p className="text-sm text-neutral-400">{dialog.product.name} · central disponible: <span className="font-mono text-white">{dialog.product.central}</span></p>
+              )}
               {(dialog.mode === "distribute" || dialog.mode === "return") && (
                 <div>
                   <Label className="micro-label text-neutral-500">Tienda</Label>
@@ -172,9 +190,12 @@ export default function CompanyInventoryView() {
                 </div>
               )}
               <div>
-                <Label className="micro-label text-neutral-500">Cantidad</Label>
+                <Label className="micro-label text-neutral-500">{dialog.mode === "adjust" ? "Nuevo total" : "Cantidad"}</Label>
                 <Input data-testid="company-inv-qty" type="number" step="any" min="0" value={qty}
                   onChange={(e) => setQty(e.target.value)} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" autoFocus />
+                {dialog.mode === "adjust" && (
+                  <p className="text-xs text-neutral-500 mt-1">No puede ser menor que lo distribuido ({dialog.product.distributed}). Se registra como un ajuste auditado.</p>
+                )}
               </div>
               <Button data-testid="company-inv-submit" onClick={submit} disabled={busy}
                 className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
