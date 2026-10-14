@@ -1,0 +1,41 @@
+{
+  "summary": "F2-04/EMP03 frontend smoke: Panel Empresa /company flows for Productos (edit vs new) and Inventario (ajustar) tested end-to-end against preview backend using cookie 'session_token=smoke_empresa_f204_token' for auth. 16/16 UI assertions passed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CompanyProductsView.save(): correctly omits 'stock' from PUT in edit mode (only metadatos). parseFloat used for new product stock supports decimals as required.",
+    "CompanyInventoryView.submit(): expected_total CAS correctly sent for adjust; op_id regenerated per call (idempotency key) but preserved across network-only retry — matches F2-02 pattern.",
+    "Edit dialog pre-fills form with {...emptyForm, ...p} which still sets form.stock from product (benign since not sent), but could be cleaner by also stripping stock to avoid confusion."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% (16/16)"},
+  "test_credentials": "Cookie session_token=smoke_empresa_f204_token (used via Playwright context.add_cookies to bypass Turnstile).",
+  "seed_data_creation": "Used existing seed: Empresa Smoke F204, Tienda Centro, product Arroz 1kg (total 100, 40 distributed). Test modified total to 120 via valid adjust and reverted to 100 at end; left two 'Ajuste de total' audit movements as expected.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login UI is Turnstile-gated. Easiest way to reach /company is Playwright context.add_cookies([{name:'session_token', value:'smoke_empresa_f204_token', domain, path:'/', secure:true, sameSite:'None'}]). DO NOT use extra_http_headers with Authorization — it triggers CORS preflight on Google Fonts and breaks networkidle wait; use wait_until='domcontentloaded' and short settle. All F2-04 UI contracts verified: edit form omits stock + shows stock-note; new form shows stock+unit; inventory adjust dialog shows total/distribuido, CAS 409 on below_distributed yields 'El total no puede ser menor que lo ya distribuido a tus tiendas.', valid adjust succeeds with 'Stock ajustado' toast and 'Ajuste de total' audit entry.",
+  "detailed_results": [
+    "PASS 1. Panel Empresa loads (company-name = 'Empresa Smoke F204')",
+    "PASS 2a. Edit form hides company-product-stock input",
+    "PASS 2b. Edit form shows company-product-stock-note",
+    "PASS 2c. Edit form hides company-product-unit selector",
+    "PASS 2d. Stock card unchanged after editing name (100 -> 100)",
+    "PASS 3a. New form shows Stock inicial input",
+    "PASS 3b. New form shows Unit selector",
+    "PASS 3c. New form hides stock-note",
+    "PASS 3d. Unit options unidad/libra/kg present",
+    "PASS 4a. company-inv-adjust-<id> button per product",
+    "PASS 4b. Adjust dialog shows 'total actual' and 'distribuido'",
+    "PASS 4c. company-inv-qty input present",
+    "PASS 4d. Adjust to 10 (< distributed 40) → 409 toast 'El total no puede ser menor que lo ya distribuido a tus tiendas.'",
+    "PASS 4e. Adjust to 120 → toast 'Stock ajustado'",
+    "PASS 4f. company-inv-total-<id> updated 100 -> 120",
+    "PASS 5. Movimientos recientes contains 'Ajuste de total' entry"
+  ]
+}
