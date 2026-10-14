@@ -27,6 +27,7 @@ from routes.vendor_products import (
     _publish_products_changed,
 )
 from services.proof_upload import maybe_upload_proof
+from services import company_inventory
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/company", tags=["Company"])
@@ -118,6 +119,8 @@ async def delete_my_store(store_id: str, request: Request) -> Any:
         {"id": store_id, "company_id": user["user_id"]})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Tienda no encontrada")
+    # Devuelve la mercancía distribuida a esa tienda al almacén central.
+    await company_inventory.release_store(user["user_id"], store_id)
     # Quita la tienda de los productos que la referenciaban.
     await db.products.update_many(
         {"company_id": user["user_id"]},
@@ -283,4 +286,88 @@ async def delete_my_product(pid: str, request: Request) -> Any:
     await _owned_product_or_404(pid, user["user_id"])
     await db.products.delete_one({"id": pid, "company_id": user["user_id"]})
     await _publish_products_changed(pid)
+    return {"ok": True}
+
+
+# ============================================================
+# Inventario por ubicación: almacén central + distribución a tiendas (Fase 2)
+# ============================================================
+
+class InvReceivePayload(BaseModel):
+    product_id: str
+    qty: float = Field(..., gt=0)
+
+
+class InvMovePayload(BaseModel):
+    product_id: str
+    store_id: str
+    qty: float = Field(..., gt=0)
+
+
+@router.get("/inventory")
+async def get_inventory(request: Request) -> Any:
+    user = await require_company(request)
+    return await company_inventory.build_inventory_rows(user["user_id"])
+
+
+@router.get("/inventory/moves")
+async def get_inventory_moves(request: Request) -> Any:
+    user = await require_company(request)
+    return await company_inventory.list_moves(user["user_id"])
+
+
+async def _ensure_owned_product(pid: str, company_id: str) -> None:
+    doc = await db.products.find_one(
+        {"id": pid, "company_id": company_id}, {"_id": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+
+async def _ensure_owned_store(sid: str, company_id: str) -> None:
+    doc = await db.stores.find_one(
+        {"id": sid, "company_id": company_id}, {"_id": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Tienda no encontrada")
+
+
+@router.post("/inventory/receive")
+async def inventory_receive(payload: InvReceivePayload, request: Request) -> Any:
+    user = await require_company(request)
+    await _ensure_owned_product(payload.product_id, user["user_id"])
+    status = await company_inventory.receive_central(
+        user["user_id"], payload.product_id, payload.qty, actor=user)
+    if status != "applied":
+        raise HTTPException(status_code=400, detail="No se pudo recibir el stock")
+    return {"ok": True}
+
+
+@router.post("/inventory/distribute")
+async def inventory_distribute(payload: InvMovePayload, request: Request) -> Any:
+    user = await require_company(request)
+    await _ensure_owned_product(payload.product_id, user["user_id"])
+    await _ensure_owned_store(payload.store_id, user["user_id"])
+    status = await company_inventory.distribute(
+        user["user_id"], payload.product_id, payload.store_id, payload.qty, actor=user)
+    if status == "insufficient":
+        raise HTTPException(
+            status_code=409,
+            detail="No hay suficiente stock en el almacén central para distribuir.")
+    if status != "applied":
+        raise HTTPException(status_code=400, detail="No se pudo distribuir el stock")
+    return {"ok": True}
+
+
+@router.post("/inventory/return")
+async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
+    user = await require_company(request)
+    await _ensure_owned_product(payload.product_id, user["user_id"])
+    await _ensure_owned_store(payload.store_id, user["user_id"])
+    status = await company_inventory.return_to_central(
+        user["user_id"], payload.product_id, payload.store_id, payload.qty, actor=user)
+    if status == "insufficient":
+        raise HTTPException(
+            status_code=409,
+            detail="La tienda no tiene esa cantidad para devolver al central.")
+    if status != "applied":
+        raise HTTPException(status_code=400, detail="No se pudo devolver el stock")
     return {"ok": True}

@@ -2679,3 +2679,22 @@ Implementado en Fase 1 (verificado):
 - Pruebas: `tests/test_empresa_phase1.py` = 8/8 (registro business→empresa under_review; rol del cliente ignorado; gate /company hasta active; aislamiento de tiendas; catálogo pending en cola admin; validación de store_ids; VIP publish/edit 403). Añadido a `test-critical`. mypy 113 archivos OK. Smoke UI: panel renderiza, alta de tienda y de producto (pending) e2e OK con toast.
 - Pendiente Fases 2-4: inventario por ubicación + distribución almacén central→tiendas; sub-saldo/liquidación; solicitar mensajería.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## EMP-02 (fork 2026-06) — Fase 2 Empresa: inventario por ubicación + distribución central→tiendas
+Modelo NO disruptivo sobre el producto de la Empresa (`products`, company_id), sin tocar la ruta de ventas:
+- `stock` sigue siendo el TOTAL vendible (las ventas del marketplace lo decrementan por la vía existente, intacta).
+- `by_store` {store_id: qty} = mercancía DISTRIBUIDA a cada tienda; `distributed` = suma (misma escritura atómica).
+- ALMACÉN CENTRAL (distribuible) = `stock − distributed`, derivado en lectura. Distribuir/devolver NO cambian `stock` (solo reubican) ⇒ nunca chocan con el decremento de una venta.
+
+Backend (`services/company_inventory.py` + endpoints en `routes/company.py`):
+- `POST /company/inventory/receive` (+stock, recibir en central), `/distribute` (central→tienda, exige central≥qty si no 409), `/return` (tienda→central, 409 si falta). Todas ATÓMICAS en un solo doc del producto (`find_one_and_update` con `$expr` para el guard central≥qty) e IDEMPOTENTES por `op_id` (`inv_ops` con $slice cap 1000). Log en `company_inventory_moves` (op_id único).
+- `GET /company/inventory` (desglose central + por tienda, flag `over_distributed`) y `/inventory/moves` (auditoría).
+- Borrar una tienda (`delete_my_store`) devuelve su mercancía al central (`release_store`).
+- Validación de pertenencia: producto y tienda deben ser de la Empresa (404 si no).
+
+Frontend: pestaña "Inventario" en `/company` (`CompanyInventoryView`) — por producto muestra Total/Central + chips por tienda, botones Recibir/Distribuir/Devolver (diálogos), y "Movimientos recientes".
+
+Pruebas: `tests/test_empresa_phase2.py` 2/2 (ciclo completo recibir→distribuir→409 sobre-distribución→devolver→409→borrar tienda devuelve al central→log; + validación de pertenencia). En `test-critical`. mypy 114 OK. Smoke UI e2e: recibir 100→central 100, distribuir 30→central 70 + chip tienda, log correcto, sin overflow.
+- Pendiente Fases 3-4: sub-saldo/liquidación; solicitar mensajería. Nota: la venta por recogida en tienda para productos Empresa (decremento por tienda en la venta) queda como mejora futura; hoy la venta decrementa el TOTAL (central disponible) sin elegir tienda.
+- Estado: en preview; pendiente de re-despliegue a producción.
