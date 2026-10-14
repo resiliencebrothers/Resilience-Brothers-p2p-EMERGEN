@@ -16,7 +16,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import DeliveryChatDialog from "@/components/DeliveryChatDialog";
 import { useLiveEvent } from "@/hooks/useLiveStream";
-import { createLatestGuard } from "@/lib/latestResponseGuard";
+import { createDeepLinkCoordinator } from "@/lib/deliveryDeepLink";
 
 // iter199 — Panel del Mensajero (Fase 2): tomar entregas, avanzar estados
 // (en camino → llegué → entregado) y ver ganancias (80% de la tarifa).
@@ -242,10 +242,15 @@ export default function CourierPanel({ embedded = false }) {
   const deepLinkId = searchParams.get("delivery");
   const [highlightId, setHighlightId] = useState(null);
   // MEN-03 fix (M02): el deep-link del aviso debe resolverse en CADA aviso
-  // DISTINTO, no solo el primero. Guardamos el id pendiente de resolver; así
-  // un refresco de polling con el mismo id no re-navega, pero tocar otro aviso
-  // (otro `delivery=<id>`) sí navega y resalta la nueva tarjeta.
-  const pendingDeepLinkRef = useRef(null);
+  // DISTINTO, no solo el primero, y SIEMPRE contra el estado VIGENTE aplicado
+  // (no contra una respuesta descartada por antigua). El coordinador liga la
+  // navegación del aviso al control de vigencia de la carga compartida.
+  const coordRef = useRef(createDeepLinkCoordinator());
+  // Espejo de la ÚLTIMA lista aplicada.
+  const dataRef = useRef(null);
+  // "Última ref" al manejador de navegación: aplica la pestaña/resaltado que
+  // decide el coordinador, usando siempre el `t` y los setters vigentes.
+  const handleTargetRef = useRef(null);
   // MEN-04 — historial COMPLETO paginado del mensajero (ya no el tope de 50).
   const [histItems, setHistItems] = useState(null);
   const [histTotal, setHistTotal] = useState(0);
@@ -329,20 +334,26 @@ export default function CourierPanel({ embedded = false }) {
 
   // M02 — control de VIGENCIA en la carga compartida: `load` lo usan el
   // deep-link, el refresco periódico y los eventos en vivo, y sus respuestas
-  // pueden solaparse. Sin este guard, una respuesta ATRASADA (p. ej. la del
-  // aviso A) podía ejecutar `setData` DESPUÉS de una más reciente (la del
-  // aviso B) y hacer «desaparecer» la entrega del último aviso. Cada llamada
-  // reserva un `seq`; solo la ÚLTIMA iniciada puede sobrescribir el estado.
-  const loadGuardRef = useRef(createLatestGuard());
+  // pueden solaparse. Solo la ÚLTIMA iniciada aplica su lista (`setData`), y
+  // SOLO esa respuesta aplicada puede resolver la navegación del aviso. Así una
+  // respuesta descartada por antigua no decide ni la lista ni la pestaña.
   const load = useCallback(() => {
-    const seq = loadGuardRef.current.begin();
+    const seq = coordRef.current.beginLoad();
     return axios.get(`${API}/courier/deliveries`, { withCredentials: true })
       .then((r) => {
-        if (loadGuardRef.current.isLatest(seq)) { setData(r.data); setLoadError(false); }
+        if (coordRef.current.isApplied(seq)) {
+          setData(r.data);
+          setLoadError(false);
+          dataRef.current = r.data;
+          // Resuelve el aviso pendiente SOLO con esta lista vigente y si es
+          // posterior a su apertura (el coordinador lo decide).
+          const target = coordRef.current.onApplied(r.data, seq);
+          if (target && handleTargetRef.current) handleTargetRef.current(target);
+        }
         return r.data;
       })
       .catch(() => {
-        if (loadGuardRef.current.isLatest(seq)) setLoadError(true);
+        if (coordRef.current.isApplied(seq)) setLoadError(true);
         return null;
       });
   }, []);
@@ -516,41 +527,35 @@ export default function CourierPanel({ embedded = false }) {
   }, [reservedCount]);
 
   // MEN-03 (M02) — al abrir un aviso (in-app o push) se navega a la entrega
-  // concreta. Se reprocesa CADA aviso DISTINTO (no solo el primero) y se
-  // resuelve SIEMPRE contra datos FRESCOS pedidos para ESE aviso:
-  //  - cambiar solo `?delivery=` mantiene el panel montado → este efecto
-  //    vuelve a correr porque `deepLinkId` cambia (A -> B sin recarga).
-  //  - una asignación recién creada que aún no está en el estado local NO se
-  //    declara "desaparecida": esperamos al fetch que disparamos aquí, no a una
-  //    lista desactualizada ni a un refresco de polling en vuelo (sin carreras).
-  //  - si el último aviso cambió mientras cargábamos, gana el último.
-  //  - si de verdad ya no está (tomada por otro, cancelada o reasignada) se
-  //    informa. Nunca se acepta automáticamente: solo navega y resalta.
+  // concreta, resuelta SIEMPRE contra el estado VIGENTE (la última lista
+  // aplicada) y NUNCA contra una respuesta descartada por antigua:
+  //  - cambiar solo `?delivery=` mantiene el panel montado → `open(id)` marca
+  //    el nuevo aviso pendiente y dispara una carga (A -> B sin recarga).
+  //  - la navegación la resuelve `load` cuando aplica una respuesta POSTERIOR a
+  //    la apertura; si la carga propia del aviso llega tarde y se descarta, un
+  //    refresco ya aplicado la resuelve con el estado vigente (el id pendiente
+  //    persiste hasta lograrlo, así que el aviso no queda sin resolver).
+  //  - una asignación recién creada NO se declara "desaparecida": esperamos a
+  //    una lista fresca, no a uno de los refrescos en vuelo previos al aviso.
+  //  - si de verdad ya no está se informa. Nunca se acepta automáticamente.
   useEffect(() => {
-    if (!deepLinkId) return;
-    if (pendingDeepLinkRef.current === deepLinkId) return;
-    pendingDeepLinkRef.current = deepLinkId;
-    let cancelled = false;
-    (async () => {
-      const fresh = await load();
-      if (cancelled || !fresh) return;
-      if (pendingDeepLinkRef.current !== deepLinkId) return;
-      if ((fresh.available || []).some((d) => d.id === deepLinkId)) {
-        setTab("available");
-        setHighlightId(deepLinkId);
-      } else if ((fresh.mine || []).some((d) => d.id === deepLinkId)) {
-        setTab("mine");
-        setHighlightId(deepLinkId);
-      } else if ((fresh.history || []).some((d) => d.id === deepLinkId)) {
-        setTab("history");
-        setHighlightId(deepLinkId);
-      } else {
+    handleTargetRef.current = (target) => {
+      if (!target) return;
+      if (target.gone) {
         setHighlightId(null);
         toast.info(t("courierPanel.deepLinkGone"));
+        return;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [deepLinkId, load, t]);
+      setTab(target.tab);
+      setHighlightId(target.highlight);
+    };
+  });
+  useEffect(() => {
+    if (!deepLinkId) return;
+    if (coordRef.current.pending() === deepLinkId) return;
+    coordRef.current.open(deepLinkId);
+    load();
+  }, [deepLinkId, load]);
 
   if (!data) {
     // MSG10 — error visible con reintento en vez de un spinner eterno.

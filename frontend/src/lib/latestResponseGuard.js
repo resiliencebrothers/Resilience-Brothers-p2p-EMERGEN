@@ -23,5 +23,8 @@ export function createLatestGuard() {
     isLatest(seq) {
       return seq === current;
     },
+    peek() {
+      return current;
+    },
   };
 }

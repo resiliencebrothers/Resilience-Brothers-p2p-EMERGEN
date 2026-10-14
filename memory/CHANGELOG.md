@@ -1,5 +1,12 @@
 ## Changelog — 12 Feb 2026
 
+### MEN-17 — M02 (el aviso navegaba a una pestaña con datos antiguos)
+Reporte del operador: `createLatestGuard` protegía `setData`/`setLoadError`, pero `load` devolvía `r.data` también cuando la respuesta ya se había descartado por antigua, y el efecto del aviso usaba ese valor para `setTab`/`setHighlightId`. Resultado: `highlightId=B` pero `tab=available` aunque B ya estaba en «Mis entregas» → el aviso dejaba al mensajero en una pestaña sin la tarjeta.
+
+- **Frontend (`CourierPanel.jsx` + nuevo `src/lib/deliveryDeepLink.js`)**: la navegación del aviso ahora la resuelve SOLO una respuesta APLICADA (la última iniciada) y además POSTERIOR a la apertura del aviso. Nuevo coordinador `createDeepLinkCoordinator` (umbral `sinceSeq` vía `guard.peek()`): el efecto del aviso solo llama a `open(id)` + dispara una carga; `load` resuelve la navegación (`onApplied`) cuando aplica una lista vigente y suficientemente fresca. Una respuesta descartada nunca decide pestaña/resaltado/aviso de desaparecida. El id pendiente persiste hasta resolverse, así un refresco posterior ya aplicado lo resuelve con el estado vigente (no queda sin resolver).
+- **Tests (`src/lib/__tests__/deliveryDeepLink.test.js`, 6/6; `latestResponseGuard.test.js`, 3/3)**: ahora ejecutan la SELECCIÓN DE PESTAÑA — apertura primero/refresco después en orden inverso (el refresco decide, la respuesta antigua no), carga del aviso superada (no resuelve con descartada), refresco previo a la apertura (no resuelve), control positivo y «entrega desaparecida».
+- `yarn lint` 0 errores; smoke 390px del panel OK (sin overflow).
+
 ### MEN-16 — M01-B (las tomas LIBRES quedaban sin ciclo → ABA de reasignación)
 Reporte del operador: una entrega tomada desde «Disponibles» (claim sin uid) quedaba `accepted` **sin** `assignment_uid`. Como liberar también lo elimina, dos aceptaciones libres sucesivas eran indistinguibles (`assignment_uid $exists:false` compartido), y una reasignación administrativa atrasada podía retirar la entrega del nuevo ciclo de A sin conflicto.
 
