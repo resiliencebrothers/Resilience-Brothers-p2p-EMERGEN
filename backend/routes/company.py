@@ -371,3 +371,169 @@ async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo devolver el stock")
     return {"ok": True}
+
+
+
+# ============================================================
+# Solicitar mensajería (Fase 4): la Empresa PIDE un envío; Resilience asigna
+# el mensajero. La Empresa NO puede elegir/asignar mensajeros.
+# ============================================================
+
+class CompanyDeliveryCreate(BaseModel):
+    receiver_name: str = Field(..., min_length=2, max_length=120)
+    receiver_phone: str = Field(..., min_length=5, max_length=40)
+    delivery_address: str = Field(..., min_length=5, max_length=400)
+    province: str = Field("", max_length=80)
+    municipality: str = Field("", max_length=80)
+    note: str = Field("", max_length=300)
+    # Origen opcional en inventario: despachar un producto DESDE una tienda
+    # (descuenta esa tienda). Si se omite, es un envío sin vínculo de inventario.
+    product_id: Optional[str] = None
+    origin_store_id: Optional[str] = None
+    quantity: Optional[float] = Field(None, gt=0)
+
+
+async def _reconcile_delivery_inventory(company_id: str, req: dict,
+                                        delivery_status: str) -> bool:
+    """Si la entrega quedó CANCELADA (p. ej. por el admin) y había inventario
+    reservado sin devolver, lo devuelve al origen EXACTAMENTE UNA VEZ."""
+    if (req.get("inv_reserved") and not req.get("inv_returned")
+            and delivery_status == "cancelled"):
+        await company_inventory.return_dispatch(
+            company_id, req["product_id"], req["origin_store_id"],
+            req["quantity"], op_id=f"cdeliv-ret:{req['id']}")
+        await db.company_delivery_requests.update_one(
+            {"id": req["id"]},
+            {"$set": {"inv_returned": True, "status": "cancelled",
+                      "updated_at": iso(now_utc())}})
+        return True
+    return False
+
+
+@router.post("/deliveries")
+async def create_company_delivery(payload: CompanyDeliveryCreate,
+                                  request: Request) -> Any:
+    user = await require_company(request)
+    reqid = str(uuid.uuid4())
+    inv_reserved = False
+    package_label = payload.note.strip() or "Envío de empresa"
+    pid_ = payload.product_id
+    sid_ = payload.origin_store_id
+    qty_ = payload.quantity
+    if pid_ or sid_ or qty_:
+        if not (pid_ and sid_ and qty_):
+            raise HTTPException(
+                status_code=400,
+                detail="Para despachar desde una tienda indica producto, tienda y cantidad.")
+        prod = await db.products.find_one(
+            {"id": pid_, "company_id": user["user_id"]}, {"_id": 0})
+        if not prod:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+        await _ensure_owned_store(sid_, user["user_id"])
+        status = await company_inventory.dispatch_from_store(
+            user["user_id"], pid_, sid_, qty_,
+            op_id=f"cdeliv:{reqid}", actor=user)
+        if status == "insufficient":
+            raise HTTPException(
+                status_code=409,
+                detail="La tienda no tiene suficiente stock para este envío.")
+        if status != "applied":
+            raise HTTPException(status_code=400, detail="No se pudo reservar el stock")
+        inv_reserved = True
+        package_label = f"{prod['name']} ×{company_inventory._q(qty_)}"
+
+    now = iso(now_utc())
+    req = {
+        "id": reqid,
+        "company_id": user["user_id"],
+        "company_name": user.get("name", ""),
+        "receiver_name": payload.receiver_name.strip(),
+        "receiver_phone": payload.receiver_phone.strip(),
+        "delivery_address": payload.delivery_address.strip(),
+        "province": payload.province.strip(),
+        "municipality": payload.municipality.strip(),
+        "note": payload.note.strip(),
+        "product_id": payload.product_id,
+        "origin_store_id": payload.origin_store_id,
+        "quantity": payload.quantity,
+        "package_label": package_label,
+        "inv_reserved": inv_reserved,
+        "inv_returned": False,
+        "status": "requested",
+        "delivery_id": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.company_delivery_requests.insert_one(dict(req))
+    # Crea el trabajo de mensajería (entra al pool de Resilience, sin mensajero).
+    from services.deliveries import ensure_delivery_job
+    job = await ensure_delivery_job(
+        "company_delivery", req, km=0, fee_usdt=0, actor_id=user["user_id"])
+    await db.company_delivery_requests.update_one(
+        {"id": reqid}, {"$set": {"delivery_id": job["id"]}})
+    req["delivery_id"] = job["id"]
+    req.pop("_id", None)
+    return {**req, "delivery_status": "available"}
+
+
+@router.get("/deliveries")
+async def list_company_deliveries(request: Request) -> Any:
+    user = await require_company(request)
+    reqs = await db.company_delivery_requests.find(
+        {"company_id": user["user_id"]}, {"_id": 0}) \
+        .sort("created_at", -1).to_list(200)
+    dids = [r["delivery_id"] for r in reqs if r.get("delivery_id")]
+    dmap = {}
+    if dids:
+        for d in await db.deliveries.find(
+                {"id": {"$in": dids}},
+                {"_id": 0, "id": 1, "status": 1, "courier_name": 1,
+                 "delivery_pin": 1}).to_list(500):
+            dmap[d["id"]] = d
+    out = []
+    for r in reqs:
+        d = dmap.get(r.get("delivery_id")) or {}
+        dstatus = d.get("status") or r.get("status")
+        if await _reconcile_delivery_inventory(user["user_id"], r, dstatus):
+            r["inv_returned"] = True
+        out.append({**r, "delivery_status": dstatus,
+                    "courier_name": d.get("courier_name"),
+                    "delivery_pin": d.get("delivery_pin")})
+    return out
+
+
+@router.post("/deliveries/{req_id}/cancel")
+async def cancel_company_delivery(req_id: str, request: Request) -> Any:
+    user = await require_company(request)
+    req = await db.company_delivery_requests.find_one(
+        {"id": req_id, "company_id": user["user_id"]}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if req.get("status") == "cancelled":
+        return {"ok": True}
+    from services.deliveries import cancel_active_delivery, publish_delivery_event
+    d = await db.deliveries.find_one(
+        {"id": req.get("delivery_id")},
+        {"_id": 0, "status": 1, "courier_id": 1, "assigned_to_courier_id": 1})
+    if d and d["status"] not in ("available", "assigned"):
+        raise HTTPException(
+            status_code=409,
+            detail="La entrega ya fue aceptada por un mensajero; contacta a Resilience para cancelarla.")
+    res = await cancel_active_delivery(
+        "company_delivery", req_id, actor_id=user["user_id"],
+        note="Cancelada por la empresa")
+    if res.matched_count and req.get("delivery_id"):
+        await publish_delivery_event(
+            req["delivery_id"], "cancelled",
+            courier_ids=None if (not d or d["status"] == "available")
+            else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+    # Devuelve el inventario reservado (idempotente, exactamente una vez).
+    if req.get("inv_reserved") and not req.get("inv_returned"):
+        await company_inventory.return_dispatch(
+            user["user_id"], req["product_id"], req["origin_store_id"],
+            req["quantity"], op_id=f"cdeliv-ret:{req_id}")
+    await db.company_delivery_requests.update_one(
+        {"id": req_id},
+        {"$set": {"status": "cancelled", "inv_returned": True,
+                  "updated_at": iso(now_utc())}})
+    return {"ok": True}

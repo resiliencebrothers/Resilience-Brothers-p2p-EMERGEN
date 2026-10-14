@@ -2380,3 +2380,21 @@ La Empresa reutiliza la MISMA billetera que VIP y clientes normales (sin cambios
 - Frontend: nueva pestaña "Saldo" en `/company` (`CompanyWalletView`) — saldo total + por moneda, y hub Depositar/Retirar-Liquidar/Convertir reutilizando `MethodPicker`, `DepositForm`, `VipWithdrawalForm`, `BalanceConverterCard`, `VerificationGateBanner`.
 - Pruebas: `tests/test_empresa_phase3.py` 2/2 (lee su sub-saldo; billetera no bloqueada por rol). Smoke UI e2e: total 1.523,48 USDT, tarjetas por moneda, picker de método, sin overflow.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## F2-01 (fork 2026-06) — Las ventas ya NO rompen el desglose por ubicación
+Bug ALTA: la venta descontaba `products.stock` (total) sin exigir existencias en el almacén central; si central=0 pero una tienda tenía stock, la venta procedía y dejaba central en negativo (total < distribuido).
+Fix (modelo: total = central + distribuido; central = stock − distributed):
+- `routes/orders.py` — para productos de Empresa (company_id) la venta del marketplace exige ATÓMICAMENTE central ≥ qty: pre-check `stock − distributed` + `extra_filter` con `$expr` en `apply_stock_idempotent`. El reverso (+qty) devuelve al central. Productos no-Empresa sin cambios.
+- `services/company_inventory.py` — primitivas de despacho con ORIGEN en tienda (para Fase 4 y futura recogida): `dispatch_from_store` (descuenta total+tienda+distributed en una escritura atómica; exige by_store[sid]≥qty) y `return_dispatch` (reverso), ambas IDEMPOTENTES por op_id (devuelven/reservan exactamente una vez).
+- Pruebas: `tests/test_empresa_f201_sales.py` 5/5 — escenario de cierre del auditor (total 100/central 30/A 40/B 30 → venta 5 desde A → total 95/central 30/A 35/B 30; venta central 31 → rechazo sin efectos), bug original (central 0 → venta rechazada), venta consume solo central, idempotencia de despacho/reverso, e INVARIANTE total == central_visible + distribuido bajo intercalado de distribuir/despachar/vender/devolver.
+
+## EMP-04 (fork 2026-06) — Fase 4 Empresa: solicitar mensajería (Resilience asigna)
+La Empresa PIDE un envío; Resilience asigna el mensajero. La Empresa NO elige ni asigna mensajeros.
+- `routes/company.py`: `POST /company/deliveries` crea una solicitud (`company_delivery_requests`) y un trabajo de mensajería (`ensure_delivery_job`, kind=`company_delivery`, status `available`, sin mensajero) que entra al POOL de Resilience. Opcionalmente despacha un producto DESDE una tienda (reserva vía `dispatch_from_store`, 409 si falta stock). `GET /company/deliveries` lista con estado de la entrega + reconcilia el inventario si Resilience canceló (devuelve exactamente una vez). `POST /company/deliveries/{id}/cancel` cancela si aún no fue aceptada y devuelve el inventario.
+- `services/deliveries.py`: rama `company_delivery` en `_ref_display` (destino = cliente final; monto = paquete).
+- La asignación sigue en el panel admin (`/admin/deliveries/{id}/assign`, permiso `deliveries`): la Empresa recibe 403 → no puede asignar.
+- Frontend: pestaña "Mensajería" en `/company` (`CompanyDeliveriesView`) — formulario (destinatario/dirección/nota + opción "despachar desde tienda" con producto/tienda/cantidad) y lista con badges de estado + cancelar.
+- Pruebas: `tests/test_empresa_phase4.py` 4/4 (entra al pool sin mensajero; despacho desde tienda descuenta y cancelar devuelve, idempotente; cancelación por admin reconciliada en lectura; Empresa no puede asignar → 403). Smoke UI e2e: solicitud con despacho desde tienda, badge "en espera de mensajero", sin overflow.
+- Nota facturación: el envío se crea con fee 0 (coste/facturación Empresa↔Resilience queda como mejora futura). Billing y recogida-en-tienda para VENTAS del marketplace siguen pendientes.
+- Estado: en preview; pendiente de re-despliegue a producción.

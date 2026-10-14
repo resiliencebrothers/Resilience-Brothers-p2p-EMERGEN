@@ -155,6 +155,78 @@ async def return_to_central(company_id: str, product_id: str, store_id: str,
     return "insufficient" if exists else "not_found"
 
 
+async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
+                              qty: float, op_id: str,
+                              actor: Optional[dict] = None) -> str:
+    """Despacha `qty` DESDE una tienda (venta/envío con origen en tienda):
+    descuenta total + tienda + distributed en UNA escritura atómica. Exige
+    by_store[sid] ≥ qty. IDEMPOTENTE por op_id (un reintento no reaplica).
+    Usado por la solicitud de mensajería con origen en una tienda (Fase 4)."""
+    qty = _q(qty)
+    if qty <= 0:
+        return "invalid"
+    res = await db.products.find_one_and_update(
+        {"id": product_id, "company_id": company_id,
+         "inv_ops": {"$nin": [op_id]},
+         "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
+        [{"$set": {
+            "stock": {"$round": [
+                {"$subtract": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
+            f"by_store.{store_id}": {"$round": [
+                {"$subtract": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+            "distributed": {"$round": [
+                {"$subtract": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+            "inv_ops": _slice_concat("inv_ops", op_id),
+        }}],
+        projection={"_id": 0, "id": 1, "name": 1},
+        return_document=ReturnDocument.AFTER)
+    if res is not None:
+        store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+        await _log_move(company_id, res, "dispatch", qty, op_id,
+                        store_id=store_id, store_name=store.get("name", ""), actor=actor)
+        return "applied"
+    # idempotencia: si el op ya quedó aplicado → duplicado (éxito, sin reaplicar).
+    dup = await db.products.find_one(
+        {"id": product_id, "company_id": company_id, "inv_ops": op_id}, {"_id": 1})
+    if dup:
+        return "applied"
+    exists = await db.products.find_one(
+        {"id": product_id, "company_id": company_id}, {"_id": 1})
+    return "insufficient" if exists else "not_found"
+
+
+async def return_dispatch(company_id: str, product_id: str, store_id: str,
+                          qty: float, op_id: str,
+                          actor: Optional[dict] = None) -> str:
+    """Reverso de dispatch_from_store (cancelación/rechazo): devuelve total +
+    tienda + distributed. IDEMPOTENTE por op_id (devuelve exactamente una vez)."""
+    qty = _q(qty)
+    if qty <= 0:
+        return "invalid"
+    res = await db.products.find_one_and_update(
+        {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [op_id]}},
+        [{"$set": {
+            "stock": {"$round": [
+                {"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
+            f"by_store.{store_id}": {"$round": [
+                {"$add": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+            "distributed": {"$round": [
+                {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+            "inv_ops": _slice_concat("inv_ops", op_id),
+        }}],
+        projection={"_id": 0, "id": 1, "name": 1},
+        return_document=ReturnDocument.AFTER)
+    if res is not None:
+        store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+        await _log_move(company_id, res, "dispatch_return", qty, op_id,
+                        store_id=store_id, store_name=store.get("name", ""), actor=actor)
+        return "applied"
+    dup = await db.products.find_one(
+        {"id": product_id, "company_id": company_id, "inv_ops": op_id}, {"_id": 1})
+    return "applied" if dup else "not_found"
+
+
+
 async def release_store(company_id: str, store_id: str) -> None:
     """Al borrar una tienda, devuelve su mercancía distribuida al central
     (resta de `distributed` y quita la clave del mapa `by_store`)."""

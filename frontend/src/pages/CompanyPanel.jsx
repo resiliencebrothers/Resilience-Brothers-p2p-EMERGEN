@@ -4,7 +4,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -12,6 +12,7 @@ import CompanyStoresView from "@/pages/company/CompanyStoresView";
 import CompanyProductsView from "@/pages/company/CompanyProductsView";
 import CompanyInventoryView from "@/pages/company/CompanyInventoryView";
 import CompanyWalletView from "@/pages/company/CompanyWalletView";
+import CompanyDeliveriesView from "@/pages/company/CompanyDeliveriesView";
 
 // Panel independiente para cuentas Empresa (rol business). Mientras la cuenta
 // está en revisión, solo se muestra el aviso de aprobación pendiente.
@@ -20,6 +21,7 @@ const TABS = [
   { id: "stores", label: "Tiendas", icon: Store },
   { id: "products", label: "Productos", icon: Boxes },
   { id: "inventory", label: "Inventario", icon: Warehouse },
+  { id: "deliveries", label: "Mensajería", icon: Truck },
   { id: "wallet", label: "Saldo", icon: Wallet },
 ];
 
@@ -123,6 +125,7 @@ export default function CompanyPanel() {
             {tab === "stores" && <CompanyStoresView onChanged={loadSummary} />}
             {tab === "products" && <CompanyProductsView onChanged={loadSummary} />}
             {tab === "inventory" && <CompanyInventoryView />}
+            {tab === "deliveries" && <CompanyDeliveriesView />}
             {tab === "wallet" && <CompanyWalletView />}
           </>
         )}

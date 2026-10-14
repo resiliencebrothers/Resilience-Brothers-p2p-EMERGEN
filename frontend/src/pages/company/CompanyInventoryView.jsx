@@ -10,7 +10,7 @@ import { Warehouse, Store, ArrowRightLeft, PackagePlus, Undo2, History } from "l
 import { toast } from "sonner";
 
 // Inventario por ubicación: almacén central (= total − distribuido) + tiendas.
-const MOVE_LABEL = { receive: "Recibido en central", distribute: "Distribuido a tienda", return: "Devuelto al central" };
+const MOVE_LABEL = { receive: "Recibido en central", distribute: "Distribuido a tienda", return: "Devuelto al central", dispatch: "Despachado (envío)", dispatch_return: "Devuelto (envío cancelado)" };
 
 export default function CompanyInventoryView() {
   const [rows, setRows] = useState([]);

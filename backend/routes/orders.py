@@ -406,7 +406,14 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     payload.quantity = norm_qty(product, payload.quantity)
     if payload.quantity <= 0:
         raise HTTPException(status_code=400, detail="Cantidad inválida")
-    if product["stock"] < payload.quantity:
+    # iter-F2-01 — para productos de Empresa lo VENDIBLE es el ALMACÉN CENTRAL
+    # (stock − distributed): las unidades distribuidas a tiendas no se venden por
+    # el marketplace. Así una venta nunca consume existencias asignadas a tiendas
+    # ni rompe el desglose por ubicación (total = central + distribuido).
+    sellable = product["stock"]
+    if product.get("company_id"):
+        sellable = round(product["stock"] - float(product.get("distributed") or 0), 3)
+    if sellable < payload.quantity:
         raise HTTPException(status_code=400, detail="Stock insuficiente")
     # iter217 — un vendedor VIP no puede canjear su propio producto.
     if product.get("owner_id") and product["owner_id"] == user["user_id"]:
@@ -537,12 +544,22 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     rdoc.update({"status": "initializing", "init_op_id": debit_op,
                  "stock_op_id": stock_op})
     await db.redemptions.insert_one(rdoc)
+    # iter-F2-01 — filtro de reserva. Para productos de Empresa añadimos la
+    # GARANTÍA ATÓMICA de que el almacén central (stock − distributed) alcanza:
+    # impide vender unidades ya asignadas a tiendas (que dejarían el central en
+    # negativo y romperían el desglose). El reverso (+qty) devuelve al central.
+    reserve_filter: dict = {"is_active": {"$ne": False},
+                            "$or": [{"owner_id": {"$in": [None, ""]}},
+                                    {"owner_id": {"$exists": False}},
+                                    {"approval_status": "approved"}]}
+    if product.get("company_id"):
+        reserve_filter["$expr"] = {"$gte": [
+            {"$subtract": [{"$ifNull": ["$stock", 0]},
+                           {"$ifNull": ["$distributed", 0]}]},
+            payload.quantity]}
     stock_status = await apply_stock_idempotent(
         product["id"], -payload.quantity, stock_op,
-        extra_filter={"is_active": {"$ne": False},
-                      "$or": [{"owner_id": {"$in": [None, ""]}},
-                              {"owner_id": {"$exists": False}},
-                              {"approval_status": "approved"}]})
+        extra_filter=reserve_filter)
     if stock_status == "insufficient":
         await db.redemptions.delete_one({"id": r.id, "status": "initializing"})
         raise HTTPException(status_code=400, detail="Stock insuficiente")

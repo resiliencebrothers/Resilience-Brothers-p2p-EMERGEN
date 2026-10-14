@@ -424,6 +424,19 @@ def _ref_display(kind: str, ref: dict) -> dict:
                 f"Recoger {ref.get('amount', 0)} {ref.get('currency', '')}"
             ),
         }
+    if kind == "company_delivery":
+        # Fase 4 — solicitud de mensajería de una Empresa. El destino es el
+        # cliente final; el "monto" es el paquete/mercancía a entregar.
+        return {
+            "user_id": ref.get("company_id"),
+            "client_name": ref.get("company_name") or "Empresa",
+            "address": ref.get("delivery_address") or "",
+            "province": ref.get("province"),
+            "receiver_name": ref.get("receiver_name") or "",
+            "receiver_phone": ref.get("receiver_phone") or "",
+            "municipality": ref.get("municipality"),
+            "amount_label": ref.get("package_label") or "Envío de empresa",
+        }
     return {
         "user_id": ref.get("user_id"),
         "client_name": ref.get("user_name") or "",
