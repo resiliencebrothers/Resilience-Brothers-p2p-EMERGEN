@@ -115,16 +115,26 @@ async def update_my_store(store_id: str, payload: CompanyStorePayload,
 @router.delete("/stores/{store_id}")
 async def delete_my_store(store_id: str, request: Request) -> Any:
     user = await require_company(request)
-    res = await db.stores.delete_one(
-        {"id": store_id, "company_id": user["user_id"]})
-    if res.deleted_count == 0:
+    # F2-03 — cierre RECUPERABLE (no deja carrera entre comprobación y borrado):
+    # 1) Marca la tienda como "closing" (cerrada a nuevos movimientos) SIN borrar
+    #    su identidad. Así, si el proceso se interrumpe, un nuevo DELETE la vuelve
+    #    a encontrar y REANUDA el cierre en vez de devolver 404.
+    marked = await db.stores.find_one_and_update(
+        {"id": store_id, "company_id": user["user_id"]},
+        {"$set": {"status": "closing", "closing_at": iso(now_utc())}},
+        projection={"_id": 0, "id": 1})
+    if marked is None:
         raise HTTPException(status_code=404, detail="Tienda no encontrada")
-    # Devuelve la mercancía distribuida a esa tienda al almacén central.
+    # 2) Devuelve TODA la mercancía distribuida al almacén central (atómico por
+    #    producto, idempotente y reanudable; conserva distributed == suma(by_store)).
     await company_inventory.release_store(user["user_id"], store_id)
-    # Quita la tienda de los productos que la referenciaban.
+    # 3) Quita la tienda de la disponibilidad de los productos que la referenciaban.
     await db.products.update_many(
         {"company_id": user["user_id"]},
         {"$pull": {"available_store_ids": store_id}})
+    # 4) Solo cuando el cierre terminó por completo, elimina la identidad.
+    await db.stores.delete_one(
+        {"id": store_id, "company_id": user["user_id"]})
     return {"ok": True}
 
 
@@ -328,9 +338,14 @@ async def _ensure_owned_product(pid: str, company_id: str) -> None:
 
 async def _ensure_owned_store(sid: str, company_id: str) -> None:
     doc = await db.stores.find_one(
-        {"id": sid, "company_id": company_id}, {"_id": 1})
+        {"id": sid, "company_id": company_id}, {"_id": 1, "status": 1})
     if not doc:
         raise HTTPException(status_code=404, detail="Tienda no encontrada")
+    # F2-03 — una tienda en cierre no admite nuevos movimientos de inventario.
+    if doc.get("status") == "closing":
+        raise HTTPException(
+            status_code=409,
+            detail="La tienda se está cerrando; no admite nuevos movimientos.")
 
 
 @router.post("/inventory/receive")

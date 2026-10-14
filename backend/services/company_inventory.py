@@ -322,19 +322,38 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
 
 
 async def release_store(company_id: str, store_id: str) -> None:
-    """Al borrar una tienda, devuelve su mercancía distribuida al central
-    (resta de `distributed` y quita la clave del mapa `by_store`)."""
-    prods = await db.products.find(
-        {"company_id": company_id, f"by_store.{store_id}": {"$gt": 0}},
-        {"_id": 0, "id": 1, f"by_store.{store_id}": 1}).to_list(1000)
-    for p in prods:
-        qty = _q((p.get("by_store") or {}).get(store_id))
-        if qty <= 0:
-            continue
-        await db.products.update_one(
-            {"id": p["id"], "company_id": company_id},
-            {"$inc": {"distributed": -qty},
-             "$unset": {f"by_store.{store_id}": ""}})
+    """Cierre RECUPERABLE de una tienda (F2-03): devuelve TODA su mercancía
+    distribuida al almacén central.
+
+    Por cada producto hace UNA escritura ATÓMICA que, en la misma pipeline,
+    resta de `distributed` el valor VIGENTE de `by_store[sid]` y elimina la
+    clave. Nunca usa una lectura previa que pueda quedar obsoleta, por lo que el
+    invariante `distributed == suma(by_store)` se conserva ante cualquier
+    devolución/distribución concurrente y `distributed` jamás queda negativo.
+
+    Es idempotente y REANUDABLE: si un intento falla a mitad de varios
+    productos, reejecutar continúa con los pendientes (los ya liberados ya no
+    tienen la clave y no vuelven a coincidir). Cada traslado se registra UNA
+    sola vez gracias al `op_id` estable por producto."""
+    while True:
+        before = await db.products.find_one_and_update(
+            {"company_id": company_id, f"by_store.{store_id}": {"$gt": 0}},
+            [
+                {"$set": {"distributed": {"$round": [{"$subtract": [
+                    {"$ifNull": ["$distributed", 0]},
+                    {"$ifNull": [f"$by_store.{store_id}", 0]},
+                ]}, QTY_DECIMALS]}}},
+                {"$unset": f"by_store.{store_id}"},
+            ],
+            projection={"_id": 0, "id": 1, "name": 1, f"by_store.{store_id}": 1},
+            return_document=ReturnDocument.BEFORE)
+        if before is None:
+            break
+        qty = _q((before.get("by_store") or {}).get(store_id))
+        if qty > 0:
+            await _log_move(company_id, before, "release", qty,
+                            f"release:{store_id}:{before['id']}",
+                            store_id=store_id)
 
 
 async def build_inventory_rows(company_id: str) -> list:
