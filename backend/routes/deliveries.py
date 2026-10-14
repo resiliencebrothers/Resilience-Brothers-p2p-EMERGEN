@@ -1134,6 +1134,7 @@ async def admin_list_deliveries(request: Request, response: Response,
                                 courier_id: Optional[str] = None,
                                 incident: Optional[str] = None,
                                 search: Optional[str] = None,
+                                reassigned_only: bool = False,
                                 skip: int = 0, limit: int = 200) -> Any:
     await require_permission(request, "deliveries")
     q: dict = {}
@@ -1166,6 +1167,12 @@ async def admin_list_deliveries(request: Request, response: Response,
         q["courier_id"] = courier_id
     if incident == "open":
         q["has_open_incident"] = True
+    # Filtro por Reasignadas — solo entregas con auditoría de reasignación/
+    # liberación (`reassign_audit`), ya sea de una entrega aceptada o de una
+    # reserva aún no aceptada. Útil en el Historial para revisar cambios de
+    # mensajero.
+    if reassigned_only:
+        q["reassign_audit"] = {"$exists": True}
     # Buscador — por cliente, mensajero, referencia o fecha (YYYY-MM[-DD]).
     term = (search or "").strip()
     if term:
@@ -1322,10 +1329,16 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
         raise HTTPException(status_code=409,
                             detail=f"No se puede asignar en estado {d['status']}")
     # Mejora mensajería #2 — si YA está reservada para otro mensajero (y aún no
-    # la rechazó), NO se puede reasignar a un tercero. El mensajero reservado
-    # debe rechazarla primero (o el admin cancelar la entrega).
+    # la rechazó), por defecto NO se reasigna a un tercero (el mensajero
+    # reservado debe rechazarla primero). EXCEPCIÓN — "Acción Rápida Reserva":
+    # el admin puede FORZAR la reasignación de una reserva LENTA aún no aceptada
+    # con `override_reservation`; se re-reserva al nuevo mensajero con un CICLO
+    # nuevo (uid), y el `expected_uid` garantiza que una aceptación del
+    # mensajero anterior que llegue en paralelo pierda con 409.
     current_reserved = d.get("assigned_to_courier_id")
-    if current_reserved and current_reserved != courier_id:
+    override_reservation = bool(payload.get("override_reservation"))
+    if current_reserved and current_reserved != courier_id \
+            and not override_reservation:
         other = await db.users.find_one({"user_id": current_reserved},
                                         {"_id": 0, "name": 1, "email": 1})
         oname = (other or {}).get("name") or (other or {}).get("email") \
@@ -1334,6 +1347,14 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
             status_code=409,
             detail=(f"Esta entrega ya está asignada a {oname}. Debe rechazarla "
                     "antes de poder asignarla a otro mensajero."))
+    # Reserva reasignada (override): recordamos al mensajero anterior para la
+    # auditoría y el aviso.
+    prev_reserved_id = (current_reserved
+                        if current_reserved and current_reserved != courier_id
+                        else None)
+    prev_reserved_name = (d.get("assigned_to_courier_name")
+                          if prev_reserved_id else None)
+    reason = (payload.get("reason") or "").strip()[:300]
     now = iso(now_utc())
     courier_display = courier.get("name") or courier.get("email")
     # ABA (A08 / M01-A) — CONCURRENCIA OPTIMISTA sobre el ciclo de asignación.
@@ -1362,24 +1383,49 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
                            {"assigned_to_courier_id": courier_id,
                             "assignment_uid": {"$exists": False}}]}
     # MSG08 — la ubicación GPS del mensajero anterior se INVALIDA al reasignar.
+    set_fields: Dict[str, Any] = {
+        "status": "available",
+        "assigned_to_courier_id": courier_id,
+        "assigned_to_courier_name": courier_display,
+        "assignment_uid": assignment_uid,
+        "assigned_by": actor["user_id"],
+        "assigned_by_name": actor.get("name") or actor.get("email"),
+        "assigned_at": now,
+        "courier_id": None,
+        "courier_name": None,
+        "updated_at": now,
+    }
+    timeline_note = f"Reservada para {courier_display} — pendiente de aceptación"
+    if prev_reserved_id:
+        # Acción Rápida Reserva — la reasignación de una RESERVA aún no aceptada
+        # queda AUDITADA igual que la de una aceptada (`reassign_audit`), con
+        # `stage=reservation` para distinguirla. Así aparece en el filtro
+        # "Solo reasignadas" del Historial.
+        set_fields["reassign_audit"] = {
+            "mode": "reassigned",
+            "by": actor["user_id"],
+            "by_name": actor.get("name") or actor.get("email"),
+            "at": now,
+            "from_courier_id": prev_reserved_id,
+            "from_courier_name": prev_reserved_name or "el mensajero reservado",
+            "to_courier_id": courier_id,
+            "to_courier_name": courier_display,
+            "reason": reason or None,
+            "stage": "reservation",
+        }
+        timeline_note = (
+            f"Reserva reasignada de {prev_reserved_name or 'otro mensajero'} a "
+            f"{courier_display} — pendiente de aceptación."
+            + (f" Motivo: {reason}" if reason else ""))
     res = await db.deliveries.update_one(
         {"id": did, "status": "available",
          # MV02 — no reservar repartos pendientes de validar.
          "needs_origin_check": {"$ne": True}, **cas}, {
-            "$set": {"status": "available",
-                     "assigned_to_courier_id": courier_id,
-                     "assigned_to_courier_name": courier_display,
-                     "assignment_uid": assignment_uid,
-                     "assigned_by": actor["user_id"],
-                     "assigned_by_name": actor.get("name") or actor.get("email"),
-                     "assigned_at": now,
-                     "courier_id": None,
-                     "courier_name": None,
-                     "updated_at": now},
+            "$set": set_fields,
             "$unset": {"courier_location": ""},
             "$push": {"timeline": {"status": "available", "at": now,
                                    "by": actor["user_id"],
-                                   "note": f"Reservada para {courier_display} — pendiente de aceptación"}},
+                                   "note": timeline_note}},
         })
     if res.matched_count == 0:
         raise HTTPException(
@@ -1428,6 +1474,29 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
             logger.error(f"assign push failed: {e}")
     except Exception as e:
         logger.error(f"assign notify failed: {e}")
+    # Acción Rápida Reserva — avisa al mensajero ANTERIOR que su reserva (aún no
+    # aceptada) fue reasignada por el equipo.
+    if prev_reserved_id:
+        try:
+            from routes.notifications import _insert_notification
+            from push_service import (send_push_to_user,
+                                      build_generic_admin_alert_payload)
+            rtitle = "Tu reserva fue reasignada"
+            rbody = (f"La entrega de {d.get('client_name', '')} "
+                     f"({d.get('amount_label', '')}) que tenías reservada fue "
+                     f"reasignada por el equipo."
+                     + (f" Motivo: {reason}" if reason else ""))
+            await _insert_notification(
+                recipient_user_id=prev_reserved_id,
+                type="delivery_reassigned", title=rtitle, message=rbody,
+                data={"delivery_id": did})
+            await send_push_to_user(
+                db, prev_reserved_id, build_generic_admin_alert_payload(
+                    title=rtitle, body=rbody,
+                    url="/dashboard/deliveries",
+                    tag=f"delivery-reassigned-{did}"))
+        except Exception as e:
+            logger.error(f"reservation reassign notify failed: {e}")
     return await db.deliveries.find_one({"id": did}, {"_id": 0})
 
 

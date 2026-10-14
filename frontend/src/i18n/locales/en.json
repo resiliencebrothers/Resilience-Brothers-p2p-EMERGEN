@@ -830,6 +830,11 @@
       "attnReservations": "{{n}} reservation(s) unanswered for over {{min}} min:",
       "attnStalled": "{{n}} deliveries stalled for over {{min}} min:",
       "staleCycleReload": "Reload: the assignment changed while you were working",
+      "reassignResvTitle": "Reassign reservation",
+      "reassignResvDesc": "Reserved for {{courier}} · {{client}}. Not accepted yet. Choose who to reassign it to.",
+      "reassignResvOk": "Reservation reassigned to the new courier",
+      "reassignPickCourier": "Choose courier",
+      "filterReassigned": "Reassigned only",
       "dispatch": {
         "title": "Dispatch Center",
         "reservationsGroup": "Unaccepted reservations (> {{min}} min)",

@@ -830,6 +830,11 @@
       "attnReservations": "{{n}} reserva(s) sin respuesta hace más de {{min}} min:",
       "attnStalled": "{{n}} entrega(s) detenidas hace más de {{min}} min:",
       "staleCycleReload": "Recarga: la asignación cambió mientras operabas",
+      "reassignResvTitle": "Reasignar reserva",
+      "reassignResvDesc": "Reservada a {{courier}} · {{client}}. Aún no la acepta. Elige a quién reasignarla.",
+      "reassignResvOk": "Reserva reasignada al nuevo mensajero",
+      "reassignPickCourier": "Elige mensajero",
+      "filterReassigned": "Solo reasignadas",
       "dispatch": {
         "title": "Centro de Despacho",
         "reservationsGroup": "Reservas sin aceptar (> {{min}} min)",

@@ -71,40 +71,72 @@ function DeliveryEta({ d, t }) {
 // operación. Motivo opcional; se avisa al mensajero anterior (y al nuevo).
 function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
   const { t } = useTranslation();
+  // Una reserva aún NO aceptada (`available` + reservada) se reasigna por la vía
+  // rápida (POST /assign con override); una ACEPTADA usa /reassign (liberar o
+  // re-reservar). El diálogo detecta el modo por el estado de la entrega.
+  const isReservation = delivery?.status === "available";
+  const currentCourierId = isReservation
+    ? delivery?.assigned_to_courier_id
+    : delivery?.courier_id;
   const [target, setTarget] = useState("__free__");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setTarget("__free__"); setReason(""); } }, [open]);
+  useEffect(() => {
+    if (open) { setTarget(isReservation ? "" : "__free__"); setReason(""); }
+  }, [open, isReservation]);
   if (!delivery) return null;
   const submit = async () => {
     setBusy(true);
     try {
-      const body = { reason: reason.trim() };
-      if (target !== "__free__") body.courier_id = target;
-      // M01-B — vincula la reasignación al CICLO aceptado que el admin ve.
-      if (delivery.assignment_uid) body.expected_uid = delivery.assignment_uid;
-      await axios.post(`${API}/admin/deliveries/${delivery.id}/reassign`,
-        body, { withCredentials: true });
-      toast.success(target === "__free__"
-        ? t("admin.deliveries.reassignFreedOk")
-        : t("admin.deliveries.reassignOk"));
-      onDone();
+      if (isReservation) {
+        // Acción Rápida Reserva — re-reserva directa al nuevo mensajero.
+        await axios.post(`${API}/admin/deliveries/${delivery.id}/assign`, {
+          courier_id: target,
+          expected_uid: delivery.assignment_uid || null,
+          override_reservation: true,
+          reason: reason.trim(),
+        }, { withCredentials: true });
+        toast.success(t("admin.deliveries.reassignResvOk"));
+        onDone();
+      } else {
+        const body = { reason: reason.trim() };
+        if (target !== "__free__") body.courier_id = target;
+        // M01-B — vincula la reasignación al CICLO aceptado que el admin ve.
+        if (delivery.assignment_uid) body.expected_uid = delivery.assignment_uid;
+        await axios.post(`${API}/admin/deliveries/${delivery.id}/reassign`,
+          body, { withCredentials: true });
+        toast.success(target === "__free__"
+          ? t("admin.deliveries.reassignFreedOk")
+          : t("admin.deliveries.reassignOk"));
+        onDone();
+      }
     } catch (e) {
       if (!handleStaleConflict(e, t, onDone)) {
         toast.error(e.response?.data?.detail || "Error");
       }
     } finally { setBusy(false); }
   };
+  const confirmDisabled = busy || (isReservation && !target);
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="bg-[#14111f] border-white/10 text-white max-h-[85vh] overflow-y-auto" data-testid="reassign-dialog">
         <DialogHeader>
-          <DialogTitle>{t("admin.deliveries.reassignTitle")}</DialogTitle>
+          <DialogTitle>
+            {isReservation
+              ? t("admin.deliveries.reassignResvTitle")
+              : t("admin.deliveries.reassignTitle")}
+          </DialogTitle>
           <DialogDescription className="text-neutral-400">
-            {t("admin.deliveries.reassignDesc", {
-              courier: delivery.courier_name || "—",
-              client: delivery.client_name || "",
-            })}
+            {isReservation
+              ? t("admin.deliveries.reassignResvDesc", {
+                courier: delivery.assigned_to_courier_name
+                  || delivery.courier_name || "—",
+                client: delivery.client_name || "",
+              })
+              : t("admin.deliveries.reassignDesc", {
+                courier: delivery.courier_name || "—",
+                client: delivery.client_name || "",
+              })}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -112,13 +144,15 @@ function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
             <label className="micro-label text-neutral-500">{t("admin.deliveries.reassignTargetLabel")}</label>
             <Select value={target} onValueChange={setTarget}>
               <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 text-sm" data-testid="reassign-target-select">
-                <SelectValue />
+                <SelectValue placeholder={t("admin.deliveries.reassignPickCourier")} />
               </SelectTrigger>
               <SelectContent className="bg-[#1A1730] border-white/10 text-white max-h-64">
-                <SelectItem value="__free__" data-testid="reassign-opt-free">
-                  {t("admin.deliveries.reassignFreeOption")}
-                </SelectItem>
-                {couriers.filter((c) => c.user_id !== delivery.courier_id).map((c) => (
+                {!isReservation && (
+                  <SelectItem value="__free__" data-testid="reassign-opt-free">
+                    {t("admin.deliveries.reassignFreeOption")}
+                  </SelectItem>
+                )}
+                {couriers.filter((c) => c.user_id !== currentCourierId).map((c) => (
                   <SelectItem key={c.user_id} value={c.user_id}>{c.name || c.email}</SelectItem>
                 ))}
               </SelectContent>
@@ -147,7 +181,7 @@ function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
           </Button>
           <Button
             onClick={submit}
-            disabled={busy}
+            disabled={confirmDisabled}
             data-testid="reassign-confirm-btn"
             className="rounded-none bg-[#8B5CF6] text-white"
           >
@@ -237,16 +271,30 @@ function DispatchCenter({ attention, t, canAssign, onReassign, onCancel }) {
                 {resv.map((d) => itemRow(d, (
                   <>
                     <span className="text-amber-200/80">
-                      {t("admin.deliveries.dispatch.reserved", { name: d.courier_name || "—" })}
+                      {t("admin.deliveries.dispatch.reserved", {
+                        name: d.assigned_to_courier_name || d.courier_name || "—",
+                      })}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => onCancel(d)}
-                      data-testid={`dispatch-cancel-${d.id}`}
-                      className="ml-auto text-[#EF4444] hover:underline"
-                    >
-                      {t("admin.deliveries.dispatch.cancel")}
-                    </button>
+                    <div className="ml-auto flex items-center gap-3">
+                      {canAssign && (
+                        <button
+                          type="button"
+                          onClick={() => onReassign(d)}
+                          data-testid={`dispatch-reassign-${d.id}`}
+                          className="text-[#8B5CF6] hover:underline"
+                        >
+                          {t("admin.deliveries.dispatch.reassign")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onCancel(d)}
+                        data-testid={`dispatch-cancel-${d.id}`}
+                        className="text-[#EF4444] hover:underline"
+                      >
+                        {t("admin.deliveries.dispatch.cancel")}
+                      </button>
+                    </div>
                   </>
                 )))}
               </ul>
@@ -343,6 +391,9 @@ function DeliveriesTab({ navigate, mode = "active" }) {
   // servidor, combinándose con el bucket/estado activo.
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  // Filtro por Reasignadas (solo en Historial): muestra únicamente entregas con
+  // auditoría de reasignación/liberación.
+  const [reassignedOnly, setReassignedOnly] = useState(false);
   useEffect(() => {
     const tmr = setTimeout(() => setSearch(searchInput.trim()), 400);
     return () => clearTimeout(tmr);
@@ -354,6 +405,7 @@ function DeliveriesTab({ navigate, mode = "active" }) {
         : statusFilter === "incidents" ? { incident: "open" }
           : { status: statusFilter };
     if (search) base.search = search;
+    if (isHistory && reassignedOnly) base.reassigned_only = true;
     const params = (isHistory || isPending)
       ? { ...base, limit: PAGE_SIZE, skip: page * PAGE_SIZE }
       : base;
@@ -368,10 +420,10 @@ function DeliveriesTab({ navigate, mode = "active" }) {
       axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
         .then((r) => setAttention(r.data)).catch(() => {});
     }
-  }, [statusFilter, mode, isHistory, isPending, page, search]);
+  }, [statusFilter, mode, isHistory, isPending, page, search, reassignedOnly]);
 
   // Al cambiar de filtro o búsqueda, vuelve a la primera página.
-  useEffect(() => { setPage(0); }, [statusFilter, mode, search]);
+  useEffect(() => { setPage(0); }, [statusFilter, mode, search, reassignedOnly]);
 
   useEffect(() => {
     if (mode !== "active") return undefined;
@@ -569,6 +621,16 @@ function DeliveriesTab({ navigate, mode = "active" }) {
             className={`px-3 py-1.5 text-xs border ${statusFilter === "incidents" ? "border-amber-400 text-amber-300" : "border-amber-400/30 text-amber-300/60"}`}
           >
             ⚠ {t("admin.deliveries.filterIncidents")}
+          </button>
+        )}
+        {isHistory && (
+          <button
+            onClick={() => setReassignedOnly((v) => !v)}
+            data-testid="deliveries-filter-reassigned"
+            aria-pressed={reassignedOnly}
+            className={`px-3 py-1.5 text-xs border ${reassignedOnly ? "border-[#8B5CF6] text-[#8B5CF6]" : "border-white/10 text-neutral-500"}`}
+          >
+            ↺ {t("admin.deliveries.filterReassigned")}
           </button>
         )}
       </div>
