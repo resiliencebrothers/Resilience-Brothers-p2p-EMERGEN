@@ -1,5 +1,13 @@
 ## Changelog — 12 Feb 2026
 
+### CR-triage — revisión de calidad de código Python (sin cambios de código)
+Se verificó cada hallazgo del informe contra el código real; ninguno resultó un arreglo seguro y en alcance:
+- **Imports circulares**: ya resueltos con imports perezosos/intencionales (`credit_markers.py` se extrajo para romper el ciclo; `inventory`→`inventory_incidents` es import tardío). Los 4 módulos importan limpio; backend corriendo.
+- **Secretos hardcodeados en tests**: falso positivo — valores aleatorios (`secrets.token_hex`), fixtures de sesión de test deterministas o tokens falsos a propósito. `grep` de patrones de secreto real = 0.
+- **68 variables indefinidas**: falso positivo — `ruff F821` y `mypy` (112 archivos) limpios. `mypy --enable-error-code possibly-undefined` arrojó 1 caso (`deposits.py:879`), no 68, y ese es seguro (mismo guard `crypto_evidence` en asignación y uso; camino de concurrencia DR02, no se toca).
+- **`is` vs `==`**: falso positivo — todas las líneas citadas son `is None`/`is not None` (correcto). `ruff F632` = 0 en todo el backend; el `sed` sugerido corrompería el código.
+- **Refactor `admin_withdrawals.py` / `admin.py` / split de rutas**: BLOQUEADO por restricción del proyecto y/o sobre-ingeniería de alto riesgo en código de producción en funcionamiento. No aplicado.
+
 ### MEN-18 — M02-UI (la apertura automática de Disponibles ocultaba el aviso)
 Reporte del operador: con una reserva A pendiente y una entrega B aceptada por el mismo mensajero, abrir el aviso de B al montar el panel lo resolvía bien (`tab=mine`), pero la MISMA aplicación de la lista subía `reservedCount` de 0 a 1 y el efecto iter208 ejecutaba `setTab("available")` después, dejando al mensajero en una pestaña sin la tarjeta de B. Ocurría en carga normal, sin respuestas desordenadas.
 
