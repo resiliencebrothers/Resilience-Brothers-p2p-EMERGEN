@@ -1,5 +1,12 @@
 ## Changelog — 12 Feb 2026
 
+### OP01 — ALTA: cancelar desde una tarjeta antigua podía anular otro ciclo
+Reporte del operador: `admin_cancel_delivery` condicionaba la escritura al estado leído por el servidor y `payout_credited`, pero NO al ciclo/estado que vio el operador. Como una reasignación de reserva conserva `status=available` cambiando `assignment_uid`, una cancelación desde la tarjeta antigua (A/U1) anulaba la reserva nueva (B/U2); y una cancelación originada en una tarjeta de reserva cancelaba un trabajo ya aceptado. Devolvía ÉXITO, así que `handleStaleConflict` (que solo actúa en 409) no avisaba.
+
+- **Backend (`admin_cancel_delivery`)**: la cancelación ahora liga su escritura atómica a `expected_status` + `expected_uid` observados. Si cambiaron (reasignada → otro uid, o aceptada → otro estado) devuelve **409** sin cancelar ni emitir avisos. La ausencia de ciclo (`expected_uid=null`, dato heredado/libre) solo cancela si el documento SIGUE sin uid (`$exists:false`), nunca un ciclo nuevo. Se conserva la protección `payout_credited`.
+- **Frontend (`cancel`)**: la tarjeta (tabla, Centro de Despacho, diálogos) envía `expected_status: d.status` y `expected_uid: d.assignment_uid ?? null`. El 409 lo captura `handleStaleConflict` → aviso "Recarga…" + refresco, permitiendo re-decidir sobre la información vigente.
+- Tests: `test_men20_cancel_cycle_cas.py` (6/6) — cancel obsoleto tras reasignación, cancel tras aceptación, cancel válido vigente, legacy sin uid (válido), ausencia de uid NO anula ciclo nuevo, y protección de comisión. Ejecutados contra `REACT_APP_BACKEND_URL` (e2e). Añadido a `make test-critical`; `mypy` 112 ok, `ruff` ok, `yarn lint` 0 errores.
+
 ### Acción Rápida Reserva + Filtro por Reasignadas
 - **Acción Rápida Reserva (reasignar una reserva lenta sin cancelar)**: el admin ahora puede reasignar directamente, desde el Centro de Despacho (y el diálogo), una RESERVA aún no aceptada a otro mensajero.
   - Backend (`admin_assign_delivery`): nuevo flag `override_reservation` que, con `expected_uid` (CAS por ciclo), re-reserva al nuevo mensajero generando un CICLO nuevo (uid); una aceptación paralela del mensajero anterior pierde con 409. Sin el flag, el comportamiento anterior (409 "debe rechazarla primero") se mantiene. Queda AUDITADO (`reassign_audit`, `stage=reservation`) y se notifica (in-app + push) al mensajero anterior.

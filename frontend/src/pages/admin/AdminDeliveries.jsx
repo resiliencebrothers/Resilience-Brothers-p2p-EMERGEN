@@ -474,7 +474,12 @@ function DeliveriesTab({ navigate, mode = "active" }) {
 
   const cancel = async (d) => {
     try {
-      await axios.post(`${API}/admin/deliveries/${d.id}/cancel`, {}, { withCredentials: true });
+      // OP01 — ligamos la cancelación al estado y ciclo que VE el operador;
+      // si cambió (reasignada/aceptada) el backend responde 409.
+      await axios.post(`${API}/admin/deliveries/${d.id}/cancel`, {
+        expected_status: d.status,
+        expected_uid: d.assignment_uid ?? null,
+      }, { withCredentials: true });
       toast.success(t("admin.deliveries.cancelled"));
       load();
     } catch (e) {

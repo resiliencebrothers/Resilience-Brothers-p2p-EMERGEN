@@ -1694,10 +1694,26 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
     if d["status"] in ("confirmed", "cancelled"):
         raise HTTPException(status_code=409, detail=f"Ya está {d['status']}")
     now = iso(now_utc())
-    # ME02 — cancelación condicionada: no puede pisar una confirmación (o el
-    # pago de la comisión) que ganó la carrera entre lectura y escritura.
+    # OP01 — la cancelación debe ligarse al CICLO y ESTADO que VIO el operador,
+    # no solo al estado que lee el servidor. Una reasignación de reserva conserva
+    # status=available pero cambia `assignment_uid`; y una aceptación cambia el
+    # estado conservando el uid. Por eso condicionamos atómicamente a ambos:
+    #  - `expected_status`: el estado observado en la tarjeta (p. ej. available).
+    #  - `expected_uid`: el ciclo observado. Si el operador vio una entrega SIN
+    #    ciclo (dato heredado/libre), solo puede cancelarse si SIGUE sin ciclo;
+    #    la ausencia NO autoriza a anular un ciclo nuevo.
+    # Se conserva la protección contra confirmación/comisión (`payout_credited`).
+    expected_status = payload.get("expected_status")
+    flt: Dict[str, Any] = {
+        "id": did,
+        "status": expected_status if expected_status else d["status"],
+        "payout_credited": {"$ne": True},
+    }
+    if "expected_uid" in payload:
+        euid = payload.get("expected_uid")
+        flt["assignment_uid"] = euid if euid else {"$exists": False}
     res = await db.deliveries.update_one(
-        {"id": did, "status": d["status"], "payout_credited": {"$ne": True}}, {
+        flt, {
             "$set": {"status": "cancelled", "updated_at": now},
             "$unset": {"active_key": ""},
             "$push": {"timeline": {"status": "cancelled", "at": now,
@@ -1707,7 +1723,8 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
     if res.matched_count == 0:
         raise HTTPException(
             status_code=409,
-            detail="La entrega cambió de estado (¿confirmada?); recarga.")
+            detail=("La entrega cambió de estado, de mensajero o de ciclo "
+                    "(¿reasignada o aceptada?); recarga y vuelve a decidir."))
     # MSG10 — el panel del mensajero ve la cancelación en vivo.
     try:
         from services.deliveries import publish_delivery_event
