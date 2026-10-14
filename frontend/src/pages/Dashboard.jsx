@@ -5,7 +5,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
 import { API } from "@/App";
-import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike, Store, Wallet } from "lucide-react";
+import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike, Wallet } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -84,9 +84,6 @@ export default function Dashboard() {
       { to: "/dashboard/assets", icon: Coins, label: t("sidebar.client.assets"), id: "nav-assets" },
       { to: "/dashboard/vip", icon: Star, label: t("sidebar.client.vip"), id: "nav-vip" },
       { to: "/dashboard/marketplace", icon: Boxes, label: t("sidebar.client.marketplace"), id: "nav-marketplace" },
-      ...(user?.role === "vip" ? [
-        { to: "/dashboard/my-products", icon: Store, label: t("sidebar.client.myProducts"), id: "nav-my-products" },
-      ] : []),
       { to: "/dashboard/referrals", icon: Gift, label: t("sidebar.client.referrals"), id: "nav-referrals" },
     ] : []),
     ...(user?.is_courier ? [

@@ -1,5 +1,10 @@
 ## Changelog — 12 Feb 2026
 
+### Cancelar una reserva pendiente ahora avisa al mensajero reservado
+Reporte: al cancelar una reserva aún NO aceptada (`assigned_to_courier_id=A`, `courier_id=None`), se registraban cero notificaciones de campana y cero push al mensajero (la notificación solo se emitía si había `courier_id`, y sin push).
+- Backend (`admin_cancel_delivery`): el aviso ahora se dirige al ciclo efectivamente cancelado — `courier_id` si estaba aceptada, o `assigned_to_courier_id` (reservado) si no. Crea notificación persistente (campana) + envía push con el patrón de reasignaciones. Se emite SOLO tras ganar la escritura; un reintento obsoleto responde 409 antes y no duplica.
+- Tests: `test_men21_cancel_notifies_reserved_courier.py` (4/4) — reserva cancelada avisa al reservado, aceptada avisa al aceptado, 409 obsoleto NO anuncia cancelación, reintento no duplica. Añadido a `make test-critical`; `mypy` 112 ok, `ruff` ok.
+
 ### OP02 — «Solo reasignadas» (y la lista admin) podía mostrar resultados de otra consulta
 Reporte del operador: los callbacks de `load` aplicaban `setRows`/`setTotal`/`setAttention` sin comprobar vigencia, así que una respuesta (o error) ATRASADA pisaba el resultado vigente: el filtro "Solo reasignadas" podía mostrar una entrega normal; activar el filtro desde una página posterior podía dejar la primera vacía; un error antiguo borraba una respuesta filtrada correcta; y una atención antigua restauraba la tarjeta U1 tras mostrarse U2.
 
@@ -2322,4 +2327,20 @@ Segunda capa del ABA (A08): el blindaje de MEN-11 ataba el aceptar/rechazar del 
 
 - Frontend: `AdminDeliveries` envía `expected_uid` (el ciclo que muestra la fila) al asignar y al reasignar, atando la escritura a lo que el admin vio.
 - **Pruebas** (nuevo `tests/test_men14_admin_write_cycle_cas.py`, en `test-critical`): M01-A escritura atrasada no restaura el ciclo viejo (+ control positivo del reintento válido); M01-B reasignación atrasada no toca el ciclo aceptado nuevo (+ control positivo). Barrera lectura/escritura reproducida de forma determinista vía `expected_uid`. Actualizado `test_men11` (aceptar conserva el uid). Regresión mensajería **72/72** (men01-06,11,14 + iter199/208/288). ruff + mypy limpios. Smoke: contrato frontend `expected_uid:null` en assign libre → 200.
+- Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## EMP-01 (fork 2026-06) — Fase 1 Empresa: rol business, tiendas (1:N) y catálogo
+Nuevo rol INDEPENDIENTE `empresa` (no VIP, no staff). Alcance confirmado por el usuario: Empresa 1:N tiendas; el inventario actual evolucionará para distribuirse desde un ALMACÉN CENTRAL hacia las tiendas (Fase 2); sub-saldo propio liquidable con Resilience (Fase 3); la Empresa NO asigna mensajeros, solo SOLICITA mensajería y Resilience asigna (Fase 4). La publicación de productos al marketplace pasa de VIP a Empresa.
+
+Implementado en Fase 1 (verificado):
+- Auth (`routes/auth.py`): `POST /api/auth/register` acepta `account_type` (personal|business). El servidor mapea business→rol `empresa` + `account_status=under_review`; el rol NUNCA se acepta del cliente. Reutiliza la aprobación admin existente (admin_users: account_status→active) — sin tocar admin.py.
+- `require_company` (`auth_utils.py`): gate de rol empresa + cuenta activa; aislado de staff (nunca pasa require_admin/staff/permission).
+- `routes/company.py` (prefijo `/company`): `/me`, CRUD de tiendas (colección `stores` con `company_id`), CRUD de catálogo (productos con `owner_id`+`company_id`, quedan `pending` + notifican admins). Validación: las sucursales elegidas en un producto deben pertenecer a la Empresa.
+- Aprobación admin reutiliza `/admin/vendor-products` (owner_id presente ⇒ entra a la cola existente).
+- `routes/stores.py`: las tiendas de Empresa (company_id presente) se EXCLUYEN del listado público `/stores` y del `/admin/stores` de Resilience.
+- VIP: `POST/PUT /vip/my-products` DESHABILITADOS (403). En el dashboard se retiró el nav "Mis Productos" VIP (datos VIP existentes intactos).
+- Frontend: selector Personal/Empresa en registro (`EmailAuthDialog`); panel `/company` (`CompanyPanel` + `CompanyStoresView` + `CompanyProductsView`) con Resumen/Tiendas/Productos y banner "en revisión" cuando under_review; redirecciones por rol (`lib/roleHome.js`, ProtectedRoute con prop `companyRoute`).
+- Pruebas: `tests/test_empresa_phase1.py` = 8/8 (registro business→empresa under_review; rol del cliente ignorado; gate /company hasta active; aislamiento de tiendas; catálogo pending en cola admin; validación de store_ids; VIP publish/edit 403). Añadido a `test-critical`. mypy 113 archivos OK. Smoke UI: panel renderiza, alta de tienda y de producto (pending) e2e OK con toast.
+- Pendiente Fases 2-4: inventario por ubicación + distribución almacén central→tiendas; sub-saldo/liquidación; solicitar mensajería.
 - Estado: en preview; pendiente de re-despliegue a producción.

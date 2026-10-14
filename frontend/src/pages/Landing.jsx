@@ -1,5 +1,6 @@
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate, useLocation } from "react-router-dom";
+import { roleHome } from "@/lib/roleHome";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -51,12 +52,12 @@ export default function Landing() {
   }, [location.search, navigate]);
 
   const handleEnter = useCallback(() => {
-    if (user) navigate(user.role === "admin" || user.role === "employee" ? "/admin" : "/dashboard");
+    if (user) navigate(roleHome(user));
     else login();
   }, [user, navigate, login]);
 
   const handleEmailAuth = useCallback(() => {
-    if (user) navigate(user.role === "admin" || user.role === "employee" ? "/admin" : "/dashboard");
+    if (user) navigate(roleHome(user));
     else { setPrefillEmail(""); setEmailAuthOpen(true); }
   }, [user, navigate]);
 

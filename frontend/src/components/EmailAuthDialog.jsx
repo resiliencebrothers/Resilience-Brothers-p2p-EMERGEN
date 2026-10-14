@@ -15,6 +15,8 @@ import { AuthNotice } from "./auth/AuthNotice";
 import { AuthCredentialsFields } from "./auth/AuthCredentialsFields";
 import { Turnstile } from "@marsidev/react-turnstile";
 import { getTheme } from "@/lib/theme";
+import { roleHome } from "@/lib/roleHome";
+import { User, Building2 } from "lucide-react";
 
 const TITLES = {
   register: "Crear cuenta",
@@ -44,6 +46,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [accountType, setAccountType] = useState("personal"); // "personal" | "business"
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
@@ -65,7 +68,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const reset = () => {
     setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false);
     setName(""); setPhone(""); setRemember24h(false); setLoading(false);
-    setSuccessMsg(""); setNotice(null); setMode("login");
+    setSuccessMsg(""); setNotice(null); setMode("login"); setAccountType("personal");
     setCaptchaToken(""); setCaptchaKey((k) => k + 1);
   };
 
@@ -143,12 +146,15 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       const url = mode === "register" ? "/auth/register" : "/auth/login";
       const captcha = captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {};
       const body = mode === "register"
-        ? { email: email.trim(), password, name: name.trim(), phone: phone.trim(), ...captcha }
+        ? { email: email.trim(), password, name: name.trim(), phone: phone.trim(), account_type: accountType, ...captcha }
         : { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}), ...captcha };
       const r = await axios.post(`${API}${url}`, body, { withCredentials: true });
       if (mode === "register") {
         // iter17: registration no longer logs in — must verify email first
-        setSuccessMsg(r.data.message || "Cuenta creada. Revisa tu correo para verificar.");
+        const base = r.data.message || "Cuenta creada. Revisa tu correo para verificar.";
+        setSuccessMsg(accountType === "business"
+          ? `${base} Tu cuenta Empresa quedará en revisión hasta que un administrador la apruebe.`
+          : base);
         return;
       }
       setUser(r.data);
@@ -156,7 +162,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       applyServerLanguage(r.data);
       toast.success("Sesión iniciada");
       onClose?.(); reset();
-      navigate(r.data.role === "admin" || r.data.role === "employee" ? "/admin" : "/dashboard");
+      navigate(roleHome(r.data));
     } catch (err) {
       handleAuthError(err);
       // iter246 — el token Turnstile es de un solo uso: regenerar tras fallo.
@@ -215,6 +221,43 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               <span className="px-3">o</span>
               <div className="flex-1 h-px bg-white/10" />
             </div>
+
+            {mode === "register" && (
+              <div data-testid="account-type-selector">
+                <div className="micro-label text-neutral-500 mb-2">Tipo de cuenta</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    data-testid="account-type-personal"
+                    onClick={() => setAccountType("personal")}
+                    className={`flex items-center justify-center gap-2 py-3 text-sm font-medium border rounded-none transition-colors ${
+                      accountType === "personal"
+                        ? "border-[#8B5CF6] bg-[#8B5CF6]/10 text-white"
+                        : "border-white/10 text-neutral-400 hover:text-white"
+                    }`}
+                  >
+                    <User className="w-4 h-4" /> Personal
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="account-type-business"
+                    onClick={() => setAccountType("business")}
+                    className={`flex items-center justify-center gap-2 py-3 text-sm font-medium border rounded-none transition-colors ${
+                      accountType === "business"
+                        ? "border-[#8B5CF6] bg-[#8B5CF6]/10 text-white"
+                        : "border-white/10 text-neutral-400 hover:text-white"
+                    }`}
+                  >
+                    <Building2 className="w-4 h-4" /> Empresa
+                  </button>
+                </div>
+                {accountType === "business" && (
+                  <p className="text-xs text-neutral-500 mt-2" data-testid="account-type-business-hint">
+                    Las cuentas Empresa quedan en revisión hasta que un administrador las aprueba.
+                  </p>
+                )}
+              </div>
+            )}
 
             <AuthCredentialsFields
               mode={mode}

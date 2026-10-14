@@ -49,7 +49,11 @@ async def list_active_stores(request: Request,
     """Sucursales activas para elegir dónde recoger. Con `product_id` filtra
     por disponibilidad del producto (lista vacía = todas)."""
     await require_user(request)
-    stores = await db.stores.find({"active": True}, {"_id": 0}) \
+    stores = await db.stores.find(
+        {"active": True,
+         "$or": [{"company_id": {"$exists": False}},
+                 {"company_id": {"$in": [None, ""]}}]},
+        {"_id": 0}) \
         .sort("created_at", 1).to_list(100)
     if product_id:
         product = await db.products.find_one({"id": product_id}, {"_id": 0})
@@ -62,7 +66,12 @@ async def list_active_stores(request: Request,
 @router.get("/admin/stores")
 async def admin_list_stores(request: Request) -> Any:
     await require_permission(request, "products")
-    return await db.stores.find({}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    # Solo sucursales de Resilience (company_id vacío/ausente). Las tiendas de
+    # cuentas Empresa se gestionan desde el panel de la propia Empresa.
+    return await db.stores.find(
+        {"$or": [{"company_id": {"$exists": False}},
+                 {"company_id": {"$in": [None, ""]}}]},
+        {"_id": 0}).sort("created_at", 1).to_list(200)
 
 
 @router.get("/admin/pickups-today")

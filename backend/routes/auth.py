@@ -22,7 +22,7 @@ import os
 import uuid
 import logging
 from datetime import timedelta
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from urllib.parse import urlencode
 
 import httpx
@@ -68,6 +68,10 @@ class AuthRegisterPayload(BaseModel):
     name: str = Field(..., min_length=2, max_length=120)
     phone: str = Field(..., min_length=8, max_length=20)  # iter23 — E.164: +<countrycode><number>
     captcha_token: Optional[str] = Field(None, max_length=2048)  # iter246 — Turnstile
+    # Empresa (rol business): el cliente solo PIDE el tipo de cuenta; el rol real
+    # lo decide el servidor. "business" => rol "empresa" (queda under_review hasta
+    # que un admin la aprueba). Nunca se acepta `role` directamente del cliente.
+    account_type: Literal["personal", "business"] = "personal"
 
 
 class AuthLoginPayload(BaseModel):
@@ -398,7 +402,8 @@ async def auth_register(payload: AuthRegisterPayload, request: Request, response
                     "message": "Este número de teléfono ya está asociado a otra cuenta."},
         )
     user_id = f"user_{uuid.uuid4().hex[:12]}"
-    role = "admin" if email in ADMIN_EMAILS else "normal"
+    role = "admin" if email in ADMIN_EMAILS else (
+        "empresa" if payload.account_type == "business" else "normal")
     if await db.users.count_documents({}) == 0:
         role = "admin"
     verification_token = uuid.uuid4().hex + uuid.uuid4().hex

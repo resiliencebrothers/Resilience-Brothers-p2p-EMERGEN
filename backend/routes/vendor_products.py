@@ -125,6 +125,12 @@ async def my_products(request: Request) -> Any:
 @router.post("/vip/my-products")
 async def create_my_product(payload: VendorProductCreate, request: Request) -> Any:
     user = await require_user(request)
+    # iter-Empresa Fase 1 — la publicación de productos pasó de VIP a cuentas
+    # Empresa. Los VIP ya no pueden crear productos nuevos en el marketplace.
+    raise HTTPException(
+        status_code=403,
+        detail="La publicación de productos para clientes VIP está deshabilitada. "
+               "Ahora solo las cuentas Empresa pueden publicar en el marketplace.")
     _require_vip(user)
     count = await db.products.count_documents({"owner_id": user["user_id"]})
     if count >= MAX_PRODUCTS_PER_VENDOR:
@@ -160,6 +166,11 @@ async def create_my_product(payload: VendorProductCreate, request: Request) -> A
 @router.put("/vip/my-products/{pid}")
 async def update_my_product(pid: str, payload: VendorProductUpdate, request: Request) -> Any:
     user = await require_user(request)
+    # iter-Empresa Fase 1 — edición VIP deshabilitada junto con la publicación.
+    raise HTTPException(
+        status_code=403,
+        detail="La edición de productos para clientes VIP está deshabilitada. "
+               "Ahora solo las cuentas Empresa gestionan productos del marketplace.")
     _require_vip(user)
     doc = await _owned_product_or_404(pid, user)
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)

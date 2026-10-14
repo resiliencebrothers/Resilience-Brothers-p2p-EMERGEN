@@ -191,6 +191,23 @@ async def require_staff(request: Request) -> dict:
     return user
 
 
+async def require_company(request: Request) -> dict:
+    """Gate un endpoint a cuentas Empresa (rol business) ACTIVAS.
+
+    Las Empresas NO son staff: nunca pasan require_admin/require_staff/
+    require_permission. Deben estar aprobadas por un admin (account_status
+    == 'active') para poder operar; mientras están `under_review` reciben 403.
+    """
+    user = await require_user(request)
+    if user.get("role") != "empresa":
+        raise HTTPException(status_code=403, detail="Solo cuentas Empresa")
+    if user.get("account_status") != "active":
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta Empresa aún no ha sido aprobada por Resilience.")
+    return user
+
+
 # iter117 — Proactive 2FA-enrollment gate for staff mutations. Any admin or
 # employee performing a state-changing (POST/PUT/PATCH/DELETE) action must have
 # 2FA ENABLED, otherwise the request is blocked with 412 TOTP_SETUP_REQUIRED so

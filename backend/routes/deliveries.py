@@ -1736,15 +1736,26 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
         pass
     await log_action(db, actor, "delivery.cancel", "delivery", did,
                      summary=f"Entrega {did[:8]} cancelada")
-    if d.get("courier_id"):
+    # Avisa al mensajero del ciclo EFECTIVAMENTE cancelado: el aceptado si lo
+    # había, o el RESERVADO (`assigned_to_courier_id`) si aún no la aceptaba.
+    # Campana + push (patrón de reasignaciones). Se emite SOLO tras ganar la
+    # escritura; un reintento obsoleto responde 409 antes y no duplica avisos.
+    recipient = d.get("courier_id") or d.get("assigned_to_courier_id")
+    if recipient:
         try:
             from routes.notifications import _insert_notification
+            from push_service import (send_push_to_user,
+                                      build_generic_admin_alert_payload)
+            ctitle = "Entrega cancelada"
+            cbody = (f"La entrega de {d.get('client_name', '')} "
+                     f"({d.get('amount_label', '')}) fue cancelada por el equipo.")
             await _insert_notification(
-                recipient_user_id=d["courier_id"], type="delivery_cancelled",
-                title="Entrega cancelada",
-                message=(f"La entrega de {d.get('client_name', '')} fue cancelada "
-                         "por el equipo."),
-                data={"delivery_id": did})
+                recipient_user_id=recipient, type="delivery_cancelled",
+                title=ctitle, message=cbody, data={"delivery_id": did})
+            await send_push_to_user(
+                db, recipient, build_generic_admin_alert_payload(
+                    title=ctitle, body=cbody, url="/dashboard/deliveries",
+                    tag=f"delivery-cancelled-{did}"))
         except Exception as e:
             logger.error(f"cancel notify failed: {e}")
     return await db.deliveries.find_one({"id": did}, {"_id": 0})

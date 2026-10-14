@@ -10,12 +10,14 @@ import ResetPassword from "@/pages/ResetPassword";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import TermsOfService from "@/pages/TermsOfService";
 import Dashboard from "@/pages/Dashboard";
+import CompanyPanel from "@/pages/CompanyPanel";
 import { DefensiveBanner } from "@/components/DefensiveModePanel";
 import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
 import InstallPrompt from "@/components/InstallPrompt";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { applyTheme, getTheme } from "@/lib/theme";
+import { roleHome } from "@/lib/roleHome";
 
 // iter241 — aplica el tema guardado antes del primer render.
 applyTheme(getTheme());
@@ -61,12 +63,13 @@ function AppRouter() {
       <Route path="/auth/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/auth/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard/*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/company/*" element={<ProtectedRoute companyRoute><CompanyPanel /></ProtectedRoute>} />
       <Route path="/admin/*" element={<ProtectedRoute staffOnly><AdminPanel /></ProtectedRoute>} />
     </Routes>
   );
 }
 
-function ProtectedRoute({ children, staffOnly = false }) {
+function ProtectedRoute({ children, staffOnly = false, companyRoute = false }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
@@ -76,7 +79,11 @@ function ProtectedRoute({ children, staffOnly = false }) {
     );
   }
   if (!user) return <Navigate to="/" replace />;
-  if (staffOnly && !["admin", "employee"].includes(user.role)) return <Navigate to="/dashboard" replace />;
+  if (staffOnly && !["admin", "employee"].includes(user.role)) return <Navigate to={roleHome(user)} replace />;
+  // El panel Empresa es exclusivo del rol business; los demás van a su home.
+  if (companyRoute && user.role !== "empresa") return <Navigate to={roleHome(user)} replace />;
+  // Las cuentas Empresa no usan el dashboard de cliente: redirige a su panel.
+  if (!companyRoute && !staffOnly && user.role === "empresa") return <Navigate to="/company" replace />;
   return children;
 }
 

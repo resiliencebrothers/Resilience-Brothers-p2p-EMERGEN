@@ -2663,3 +2663,19 @@ Cada asignación lleva `assignment_uid` (estable en reintentos de la misma, nuev
 - **M01-A** `admin_assign_delivery`: CAS sobre el `assignment_uid` observado (`expected_uid`/leído) — un reintento válido conserva el uid; una orden atrasada que vio un uid viejo pierde con 409 y no revierte la identidad.
 - **M01-B** `admin_reassign_delivery`: el `assignment_uid` se conserva al aceptar (`claim` ya no lo borra) y la reasignación hace CAS sobre el ciclo observado — una reasignación atrasada no toca un ciclo aceptado posterior.
 - Frontend envía `expected_uid` (ciclo mostrado) en assign/reassign. Tests `test_men14_...` en `test-critical`. Regresión 72/72. Estado: en preview; pendiente de re-despliegue.
+
+
+## EMP-01 (fork 2026-06) — Fase 1 Empresa: rol business, tiendas (1:N) y catálogo
+Nuevo rol INDEPENDIENTE `empresa` (no VIP, no staff). Alcance confirmado por el usuario: Empresa 1:N tiendas; el inventario actual evolucionará para distribuirse desde un ALMACÉN CENTRAL hacia las tiendas (Fase 2); sub-saldo propio liquidable con Resilience (Fase 3); la Empresa NO asigna mensajeros, solo SOLICITA mensajería y Resilience asigna (Fase 4). La publicación de productos al marketplace pasa de VIP a Empresa.
+
+Implementado en Fase 1 (verificado):
+- Auth (`routes/auth.py`): `POST /api/auth/register` acepta `account_type` (personal|business). El servidor mapea business→rol `empresa` + `account_status=under_review`; el rol NUNCA se acepta del cliente. Reutiliza la aprobación admin existente (admin_users: account_status→active) — sin tocar admin.py.
+- `require_company` (`auth_utils.py`): gate de rol empresa + cuenta activa; aislado de staff (nunca pasa require_admin/staff/permission).
+- `routes/company.py` (prefijo `/company`): `/me`, CRUD de tiendas (colección `stores` con `company_id`), CRUD de catálogo (productos con `owner_id`+`company_id`, quedan `pending` + notifican admins). Validación: las sucursales elegidas en un producto deben pertenecer a la Empresa.
+- Aprobación admin reutiliza `/admin/vendor-products` (owner_id presente ⇒ entra a la cola existente).
+- `routes/stores.py`: las tiendas de Empresa (company_id presente) se EXCLUYEN del listado público `/stores` y del `/admin/stores` de Resilience.
+- VIP: `POST/PUT /vip/my-products` DESHABILITADOS (403). En el dashboard se retiró el nav "Mis Productos" VIP (datos VIP existentes intactos).
+- Frontend: selector Personal/Empresa en registro (`EmailAuthDialog`); panel `/company` (`CompanyPanel` + `CompanyStoresView` + `CompanyProductsView`) con Resumen/Tiendas/Productos y banner "en revisión" cuando under_review; redirecciones por rol (`lib/roleHome.js`, ProtectedRoute con prop `companyRoute`).
+- Pruebas: `tests/test_empresa_phase1.py` = 8/8 (registro business→empresa under_review; rol del cliente ignorado; gate /company hasta active; aislamiento de tiendas; catálogo pending en cola admin; validación de store_ids; VIP publish/edit 403). Añadido a `test-critical`. mypy 113 archivos OK. Smoke UI: panel renderiza, alta de tienda y de producto (pending) e2e OK con toast.
+- Pendiente Fases 2-4: inventario por ubicación + distribución almacén central→tiendas; sub-saldo/liquidación; solicitar mensajería.
+- Estado: en preview; pendiente de re-despliegue a producción.
