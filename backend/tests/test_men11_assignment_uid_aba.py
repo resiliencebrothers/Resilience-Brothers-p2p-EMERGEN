@@ -138,7 +138,7 @@ def test_stale_claim_does_not_accept_new_assignment_ABA():
         d = _doc(did)
         assert d["status"] == "accepted"
         assert d["courier_id"] == A_ID
-        assert d.get("assignment_uid") is None  # ciclo consumido
+        assert d.get("assignment_uid") == uid3  # el ciclo se CONSERVA al aceptar
     finally:
         _cleanup(did)
 

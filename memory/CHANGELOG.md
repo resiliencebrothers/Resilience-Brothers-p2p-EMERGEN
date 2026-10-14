@@ -2248,3 +2248,14 @@ Bug de concurrencia (alta prioridad operativa). El rechazo/aceptación casaban p
 
 - **Pruebas**: `test_men01..06 + men11` = **33/33** juntos; ruff limpio. Smokes UI 1920: asignación en vivo (tarjeta aparece sin recargar). Datos de prueba limpiados. Nota: las pruebas de navegador para aviso/historial se validan con el tool de screenshots (no hay harness Playwright en el CI de pytest).
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+## MEN-14 (fork 2026-06) — ABA en las ESCRITURAS ADMINISTRATIVAS (M01-A / M01-B): concurrencia optimista por ciclo
+Segunda capa del ABA (A08): el blindaje de MEN-11 ataba el aceptar/rechazar del MENSAJERO al ciclo, pero las ESCRITURAS DEL ADMIN no verificaban el ciclo que leyeron.
+
+**M01-A** (`admin_assign_delivery`): la función leía `assignment_uid` y, en un reintento al mismo mensajero, lo conservaba y reescribía — pero el filtro atómico no exigía que ese uid siguiera vigente. Una asignación atrasada que leyó U1 podía reescribir U1 sobre el ciclo nuevo U3, "resucitando" un rechazo viejo. **Fix**: CAS (concurrencia optimista) — la escritura se condiciona al `assignment_uid` observado (`expected_uid` del cliente, o el leído en la invocación): reintento real sobre el ciclo vigente → conserva uid (idempotente); orden atrasada que vio un uid viejo → 409 y NO retrocede la identidad.
+
+**M01-B** (`admin_reassign_delivery`): el filtro usaba solo `{id, status:accepted, courier_id}`; que la entrega volviera a estar aceptada por A no probaba que fuera el mismo ciclo. **Fix**: el `assignment_uid` ahora SE CONSERVA al aceptar (`claim_delivery` ya no lo borra), y la reasignación hace CAS sobre el ciclo observado. Una reasignación atrasada que vio C1 → 409; el ciclo aceptado posterior C3 de A queda intacto.
+
+- Frontend: `AdminDeliveries` envía `expected_uid` (el ciclo que muestra la fila) al asignar y al reasignar, atando la escritura a lo que el admin vio.
+- **Pruebas** (nuevo `tests/test_men14_admin_write_cycle_cas.py`, en `test-critical`): M01-A escritura atrasada no restaura el ciclo viejo (+ control positivo del reintento válido); M01-B reasignación atrasada no toca el ciclo aceptado nuevo (+ control positivo). Barrera lectura/escritura reproducida de forma determinista vía `expected_uid`. Actualizado `test_men11` (aceptar conserva el uid). Regresión mensajería **72/72** (men01-06,11,14 + iter199/208/288). ruff + mypy limpios. Smoke: contrato frontend `expected_uid:null` en assign libre → 200.
+- Estado: en preview; pendiente de re-despliegue a producción.

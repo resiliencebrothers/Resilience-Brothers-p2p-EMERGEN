@@ -417,7 +417,10 @@ async def claim_delivery(did: str, request: Request,
                   "assigned_to_courier_id": None,
                   "assigned_to_courier_name": None,
                   "updated_at": now},
-         "$unset": {"assignment_uid": ""},
+         # M01-B — el ciclo (`assignment_uid`) SE CONSERVA al aceptar: una
+         # entrega aceptada mantiene su identidad de ciclo para que una
+         # reasignación administrativa atrasada no pueda actuar sobre un ciclo
+         # aceptado posterior creyendo que es el que examinó.
          "$push": {"timeline": {"status": "accepted", "at": now,
                                 "by": me["user_id"]}}},
         projection={"_id": 0},
@@ -1324,26 +1327,36 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
                     "antes de poder asignarla a otro mensajero."))
     now = iso(now_utc())
     courier_display = courier.get("name") or courier.get("email")
-    # ABA (A08) — identidad de ESTE ciclo de asignación. Estable en reintentos
-    # al MISMO mensajero (no invalida su vista); NUEVA en cada ciclo distinto,
-    # para que un aceptar/rechazar atrasado de un ciclo anterior no case con una
-    # reserva posterior (caso A -> B -> A que volvía a casar por propietario).
-    assignment_uid = d.get("assignment_uid")
-    if current_reserved != courier_id or not assignment_uid:
+    # ABA (A08 / M01-A) — CONCURRENCIA OPTIMISTA sobre el ciclo de asignación.
+    # La escritura se condiciona (CAS) al `assignment_uid` que ESTA invocación
+    # leyó (o al `expected_uid` que el admin declaró ver). Así:
+    #   - un reintento REAL al mismo mensajero sobre el ciclo vigente conserva
+    #     el uid (idempotente) y no invalida la vista del mensajero;
+    #   - una orden ATRASADA que leyó un uid viejo (U1) pierde con 409 y NO
+    #     reescribe U1 sobre el ciclo nuevo (U3): la identidad no retrocede, y
+    #     el rechazo viejo con U1 sigue siendo inválido.
+    expected_uid = payload.get("expected_uid")
+    observed_uid = expected_uid if expected_uid is not None \
+        else d.get("assignment_uid")
+    cas: Dict[str, Any] = {}
+    if current_reserved == courier_id and observed_uid:
+        assignment_uid = observed_uid
+        cas = {"assigned_to_courier_id": courier_id,
+               "assignment_uid": observed_uid}
+    else:
         assignment_uid = uuid.uuid4().hex
-    # ME02 — reasignación condicionada al estado leído: no puede revivir
-    # entregas canceladas/confirmadas que cambiaron entre lectura y escritura.
-    # Mejora mensajería #2 — el filtro ATÓMICO exige que la reserva siga libre
-    # o sea la del mismo mensajero: cierra la ventana de dos admins reservando
-    # a mensajeros distintos a la vez.
-    # MSG08 — la ubicación GPS del mensajero anterior se INVALIDA al
-    # reasignar: el nuevo mensajero no hereda coordenadas ajenas.
+        if expected_uid is not None:
+            cas = {"assignment_uid": expected_uid}
+        else:
+            cas = {"$or": [{"assigned_to_courier_id": {"$in": [None, ""]}},
+                           {"assigned_to_courier_id": {"$exists": False}},
+                           {"assigned_to_courier_id": courier_id,
+                            "assignment_uid": {"$exists": False}}]}
+    # MSG08 — la ubicación GPS del mensajero anterior se INVALIDA al reasignar.
     res = await db.deliveries.update_one(
         {"id": did, "status": "available",
          # MV02 — no reservar repartos pendientes de validar.
-         "needs_origin_check": {"$ne": True},
-         "$or": [{"assigned_to_courier_id": {"$in": [None, "", courier_id]}},
-                 {"assigned_to_courier_id": {"$exists": False}}]}, {
+         "needs_origin_check": {"$ne": True}, **cas}, {
             "$set": {"status": "available",
                      "assigned_to_courier_id": courier_id,
                      "assigned_to_courier_name": courier_display,
@@ -1362,8 +1375,8 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     if res.matched_count == 0:
         raise HTTPException(
             status_code=409,
-            detail=("La entrega cambió de estado o fue reservada para otro "
-                    "mensajero; recarga."))
+            detail=("La asignación cambió mientras se procesaba (otro ciclo, "
+                    "otro mensajero o cambió de estado); recarga."))
     # MSG10 — el mensajero nuevo (y el anterior, si existía) ven el cambio
     # en vivo sin recargar el panel.
     try:
@@ -1434,6 +1447,14 @@ async def admin_reassign_delivery(did: str, payload: dict,
                     "entregada, usa cancelar."))
     prev_courier_id = d.get("courier_id")
     prev_courier_name = d.get("courier_name") or "el mensajero anterior"
+    # M01-B — CAS sobre el CICLO que ESTA invocación examinó: una reasignación
+    # atrasada que vio el ciclo viejo (C1) NO debe actuar sobre un ciclo
+    # aceptado POSTERIOR (C3) solo porque la entrega vuelva a estar aceptada por
+    # el mismo mensajero. El `assignment_uid` persiste al aceptar (ver
+    # claim_delivery), así distinguimos ciclos aceptados.
+    expected_uid = payload.get("expected_uid")
+    observed_uid = expected_uid if expected_uid is not None \
+        else d.get("assignment_uid")
     new_display = None
     if new_courier_id:
         if new_courier_id == prev_courier_id:
@@ -1489,18 +1510,23 @@ async def admin_reassign_delivery(did: str, payload: dict,
                           "assigned_at": ""})
         note = (f"Liberada (estaba aceptada por {prev_courier_name}) a "
                 f"DISPONIBLE por el equipo.{reason_suffix}")
-    # Guardado ATÓMICO condicionado al estado y mensajero leídos: una petición
-    # atrasada (el mensajero avanzó a on_the_way, o ya se canceló) pierde 409.
+    # Guardado ATÓMICO condicionado al estado, mensajero y CICLO leídos: una
+    # petición atrasada (el mensajero avanzó a on_the_way, se canceló, o es un
+    # ciclo aceptado posterior) pierde con 409.
+    cas_filter: Dict[str, Any] = {"id": did, "status": "accepted",
+                                  "courier_id": prev_courier_id}
+    cas_filter["assignment_uid"] = (observed_uid if observed_uid is not None
+                                    else {"$exists": False})
     res = await db.deliveries.update_one(
-        {"id": did, "status": "accepted", "courier_id": prev_courier_id},
+        cas_filter,
         {"$set": set_doc, "$unset": unset_doc,
          "$push": {"timeline": {"status": "available", "at": now,
                                 "by": actor["user_id"], "note": note}}})
     if res.matched_count == 0:
         raise HTTPException(
             status_code=409,
-            detail=("La entrega cambió de estado o de mensajero mientras "
-                    "reasignabas — recarga tu panel."))
+            detail=("La entrega cambió de estado, de mensajero o de ciclo "
+                    "mientras reasignabas — recarga tu panel."))
     try:
         from services.deliveries import publish_delivery_event
         await publish_delivery_event(

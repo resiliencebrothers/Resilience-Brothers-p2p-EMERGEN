@@ -2658,3 +2658,8 @@ Cada asignación lleva `assignment_uid` (estable en reintentos de la misma, nuev
 - **B**: `loadHistory` endurecido — guard de secuencia (descarta respuestas atrasadas) + dedup por id al combinar refresco/«Cargar más»; recarga al entrar y en vivo ya estaban.
 - **C**: `test_men01..06` + `test_men11` añadidos a `test-critical` (CI push/PR obligatorio); nueva regresión M01 (origin_cancel_intent bloquea aceptar) en `test_men11`. 33/33.
 - Estado: en preview; pendiente de re-despliegue.
+
+## MEN-14 (fork 2026-06) — ABA en escrituras administrativas (M01-A/M01-B)
+- **M01-A** `admin_assign_delivery`: CAS sobre el `assignment_uid` observado (`expected_uid`/leído) — un reintento válido conserva el uid; una orden atrasada que vio un uid viejo pierde con 409 y no revierte la identidad.
+- **M01-B** `admin_reassign_delivery`: el `assignment_uid` se conserva al aceptar (`claim` ya no lo borra) y la reasignación hace CAS sobre el ciclo observado — una reasignación atrasada no toca un ciclo aceptado posterior.
+- Frontend envía `expected_uid` (ciclo mostrado) en assign/reassign. Tests `test_men14_...` en `test-critical`. Regresión 72/72. Estado: en preview; pendiente de re-despliegue.

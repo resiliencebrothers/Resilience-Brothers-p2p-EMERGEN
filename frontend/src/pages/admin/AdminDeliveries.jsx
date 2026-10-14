@@ -81,6 +81,8 @@ function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
     try {
       const body = { reason: reason.trim() };
       if (target !== "__free__") body.courier_id = target;
+      // M01-B — vincula la reasignación al CICLO aceptado que el admin ve.
+      if (delivery.assignment_uid) body.expected_uid = delivery.assignment_uid;
       await axios.post(`${API}/admin/deliveries/${delivery.id}/reassign`,
         body, { withCredentials: true });
       toast.success(target === "__free__"
@@ -249,8 +251,11 @@ function DeliveriesTab({ navigate, mode = "active" }) {
 
   const assign = async (d, courierId) => {
     try {
+      // M01-A — vinculamos la escritura al CICLO que el admin está viendo
+      // (`expected_uid`): una orden sobre una vista obsoleta pierde con 409.
       await axios.post(`${API}/admin/deliveries/${d.id}/assign`,
-        { courier_id: courierId }, { withCredentials: true });
+        { courier_id: courierId, expected_uid: d.assignment_uid || null },
+        { withCredentials: true });
       toast.success(t("admin.deliveries.assigned"));
       load();
     } catch (e) {
