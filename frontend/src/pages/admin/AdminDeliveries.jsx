@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Truck, Search, X } from "lucide-react";
 import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog";
 import { etaFromDelivery } from "@/services/deliveryEta";
+import { createLatestGuard } from "@/lib/latestResponseGuard";
 import DeliveryDetailsDialog from "./deliveries/DeliveryDetailsDialog";
 import MunicipalityRatesTab from "./deliveries/MunicipalityRatesTab";
 import CourierCashTab from "./deliveries/CourierCashTab";
@@ -385,6 +386,10 @@ function DeliveriesTab({ navigate, mode = "active" }) {
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
+  // OP02 — guards de vigencia: una respuesta/error ATRASADO de la lista o de
+  // atención no debe pisar el resultado de una consulta posterior.
+  const listGuardRef = useRef(createLatestGuard());
+  const attnGuardRef = useRef(createLatestGuard());
   const paginated = isHistory || isPending;
   // Buscador — por cliente, mensajero, referencia o fecha. Se aplica a las
   // tres vistas (Entregas, Por confirmar e Historial) como consulta de
@@ -409,16 +414,28 @@ function DeliveriesTab({ navigate, mode = "active" }) {
     const params = (isHistory || isPending)
       ? { ...base, limit: PAGE_SIZE, skip: page * PAGE_SIZE }
       : base;
+    // OP02 — control de VIGENCIA: filtro, paginación y búsqueda disparan cargas
+    // que pueden solaparse. Solo la ÚLTIMA iniciada aplica filas/total/error;
+    // una respuesta (o error) ATRASADA no debe pisar el resultado vigente (p.
+    // ej. mostrar una entrega sin reasignar con "Solo reasignadas" activo).
+    const listSeq = listGuardRef.current.begin();
     axios.get(`${API}/admin/deliveries`, { params, withCredentials: true })
       .then((r) => {
+        if (!listGuardRef.current.isLatest(listSeq)) return;
         setRows(r.data);
         setTotal(parseInt(r.headers["x-total-count"] || r.data.length, 10));
-      }).catch(() => { setRows([]); setTotal(0); });
+      }).catch(() => {
+        if (!listGuardRef.current.isLatest(listSeq)) return;
+        setRows([]); setTotal(0);
+      });
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data)).catch(() => setCouriers([]));
     if (mode === "active") {
+      const attnSeq = attnGuardRef.current.begin();
       axios.get(`${API}/admin/deliveries/attention`, { withCredentials: true })
-        .then((r) => setAttention(r.data)).catch(() => {});
+        .then((r) => {
+          if (attnGuardRef.current.isLatest(attnSeq)) setAttention(r.data);
+        }).catch(() => {});
     }
   }, [statusFilter, mode, isHistory, isPending, page, search, reassignedOnly]);
 

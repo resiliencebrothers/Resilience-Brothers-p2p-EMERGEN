@@ -1,5 +1,11 @@
 ## Changelog — 12 Feb 2026
 
+### OP02 — «Solo reasignadas» (y la lista admin) podía mostrar resultados de otra consulta
+Reporte del operador: los callbacks de `load` aplicaban `setRows`/`setTotal`/`setAttention` sin comprobar vigencia, así que una respuesta (o error) ATRASADA pisaba el resultado vigente: el filtro "Solo reasignadas" podía mostrar una entrega normal; activar el filtro desde una página posterior podía dejar la primera vacía; un error antiguo borraba una respuesta filtrada correcta; y una atención antigua restauraba la tarjeta U1 tras mostrarse U2.
+
+- **Frontend (`AdminDeliveries.jsx::load`)**: control de vigencia con `createLatestGuard` (reutilizado del panel del mensajero), un guard para la LISTA (`listGuardRef`) y otro para ATENCIÓN (`attnGuardRef`). `setRows`/`setTotal` (éxito y error) y `setAttention` solo se aplican si su `seq` sigue siendo el último iniciado. El reset de página al cambiar de filtro se coordina con las deps de `load`, así que el guard descarta la carga de la página antigua.
+- Tests: `src/lib/__tests__/adminDeliveriesLoad.test.js` (5/5) ejecuta los callbacks reales en orden INVERSO para filtro, paginación, error-pisa-fresco y atención, más control positivo. Suite lib del área: **19/19**; `yarn lint` 0 errores. Verificado en vivo: Historial con filtro activo muestra solo reasignadas (coherencia filtro↔filas), sin errores de consola.
+
 ### OP01 — ALTA: cancelar desde una tarjeta antigua podía anular otro ciclo
 Reporte del operador: `admin_cancel_delivery` condicionaba la escritura al estado leído por el servidor y `payout_credited`, pero NO al ciclo/estado que vio el operador. Como una reasignación de reserva conserva `status=available` cambiando `assignment_uid`, una cancelación desde la tarjeta antigua (A/U1) anulaba la reserva nueva (B/U2); y una cancelación originada en una tarjeta de reserva cancelaba un trabajo ya aceptado. Devolvía ÉXITO, así que `handleStaleConflict` (que solo actúa en 409) no avisaba.
 
