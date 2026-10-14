@@ -1,6 +1,15 @@
 ## Changelog — 12 Feb 2026
 
+### MEN-16 — M01-B (las tomas LIBRES quedaban sin ciclo → ABA de reasignación)
+Reporte del operador: una entrega tomada desde «Disponibles» (claim sin uid) quedaba `accepted` **sin** `assignment_uid`. Como liberar también lo elimina, dos aceptaciones libres sucesivas eran indistinguibles (`assignment_uid $exists:false` compartido), y una reasignación administrativa atrasada podía retirar la entrega del nuevo ciclo de A sin conflicto.
+
+- **Backend (`routes/deliveries.py::claim_delivery`)**: toda ACEPTACIÓN sella ahora una identidad de ciclo distinguible. `cycle_uid = uid or uuid.uuid4().hex` — si se acepta una reserva vigente se conserva SU uid; si es un trabajo libre (o reserva heredada sin uid) se genera uno NUEVO. El `$set` incluye siempre `assignment_uid`. Es el único punto que transiciona a `accepted`, así que cubre todas las rutas.
+- **Backend (`services/db_migrations.py` + `server.py`)**: nueva migración de startup `migrate_assignment_uid_for_accepted_deliveries` que sella con uid los registros YA `accepted` heredados sin uid (idempotente). Así la protección de reasignación (CAS por `assignment_uid`) también cubre los datos previos.
+- **Efecto**: la reasignación administrativa atrasada que observó el ciclo inicial pierde con 409 al reanudarse (keyed en `expected_uid`/uid observado) y la nueva aceptación de A queda intacta. No se reutiliza la ausencia de uid como identidad compartida.
+- **Tests (`tests/test_men16_free_accept_cycle_aba.py`, 5/5)**: sellado al aceptar libre, dos tomas libres sucesivas con uid distinto, el recorrido ABA completo libre→A→libera→B→libera→A con la primera reasignación observando el ciclo inicial (409 + ciclo nuevo intacto), control positivo de reasignación vigente, y sellado de legacy-accepted por la migración. Añadido a `make test-critical`. Suite MEN completa: **42/42**; mypy **ok** (112 archivos); ruff **ok**.
+
 ### MEN-15 — M02 (respuesta atrasada oculta la entrega del último aviso) + CI02 (diálogo sin scroll)
+
 Reportes del operador: una respuesta ATRASADA de la carga del panel del mensajero podía sobrescribir una más reciente y hacer «desaparecer» la entrega del aviso seleccionado; y el nuevo `ReassignDialog` fallaba el job `Frontend · ESLint` por la regla `rb-local/no-dialog-without-scroll`.
 
 - **M02 (frontend, `CourierPanel.jsx`)**: la carga compartida `/courier/deliveries` (deep-link + refresco periódico + eventos en vivo) ahora aplica un control de VIGENCIA antes de `setData`/`setLoadError`. Nuevo módulo puro `src/lib/latestResponseGuard.js` (`createLatestGuard`): cada llamada reserva un `seq` con `begin()` y solo aplica su payload si `isLatest(seq)` (ninguna petición posterior la reemplazó). Una respuesta iniciada ANTES ya no puede pisar el resultado de una iniciada DESPUÉS. El deep-link sigue resolviendo contra su propio `fresh`, así que el resaltado del aviso y la lista quedan coherentes.

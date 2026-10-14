@@ -219,6 +219,16 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"assignment_uid migration failed: {e}")
 
+    # M01-B — sella assignment_uid en entregas YA aceptadas sin uid (tomas
+    # libres previas al sellado al aceptar) para que la reasignación atrasada no
+    # pueda confundir dos ciclos aceptados heredados indistinguibles.
+    try:
+        from services.db_migrations import (
+            migrate_assignment_uid_for_accepted_deliveries)
+        await migrate_assignment_uid_for_accepted_deliveries(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"accepted assignment_uid migration failed: {e}")
+
     # iter48 — security_events collection indexes (idempotent).
     try:
         await security_events_indexes()

@@ -155,3 +155,27 @@ async def migrate_assignment_uid_for_existing_reservations(db: Any) -> int:
     if n:
         logger.info(f"Sealed assignment_uid on {n} legacy reservations (A08)")
     return n
+
+
+async def migrate_assignment_uid_for_accepted_deliveries(db: Any) -> int:
+    """M01-B — sella con `assignment_uid` las entregas YA `accepted` existentes
+    que no tengan uid (aceptaciones de trabajos libres anteriores al cambio que
+    sella el ciclo al aceptar). Sin esto, dos ciclos aceptados heredados sin uid
+    serían indistinguibles y una reasignación administrativa atrasada podría
+    actuar sobre un ciclo aceptado posterior (ABA). Idempotente: cada entrega
+    recibe un uid único y una segunda ejecución no vuelve a tocarla."""
+    import uuid as _uuid
+
+    n = 0
+    rows = await db.deliveries.find(
+        {"status": "accepted", "assignment_uid": {"$exists": False}},
+        {"_id": 0, "id": 1}).to_list(5000)
+    for d in rows:
+        res = await db.deliveries.update_one(
+            {"id": d["id"], "status": "accepted",
+             "assignment_uid": {"$exists": False}},
+            {"$set": {"assignment_uid": _uuid.uuid4().hex}})
+        n += res.modified_count
+    if n:
+        logger.info(f"Sealed assignment_uid on {n} legacy accepted deliveries (M01-B)")
+    return n

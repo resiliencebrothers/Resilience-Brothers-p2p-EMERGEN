@@ -151,6 +151,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_men06_dispatch_alerts_and_history_search.py \
 		tests/test_men11_assignment_uid_aba.py \
 		tests/test_men14_admin_write_cycle_cas.py \
+		tests/test_men16_free_accept_cycle_aba.py \
 		-q --tb=line
 
 test-all: ## Run the full pytest suite (~8-9 min, 935+ tests)

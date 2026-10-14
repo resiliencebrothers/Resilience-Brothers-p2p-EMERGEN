@@ -400,6 +400,13 @@ async def claim_delivery(did: str, request: Request,
         accept_or = [{"assigned_to_courier_id": {"$in": [None, ""]}},
                      {"assigned_to_courier_id": me["user_id"],
                       "assignment_uid": {"$exists": False}}]
+    # M01-B — toda ACEPTACIÓN recibe una identidad de ciclo DISTINGUIBLE.
+    # Si se acepta una reserva vigente (llega `uid`) conservamos SU uid; si es
+    # un trabajo realmente libre —o una reserva heredada SIN uid— generamos uno
+    # NUEVO aquí. Así dos aceptaciones sucesivas jamás comparten la "ausencia de
+    # uid" como identidad: una reasignación administrativa atrasada que examinó
+    # un ciclo anterior no puede confundirlo con un ciclo aceptado posterior.
+    cycle_uid = uid or uuid.uuid4().hex
     updated = await db.deliveries.find_one_and_update(
         {"id": did, "status": "available",
          # MV02 — un reparto pendiente de validar contra su origen NO es
@@ -416,11 +423,13 @@ async def claim_delivery(did: str, request: Request,
                   "courier_name": me.get("name") or me.get("email"),
                   "assigned_to_courier_id": None,
                   "assigned_to_courier_name": None,
+                  # M01-B — sella SIEMPRE el ciclo aceptado (ver arriba): una
+                  # entrega aceptada mantiene una identidad de ciclo única para
+                  # que una reasignación administrativa atrasada no pueda actuar
+                  # sobre un ciclo aceptado posterior creyendo que es el que
+                  # examinó. Incluye trabajos libres y reservas heredadas.
+                  "assignment_uid": cycle_uid,
                   "updated_at": now},
-         # M01-B — el ciclo (`assignment_uid`) SE CONSERVA al aceptar: una
-         # entrega aceptada mantiene su identidad de ciclo para que una
-         # reasignación administrativa atrasada no pueda actuar sobre un ciclo
-         # aceptado posterior creyendo que es el que examinó.
          "$push": {"timeline": {"status": "accepted", "at": now,
                                 "by": me["user_id"]}}},
         projection={"_id": 0},
