@@ -197,7 +197,7 @@ async def find_attention_items() -> dict:
     fields = {"_id": 0, "id": 1, "kind": 1, "client_name": 1,
               "amount_label": 1, "status": 1, "assigned_to_courier_id": 1,
               "courier_name": 1, "courier_id": 1, "updated_at": 1,
-              "created_at": 1}
+              "created_at": 1, "assignment_uid": 1}
     unanswered = await db.deliveries.find(
         {"status": "available",
          "assigned_to_courier_id": {"$nin": [None, ""]},

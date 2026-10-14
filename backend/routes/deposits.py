@@ -876,7 +876,12 @@ async def _do_confirm_deposit(doc: dict, staff: dict,
         # (aunque todavía no haya reescrito el sello `evidence_claim_movement`),
         # ESTA confirmación antigua pierde el filtro y recibe 409 — el depósito
         # confirmado y su reserva activa terminan SIEMPRE en el mismo movimiento.
-        confirm_filter["evidence_claim_seq_next"] = my_seq
+        # INVARIANTE (no es un bug): `my_seq` se asigna en la línea 846 bajo
+        # `if crypto_evidence:` y aquí se usa bajo `if crypto_evidence:` con el
+        # MISMO flag, calculado una sola vez (835) y nunca reasignado. Por tanto
+        # siempre está definido en este punto. Se silencia el análisis
+        # conservador de mypy sin tocar el flujo de concurrencia DR02.
+        confirm_filter["evidence_claim_seq_next"] = my_seq  # type: ignore[possibly-undefined]
     res = await db.deposits.update_one(
         confirm_filter,
         {"$set": confirm_sets},

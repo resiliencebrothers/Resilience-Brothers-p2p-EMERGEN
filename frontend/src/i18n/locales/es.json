@@ -829,6 +829,17 @@
       "incidentResolved": "Incidencia resuelta",
       "attnReservations": "{{n}} reserva(s) sin respuesta hace más de {{min}} min:",
       "attnStalled": "{{n}} entrega(s) detenidas hace más de {{min}} min:",
+      "staleCycleReload": "Recarga: la asignación cambió mientras operabas",
+      "dispatch": {
+        "title": "Centro de Despacho",
+        "reservationsGroup": "Reservas sin aceptar (> {{min}} min)",
+        "stalledGroup": "Entregas detenidas (> {{min}} min)",
+        "minAgo": "hace {{n}} min",
+        "reassign": "Reasignar",
+        "cancel": "Cancelar",
+        "reserved": "Reservada a {{name}}",
+        "courier": "Mensajero: {{name}}"
+      },
       "colActiveLoad": "Carga activa",
       "colGps": "GPS",
       "gpsAgo": "hace {{min}} min",

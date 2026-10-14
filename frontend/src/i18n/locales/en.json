@@ -829,6 +829,17 @@
       "incidentResolved": "Incident resolved",
       "attnReservations": "{{n}} reservation(s) unanswered for over {{min}} min:",
       "attnStalled": "{{n}} deliveries stalled for over {{min}} min:",
+      "staleCycleReload": "Reload: the assignment changed while you were working",
+      "dispatch": {
+        "title": "Dispatch Center",
+        "reservationsGroup": "Unaccepted reservations (> {{min}} min)",
+        "stalledGroup": "Stalled deliveries (> {{min}} min)",
+        "minAgo": "{{n}} min ago",
+        "reassign": "Reassign",
+        "cancel": "Cancel",
+        "reserved": "Reserved for {{name}}",
+        "courier": "Courier: {{name}}"
+      },
       "colActiveLoad": "Active load",
       "colGps": "GPS",
       "gpsAgo": "{{min}} min ago",

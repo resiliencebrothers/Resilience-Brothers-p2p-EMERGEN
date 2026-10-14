@@ -1,5 +1,12 @@
 ## Changelog — 12 Feb 2026
 
+### CR-gate + Despacho + Ciclo Obsoleto (3 tareas del backlog)
+- **CI-gate `possibly-undefined` (Tarea 1)**: `mypy.ini` ahora activa `enable_error_code = possibly-undefined` en el CI para blindar el patrón de variables asignadas solo en algunas ramas. El único caso conocido (`routes/deposits.py:879` `my_seq`) es un INVARIANTE documentado (misma guarda `crypto_evidence` en asignación y uso) y se silencia puntualmente con `# type: ignore[possibly-undefined]`, sin tocar el flujo de concurrencia DR02. `mypy` verde (112 archivos).
+- **Centro de Despacho (Tarea 2)**: el banner compacto de atención se reemplazó por un panel accionable único `DispatchCenter` (solo en vista "Activas"): colapsable, con contador total y dos grupos — "Reservas sin aceptar (> N min)" y "Entregas detenidas (> N min)" — listando cada ítem (cliente, importe, mensajero, "hace N min") con acciones directas: **Reasignar** (solo `accepted`, abre el diálogo con el ciclo) y **Cancelar**. Backend: `find_attention_items` ahora proyecta también `assignment_uid` para que la reasignación desde el panel vincule el ciclo. testids: `dispatch-center`, `dispatch-center-toggle/-count/-body`, `dispatch-item-{id}`, `dispatch-reassign-{id}`, `dispatch-cancel-{id}`.
+- **Vista de Ciclo Obsoleto (Tarea 3)**: `assign`, `cancel` y la reasignación ahora detectan 409 (CAS por `assignment_uid` o estado/mensajero cambiado) vía `handleStaleConflict`: muestran un aviso de ADVERTENCIA "Recarga: la asignación cambió mientras operabas" (con el detalle del servidor) y REFRESCAN la lista, en vez de un error genérico. Verificado en vivo: asignar una reserva ajena → 409 → toast de recarga + lista refrescada.
+- i18n: nuevas claves `admin.deliveries.staleCycleReload` y `admin.deliveries.dispatch.*` (es/en).
+- Verificación: `mypy` 112 ok, `ruff` ok, `yarn lint` 0 errores, JSON válido; smoke 1920px del panel + diálogo + flujo 409 sin errores de consola; `test_men06` 3/3.
+
 ### CR-triage — revisión de calidad de código Python (sin cambios de código)
 Se verificó cada hallazgo del informe contra el código real; ninguno resultó un arreglo seguro y en alcance:
 - **Imports circulares**: ya resueltos con imports perezosos/intencionales (`credit_markers.py` se extrajo para romper el ciclo; `inventory`→`inventory_incidents` es import tardío). Los 4 módulos importan limpio; backend corriendo.

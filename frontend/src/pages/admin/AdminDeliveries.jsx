@@ -90,7 +90,9 @@ function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
         : t("admin.deliveries.reassignOk"));
       onDone();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
+      if (!handleStaleConflict(e, t, onDone)) {
+        toast.error(e.response?.data?.detail || "Error");
+      }
     } finally { setBusy(false); }
   };
   return (
@@ -156,6 +158,145 @@ function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
     </Dialog>
   );
 }
+
+// Vista de Ciclo Obsoleta — una acción admin que pierde la concurrencia
+// optimista (CAS por `assignment_uid`) o encuentra el estado/mensajero/ciclo
+// cambiado devuelve 409: la vista del admin quedó OBSOLETA. En vez de un error
+// genérico, avisamos "recarga" y refrescamos para mostrar el ciclo real.
+// Devuelve true si gestionó el 409 (para no mostrar también el toast de error).
+function handleStaleConflict(e, t, reload) {
+  if (e.response?.status !== 409) return false;
+  const detail = e.response?.data?.detail;
+  toast.warning(t("admin.deliveries.staleCycleReload"), {
+    description: typeof detail === "string" ? detail : undefined,
+  });
+  if (reload) reload();
+  return true;
+}
+
+// Centro de Despacho — agrupa en un único panel accionable las reservas sin
+// aceptar (lentas) y las entregas detenidas que detecta el backend
+// (`find_attention_items`), con acciones directas (reasignar/cancelar) sin tener
+// que buscarlas en la tabla. Colapsable; se muestra solo en la vista "Activas".
+function DispatchCenter({ attention, t, canAssign, onReassign, onCancel }) {
+  const [open, setOpen] = useState(true);
+  const resv = attention.unanswered_reservations || [];
+  const stalled = attention.stalled || [];
+  const total = resv.length + stalled.length;
+  const resMin = attention.thresholds?.reservation_min ?? 30;
+  const actMin = attention.thresholds?.active_min ?? 90;
+  const minsAgo = (iso) =>
+    Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  const itemRow = (d, extra) => (
+    <li
+      key={d.id}
+      data-testid={`dispatch-item-${d.id}`}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs bg-black/20 px-2.5 py-2"
+    >
+      <span className="font-medium text-white">{d.client_name || "—"}</span>
+      {d.amount_label && <span className="text-neutral-400">{d.amount_label}</span>}
+      {extra}
+      <span className="text-neutral-500 font-mono">
+        {t("admin.deliveries.dispatch.minAgo", { n: minsAgo(d.updated_at) })}
+      </span>
+    </li>
+  );
+  return (
+    <div className="border border-amber-400/40 bg-amber-400/5" data-testid="dispatch-center">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        data-testid="dispatch-center-toggle"
+        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left"
+      >
+        <span className="flex items-center gap-2">
+          <span className="text-amber-300 text-sm font-semibold uppercase tracking-wider">
+            {t("admin.deliveries.dispatch.title")}
+          </span>
+          <span
+            data-testid="dispatch-center-count"
+            className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 text-[0.65rem] font-mono bg-amber-400/20 text-amber-200 rounded-full"
+          >
+            {total}
+          </span>
+        </span>
+        <span className="text-amber-300/70 text-xs">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div
+          className="px-3 pb-3 space-y-3 border-t border-amber-400/20 pt-2.5"
+          data-testid="dispatch-center-body"
+        >
+          {resv.length > 0 && (
+            <div data-testid="attention-reservations">
+              <div className="text-[0.7rem] text-amber-300 uppercase tracking-wider mb-1.5">
+                ⏰ {t("admin.deliveries.dispatch.reservationsGroup", { min: resMin })}
+              </div>
+              <ul className="space-y-1.5">
+                {resv.map((d) => itemRow(d, (
+                  <>
+                    <span className="text-amber-200/80">
+                      {t("admin.deliveries.dispatch.reserved", { name: d.courier_name || "—" })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onCancel(d)}
+                      data-testid={`dispatch-cancel-${d.id}`}
+                      className="ml-auto text-[#EF4444] hover:underline"
+                    >
+                      {t("admin.deliveries.dispatch.cancel")}
+                    </button>
+                  </>
+                )))}
+              </ul>
+            </div>
+          )}
+          {stalled.length > 0 && (
+            <div data-testid="attention-stalled">
+              <div className="text-[0.7rem] text-[#EF4444] uppercase tracking-wider mb-1.5">
+                🛑 {t("admin.deliveries.dispatch.stalledGroup", { min: actMin })}
+              </div>
+              <ul className="space-y-1.5">
+                {stalled.map((d) => itemRow(d, (
+                  <>
+                    <span className="uppercase tracking-wider text-neutral-500">
+                      {t(`courierPanel.status.${d.status}`)}
+                    </span>
+                    <span className="text-neutral-300">
+                      {t("admin.deliveries.dispatch.courier", { name: d.courier_name || "—" })}
+                    </span>
+                    <div className="ml-auto flex items-center gap-3">
+                      {canAssign && d.status === "accepted" && (
+                        <button
+                          type="button"
+                          onClick={() => onReassign(d)}
+                          data-testid={`dispatch-reassign-${d.id}`}
+                          className="text-[#8B5CF6] hover:underline"
+                        >
+                          {t("admin.deliveries.dispatch.reassign")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onCancel(d)}
+                        data-testid={`dispatch-cancel-${d.id}`}
+                        className="text-[#EF4444] hover:underline"
+                      >
+                        {t("admin.deliveries.dispatch.cancel")}
+                      </button>
+                    </div>
+                  </>
+                )))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function DeliveriesTab({ navigate, mode = "active" }) {
   const { t } = useTranslation();
@@ -259,7 +400,9 @@ function DeliveriesTab({ navigate, mode = "active" }) {
       toast.success(t("admin.deliveries.assigned"));
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
+      if (!handleStaleConflict(e, t, load)) {
+        toast.error(e.response?.data?.detail || "Error");
+      }
     }
   };
 
@@ -283,40 +426,25 @@ function DeliveriesTab({ navigate, mode = "active" }) {
       toast.success(t("admin.deliveries.cancelled"));
       load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error");
+      if (!handleStaleConflict(e, t, load)) {
+        toast.error(e.response?.data?.detail || "Error");
+      }
     }
   };
 
   return (
     <div className="space-y-4">
-      {/* Mejora #4 — banner de atención del despacho */}
-      {attention && (attention.unanswered_reservations?.length > 0 || attention.stalled?.length > 0) && (
-        <div className="border border-amber-400/40 bg-amber-400/5 p-3 space-y-1.5" data-testid="deliveries-attention-banner">
-          {attention.unanswered_reservations?.length > 0 && (
-            <div className="text-xs text-amber-300 flex flex-wrap items-baseline gap-1.5" data-testid="attention-reservations">
-              ⏰ {t("admin.deliveries.attnReservations", {
-                n: attention.unanswered_reservations.length,
-                min: attention.thresholds?.reservation_min ?? 30,
-              })}
-              <span className="text-neutral-400">
-                {attention.unanswered_reservations.slice(0, 3).map((d) => d.client_name).join(", ")}
-                {attention.unanswered_reservations.length > 3 ? "…" : ""}
-              </span>
-            </div>
-          )}
-          {attention.stalled?.length > 0 && (
-            <div className="text-xs text-[#EF4444] flex flex-wrap items-baseline gap-1.5" data-testid="attention-stalled">
-              🛑 {t("admin.deliveries.attnStalled", {
-                n: attention.stalled.length,
-                min: attention.thresholds?.active_min ?? 90,
-              })}
-              <span className="text-neutral-400">
-                {attention.stalled.slice(0, 3).map((d) => `${d.client_name} (${d.courier_name || "—"})`).join(", ")}
-                {attention.stalled.length > 3 ? "…" : ""}
-              </span>
-            </div>
-          )}
-        </div>
+      {/* Mejora #4 / Centro de Despacho — panel accionable único */}
+      {mode === "active" && attention
+        && (attention.unanswered_reservations?.length > 0
+          || attention.stalled?.length > 0) && (
+        <DispatchCenter
+          attention={attention}
+          t={t}
+          canAssign={canAssign}
+          onReassign={setReassignRow}
+          onCancel={cancel}
+        />
       )}
 
       {/* iter216 — Resumen del día de TODO el equipo (iter217: fecha elegible) */}
