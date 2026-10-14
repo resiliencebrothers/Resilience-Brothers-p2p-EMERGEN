@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import DeliveryChatDialog from "@/components/DeliveryChatDialog";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import { createDeepLinkCoordinator } from "@/lib/deliveryDeepLink";
+import { shouldAutoOpenReserved } from "@/lib/courierTabNav";
 
 // iter199 — Panel del Mensajero (Fase 2): tomar entregas, avanzar estados
 // (en camino → llegué → entregado) y ver ganancias (80% de la tarifa).
@@ -251,6 +252,11 @@ export default function CourierPanel({ embedded = false }) {
   // "Última ref" al manejador de navegación: aplica la pestaña/resaltado que
   // decide el coordinador, usando siempre el `t` y los setters vigentes.
   const handleTargetRef = useRef(null);
+  // M02-UI — token de navegación EXPLÍCITA: sube cada vez que un aviso fija
+  // pestaña; el efecto de reservas lo compara con `navTokenSeenRef` para no
+  // pisar un aviso recién resuelto en la misma aplicación de la lista.
+  const navTokenRef = useRef(0);
+  const navTokenSeenRef = useRef(0);
   // MEN-04 — historial COMPLETO paginado del mensajero (ya no el tope de 50).
   const [histItems, setHistItems] = useState(null);
   const [histTotal, setHistTotal] = useState(0);
@@ -519,12 +525,24 @@ export default function CourierPanel({ embedded = false }) {
   // iter208 — auto-abre la pestaña "Disponibles" si hay reservadas para
   // el mensajero (se ejecuta ANTES del guard de loading para respetar las
   // reglas de hooks — corre en cada render, no depende de `data`).
+  // M02-UI — pero NO pisa la navegación EXPLÍCITA de un aviso recién resuelto
+  // en la MISMA aplicación de la lista (ver `shouldAutoOpenReserved`): esa
+  // selección del aviso tiene prioridad durante su apertura/resolución.
   const reservedCount = data
     ? data.available.filter((d) => d.reserved_for_me).length
     : 0;
   useEffect(() => {
-    if (reservedCount > 0) setTab("available");
+    if (shouldAutoOpenReserved(
+      reservedCount, navTokenRef.current, navTokenSeenRef.current)) {
+      setTab("available");
+    }
   }, [reservedCount]);
+  // Sincroniza el token visto DESPUÉS del efecto de reservas (corre en cada
+  // render), de modo que la supresión solo cubre la aplicación que resolvió el
+  // aviso; reservas posteriores independientes vuelven a abrir "Disponibles".
+  useEffect(() => {
+    navTokenSeenRef.current = navTokenRef.current;
+  });
 
   // MEN-03 (M02) — al abrir un aviso (in-app o push) se navega a la entrega
   // concreta, resuelta SIEMPRE contra el estado VIGENTE (la última lista
@@ -546,6 +564,9 @@ export default function CourierPanel({ embedded = false }) {
         toast.info(t("courierPanel.deepLinkGone"));
         return;
       }
+      // M02-UI — el aviso fija pestaña: avanza el token de navegación explícita
+      // para que la apertura automática por reservas no lo pise este ciclo.
+      navTokenRef.current += 1;
       setTab(target.tab);
       setHighlightId(target.highlight);
     };

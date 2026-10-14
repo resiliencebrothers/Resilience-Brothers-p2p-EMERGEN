@@ -1,5 +1,11 @@
 ## Changelog — 12 Feb 2026
 
+### MEN-18 — M02-UI (la apertura automática de Disponibles ocultaba el aviso)
+Reporte del operador: con una reserva A pendiente y una entrega B aceptada por el mismo mensajero, abrir el aviso de B al montar el panel lo resolvía bien (`tab=mine`), pero la MISMA aplicación de la lista subía `reservedCount` de 0 a 1 y el efecto iter208 ejecutaba `setTab("available")` después, dejando al mensajero en una pestaña sin la tarjeta de B. Ocurría en carga normal, sin respuestas desordenadas.
+
+- **Frontend (`CourierPanel.jsx` + nuevo `src/lib/courierTabNav.js`)**: la navegación automática por reservas ahora se coordina con la explícita del aviso. Token de navegación (`navTokenRef`): se incrementa cuando un aviso fija pestaña; el efecto de reservas solo abre «Disponibles» si el token no avanzó respecto al visto (`shouldAutoOpenReserved`). Un efecto de sincronización por render consume el token, así la prioridad del aviso cubre SOLO su apertura y la aplicación que lo resuelve; reservas posteriores independientes vuelven a abrir «Disponibles» (iter208 intacto).
+- **Tests (`src/lib/__tests__/courierTabNav.test.js`, 5/5)**: arnés de integración que ejecuta AMBOS efectos con las piezas puras reales y el ciclo del token — criterio a) primera carga aviso B + A reservada → Mis entregas/B; b) sin aviso, nueva reserva → Disponibles; c) panel cargado, reservas sin cambio, aviso B → B visible; d) aviso + refresco en orden inverso → vigencia + selección; y prioridad acotada a la resolución. Suite lib del panel: **14/14**; `yarn lint` 0 errores; smoke 390px sin errores de consola.
+
 ### MEN-17 — M02 (el aviso navegaba a una pestaña con datos antiguos)
 Reporte del operador: `createLatestGuard` protegía `setData`/`setLoadError`, pero `load` devolvía `r.data` también cuando la respuesta ya se había descartado por antigua, y el efecto del aviso usaba ese valor para `setTab`/`setHighlightId`. Resultado: `highlightId=B` pero `tab=available` aunque B ya estaba en «Mis entregas» → el aviso dejaba al mensajero en una pestaña sin la tarjeta.
 
