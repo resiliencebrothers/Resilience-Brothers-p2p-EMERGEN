@@ -1,5 +1,12 @@
 ## Changelog — 12 Feb 2026
 
+### MEN-15 — M02 (respuesta atrasada oculta la entrega del último aviso) + CI02 (diálogo sin scroll)
+Reportes del operador: una respuesta ATRASADA de la carga del panel del mensajero podía sobrescribir una más reciente y hacer «desaparecer» la entrega del aviso seleccionado; y el nuevo `ReassignDialog` fallaba el job `Frontend · ESLint` por la regla `rb-local/no-dialog-without-scroll`.
+
+- **M02 (frontend, `CourierPanel.jsx`)**: la carga compartida `/courier/deliveries` (deep-link + refresco periódico + eventos en vivo) ahora aplica un control de VIGENCIA antes de `setData`/`setLoadError`. Nuevo módulo puro `src/lib/latestResponseGuard.js` (`createLatestGuard`): cada llamada reserva un `seq` con `begin()` y solo aplica su payload si `isLatest(seq)` (ninguna petición posterior la reemplazó). Una respuesta iniciada ANTES ya no puede pisar el resultado de una iniciada DESPUÉS. El deep-link sigue resolviendo contra su propio `fresh`, así que el resaltado del aviso y la lista quedan coherentes.
+- **M02 (tests)**: `src/lib/__tests__/latestResponseGuard.test.js` (jest, lógica pura) — B-antes-de-A (la lista atrasada de A no oculta B), solapamiento refresco-periódico/apertura (un refresco atrasado no pisa la apertura), y control positivo en orden. 3/3 verdes vía `craco test`.
+- **CI02 (frontend, `AdminDeliveries.jsx`)**: `ReassignDialog > DialogContent` recibe `max-h-[85vh] overflow-y-auto` (patrón del proyecto). `yarn lint` → 0 errores (solo 2 warnings preexistentes no relacionados).
+
 ### iter114 — Landing brand presentation title (gold RB style)
 Operator report: *"necesitamos poner a modo de titulo de presentacion de la marca con disennno de las letras acorde al logo y al disenno de colores de la plataforma el nombre de la empresa Resilience Brothers ya que se note que se elimino el nombre que se via al lado del logo"*.
 

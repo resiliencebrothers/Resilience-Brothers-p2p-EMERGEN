@@ -16,6 +16,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import DeliveryChatDialog from "@/components/DeliveryChatDialog";
 import { useLiveEvent } from "@/hooks/useLiveStream";
+import { createLatestGuard } from "@/lib/latestResponseGuard";
 
 // iter199 — Panel del Mensajero (Fase 2): tomar entregas, avanzar estados
 // (en camino → llegué → entregado) y ver ganancias (80% de la tarifa).
@@ -326,10 +327,24 @@ export default function CourierPanel({ embedded = false }) {
 
   useEffect(() => () => stopSharing(), [stopSharing]);
 
+  // M02 — control de VIGENCIA en la carga compartida: `load` lo usan el
+  // deep-link, el refresco periódico y los eventos en vivo, y sus respuestas
+  // pueden solaparse. Sin este guard, una respuesta ATRASADA (p. ej. la del
+  // aviso A) podía ejecutar `setData` DESPUÉS de una más reciente (la del
+  // aviso B) y hacer «desaparecer» la entrega del último aviso. Cada llamada
+  // reserva un `seq`; solo la ÚLTIMA iniciada puede sobrescribir el estado.
+  const loadGuardRef = useRef(createLatestGuard());
   const load = useCallback(() => {
+    const seq = loadGuardRef.current.begin();
     return axios.get(`${API}/courier/deliveries`, { withCredentials: true })
-      .then((r) => { setData(r.data); setLoadError(false); return r.data; })
-      .catch(() => { setLoadError(true); return null; });
+      .then((r) => {
+        if (loadGuardRef.current.isLatest(seq)) { setData(r.data); setLoadError(false); }
+        return r.data;
+      })
+      .catch(() => {
+        if (loadGuardRef.current.isLatest(seq)) setLoadError(true);
+        return null;
+      });
   }, []);
 
   useEffect(() => { load(); }, [load]);

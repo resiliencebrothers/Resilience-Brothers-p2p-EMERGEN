@@ -95,7 +95,7 @@ function ReassignDialog({ delivery, couriers, open, onClose, onDone }) {
   };
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="bg-[#14111f] border-white/10 text-white" data-testid="reassign-dialog">
+      <DialogContent className="bg-[#14111f] border-white/10 text-white max-h-[85vh] overflow-y-auto" data-testid="reassign-dialog">
         <DialogHeader>
           <DialogTitle>{t("admin.deliveries.reassignTitle")}</DialogTitle>
           <DialogDescription className="text-neutral-400">
