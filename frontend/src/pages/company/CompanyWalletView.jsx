@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
-import { Wallet, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, History, Lock } from "lucide-react";
+import { toast } from "sonner";
+import { Wallet, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, History, Lock, FileDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import QuickDateRange from "@/components/QuickDateRange";
 import { FlashNumber } from "@/components/FlashNumber";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
@@ -33,6 +37,31 @@ export default function CompanyWalletView() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [ledgerCurrency, setLedgerCurrency] = useState("");
+  const [closingSince, setClosingSince] = useState("");
+  const [closingUntil, setClosingUntil] = useState("");
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadClosing = async () => {
+    setDownloading(true);
+    try {
+      const res = await axios.get(`${API}/vip/daily-closing`, {
+        params: { since: closingSince || undefined, until: closingUntil || undefined },
+        responseType: "blob", withCredentials: true,
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      const slug = closingSince && closingUntil
+        ? `${closingSince}_${closingUntil}`
+        : (closingSince || closingUntil || "historico");
+      a.download = `cierre_empresa_${slug}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Cierre contable descargado");
+    } catch {
+      toast.error("No se pudo generar el cierre contable");
+    } finally { setDownloading(false); }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -154,6 +183,45 @@ export default function CompanyWalletView() {
           retiros pendientes aparece marcado en cada moneda y vuelve a estar
           disponible si el retiro se rechaza o cancela.
         </p>
+      </section>
+
+      <section className="tactile-card p-6" data-testid="company-wallet-closing">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h2 className="font-display text-xl flex items-center gap-2">
+                <FileDown className="w-5 h-5 text-[#8B5CF6]" /> Cierre contable
+              </h2>
+              <p className="text-sm text-neutral-400 mt-1 max-w-xl">
+                Descarga un PDF con tus movimientos (depósitos, retiros, ventas y
+                conversiones) y el saldo por rango de fechas. Sin fechas: histórico completo.
+              </p>
+            </div>
+            <div className="flex items-end gap-3 flex-wrap">
+              <div className="flex flex-col">
+                <label className="micro-label text-neutral-500 mb-1">Desde</label>
+                <Input data-testid="company-closing-since-input" type="date"
+                  value={closingSince} onChange={(e) => setClosingSince(e.target.value)}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-40" />
+              </div>
+              <div className="flex flex-col">
+                <label className="micro-label text-neutral-500 mb-1">Hasta</label>
+                <Input data-testid="company-closing-until-input" type="date"
+                  value={closingUntil} onChange={(e) => setClosingUntil(e.target.value)}
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-40" />
+              </div>
+              <Button data-testid="company-closing-download-btn" onClick={downloadClosing}
+                disabled={downloading}
+                className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-11">
+                <FileDown className="w-4 h-4 mr-2" />
+                {downloading ? "Generando…" : "Descargar PDF"}
+              </Button>
+            </div>
+          </div>
+          <QuickDateRange since={closingSince} until={closingUntil}
+            onRangeChange={({ since: s, until: u }) => { setClosingSince(s); setClosingUntil(u); }}
+            testIdPrefix="company-closing-quick" />
+        </div>
       </section>
 
       <AccountHistoryDialog
