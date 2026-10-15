@@ -537,6 +537,9 @@ async def reject_reservation(did: str, payload: dict, request: Request) -> Any:
     # IDENTIDAD de la asignación mostrada (`assignment_uid`); si el cliente no
     # envía uid (reserva heredada sin uid) solo casa reservas sin uid.
     uid = payload.get("assignment_uid")
+    # MEN23 — `assignment_uid` debe ser cadena o null; nunca un operador.
+    if uid is not None:
+        _require_scalar_str(uid, "assignment_uid")
     filt: Dict[str, Any] = {"id": did, "status": "available",
                             "assigned_to_courier_id": me["user_id"],
                             "assignment_uid": uid if uid else {"$exists": False}}
@@ -1325,6 +1328,8 @@ async def admin_create_delivery(payload: dict, request: Request) -> Any:
     ref_id = payload.get("ref_id")
     if kind not in ("withdrawal", "redemption") or not ref_id:
         raise HTTPException(status_code=400, detail="kind/ref_id inválidos")
+    # MEN23 — `ref_id` debe ser escalar antes de consultar por él.
+    _require_scalar_str(ref_id, "ref_id")
     coll = db.withdrawals if kind == "withdrawal" else db.redemptions
     ref = await coll.find_one({"id": ref_id}, {"_id": 0})
     if not ref:
@@ -1383,6 +1388,16 @@ def _validate_expected_uid(payload: dict) -> None:
                 detail="expected_uid inválido: debe ser una cadena o null.")
 
 
+def _require_scalar_str(value: Any, field: str) -> None:
+    """MEN23 — exige que un identificador tomado del body sea una CADENA antes
+    de usarlo como valor de filtro Mongo. Rechaza objetos/arrays/números/
+    booleanos para que no se interpreten como operadores de consulta."""
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} inválido: debe ser una cadena.")
+
+
 @router.post("/admin/deliveries/{did}/assign")
 async def admin_assign_delivery(did: str, payload: dict, request: Request) -> Any:
     """iter208 — El admin *reserva* la entrega para un mensajero pero NO la
@@ -1395,6 +1410,8 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     courier_id = payload.get("courier_id")
     if not courier_id:
         raise HTTPException(status_code=400, detail="courier_id requerido")
+    # MEN23 — `courier_id` debe ser escalar antes de usarse en find/CAS.
+    _require_scalar_str(courier_id, "courier_id")
     courier = await db.users.find_one({"user_id": courier_id}, {"_id": 0})
     if not courier or not (courier.get("is_courier")
                            or courier.get("role") in ("admin", "employee")):

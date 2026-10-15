@@ -156,6 +156,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_men20_cancel_cycle_cas.py \
 		tests/test_men21_cancel_notifies_reserved_courier.py \
 		tests/test_men23_cancel_scalar_validation.py \
+		tests/test_men23_mongo_filter_audit.py \
 		tests/test_empresa_phase1.py \
 		tests/test_empresa_phase2.py \
 		tests/test_empresa_phase3.py \

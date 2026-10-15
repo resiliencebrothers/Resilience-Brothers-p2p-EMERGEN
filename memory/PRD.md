@@ -2875,3 +2875,15 @@ Fix:
 - `scheduler.py::run_credit_recovery`: añade `heal_cancelled_company_deliveries()` (cada 120 s).
 - Respuesta del listado ya refleja `fee_status` actualizado en la misma lectura (E34-05 `req.update`).
 - Pruebas `test_empresa_e34_06_recover.py` 3/3 (admin cancel reconcilia SIN GET del usuario; worker sana entregas canceladas offline/antiguas y NO toca entregas activas; idempotente) + regresión E34-01/02/05 + MEN20 + billing = 29/29. ruff(proyecto)+mypy limpios. Estado: preview; pendiente re-despliegue a producción.
+
+### F2-06 (MEDIA) — ESLint del diálogo de Inventario (fork 2026-06)
+`CompanyInventoryView.jsx` tenía un `<DialogContent>` sin `max-h-*`, fallando la regla local `rb-local/no-dialog-without-scroll` (CI exit 1). Fix: className ahora incluye `max-h-[85vh] overflow-y-auto`. Verificado: `npx eslint --config eslint.hooks.config.mjs "src/**/*.{js,jsx}"` → 0 errores (solo 2 warnings preexistentes no relacionados).
+
+### Auditoría de filtros Mongo (MEN23, ampliación — fork 2026-06)
+Revisión de endpoints admin/staff que llevan valores del BODY a filtros Mongo. Hallazgos y fix (`routes/deliveries.py`, nuevo helper `_require_scalar_str`):
+- `admin_create_delivery` (`POST /admin/deliveries`): `ref_id` se usaba en `find_one({"id": ref_id})` sin coerción → ahora exige cadena (400).
+- `admin_assign_delivery` (`POST /admin/deliveries/{id}/assign`): `courier_id` se usaba en `find_one` y en el filtro CAS → ahora exige cadena (400).
+- `reject_reservation` (`POST /courier/deliveries/{id}/reject-reservation`): `assignment_uid` iba al filtro → ahora cadena o null (400). Misma clase aunque sea endpoint de mensajero.
+- Ya protegidos antes (MEN23 inicial): `admin_cancel_delivery`, `admin_assign_delivery`/`admin_reassign_delivery` (`expected_uid` vía `_validate_expected_uid`).
+- Auditados y SEGUROS (sin cambios): `admin.py`, `admin_withdrawals.py`, `admin_users.py`, `admin_company_funds.py`, `admin_audit.py`, `admin_revenue.py`, `municipality_rates.py` — coercionan con `.strip()`/`str()`/`int()`/`bool()`, usan modelos Pydantic, o filtran por path/query params (escalares por construcción). No se tocaron los archivos protegidos (admin.py/admin_withdrawals.py).
+- Pruebas `test_men23_mongo_filter_audit.py` 4/4 (ref_id objeto/array, courier_id objeto, assignment_uid objeto → 400 sin efecto) + regresión MEN14/19/20/23 = 26/26. ruff(proyecto)+mypy limpios. Estado: preview; pendiente re-despliegue a producción.

@@ -183,7 +183,7 @@ export default function CompanyInventoryView() {
       )}
 
       <Dialog open={!!dialog} onOpenChange={(o) => !o && setDialog(null)}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle className="font-display">{title}</DialogTitle></DialogHeader>
           {dialog && (
             <div className="space-y-3">
