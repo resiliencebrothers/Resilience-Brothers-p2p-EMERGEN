@@ -18,6 +18,7 @@ import InstallPrompt from "@/components/InstallPrompt";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { applyTheme, getTheme } from "@/lib/theme";
 import { roleHome } from "@/lib/roleHome";
+import { currentPanelBase } from "@/lib/profilePaths";
 
 // iter241 — aplica el tema guardado antes del primer render.
 applyTheme(getTheme());
@@ -41,7 +42,7 @@ axios.interceptors.response.use(
         id: "totp-setup-required",
         action: {
           label: "Activar 2FA",
-          onClick: () => { window.location.href = detail.setup_url || "/dashboard/security"; },
+          onClick: () => { window.location.href = `${currentPanelBase()}/security`; },
         },
       });
     }

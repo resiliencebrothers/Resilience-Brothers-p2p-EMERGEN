@@ -10,7 +10,7 @@ import RecoveryCodesPanel from "./security/RecoveryCodesPanel";
 import { DisableTwoFAModal, RegenerateCodesModal } from "./security/TwoFAModals";
 import PasswordChangeCard from "./security/PasswordChangeCard";
 
-export default function SecuritySettings() {
+export default function SecuritySettings({ embedded = false }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -187,7 +187,7 @@ export default function SecuritySettings() {
 
   return (
     <div data-testid="security-settings" className="space-y-6 max-w-2xl">
-      <ProfileSectionTabs />
+      {!embedded && <ProfileSectionTabs />}
       <div>
         <h1 className="font-display text-3xl">{t("security.title")}</h1>
         <p className="text-neutral-500 text-sm mt-1">{t("security.subtitle")}</p>

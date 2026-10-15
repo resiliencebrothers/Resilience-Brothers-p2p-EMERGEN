@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { currentPanelBase } from "@/lib/profilePaths";
 
 /**
  * Reusable 2FA step-up prompt for high-risk admin actions.
@@ -83,7 +84,7 @@ export default function TotpPromptDialog({
               Código de 6 dígitos de tu app autenticadora o un código de recuperación.{" "}
               <button
                 type="button"
-                onClick={() => navigate("/dashboard/security")}
+                onClick={() => navigate(`${currentPanelBase()}/security`)}
                 className="text-[#8B5CF6] hover:underline"
               >
                 Configurar 2FA
@@ -123,7 +124,7 @@ export function handleTotpError(error, navigate) {
   const code = typeof detail === "object" ? detail?.code : null;
   if (error?.response?.status === 412 && code === "TOTP_SETUP_REQUIRED") {
     toast.error("Debes configurar 2FA antes de realizar esta acción");
-    setTimeout(() => navigate?.("/dashboard/security"), 1500);
+    setTimeout(() => navigate?.(`${currentPanelBase()}/security`), 1500);
     return true;
   }
   if (code === "TOTP_INVALID" || code === "TOTP_CODE_REQUIRED") {

@@ -30,7 +30,7 @@ const STATUS_LABEL_KEYS = {
  * KYCView — client-facing wizard to submit identity documents.
  * Route: /dashboard/kyc (iter52)
  */
-export default function KYCView() {
+export default function KYCView({ embedded = false }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -110,7 +110,7 @@ export default function KYCView() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6" data-testid="client-kyc-page">
-      <ProfileSectionTabs />
+      {!embedded && <ProfileSectionTabs />}
       <header>
         <h1 className="text-3xl font-bold text-white flex items-center gap-3">
           <IdCard className="w-7 h-7 text-[#8B5CF6]" /> {t("kyc.titleFull")}

@@ -17,11 +17,14 @@ import { useAuth } from "@/context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ShieldAlert, Mail, Phone, IdCard, ArrowRight } from "lucide-react";
+import { profileBase } from "@/lib/profilePaths";
 
+// `path` es el sufijo de la pantalla; la base (/company o /dashboard) se
+// resuelve por rol para que el CTA de Empresa no caiga en /dashboard/*.
 const STEP_META = {
-  email: { icon: Mail, href: "/dashboard/security", testid: "gate-cta-email" },
-  phone: { icon: Phone, href: "/dashboard/security", testid: "gate-cta-phone" },
-  kyc:   { icon: IdCard, href: "/dashboard/kyc", testid: "gate-cta-kyc" },
+  email: { icon: Mail, path: "security", testid: "gate-cta-email" },
+  phone: { icon: Phone, path: "security", testid: "gate-cta-phone" },
+  kyc:   { icon: IdCard, path: "kyc", testid: "gate-cta-kyc" },
 };
 
 export default function VerificationGateBanner({ children, blocking = false, action = "operate" }) {
@@ -29,6 +32,7 @@ export default function VerificationGateBanner({ children, blocking = false, act
   const navigate = useNavigate();
   const { t } = useTranslation();
   const verification = user?.verification;
+  const base = profileBase(user?.role);
 
   if (!verification || verification.fully_verified) return children ?? null;
 
@@ -65,7 +69,7 @@ export default function VerificationGateBanner({ children, blocking = false, act
               <button
                 type="button"
                 data-testid={meta.testid}
-                onClick={() => navigate(meta.href)}
+                onClick={() => navigate(`${base}/${meta.path}`)}
                 className="group w-full flex items-center gap-3 p-4 border border-white/10 hover:border-amber-400/60 hover:bg-amber-500/[0.04] transition-all text-left"
               >
                 <Icon className="w-5 h-5 text-amber-400 flex-shrink-0" />

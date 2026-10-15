@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -13,9 +13,14 @@ import CompanyProductsView from "@/pages/company/CompanyProductsView";
 import CompanyInventoryView from "@/pages/company/CompanyInventoryView";
 import CompanyWalletView from "@/pages/company/CompanyWalletView";
 import CompanyDeliveriesView from "@/pages/company/CompanyDeliveriesView";
+import KYCView from "@/pages/dashboard/KYCView";
+import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 
 // Panel independiente para cuentas Empresa (rol business). Mientras la cuenta
 // está en revisión, solo se muestra el aviso de aprobación pendiente.
+// Las pestañas se manejan por URL (/company/<tab>) para que los CTA de
+// verificación (banner, step-up 2FA) puedan dirigir directamente a las
+// pantallas comunes de Verificación/Seguridad dentro del panel Empresa.
 const TABS = [
   { id: "overview", label: "Resumen", icon: LayoutDashboard },
   { id: "stores", label: "Tiendas", icon: Store },
@@ -24,11 +29,23 @@ const TABS = [
   { id: "deliveries", label: "Mensajería", icon: Truck },
   { id: "wallet", label: "Saldo", icon: Wallet },
 ];
+// Pantallas comunes de cuenta (verificación de identidad + 2FA). Son requisito
+// para retirar/liquidar; antes la Empresa no tenía forma de alcanzarlas.
+const ACCOUNT_TABS = [
+  { id: "kyc", label: "Verificación", icon: IdCard },
+  { id: "security", label: "Seguridad", icon: ShieldCheck },
+];
+const VALID_IDS = [...TABS, ...ACCOUNT_TABS].map((tb) => tb.id);
 
 export default function CompanyPanel() {
   const { user, logout } = useAuth();
-  const [tab, setTab] = useState("overview");
+  const location = useLocation();
+  const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
+
+  const seg = location.pathname.split("/")[2] || "overview";
+  const tab = VALID_IDS.includes(seg) ? seg : "overview";
+  const go = (id) => navigate(id === "overview" ? "/company" : `/company/${id}`);
 
   const active = user?.account_status === "active";
 
@@ -80,11 +97,23 @@ export default function CompanyPanel() {
           </div>
         ) : (
           <>
-            <nav className="flex gap-1 mb-8 border-b border-white/10">
+            <nav className="flex gap-1 mb-8 border-b border-white/10 overflow-x-auto scrollbar-none">
               {TABS.map((tItem) => (
                 <button key={tItem.id} data-testid={`company-tab-${tItem.id}`}
-                  onClick={() => setTab(tItem.id)}
-                  className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                  onClick={() => go(tItem.id)}
+                  className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+                    tab === tItem.id
+                      ? "border-[#8B5CF6] text-white"
+                      : "border-transparent text-white/50 hover:text-white"
+                  }`}>
+                  <tItem.icon className="w-4 h-4" /> {tItem.label}
+                </button>
+              ))}
+              <span className="w-px bg-white/10 my-2 mx-1 shrink-0" aria-hidden />
+              {ACCOUNT_TABS.map((tItem) => (
+                <button key={tItem.id} data-testid={`company-tab-${tItem.id}`}
+                  onClick={() => go(tItem.id)}
+                  className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
                     tab === tItem.id
                       ? "border-[#8B5CF6] text-white"
                       : "border-transparent text-white/50 hover:text-white"
@@ -98,12 +127,12 @@ export default function CompanyPanel() {
               <div className="space-y-6" data-testid="company-overview">
                 <h1 className="font-display text-3xl">Resumen</h1>
                 <div className="grid sm:grid-cols-3 gap-4">
-                  <button onClick={() => setTab("stores")} className="tactile-card p-6 text-left hover:border-[#8B5CF6]/40 transition-colors" data-testid="company-stat-stores">
+                  <button onClick={() => go("stores")} className="tactile-card p-6 text-left hover:border-[#8B5CF6]/40 transition-colors" data-testid="company-stat-stores">
                     <Store className="w-7 h-7 text-[#8B5CF6] mb-3" />
                     <div className="font-display text-3xl">{summary?.stores_count ?? "—"}</div>
                     <div className="micro-label text-neutral-500 mt-1">Tiendas</div>
                   </button>
-                  <button onClick={() => setTab("products")} className="tactile-card p-6 text-left hover:border-[#8B5CF6]/40 transition-colors" data-testid="company-stat-products">
+                  <button onClick={() => go("products")} className="tactile-card p-6 text-left hover:border-[#8B5CF6]/40 transition-colors" data-testid="company-stat-products">
                     <Boxes className="w-7 h-7 text-[#8B5CF6] mb-3" />
                     <div className="font-display text-3xl">{summary?.products_count ?? "—"}</div>
                     <div className="micro-label text-neutral-500 mt-1">Productos</div>
@@ -127,6 +156,8 @@ export default function CompanyPanel() {
             {tab === "inventory" && <CompanyInventoryView />}
             {tab === "deliveries" && <CompanyDeliveriesView />}
             {tab === "wallet" && <CompanyWalletView />}
+            {tab === "kyc" && <KYCView embedded />}
+            {tab === "security" && <SecuritySettings embedded />}
           </>
         )}
       </main>
