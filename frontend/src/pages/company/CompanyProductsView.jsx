@@ -23,7 +23,7 @@ const STATUS_LABEL = { pending: "Pendiente", approved: "Aprobado", rejected: "Re
 
 const emptyForm = {
   name: "", description: "", image_url: "", price_usd: "", stock: "",
-  unit: "unidad", category: "general", is_active: true, available_store_ids: [],
+  unit: "unidad", min_stock: "", category: "general", is_active: true, available_store_ids: [],
 };
 
 export default function CompanyProductsView({ onChanged }) {
@@ -79,6 +79,7 @@ export default function CompanyProductsView({ onChanged }) {
       category: form.category || "general",
       is_active: form.is_active,
       available_store_ids: form.available_store_ids || [],
+      min_stock: parseFloat(form.min_stock) || 0,
     };
     try {
       if (editing) {
@@ -227,6 +228,11 @@ export default function CompanyProductsView({ onChanged }) {
             <div>
               <Label className="micro-label text-neutral-500">Categoría</Label>
               <Input data-testid="company-product-category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+            </div>
+            <div>
+              <Label className="micro-label text-neutral-500">Alerta de stock bajo (mínimo en central)</Label>
+              <Input data-testid="company-product-min-stock" type="number" step="any" min="0" value={form.min_stock ?? ""} onChange={(e) => setForm({ ...form, min_stock: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+              <p className="text-xs text-neutral-500 mt-1">Te avisamos cuando el almacén central baje de este nivel. 0 = sin alerta.</p>
             </div>
             <div>
               <Label className="micro-label text-neutral-500">Disponible en tiendas (opcional)</Label>

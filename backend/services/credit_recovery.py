@@ -306,10 +306,13 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     rows = await db.redemptions.find(
         {"$or": [{"status": "initializing", "created_at": {"$lt": cutoff}},
                  {"status": "failed_init", "init_op_id": {"$exists": True}},
-                 {"status": "failed_init", "stock_op_id": {"$exists": True}}]},
+                 {"status": "failed_init", "stock_op_id": {"$exists": True}},
+                 {"status": "failed_init", "loc_op_id": {"$exists": True}}]},
         {"_id": 0, "id": 1, "user_id": 1, "settlement_currency": 1,
          "init_op_id": 1, "stock_op_id": 1, "product_id": 1, "quantity": 1,
-         "total_usd": 1, "courier_fee_usd": 1, "status": 1}).to_list(100)
+         "total_usd": 1, "courier_fee_usd": 1, "status": 1,
+         "loc_op_id": 1, "store_id": 1, "pickup_company_id": 1,
+         "pickup_from_store": 1}).to_list(100)
     for r in rows:
         if r.get("status") == "initializing":
             claim = await db.redemptions.update_one(
@@ -322,6 +325,15 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             # DR04 — mismo patrón terminal para la reserva de stock.
             await burn_or_undo_stock(r["product_id"],
                                      round(float(r.get("quantity") or 0), 3), stock_op)
+        loc_op = r.get("loc_op_id") or ""
+        if loc_op and r.get("pickup_from_store") and r.get("store_id") \
+                and r.get("pickup_company_id"):
+            # F2-B — decisión terminal para la reserva de UBICACIÓN (estantería)
+            # de una venta con recogida en tienda interrumpida a medio crear.
+            from services.company_inventory import burn_or_undo_pickup
+            await burn_or_undo_pickup(
+                r["pickup_company_id"], r["product_id"], r["store_id"],
+                round(float(r.get("quantity") or 0), 3), loc_op)
         op = r.get("init_op_id") or ""
         amount = (float(r.get("total_usd") or 0)
                   + float(r.get("courier_fee_usd") or 0))
@@ -332,7 +344,7 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
                                      amount, op)
         await db.redemptions.update_one(
             {"id": r["id"], "status": "failed_init"},
-            {"$unset": {"init_op_id": "", "stock_op_id": ""}})
+            {"$unset": {"init_op_id": "", "stock_op_id": "", "loc_op_id": ""}})
         healed += 1
         logger.warning("canje initializing revertido: %s", r["id"])
 
@@ -340,7 +352,8 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
     rows = await db.redemptions.find(
         {"status": "rejected", "reactivation_pending.at": {"$lt": cutoff}},
         {"_id": 0, "id": 1, "user_id": 1, "product_id": 1, "quantity": 1,
-         "reactivation_pending": 1}).to_list(100)
+         "reactivation_pending": 1, "store_id": 1, "pickup_company_id": 1,
+         "pickup_from_store": 1}).to_list(100)
     for r in rows:
         plan = r.get("reactivation_pending") or {}
         stock_op = plan.get("stock_op") or ""
@@ -368,6 +381,16 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
             await burn_or_undo_stock(r["product_id"],
                                      round(float(plan.get("quantity")
                                            or r.get("quantity") or 0), 3), stock_op)
+        loc_op = plan.get("loc_op") or ""
+        if loc_op and r.get("pickup_from_store") and r.get("store_id") \
+                and r.get("pickup_company_id"):
+            # F2-B — decisión terminal para la estantería re-reservada en una
+            # reactivación de canje con recogida en tienda interrumpida.
+            from services.company_inventory import burn_or_undo_pickup
+            await burn_or_undo_pickup(
+                r["pickup_company_id"], r["product_id"], r["store_id"],
+                round(float(plan.get("quantity") or r.get("quantity") or 0), 3),
+                loc_op)
         await db.redemptions.update_one(
             {"id": r["id"], "reactivation_pending.stock_op": stock_op},
             {"$unset": {"reactivation_pending": ""}})

@@ -39,6 +39,10 @@ def _seed():
     db.user_sessions.update_one({"session_token": EMP_TOKEN},
         {"$set": {"session_token": EMP_TOKEN, "user_id": EMP_ID, "expires_at": exp}},
         upsert=True)
+    # Fase 4 asume mensajería gratuita: fija la tarifa global en 0 (evita que
+    # el ciclo económico, configurable por el admin, afecte estas pruebas).
+    db.settings.update_one({"id": "global"},
+        {"$set": {"company_delivery_fee_usdt": 0}}, upsert=True)
 
 
 def _cleanup():

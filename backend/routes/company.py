@@ -28,6 +28,7 @@ from routes.vendor_products import (
 )
 from services.proof_upload import maybe_upload_proof
 from services import company_inventory
+from services import company_delivery_billing as billing
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/company", tags=["Company"])
@@ -50,6 +51,7 @@ async def company_me(request: Request) -> Any:
         "stores_count": stores_count,
         "products_count": products_count,
         "commission_pct": await get_commission_pct(),
+        "delivery_fee_usdt": await billing.get_company_delivery_fee(),
     }
 
 
@@ -153,6 +155,8 @@ class CompanyProductCreate(BaseModel):
     stock: float = Field(0, ge=0)
     # F2-04 — unidad de medida: "unidad" NO admite fracciones; "libra"/"kg" sí.
     unit: Literal["unidad", "libra", "kg"] = "unidad"
+    # Alerta de stock bajo: umbral del almacén central (0 = sin alerta).
+    min_stock: float = Field(0, ge=0)
     category: str = Field("general", max_length=40)
     is_active: bool = True
     available_store_ids: list[str] = Field(default_factory=list)
@@ -169,6 +173,8 @@ class CompanyProductUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=40)
     is_active: Optional[bool] = None
     available_store_ids: Optional[list[str]] = None
+    # Umbral de alerta de stock bajo del almacén central (0 = desactiva).
+    min_stock: Optional[float] = Field(None, ge=0)
 
 
 def _reject_fraction(unit: str, qty: float) -> None:
@@ -247,6 +253,7 @@ async def create_my_product(payload: CompanyProductCreate,
         cost_usd=0.0,
         stock=0.0,  # el stock inicial entra como movimiento auditado (abajo)
         unit=payload.unit,
+        min_stock=payload.min_stock,
         category=payload.category.strip() or "general",
         is_active=payload.is_active,
         owner_id=user["user_id"],
@@ -395,6 +402,7 @@ async def inventory_receive(payload: InvReceivePayload, request: Request) -> Any
             detail="La clave de operación ya se usó con datos distintos.")
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo recibir el stock")
+    await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
     return {"ok": True}
 
 
@@ -417,6 +425,7 @@ async def inventory_distribute(payload: InvMovePayload, request: Request) -> Any
             detail="No hay suficiente stock en el almacén central para distribuir.")
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo distribuir el stock")
+    await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
     return {"ok": True}
 
 
@@ -439,6 +448,7 @@ async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
             detail="La tienda no tiene esa cantidad para devolver al central.")
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo devolver el stock")
+    await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
     return {"ok": True}
 
 
@@ -465,6 +475,7 @@ async def inventory_adjust(payload: InvAdjustPayload, request: Request) -> Any:
             detail="El total no puede ser menor que lo ya distribuido a tus tiendas.")
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo ajustar el stock")
+    await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
     return {"ok": True}
 
 
@@ -490,19 +501,28 @@ class CompanyDeliveryCreate(BaseModel):
 
 async def _reconcile_delivery_inventory(company_id: str, req: dict,
                                         delivery_status: str) -> bool:
-    """Si la entrega quedó CANCELADA (p. ej. por el admin) y había inventario
-    reservado sin devolver, lo devuelve al origen EXACTAMENTE UNA VEZ."""
-    if (req.get("inv_reserved") and not req.get("inv_returned")
-            and delivery_status == "cancelled"):
+    """Si la entrega quedó CANCELADA (p. ej. por el admin), reconcilia la
+    solicitud EXACTAMENTE UNA VEZ: reembolsa la tarifa retenida y devuelve al
+    origen el inventario reservado. Idempotente (flags + ops idempotentes)."""
+    if delivery_status != "cancelled":
+        return False
+    updates: dict = {}
+    if req.get("fee_status") == "held":
+        await billing.refund_fee(company_id, req["id"],
+                                 float(req.get("fee_usdt") or 0))
+        updates["fee_status"] = "refunded"
+    if req.get("inv_reserved") and not req.get("inv_returned"):
         await company_inventory.return_dispatch(
             company_id, req["product_id"], req["origin_store_id"],
             req["quantity"], op_id=f"cdeliv-ret:{req['id']}")
-        await db.company_delivery_requests.update_one(
-            {"id": req["id"]},
-            {"$set": {"inv_returned": True, "status": "cancelled",
-                      "updated_at": iso(now_utc())}})
-        return True
-    return False
+        updates["inv_returned"] = True
+    if not updates:
+        return False
+    updates["status"] = "cancelled"
+    updates["updated_at"] = iso(now_utc())
+    await db.company_delivery_requests.update_one(
+        {"id": req["id"]}, {"$set": updates})
+    return True
 
 
 @router.post("/deliveries")
@@ -515,28 +535,43 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
     pid_ = payload.product_id
     sid_ = payload.origin_store_id
     qty_ = payload.quantity
-    if pid_ or sid_ or qty_:
-        if not (pid_ and sid_ and qty_):
-            raise HTTPException(
-                status_code=400,
-                detail="Para despachar desde una tienda indica producto, tienda y cantidad.")
-        prod = await db.products.find_one(
-            {"id": pid_, "company_id": user["user_id"]}, {"_id": 0})
-        if not prod:
-            raise HTTPException(status_code=404, detail="Producto no encontrado")
-        _reject_fraction(prod.get("unit", "unidad"), qty_)
-        await _ensure_owned_store(sid_, user["user_id"])
-        status = await company_inventory.dispatch_from_store(
-            user["user_id"], pid_, sid_, qty_,
-            op_id=f"cdeliv:{reqid}", actor=user)
-        if status == "insufficient":
-            raise HTTPException(
-                status_code=409,
-                detail="La tienda no tiene suficiente stock para este envío.")
-        if status != "applied":
-            raise HTTPException(status_code=400, detail="No se pudo reservar el stock")
-        inv_reserved = True
-        package_label = f"{prod['name']} ×{company_inventory._q(qty_)}"
+    # Ciclo económico: RETIENE la tarifa fija del sub-saldo USDT ANTES de tocar
+    # inventario (así un fallo de saldo no deja mercancía reservada). Sin saldo
+    # suficiente → se rechaza y nada queda a medias.
+    fee = await billing.get_company_delivery_fee()
+    hold = await billing.hold_fee(user["user_id"], reqid, fee)
+    if hold == "insufficient":
+        raise HTTPException(
+            status_code=402,
+            detail=(f"Saldo insuficiente: la mensajería cuesta {fee} USDT. "
+                    "Recarga tu sub-saldo para solicitar el envío."))
+    try:
+        if pid_ or sid_ or qty_:
+            if not (pid_ and sid_ and qty_):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Para despachar desde una tienda indica producto, tienda y cantidad.")
+            prod = await db.products.find_one(
+                {"id": pid_, "company_id": user["user_id"]}, {"_id": 0})
+            if not prod:
+                raise HTTPException(status_code=404, detail="Producto no encontrado")
+            _reject_fraction(prod.get("unit", "unidad"), qty_)
+            await _ensure_owned_store(sid_, user["user_id"])
+            status = await company_inventory.dispatch_from_store(
+                user["user_id"], pid_, sid_, qty_,
+                op_id=f"cdeliv:{reqid}", actor=user)
+            if status == "insufficient":
+                raise HTTPException(
+                    status_code=409,
+                    detail="La tienda no tiene suficiente stock para este envío.")
+            if status != "applied":
+                raise HTTPException(status_code=400, detail="No se pudo reservar el stock")
+            inv_reserved = True
+            package_label = f"{prod['name']} ×{company_inventory._q(qty_)}"
+    except HTTPException:
+        # Cualquier fallo tras retener la tarifa → devuélvela íntegra.
+        await billing.refund_fee(user["user_id"], reqid, fee)
+        raise
 
     now = iso(now_utc())
     req = {
@@ -555,6 +590,8 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
         "package_label": package_label,
         "inv_reserved": inv_reserved,
         "inv_returned": False,
+        "fee_usdt": fee,
+        "fee_status": "held" if fee > 0 else "none",
         "status": "requested",
         "delivery_id": None,
         "created_at": now,
@@ -562,9 +599,11 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
     }
     await db.company_delivery_requests.insert_one(dict(req))
     # Crea el trabajo de mensajería (entra al pool de Resilience, sin mensajero).
+    # La tarifa real viaja al documento de entrega: al confirmar, el mensajero
+    # cobra su parte y Resilience retiene la comisión (mecanismo existente).
     from services.deliveries import ensure_delivery_job
     job = await ensure_delivery_job(
-        "company_delivery", req, km=0, fee_usdt=0, actor_id=user["user_id"])
+        "company_delivery", req, km=0, fee_usdt=fee, actor_id=user["user_id"])
     await db.company_delivery_requests.update_one(
         {"id": reqid}, {"$set": {"delivery_id": job["id"]}})
     req["delivery_id"] = job["id"]
@@ -623,6 +662,10 @@ async def cancel_company_delivery(req_id: str, request: Request) -> Any:
             req["delivery_id"], "cancelled",
             courier_ids=None if (not d or d["status"] == "available")
             else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+    # Reembolsa la tarifa retenida (idempotente, exactamente una vez).
+    if req.get("fee_status") == "held":
+        await billing.refund_fee(user["user_id"], req_id,
+                                 float(req.get("fee_usdt") or 0))
     # Devuelve el inventario reservado (idempotente, exactamente una vez).
     if req.get("inv_reserved") and not req.get("inv_returned"):
         await company_inventory.return_dispatch(
@@ -631,5 +674,24 @@ async def cancel_company_delivery(req_id: str, request: Request) -> Any:
     await db.company_delivery_requests.update_one(
         {"id": req_id},
         {"$set": {"status": "cancelled", "inv_returned": True,
+                  "fee_status": ("refunded" if float(req.get("fee_usdt") or 0) > 0
+                                 else req.get("fee_status", "none")),
                   "updated_at": iso(now_utc())}})
     return {"ok": True}
+
+
+async def _settle_company_delivery(ref_id: str, actor: dict) -> None:
+    """Liquidación al CONFIRMARSE la entrega: la tarifa retenida se consume (el
+    mensajero ya cobró su parte y Resilience la comisión, por el mecanismo de
+    entregas). Marca la solicitud como confirmada y la tarifa como cobrada."""
+    now = iso(now_utc())
+    await db.company_delivery_requests.update_one(
+        {"id": ref_id, "status": {"$ne": "cancelled"}},
+        {"$set": {"status": "confirmed", "updated_at": now}})
+    await db.company_delivery_requests.update_one(
+        {"id": ref_id, "fee_status": "held"},
+        {"$set": {"fee_status": "charged"}})
+
+
+from services.delivery_settlement import register_settlement_handler  # noqa: E402
+register_settlement_handler("company_delivery", _settle_company_delivery)

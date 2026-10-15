@@ -47,8 +47,33 @@ class StoreCreate(BaseModel):
 async def list_active_stores(request: Request,
                              product_id: Optional[str] = None) -> Any:
     """Sucursales activas para elegir dónde recoger. Con `product_id` filtra
-    por disponibilidad del producto (lista vacía = todas)."""
+    por disponibilidad del producto (lista vacía = todas).
+
+    F2-B — si el producto es de una EMPRESA (company_id, sin owner_id), se
+    devuelven las tiendas de ESA Empresa que TIENEN existencias del producto
+    en su estantería (`by_store[sid] > 0`), con `available_qty`, para que el
+    comprador sólo pueda recoger donde hay stock real."""
     await require_user(request)
+    if product_id:
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    else:
+        product = None
+    if product and product.get("company_id"):
+        cid = product["company_id"]
+        by_store = product.get("by_store") or {}
+        allowed = product.get("available_store_ids") or []
+        company_stores = await db.stores.find(
+            {"company_id": cid, "active": True, "status": {"$ne": "closing"}},
+            {"_id": 0}).sort("created_at", 1).to_list(200)
+        result = []
+        for s in company_stores:
+            if allowed and s["id"] not in allowed:
+                continue
+            qty = round(float(by_store.get(s["id"]) or 0), 3)
+            if qty <= 0:
+                continue  # sólo tiendas con existencias reales del producto
+            result.append({**s, "available_qty": qty})
+        return result
     stores = await db.stores.find(
         {"active": True,
          "$or": [{"company_id": {"$exists": False}},
@@ -56,7 +81,6 @@ async def list_active_stores(request: Request,
         {"_id": 0}) \
         .sort("created_at", 1).to_list(100)
     if product_id:
-        product = await db.products.find_one({"id": product_id}, {"_id": 0})
         allowed = (product or {}).get("available_store_ids") or []
         if allowed:
             stores = [s for s in stores if s["id"] in allowed]

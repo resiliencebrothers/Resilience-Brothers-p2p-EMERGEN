@@ -2743,3 +2743,28 @@ Fix:
 - `frontend/CompanyInventoryView.jsx` — genera un `op_id` estable por operación y lo CONSERVA en un reintento automático ante pérdida de respuesta (sin respuesta del servidor), para que el servidor deduplique.
 - Pruebas: `tests/test_empresa_f202_idempotency.py` 7/7 — recibir/distribuir/devolver con misma clave aplican una sola vez (y un solo movimiento); claves distintas aplican ambas; misma clave + payload distinto ⇒ conflict sin efecto; DURABILIDAD: tras vaciar `inv_ops` (simular rotación) un reintento con la misma clave NO reaplica; 3 llamadas CONCURRENTES (`asyncio.gather`) con la misma clave ⇒ un único incremento y un único movimiento.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## F2-B (fork 2026-06) — Venta del marketplace con RECOGIDA EN TIENDA (origen en estantería)
+Feature: una compra de un producto de Empresa con `fulfillment=store_pickup` ahora descuenta la TIENDA elegida por el comprador (no sólo el almacén central), con restauración EXACTA ante rechazo/cancelación/recuperación. (Antes la recogida en tienda sólo marcaba la sucursal pero vendía del central; y `_load_pickup_store` incluso rechazaba productos de Empresa porque llevan `owner_id`.)
+
+Modelo (dos capas sobre el MISMO total, para no tocar los caminos de stock existentes):
+- Capa de STOCK (total): la reserva/rechazo/healer del canje siguen EXACTAMENTE igual (`apply_stock_idempotent` / `burn_or_undo_stock` / `reject-stock`), ahora con un guard de estantería `by_store[sid] ≥ qty` en la reserva del pickup.
+- Capa de UBICACIÓN (nueva, en `services/company_inventory.py`): `reserve_pickup` (resta `by_store[sid]`+`distributed`, respeta token de quema), `restore_pickup` (suma de vuelta), `burn_or_undo_pickup` (decisión terminal mirror de `burn_or_undo_stock`: empuja token `op:burn` y luego deshace si aplicó). Como ambas capas caen por el mismo importe, el CENTRAL (stock−distributed) no cambia: la venta consume exactamente esa tienda. Todo idempotente/durable por op_id vía `company_inventory_ops` + guard `inv_ops`.
+
+Detección correcta: "producto de Empresa" = `company_id` presente (los productos de Empresa llevan `owner_id == company_id`; VIP tiene owner_id SIN company_id; central Resilience no tiene ninguno). La recogida en tienda para productos Resilience (sin company_id) conserva el comportamiento anterior (sólo ubicación de recogida, sin descuento por estantería).
+
+Integración (cambios ADITIVOS, sin refactor de `admin.py`):
+- `routes/orders.py` `redeem_product`: resuelve `pickup_store` temprano, valida estantería, reserva stock+ubicación, marca `pickup_from_store`/`pickup_company_id`/`loc_op_id` (durables), y deshace ambas capas en los dos caminos de fallo inline (saldo insuficiente, carrera con el healer). `_load_pickup_store` ahora acepta productos de Empresa y exige que la tienda pertenezca a la Empresa (company_id) y no esté en cierre.
+- `routes/stores.py` `GET /stores?product_id=…`: para productos de Empresa devuelve las tiendas de ESA Empresa CON existencias del producto (`by_store[sid] > 0`) y su `available_qty`.
+- `routes/admin.py` `_on_redemption_rejected`: tras restituir el stock, restituye la MISMA estantería (`restore_pickup`, `reject-loc:{rid}:c{cycle}`). Reactivación: el plan incluye `loc_op`; `_reserve_reactivation_funds` re-reserva la estantería (409 si no hay stock allí); `_abort_reactivation` aplica la decisión terminal también a la ubicación.
+- `services/credit_recovery.py` `heal_initializing_ops`: ramas de canje a medio crear y de reactivación revierten también la capa de ubicación (`burn_or_undo_pickup`, `loc_op`).
+- Frontend `MarketplaceView.jsx`: el picker de tiendas muestra existencias por tienda, deshabilita las que no alcanzan la cantidad y avisa cuando ninguna tiene stock; valida al canjear. i18n es/en añadido.
+
+Pruebas:
+- `tests/test_empresa_f2b_pickup.py` 8/8 (capa de servicio + composición real: venta consume la tienda y no el central; guard bloquea sin stock; rechazo restaura la misma tienda una vez; healer revierte venta a medias una vez; idempotencia; token de quema bloquea una reserva tardía; burn_or_undo deshace una reserva aplicada una vez; dos ventas y rechazo de una).
+- `tests/test_empresa_f2b_pickup_http.py` 4/4 (picker lista sólo tiendas con stock + available_qty; venta descuenta tienda y rechazo admin restaura; rechazo idempotente en repetición; venta bloqueada si la tienda no alcanza).
+- Regresión verde: F2-01/02/03/04/05, phase4, low_stock, iter236/238/240, iter249/254/256/257 (credit recovery + reject/reactivation). mypy limpio.
+- Añadidas a la suite crítica/Empresa del Makefile.
+- Estado: en preview; pendiente de re-despliegue a producción.
+

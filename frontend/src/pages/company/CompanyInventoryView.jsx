@@ -103,6 +103,11 @@ export default function CompanyInventoryView() {
                     <Warehouse className="w-4 h-4" /> Central: <span className="font-mono" data-testid={`company-inv-central-${p.product_id}`}>{p.central}</span>
                   </span>
                   {p.over_distributed && <span className="text-amber-400 text-xs">(sobre-distribuido)</span>}
+                  {p.low && (
+                    <span className="flex items-center gap-1 text-amber-300 text-xs border border-amber-500/30 bg-amber-500/10 px-2 py-0.5" data-testid={`company-inv-low-${p.product_id}`}>
+                      Stock bajo (mín. {p.min_stock})
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2">

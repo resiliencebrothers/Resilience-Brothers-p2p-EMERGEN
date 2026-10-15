@@ -52,6 +52,13 @@ def _slice_concat(field: str, value: Any) -> dict:
 async def _log_move(company_id: str, product: dict, mtype: str, qty: float,
                     op_id: str, store_id: str = "", store_name: str = "",
                     actor: Optional[dict] = None) -> None:
+    """Registra el movimiento de inventario de forma DURADERA (F2-05).
+
+    Evidencia ÚNICA por `op_id` (índice único): reintentar la misma operación
+    re-inserta la misma clave y el `DuplicateKeyError` confirma que ya quedó
+    registrada. CUALQUIER otro fallo de almacenamiento se PROPAGA (no se traga):
+    así nunca se pierde trazabilidad en silencio y la operación queda
+    'pending' para reanudarse (el guard `inv_ops` impide un segundo efecto)."""
     global _MOVES_IDX_READY
     if not _MOVES_IDX_READY:
         await db.company_inventory_moves.create_index("op_id", unique=True, sparse=True)
@@ -71,8 +78,29 @@ async def _log_move(company_id: str, product: dict, mtype: str, qty: float,
     }
     try:
         await db.company_inventory_moves.insert_one(doc)
-    except Exception:
-        pass  # dedupe por op_id — el movimiento ya quedó registrado
+    except DuplicateKeyError:
+        pass  # misma op_id → ya registrada (evidencia única garantizada)
+
+
+async def _relog_if_applied(company_id: str, product_id: str, oid: str,
+                            mtype: str, qty: float, store_id: str = "",
+                            actor: Optional[dict] = None) -> bool:
+    """Recuperación F2-05: si la mutación de stock YA se aplicó (el guard
+    `inv_ops` contiene `oid`) pero el movimiento pudo no haberse escrito (p. ej.
+    un fallo de almacenamiento en un intento previo), lo re-registra de forma
+    idempotente. Devuelve True si la mutación estaba aplicada."""
+    dup = await db.products.find_one(
+        {"id": product_id, "company_id": company_id, "inv_ops": oid},
+        {"_id": 0, "id": 1, "name": 1})
+    if not dup:
+        return False
+    sname = ""
+    if store_id:
+        s = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+        sname = s.get("name", "")
+    await _log_move(company_id, dup, mtype, qty, oid,
+                    store_id=store_id, store_name=sname, actor=actor)
+    return True
 
 
 def _payload_hash(op_type: str, payload: dict) -> str:
@@ -147,9 +175,9 @@ async def receive_central(company_id: str, product_id: str, qty: float,
         if res is not None:
             await _log_move(company_id, res, "receive", qty, oid, actor=actor)
             return "applied"
-        dup = await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
-        return "applied" if dup else "not_found"
+        if await _relog_if_applied(company_id, product_id, oid, "receive", qty, actor=actor):
+            return "applied"
+        return "not_found"
 
     return await _run_idempotent(company_id, op_key, "receive",
                                  {"product_id": product_id, "qty": qty}, _apply)
@@ -185,9 +213,8 @@ async def distribute(company_id: str, product_id: str, store_id: str, qty: float
             await _log_move(company_id, res, "distribute", qty, oid,
                             store_id=store_id, store_name=store.get("name", ""), actor=actor)
             return "applied"
-        dup = await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
-        if dup:
+        if await _relog_if_applied(company_id, product_id, oid, "distribute", qty,
+                                   store_id=store_id, actor=actor):
             return "applied"
         exists = await db.products.find_one(
             {"id": product_id, "company_id": company_id}, {"_id": 1})
@@ -225,9 +252,8 @@ async def return_to_central(company_id: str, product_id: str, store_id: str,
             await _log_move(company_id, res, "return", qty, oid,
                             store_id=store_id, store_name=store.get("name", ""), actor=actor)
             return "applied"
-        dup = await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
-        if dup:
+        if await _relog_if_applied(company_id, product_id, oid, "return", qty,
+                                   store_id=store_id, actor=actor):
             return "applied"
         exists = await db.products.find_one(
             {"id": product_id, "company_id": company_id}, {"_id": 1})
@@ -275,8 +301,12 @@ async def adjust_total(company_id: str, product_id: str, new_total: float,
                 await _log_move(company_id, res, "adjust", delta, oid, actor=actor)
             return "applied"
         dup = await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+            {"id": product_id, "company_id": company_id, "inv_ops": oid},
+            {"_id": 0, "id": 1, "name": 1})
         if dup:
+            delta = round(new_total - expected_total, QTY_DECIMALS)
+            if delta != 0:
+                await _log_move(company_id, dup, "adjust", delta, oid, actor=actor)
             return "applied"
         cur = await db.products.find_one(
             {"id": product_id, "company_id": company_id},
@@ -325,9 +355,8 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
             await _log_move(company_id, res, "dispatch", qty, oid,
                             store_id=store_id, store_name=store.get("name", ""), actor=actor)
             return "applied"
-        dup = await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
-        if dup:
+        if await _relog_if_applied(company_id, product_id, oid, "dispatch", qty,
+                                   store_id=store_id, actor=actor):
             return "applied"
         exists = await db.products.find_one(
             {"id": product_id, "company_id": company_id}, {"_id": 1})
@@ -366,49 +395,228 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
             await _log_move(company_id, res, "dispatch_return", qty, oid,
                             store_id=store_id, store_name=store.get("name", ""), actor=actor)
             return "applied"
-        dup = await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
-        return "applied" if dup else "not_found"
+        if await _relog_if_applied(company_id, product_id, oid, "dispatch_return", qty,
+                                   store_id=store_id, actor=actor):
+            return "applied"
+        return "not_found"
 
     return await _run_idempotent(
         company_id, op_id, "dispatch_return",
         {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
+# ============================================================
+# Venta con recogida en tienda (F2-B) — CAPA DE UBICACIÓN
+# ------------------------------------------------------------
+# Una venta del marketplace con origen en una tienda concreta descuenta el
+# TOTAL (`stock`) por la vía existente del canje (apply_stock_idempotent, que
+# conserva intactos todos los caminos de reserva/rechazo/healer) y, ADEMÁS,
+# esta capa descuenta la ESTANTERÍA elegida (`by_store[sid]`) y `distributed`.
+# Al ser dos capas sobre el MISMO total, el almacén central (stock−distributed)
+# no cambia: la venta consume exactamente la tienda seleccionada. La capa de
+# ubicación tiene su propia decisión terminal (burn/undo) para que un crash
+# a mitad del alta se recupere con UN solo efecto físico y UNA sola evidencia.
+# ============================================================
 
-async def release_store(company_id: str, store_id: str) -> None:
-    """Cierre RECUPERABLE de una tienda (F2-03): devuelve TODA su mercancía
-    distribuida al almacén central.
 
-    Por cada producto hace UNA escritura ATÓMICA que, en la misma pipeline,
-    resta de `distributed` el valor VIGENTE de `by_store[sid]` y elimina la
-    clave. Nunca usa una lectura previa que pueda quedar obsoleta, por lo que el
-    invariante `distributed == suma(by_store)` se conserva ante cualquier
-    devolución/distribución concurrente y `distributed` jamás queda negativo.
+async def reserve_pickup(company_id: str, product_id: str, store_id: str,
+                         qty: float, op_id: str,
+                         actor: Optional[dict] = None) -> str:
+    """Reserva de ubicación de una venta con recogida en tienda: descuenta
+    `qty` de la ESTANTERÍA (by_store[sid]) y de `distributed`, SIN tocar
+    `stock` (el total lo descuenta la capa de stock del canje). Exige
+    by_store[sid] ≥ qty. IDEMPOTENTE y DURADERA por `op_id`; respeta el TOKEN
+    de quema `op:burn` (decisión terminal del healer). 'applied'|'insufficient'
+    |'burned'|'not_found'|'invalid'."""
+    qty = _q(qty)
+    if qty <= 0:
+        return "invalid"
 
-    Es idempotente y REANUDABLE: si un intento falla a mitad de varios
-    productos, reejecutar continúa con los pendientes (los ya liberados ya no
-    tienen la clave y no vuelven a coincidir). Cada traslado se registra UNA
-    sola vez gracias al `op_id` estable por producto."""
-    while True:
+    async def _apply(oid: str) -> str:
+        burn_token = f"{oid}:burn"
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id,
+             "inv_ops": {"$nin": [oid, burn_token]},
+             "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
+            [{"$set": {
+                f"by_store.{store_id}": {"$round": [
+                    {"$subtract": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+                "distributed": {"$round": [
+                    {"$subtract": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+            await _log_move(company_id, res, "pickup_sale", qty, oid,
+                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            return "applied"
+        if await _relog_if_applied(company_id, product_id, oid, "pickup_sale", qty,
+                                   store_id=store_id, actor=actor):
+            return "applied"
+        # TOKEN de quema presente → decisión terminal: jamás muta.
+        if await db.products.find_one(
+                {"id": product_id, "company_id": company_id, "inv_ops": burn_token},
+                {"_id": 1}):
+            return "burned"
+        exists = await db.products.find_one(
+            {"id": product_id, "company_id": company_id}, {"_id": 1})
+        return "insufficient" if exists else "not_found"
+
+    return await _run_idempotent(
+        company_id, op_id, "pickup",
+        {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
+
+
+async def restore_pickup(company_id: str, product_id: str, store_id: str,
+                         qty: float, op_id: str,
+                         actor: Optional[dict] = None) -> str:
+    """Restitución del reverso de una venta con recogida en tienda
+    (rechazo/cancelación/recuperación): devuelve `qty` a la ESTANTERÍA
+    (by_store[sid]) y a `distributed`, SIN tocar `stock` (ese reverso lo hace
+    la capa de stock del canje). IDEMPOTENTE y DURADERA por `op_id`
+    (exactamente una vez, incluso tras rotar `inv_ops`)."""
+    qty = _q(qty)
+    if qty <= 0:
+        return "invalid"
+
+    async def _apply(oid: str) -> str:
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [oid]}},
+            [{"$set": {
+                f"by_store.{store_id}": {"$round": [
+                    {"$add": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}, QTY_DECIMALS]},
+                "distributed": {"$round": [
+                    {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }}],
+            projection={"_id": 0, "id": 1, "name": 1},
+            return_document=ReturnDocument.AFTER)
+        if res is not None:
+            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
+            await _log_move(company_id, res, "pickup_restore", qty, oid,
+                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            return "applied"
+        if await _relog_if_applied(company_id, product_id, oid, "pickup_restore", qty,
+                                   store_id=store_id, actor=actor):
+            return "applied"
+        return "not_found"
+
+    return await _run_idempotent(
+        company_id, op_id, "pickup_restore",
+        {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
+
+
+async def burn_or_undo_pickup(company_id: str, product_id: str, store_id: str,
+                              qty: float, op_id: str,
+                              actor: Optional[dict] = None) -> str:
+    """Decisión TERMINAL para la reserva de ubicación de una recogida en tienda
+    (mirror de burn_or_undo_stock): empuja PRIMERO el TOKEN de quema `op:burn`
+    al guard embebido y LUEGO comprueba si la reserva llegó a aplicarse. Si YA
+    se aplicó (inv_ops contiene `op_id`), la deshace con `restore_pickup`
+    (`op:undo`, idempotente); si no, el token impide que un creador lento la
+    aplique más tarde. Empujar el token antes de comprobar cierra la carrera:
+    la reserva tardía fracasa (guard) o se detecta ya aplicada. 'undone'|'burned'."""
+    qty = _q(qty)
+    burn_token = f"{op_id}:burn"
+    await db.products.update_one(
+        {"id": product_id, "company_id": company_id,
+         "inv_ops": {"$ne": burn_token}},
+        {"$push": {"inv_ops": burn_token}})
+    if await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": op_id},
+            {"_id": 1}):
+        await restore_pickup(company_id, product_id, store_id, qty,
+                             f"{op_id}:undo", actor=actor)
+        return "undone"
+    return "burned"
+
+
+
+
+async def _release_one(company_id: str, store_id: str, product_id: str) -> None:
+    """Libera un producto de una tienda (cierre F2-03) con traza DURADERA (F2-05).
+
+    Atómico por documento: resta de `distributed` el valor VIGENTE de
+    `by_store[sid]` y elimina la clave (nunca una lectura obsoleta). La cantidad
+    liberada se PERSISTE en el registro durable de la operación ANTES de intentar
+    el movimiento, de modo que si la escritura del log falla, un reintento la
+    recupera y re-registra sin reaplicar el stock (guard `inv_ops`)."""
+    op_key = f"release:{store_id}:{product_id}"
+
+    async def _apply(oid: str) -> str:
         before = await db.products.find_one_and_update(
-            {"company_id": company_id, f"by_store.{store_id}": {"$gt": 0}},
+            {"id": product_id, "company_id": company_id,
+             "inv_ops": {"$nin": [oid]},
+             f"by_store.{store_id}": {"$gt": 0}},
             [
                 {"$set": {"distributed": {"$round": [{"$subtract": [
                     {"$ifNull": ["$distributed", 0]},
                     {"$ifNull": [f"$by_store.{store_id}", 0]},
-                ]}, QTY_DECIMALS]}}},
+                ]}, QTY_DECIMALS]},
+                    "inv_ops": _slice_concat("inv_ops", oid)}},
                 {"$unset": f"by_store.{store_id}"},
             ],
             projection={"_id": 0, "id": 1, "name": 1, f"by_store.{store_id}": 1},
             return_document=ReturnDocument.BEFORE)
-        if before is None:
-            break
-        qty = _q((before.get("by_store") or {}).get(store_id))
-        if qty > 0:
-            await _log_move(company_id, before, "release", qty,
-                            f"release:{store_id}:{before['id']}",
-                            store_id=store_id)
+        if before is not None:
+            qty = _q((before.get("by_store") or {}).get(store_id))
+            # Persiste la cantidad liberada ANTES del log → recuperable.
+            await db.company_inventory_ops.update_one(
+                {"company_id": company_id, "op_key": oid},
+                {"$set": {"applied_qty": qty, "product_name": before.get("name", "")}})
+            if qty > 0:
+                await _log_move(company_id, before, "release", qty, oid,
+                                store_id=store_id)
+            return "applied"
+        # La mutación ya se aplicó en un intento previo: re-registra el log desde
+        # la cantidad persistida (recuperación), de forma idempotente.
+        dup = await db.products.find_one(
+            {"id": product_id, "company_id": company_id, "inv_ops": oid}, {"_id": 1})
+        if dup:
+            rec = await db.company_inventory_ops.find_one(
+                {"company_id": company_id, "op_key": oid},
+                {"_id": 0, "applied_qty": 1, "product_name": 1})
+            q = _q((rec or {}).get("applied_qty"))
+            if q > 0:
+                await _log_move(
+                    company_id,
+                    {"id": product_id, "name": (rec or {}).get("product_name", "")},
+                    "release", q, oid, store_id=store_id)
+            return "applied"
+        return "noop"  # nada que liberar para esta tienda en este producto
+
+    await _run_idempotent(
+        company_id, op_key, "release",
+        {"store_id": store_id, "product_id": product_id}, _apply)
+
+
+async def release_store(company_id: str, store_id: str) -> None:
+    """Cierre RECUPERABLE de una tienda (F2-03 + F2-05): devuelve TODA su
+    mercancía distribuida al almacén central, con un movimiento trazable por
+    cada producto afectado y evidencia duradera.
+
+    1) Reanuda operaciones de cierre ya mutadas pero cuyo log no se completó
+       (estado != 'done' con `applied_qty`): re-registra sin reaplicar.
+    2) Libera cada producto que aún tenga stock en la tienda.
+    Es idempotente y reanudable: reejecutar continúa con lo pendiente."""
+    # 1) Recuperación: ops de cierre mutadas pero no completadas (log pendiente).
+    pending = await db.company_inventory_ops.find(
+        {"company_id": company_id, "op_type": "release",
+         "op_key": {"$regex": f"^release:{store_id}:"},
+         "status": {"$ne": "done"}, "applied_qty": {"$exists": True}},
+        {"_id": 0, "op_key": 1}).to_list(5000)
+    for rec in pending:
+        parts = rec["op_key"].split(":", 2)
+        if len(parts) == 3:
+            await _release_one(company_id, store_id, parts[2])
+    # 2) Libera los productos que aún tienen existencias en la tienda.
+    pids = [p["id"] for p in await db.products.find(
+        {"company_id": company_id, f"by_store.{store_id}": {"$gt": 0}},
+        {"_id": 0, "id": 1}).to_list(5000)]
+    for pid in pids:
+        await _release_one(company_id, store_id, pid)
 
 
 async def build_inventory_rows(company_id: str) -> list:
@@ -424,6 +632,7 @@ async def build_inventory_rows(company_id: str) -> list:
         by_store = p.get("by_store") or {}
         distributed = round(sum(_q(v) for v in by_store.values()), QTY_DECIMALS)
         central = round(total - distributed, QTY_DECIMALS)
+        min_stock = _q(p.get("min_stock"))
         rows.append({
             "product_id": p["id"],
             "name": p.get("name", ""),
@@ -432,6 +641,8 @@ async def build_inventory_rows(company_id: str) -> list:
             "distributed": distributed,
             "central": central if central > 0 else 0.0,
             "over_distributed": central < 0,
+            "min_stock": min_stock,
+            "low": bool(min_stock > 0 and central <= min_stock),
             "stores": [
                 {"store_id": sid, "store_name": name_by_id.get(sid, "tienda eliminada"),
                  "qty": _q(q)}
@@ -445,3 +656,45 @@ async def list_moves(company_id: str, limit: int = 100) -> list:
     return await db.company_inventory_moves.find(
         {"company_id": company_id}, {"_id": 0, "op_id": 0}) \
         .sort("created_at", -1).to_list(limit)
+
+
+async def maybe_alert_low_stock(company_id: str, product_id: str) -> None:
+    """Alerta de stock bajo (Empresa): si el almacén CENTRAL (stock−distributed)
+    cae a/por debajo del mínimo configurado del producto (`min_stock`), avisa
+    UNA vez a la Empresa para que reponga. Se RE-ARMA cuando el central vuelve a
+    subir por encima del mínimo (recibir/devolver/ajustar). Best-effort: nunca
+    rompe el flujo de la venta/operación."""
+    try:
+        p = await db.products.find_one(
+            {"id": product_id, "company_id": company_id},
+            {"_id": 0, "id": 1, "name": 1, "stock": 1, "distributed": 1,
+             "min_stock": 1, "low_stock_alerted": 1})
+        if not p:
+            return
+        threshold = _q(p.get("min_stock"))
+        if threshold <= 0:
+            return  # sin mínimo configurado → sin alerta
+        central = round(_q(p.get("stock")) - _q(p.get("distributed")), QTY_DECIMALS)
+        alerted = bool(p.get("low_stock_alerted"))
+        if central <= threshold and not alerted:
+            await db.products.update_one(
+                {"id": product_id, "company_id": company_id},
+                {"$set": {"low_stock_alerted": True}})
+            try:
+                from routes.notifications import _insert_notification
+                await _insert_notification(
+                    recipient_user_id=company_id, type="company_low_stock",
+                    title="Stock bajo en almacén central",
+                    message=(f"«{p.get('name', '')}» tiene {central} en el almacén "
+                             f"central (mínimo {threshold}). Recibe más mercancía "
+                             "para no quedarte sin existencias."),
+                    data={"product_id": product_id, "central": central,
+                          "min_stock": threshold})
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"low-stock notify failed: {e}")
+        elif central > threshold and alerted:
+            await db.products.update_one(
+                {"id": product_id, "company_id": company_id},
+                {"$set": {"low_stock_alerted": False}})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"maybe_alert_low_stock failed: {e}")

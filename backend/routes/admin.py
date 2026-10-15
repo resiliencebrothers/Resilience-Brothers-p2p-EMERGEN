@@ -948,6 +948,7 @@ async def _claim_reactivation_plan(r: dict, rid: str, new_status: str,
     nonce = _uuid.uuid4().hex[:8]
     plan = {"stock_op": f"reactivate-stock:{rid}:{nonce}",
             "debit_op": f"reactivate-debit:{rid}:{nonce}",
+            "loc_op": f"reactivate-loc:{rid}:{nonce}",
             "amount": round(recharge, 8), "currency": settle_cur,
             "quantity": round(float(r["quantity"]), 3), "target": new_status,
             "at": iso(now_utc()), "by": actor.get("user_id", "")}
@@ -995,6 +996,14 @@ async def _abort_reactivation(r: dict, rid: str, plan: dict,
     await burn_or_undo_stock(r["product_id"],
                              round(float(plan.get("quantity") or r["quantity"]), 3),
                              plan["stock_op"])
+    if r.get("pickup_from_store") and plan.get("loc_op") \
+            and r.get("store_id") and r.get("pickup_company_id"):
+        # F2-B — decisión terminal también para la estantería re-reservada.
+        from services.company_inventory import burn_or_undo_pickup
+        await burn_or_undo_pickup(
+            r["pickup_company_id"], r["product_id"], r["store_id"],
+            round(float(plan.get("quantity") or r["quantity"]), 3),
+            plan["loc_op"])
     await db.redemptions.update_one(
         {"id": rid, "reactivation_pending.stock_op": plan["stock_op"]},
         {"$unset": {"reactivation_pending": ""}})
@@ -1016,6 +1025,20 @@ async def _reserve_reactivation_funds(r: dict, rid: str, plan: dict,
         await _abort_reactivation(r, rid, plan, settle_cur)
         raise HTTPException(status_code=409,
                             detail="Sin stock disponible para reactivar este canje")
+    if r.get("pickup_from_store") and r.get("store_id") \
+            and r.get("pickup_company_id") and plan.get("loc_op"):
+        # F2-B — reactivar una venta con recogida en tienda vuelve a descontar
+        # la MISMA estantería; si allí ya no hay existencias, se aborta todo
+        # (incluida la reserva de stock recién hecha) y se devuelve 409.
+        from services.company_inventory import reserve_pickup
+        loc_status = await reserve_pickup(
+            r["pickup_company_id"], r["product_id"], r["store_id"], qty,
+            plan["loc_op"])
+        if loc_status != "applied":
+            await _abort_reactivation(r, rid, plan, settle_cur)
+            raise HTTPException(
+                status_code=409,
+                detail="Sin stock en la tienda para reactivar este canje")
     st = await debit_balance_idempotent(r["user_id"], settle_cur, recharge,
                                         plan["debit_op"])
     if st == "insufficient":
@@ -1170,6 +1193,15 @@ async def _on_redemption_rejected(r: dict, rid: str, actor: dict,
     await apply_stock_idempotent(r["product_id"], round(float(r["quantity"]), 3),
                                  f"reject-stock:{rid}:c{cycle}",
                                  require_available=False)
+    # F2-B — venta con recogida en tienda: además del total, repón la MISMA
+    # estantería de origen (by_store[sid] + distributed), idempotente por ciclo.
+    if r.get("pickup_from_store") and r.get("store_id") \
+            and r.get("pickup_company_id"):
+        from services.company_inventory import restore_pickup
+        await restore_pickup(
+            r["pickup_company_id"], r["product_id"], r["store_id"],
+            round(float(r["quantity"]), 3), f"reject-loc:{rid}:c{cycle}",
+            actor=actor)
     # iter217 — reverso de inventario (producto empresa) + reverso del
     # crédito al vendedor VIP si ya se había pagado.
     product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})

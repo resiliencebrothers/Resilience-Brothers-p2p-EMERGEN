@@ -356,8 +356,11 @@ async def _new_pickup_code() -> str:
 
 
 async def _load_pickup_store(store_id: Optional[str], product: dict) -> dict:
-    """iter236 — valida la sucursal elegida para recogida en tienda."""
-    if product.get("owner_id"):
+    """iter236 / F2-B — valida la sucursal elegida para recogida en tienda.
+    Para productos de Empresa la tienda DEBE pertenecer a la Empresa dueña del
+    producto (company_id) y no estar en cierre; así la venta sólo puede salir
+    de una estantería real de esa Empresa."""
+    if product.get("owner_id") and not product.get("company_id"):
         raise HTTPException(
             status_code=400,
             detail="Los productos de vendedores VIP no admiten recogida en tienda")
@@ -365,8 +368,11 @@ async def _load_pickup_store(store_id: Optional[str], product: dict) -> dict:
         raise HTTPException(
             status_code=400,
             detail="Selecciona la tienda donde recogerás tu pedido")
-    store = await db.stores.find_one({"id": store_id, "active": True}, {"_id": 0})
-    if not store:
+    store_query: dict = {"id": store_id, "active": True}
+    if product.get("company_id"):
+        store_query["company_id"] = product["company_id"]
+    store = await db.stores.find_one(store_query, {"_id": 0})
+    if not store or store.get("status") == "closing":
         raise HTTPException(status_code=404,
                             detail="Tienda no encontrada o inactiva")
     allowed = product.get("available_store_ids") or []
@@ -406,15 +412,29 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     payload.quantity = norm_qty(product, payload.quantity)
     if payload.quantity <= 0:
         raise HTTPException(status_code=400, detail="Cantidad inválida")
-    # iter-F2-01 — para productos de Empresa lo VENDIBLE es el ALMACÉN CENTRAL
-    # (stock − distributed): las unidades distribuidas a tiendas no se venden por
-    # el marketplace. Así una venta nunca consume existencias asignadas a tiendas
-    # ni rompe el desglose por ubicación (total = central + distribuido).
-    sellable = product["stock"]
-    if product.get("company_id"):
-        sellable = round(product["stock"] - float(product.get("distributed") or 0), 3)
-    if sellable < payload.quantity:
-        raise HTTPException(status_code=400, detail="Stock insuficiente")
+    # F2-B — ORIGEN de la venta. Por defecto, para productos de Empresa lo
+    # vendible es el ALMACÉN CENTRAL (stock − distributed): las unidades
+    # distribuidas a tiendas no se venden por mensajería. Pero si el cliente
+    # elige RECOGIDA EN TIENDA de un producto de Empresa, la venta sale de la
+    # ESTANTERÍA de esa tienda (by_store[sid]) — no del central.
+    is_company_product = bool(product.get("company_id"))
+    pickup_store = None
+    if payload.fulfillment == "store_pickup":
+        pickup_store = await _load_pickup_store(payload.store_id, product)
+    is_pickup_from_store = bool(pickup_store) and is_company_product
+    pickup_store_id = pickup_store["id"] if pickup_store else ""
+    if is_pickup_from_store:
+        shelf = round(float((product.get("by_store") or {}).get(pickup_store_id) or 0), 3)
+        if shelf < payload.quantity:
+            raise HTTPException(
+                status_code=400,
+                detail="Stock insuficiente en la tienda seleccionada")
+    else:
+        sellable = product["stock"]
+        if product.get("company_id"):
+            sellable = round(product["stock"] - float(product.get("distributed") or 0), 3)
+        if sellable < payload.quantity:
+            raise HTTPException(status_code=400, detail="Stock insuficiente")
     # iter217 — un vendedor VIP no puede canjear su propio producto.
     if product.get("owner_id") and product["owner_id"] == user["user_id"]:
         raise HTTPException(status_code=400, detail="No puedes canjear tu propio producto")
@@ -442,10 +462,9 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         store_cost = round(float(product.get("cost_usd") or 0) * payload.quantity, 2)
         total = to_usdt(store_total, fx_rate)
         cost = to_usdt(store_cost, fx_rate) or 0.0
-    # iter236 — recogida en tienda: sin mensajería ni costo de envío.
-    pickup_store = None
-    if payload.fulfillment == "store_pickup":
-        pickup_store = await _load_pickup_store(payload.store_id, product)
+    # iter236 / F2-B — recogida en tienda: sin mensajería ni costo de envío
+    # (pickup_store ya se resolvió y validó arriba, incluido el stock de la
+    # estantería elegida para productos de Empresa).
     # iter198 — courier fee for the physical delivery. Free when the redeem
     # value reaches the USDT threshold; auto-quoted from the office when the
     # client picked coordinates; otherwise flagged for manual staff review.
@@ -541,8 +560,16 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     rdoc = r.model_dump()
     stock_op = f"redeem-stock:{r.id}"
     debit_op = f"redeem-debit:{r.id}"
-    rdoc.update({"status": "initializing", "init_op_id": debit_op,
-                 "stock_op_id": stock_op})
+    loc_op = f"redeem-loc:{r.id}"
+    init_fields: dict = {"status": "initializing", "init_op_id": debit_op,
+                         "stock_op_id": stock_op}
+    if is_pickup_from_store:
+        # F2-B — marcas DURABLES para que el rechazo y el healer repongan la
+        # MISMA tienda (by_store[sid] + distributed) exactamente una vez.
+        init_fields.update({"pickup_from_store": True,
+                            "pickup_company_id": product["company_id"],
+                            "loc_op_id": loc_op})
+    rdoc.update(init_fields)
     await db.redemptions.insert_one(rdoc)
     # iter-F2-01 — filtro de reserva. Para productos de Empresa añadimos la
     # GARANTÍA ATÓMICA de que el almacén central (stock − distributed) alcanza:
@@ -552,7 +579,13 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
                             "$or": [{"owner_id": {"$in": [None, ""]}},
                                     {"owner_id": {"$exists": False}},
                                     {"approval_status": "approved"}]}
-    if product.get("company_id"):
+    if is_pickup_from_store:
+        # F2-B — la reserva del TOTAL exige que la ESTANTERÍA elegida alcance,
+        # para que total y estantería caigan de forma consistente y atómica.
+        reserve_filter["$expr"] = {"$gte": [
+            {"$ifNull": [f"$by_store.{pickup_store_id}", 0]},
+            payload.quantity]}
+    elif product.get("company_id"):
         reserve_filter["$expr"] = {"$gte": [
             {"$subtract": [{"$ifNull": ["$stock", 0]},
                            {"$ifNull": ["$distributed", 0]}]},
@@ -563,12 +596,33 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     if stock_status == "insufficient":
         await db.redemptions.delete_one({"id": r.id, "status": "initializing"})
         raise HTTPException(status_code=400, detail="Stock insuficiente")
+    if is_pickup_from_store:
+        # F2-B — capa de UBICACIÓN: descuenta la estantería elegida (y
+        # distributed) por el MISMO importe. Si una carrera dejó la estantería
+        # sin existencias, se deshace la reserva del total y se aborta.
+        from services.company_inventory import reserve_pickup
+        loc_status = await reserve_pickup(
+            product["company_id"], product["id"], pickup_store_id,
+            payload.quantity, loc_op,
+            actor={"user_id": user["user_id"], "name": user["name"]})
+        if loc_status != "applied":
+            await apply_stock_idempotent(product["id"], payload.quantity,
+                                         f"{stock_op}:undo",
+                                         require_available=False)
+            await db.redemptions.delete_one({"id": r.id, "status": "initializing"})
+            raise HTTPException(
+                status_code=400,
+                detail="Stock insuficiente en la tienda seleccionada")
     debit_status = await debit_balance_idempotent(
         user["user_id"], "USDT", total + courier_fee_usd, debit_op)
     if debit_status == "insufficient":
         await apply_stock_idempotent(product["id"], payload.quantity,
                                      f"{stock_op}:undo",
                                      require_available=False)
+        if is_pickup_from_store:
+            from services.company_inventory import burn_or_undo_pickup
+            await burn_or_undo_pickup(product["company_id"], product["id"],
+                                      pickup_store_id, payload.quantity, loc_op)
         await db.redemptions.delete_one({"id": r.id, "status": "initializing"})
         raise HTTPException(
             status_code=409,
@@ -585,7 +639,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     act = await db.redemptions.update_one(
         {"id": r.id, "status": "initializing"},
         {"$set": act_sets,
-         "$unset": {"init_op_id": "", "stock_op_id": ""}})
+         "$unset": {"init_op_id": "", "stock_op_id": "", "loc_op_id": ""}})
     if act.matched_count == 0:
         # iter256(S03) — el healer revirtió este intento (tardó demasiado):
         # deshacer nuestros efectos con los MISMOS op_ids de undo del healer
@@ -597,6 +651,10 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         await apply_stock_idempotent(product["id"], payload.quantity,
                                      f"{stock_op}:undo",
                                      require_available=False)
+        if is_pickup_from_store:
+            from services.company_inventory import burn_or_undo_pickup
+            await burn_or_undo_pickup(product["company_id"], product["id"],
+                                      pickup_store_id, payload.quantity, loc_op)
         raise HTTPException(
             status_code=409,
             detail=("La solicitud tardó demasiado y fue revertida por "
@@ -638,6 +696,10 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
                 data={"redemption_id": r.id, "product_id": product["id"]})
         except Exception as e:
             logger.error(f"vendor sold notify failed: {e}")
+        # Alerta de stock bajo para la Empresa (la venta redujo el central).
+        if product.get("company_id"):
+            from services.company_inventory import maybe_alert_low_stock
+            await maybe_alert_low_stock(product["company_id"], product["id"])
     try:
         await notify_all_admins(
             db,

@@ -121,6 +121,13 @@ export default function MarketplaceView() {
     if (qtyNum <= 0) return toast.error(t("marketplace.invalidQty"));
     const pickup = fulfillment === "pickup";
     if (pickup && !storeId) return toast.error(t("marketplace.pickupStoreRequired"));
+    if (pickup) {
+      const sel = stores.find((s) => s.id === storeId);
+      if (sel && sel.available_qty !== undefined && sel.available_qty !== null
+          && Number(sel.available_qty) < qtyNum) {
+        return toast.error(t("marketplace.pickupStoreInsufficient"));
+      }
+    }
     if (!pickup && !addr) return toast.error(t("marketplace.addressRequired"));
     setBusy(true);
     try {
@@ -433,13 +440,24 @@ export default function MarketplaceView() {
             {fulfillment === "pickup" ? (
               <div className="space-y-2" data-testid="pickup-store-picker">
                 <Label className="micro-label text-neutral-500">{t("marketplace.pickupSelectStore")}</Label>
-                {stores.map((s) => (
+                {stores.length === 0 && (
+                  <p className="text-[0.7rem] text-amber-400" data-testid="pickup-no-stores">
+                    {t("marketplace.pickupNoStores")}
+                  </p>
+                )}
+                {stores.map((s) => {
+                  const tracked = s.available_qty !== undefined && s.available_qty !== null;
+                  const enough = !tracked || Number(s.available_qty) >= qtyNum;
+                  return (
                   <button
                     key={s.id}
                     data-testid={`pickup-store-option-${s.id}`}
-                    onClick={() => setStoreId(s.id)}
+                    disabled={tracked && !enough}
+                    onClick={() => enough && setStoreId(s.id)}
                     className={`block w-full text-left border p-3 transition-colors ${
-                      storeId === s.id
+                      !enough
+                        ? "border-white/5 opacity-50 cursor-not-allowed"
+                        : storeId === s.id
                         ? "border-[#8B5CF6] bg-[#8B5CF6]/10"
                         : "border-white/10 hover:border-white/30"
                     }`}
@@ -450,13 +468,24 @@ export default function MarketplaceView() {
                     <div className="text-xs text-neutral-400 mt-1">
                       {s.address}{[s.municipality, s.province].filter(Boolean).length > 0 ? ` — ${[s.municipality, s.province].filter(Boolean).join(", ")}` : ""}
                     </div>
+                    {tracked && (
+                      <div
+                        className={`text-[0.65rem] mt-1 font-mono ${enough ? "text-[#22C55E]" : "text-red-400"}`}
+                        data-testid={`pickup-store-stock-${s.id}`}
+                      >
+                        {enough
+                          ? t("marketplace.pickupStoreStock", { qty: s.available_qty })
+                          : t("marketplace.pickupStoreNoStock")}
+                      </div>
+                    )}
                     {(s.hours || s.phone) && (
                       <div className="text-[0.65rem] text-neutral-500 mt-0.5 font-mono">
                         {[s.hours, s.phone].filter(Boolean).join(" · ")}
                       </div>
                     )}
                   </button>
-                ))}
+                  );
+                })}
                 <p className="text-[0.65rem] text-[#22C55E]" data-testid="redeem-pickup-free-line">
                   {t("marketplace.pickupFreeLine")}
                 </p>

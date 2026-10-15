@@ -34,6 +34,7 @@ export default function CompanyDeliveriesView() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
+  const [fee, setFee] = useState(0);
 
   const load = useCallback(() => {
     axios.get(`${API}/company/deliveries`, { withCredentials: true }).then((r) => setItems(r.data)).catch(() => {});
@@ -41,6 +42,7 @@ export default function CompanyDeliveriesView() {
 
   useEffect(() => {
     load();
+    axios.get(`${API}/company/me`, { withCredentials: true }).then((r) => setFee(Number(r.data?.delivery_fee_usdt || 0))).catch(() => {});
     axios.get(`${API}/company/products`, { withCredentials: true }).then((r) => setProducts(r.data)).catch(() => {});
     axios.get(`${API}/company/stores`, { withCredentials: true }).then((r) => setStores(r.data)).catch(() => {});
   }, [load]);
@@ -91,6 +93,11 @@ export default function CompanyDeliveriesView() {
             <Truck className="w-6 h-6 text-[#8B5CF6]" /> Mensajería
           </h2>
           <p className="text-sm text-neutral-500 mt-1">Solicita un envío. Resilience asigna el mensajero (tú no lo eliges).</p>
+          <p className="text-xs mt-1" data-testid="company-delivery-fee-note">
+            {fee > 0
+              ? <span className="text-amber-300">Tarifa por envío: <span className="font-mono">{fee} USDT</span> · se retiene de tu sub-saldo y se reembolsa si cancelas antes de completarse.</span>
+              : <span className="text-emerald-400">Mensajería sin costo por ahora.</span>}
+          </p>
         </div>
         <Button data-testid="company-delivery-new-btn" onClick={() => { setForm(emptyForm); setOpen(true); }}
           className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none">
@@ -115,6 +122,14 @@ export default function CompanyDeliveriesView() {
                   <div className="flex items-start gap-2 text-sm text-neutral-400"><MapPin className="w-4 h-4 mt-0.5 text-neutral-600" /> {it.delivery_address}{it.municipality ? `, ${it.municipality}` : ""}{it.province ? `, ${it.province}` : ""}</div>
                   <div className="flex items-center gap-2 text-sm text-neutral-400"><Package className="w-4 h-4 text-neutral-600" /> {it.package_label}</div>
                   {it.courier_name && <div className="text-xs text-sky-300">Mensajero: {it.courier_name}</div>}
+                  {Number(it.fee_usdt || 0) > 0 && (
+                    <div className="text-xs text-neutral-500" data-testid={`company-delivery-fee-${it.id}`}>
+                      Tarifa: <span className="font-mono text-neutral-300">{it.fee_usdt} USDT</span>
+                      {it.fee_status === "held" && <span className="text-amber-300"> · retenida</span>}
+                      {it.fee_status === "charged" && <span className="text-emerald-400"> · cobrada</span>}
+                      {it.fee_status === "refunded" && <span className="text-neutral-400"> · reembolsada</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <span className={`text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${st.cls}`} data-testid={`company-delivery-status-${it.id}`}>{st.label}</span>
@@ -193,8 +208,11 @@ export default function CompanyDeliveriesView() {
               </div>
             )}
             <Button data-testid="company-delivery-save" onClick={submit} disabled={busy} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
-              {busy ? "…" : "Enviar solicitud"}
+              {busy ? "…" : (fee > 0 ? `Enviar solicitud · ${fee} USDT` : "Enviar solicitud")}
             </Button>
+            {fee > 0 && (
+              <p className="text-xs text-neutral-500 text-center">Se retienen {fee} USDT de tu sub-saldo al solicitar. Si cancelas antes de que se complete, se te reembolsan íntegros.</p>
+            )}
           </div>
         </div>
       )}

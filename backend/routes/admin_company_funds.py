@@ -557,6 +557,42 @@ async def admin_company_funds(request: Request) -> Any:
     return await _compute_company_funds(_actor_currency_scope(actor))
 
 
+class CompanyDeliveryFeePayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    fee_usdt: float = Field(..., ge=0, le=100000)
+
+
+@router.get("/admin/company-delivery-fee")
+async def get_company_delivery_fee_config(request: Request) -> Any:
+    """Config del ciclo económico de la mensajería de Empresa (Fase 4): tarifa
+    fija por envío y reparto mensajero/Resilience (comisión = 100 − parte del
+    mensajero), leído del mismo `settings.global`."""
+    await require_permission(request, "deliveries")
+    from services.company_delivery_billing import get_company_delivery_fee
+    from services.deliveries import get_share_pct
+    share_pct = await get_share_pct()
+    return {
+        "fee_usdt": await get_company_delivery_fee(),
+        "courier_share_pct": share_pct,
+        "resilience_commission_pct": round(100.0 - share_pct, 2),
+    }
+
+
+@router.put("/admin/company-delivery-fee")
+async def set_company_delivery_fee_config(payload: CompanyDeliveryFeePayload,
+                                          request: Request) -> Any:
+    actor = await require_permission(request, "deliveries")
+    fee = round(float(payload.fee_usdt), 2)
+    await db.settings.update_one(
+        {"id": "global"}, {"$set": {"company_delivery_fee_usdt": fee}},
+        upsert=True)
+    await log_action(db, actor, "settings.company_delivery_fee", "settings",
+                     "global", summary=f"Tarifa de mensajería Empresa = {fee} USDT",
+                     details={"fee_usdt": fee})
+    return {"ok": True, "fee_usdt": fee}
+
+
+
 @router.get("/admin/company-funds/reconciliation-health")
 async def admin_reconciliation_health(request: Request) -> Any:
     """SUN-08-R1-REC — salud EN TIEMPO REAL de las colas de recuperación POS/fondo.
