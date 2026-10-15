@@ -704,6 +704,17 @@
       "tabCouriers": "Couriers",
       "tabMuniRates": "Municipality rates",
       "tabCompanyFee": "Company fee",
+      "tabIncidents": "Incidents",
+      "incidents": {
+        "title": "Delivery incidents",
+        "desc": "Deliveries with a physical movement (delivered or confirmed) whose origin was rejected or cancelled. Review the cash or product and close them.",
+        "empty": "No open incidents.",
+        "loadError": "Could not load incidents.",
+        "row": "Origin: {{kind}} · delivery status: {{status}}",
+        "resolve": "Mark resolved",
+        "resolvePrompt": "Resolution note (optional):",
+        "resolved": "Incident resolved"
+      },
       "companyFee": {
         "title": "Company delivery fee",
         "desc": "Flat fee a Company pays Resilience per delivery request. Held from its sub-balance when the request is created and split when the delivery is confirmed.",

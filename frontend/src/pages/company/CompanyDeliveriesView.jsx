@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,7 @@ export default function CompanyDeliveriesView() {
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
   const [fee, setFee] = useState(0);
+  const clientKeyRef = useRef(null);
 
   const load = useCallback(() => {
     axios.get(`${API}/company/deliveries`, { withCredentials: true }).then((r) => setItems(r.data)).catch(() => {});
@@ -51,6 +52,11 @@ export default function CompanyDeliveriesView() {
     if (!form.receiver_name || form.receiver_name.trim().length < 2) return toast.error("Nombre del destinatario requerido");
     if (!form.receiver_phone) return toast.error("Teléfono del destinatario requerido");
     if (!form.delivery_address || form.delivery_address.trim().length < 5) return toast.error("Dirección de entrega requerida");
+    // E34-02 — clave de idempotencia ESTABLE por envío lógico: se genera UNA
+    // vez y se conserva en los reintentos (mismo envío ⇒ mismo cargo/reserva).
+    if (!clientKeyRef.current) {
+      clientKeyRef.current = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
+    }
     const body = {
       receiver_name: form.receiver_name.trim(),
       receiver_phone: form.receiver_phone.trim(),
@@ -58,6 +64,7 @@ export default function CompanyDeliveriesView() {
       province: form.province || "",
       municipality: form.municipality || "",
       note: form.note || "",
+      client_key: clientKeyRef.current,
     };
     if (form.fromStore) {
       if (!form.product_id || !form.origin_store_id || !form.quantity) return toast.error("Elige producto, tienda y cantidad");
@@ -66,9 +73,17 @@ export default function CompanyDeliveriesView() {
       body.quantity = parseFloat(form.quantity);
     }
     setBusy(true);
+    const doPost = () => axios.post(`${API}/company/deliveries`, body, { withCredentials: true });
     try {
-      await axios.post(`${API}/company/deliveries`, body, { withCredentials: true });
+      try {
+        await doPost();
+      } catch (e1) {
+        // Sin respuesta del servidor (red): reintenta UNA vez con la MISMA
+        // clave → el backend deduplica (no se cobra ni reserva dos veces).
+        if (!e1.response) { await doPost(); } else { throw e1; }
+      }
       toast.success("Solicitud enviada. Resilience asignará un mensajero.");
+      clientKeyRef.current = null;  // nuevo envío ⇒ nueva clave
       setOpen(false); setForm(emptyForm); load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "No se pudo crear la solicitud");

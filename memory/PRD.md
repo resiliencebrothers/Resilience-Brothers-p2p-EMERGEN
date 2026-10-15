@@ -2807,3 +2807,15 @@ Pruebas `tests/test_empresa_e34_cancel_race.py` 6/6: available→gana+compensa; 
 
 mypy limpio (114 fuentes), JSON/JSX válidos, smoke UI desktop+mobile del panel OK (sin overflow). Nuevas suites añadidas al Makefile. Nota: `test_iter257 D09 recovery-codes` es un flake de concurrencia preexistente (pasa en aislamiento), ajeno a estos cambios. Estado: en preview; pendiente de re-despliegue a producción.
 
+
+---
+## E34-02 + Incidencias de mensajería (fork 2026-06)
+
+### E34-02 (ALTA) — crear envío Empresa ahora idempotente y recuperable E2E
+Fix verificado: `client_key` estable por envío lógico, intención recuperable con op_ids/fases antes del débito; saldo+inventario+creación+enlace de entrega se reanudan por la misma identidad. Reintento devuelve la MISMA solicitud sin doble tarifa/reserva/trabajo. Recuperador en `services/credit_recovery.py` conectado al scheduler. Frontend `CompanyDeliveriesView.jsx` genera/retiene `client_key` y reintenta 1 vez ante pérdida de red. Pruebas: `test_empresa_e34_02_idempotent_create.py` + `test_empresa_e34_02_recovery.py`.
+
+### Incidencias de mensajería (panel admin) — gestión manual
+Entregas con `origin_conflict` (movimiento físico entregado/confirmado cuyo origen quedó rechazado/cancelado) se listan para revisión manual.
+- Backend `routes/deliveries.py`: `GET /admin/delivery-incidents` (solo abiertas: `origin_conflict.resolved != true`, orden desc por fecha) y `POST /admin/delivery-incidents/{did}/resolve` {note} → marca `resolved/resolved_by/resolved_at/resolution_note`, añade a timeline, log_action; 404 si no existe o ya resuelta (idempotente). Ambos requieren permiso `deliveries` (mensajero NO).
+- Frontend: `pages/admin/deliveries/DeliveryIncidentsTab.jsx`, pestaña "Incidencias" en `AdminDeliveries.jsx`. i18n es/en. data-testid en tabla/acciones.
+- Pruebas `test_delivery_incidents_admin.py` 3/3 (lista solo abiertas; resolve cierra idempotente→404 al repetir; no-admin 401/403). Regresión entregas Empresa 27/27. mypy+ruff limpios. Smoke UI mobile OK sin overflow. Estado: preview; pendiente re-despliegue a producción.

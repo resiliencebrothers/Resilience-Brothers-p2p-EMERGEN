@@ -16,6 +16,7 @@ Admin-facing (permission `withdrawals`):
 import logging
 import re
 import uuid
+from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -1078,6 +1079,48 @@ async def admin_deliveries_attention(request: Request) -> Any:
     await require_permission(request, "deliveries")
     from services.deliveries import find_attention_items
     return await find_attention_items()
+
+
+@router.get("/admin/delivery-incidents")
+async def admin_delivery_incidents(request: Request) -> Any:
+    """Incidencias de mensajería: entregas con MOVIMIENTO FÍSICO (entregadas/
+    confirmadas) cuyo origen quedó rechazado/cancelado (`origin_conflict`) y aún
+    SIN resolver. Para gestión manual: revisar el efectivo/producto y cerrar."""
+    await require_permission(request, "deliveries")
+    rows = await db.deliveries.find(
+        {"origin_conflict": {"$exists": True},
+         "origin_conflict.resolved": {"$ne": True}},
+        {"_id": 0}).sort("origin_conflict.at", -1).to_list(200)
+    return rows
+
+
+class _IncidentResolvePayload(BaseModel):
+    note: str = Field("", max_length=500)
+
+
+@router.post("/admin/delivery-incidents/{did}/resolve")
+async def admin_resolve_origin_conflict(did: str, payload: _IncidentResolvePayload,
+                                        request: Request) -> Any:
+    """Marca una incidencia como resuelta tras gestionarla manualmente
+    (idempotente: solo afecta incidencias abiertas)."""
+    actor = await require_permission(request, "deliveries")
+    now = iso(now_utc())
+    note = payload.note.strip()
+    res = await db.deliveries.update_one(
+        {"id": did, "origin_conflict": {"$exists": True},
+         "origin_conflict.resolved": {"$ne": True}},
+        {"$set": {"origin_conflict.resolved": True,
+                  "origin_conflict.resolved_by": actor["user_id"],
+                  "origin_conflict.resolved_at": now,
+                  "origin_conflict.resolution_note": note},
+         "$push": {"timeline": {"status": "incident_resolved", "at": now,
+                                "by": actor["user_id"], "note": note}}})
+    if res.modified_count == 0:
+        raise HTTPException(status_code=404,
+                            detail="Incidencia no encontrada o ya resuelta")
+    await log_action(db, actor, "delivery.incident_resolved", "delivery", did,
+                     details={"note": note})
+    return {"ok": True}
 
 
 @router.post("/admin/deliveries/{did}/retry-sync")

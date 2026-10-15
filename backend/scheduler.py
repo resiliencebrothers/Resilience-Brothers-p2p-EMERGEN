@@ -320,9 +320,11 @@ async def run_credit_recovery():
     claim y el abono). Idempotente por op_id; nunca duplica."""
     try:
         from services.credit_recovery import (heal_pending_credits,
-                                              heal_initializing_ops)
+                                              heal_initializing_ops,
+                                              heal_initializing_company_deliveries)
         n = await heal_pending_credits()
         n += await heal_initializing_ops()
+        n += await heal_initializing_company_deliveries()
         # iter257(D06) — compactación de registros embebidos: retira solo ops
         # con log duradero confirmado; los 'pending' se conservan como
         # evidencia (sustituye al viejo $slice ciego).

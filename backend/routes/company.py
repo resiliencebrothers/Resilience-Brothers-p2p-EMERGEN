@@ -12,10 +12,12 @@ solicitud de mensajería.
 """
 import uuid
 import logging
+from datetime import timedelta
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel, Field
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import require_company, now_utc, iso
@@ -525,6 +527,9 @@ class CompanyDeliveryCreate(BaseModel):
     product_id: Optional[str] = None
     origin_store_id: Optional[str] = None
     quantity: Optional[float] = Field(None, gt=0)
+    # E34-02 — clave de idempotencia por envío LÓGICO (la genera el cliente una
+    # vez y la reusa en los reintentos). Misma clave ⇒ misma solicitud.
+    client_key: Optional[str] = Field(None, max_length=100)
 
 
 async def _reconcile_delivery_inventory(company_id: str, req: dict,
@@ -556,93 +561,153 @@ async def _reconcile_delivery_inventory(company_id: str, req: dict,
     return True
 
 
+_CDELIV_IDX_READY = False
+
+
+async def _ensure_cdeliv_index() -> None:
+    """Índice único (empresa, client_key) para deduplicar el alta de envíos.
+    Sparse: no afecta a documentos antiguos sin client_key."""
+    global _CDELIV_IDX_READY
+    if _CDELIV_IDX_READY:
+        return
+    await db.company_delivery_requests.create_index(
+        [("company_id", 1), ("client_key", 1)], unique=True, sparse=True)
+    _CDELIV_IDX_READY = True
+
+
+async def _delivery_status_for(req: dict) -> str:
+    did = req.get("delivery_id")
+    if not did:
+        return req.get("status", "requested")
+    d = await db.deliveries.find_one({"id": did}, {"_id": 0, "status": 1})
+    return (d or {}).get("status", req.get("status", "requested"))
+
+
 @router.post("/deliveries")
 async def create_company_delivery(payload: CompanyDeliveryCreate,
                                   request: Request) -> Any:
-    user = await require_company(request)
-    reqid = str(uuid.uuid4())
-    inv_reserved = False
-    package_label = payload.note.strip() or "Envío de empresa"
-    pid_ = payload.product_id
-    sid_ = payload.origin_store_id
-    qty_ = payload.quantity
-    # Ciclo económico: RETIENE la tarifa fija del sub-saldo USDT ANTES de tocar
-    # inventario (así un fallo de saldo no deja mercancía reservada). Sin saldo
-    # suficiente → se rechaza y nada queda a medias.
-    fee = await billing.get_company_delivery_fee()
-    hold = await billing.hold_fee(user["user_id"], reqid, fee)
-    if hold == "insufficient":
-        raise HTTPException(
-            status_code=402,
-            detail=(f"Saldo insuficiente: la mensajería cuesta {fee} USDT. "
-                    "Recarga tu sub-saldo para solicitar el envío."))
-    try:
-        if pid_ or sid_ or qty_:
-            if not (pid_ and sid_ and qty_):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Para despachar desde una tienda indica producto, tienda y cantidad.")
-            prod = await db.products.find_one(
-                {"id": pid_, "company_id": user["user_id"]}, {"_id": 0})
-            if not prod:
-                raise HTTPException(status_code=404, detail="Producto no encontrado")
-            _reject_fraction(prod.get("unit", "unidad"), qty_)
-            await _ensure_owned_store(sid_, user["user_id"])
-            status = await company_inventory.dispatch_from_store(
-                user["user_id"], pid_, sid_, qty_,
-                op_id=f"cdeliv:{reqid}", actor=user)
-            if status == "insufficient":
-                raise HTTPException(
-                    status_code=409,
-                    detail="La tienda no tiene suficiente stock para este envío.")
-            if status != "applied":
-                raise HTTPException(status_code=400, detail="No se pudo reservar el stock")
-            inv_reserved = True
-            package_label = f"{prod['name']} ×{company_inventory._q(qty_)}"
-            # Alerta por tienda: el despacho pudo agotar esa sucursal.
-            await company_inventory.maybe_alert_store_out_of_stock(
-                user["user_id"], pid_, sid_)
-    except HTTPException:
-        # Cualquier fallo tras retener la tarifa → devuélvela íntegra.
-        await billing.refund_fee(user["user_id"], reqid, fee)
-        raise
+    """E34-02 — alta de envío IDEMPOTENTE y RECUPERABLE de extremo a extremo.
 
+    Una `client_key` ESTABLE por envío lógico deduplica reintentos y POSTs
+    simultáneos: la MISMA clave ⇒ la MISMA solicitud, un ÚNICO cargo y una
+    ÚNICA reserva. Se guarda primero una INTENCIÓN duradera ('initializing') y
+    luego se ejecutan fases idempotentes por op_id ligado al reqid: (1) retener
+    tarifa, (2) reservar inventario, (3) crear/enlazar el trabajo, (4) activar.
+    Un crash a mitad se RETOMA en el reintento (misma clave) o lo COMPENSA el
+    recuperador `heal_initializing_company_deliveries` con decisión duradera."""
+    user = await require_company(request)
+    cid = user["user_id"]
+    await _ensure_cdeliv_index()
+
+    # --- Validación PURA (sin escrituras ni cargos): errores limpios sin efectos.
+    pid_, sid_, qty_ = payload.product_id, payload.origin_store_id, payload.quantity
+    has_inv = bool(pid_ or sid_ or qty_)
+    prod = None
+    if has_inv:
+        if not (pid_ and sid_ and qty_):
+            raise HTTPException(
+                status_code=400,
+                detail="Para despachar desde una tienda indica producto, tienda y cantidad.")
+        prod = await db.products.find_one({"id": pid_, "company_id": cid}, {"_id": 0})
+        if not prod:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+        _reject_fraction(prod.get("unit", "unidad"), qty_)
+        await _ensure_owned_store(sid_, cid)
+
+    fee = await billing.get_company_delivery_fee()
     now = iso(now_utc())
-    req = {
-        "id": reqid,
-        "company_id": user["user_id"],
+    client_key = (payload.client_key or str(uuid.uuid4())).strip()
+    package_label = (f"{prod['name']} ×{company_inventory._q(qty_)}" if prod
+                     else (payload.note.strip() or "Envío de empresa"))
+
+    # --- INTENCIÓN duradera (dedup de reintentos y POSTs simultáneos).
+    reqid = str(uuid.uuid4())
+    intent = {
+        "id": reqid, "company_id": cid, "client_key": client_key,
         "company_name": user.get("name", ""),
         "receiver_name": payload.receiver_name.strip(),
         "receiver_phone": payload.receiver_phone.strip(),
         "delivery_address": payload.delivery_address.strip(),
-        "province": payload.province.strip(),
-        "municipality": payload.municipality.strip(),
+        "province": payload.province.strip(), "municipality": payload.municipality.strip(),
         "note": payload.note.strip(),
-        "product_id": payload.product_id,
-        "origin_store_id": payload.origin_store_id,
-        "quantity": payload.quantity,
+        "product_id": pid_, "origin_store_id": sid_, "quantity": qty_,
         "package_label": package_label,
-        "inv_reserved": inv_reserved,
-        "inv_returned": False,
-        "fee_usdt": fee,
-        "fee_status": "held" if fee > 0 else "none",
-        "status": "requested",
-        "delivery_id": None,
-        "created_at": now,
-        "updated_at": now,
+        "inv_reserved": False, "inv_returned": False,
+        "fee_usdt": fee, "fee_status": "pending" if fee > 0 else "none",
+        "status": "initializing", "delivery_id": None,
+        "created_at": now, "updated_at": now,
     }
-    await db.company_delivery_requests.insert_one(dict(req))
-    # Crea el trabajo de mensajería (entra al pool de Resilience, sin mensajero).
-    # La tarifa real viaja al documento de entrega: al confirmar, el mensajero
-    # cobra su parte y Resilience retiene la comisión (mecanismo existente).
+    try:
+        await db.company_delivery_requests.insert_one(dict(intent))
+        req = intent
+    except DuplicateKeyError:
+        req = await db.company_delivery_requests.find_one(
+            {"company_id": cid, "client_key": client_key}, {"_id": 0})
+        if not req:
+            raise HTTPException(status_code=409, detail="Conflicto de clave; reintenta.")
+        st = req.get("status")
+        if st == "initializing":
+            # Reintento/concurrencia: RETOMAR con el MISMO reqid y payload guardado.
+            reqid = req["id"]
+            fee = float(req.get("fee_usdt") or 0)
+            pid_, sid_, qty_ = req.get("product_id"), req.get("origin_store_id"), req.get("quantity")
+            has_inv = bool(pid_ and sid_ and qty_)
+        elif st == "failed_init":
+            # El recuperador ya compensó este envío → pide crear uno nuevo.
+            raise HTTPException(
+                status_code=409,
+                detail="Ese envío no se completó y fue revertido. Vuelve a crearlo.")
+        else:
+            # Ya creado → devolver el MISMO (idempotente, sin doble efecto).
+            return {**req, "delivery_status": await _delivery_status_for(req)}
+
+    # --- FASE 1: retener la tarifa (idempotente por reqid).
+    if fee > 0 and req.get("fee_status") != "held":
+        hold = await billing.hold_fee(cid, reqid, fee)
+        if hold == "insufficient":
+            # Aún no hay inventario reservado → elimina la intención (si es nuestra).
+            await db.company_delivery_requests.delete_one(
+                {"id": reqid, "status": "initializing"})
+            raise HTTPException(
+                status_code=402,
+                detail=(f"Saldo insuficiente: la mensajería cuesta {fee} USDT. "
+                        "Recarga tu sub-saldo para solicitar el envío."))
+        await db.company_delivery_requests.update_one(
+            {"id": reqid}, {"$set": {"fee_status": "held", "updated_at": iso(now_utc())}})
+
+    # --- FASE 2: reservar inventario (idempotente por op cdeliv:{reqid}).
+    if has_inv and not req.get("inv_reserved"):
+        assert pid_ and sid_ and qty_  # garantizado por has_inv
+        status = await company_inventory.dispatch_from_store(
+            cid, pid_, sid_, qty_, op_id=f"cdeliv:{reqid}", actor=user)
+        if status not in ("applied", "duplicate"):
+            # No se pudo reservar → reembolsa la tarifa y elimina la intención.
+            await billing.refund_fee(cid, reqid, fee)
+            await db.company_delivery_requests.delete_one(
+                {"id": reqid, "status": "initializing"})
+            detail = ("La tienda no tiene suficiente stock para este envío."
+                      if status == "insufficient" else "No se pudo reservar el stock")
+            raise HTTPException(
+                status_code=409 if status == "insufficient" else 400, detail=detail)
+        await db.company_delivery_requests.update_one(
+            {"id": reqid}, {"$set": {"inv_reserved": True, "updated_at": iso(now_utc())}})
+        await company_inventory.maybe_alert_store_out_of_stock(cid, pid_, sid_)
+
+    # --- FASE 3: crear/enlazar el trabajo (idempotente por active_key).
     from services.deliveries import ensure_delivery_job
+    req_for_job = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
     job = await ensure_delivery_job(
-        "company_delivery", req, km=0, fee_usdt=fee, actor_id=user["user_id"])
+        "company_delivery", req_for_job, km=0, fee_usdt=fee, actor_id=cid)
+
+    # --- FASE 4: activar (initializing → requested) y enlazar la entrega. Las
+    # fases son idempotentes ⇒ dos POSTs con la misma clave convergen al MISMO
+    # envío/cargo/reserva.
     await db.company_delivery_requests.update_one(
-        {"id": reqid}, {"$set": {"delivery_id": job["id"]}})
-    req["delivery_id"] = job["id"]
-    req.pop("_id", None)
-    return {**req, "delivery_status": "available"}
+        {"id": reqid},
+        {"$set": {"status": "requested", "delivery_id": job["id"],
+                  "updated_at": iso(now_utc())}})
+    final = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+    return {**final, "delivery_status": job.get("status", "available")}
 
 
 @router.get("/deliveries")

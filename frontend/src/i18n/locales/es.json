@@ -704,6 +704,17 @@
       "tabCouriers": "Mensajeros",
       "tabMuniRates": "Tarifas municipio",
       "tabCompanyFee": "Tarifa Empresa",
+      "tabIncidents": "Incidencias",
+      "incidents": {
+        "title": "Incidencias de mensajería",
+        "desc": "Entregas con movimiento físico (entregadas o confirmadas) cuyo origen quedó rechazado o cancelado. Revisa el efectivo o producto y ciérralas.",
+        "empty": "No hay incidencias abiertas.",
+        "loadError": "No se pudieron cargar las incidencias.",
+        "row": "Origen: {{kind}} · estado de la entrega: {{status}}",
+        "resolve": "Marcar resuelta",
+        "resolvePrompt": "Nota de resolución (opcional):",
+        "resolved": "Incidencia resuelta"
+      },
       "companyFee": {
         "title": "Tarifa de mensajería Empresa",
         "desc": "Tarifa fija que una Empresa paga por cada solicitud de envío a Resilience. Se retiene de su sub-saldo al crear la solicitud y se reparte al confirmar la entrega.",

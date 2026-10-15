@@ -17,6 +17,7 @@ import { createLatestGuard } from "@/lib/latestResponseGuard";
 import DeliveryDetailsDialog from "./deliveries/DeliveryDetailsDialog";
 import MunicipalityRatesTab from "./deliveries/MunicipalityRatesTab";
 import CompanyDeliveryFeeTab from "./deliveries/CompanyDeliveryFeeTab";
+import DeliveryIncidentsTab from "./deliveries/DeliveryIncidentsTab";
 import CourierCashTab from "./deliveries/CourierCashTab";
 import DeliveryMetricsTab from "./deliveries/DeliveryMetricsTab";
 import CourierPanel from "@/pages/dashboard/CourierPanel";
@@ -1176,6 +1177,13 @@ export default function AdminDeliveries() {
         >
           {t("admin.deliveries.tabCompanyFee")}
         </button>
+        <button
+          onClick={() => setTab("incidents")}
+          data-testid="admin-tab-incidents"
+          className={`px-4 py-2.5 text-sm border-b-2 -mb-px whitespace-nowrap ${tab === "incidents" ? "border-amber-400 text-amber-400" : "border-transparent text-neutral-500 hover:text-white"}`}
+        >
+          {t("admin.deliveries.tabIncidents")}
+        </button>
       </div>
 
       {tab === "deliveries" ? <DeliveriesTab navigate={navigate} />
@@ -1184,6 +1192,7 @@ export default function AdminDeliveries() {
         : tab === "my" ? <div data-testid="admin-my-deliveries"><CourierPanel embedded /></div>
         : tab === "rates" ? <MunicipalityRatesTab />
         : tab === "company-fee" ? <CompanyDeliveryFeeTab />
+        : tab === "incidents" ? <DeliveryIncidentsTab />
         : tab === "cash" ? <CourierCashTab />
         : tab === "metrics" ? <DeliveryMetricsTab />
         : <CouriersTab navigate={navigate} />}
