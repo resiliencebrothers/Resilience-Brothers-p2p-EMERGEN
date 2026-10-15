@@ -1,0 +1,25 @@
+{
+  "summary": "E2E empresa KYC/verification flow validated end-to-end via Playwright with cookie-based auth. All critical acceptance checks pass: /company shows Verificación + Seguridad tabs; clicking Verificación navigates to /company/kyc and renders company-kyc-page (not personal identity form); form collects fiscal code + legal address + 2 docs (image + PDF supported); submit button is disabled until all fields+docs ready; POST /api/kyc/company/submit returns 200; status flips to 'En revisión' (company-kyc-settled). Wallet verification gate works: /company/wallet withdraw button triggers verification-gate-banner with gate-cta-kyc that routes to /company/kyc (not bouncing to /company). Admin review: /admin/kyc shows kyc-row-company-* with Empresa badge; approve dialog (kyc-action-dialog) shows kyc-company-badge, kyc-company-fields with fiscal_code+legal_address, tax_certificate as image and operating_license as 'Ver PDF' link. Approve request returns 200 and empresa final status becomes 'Verificada'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/_seed_empresa_e2e.py",
+    "/app/backend/tests/test_empresa_kyc_company.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CompanyKYCView.jsx (272 LOC) acceptable but refs object recreated every render (fileRefs object literal in function body) - minor; useRef values are stable but outer object identity changes. Not functional bug."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Cookie session_token=test_session_empresa_e2e_X (user_test_empresa_e2e, role=empresa) and session_token=test_session_admin_X (admin). Seeded via /app/backend/tests/_seed_empresa_e2e.py",
+  "seed_data_creation": "Seeded user_test_empresa_e2e (empresa, active, email+phone verified, kyc=unverified) + session; also upserted admin session. KYC verification created and approved during run; final kyc_status=verified.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To re-run: `python /app/backend/tests/_seed_empresa_e2e.py` then use cookies on preview. PNG+PDF fixtures at /tmp/test_tax.png and /tmp/test_license.pdf. The approve button inside kyc-row-company-* uses data-testid=kyc-approve-btn-<verification_id> (NOT nested inside the row element in DOM; select at page level).",
+  "rca of the issue": "N/A - all flows passed."
+}
