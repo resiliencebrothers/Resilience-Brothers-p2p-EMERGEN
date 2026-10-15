@@ -633,6 +633,7 @@ async def build_inventory_rows(company_id: str) -> list:
         distributed = round(sum(_q(v) for v in by_store.values()), QTY_DECIMALS)
         central = round(total - distributed, QTY_DECIMALS)
         min_stock = _q(p.get("min_stock"))
+        store_min = p.get("store_min") or {}
         rows.append({
             "product_id": p["id"],
             "name": p.get("name", ""),
@@ -645,7 +646,9 @@ async def build_inventory_rows(company_id: str) -> list:
             "low": bool(min_stock > 0 and central <= min_stock),
             "stores": [
                 {"store_id": sid, "store_name": name_by_id.get(sid, "tienda eliminada"),
-                 "qty": _q(q)}
+                 "qty": _q(q),
+                 "min": _q(store_min.get(sid)),
+                 "low": bool(_q(store_min.get(sid)) > 0 and _q(q) <= _q(store_min.get(sid)))}
                 for sid, q in by_store.items() if _q(q) > 0
             ],
         })
@@ -703,11 +706,11 @@ async def maybe_alert_low_stock(company_id: str, product_id: str) -> None:
 
 async def maybe_alert_store_out_of_stock(company_id: str, product_id: str,
                                          store_id: str) -> None:
-    """Alerta POR TIENDA (Empresa): cuando una SUCURSAL concreta se queda SIN
-    existencias de un producto (by_store[sid] ≤ 0), avisa UNA vez a la Empresa
-    para que reabastezca ESA tienda. Se RE-ARMA cuando la tienda vuelve a tener
-    existencias (distribución/reabastecimiento). No alerta por tiendas que ya
-    no existen o están en cierre (el vaciado por cierre no es "agotado").
+    """Alerta POR TIENDA (Empresa): cuando una SUCURSAL concreta cae a/por
+    debajo de SU umbral configurable `store_min[sid]` (0 = sin existencias),
+    avisa UNA vez a la Empresa para reabastecer ANTES de agotarse. Se RE-ARMA
+    cuando la tienda vuelve a superar ese umbral (distribución/reabastecimiento).
+    No alerta por tiendas inexistentes o en cierre (vaciado intencional).
     Best-effort: nunca rompe el flujo de la venta/despacho."""
     if not store_id:
         return
@@ -715,12 +718,13 @@ async def maybe_alert_store_out_of_stock(company_id: str, product_id: str,
         p = await db.products.find_one(
             {"id": product_id, "company_id": company_id},
             {"_id": 0, "id": 1, "name": 1, f"by_store.{store_id}": 1,
-             f"store_low_alerted.{store_id}": 1})
+             f"store_min.{store_id}": 1, f"store_low_alerted.{store_id}": 1})
         if not p:
             return
         shelf = _q((p.get("by_store") or {}).get(store_id))
+        threshold = _q((p.get("store_min") or {}).get(store_id))
         alerted = bool((p.get("store_low_alerted") or {}).get(store_id))
-        if shelf <= 0 and not alerted:
+        if shelf <= threshold and not alerted:
             # No avisar por una tienda inexistente o en cierre (su vaciado es
             # intencional, no un agotamiento por ventas).
             store = await db.stores.find_one(
@@ -734,17 +738,26 @@ async def maybe_alert_store_out_of_stock(company_id: str, product_id: str,
             try:
                 from routes.notifications import _insert_notification
                 sname = store.get("name", "") or "una tienda"
+                pname = p.get("name", "")
+                if shelf <= 0:
+                    title = "Tienda sin existencias"
+                    msg = (f"«{pname}» se agotó en {sname}. Reabastece esa "
+                           "sucursal (distribuye desde el almacén central) para "
+                           "seguir vendiendo allí.")
+                else:
+                    title = "Stock bajo en tienda"
+                    msg = (f"«{pname}» está por debajo del mínimo en {sname} "
+                           f"(quedan {_q(shelf)}, mínimo {_q(threshold)}). "
+                           "Reabastece esa sucursal antes de que se agote.")
                 await _insert_notification(
                     recipient_user_id=company_id, type="company_store_out_of_stock",
-                    title="Tienda sin existencias",
-                    message=(f"«{p.get('name', '')}» se agotó en {sname}. "
-                             "Reabastece esa sucursal (distribuye desde el "
-                             "almacén central) para seguir vendiendo allí."),
+                    title=title, message=msg,
                     data={"product_id": product_id, "store_id": store_id,
-                          "store_name": sname})
+                          "store_name": sname, "remaining": _q(shelf),
+                          "min_stock": _q(threshold)})
             except Exception as e:  # noqa: BLE001
                 logger.error(f"store-out-of-stock notify failed: {e}")
-        elif shelf > 0 and alerted:
+        elif shelf > threshold and alerted:
             await db.products.update_one(
                 {"id": product_id, "company_id": company_id},
                 {"$set": {f"store_low_alerted.{store_id}": False}})

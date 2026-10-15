@@ -2785,3 +2785,25 @@ Antes solo existía la alerta del almacén CENTRAL. Ahora, cuando una SUCURSAL c
 
 Regresión verde: F2-B pickup (service+http), phase4, low_stock, f4_billing, iter236. mypy limpio (114 fuentes). Ambas suites añadidas a la suite crítica/Empresa del Makefile. Estado: en preview; pendiente de re-despliegue a producción.
 
+
+
+## E34-01 + ajustes (fork 2026-06) — carrera de cancelación Empresa, mínimo por tienda, comisión editable
+
+### E34-01 (ALTA) — la cancelación de Empresa devolvía fondos/stock sin ganar la cancelación
+Bug: `cancel_company_delivery` decidía por una LECTURA y luego llamaba `cancel_active_delivery` (filtro genérico que permitía accepted/on_the_way); además el reembolso, el retorno de stock y el sello de solicitud corrían aunque `matched_count==0`. Resultado reproducido: entrega delivered/accepted + solicitud cancelled + reembolso + retorno de mercancía.
+Fix (`routes/company.py`): transición ATÓMICA específica de Empresa — la entrega se cancela SOLO si `status ∈ {available, assigned}` y `payout_credited != True`, decidido EN la escritura. Las compensaciones (reembolso idempotente `refund_fee`, retorno de inventario idempotente `return_dispatch`, sello de solicitud) corren SOLO si la cancelación se ganó (`matched_count`) o hay EVIDENCIA DURADERA (`delivery.status=='cancelled'`, reintento tras caída; este handler es el único que cancela company_delivery). En conflicto → relee y 409 SIN efectos. `_settle_company_delivery` endurecido: ambos efectos condicionados a `status != cancelled` (un origen cancelado nunca se trata como liquidación correcta).
+Pruebas `tests/test_empresa_e34_cancel_race.py` 6/6: available→gana+compensa; accepted/delivered/confirmed entre lectura y escritura→409 sin efecto; assigned→gana; reintento tras caída→efecto económico único (sin doble reembolso/retorno).
+
+### Mínimo por tienda — umbral configurable por sucursal (no solo 0)
+- Producto lleva mapa `store_min[sid]`. `maybe_alert_store_out_of_stock` alerta cuando `by_store[sid] ≤ store_min[sid]` (0 = solo al agotarse), mensaje "agotado" vs "bajo mínimo (quedan X, mínimo Y)". Re-armable al superar el umbral.
+- Nuevo endpoint `POST /company/inventory/store-min` {product_id, store_id, min_stock} (valida producto+tienda de la Empresa, re-evalúa la alerta). `build_inventory_rows` añade `min` y `low` por tienda.
+- UI `CompanyInventoryView.jsx`: cada chip de tienda muestra `mín X`, tinte ámbar + "bajo" cuando está por debajo, y botón campana (modo `storemin`) para fijar el umbral.
+- Pruebas: `test_empresa_store_out_of_stock.py` +1 (umbral avisa antes de agotarse y re-arma), `test_empresa_store_min_endpoint.py` 2/2 (endpoint fija y refleja min/low; rechaza tienda ajena).
+
+### Comisión Resilience editable en el panel de tarifa
+- `PUT /admin/company-delivery-fee` acepta opcional `resilience_commission_pct` → persiste `courier_share_pct = 100 − comisión` en settings.global; el GET/PUT devuelven ambos. (El reparto es global para todas las entregas.)
+- UI `CompanyDeliveryFeeTab.jsx`: input editable de comisión + reparto recomputado en vivo; Save envía tarifa y comisión.
+- Pruebas: `test_empresa_company_delivery_fee_admin.py` +2 (comisión actualiza reparto y persiste; rechaza >100).
+
+mypy limpio (114 fuentes), JSON/JSX válidos, smoke UI desktop+mobile del panel OK (sin overflow). Nuevas suites añadidas al Makefile. Nota: `test_iter257 D09 recovery-codes` es un flake de concurrencia preexistente (pasa en aislamiento), ajeno a estos cambios. Estado: en preview; pendiente de re-despliegue a producción.
+

@@ -356,6 +356,14 @@ class InvAdjustPayload(BaseModel):
     op_id: Optional[str] = Field(None, max_length=80)
 
 
+class StoreMinPayload(BaseModel):
+    product_id: str
+    store_id: str
+    # Umbral POR TIENDA (0 = avisar solo al agotarse). Igual que el mínimo
+    # central pero por sucursal, para avisar ANTES de que se agote.
+    min_stock: float = Field(0, ge=0)
+
+
 @router.get("/inventory")
 async def get_inventory(request: Request) -> Any:
     user = await require_company(request)
@@ -482,6 +490,22 @@ async def inventory_adjust(payload: InvAdjustPayload, request: Request) -> Any:
     await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
     return {"ok": True}
 
+
+@router.post("/inventory/store-min")
+async def set_store_min(payload: StoreMinPayload, request: Request) -> Any:
+    """Configura el UMBRAL de stock bajo POR TIENDA de un producto. Al caer la
+    estantería a/por debajo del umbral, la Empresa recibe un aviso (re-armable).
+    0 = avisar solo cuando se agote."""
+    user = await require_company(request)
+    await _ensure_owned_product(payload.product_id, user["user_id"])
+    await _ensure_owned_store(payload.store_id, user["user_id"])
+    await db.products.update_one(
+        {"id": payload.product_id, "company_id": user["user_id"]},
+        {"$set": {f"store_min.{payload.store_id}": round(float(payload.min_stock), 3)}})
+    # Re-evaluar la alerta con el nuevo umbral (puede disparar o re-armar).
+    await company_inventory.maybe_alert_store_out_of_stock(
+        user["user_id"], payload.product_id, payload.store_id)
+    return {"ok": True, "min_stock": round(float(payload.min_stock), 3)}
 
 
 # ============================================================
@@ -656,22 +680,55 @@ async def cancel_company_delivery(req_id: str, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     if req.get("status") == "cancelled":
         return {"ok": True}
-    from services.deliveries import cancel_active_delivery, publish_delivery_event
-    d = await db.deliveries.find_one(
-        {"id": req.get("delivery_id")},
-        {"_id": 0, "status": 1, "courier_id": 1, "assigned_to_courier_id": 1})
-    if d and d["status"] not in ("available", "assigned"):
-        raise HTTPException(
-            status_code=409,
-            detail="La entrega ya fue aceptada por un mensajero; contacta a Resilience para cancelarla.")
-    res = await cancel_active_delivery(
-        "company_delivery", req_id, actor_id=user["user_id"],
-        note="Cancelada por la empresa")
-    if res.matched_count and req.get("delivery_id"):
-        await publish_delivery_event(
-            req["delivery_id"], "cancelled",
-            courier_ids=None if (not d or d["status"] == "available")
-            else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+    from services.deliveries import publish_delivery_event
+    now = iso(now_utc())
+    did = req.get("delivery_id")
+    won = False
+    courier_ids = None
+    if did:
+        # E34-01 — transición ATÓMICA específica de Empresa. Solo se puede
+        # cancelar si la entrega sigue SIN aceptar por un mensajero
+        # (available/assigned). El estado se DECIDE EN la escritura, no en una
+        # lectura previa: así una aceptación/entrega intercalada hace perder la
+        # cancelación en lugar de sobrescribirla.
+        res = await db.deliveries.update_one(
+            {"id": did, "kind": "company_delivery", "ref_id": req_id,
+             "status": {"$in": ["available", "assigned"]},
+             "payout_credited": {"$ne": True}},
+            {"$set": {"status": "cancelled", "updated_at": now},
+             "$unset": {"active_key": ""},
+             "$push": {"timeline": {"status": "cancelled", "at": now,
+                                    "by": user["user_id"],
+                                    "note": "Cancelada por la empresa"}}})
+        if res.matched_count:
+            won = True  # ganamos la cancelación ahora mismo
+        else:
+            # No ganamos la escritura: releemos para distinguir conflicto real
+            # de EVIDENCIA DURADERA de una cancelación ya ganada (reintento tras
+            # caída). Para company_delivery, este handler es el ÚNICO que cancela
+            # ⇒ delivery.status=='cancelled' prueba que ya ganó esta solicitud.
+            d = await db.deliveries.find_one({"id": did}, {"_id": 0, "status": 1})
+            if d and d.get("status") == "cancelled":
+                won = True
+            else:
+                # Aceptada/en camino/entregada/confirmada → CONFLICTO real:
+                # 409 SIN ningún efecto económico ni de inventario.
+                raise HTTPException(
+                    status_code=409,
+                    detail="La entrega ya fue aceptada por un mensajero; "
+                           "contacta a Resilience para cancelarla.")
+        d2 = await db.deliveries.find_one(
+            {"id": did}, {"_id": 0, "courier_id": 1, "assigned_to_courier_id": 1})
+        if d2 and (d2.get("courier_id") or d2.get("assigned_to_courier_id")):
+            courier_ids = [d2.get("courier_id"), d2.get("assigned_to_courier_id")]
+    else:
+        won = True  # sin entrega asociada (no debería ocurrir)
+
+    # A PARTIR DE AQUÍ la cancelación está GANADA (ahora o por evidencia
+    # duradera). Toda compensación es IDEMPOTENTE ⇒ efecto económico único,
+    # recuperable ante reintento tras caída.
+    if did:
+        await publish_delivery_event(did, "cancelled", courier_ids=courier_ids)
     # Reembolsa la tarifa retenida (idempotente, exactamente una vez).
     if req.get("fee_status") == "held":
         await billing.refund_fee(user["user_id"], req_id,
@@ -695,13 +752,19 @@ async def cancel_company_delivery(req_id: str, request: Request) -> Any:
 async def _settle_company_delivery(ref_id: str, actor: dict) -> None:
     """Liquidación al CONFIRMARSE la entrega: la tarifa retenida se consume (el
     mensajero ya cobró su parte y Resilience la comisión, por el mecanismo de
-    entregas). Marca la solicitud como confirmada y la tarifa como cobrada."""
+    entregas). Marca la solicitud como confirmada y la tarifa como cobrada.
+
+    E34-01 — NUNCA liquida una solicitud CANCELADA: ambos efectos están
+    condicionados a status != cancelled, de modo que un origen cancelado no se
+    trata como liquidación correcta (si hubiera una contradicción
+    entrega-confirmada/solicitud-cancelada, no se borra: la tarifa no se cobra
+    sobre lo ya reembolsado)."""
     now = iso(now_utc())
     await db.company_delivery_requests.update_one(
         {"id": ref_id, "status": {"$ne": "cancelled"}},
         {"$set": {"status": "confirmed", "updated_at": now}})
     await db.company_delivery_requests.update_one(
-        {"id": ref_id, "fee_status": "held"},
+        {"id": ref_id, "status": {"$ne": "cancelled"}, "fee_status": "held"},
         {"$set": {"fee_status": "charged"}})
 
 

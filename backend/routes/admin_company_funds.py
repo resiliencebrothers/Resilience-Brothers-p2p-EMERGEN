@@ -560,6 +560,8 @@ async def admin_company_funds(request: Request) -> Any:
 class CompanyDeliveryFeePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
     fee_usdt: float = Field(..., ge=0, le=100000)
+    # Opcional: comisión de Resilience (%); la parte del mensajero = 100 − esta.
+    resilience_commission_pct: Optional[float] = Field(None, ge=0, le=100)
 
 
 @router.get("/admin/company-delivery-fee")
@@ -583,13 +585,23 @@ async def set_company_delivery_fee_config(payload: CompanyDeliveryFeePayload,
                                           request: Request) -> Any:
     actor = await require_permission(request, "deliveries")
     fee = round(float(payload.fee_usdt), 2)
+    sets: dict = {"company_delivery_fee_usdt": fee}
+    summary = f"Tarifa de mensajería Empresa = {fee} USDT"
+    if payload.resilience_commission_pct is not None:
+        # El reparto se guarda como parte del MENSAJERO (courier_share_pct);
+        # la comisión de Resilience es el complemento a 100.
+        commission = round(float(payload.resilience_commission_pct), 2)
+        courier = round(100.0 - commission, 2)
+        sets["courier_share_pct"] = courier
+        summary += f"; comisión Resilience = {commission}% (mensajero {courier}%)"
     await db.settings.update_one(
-        {"id": "global"}, {"$set": {"company_delivery_fee_usdt": fee}},
-        upsert=True)
+        {"id": "global"}, {"$set": sets}, upsert=True)
     await log_action(db, actor, "settings.company_delivery_fee", "settings",
-                     "global", summary=f"Tarifa de mensajería Empresa = {fee} USDT",
-                     details={"fee_usdt": fee})
-    return {"ok": True, "fee_usdt": fee}
+                     "global", summary=summary, details=sets)
+    from services.deliveries import get_share_pct
+    share_pct = await get_share_pct()
+    return {"ok": True, "fee_usdt": fee, "courier_share_pct": share_pct,
+            "resilience_commission_pct": round(100.0 - share_pct, 2)}
 
 
 

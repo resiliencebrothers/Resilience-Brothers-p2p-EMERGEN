@@ -22,12 +22,15 @@ def _db():
 
 class TestCompanyDeliveryFeeAdmin:
     def setup_method(self, _):
-        s = _db().settings.find_one({"id": "global"}, {"_id": 0, "company_delivery_fee_usdt": 1}) or {}
+        s = _db().settings.find_one({"id": "global"},
+            {"_id": 0, "company_delivery_fee_usdt": 1, "courier_share_pct": 1}) or {}
         self._prev = s.get("company_delivery_fee_usdt", 0)
+        self._prev_share = s.get("courier_share_pct", 80)
 
     def teardown_method(self, _):
         _db().settings.update_one({"id": "global"},
-            {"$set": {"company_delivery_fee_usdt": self._prev}}, upsert=True)
+            {"$set": {"company_delivery_fee_usdt": self._prev,
+                      "courier_share_pct": self._prev_share}}, upsert=True)
 
     def test_get_returns_fee_and_split(self):
         r = requests.get(f"{API}/admin/company-delivery-fee", headers=_h(ADMIN_TOKEN))
@@ -53,6 +56,25 @@ class TestCompanyDeliveryFeeAdmin:
         r = requests.put(f"{API}/admin/company-delivery-fee", headers=_h(ADMIN_TOKEN),
                          json={"fee_usdt": -3})
         assert r.status_code == 422  # Field ge=0
+
+    def test_put_commission_updates_split(self):
+        # Ajustar la comisión de Resilience recalcula la parte del mensajero.
+        r = requests.put(f"{API}/admin/company-delivery-fee", headers=_h(ADMIN_TOKEN),
+                         json={"fee_usdt": 10, "resilience_commission_pct": 30})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["resilience_commission_pct"] == 30
+        assert body["courier_share_pct"] == 70
+        # persistido como parte del mensajero (courier_share_pct)
+        s = _db().settings.find_one({"id": "global"}, {"_id": 0})
+        assert s["courier_share_pct"] == 70
+        g = requests.get(f"{API}/admin/company-delivery-fee", headers=_h(ADMIN_TOKEN)).json()
+        assert g["resilience_commission_pct"] == 30 and g["courier_share_pct"] == 70
+
+    def test_put_rejects_commission_over_100(self):
+        r = requests.put(f"{API}/admin/company-delivery-fee", headers=_h(ADMIN_TOKEN),
+                         json={"fee_usdt": 5, "resilience_commission_pct": 150})
+        assert r.status_code == 422
 
     def test_non_admin_forbidden(self):
         r = requests.put(f"{API}/admin/company-delivery-fee", headers=_h(NORMAL_TOKEN),

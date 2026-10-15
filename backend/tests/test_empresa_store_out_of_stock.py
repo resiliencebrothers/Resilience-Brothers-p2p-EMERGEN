@@ -105,3 +105,37 @@ async def test_each_store_tracked_independently():
         assert await _oos_notifs(pid, s2) == 0   # s2 con stock → sin aviso
     finally:
         await _clean()
+
+
+async def test_per_store_threshold_alerts_before_running_out():
+    # Umbral POR TIENDA > 0: avisa ANTES de agotarse (igual que el mínimo
+    # central) y se re-arma al subir por encima del umbral.
+    await _clean()
+    sid = await _mkstore()
+    pid = await _mk({sid: 10})
+    await db.products.update_one({"id": pid}, {"$set": {f"store_min.{sid}": 3}})
+    try:
+        # baja a 3 (== mínimo) → aviso "bajo mínimo" aunque NO esté agotada
+        assert await ci.reserve_pickup(COMPANY, pid, sid, 7, f"loc:{uuid.uuid4().hex}") == "applied"
+        await ci.maybe_alert_store_out_of_stock(COMPANY, pid, sid)
+        assert await _oos_notifs(pid, sid) == 1
+        n = await db.notifications.find_one(
+            {"recipient_user_id": COMPANY, "data.product_id": pid, "data.store_id": sid},
+            sort=[("created_at", -1)])
+        assert n["data"]["min_stock"] == 3 and n["data"]["remaining"] == 3
+        # sigue por debajo (baja a 1) → NO duplica
+        assert await ci.reserve_pickup(COMPANY, pid, sid, 2, f"loc:{uuid.uuid4().hex}") == "applied"
+        await ci.maybe_alert_store_out_of_stock(COMPANY, pid, sid)
+        assert await _oos_notifs(pid, sid) == 1
+        # reabastece por encima del umbral → re-arma
+        await db.products.update_one({"id": pid}, {"$set": {"stock": 20, "distributed": 1}})
+        assert await ci.distribute(COMPANY, pid, sid, 9) == "applied"  # tienda → 10
+        await ci.maybe_alert_store_out_of_stock(COMPANY, pid, sid)
+        p = await db.products.find_one({"id": pid})
+        assert (p.get("store_low_alerted") or {}).get(sid) is False
+        # vuelve a caer bajo el umbral → nuevo aviso
+        assert await ci.reserve_pickup(COMPANY, pid, sid, 8, f"loc:{uuid.uuid4().hex}") == "applied"
+        await ci.maybe_alert_store_out_of_stock(COMPANY, pid, sid)
+        assert await _oos_notifs(pid, sid) == 2
+    finally:
+        await _clean()

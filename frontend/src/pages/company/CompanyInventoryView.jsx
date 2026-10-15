@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { Warehouse, Store, ArrowRightLeft, PackagePlus, Undo2, History, SlidersHorizontal } from "lucide-react";
+import { Warehouse, Store, ArrowRightLeft, PackagePlus, Undo2, History, SlidersHorizontal, Bell } from "lucide-react";
 import { toast } from "sonner";
 
 // Inventario por ubicación: almacén central (= total − distribuido) + tiendas.
@@ -31,9 +31,10 @@ export default function CompanyInventoryView() {
     axios.get(`${API}/company/stores`, { withCredentials: true }).then((r) => setStores(r.data)).catch(() => {});
   }, [load]);
 
-  const openDialog = (mode, product, preStore = "") => {
+  const openDialog = (mode, product, preStore = "", preVal = "") => {
     setDialog({ mode, product });
-    setQty(mode === "adjust" ? String(product.total) : "");
+    setQty(mode === "adjust" ? String(product.total)
+      : mode === "storemin" ? String(preVal ?? "") : "");
     setStoreId(preStore);
   };
 
@@ -42,6 +43,8 @@ export default function CompanyInventoryView() {
     const { mode, product } = dialog;
     if (mode === "adjust") {
       if (isNaN(n) || n < 0) return toast.error("Total inválido");
+    } else if (mode === "storemin") {
+      if (isNaN(n) || n < 0) return toast.error("Mínimo inválido");
     } else if (!n || n <= 0) {
       return toast.error("Cantidad inválida");
     }
@@ -53,9 +56,11 @@ export default function CompanyInventoryView() {
     let body;
     if (mode === "receive") body = { product_id: product.product_id, qty: n, op_id: opId };
     else if (mode === "adjust") body = { product_id: product.product_id, new_total: n, expected_total: product.total, op_id: opId };
+    else if (mode === "storemin") body = { product_id: product.product_id, store_id: storeId, min_stock: n };
     else body = { product_id: product.product_id, store_id: storeId, qty: n, op_id: opId };
-    const okMsg = mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : mode === "return" ? "Devuelto al central" : "Stock ajustado";
-    const doPost = () => axios.post(`${API}/company/inventory/${mode}`, body, { withCredentials: true });
+    const okMsg = mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : mode === "return" ? "Devuelto al central" : mode === "storemin" ? "Mínimo de la tienda actualizado" : "Stock ajustado";
+    const endpoint = mode === "storemin" ? "store-min" : mode;
+    const doPost = () => axios.post(`${API}/company/inventory/${endpoint}`, body, { withCredentials: true });
     try {
       try {
         await doPost();
@@ -73,6 +78,7 @@ export default function CompanyInventoryView() {
   const title = dialog?.mode === "receive" ? "Recibir en almacén central"
     : dialog?.mode === "distribute" ? "Distribuir a una tienda"
     : dialog?.mode === "adjust" ? "Ajustar total (inventario físico)"
+    : dialog?.mode === "storemin" ? "Umbral de stock bajo de la tienda"
     : "Devolver al almacén central";
 
   return (
@@ -131,10 +137,21 @@ export default function CompanyInventoryView() {
             {p.stores.length > 0 && (
               <div className="mt-3 pt-3 border-t border-white/5 flex flex-wrap gap-2">
                 {p.stores.map((s) => (
-                  <div key={s.store_id} className="flex items-center gap-2 bg-[#0a0a0a] border border-white/10 px-3 py-1.5 text-sm" data-testid={`company-inv-store-${p.product_id}-${s.store_id}`}>
+                  <div key={s.store_id} className={`flex items-center gap-2 bg-[#0a0a0a] border px-3 py-1.5 text-sm ${s.low ? "border-amber-500/40" : "border-white/10"}`} data-testid={`company-inv-store-${p.product_id}-${s.store_id}`}>
                     <Store className="w-3.5 h-3.5 text-neutral-500" />
                     <span className="text-neutral-300">{s.store_name}</span>
-                    <span className="font-mono text-white">{s.qty}</span>
+                    <span className={`font-mono ${s.low ? "text-amber-300" : "text-white"}`} data-testid={`company-inv-store-qty-${p.product_id}-${s.store_id}`}>{s.qty}</span>
+                    {s.min > 0 && (
+                      <span className="text-[0.6rem] text-neutral-500" data-testid={`company-inv-store-min-${p.product_id}-${s.store_id}`}>mín {s.min}</span>
+                    )}
+                    {s.low && (
+                      <span className="text-[0.6rem] text-amber-300" data-testid={`company-inv-store-low-${p.product_id}-${s.store_id}`}>bajo</span>
+                    )}
+                    <button data-testid={`company-inv-storemin-${p.product_id}-${s.store_id}`}
+                      onClick={() => openDialog("storemin", p, s.store_id, s.min)}
+                      className="text-neutral-500 hover:text-amber-300" title="Umbral de stock bajo">
+                      <Bell className="w-3.5 h-3.5" />
+                    </button>
                     <button data-testid={`company-inv-return-${p.product_id}-${s.store_id}`}
                       onClick={() => openDialog("return", p, s.store_id)}
                       className="text-neutral-500 hover:text-[#8B5CF6]" title="Devolver al central">
@@ -175,12 +192,10 @@ export default function CompanyInventoryView() {
               ) : (
                 <p className="text-sm text-neutral-400">{dialog.product.name} · central disponible: <span className="font-mono text-white">{dialog.product.central}</span></p>
               )}
-              {(dialog.mode === "distribute" || dialog.mode === "return") && (
+              {(dialog.mode === "distribute" || dialog.mode === "return" || dialog.mode === "storemin") && (
                 <div>
                   <Label className="micro-label text-neutral-500">Tienda</Label>
-                  {dialog.mode === "return" ? (
-                    <Input disabled value={dialog.product.stores.find((s) => s.store_id === storeId)?.store_name || ""} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
-                  ) : (
+                  {dialog.mode === "distribute" ? (
                     <Select value={storeId} onValueChange={setStoreId}>
                       <SelectTrigger data-testid="company-inv-store-select" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10">
                         <SelectValue placeholder="Selecciona una tienda" />
@@ -191,15 +206,20 @@ export default function CompanyInventoryView() {
                         ))}
                       </SelectContent>
                     </Select>
+                  ) : (
+                    <Input disabled value={dialog.product.stores.find((s) => s.store_id === storeId)?.store_name || ""} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
                   )}
                 </div>
               )}
               <div>
-                <Label className="micro-label text-neutral-500">{dialog.mode === "adjust" ? "Nuevo total" : "Cantidad"}</Label>
+                <Label className="micro-label text-neutral-500">{dialog.mode === "adjust" ? "Nuevo total" : dialog.mode === "storemin" ? "Mínimo de la tienda" : "Cantidad"}</Label>
                 <Input data-testid="company-inv-qty" type="number" step="any" min="0" value={qty}
                   onChange={(e) => setQty(e.target.value)} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" autoFocus />
                 {dialog.mode === "adjust" && (
                   <p className="text-xs text-neutral-500 mt-1">No puede ser menor que lo distribuido ({dialog.product.distributed}). Se registra como un ajuste auditado.</p>
+                )}
+                {dialog.mode === "storemin" && (
+                  <p className="text-xs text-neutral-500 mt-1">Avisaremos cuando esta tienda baje a/por debajo de este mínimo. 0 = avisar solo cuando se agote.</p>
                 )}
               </div>
               <Button data-testid="company-inv-submit" onClick={submit} disabled={busy}

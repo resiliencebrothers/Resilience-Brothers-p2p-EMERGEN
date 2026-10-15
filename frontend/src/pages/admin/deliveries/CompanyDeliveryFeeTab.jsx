@@ -8,41 +8,51 @@ import { toast } from "sonner";
 import { Truck, Save, Percent } from "lucide-react";
 
 // Panel admin — tarifa fija de mensajería Empresa (company_delivery_fee_usdt)
-// y vista del reparto mensajero/Resilience. Editable con permiso de Mensajería.
+// y reparto EDITABLE mensajero/Resilience (comisión = 100 − parte mensajero).
 export default function CompanyDeliveryFeeTab() {
   const { t } = useTranslation();
   const [cfg, setCfg] = useState(null);
   const [fee, setFee] = useState("");
+  const [commission, setCommission] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = () =>
     axios.get(`${API}/admin/company-delivery-fee`, { withCredentials: true })
-      .then((r) => { setCfg(r.data); setFee(String(r.data.fee_usdt ?? 0)); })
+      .then((r) => {
+        setCfg(r.data);
+        setFee(String(r.data.fee_usdt ?? 0));
+        setCommission(String(r.data.resilience_commission_pct ?? 0));
+      })
       .catch(() => toast.error(t("admin.deliveries.companyFee.loadError")));
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     const val = parseFloat(fee);
+    const comm = parseFloat(commission);
     if (isNaN(val) || val < 0) return toast.error(t("admin.deliveries.companyFee.invalid"));
+    if (isNaN(comm) || comm < 0 || comm > 100)
+      return toast.error(t("admin.deliveries.companyFee.invalidPct"));
     setBusy(true);
     try {
       const r = await axios.put(`${API}/admin/company-delivery-fee`,
-        { fee_usdt: val }, { withCredentials: true });
+        { fee_usdt: val, resilience_commission_pct: comm }, { withCredentials: true });
       toast.success(t("admin.deliveries.companyFee.saved"));
+      setCfg(r.data);
       setFee(String(r.data.fee_usdt));
-      await load();
+      setCommission(String(r.data.resilience_commission_pct ?? 0));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
     } finally { setBusy(false); }
   };
 
   const feeNum = parseFloat(fee) || 0;
-  const courierPct = cfg?.courier_share_pct ?? 0;
-  const commissionPct = cfg?.resilience_commission_pct ?? 0;
+  const commNum = Math.min(Math.max(parseFloat(commission) || 0, 0), 100);
+  const courierPct = Math.round((100 - commNum) * 100) / 100;
   const courierAmt = (feeNum * courierPct) / 100;
-  const commissionAmt = (feeNum * commissionPct) / 100;
-  const dirty = cfg && String(cfg.fee_usdt ?? 0) !== fee;
+  const commissionAmt = (feeNum * commNum) / 100;
+  const dirty = cfg && (String(cfg.fee_usdt ?? 0) !== fee
+    || String(cfg.resilience_commission_pct ?? 0) !== commission);
 
   return (
     <div className="space-y-6 max-w-xl" data-testid="company-delivery-fee-tab">
@@ -55,52 +65,55 @@ export default function CompanyDeliveryFeeTab() {
 
         <div className="space-y-2">
           <label className="micro-label text-neutral-500">{t("admin.deliveries.companyFee.feeLabel")}</label>
-          <div className="flex gap-2">
-            <Input
-              type="number" min="0" step="0.5" value={fee}
-              onChange={(e) => setFee(e.target.value)}
-              data-testid="company-fee-input"
-              className="rounded-none bg-[#0a0a0a] border-white/10"
-            />
-            <Button
-              onClick={save} disabled={busy || !dirty}
-              data-testid="company-fee-save"
-              className="rounded-none gap-2 whitespace-nowrap"
-            >
-              <Save className="w-4 h-4" /> {t("admin.deliveries.companyFee.save")}
-            </Button>
-          </div>
-          <p className="text-[0.65rem] text-neutral-500">
-            {t("admin.deliveries.companyFee.feeHint")}
-          </p>
+          <Input
+            type="number" min="0" step="0.5" value={fee}
+            onChange={(e) => setFee(e.target.value)}
+            data-testid="company-fee-input"
+            className="rounded-none bg-[#0a0a0a] border-white/10"
+          />
+          <p className="text-[0.65rem] text-neutral-500">{t("admin.deliveries.companyFee.feeHint")}</p>
         </div>
 
-        {cfg && (
-          <div className="border-t border-white/10 pt-4 space-y-2" data-testid="company-fee-split">
-            <div className="micro-label text-neutral-500 flex items-center gap-1">
-              <Percent className="w-3.5 h-3.5" /> {t("admin.deliveries.companyFee.splitTitle")}
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-neutral-400">
-                {t("admin.deliveries.companyFee.courierShare", { pct: courierPct })}
-              </span>
-              <span className="font-mono text-[#22C55E]" data-testid="company-fee-courier-amt">
-                {courierAmt.toFixed(2)} USDT
-              </span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-neutral-400">
-                {t("admin.deliveries.companyFee.resilienceShare", { pct: commissionPct })}
-              </span>
-              <span className="font-mono text-[#8B5CF6]" data-testid="company-fee-resilience-amt">
-                {commissionAmt.toFixed(2)} USDT
-              </span>
-            </div>
-            <p className="text-[0.65rem] text-neutral-500 pt-1">
-              {t("admin.deliveries.companyFee.splitNote")}
-            </p>
+        <div className="space-y-2">
+          <label className="micro-label text-neutral-500 flex items-center gap-1">
+            <Percent className="w-3.5 h-3.5" /> {t("admin.deliveries.companyFee.commissionLabel")}
+          </label>
+          <Input
+            type="number" min="0" max="100" step="1" value={commission}
+            onChange={(e) => setCommission(e.target.value)}
+            data-testid="company-commission-input"
+            className="rounded-none bg-[#0a0a0a] border-white/10"
+          />
+          <p className="text-[0.65rem] text-neutral-500">{t("admin.deliveries.companyFee.commissionHint")}</p>
+        </div>
+
+        <div className="border-t border-white/10 pt-4 space-y-2" data-testid="company-fee-split">
+          <div className="micro-label text-neutral-500">{t("admin.deliveries.companyFee.splitTitle")}</div>
+          <div className="flex justify-between text-sm">
+            <span className="text-neutral-400">
+              {t("admin.deliveries.companyFee.courierShare", { pct: courierPct })}
+            </span>
+            <span className="font-mono text-[#22C55E]" data-testid="company-fee-courier-amt">
+              {courierAmt.toFixed(2)} USDT
+            </span>
           </div>
-        )}
+          <div className="flex justify-between text-sm">
+            <span className="text-neutral-400">
+              {t("admin.deliveries.companyFee.resilienceShare", { pct: commNum })}
+            </span>
+            <span className="font-mono text-[#8B5CF6]" data-testid="company-fee-resilience-amt">
+              {commissionAmt.toFixed(2)} USDT
+            </span>
+          </div>
+        </div>
+
+        <Button
+          onClick={save} disabled={busy || !dirty}
+          data-testid="company-fee-save"
+          className="rounded-none gap-2 w-full"
+        >
+          <Save className="w-4 h-4" /> {t("admin.deliveries.companyFee.save")}
+        </Button>
       </div>
     </div>
   );
