@@ -713,7 +713,20 @@
         "row": "Origin: {{kind}} · delivery status: {{status}}",
         "resolve": "Mark resolved",
         "resolvePrompt": "Resolution note (optional):",
-        "resolved": "Incident resolved"
+        "resolved": "Incident resolved",
+        "viewOpen": "Open",
+        "viewResolved": "Resolved",
+        "emptyResolved": "No resolved incidents.",
+        "loading": "Loading incidents…",
+        "resolvedOn": "Resolved on {{when}}",
+        "originMissing": "The origin document no longer exists.",
+        "originTitle": "Origin",
+        "fOriginStatus": "Origin status",
+        "fProduct": "Product",
+        "fAmount": "Amount",
+        "fParty": "Customer/Company",
+        "fLocation": "Location",
+        "fMethod": "Method"
       },
       "companyFee": {
         "title": "Company delivery fee",

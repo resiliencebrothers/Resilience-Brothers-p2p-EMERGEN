@@ -713,7 +713,20 @@
         "row": "Origen: {{kind}} · estado de la entrega: {{status}}",
         "resolve": "Marcar resuelta",
         "resolvePrompt": "Nota de resolución (opcional):",
-        "resolved": "Incidencia resuelta"
+        "resolved": "Incidencia resuelta",
+        "viewOpen": "Abiertas",
+        "viewResolved": "Resueltas",
+        "emptyResolved": "No hay incidencias resueltas.",
+        "loading": "Cargando incidencias…",
+        "resolvedOn": "Resuelta el {{when}}",
+        "originMissing": "El documento de origen ya no existe.",
+        "originTitle": "Origen",
+        "fOriginStatus": "Estado del origen",
+        "fProduct": "Producto",
+        "fAmount": "Importe",
+        "fParty": "Cliente/Empresa",
+        "fLocation": "Ubicación",
+        "fMethod": "Método"
       },
       "companyFee": {
         "title": "Tarifa de mensajería Empresa",

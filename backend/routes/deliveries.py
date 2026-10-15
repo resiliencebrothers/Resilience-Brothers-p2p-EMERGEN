@@ -1081,17 +1081,50 @@ async def admin_deliveries_attention(request: Request) -> Any:
     return await find_attention_items()
 
 
-@router.get("/admin/delivery-incidents")
-async def admin_delivery_incidents(request: Request) -> Any:
-    """Incidencias de mensajería: entregas con MOVIMIENTO FÍSICO (entregadas/
-    confirmadas) cuyo origen quedó rechazado/cancelado (`origin_conflict`) y aún
-    SIN resolver. Para gestión manual: revisar el efectivo/producto y cerrar."""
-    await require_permission(request, "deliveries")
-    rows = await db.deliveries.find(
-        {"origin_conflict": {"$exists": True},
-         "origin_conflict.resolved": {"$ne": True}},
-        {"_id": 0}).sort("origin_conflict.at", -1).to_list(200)
+_INCIDENT_ORIGIN_COLL = {"withdrawal": "withdrawals",
+                         "redemption": "redemptions",
+                         "company_delivery": "company_delivery_requests"}
+_INCIDENT_ORIGIN_FIELDS = [
+    "status", "created_at", "product_name", "quantity", "total_usd",
+    "amount_usd", "currency", "method", "user_name", "user_email",
+    "company_name", "receiver_name", "receiver_phone", "municipality",
+    "province", "package_label", "delivery_address"]
+
+
+async def _incident_origin_summary(kind: str, ref_id: str) -> Dict[str, Any]:
+    """Resumen curado del documento de origen (canje/retiro/envío Empresa)
+    para que el admin verifique el efectivo/producto sin salir del panel."""
+    coll = _INCIDENT_ORIGIN_COLL.get(kind)
+    if not coll or not ref_id:
+        return {}
+    doc = await db[coll].find_one({"id": ref_id}, {"_id": 0})
+    if not doc:
+        return {"missing": True}
+    return {k: doc[k] for k in _INCIDENT_ORIGIN_FIELDS if k in doc}
+
+
+async def _list_incidents(resolved: bool) -> list:
+    flt = {"origin_conflict": {"$exists": True},
+           "origin_conflict.resolved": (True if resolved else {"$ne": True})}
+    rows = await db.deliveries.find(flt, {"_id": 0}).sort(
+        "origin_conflict.at", -1).to_list(200)
+    for r in rows:
+        oc = r.get("origin_conflict") or {}
+        r["origin"] = await _incident_origin_summary(
+            oc.get("kind") or r.get("kind") or "",
+            oc.get("ref_id") or r.get("ref_id") or "")
     return rows
+
+
+@router.get("/admin/delivery-incidents")
+async def admin_delivery_incidents(request: Request,
+                                   resolved: bool = False) -> Any:
+    """Incidencias de mensajería: entregas con MOVIMIENTO FÍSICO (entregadas/
+    confirmadas) cuyo origen quedó rechazado/cancelado (`origin_conflict`).
+    Por defecto lista las ABIERTAS; `resolved=true` devuelve el historial de
+    resueltas. Cada fila incluye un resumen del origen para gestión manual."""
+    await require_permission(request, "deliveries")
+    return await _list_incidents(resolved)
 
 
 class _IncidentResolvePayload(BaseModel):
