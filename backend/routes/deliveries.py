@@ -1106,6 +1106,37 @@ async def _incident_origin_summary(kind: str, ref_id: str) -> Dict[str, Any]:
     return {k: doc[k] for k in _INCIDENT_ORIGIN_FIELDS if k in doc}
 
 
+async def _incident_reassign_info(oc: dict) -> Dict[str, Any]:
+    """Para incidencias de envío Empresa cuya devolución de inventario quedó
+    PENDIENTE (`inv_return_incident`), devuelve los datos para reasignar la
+    mercancía a una tienda existente: producto, cantidad, si el producto aún
+    existe y la lista de tiendas activas de la empresa. `{}` si no aplica."""
+    if oc.get("kind") != "company_delivery":
+        return {}
+    req = await db.company_delivery_requests.find_one(
+        {"id": oc.get("ref_id")},
+        {"_id": 0, "company_id": 1, "product_id": 1, "quantity": 1,
+         "inv_return_incident": 1, "inv_returned": 1})
+    if not req or not req.get("inv_return_incident") or req.get("inv_returned"):
+        return {}
+    company_id = req.get("company_id")
+    pid = req.get("product_id")
+    prod = await db.products.find_one(
+        {"id": pid, "company_id": company_id}, {"_id": 0, "name": 1})
+    stores = await db.stores.find(
+        {"company_id": company_id, "status": {"$ne": "closing"},
+         "is_active": {"$ne": False}},
+        {"_id": 0, "id": 1, "name": 1}).to_list(100)
+    return {
+        "pending": True,
+        "product_id": pid,
+        "product_name": (prod or {}).get("name"),
+        "product_exists": prod is not None,
+        "quantity": req.get("quantity"),
+        "stores": stores,
+    }
+
+
 async def _list_incidents(resolved: bool) -> list:
     flt = {"origin_conflict": {"$exists": True},
            "origin_conflict.resolved": (True if resolved else {"$ne": True})}
@@ -1116,6 +1147,7 @@ async def _list_incidents(resolved: bool) -> list:
         r["origin"] = await _incident_origin_summary(
             oc.get("kind") or r.get("kind") or "",
             oc.get("ref_id") or r.get("ref_id") or "")
+        r["reassign"] = await _incident_reassign_info(oc)
     return rows
 
 
@@ -1157,6 +1189,82 @@ async def admin_resolve_origin_conflict(did: str, payload: _IncidentResolvePaylo
     await log_action(db, actor, "delivery.incident_resolved", "delivery", did,
                      details={"note": note})
     return {"ok": True}
+
+
+class _IncidentReassignPayload(BaseModel):
+    store_id: str = Field(..., min_length=1, max_length=120)
+    note: str = Field("", max_length=500)
+
+
+@router.post("/admin/delivery-incidents/{did}/reassign-inventory")
+async def admin_reassign_incident_inventory(
+        did: str, payload: _IncidentReassignPayload, request: Request) -> Any:
+    """Reasigna a una TIENDA EXISTENTE la mercancía que quedó pendiente tras una
+    incidencia de envío Empresa (devolución que no se pudo aplicar). Suma la
+    cantidad al inventario de la tienda elegida (idempotente) y resuelve la
+    incidencia. Si el producto ya no existe, NO se puede reasignar (usar
+    'resolver')."""
+    actor = await require_permission(request, "deliveries")
+    d = await db.deliveries.find_one(
+        {"id": did, "origin_conflict": {"$exists": True},
+         "origin_conflict.resolved": {"$ne": True}}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=404,
+                            detail="Incidencia no encontrada o ya resuelta")
+    oc = d.get("origin_conflict") or {}
+    if oc.get("kind") != "company_delivery":
+        raise HTTPException(status_code=400,
+                            detail="La incidencia no corresponde a un envío Empresa.")
+    req = await db.company_delivery_requests.find_one(
+        {"id": oc.get("ref_id")}, {"_id": 0})
+    if not req or not req.get("inv_return_incident") or req.get("inv_returned"):
+        raise HTTPException(status_code=409,
+                            detail="La incidencia no tiene inventario pendiente de reasignar.")
+    company_id = req["company_id"]
+    pid = req["product_id"]
+    qty = float(req.get("quantity") or 0)
+    prod = await db.products.find_one({"id": pid, "company_id": company_id}, {"_id": 0, "name": 1})
+    if not prod:
+        raise HTTPException(
+            status_code=409,
+            detail=("El producto ya no existe; no se puede reasignar su stock. "
+                    "Usa 'Resolver' para cerrar la incidencia."))
+    store = await db.stores.find_one(
+        {"id": payload.store_id, "company_id": company_id,
+         "status": {"$ne": "closing"}, "is_active": {"$ne": False}},
+        {"_id": 0, "id": 1, "name": 1})
+    if not store:
+        raise HTTPException(status_code=400,
+                            detail="Tienda no encontrada o no disponible.")
+    # Coloca la cantidad en la tienda elegida (sube total + distribuido + by_store).
+    # op_id propio de la reasignación → no colisiona con la devolución fallida.
+    from services import company_inventory
+    status = await company_inventory.return_dispatch(
+        company_id, pid, payload.store_id, qty,
+        op_id=f"cdeliv-reassign:{req['id']}",
+        actor={"user_id": actor["user_id"]})
+    if status != "applied":
+        raise HTTPException(status_code=409,
+                            detail=f"No se pudo reasignar el inventario ({status}).")
+    now = iso(now_utc())
+    note = (f"Inventario reasignado a '{store.get('name', '')}' "
+            f"({qty:g} uds). {payload.note.strip()}").strip()
+    await db.company_delivery_requests.update_one(
+        {"id": req["id"]},
+        {"$set": {"inv_returned": True, "inv_reassigned_store_id": payload.store_id,
+                  "updated_at": now}})
+    await db.deliveries.update_one(
+        {"id": did, "origin_conflict.resolved": {"$ne": True}},
+        {"$set": {"origin_conflict.resolved": True,
+                  "origin_conflict.resolved_by": actor["user_id"],
+                  "origin_conflict.resolved_at": now,
+                  "origin_conflict.resolution_note": note},
+         "$push": {"timeline": {"status": "incident_reassigned", "at": now,
+                                "by": actor["user_id"], "note": note}}})
+    await company_inventory.maybe_alert_store_out_of_stock(company_id, pid, payload.store_id)
+    await log_action(db, actor, "delivery.incident_reassigned", "delivery", did,
+                     details={"store_id": payload.store_id, "product_id": pid, "qty": qty})
+    return {"ok": True, "store_name": store.get("name", "")}
 
 
 @router.post("/admin/deliveries/{did}/retry-sync")

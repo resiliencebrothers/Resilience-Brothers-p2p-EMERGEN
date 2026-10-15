@@ -177,6 +177,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_empresa_e34_02_idempotent_create.py \
 		tests/test_empresa_e34_02_recovery.py \
 		tests/test_delivery_incidents_admin.py \
+		tests/test_empresa_reassign_incident.py \
 		tests/test_empresa_kyc_company.py \
 		tests/test_empresa_e34_05_return_deleted_store.py \
 		tests/test_empresa_e34_05_http.py \

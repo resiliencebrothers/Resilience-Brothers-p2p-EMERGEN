@@ -4,7 +4,7 @@ import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, Package, User, MapPin, DollarSign } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Package, User, MapPin, DollarSign, ArrowRightLeft } from "lucide-react";
 
 // Incidencias de mensajería: entregas con movimiento físico cuyo origen quedó
 // rechazado/cancelado (origin_conflict). Lista ABIERTAS + historial de RESUELTAS,
@@ -60,6 +60,7 @@ export default function DeliveryIncidentsTab() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  const [picked, setPicked] = useState({});
 
   const load = useCallback((v) => {
     setLoading(true);
@@ -80,6 +81,21 @@ export default function DeliveryIncidentsTab() {
       await axios.post(`${API}/admin/delivery-incidents/${did}/resolve`,
         { note }, { withCredentials: true });
       toast.success(t("admin.deliveries.incidents.resolved"));
+      load(view);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    } finally { setBusy(""); }
+  };
+
+  const reassign = async (did) => {
+    const storeId = picked[did];
+    if (!storeId) return;
+    const note = window.prompt(t("admin.deliveries.incidents.reassignNote")) ?? "";
+    setBusy(did);
+    try {
+      const r = await axios.post(`${API}/admin/delivery-incidents/${did}/reassign-inventory`,
+        { store_id: storeId, note }, { withCredentials: true });
+      toast.success(t("admin.deliveries.incidents.reassigned", { store: r.data?.store_name || "" }));
       load(view);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
@@ -150,13 +166,51 @@ export default function DeliveryIncidentsTab() {
                   )}
                 </div>
                 {isOpen && (
-                  <Button
-                    onClick={() => resolve(d.id)} disabled={busy === d.id}
-                    data-testid={`delivery-incident-resolve-${d.id}`}
-                    className="rounded-none gap-2 shrink-0">
-                    <CheckCircle2 className="w-4 h-4" />
-                    {busy === d.id ? "…" : t("admin.deliveries.incidents.resolve")}
-                  </Button>
+                  <div className="flex flex-col gap-2 shrink-0 sm:w-56">
+                    {d.reassign?.pending && d.reassign.product_exists && (
+                      <div className="border border-sky-500/30 bg-sky-500/5 p-2 space-y-1.5"
+                        data-testid={`incident-reassign-${d.id}`}>
+                        <div className="text-[0.7rem] text-sky-200 flex items-center gap-1">
+                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                          {t("admin.deliveries.incidents.reassignTitle", {
+                            qty: d.reassign.quantity,
+                            product: d.reassign.product_name || "—",
+                          })}
+                        </div>
+                        <select
+                          data-testid={`incident-reassign-store-${d.id}`}
+                          value={picked[d.id] || ""}
+                          onChange={(e) => setPicked((p) => ({ ...p, [d.id]: e.target.value }))}
+                          className="w-full bg-black/40 border border-white/10 text-xs text-neutral-200 px-2 py-1.5 rounded-none">
+                          <option value="">{t("admin.deliveries.incidents.reassignPick")}</option>
+                          {(d.reassign.stores || []).map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                        <Button
+                          onClick={() => reassign(d.id)} disabled={busy === d.id || !picked[d.id]}
+                          data-testid={`incident-reassign-btn-${d.id}`}
+                          className="rounded-none gap-2 w-full bg-sky-600 hover:bg-sky-500 h-8 text-xs">
+                          <ArrowRightLeft className="w-3.5 h-3.5" />
+                          {t("admin.deliveries.incidents.reassignBtn")}
+                        </Button>
+                      </div>
+                    )}
+                    {d.reassign?.pending && !d.reassign.product_exists && (
+                      <div className="text-[0.7rem] text-amber-300/80 border border-amber-500/20 bg-amber-500/5 p-2"
+                        data-testid={`incident-reassign-blocked-${d.id}`}>
+                        {t("admin.deliveries.incidents.reassignBlocked")}
+                      </div>
+                    )}
+                    <Button
+                      onClick={() => resolve(d.id)} disabled={busy === d.id}
+                      data-testid={`delivery-incident-resolve-${d.id}`}
+                      variant="outline"
+                      className="rounded-none gap-2 border-white/10">
+                      <CheckCircle2 className="w-4 h-4" />
+                      {busy === d.id ? "…" : t("admin.deliveries.incidents.resolve")}
+                    </Button>
+                  </div>
                 )}
               </div>
             );
