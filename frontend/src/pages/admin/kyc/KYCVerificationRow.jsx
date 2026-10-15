@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   User, Mail, Phone, AlertTriangle, Check, X, Info,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, Building2,
 } from "lucide-react";
 
 /**
@@ -50,6 +50,12 @@ export default function KYCVerificationRow({
             <div className="font-semibold text-white flex items-center gap-1.5">
               <User className="w-4 h-4 text-neutral-500" /> {v.user_name}
             </div>
+            {v.kind === "company" && (
+              <span className="inline-flex items-center gap-1 text-[0.6rem] uppercase tracking-wider px-1.5 py-0.5 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6]"
+                data-testid={`kyc-row-company-${v.id}`}>
+                <Building2 className="w-3 h-3" /> {t("admin.kycAdmin.companyBadge")}
+              </span>
+            )}
             <span className={`text-xs font-mono ${riskColor}`}>
               {t("admin.kycAdmin.rowRisk", { score: v.risk_score })}
             </span>

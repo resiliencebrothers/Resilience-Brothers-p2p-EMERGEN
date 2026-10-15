@@ -1134,6 +1134,18 @@
       "fRiskAuto": "Riesgo automático",
       "fSubmittedAt": "Enviado el",
       "fSubmitIp": "IP de envío",
+      "companyBadge": "Empresa",
+      "companySection": "Datos de la empresa",
+      "fCompanyName": "Nombre de la empresa",
+      "fFiscalCode": "Código fiscal",
+      "fLegalAddress": "Dirección legal",
+      "docType": {
+        "id_front": "Identificación (frente)",
+        "id_back": "Identificación (dorso)",
+        "selfie": "Selfie con identificación",
+        "tax_certificate": "Código / certificado fiscal",
+        "operating_license": "Licencia operativa"
+      },
       "riskSignals": "Señales de riesgo",
       "documentsPanel": "Documentos subidos ({{n}})",
       "reasonsLabel": "Motivos (selecciona ≥ 1)",

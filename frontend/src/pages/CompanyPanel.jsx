@@ -13,7 +13,7 @@ import CompanyProductsView from "@/pages/company/CompanyProductsView";
 import CompanyInventoryView from "@/pages/company/CompanyInventoryView";
 import CompanyWalletView from "@/pages/company/CompanyWalletView";
 import CompanyDeliveriesView from "@/pages/company/CompanyDeliveriesView";
-import KYCView from "@/pages/dashboard/KYCView";
+import CompanyKYCView from "@/pages/company/CompanyKYCView";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
 
 // Panel independiente para cuentas Empresa (rol business). Mientras la cuenta
@@ -156,7 +156,7 @@ export default function CompanyPanel() {
             {tab === "inventory" && <CompanyInventoryView />}
             {tab === "deliveries" && <CompanyDeliveriesView />}
             {tab === "wallet" && <CompanyWalletView />}
-            {tab === "kyc" && <KYCView embedded />}
+            {tab === "kyc" && <CompanyKYCView />}
             {tab === "security" && <SecuritySettings embedded />}
           </>
         )}

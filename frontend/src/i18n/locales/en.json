@@ -1134,6 +1134,18 @@
       "fRiskAuto": "Automatic risk",
       "fSubmittedAt": "Submitted on",
       "fSubmitIp": "Submit IP",
+      "companyBadge": "Company",
+      "companySection": "Company details",
+      "fCompanyName": "Company name",
+      "fFiscalCode": "Fiscal code",
+      "fLegalAddress": "Legal address",
+      "docType": {
+        "id_front": "ID (front)",
+        "id_back": "ID (back)",
+        "selfie": "Selfie with ID",
+        "tax_certificate": "Fiscal code / certificate",
+        "operating_license": "Operating license"
+      },
       "riskSignals": "Risk signals",
       "documentsPanel": "Uploaded documents ({{n}})",
       "reasonsLabel": "Reasons (select ≥ 1)",

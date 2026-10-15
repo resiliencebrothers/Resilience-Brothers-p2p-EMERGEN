@@ -243,6 +243,74 @@ async def submit_verification(
     return doc
 
 
+async def submit_company_verification(
+    db: Any,
+    user: dict,
+    documents: list[dict],
+    company_fields: dict,
+    ip: str,
+    user_agent: str,
+) -> dict:
+    """Crea una verificación `pending` para una cuenta Empresa.
+
+    A diferencia del KYC individual (documento de identidad + selfie), la
+    Empresa aporta su código fiscal, su licencia operativa y su dirección.
+    Reusa la misma cola de revisión y el mismo `kyc_status` → al aprobarse
+    habilita el retiro igual que el KYC individual.
+    """
+    active = await get_active_verification(db, user["user_id"])
+    if active:
+        raise ValueError(f"already_active_verification:{active['status']}")
+
+    if len(documents) < 2:
+        raise ValueError("missing_documents")
+
+    fiscal = (company_fields.get("fiscal_code") or "").strip()
+    address = (company_fields.get("legal_address") or "").strip()
+    if not fiscal or not address:
+        raise ValueError("missing_company_fields")
+
+    company_name = (company_fields.get("company_name") or "").strip() or user.get("name", "")
+    score, flags = await compute_risk(
+        db, user["user_id"], user.get("email", ""), company_name, ip,
+    )
+
+    now = iso(now_utc())
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["user_id"],
+        "user_email": user.get("email", ""),
+        "user_name": company_name,
+        "user_phone": user.get("phone", ""),
+        "kind": "company",
+        "company_fields": {
+            "company_name": company_name,
+            "fiscal_code": fiscal,
+            "legal_address": address,
+        },
+        "status": "pending",
+        "documents": documents,
+        "risk_score": score,
+        "risk_flags": flags,
+        "submit_ip": ip,
+        "submit_user_agent": user_agent[:200],
+        "reviewed_by": None,
+        "reviewed_by_email": None,
+        "reviewed_at": None,
+        "review_notes": "",
+        "rejection_reasons": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.kyc_verifications.insert_one(doc)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"kyc_status": "pending", "kyc_last_submit_at": now}},
+    )
+    doc.pop("_id", None)
+    return doc
+
+
 async def approve_verification(
     db: Any, verification_id: str, staff: dict, notes: str = "",
 ) -> Optional[dict]:

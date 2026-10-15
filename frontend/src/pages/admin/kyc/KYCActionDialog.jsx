@@ -7,12 +7,20 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
   CheckCircle2, XCircle, Info, User, Mail, Phone, AlertTriangle, Loader2,
+  Building2, Hash, MapPin,
 } from "lucide-react";
 
 const REJECT_REASON_KEYS = [
   "blurry", "expired", "selfie_mismatch", "manipulated",
   "name_mismatch", "invalid_country", "incomplete",
 ];
+
+// Etiqueta legible por tipo de documento (individual + empresa).
+function docTypeLabel(docType, t) {
+  const key = `admin.kycAdmin.docType.${docType}`;
+  const translated = t(key);
+  return translated === key ? docType.replace(/_/g, " ") : translated;
+}
 
 /**
  * Approve / reject / more-info dialog. Side-by-side layout: declared
@@ -43,6 +51,12 @@ export default function KYCActionDialog({
                 {action === "approve" && <><CheckCircle2 className="w-5 h-5 text-emerald-400" /> {t("admin.kycAdmin.actionApprove")}</>}
                 {action === "reject" && <><XCircle className="w-5 h-5 text-[#EF4444]" /> {t("admin.kycAdmin.actionReject")}</>}
                 {action === "more_info" && <><Info className="w-5 h-5 text-[#8B5CF6]" /> {t("admin.kycAdmin.actionMoreInfo")}</>}
+                {selected.kind === "company" && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6]"
+                    data-testid="kyc-company-badge">
+                    <Building2 className="w-3 h-3" /> {t("admin.kycAdmin.companyBadge")}
+                  </span>
+                )}
               </DialogTitle>
               <DialogDescription className="text-neutral-500">
                 {t("admin.kycAdmin.actionDesc")}
@@ -72,6 +86,17 @@ export default function KYCActionDialog({
                 {selected.submit_ip && (
                   <ProfileField label={t("admin.kycAdmin.fSubmitIp")} value={selected.submit_ip} mono />
                 )}
+                {selected.kind === "company" && selected.company_fields && (
+                  <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-2 mt-3 space-y-1.5"
+                    data-testid="kyc-company-fields">
+                    <div className="text-[0.65rem] font-semibold text-[#8B5CF6] flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5" /> {t("admin.kycAdmin.companySection")}
+                    </div>
+                    <ProfileField label={t("admin.kycAdmin.fCompanyName")} value={selected.company_fields.company_name} icon={Building2} />
+                    <ProfileField label={t("admin.kycAdmin.fFiscalCode")} value={selected.company_fields.fiscal_code} icon={Hash} mono />
+                    <ProfileField label={t("admin.kycAdmin.fLegalAddress")} value={selected.company_fields.legal_address} icon={MapPin} />
+                  </div>
+                )}
                 {selected.risk_flags?.length > 0 && (
                   <div className="border border-amber-500/30 bg-amber-500/5 p-2 mt-3 space-y-1">
                     <div className="text-[0.65rem] font-semibold text-amber-300 flex items-center gap-1.5">
@@ -96,7 +121,7 @@ export default function KYCActionDialog({
                 {selected.documents?.map((d) => (
                   <div key={d.doc_type} className="space-y-1">
                     <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500">
-                      {d.doc_type.replace("_", " ")}
+                      {docTypeLabel(d.doc_type, t)}
                     </div>
                     <a href={d.ref} target="_blank" rel="noreferrer" className="block">
                       <img

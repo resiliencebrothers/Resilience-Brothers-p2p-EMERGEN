@@ -73,11 +73,37 @@ class _KYCMoreInfoPayload(BaseModel):
 # CLIENT endpoints
 # ============================================================
 
+class _KYCCompanySubmitPayload(BaseModel):
+    fiscal_code: str = Field(..., min_length=3, max_length=60,
+                             description="Código / número de identificación fiscal de la empresa")
+    legal_address: str = Field(..., min_length=5, max_length=300,
+                               description="Dirección legal / fiscal de la empresa")
+    company_name: str = Field("", max_length=160)
+    tax_certificate: str = Field(..., description="base64 data URL del código/certificado fiscal")
+    operating_license: str = Field(..., description="base64 data URL de la licencia operativa")
+
+    @field_validator("tax_certificate", "operating_license")
+    @classmethod
+    def _must_be_data_url(cls, v: str) -> str:
+        if not v or not v.startswith("data:image/"):
+            raise ValueError("Debe ser una imagen en formato data:image/... (base64).")
+        return v
+
+
 @router.post("/kyc/submit")
 async def submit_kyc(payload: _KYCSubmitPayload, request: Request) -> Any:
     """Client submits ID front + back + selfie for verification. Only one
     active (pending / verified) verification per user."""
     user = await require_user(request)
+
+    # Las cuentas Empresa usan un recorrido distinto (código fiscal, licencia
+    # operativa y dirección), no el documento de identidad + selfie.
+    if user.get("role") == "empresa":
+        raise HTTPException(
+            400,
+            detail=("Las cuentas Empresa deben usar la verificación de empresa "
+                    "(código fiscal, licencia operativa y dirección)."),
+        )
 
     # Upload the 3 base64 blobs to R2 (or keep base64 if storage disabled).
     ip = _client_ip(request)
@@ -114,6 +140,67 @@ async def submit_kyc(payload: _KYCSubmitPayload, request: Request) -> Any:
             )
         if code == "missing_documents":
             raise HTTPException(400, detail="Faltan documentos requeridos.")
+        raise HTTPException(400, detail=code)
+
+    return {
+        "id": v["id"],
+        "status": v["status"],
+        "risk_score": v["risk_score"],
+        "created_at": v["created_at"],
+    }
+
+
+@router.post("/kyc/company/submit")
+async def submit_company_kyc(payload: _KYCCompanySubmitPayload, request: Request) -> Any:
+    """Verificación de cuenta Empresa: código fiscal + licencia operativa +
+    dirección. Solo para el rol `empresa`. Una única verificación activa por
+    cuenta (misma regla que el KYC individual)."""
+    user = await require_user(request)
+    if user.get("role") != "empresa":
+        raise HTTPException(403, detail="Solo las cuentas Empresa pueden usar esta verificación.")
+
+    ip = _client_ip(request)
+    ua = request.headers.get("user-agent", "")
+
+    documents = []
+    for doc_type, data_url in [
+        ("tax_certificate", payload.tax_certificate),
+        ("operating_license", payload.operating_license),
+    ]:
+        try:
+            ref = maybe_upload_proof(data_url, folder="kyc")
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"KYC empresa {doc_type} upload failed for user {user['user_id']}: {e}")
+            raise HTTPException(500, detail=f"No se pudo subir el documento ({doc_type}).")
+        if not ref:
+            raise HTTPException(400, detail=f"Documento inválido: {doc_type}.")
+        documents.append({"doc_type": doc_type, "ref": ref})
+
+    try:
+        v = await kyc_service.submit_company_verification(
+            db, user, documents,
+            {
+                "fiscal_code": payload.fiscal_code,
+                "legal_address": payload.legal_address,
+                "company_name": payload.company_name,
+            },
+            ip, ua,
+        )
+    except ValueError as e:
+        code = str(e)
+        if code.startswith("already_active_verification:"):
+            status = code.split(":", 1)[1]
+            raise HTTPException(
+                409,
+                detail=(f"Ya tienes una verificación {status}. Espera la respuesta "
+                        "del equipo antes de enviar otra."),
+            )
+        if code == "missing_documents":
+            raise HTTPException(400, detail="Faltan documentos requeridos.")
+        if code == "missing_company_fields":
+            raise HTTPException(400, detail="Faltan el código fiscal o la dirección legal.")
         raise HTTPException(400, detail=code)
 
     return {
