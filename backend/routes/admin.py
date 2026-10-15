@@ -1202,6 +1202,10 @@ async def _on_redemption_rejected(r: dict, rid: str, actor: dict,
             r["pickup_company_id"], r["product_id"], r["store_id"],
             round(float(r["quantity"]), 3), f"reject-loc:{rid}:c{cycle}",
             actor=actor)
+        # El stock volvió a la tienda → re-arma la alerta de agotado.
+        from services.company_inventory import maybe_alert_store_out_of_stock
+        await maybe_alert_store_out_of_stock(
+            r["pickup_company_id"], r["product_id"], r["store_id"])
     # iter217 — reverso de inventario (producto empresa) + reverso del
     # crédito al vendedor VIP si ya se había pagado.
     product = await db.products.find_one({"id": r["product_id"]}, {"_id": 0})

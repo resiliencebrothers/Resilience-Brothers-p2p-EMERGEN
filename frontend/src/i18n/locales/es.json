@@ -703,6 +703,21 @@
       "reassignAuditReason": "Motivo: {{reason}}",
       "tabCouriers": "Mensajeros",
       "tabMuniRates": "Tarifas municipio",
+      "tabCompanyFee": "Tarifa Empresa",
+      "companyFee": {
+        "title": "Tarifa de mensajería Empresa",
+        "desc": "Tarifa fija que una Empresa paga por cada solicitud de envío a Resilience. Se retiene de su sub-saldo al crear la solicitud y se reparte al confirmar la entrega.",
+        "feeLabel": "Tarifa por envío (USDT)",
+        "feeHint": "Pon 0 para envíos gratis (sin cobro a la Empresa).",
+        "save": "Guardar",
+        "saved": "Tarifa actualizada",
+        "invalid": "Introduce una tarifa válida (0 o mayor).",
+        "loadError": "No se pudo cargar la configuración de la tarifa.",
+        "splitTitle": "Reparto de esta tarifa al confirmar",
+        "courierShare": "Mensajero ({{pct}}%)",
+        "resilienceShare": "Resilience ({{pct}}%)",
+        "splitNote": "El reparto mensajero/Resilience se configura en los ajustes de reparto de mensajería."
+      },
       "summary": {
         "confirmedToday": "Entregas hoy (equipo)",
         "confirmedOn": "Entregas (equipo) — {{d}}",

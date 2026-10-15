@@ -426,6 +426,8 @@ async def inventory_distribute(payload: InvMovePayload, request: Request) -> Any
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo distribuir el stock")
     await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
+    await company_inventory.maybe_alert_store_out_of_stock(
+        user["user_id"], payload.product_id, payload.store_id)
     return {"ok": True}
 
 
@@ -449,6 +451,8 @@ async def inventory_return(payload: InvMovePayload, request: Request) -> Any:
     if status != "applied":
         raise HTTPException(status_code=400, detail="No se pudo devolver el stock")
     await company_inventory.maybe_alert_low_stock(user["user_id"], payload.product_id)
+    await company_inventory.maybe_alert_store_out_of_stock(
+        user["user_id"], payload.product_id, payload.store_id)
     return {"ok": True}
 
 
@@ -516,6 +520,9 @@ async def _reconcile_delivery_inventory(company_id: str, req: dict,
             company_id, req["product_id"], req["origin_store_id"],
             req["quantity"], op_id=f"cdeliv-ret:{req['id']}")
         updates["inv_returned"] = True
+        # El inventario volvió a la tienda → re-arma la alerta de agotado.
+        await company_inventory.maybe_alert_store_out_of_stock(
+            company_id, req["product_id"], req["origin_store_id"])
     if not updates:
         return False
     updates["status"] = "cancelled"
@@ -568,6 +575,9 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
                 raise HTTPException(status_code=400, detail="No se pudo reservar el stock")
             inv_reserved = True
             package_label = f"{prod['name']} ×{company_inventory._q(qty_)}"
+            # Alerta por tienda: el despacho pudo agotar esa sucursal.
+            await company_inventory.maybe_alert_store_out_of_stock(
+                user["user_id"], pid_, sid_)
     except HTTPException:
         # Cualquier fallo tras retener la tarifa → devuélvela íntegra.
         await billing.refund_fee(user["user_id"], reqid, fee)
@@ -671,6 +681,8 @@ async def cancel_company_delivery(req_id: str, request: Request) -> Any:
         await company_inventory.return_dispatch(
             user["user_id"], req["product_id"], req["origin_store_id"],
             req["quantity"], op_id=f"cdeliv-ret:{req_id}")
+        await company_inventory.maybe_alert_store_out_of_stock(
+            user["user_id"], req["product_id"], req["origin_store_id"])
     await db.company_delivery_requests.update_one(
         {"id": req_id},
         {"$set": {"status": "cancelled", "inv_returned": True,

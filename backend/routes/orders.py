@@ -700,6 +700,11 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         if product.get("company_id"):
             from services.company_inventory import maybe_alert_low_stock
             await maybe_alert_low_stock(product["company_id"], product["id"])
+            # F2-B — venta con recogida en tienda: pudo agotar ESA sucursal.
+            if is_pickup_from_store:
+                from services.company_inventory import maybe_alert_store_out_of_stock
+                await maybe_alert_store_out_of_stock(
+                    product["company_id"], product["id"], pickup_store_id)
     try:
         await notify_all_admins(
             db,

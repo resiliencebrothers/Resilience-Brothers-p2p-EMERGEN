@@ -2768,3 +2768,20 @@ Pruebas:
 - Añadidas a la suite crítica/Empresa del Makefile.
 - Estado: en preview; pendiente de re-despliegue a producción.
 
+
+
+## F2-B+ (fork 2026-06) — Panel admin de tarifa de mensajería Empresa + Alerta por tienda
+
+### 1) Panel admin — editar la tarifa fija de mensajería Empresa (sin tocar la BD)
+Los endpoints ya existían en `routes/admin_company_funds.py` (no restringido): `GET /admin/company-delivery-fee` (devuelve `fee_usdt`, `courier_share_pct`, `resilience_commission_pct`) y `PUT /admin/company-delivery-fee` (`{fee_usdt}` → persiste en `settings.global.company_delivery_fee_usdt`), permiso `deliveries`.
+- Frontend nuevo: pestaña **"Tarifa Empresa"** en `/admin/deliveries` (`pages/admin/deliveries/CompanyDeliveryFeeTab.jsx`, tab `admin-tab-company-fee`): input de tarifa (USDT) + Guardar, y vista del reparto mensajero/Resilience al confirmar (p. ej. 5 USDT → 80% mensajero 4.00 / 20% Resilience 1.00). El reparto % se configura aparte (solo lectura aquí). i18n es/en bajo `admin.deliveries.companyFee`.
+- Pruebas: `tests/test_empresa_company_delivery_fee_admin.py` 4/4 (GET devuelve tarifa+reparto; PUT persiste y GET lo refleja; rechaza negativo 422; no-admin 401/403). Smoke UI desktop+mobile OK (sin overflow).
+
+### 2) Alerta POR TIENDA — aviso cuando una sucursal se queda sin existencias
+Antes solo existía la alerta del almacén CENTRAL. Ahora, cuando una SUCURSAL concreta se queda sin existencias de un producto (`by_store[sid] ≤ 0`), la Empresa recibe una notificación `company_store_out_of_stock` (nombre de tienda + producto). Re-armable: no duplica mientras siga agotada y vuelve a armarse al reabastecer. No avisa por tiendas en cierre (vaciado intencional).
+- `services/company_inventory.py`: `maybe_alert_store_out_of_stock(company_id, product_id, store_id)` con flag por tienda `store_low_alerted[sid]`.
+- Disparo: venta con recogida en tienda (`routes/orders.py`), despacho de mensajería Empresa (`routes/company.py` create_company_delivery). Re-arme: `distribute`/`return` (rutas de inventario), cancelación/reconciliación de mensajería (return_dispatch) y rechazo admin de un canje pickup (`admin.py`, additivo).
+- Pruebas: `tests/test_empresa_store_out_of_stock.py` 3/3 (avisa una vez al agotarse y re-arma al reabastecer y vuelve a avisar; no avisa por tienda en cierre; tiendas rastreadas de forma independiente).
+
+Regresión verde: F2-B pickup (service+http), phase4, low_stock, f4_billing, iter236. mypy limpio (114 fuentes). Ambas suites añadidas a la suite crítica/Empresa del Makefile. Estado: en preview; pendiente de re-despliegue a producción.
+

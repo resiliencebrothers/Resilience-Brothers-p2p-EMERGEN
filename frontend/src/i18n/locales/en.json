@@ -703,6 +703,21 @@
       "reassignAuditReason": "Reason: {{reason}}",
       "tabCouriers": "Couriers",
       "tabMuniRates": "Municipality rates",
+      "tabCompanyFee": "Company fee",
+      "companyFee": {
+        "title": "Company delivery fee",
+        "desc": "Flat fee a Company pays Resilience per delivery request. Held from its sub-balance when the request is created and split when the delivery is confirmed.",
+        "feeLabel": "Fee per delivery (USDT)",
+        "feeHint": "Set 0 for free deliveries (no charge to the Company).",
+        "save": "Save",
+        "saved": "Fee updated",
+        "invalid": "Enter a valid fee (0 or greater).",
+        "loadError": "Could not load the fee configuration.",
+        "splitTitle": "Split of this fee on confirmation",
+        "courierShare": "Courier ({{pct}}%)",
+        "resilienceShare": "Resilience ({{pct}}%)",
+        "splitNote": "The courier/Resilience split is configured in the courier payout settings."
+      },
       "summary": {
         "confirmedToday": "Deliveries today (team)",
         "confirmedOn": "Deliveries (team) — {{d}}",
