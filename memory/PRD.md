@@ -2856,3 +2856,12 @@ Fix:
 
 ### E2E Empresa verificación→aprobación (fork 2026-06)
 Testing agent (iteration_362) frontend 100%, 0 issues: /company muestra Verificación+Seguridad; KYC Empresa (código fiscal/dirección/2 docs imagen+PDF, sin identidad personal) → submit 200 → "En revisión"; gate de retiro → CTA KYC a /company/kyc; admin /admin/kyc con badge EMPRESA + datos empresa + licencia como "Ver PDF"; aprobar → 200 → "Verificada". Cuenta de prueba documentada en test_credentials.md (cookie `test_session_empresa_e2e_X`), KYC reseteado a `unverified` tras la corrida.
+
+### MEN23 (MEDIA) — validación escalar en cancelación admin (fork 2026-06)
+Residual de MEN22: `admin_cancel_delivery` copiaba `expected_status` y `expected_uid` a los valores del filtro Mongo sin verificar que fueran escalares. Un objeto (p. ej. `{"$ne": "confirmed"}` o `{"$ne": null}`) se interpretaba como OPERADOR de consulta, debilitando la igualdad de estado/ciclo del CAS (requería permiso `deliveries` y petición fuera de la UI; no observado en producción).
+Fix (`routes/deliveries.py`):
+- `expected_status`: debe ser `str` y pertenecer a `_CANCELABLE_STATUSES` {available, accepted, on_the_way, arrived, delivered} → si no, 400.
+- `expected_uid`: helper `_validate_expected_uid(payload)` exige cadena o null; rechaza objeto/array/número/booleano → 400. Aplicado TAMBIÉN en `admin_assign_delivery` y `admin_reassign_delivery` (misma clase de inyección).
+- `note`: debe ser texto → si no, 400; se trunca a 200.
+- Se mantiene: obligatoriedad de ambos campos (400 al omitir), igualdad de ciclo (409 ante cambio), guard de `payout_credited`.
+- Pruebas `test_men23_cancel_scalar_validation.py` 6/6 (objeto/array/número/bool/estado desconocido/note no-texto → 400; escalar válido → 200) + regresión MEN14/19/20/21 20/20 = 26/26. ruff(proyecto)+mypy limpios. Solo backend (el frontend ya envía escalares). Estado: preview; pendiente re-despliegue a producción.

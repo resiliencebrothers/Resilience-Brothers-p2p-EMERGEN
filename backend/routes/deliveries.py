@@ -1367,6 +1367,22 @@ async def admin_create_delivery(payload: dict, request: Request) -> Any:
     return doc
 
 
+# MEN23 — estados desde los que el operador puede ordenar una cancelación.
+_CANCELABLE_STATUSES = {"available", "accepted", "on_the_way", "arrived", "delivered"}
+
+
+def _validate_expected_uid(payload: dict) -> None:
+    """MEN23 — `expected_uid` debe ser una CADENA o null. Rechaza objetos,
+    arrays, números y booleanos ANTES de construir el filtro Mongo, para que no
+    puedan colarse como operadores de consulta y debilitar la igualdad de ciclo."""
+    if "expected_uid" in payload:
+        v = payload["expected_uid"]
+        if v is not None and not isinstance(v, str):
+            raise HTTPException(
+                status_code=400,
+                detail="expected_uid inválido: debe ser una cadena o null.")
+
+
 @router.post("/admin/deliveries/{did}/assign")
 async def admin_assign_delivery(did: str, payload: dict, request: Request) -> Any:
     """iter208 — El admin *reserva* la entrega para un mensajero pero NO la
@@ -1441,6 +1457,7 @@ async def admin_assign_delivery(did: str, payload: dict, request: Request) -> An
     #   - una orden ATRASADA que leyó un uid viejo (U1) pierde con 409 y NO
     #     reescribe U1 sobre el ciclo nuevo (U3): la identidad no retrocede, y
     #     el rechazo viejo con U1 sigue siendo inválido.
+    _validate_expected_uid(payload)
     expected_uid = payload.get("expected_uid")
     observed_uid = expected_uid if expected_uid is not None \
         else d.get("assignment_uid")
@@ -1606,6 +1623,7 @@ async def admin_reassign_delivery(did: str, payload: dict,
     # aceptado POSTERIOR (C3) solo porque la entrega vuelva a estar aceptada por
     # el mismo mensajero. El `assignment_uid` persiste al aceptar (ver
     # claim_delivery), así distinguimos ciclos aceptados.
+    _validate_expected_uid(payload)
     expected_uid = payload.get("expected_uid")
     observed_uid = expected_uid if expected_uid is not None \
         else d.get("assignment_uid")
@@ -1781,17 +1799,27 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
     # `assignment_uid`; y una aceptación cambia el estado conservando el uid.
     # Se conserva la protección contra confirmación/comisión (`payout_credited`).
     expected_status = payload.get("expected_status")
-    if not expected_status:
+    if not isinstance(expected_status, str) or expected_status not in _CANCELABLE_STATUSES:
         raise HTTPException(
             status_code=400,
-            detail=("Falta expected_status: la cancelación debe declarar el "
-                    "estado observado en la tarjeta."))
+            detail=("expected_status inválido o ausente: declara el estado "
+                    "observado en la tarjeta (available, accepted, on_the_way, "
+                    "arrived o delivered)."))
     if "expected_uid" not in payload:
         raise HTTPException(
             status_code=400,
             detail=("Falta expected_uid: la cancelación debe declarar el ciclo "
                     "observado (o null si la entrega no tenía ciclo)."))
+    # MEN23 — rechaza no-escalares ANTES de construir el filtro: un objeto/array
+    # (p. ej. {"$ne": "confirmed"}) se interpretaría como OPERADOR de consulta y
+    # debilitaría la igualdad de estado/ciclo que el CAS debe exigir.
+    _validate_expected_uid(payload)
     euid = payload.get("expected_uid")
+    note_raw = payload.get("note")
+    if note_raw is not None and not isinstance(note_raw, str):
+        raise HTTPException(status_code=400,
+                            detail="note inválido: debe ser texto.")
+    note = (note_raw or "")[:200]
     flt: Dict[str, Any] = {
         "id": did,
         "status": expected_status,
@@ -1804,7 +1832,7 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
             "$unset": {"active_key": ""},
             "$push": {"timeline": {"status": "cancelled", "at": now,
                                    "by": actor["user_id"],
-                                   "note": (payload.get("note") or "")[:200]}},
+                                   "note": note}},
         })
     if res.matched_count == 0:
         raise HTTPException(
