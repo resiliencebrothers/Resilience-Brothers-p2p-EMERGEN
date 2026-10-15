@@ -1839,6 +1839,18 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
             status_code=409,
             detail=("La entrega cambió de estado, de mensajero o de ciclo "
                     "(¿reasignada o aceptada?); recarga y vuelve a decidir."))
+    # E34-06 — si es un envío de EMPRESA, reconcilia su solicitud AHORA (reembolso
+    # de tarifa + devolución de inventario), sin esperar a que la Empresa abra su
+    # pantalla. Es idempotente y el worker del scheduler lo reintenta si falla.
+    if d.get("kind") == "company_delivery":
+        try:
+            from services.company_delivery_recovery import reconcile_cancelled_request
+            creq = await db.company_delivery_requests.find_one(
+                {"id": d.get("ref_id")}, {"_id": 0})
+            if creq and creq.get("status") != "cancelled":
+                await reconcile_cancelled_request(creq)
+        except Exception as e:
+            logger.error(f"company_delivery admin-cancel reconcile failed: {e}")
     # MSG10 — el panel del mensajero ve la cancelación en vivo.
     try:
         from services.deliveries import publish_delivery_event

@@ -31,6 +31,8 @@ from routes.vendor_products import (
 from services.proof_upload import maybe_upload_proof
 from services import company_inventory
 from services import company_delivery_billing as billing
+from services.company_delivery_recovery import (
+    reconcile_cancelled_request, return_delivery_inventory)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/company", tags=["Company"])
@@ -545,61 +547,18 @@ class CompanyDeliveryCreate(BaseModel):
 
 
 async def _return_delivery_inventory(company_id: str, req: dict) -> bool:
-    """E34-05 — devuelve el inventario reservado de un envío cancelado y
-    CONFIRMA el resultado. Si la tienda de origen ya no existe, el motor lo
-    devuelve al almacén central. Si NO se pudo devolver (p. ej. el producto fue
-    borrado → `not_found`), NO se sella éxito: registra una INCIDENCIA para
-    gestión manual y deja la devolución PENDIENTE. Devuelve True solo si la
-    mercancía quedó efectivamente devuelta."""
-    status = await company_inventory.return_dispatch(
-        company_id, req["product_id"], req["origin_store_id"],
-        req["quantity"], op_id=f"cdeliv-ret:{req['id']}")
-    if status == "applied":
-        # La mercancía volvió a la tienda o al central → re-arma la alerta.
-        await company_inventory.maybe_alert_store_out_of_stock(
-            company_id, req["product_id"], req["origin_store_id"])
-        return True
-    # Fallo de devolución (producto inexistente, etc.) → incidencia, SIN sello.
-    await db.company_delivery_requests.update_one(
-        {"id": req["id"], "inv_return_incident": {"$ne": True}},
-        {"$set": {"inv_return_incident": True,
-                  "inv_return_incident_reason": status,
-                  "inv_return_incident_at": iso(now_utc())}})
-    did = req.get("delivery_id")
-    if did:
-        from services.deliveries import flag_origin_conflict
-        await flag_origin_conflict(
-            did, "company_delivery", req["id"],
-            note=("No se pudo devolver el inventario reservado "
-                  f"({status}); requiere ajuste manual del stock."))
-    return False
+    """Delegado a services.company_delivery_recovery (E34-05/E34-06)."""
+    return await return_delivery_inventory(req)
 
 
 async def _reconcile_delivery_inventory(company_id: str, req: dict,
                                         delivery_status: str) -> bool:
-    """Si la entrega quedó CANCELADA (p. ej. por el admin), reconcilia la
-    solicitud EXACTAMENTE UNA VEZ: reembolsa la tarifa retenida y devuelve al
-    origen el inventario reservado. Idempotente (flags + ops idempotentes)."""
+    """Reconcilia la solicitud si su entrega quedó CANCELADA. Delegado al
+    servicio recuperable (E34-06) para compartir la misma lógica idempotente
+    con la cancelación admin y el worker del scheduler."""
     if delivery_status != "cancelled":
         return False
-    updates: dict = {}
-    if req.get("fee_status") == "held":
-        await billing.refund_fee(company_id, req["id"],
-                                 float(req.get("fee_usdt") or 0))
-        updates["fee_status"] = "refunded"
-    if req.get("inv_reserved") and not req.get("inv_returned"):
-        # E34-05 — solo se sella `inv_returned` si la devolución REALMENTE se
-        # aplicó. Un fallo deja la devolución pendiente + incidencia.
-        if await _return_delivery_inventory(company_id, req):
-            updates["inv_returned"] = True
-    if not updates:
-        return False
-    updates["status"] = "cancelled"
-    updates["updated_at"] = iso(now_utc())
-    await db.company_delivery_requests.update_one(
-        {"id": req["id"]}, {"$set": updates})
-    req.update(updates)
-    return True
+    return await reconcile_cancelled_request(req)
 
 
 _CDELIV_IDX_READY = False

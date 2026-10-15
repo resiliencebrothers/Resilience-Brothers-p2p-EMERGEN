@@ -2865,3 +2865,13 @@ Fix (`routes/deliveries.py`):
 - `note`: debe ser texto → si no, 400; se trunca a 200.
 - Se mantiene: obligatoriedad de ambos campos (400 al omitir), igualdad de ciclo (409 ante cambio), guard de `payout_credited`.
 - Pruebas `test_men23_cancel_scalar_validation.py` 6/6 (objeto/array/número/bool/estado desconocido/note no-texto → 400; escalar válido → 200) + regresión MEN14/19/20/21 20/20 = 26/26. ruff(proyecto)+mypy limpios. Solo backend (el frontend ya envía escalares). Estado: preview; pendiente re-despliegue a producción.
+
+### E34-06 (MEDIA) — compensación de cancelación Empresa recuperable (fork 2026-06)
+Bug: la cancelación ADMIN de una entrega cambiaba el estado pero NO reembolsaba la tarifa ni devolvía el inventario Empresa; eso solo ocurría de forma perezosa en `GET /company/deliveries` (y como mucho sobre las 200 solicitudes más recientes). Sin esa lectura, saldo/stock quedaban reservados; los recuperadores no cubrían cancelaciones de company_delivery.
+Fix:
+- Nuevo servicio `services/company_delivery_recovery.py`: `return_delivery_inventory(req)`, `reconcile_cancelled_request(req)` (reembolso + devolución idempotentes, muta `req` para reflejar el estado en la misma lectura) y `heal_cancelled_company_deliveries(limit)` (worker que reconcilia solicitudes `requested` con tarifa retenida/stock reservado cuya ENTREGA está realmente `cancelled`).
+- `routes/company.py`: `_reconcile_delivery_inventory` y `_return_delivery_inventory` ahora delegan en el servicio (misma lógica E34-05 compartida).
+- `routes/deliveries.py::admin_cancel_delivery`: tras ganar la cancelación, si `kind=="company_delivery"` reconcilia inline (best-effort; el worker lo reintenta).
+- `scheduler.py::run_credit_recovery`: añade `heal_cancelled_company_deliveries()` (cada 120 s).
+- Respuesta del listado ya refleja `fee_status` actualizado en la misma lectura (E34-05 `req.update`).
+- Pruebas `test_empresa_e34_06_recover.py` 3/3 (admin cancel reconcilia SIN GET del usuario; worker sana entregas canceladas offline/antiguas y NO toca entregas activas; idempotente) + regresión E34-01/02/05 + MEN20 + billing = 29/29. ruff(proyecto)+mypy limpios. Estado: preview; pendiente re-despliegue a producción.

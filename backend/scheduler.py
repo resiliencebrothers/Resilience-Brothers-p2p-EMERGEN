@@ -325,6 +325,12 @@ async def run_credit_recovery():
         n = await heal_pending_credits()
         n += await heal_initializing_ops()
         n += await heal_initializing_company_deliveries()
+        # E34-06 — reconcilia envíos Empresa cuya entrega quedó cancelada pero
+        # cuya tarifa/stock sigue sin restituir (p. ej. cancelación admin sin
+        # que la Empresa abra su pantalla). Idempotente.
+        from services.company_delivery_recovery import (
+            heal_cancelled_company_deliveries)
+        n += await heal_cancelled_company_deliveries()
         # iter257(D06) — compactación de registros embebidos: retira solo ops
         # con log duradero confirmado; los 'pending' se conservan como
         # evidencia (sustituye al viejo $slice ciego).
