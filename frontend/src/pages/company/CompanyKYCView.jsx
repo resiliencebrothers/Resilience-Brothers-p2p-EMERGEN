@@ -32,6 +32,7 @@ export default function CompanyKYCView() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [reverify, setReverify] = useState(false);
   const [fiscalCode, setFiscalCode] = useState("");
   const [legalAddress, setLegalAddress] = useState("");
   const [companyName, setCompanyName] = useState(user?.name || "");
@@ -86,6 +87,7 @@ export default function CompanyKYCView() {
       }, { withCredentials: true });
       toast.success("Verificación enviada. El equipo la revisará pronto.");
       setDocs({ tax_certificate: null, operating_license: null });
+      setReverify(false);
       for (const k of Object.keys(fileRefs)) { if (fileRefs[k].current) fileRefs[k].current.value = ""; }
       await load();
     } catch (e) {
@@ -98,7 +100,8 @@ export default function CompanyKYCView() {
 
   const s = status?.status || "unverified";
   const v = status?.verification;
-  const canSubmit = s === "unverified" || s === "rejected";
+  const canSubmit = s === "unverified" || s === "rejected"
+    || (s === "verified" && reverify);
   const cfg = STATUS_META[s] || STATUS_META.unverified;
   const StatusIcon = cfg.icon;
   const toneCls = {
@@ -157,6 +160,13 @@ export default function CompanyKYCView() {
 
           {canSubmit && (
             <div className="space-y-4">
+              {s === "verified" && reverify && (
+                <div className="border border-amber-500/40 bg-amber-500/5 p-4 text-xs text-amber-200" data-testid="company-kyc-revalidation-notice">
+                  Estás actualizando una verificación ya aprobada. Al reenviarla,
+                  tu empresa vuelve a <strong>revisión</strong> y los retiros se
+                  pausan hasta que el equipo apruebe la nueva versión.
+                </div>
+              )}
               <div className="grid sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs uppercase tracking-wider text-neutral-500">Nombre de la empresa</label>
@@ -247,20 +257,34 @@ export default function CompanyKYCView() {
                   {!submitting && <ArrowRight className="w-4 h-4 ml-2" />}
                 </Button>
                 <p className="text-xs text-neutral-500">El equipo suele responder en menos de 48 h.</p>
+                {s === "verified" && reverify && (
+                  <Button variant="ghost" size="sm" onClick={() => { setReverify(false); removeFile("tax_certificate"); removeFile("operating_license"); }}
+                    className="text-neutral-400 hover:text-white"
+                    data-testid="company-kyc-cancel-reverify-btn">
+                    Cancelar
+                  </Button>
+                )}
               </div>
             </div>
           )}
 
-          {(s === "pending" || s === "verified") && (
+          {(s === "pending" || (s === "verified" && !reverify)) && (
             <div className="border border-white/10 bg-black/30 p-6 text-sm text-neutral-400" data-testid="company-kyc-settled">
               {s === "pending" && "Tu verificación está en revisión. Te avisaremos cuando haya una decisión."}
               {s === "verified" && "Tu empresa está verificada. Ya puedes solicitar retiros."}
-              <div className="mt-3">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={load}
                   className="border-white/10 text-neutral-300 hover:bg-white/5"
                   data-testid="company-kyc-refresh-btn">
                   <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Actualizar estado
                 </Button>
+                {s === "verified" && (
+                  <Button variant="outline" size="sm" onClick={() => setReverify(true)}
+                    className="border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10"
+                    data-testid="company-kyc-reverify-btn">
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Actualizar datos / re-verificar
+                  </Button>
+                )}
               </div>
             </div>
           )}

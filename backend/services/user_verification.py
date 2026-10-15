@@ -22,28 +22,34 @@ The helper raises `HTTPException(403)` with a machine-readable `code`
 `missing` list so the SPA can highlight all pending steps in one shot
 without triggering multiple round trips.
 """
-from typing import Any, List
+from typing import Any, List, Optional
 
 from fastapi import HTTPException
 
 
-_CTA_MAP = {
-    "email": "/dashboard/security",
-    "phone": "/dashboard/security",
-    "kyc": "/dashboard/kyc",
-}
+def _cta_url(step: str, role: Optional[str]) -> str:
+    """Destino del CTA de verificación según el rol. La Empresa vive en
+    /company/* (su router devuelve /dashboard/* a /company), así que sus CTA
+    deben apuntar a /company/kyc y /company/security — E34-03."""
+    base = "/company" if role == "empresa" else "/dashboard"
+    screen = "kyc" if step == "kyc" else "security"
+    return f"{base}/{screen}"
 
 
-async def _kyc_is_verified(db: Any, user_id: str) -> bool:
-    """Return True if the user has an approved KYC verification.
+async def _kyc_is_verified(
+    db: Any, user_id: str, role: Optional[str] = None,
+) -> bool:
+    """Return True if the user has an approved verification.
 
     Only `status = "verified"` counts — pending / needs_more_info / rejected
-    all mean the user cannot operate.
+    / superseded all mean the user cannot operate. Para una cuenta Empresa la
+    verificación debe ser EMPRESARIAL (`kind = "company"`): un KYC personal
+    aprobado NO habilita los retiros de una Empresa (E34-03).
     """
-    doc = await db.kyc_verifications.find_one(
-        {"user_id": user_id, "status": "verified"},
-        {"_id": 0, "status": 1},
-    )
+    query: dict = {"user_id": user_id, "status": "verified"}
+    if role == "empresa":
+        query["kind"] = "company"
+    doc = await db.kyc_verifications.find_one(query, {"_id": 0, "status": 1})
     return doc is not None
 
 
@@ -63,7 +69,7 @@ async def get_user_verification_state(db: Any, user: dict) -> dict:
         }
     email_ok = bool(user.get("email_verified"))
     phone_ok = bool(user.get("phone_verified"))
-    kyc_ok = await _kyc_is_verified(db, user["user_id"])
+    kyc_ok = await _kyc_is_verified(db, user["user_id"], user.get("role"))
     missing: List[str] = []
     if not email_ok:
         missing.append("email")
@@ -104,6 +110,9 @@ async def assert_user_fully_verified(
     # code_map / msg_map / _CTA_MAP indexers below type-check cleanly.
     first: str = missing[0]
 
+    role = user.get("role")
+    is_company = role == "empresa"
+
     # Pick the most user-actionable code (first missing step in a natural
     # order: email → phone → KYC). All three codes are returned in the
     # `missing` list so the frontend can render every pending step.
@@ -112,6 +121,16 @@ async def assert_user_fully_verified(
         "phone": "PHONE_NOT_VERIFIED",
         "kyc": "KYC_NOT_APPROVED",
     }
+    kyc_msg = (
+        ("Debes completar la VERIFICACIÓN DE EMPRESA (código fiscal, "
+         "licencia operativa y dirección legal) antes de poder "
+         f"{action_label}. Ve a Empresa → Verificación. Un KYC personal "
+         "no habilita los retiros de una cuenta Empresa.")
+        if is_company else
+        ("Debes completar la verificación de identidad (KYC) "
+         f"antes de poder {action_label}. Sube tu documento de "
+         "identidad y una selfie desde /dashboard/kyc.")
+    )
     msg_map = {
         "email": ("Debes verificar tu email antes de poder "
                   f"{action_label}. Revisa tu bandeja de entrada o "
@@ -119,9 +138,7 @@ async def assert_user_fully_verified(
         "phone": ("Tu número de teléfono debe ser verificado por un "
                   f"miembro del staff antes de poder {action_label}. "
                   "Contacta a soporte para acelerar la verificación."),
-        "kyc": ("Debes completar la verificación de identidad (KYC) "
-                f"antes de poder {action_label}. Sube tu documento de "
-                "identidad y una selfie desde /dashboard/kyc."),
+        "kyc": kyc_msg,
     }
     raise HTTPException(
         status_code=403,
@@ -129,6 +146,6 @@ async def assert_user_fully_verified(
             "code": code_map[first],
             "message": msg_map[first],
             "missing": missing,
-            "cta_url": _CTA_MAP[first],
+            "cta_url": _cta_url(first, role),
         },
     )

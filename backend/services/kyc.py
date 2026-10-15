@@ -168,9 +168,12 @@ async def ensure_indexes(db: Any) -> None:
 
 
 async def get_active_verification(db: Any, user_id: str) -> Optional[dict]:
-    """Return the latest non-rejected verification for a user, or None."""
+    """Return the latest non-rejected verification for a user, or None.
+
+    `superseded` también se excluye: es una aprobación empresarial reemplazada
+    por una re-verificación (E34-03) y no debe bloquear nuevos envíos."""
     doc = await db.kyc_verifications.find_one(
-        {"user_id": user_id, "status": {"$ne": "rejected"}},
+        {"user_id": user_id, "status": {"$nin": ["rejected", "superseded"]}},
         {"_id": 0},
         sort=[("created_at", -1)],
     )
@@ -260,7 +263,20 @@ async def submit_company_verification(
     """
     active = await get_active_verification(db, user["user_id"])
     if active:
-        raise ValueError(f"already_active_verification:{active['status']}")
+        if active.get("status") == "verified":
+            # Revalidación (E34-03): cambiar datos/documentos ya aprobados NO
+            # conserva la aprobación en silencio. La verificación empresarial
+            # anterior se marca 'superseded' y la cuenta vuelve a 'pending'
+            # hasta una nueva revisión → los retiros quedan bloqueados mientras
+            # tanto (la nueva fila pending se crea más abajo).
+            ts = iso(now_utc())
+            await db.kyc_verifications.update_one(
+                {"id": active["id"], "status": "verified"},
+                {"$set": {"status": "superseded",
+                          "superseded_at": ts, "updated_at": ts}},
+            )
+        else:
+            raise ValueError(f"already_active_verification:{active['status']}")
 
     if len(documents) < 2:
         raise ValueError("missing_documents")
