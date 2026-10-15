@@ -1148,6 +1148,7 @@
       },
       "riskSignals": "Risk signals",
       "documentsPanel": "Uploaded documents ({{n}})",
+      "viewPdf": "View PDF",
       "reasonsLabel": "Reasons (select ≥ 1)",
       "notesMoreInfo": "Explain what you need from the client",
       "notesInternal": "Internal notes (optional)",

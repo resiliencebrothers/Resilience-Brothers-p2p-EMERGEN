@@ -1148,6 +1148,7 @@
       },
       "riskSignals": "Señales de riesgo",
       "documentsPanel": "Documentos subidos ({{n}})",
+      "viewPdf": "Ver PDF",
       "reasonsLabel": "Motivos (selecciona ≥ 1)",
       "notesMoreInfo": "Explica qué necesitas del cliente",
       "notesInternal": "Notas internas (opcional)",

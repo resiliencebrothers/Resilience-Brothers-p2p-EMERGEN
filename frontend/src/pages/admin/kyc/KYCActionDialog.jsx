@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
   CheckCircle2, XCircle, Info, User, Mail, Phone, AlertTriangle, Loader2,
-  Building2, Hash, MapPin,
+  Building2, Hash, MapPin, FileText,
 } from "lucide-react";
 
 const REJECT_REASON_KEYS = [
@@ -118,21 +118,33 @@ export default function KYCActionDialog({
                 <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500 mb-1">
                   {t("admin.kycAdmin.documentsPanel", { n: selected.documents?.length || 0 })}
                 </div>
-                {selected.documents?.map((d) => (
+                {selected.documents?.map((d) => {
+                  const ref = d.ref || "";
+                  const isPdf = ref.toLowerCase().endsWith(".pdf") || ref.startsWith("data:application/pdf");
+                  return (
                   <div key={d.doc_type} className="space-y-1">
                     <div className="text-[0.65rem] uppercase tracking-wider text-neutral-500">
                       {docTypeLabel(d.doc_type, t)}
                     </div>
-                    <a href={d.ref} target="_blank" rel="noreferrer" className="block">
-                      <img
-                        src={d.ref}
-                        alt={d.doc_type}
-                        className="w-full h-40 object-contain bg-neutral-900 border border-white/10 hover:border-[#8B5CF6]/60 transition"
-                        data-testid={`kyc-doc-${d.doc_type}`}
-                      />
-                    </a>
+                    {isPdf ? (
+                      <a href={ref} target="_blank" rel="noreferrer"
+                        className="flex items-center justify-center gap-2 w-full h-40 bg-neutral-900 border border-white/10 hover:border-[#8B5CF6]/60 transition text-sm text-[#8B5CF6]"
+                        data-testid={`kyc-doc-${d.doc_type}`}>
+                        <FileText className="w-5 h-5" /> {t("admin.kycAdmin.viewPdf")}
+                      </a>
+                    ) : (
+                      <a href={ref} target="_blank" rel="noreferrer" className="block">
+                        <img
+                          src={ref}
+                          alt={d.doc_type}
+                          className="w-full h-40 object-contain bg-neutral-900 border border-white/10 hover:border-[#8B5CF6]/60 transition"
+                          data-testid={`kyc-doc-${d.doc_type}`}
+                        />
+                      </a>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

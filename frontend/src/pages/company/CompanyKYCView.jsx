@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import {
-  Building2, Upload, Check, X, Loader2, FileImage, ShieldCheck,
+  Building2, Upload, Check, X, Loader2, FileImage, FileText, ShieldCheck,
   AlertTriangle, Info, RefreshCw, ArrowRight,
 } from "lucide-react";
 
@@ -15,8 +15,8 @@ import {
 // dirección legal (en vez del documento de identidad personal + selfie).
 // Reusa /kyc/my-status para el estado y POSTea a /kyc/company/submit.
 const DOC_STEPS = [
-  { key: "tax_certificate", label: "Código / certificado fiscal", hint: "Foto o escaneo del documento que acredita tu código fiscal." },
-  { key: "operating_license", label: "Licencia operativa", hint: "Foto o escaneo de la licencia que autoriza tu actividad comercial." },
+  { key: "tax_certificate", label: "Código / certificado fiscal", hint: "Foto, escaneo o PDF del documento que acredita tu código fiscal." },
+  { key: "operating_license", label: "Licencia operativa", hint: "Foto, escaneo o PDF de la licencia que autoriza tu actividad comercial." },
 ];
 
 const STATUS_META = {
@@ -57,9 +57,11 @@ export default function CompanyKYCView() {
     const file = ev.target.files?.[0];
     if (!file) return;
     if (file.size > 8 * 1024 * 1024) { toast.error("Archivo muy grande (máximo 8 MB)."); return; }
-    if (!file.type.startsWith("image/")) { toast.error("Solo se aceptan imágenes (JPG, PNG)."); return; }
+    const isImg = file.type.startsWith("image/");
+    const isPdf = file.type === "application/pdf";
+    if (!isImg && !isPdf) { toast.error("Solo se aceptan imágenes (JPG, PNG) o PDF."); return; }
     const reader = new FileReader();
-    reader.onload = () => setDocs((p) => ({ ...p, [docKey]: reader.result }));
+    reader.onload = () => setDocs((p) => ({ ...p, [docKey]: { data: reader.result, name: file.name, isPdf } }));
     reader.readAsDataURL(file);
   };
 
@@ -79,8 +81,8 @@ export default function CompanyKYCView() {
         fiscal_code: fiscalCode.trim(),
         legal_address: legalAddress.trim(),
         company_name: companyName.trim(),
-        tax_certificate: docs.tax_certificate,
-        operating_license: docs.operating_license,
+        tax_certificate: docs.tax_certificate.data,
+        operating_license: docs.operating_license.data,
       }, { withCredentials: true });
       toast.success("Verificación enviada. El equipo la revisará pronto.");
       setDocs({ tax_certificate: null, operating_license: null });
@@ -202,7 +204,13 @@ export default function CompanyKYCView() {
                     </div>
                     {docs[key] ? (
                       <div className="flex items-center gap-2">
-                        <img src={docs[key]} alt={label} className="w-20 h-20 object-cover border border-white/10" />
+                        {docs[key].isPdf ? (
+                          <span className="flex items-center gap-1.5 px-2 py-2 border border-white/10 bg-black/40 text-xs text-neutral-200 max-w-[10rem] truncate" title={docs[key].name}>
+                            <FileText className="w-4 h-4 text-[#8B5CF6] shrink-0" /> {docs[key].name}
+                          </span>
+                        ) : (
+                          <img src={docs[key].data} alt={label} className="w-20 h-20 object-cover border border-white/10" />
+                        )}
                         <Button size="sm" variant="outline" onClick={() => removeFile(key)}
                           className="border-[#EF4444]/40 text-[#EF4444] hover:bg-[#EF4444]/10 h-8"
                           data-testid={`company-kyc-remove-${key}`}>
@@ -211,7 +219,7 @@ export default function CompanyKYCView() {
                       </div>
                     ) : (
                       <label className="cursor-pointer">
-                        <input ref={fileRefs[key]} type="file" accept="image/*"
+                        <input ref={fileRefs[key]} type="file" accept="image/*,application/pdf"
                           onChange={(e) => handleFile(key, e)} className="hidden"
                           data-testid={`company-kyc-file-input-${key}`} />
                         <span className="inline-flex items-center gap-1.5 px-3 py-2 border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 text-[#8B5CF6] text-xs font-semibold hover:bg-[#8B5CF6]/20 transition">

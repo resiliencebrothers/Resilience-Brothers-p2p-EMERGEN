@@ -32,7 +32,7 @@ from services import storage as storage_service
 logger = logging.getLogger(__name__)
 
 _DATA_URL_RE = re.compile(
-    r"^data:(?P<mime>image/(?:png|jpe?g|gif|webp|bmp));base64,(?P<payload>[A-Za-z0-9+/=\s]+)$",
+    r"^data:(?P<mime>image/(?:png|jpe?g|gif|webp|bmp)|application/pdf);base64,(?P<payload>[A-Za-z0-9+/=\s]+)$",
     re.IGNORECASE,
 )
 
@@ -43,6 +43,7 @@ _MIME_TO_EXT = {
     "image/gif": "gif",
     "image/webp": "webp",
     "image/bmp": "bmp",
+    "application/pdf": "pdf",
 }
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB hard limit per file

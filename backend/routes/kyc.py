@@ -79,14 +79,14 @@ class _KYCCompanySubmitPayload(BaseModel):
     legal_address: str = Field(..., min_length=5, max_length=300,
                                description="Dirección legal / fiscal de la empresa")
     company_name: str = Field("", max_length=160)
-    tax_certificate: str = Field(..., description="base64 data URL del código/certificado fiscal")
-    operating_license: str = Field(..., description="base64 data URL de la licencia operativa")
+    tax_certificate: str = Field(..., description="base64 data URL (imagen o PDF) del código/certificado fiscal")
+    operating_license: str = Field(..., description="base64 data URL (imagen o PDF) de la licencia operativa")
 
     @field_validator("tax_certificate", "operating_license")
     @classmethod
     def _must_be_data_url(cls, v: str) -> str:
-        if not v or not v.startswith("data:image/"):
-            raise ValueError("Debe ser una imagen en formato data:image/... (base64).")
+        if not v or not (v.startswith("data:image/") or v.startswith("data:application/pdf")):
+            raise ValueError("Debe ser una imagen o un PDF en formato data:...;base64.")
         return v
 
 

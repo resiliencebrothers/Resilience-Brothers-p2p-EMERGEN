@@ -377,9 +377,14 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
         return "invalid"
 
     async def _apply(oid: str) -> str:
-        res = await db.products.find_one_and_update(
-            {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [oid]}},
-            [{"$set": {
+        # E34-05 — si la tienda de origen YA NO EXISTE (cerrada/borrada), la
+        # mercancía NO puede volver a un `by_store` huérfano: se devuelve al
+        # ALMACÉN CENTRAL (central = stock − distributed ⇒ sube `stock` sin
+        # tocar `distributed`). Si la tienda existe, se restaura su estantería.
+        store = await db.stores.find_one(
+            {"id": store_id, "company_id": company_id}, {"_id": 0, "name": 1})
+        if store is not None:
+            set_stage = {
                 "stock": {"$round": [
                     {"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
                 f"by_store.{store_id}": {"$round": [
@@ -387,16 +392,26 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
                 "distributed": {"$round": [
                     {"$add": [{"$ifNull": ["$distributed", 0]}, qty]}, QTY_DECIMALS]},
                 "inv_ops": _slice_concat("inv_ops", oid),
-            }}],
+            }
+            move_type, move_sid, move_sname = "dispatch_return", store_id, store.get("name", "")
+        else:
+            set_stage = {
+                "stock": {"$round": [
+                    {"$add": [{"$ifNull": ["$stock", 0]}, qty]}, QTY_DECIMALS]},
+                "inv_ops": _slice_concat("inv_ops", oid),
+            }
+            move_type, move_sid, move_sname = "dispatch_return_central", "", ""
+        res = await db.products.find_one_and_update(
+            {"id": product_id, "company_id": company_id, "inv_ops": {"$nin": [oid]}},
+            [{"$set": set_stage}],
             projection={"_id": 0, "id": 1, "name": 1},
             return_document=ReturnDocument.AFTER)
         if res is not None:
-            store = await db.stores.find_one({"id": store_id}, {"_id": 0, "name": 1}) or {}
-            await _log_move(company_id, res, "dispatch_return", qty, oid,
-                            store_id=store_id, store_name=store.get("name", ""), actor=actor)
+            await _log_move(company_id, res, move_type, qty, oid,
+                            store_id=move_sid, store_name=move_sname, actor=actor)
             return "applied"
-        if await _relog_if_applied(company_id, product_id, oid, "dispatch_return", qty,
-                                   store_id=store_id, actor=actor):
+        if await _relog_if_applied(company_id, product_id, oid, move_type, qty,
+                                   store_id=move_sid, actor=actor):
             return "applied"
         return "not_found"
 

@@ -327,6 +327,18 @@ async def update_my_product(pid: str, payload: CompanyProductUpdate,
 async def delete_my_product(pid: str, request: Request) -> Any:
     user = await require_company(request)
     await _owned_product_or_404(pid, user["user_id"])
+    # E34-05 — no permitir borrado destructivo si hay envíos ACTIVOS que
+    # reservan stock de este producto (mercancía en tránsito que aún debe poder
+    # devolverse a una ubicación existente). Hay que cancelar/completar antes.
+    active = await db.company_delivery_requests.find_one({
+        "company_id": user["user_id"], "product_id": pid,
+        "inv_reserved": True, "inv_returned": {"$ne": True},
+        "status": {"$nin": ["cancelled", "confirmed"]}}, {"_id": 1})
+    if active:
+        raise HTTPException(
+            status_code=409,
+            detail=("No puedes borrar este producto: tiene envíos activos que "
+                    "reservan su stock. Cancela o completa esos envíos primero."))
     await db.products.delete_one({"id": pid, "company_id": user["user_id"]})
     await _publish_products_changed(pid)
     return {"ok": True}
@@ -532,6 +544,37 @@ class CompanyDeliveryCreate(BaseModel):
     client_key: Optional[str] = Field(None, max_length=100)
 
 
+async def _return_delivery_inventory(company_id: str, req: dict) -> bool:
+    """E34-05 — devuelve el inventario reservado de un envío cancelado y
+    CONFIRMA el resultado. Si la tienda de origen ya no existe, el motor lo
+    devuelve al almacén central. Si NO se pudo devolver (p. ej. el producto fue
+    borrado → `not_found`), NO se sella éxito: registra una INCIDENCIA para
+    gestión manual y deja la devolución PENDIENTE. Devuelve True solo si la
+    mercancía quedó efectivamente devuelta."""
+    status = await company_inventory.return_dispatch(
+        company_id, req["product_id"], req["origin_store_id"],
+        req["quantity"], op_id=f"cdeliv-ret:{req['id']}")
+    if status == "applied":
+        # La mercancía volvió a la tienda o al central → re-arma la alerta.
+        await company_inventory.maybe_alert_store_out_of_stock(
+            company_id, req["product_id"], req["origin_store_id"])
+        return True
+    # Fallo de devolución (producto inexistente, etc.) → incidencia, SIN sello.
+    await db.company_delivery_requests.update_one(
+        {"id": req["id"], "inv_return_incident": {"$ne": True}},
+        {"$set": {"inv_return_incident": True,
+                  "inv_return_incident_reason": status,
+                  "inv_return_incident_at": iso(now_utc())}})
+    did = req.get("delivery_id")
+    if did:
+        from services.deliveries import flag_origin_conflict
+        await flag_origin_conflict(
+            did, "company_delivery", req["id"],
+            note=("No se pudo devolver el inventario reservado "
+                  f"({status}); requiere ajuste manual del stock."))
+    return False
+
+
 async def _reconcile_delivery_inventory(company_id: str, req: dict,
                                         delivery_status: str) -> bool:
     """Si la entrega quedó CANCELADA (p. ej. por el admin), reconcilia la
@@ -545,19 +588,17 @@ async def _reconcile_delivery_inventory(company_id: str, req: dict,
                                  float(req.get("fee_usdt") or 0))
         updates["fee_status"] = "refunded"
     if req.get("inv_reserved") and not req.get("inv_returned"):
-        await company_inventory.return_dispatch(
-            company_id, req["product_id"], req["origin_store_id"],
-            req["quantity"], op_id=f"cdeliv-ret:{req['id']}")
-        updates["inv_returned"] = True
-        # El inventario volvió a la tienda → re-arma la alerta de agotado.
-        await company_inventory.maybe_alert_store_out_of_stock(
-            company_id, req["product_id"], req["origin_store_id"])
+        # E34-05 — solo se sella `inv_returned` si la devolución REALMENTE se
+        # aplicó. Un fallo deja la devolución pendiente + incidencia.
+        if await _return_delivery_inventory(company_id, req):
+            updates["inv_returned"] = True
     if not updates:
         return False
     updates["status"] = "cancelled"
     updates["updated_at"] = iso(now_utc())
     await db.company_delivery_requests.update_one(
         {"id": req["id"]}, {"$set": updates})
+    req.update(updates)
     return True
 
 
@@ -728,8 +769,9 @@ async def list_company_deliveries(request: Request) -> Any:
     for r in reqs:
         d = dmap.get(r.get("delivery_id")) or {}
         dstatus = d.get("status") or r.get("status")
-        if await _reconcile_delivery_inventory(user["user_id"], r, dstatus):
-            r["inv_returned"] = True
+        # Reconcilia in situ: `r` queda con el estado real (inv_returned solo si
+        # la mercancía se devolvió efectivamente — E34-05).
+        await _reconcile_delivery_inventory(user["user_id"], r, dstatus)
         out.append({**r, "delivery_status": dstatus,
                     "courier_name": d.get("courier_name"),
                     "delivery_pin": d.get("delivery_pin")})
@@ -798,16 +840,15 @@ async def cancel_company_delivery(req_id: str, request: Request) -> Any:
     if req.get("fee_status") == "held":
         await billing.refund_fee(user["user_id"], req_id,
                                  float(req.get("fee_usdt") or 0))
-    # Devuelve el inventario reservado (idempotente, exactamente una vez).
-    if req.get("inv_reserved") and not req.get("inv_returned"):
-        await company_inventory.return_dispatch(
-            user["user_id"], req["product_id"], req["origin_store_id"],
-            req["quantity"], op_id=f"cdeliv-ret:{req_id}")
-        await company_inventory.maybe_alert_store_out_of_stock(
-            user["user_id"], req["product_id"], req["origin_store_id"])
+    # Devuelve el inventario reservado y VERIFICA el resultado (E34-05): si la
+    # tienda ya no existe, vuelve al central; si no se pudo devolver (producto
+    # borrado), NO se sella éxito y queda incidencia pendiente.
+    inv_returned = bool(req.get("inv_returned"))
+    if req.get("inv_reserved") and not inv_returned:
+        inv_returned = await _return_delivery_inventory(user["user_id"], req)
     await db.company_delivery_requests.update_one(
         {"id": req_id},
-        {"$set": {"status": "cancelled", "inv_returned": True,
+        {"$set": {"status": "cancelled", "inv_returned": inv_returned,
                   "fee_status": ("refunded" if float(req.get("fee_usdt") or 0) > 0
                                  else req.get("fee_status", "none")),
                   "updated_at": iso(now_utc())}})
