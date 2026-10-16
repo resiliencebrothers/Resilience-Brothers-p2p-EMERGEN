@@ -1125,7 +1125,7 @@ async def _incident_reassign_info(oc: dict) -> Dict[str, Any]:
         {"id": pid, "company_id": company_id}, {"_id": 0, "name": 1})
     stores = await db.stores.find(
         {"company_id": company_id, "status": {"$ne": "closing"},
-         "is_active": {"$ne": False}},
+         "active": {"$ne": False}},
         {"_id": 0, "id": 1, "name": 1}).to_list(100)
     return {
         "pending": True,
@@ -1231,7 +1231,7 @@ async def admin_reassign_incident_inventory(
                     "Usa 'Resolver' para cerrar la incidencia."))
     store = await db.stores.find_one(
         {"id": payload.store_id, "company_id": company_id,
-         "status": {"$ne": "closing"}, "is_active": {"$ne": False}},
+         "status": {"$ne": "closing"}, "active": {"$ne": False}},
         {"_id": 0, "id": 1, "name": 1})
     if not store:
         raise HTTPException(status_code=400,

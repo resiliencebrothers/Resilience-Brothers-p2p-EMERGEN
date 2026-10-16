@@ -49,24 +49,52 @@ async def return_delivery_inventory(req: dict) -> bool:
     return False
 
 
+async def _compensate_request_effects(req: dict) -> dict:
+    """Compensa tarifa e inventario basándose en EFECTOS DURADEROS, nunca en
+    flags que puedan ir atrasados (R02). Devuelve los campos a sellar.
+
+    - Tarifa: SIEMPRE se reconcilia (`refund_fee` deja el saldo correcto tanto si
+      el débito fue real como si nunca movió dinero) y se sella el estado
+      VERDADERO: 'refunded' (débito real devuelto), 'void' (nunca cobró) o
+      'none'. Si la reconciliación no concluye, NO se sella (reintentable).
+    - Inventario: se devuelve SOLO si la reserva se aplicó de forma DURADERA
+      (`dispatch_applied`). Si nunca se reservó, no hay stock que devolver y se
+      marca `inv_returned` (no se añade inventario fantasma). Si la devolución
+      no se pudo aplicar (producto borrado…), `return_delivery_inventory` deja
+      una incidencia y NO se sella éxito."""
+    cid, reqid = req["company_id"], req["id"]
+    fee = float(req.get("fee_usdt") or 0)
+    updates: dict = {}
+    if req.get("fee_status") not in ("refunded", "void", "none"):
+        res = await billing.refund_fee(cid, reqid, fee)
+        if fee <= 0:
+            updates["fee_status"] = "none"
+        elif res == "undone":
+            updates["fee_status"] = "refunded"
+        elif res == "burned":
+            updates["fee_status"] = "void"
+        # cualquier otro resultado → no sellar (se reintenta la próxima pasada)
+    if not req.get("inv_returned") and req.get("product_id") \
+            and req.get("origin_store_id"):
+        if await company_inventory.dispatch_applied(cid, f"cdeliv:{reqid}"):
+            if await return_delivery_inventory(req):
+                updates["inv_returned"] = True
+            # si no se pudo devolver → incidencia dejada por return_delivery_inventory
+        else:
+            # la reserva nunca se aplicó de forma duradera → nada que devolver
+            updates["inv_returned"] = True
+    return updates
+
+
 async def reconcile_cancelled_request(req: dict) -> bool:
     """Reconcilia EXACTAMENTE UNA VEZ una solicitud cuyo envío quedó cancelado:
-    reembolsa la tarifa retenida y devuelve el inventario reservado. Idempotente
-    (reembolso/devolución por op_id ligado al reqid; flags que no se repiten).
-    Muta `req` in situ para que la respuesta refleje el estado ya aplicado en
-    esta misma lectura. Devuelve True si cambió algo."""
+    reembolsa la tarifa retenida y devuelve el inventario reservado, basándose en
+    EFECTOS DURADEROS (R02). Idempotente. Muta `req` in situ para que la respuesta
+    refleje el estado ya aplicado en esta misma lectura. True si cambió algo."""
     company_id = req.get("company_id")
     if not company_id:
         return False
-    updates: dict = {}
-    if req.get("fee_status") == "held":
-        await billing.refund_fee(company_id, req["id"],
-                                 float(req.get("fee_usdt") or 0))
-        updates["fee_status"] = "refunded"
-    if req.get("inv_reserved") and not req.get("inv_returned") \
-            and req.get("product_id") and req.get("origin_store_id"):
-        if await return_delivery_inventory(req):
-            updates["inv_returned"] = True
+    updates = await _compensate_request_effects(req)
     if not updates:
         return False
     updates["status"] = "cancelled"
@@ -78,26 +106,34 @@ async def reconcile_cancelled_request(req: dict) -> bool:
 
 
 async def heal_cancelled_company_deliveries(limit: int = 300) -> int:
-    """E34-06 — worker recuperable: reconcilia envíos Empresa cuya ENTREGA quedó
-    cancelada pero cuya compensación (tarifa/stock) sigue pendiente, SIN depender
-    de que la Empresa abra su pantalla ni de cuántas solicitudes recientes haya.
-    Solo compensa cuando la entrega vinculada está realmente `cancelled`."""
-    rows = await db.company_delivery_requests.find(
-        {"status": "requested",
-         "$or": [
-             {"fee_status": "held"},
-             {"inv_reserved": True, "inv_returned": {"$ne": True},
-              "inv_return_incident": {"$ne": True}},
-         ]},
-        {"_id": 0}).to_list(limit)
+    """E34-06/R07 — worker recuperable: reconcilia envíos Empresa cuya ENTREGA
+    quedó cancelada pero cuya compensación (tarifa/stock) sigue pendiente, SIN
+    depender de que la Empresa abra su pantalla.
+
+    R07 — el filtrado por entrega cancelada se hace mediante un JOIN explícito
+    ($lookup) ANTES de aplicar el límite, de modo que una avalancha de
+    solicitudes ACTIVAS no pueda desplazar indefinidamente a una cancelada: el
+    pipeline selecciona únicamente candidatas cuya entrega vinculada está
+    realmente `cancelled`."""
+    pipeline = [
+        {"$match": {
+            "status": "requested",
+            "delivery_id": {"$ne": None},
+            "$or": [
+                {"fee_status": "held"},
+                {"inv_reserved": True, "inv_returned": {"$ne": True},
+                 "inv_return_incident": {"$ne": True}},
+            ]}},
+        {"$lookup": {
+            "from": "deliveries", "localField": "delivery_id",
+            "foreignField": "id", "as": "_d"}},
+        {"$match": {"_d.status": "cancelled"}},
+        {"$limit": limit},
+        {"$project": {"_d": 0, "_id": 0}},
+    ]
+    rows = await db.company_delivery_requests.aggregate(pipeline).to_list(limit)
     healed = 0
     for r in rows:
-        did = r.get("delivery_id")
-        if not did:
-            continue  # sin entrega → lo cubre heal_initializing_company_deliveries
-        d = await db.deliveries.find_one({"id": did}, {"_id": 0, "status": 1})
-        if not d or d.get("status") != "cancelled":
-            continue  # la entrega sigue activa → NO compensar
         try:
             if await reconcile_cancelled_request(r):
                 healed += 1

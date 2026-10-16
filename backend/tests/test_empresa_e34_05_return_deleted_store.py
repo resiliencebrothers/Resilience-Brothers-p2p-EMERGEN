@@ -22,6 +22,21 @@ from services import company_inventory as ci  # noqa: E402
 CID = "user_test_e3405_company"
 
 
+def _run(coro):
+    """Ejecuta una corutina desde un test SÍNCRONO de forma robusta aunque un
+    test async previo (pytest-asyncio) haya cerrado el loop del hilo. El
+    fixture autouse de conftest resetea el binding de motor, así que el cliente
+    se reenlaza al loop vigente en la primera operación."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
 def _sync_db():
     return MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
@@ -68,7 +83,7 @@ def test_return_to_deleted_store_lands_in_central():
         r2 = await ci.return_dispatch(CID, pid, sid, 2, op_id=f"ret:{pid}:x")
         return r2
 
-    res = asyncio.get_event_loop().run_until_complete(run())
+    res = _run(run())
     assert res == "applied"
     p = db.products.find_one({"id": pid}, {"_id": 0})
     # total vuelve a 10, distributed sigue 0 (central = 10), SIN by_store huérfano.
@@ -99,6 +114,6 @@ def test_return_when_product_deleted_reports_not_found():
         db.products.delete_one({"id": pid})  # producto borrado
         return await ci.return_dispatch(CID, pid, sid, 2, op_id=f"ret:{pid}:del")
 
-    res = asyncio.get_event_loop().run_until_complete(run())
+    res = _run(run())
     assert res == "not_found"
     assert db.products.find_one({"id": pid}) is None

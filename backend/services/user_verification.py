@@ -45,11 +45,20 @@ async def _kyc_is_verified(
     / superseded all mean the user cannot operate. Para una cuenta Empresa la
     verificación debe ser EMPRESARIAL (`kind = "company"`): un KYC personal
     aprobado NO habilita los retiros de una Empresa (E34-03).
-    """
-    query: dict = {"user_id": user_id, "status": "verified"}
+
+    R10 — para la Empresa se evalúa el expediente `company` MÁS RECIENTE: si el
+    último está 'pending'/'needs_more_info'/'superseded' (p. ej. una
+    revalidación en curso o un reenvío), la empresa NO está verificada aunque
+    exista una aprobación anterior. Así el estado del guard es siempre coherente
+    con la última decisión, sin depender de que el sellado 'superseded' se
+    completara."""
     if role == "empresa":
-        query["kind"] = "company"
-    doc = await db.kyc_verifications.find_one(query, {"_id": 0, "status": 1})
+        latest = await db.kyc_verifications.find_one(
+            {"user_id": user_id, "kind": "company"},
+            {"_id": 0, "status": 1}, sort=[("created_at", -1)])
+        return bool(latest and latest.get("status") == "verified")
+    doc = await db.kyc_verifications.find_one(
+        {"user_id": user_id, "status": "verified"}, {"_id": 0, "status": 1})
     return doc is not None
 
 

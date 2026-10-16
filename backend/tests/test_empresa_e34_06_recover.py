@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tests.conftest import BASE_URL, ADMIN_TOKEN  # noqa: E402
 from services.company_delivery_recovery import (  # noqa: E402
     heal_cancelled_company_deliveries)
+from services import company_delivery_billing as billing  # noqa: E402
+from services import company_inventory as ci  # noqa: E402
 
 API = f"{BASE_URL}/api"
 CID = "user_test_e3406"
@@ -41,8 +43,21 @@ def _q(v):
     return round(float(v or 0), 3)
 
 
+def _loop():
+    """Loop robusto para tests SÍNCRONOS aunque un test async previo lo cerrara."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop
+
+
 def _cleanup():
     db = _db()
+    db.users.delete_one({"user_id": CID})
     db.products.delete_many({"company_id": CID})
     db.stores.delete_many({"company_id": CID})
     db.company_delivery_requests.delete_many({"company_id": CID})
@@ -53,16 +68,26 @@ def _cleanup():
 
 def _seed(reqid, delivery_status="available", req_status="requested",
           created=None, with_store=True):
-    """Producto YA reservado (8 total, 0 distrib, by_store 0) + entrega + solicitud
-    con tarifa retenida e inventario reservado."""
+    """Siembra con EFECTOS DURADEROS REALES (R02): retiene la tarifa de verdad
+    (débito) y reserva inventario de verdad (dispatch), de modo que el saldo y
+    el stock reflejen un alta real a medio compensar. Producto con 2 uds en la
+    tienda (stock 10, distribuido 2) → tras el dispatch queda stock 8/by_store 0;
+    la reconciliación debe devolverlo a stock 10/by_store 2 y el saldo a 100."""
     db = _db()
+    loop = _loop()
     sid = f"{reqid}-store"
     pid = f"{reqid}-prod"
     if with_store:
         db.stores.insert_one({"id": sid, "company_id": CID, "name": "T", "active": True})
     db.products.insert_one({
         "id": pid, "name": "P3406", "company_id": CID, "owner_id": CID,
-        "stock": 8.0, "distributed": 0.0, "by_store": {sid: 0.0}, "is_active": True})
+        "stock": 10.0, "distributed": 2.0, "by_store": {sid: 2.0}, "is_active": True})
+    db.users.update_one({"user_id": CID},
+                        {"$set": {"vip_balances": {"USDT": 100.0}}}, upsert=True)
+    # Retención REAL de tarifa (saldo 100 → 95) y reserva REAL (stock 10 → 8).
+    assert loop.run_until_complete(billing.hold_fee(CID, reqid, 5)) == "applied"
+    assert loop.run_until_complete(
+        ci.dispatch_from_store(CID, pid, sid, 2.0, op_id=f"cdeliv:{reqid}")) == "applied"
     did = f"e3406-{uuid.uuid4().hex[:8]}"
     db.deliveries.insert_one({
         "id": did, "kind": "company_delivery", "ref_id": reqid,
@@ -112,7 +137,7 @@ class TestE3406:
         reqid_ctl = f"e3406C{uuid.uuid4().hex[:8]}"
         _seed(reqid_ctl, delivery_status="available")
 
-        healed = asyncio.get_event_loop().run_until_complete(
+        healed = _loop().run_until_complete(
             heal_cancelled_company_deliveries())
         assert healed >= 1
 
@@ -129,7 +154,7 @@ class TestE3406:
         db = _db()
         reqid = f"e3406D{uuid.uuid4().hex[:8]}"
         did, pid, sid = _seed(reqid, delivery_status="cancelled")
-        loop = asyncio.get_event_loop()
+        loop = _loop()
         loop.run_until_complete(heal_cancelled_company_deliveries())
         stock_after_first = _q(db.products.find_one({"id": pid})["stock"])
         # Segunda pasada: no vuelve a compensar (status ya cancelled) ni duplica stock.

@@ -25,6 +25,7 @@ const STATUS_META = {
   needs_more_info: { label: "Requiere más información", tone: "warn", icon: AlertTriangle },
   verified:        { label: "Verificada",    tone: "ok",     icon: ShieldCheck },
   rejected:        { label: "Rechazada",     tone: "danger", icon: X },
+  superseded:      { label: "Reemplazada",   tone: "muted",  icon: Info },
 };
 
 export default function CompanyKYCView() {
@@ -100,7 +101,10 @@ export default function CompanyKYCView() {
 
   const s = status?.status || "unverified";
   const v = status?.verification;
+  // R05 — needs_more_info permite subsanar; R10 — 'superseded' (expediente
+  // huérfano por un fallo de reemplazo) también puede reenviarse para recuperar.
   const canSubmit = s === "unverified" || s === "rejected"
+    || s === "needs_more_info" || s === "superseded"
     || (s === "verified" && reverify);
   const cfg = STATUS_META[s] || STATUS_META.unverified;
   const StatusIcon = cfg.icon;

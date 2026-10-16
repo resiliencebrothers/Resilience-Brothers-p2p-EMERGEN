@@ -49,10 +49,16 @@ async def hold_fee(company_id: str, reqid: str, fee: float) -> str:
         company_id, FEE_CODE, round(float(fee), 2), _fee_op(reqid))
 
 
-async def refund_fee(company_id: str, reqid: str, fee: float) -> None:
-    """Reembolsa la tarifa retenida (idempotente, exactamente una vez).
-    No-op si fee<=0 (burn/undo tolera un débito que nunca llegó a aplicarse)."""
+async def refund_fee(company_id: str, reqid: str, fee: float) -> str:
+    """Reembolsa la tarifa retenida (idempotente, exactamente una vez). Devuelve
+    el resultado DURADERO para poder sellar el estado VERDADERO (R02):
+    - 'undone'  → se devolvió un débito REAL (el saldo vuelve a su sitio),
+    - 'burned'  → el débito nunca movió dinero (nada que reembolsar; bloqueado),
+    - 'none'    → no había tarifa (fee<=0).
+    `burn_or_undo_debit` deja el saldo CORRECTO en todos los casos, así que
+    llamarla SIEMPRE (sin fiarse de un flag que pudo quedar atrasado) garantiza
+    que el saldo quede consistente antes de marcar la solicitud."""
     if fee <= 0:
-        return
-    await burn_or_undo_debit(
+        return "none"
+    return await burn_or_undo_debit(
         company_id, FEE_CODE, round(float(fee), 2), _fee_op(reqid))

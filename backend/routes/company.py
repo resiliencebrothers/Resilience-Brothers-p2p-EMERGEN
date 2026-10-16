@@ -11,6 +11,8 @@ fases siguientes añadirán inventario por tienda/almacén central, sub-saldo y
 solicitud de mensajería.
 """
 import uuid
+import json
+import hashlib
 import logging
 from datetime import timedelta
 from typing import Any, Literal, Optional
@@ -141,6 +143,10 @@ async def delete_my_store(store_id: str, request: Request) -> Any:
     # 4) Solo cuando el cierre terminó por completo, elimina la identidad.
     await db.stores.delete_one(
         {"id": store_id, "company_id": user["user_id"]})
+    # 5) R06 — barrido final: reubica al central cualquier existencia residual
+    #    que una devolución concurrente pudiera haber dejado en by_store durante
+    #    el cierre. Idempotente; evita estanterías huérfanas tras el borrado.
+    await company_inventory.reclaim_store_shelf_to_central(user["user_id"], store_id)
     return {"ok": True}
 
 
@@ -566,12 +572,30 @@ _CDELIV_IDX_READY = False
 
 async def _ensure_cdeliv_index() -> None:
     """Índice único (empresa, client_key) para deduplicar el alta de envíos.
-    Sparse: no afecta a documentos antiguos sin client_key."""
+    R01 — PARCIAL (no meramente sparse): solo indexa documentos cuyo `client_key`
+    es una CADENA. Un índice sparse compuesto SÍ indexa los documentos antiguos
+    que tienen `company_id` pero `client_key` ausente (con client_key=null), de
+    modo que DOS documentos antiguos de la misma empresa sin clave colisionan
+    ('A', null) e impiden crear el índice. El filtro parcial los EXCLUYE por
+    completo, por lo que el índice se construye sobre datos antiguos reales sin
+    colisiones y sigue garantizando unicidad de las claves válidas nuevas."""
     global _CDELIV_IDX_READY
     if _CDELIV_IDX_READY:
         return
+    # R01 — MIGRACIÓN: elimina el índice sparse compuesto ANTIGUO
+    # (`company_id_1_client_key_1`). Un sparse compuesto SÍ indexa los documentos
+    # que tienen `company_id` pero `client_key` ausente (como client_key=null),
+    # de modo que dos documentos antiguos sin clave colisionan ('A', null) e
+    # impiden siquiera crear/usar el índice. Se sustituye por un índice PARCIAL
+    # que solo indexa `client_key` de tipo cadena (excluye los nulos antiguos).
+    try:
+        await db.company_delivery_requests.drop_index("company_id_1_client_key_1")
+    except Exception:
+        pass
     await db.company_delivery_requests.create_index(
-        [("company_id", 1), ("client_key", 1)], unique=True, sparse=True)
+        [("company_id", 1), ("client_key", 1)], unique=True,
+        partialFilterExpression={"client_key": {"$type": "string"}},
+        name="uniq_company_client_key_str")
     _CDELIV_IDX_READY = True
 
 
@@ -619,11 +643,23 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
     client_key = (payload.client_key or str(uuid.uuid4())).strip()
     package_label = (f"{prod['name']} ×{company_inventory._q(qty_)}" if prod
                      else (payload.note.strip() or "Envío de empresa"))
+    # R09 — HUELLA del payload económicamente relevante: una misma `client_key`
+    # DEBE corresponder al MISMO envío lógico. Si se reusa la clave con un
+    # payload distinto (otro destinatario/dirección/producto/cantidad) se
+    # rechaza con conflicto, en vez de reutilizar en silencio la solicitud
+    # anterior (que podría cobrar/reservar algo distinto a lo pedido).
+    fingerprint = hashlib.sha256(json.dumps({
+        "r": payload.receiver_name.strip(), "p": payload.receiver_phone.strip(),
+        "a": payload.delivery_address.strip(), "pv": payload.province.strip(),
+        "m": payload.municipality.strip(), "pid": pid_, "sid": sid_,
+        "q": company_inventory._q(qty_) if qty_ else None,
+    }, sort_keys=True).encode()).hexdigest()
 
     # --- INTENCIÓN duradera (dedup de reintentos y POSTs simultáneos).
     reqid = str(uuid.uuid4())
     intent = {
         "id": reqid, "company_id": cid, "client_key": client_key,
+        "payload_fingerprint": fingerprint,
         "company_name": user.get("name", ""),
         "receiver_name": payload.receiver_name.strip(),
         "receiver_phone": payload.receiver_phone.strip(),
@@ -645,6 +681,13 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
             {"company_id": cid, "client_key": client_key}, {"_id": 0})
         if not req:
             raise HTTPException(status_code=409, detail="Conflicto de clave; reintenta.")
+        # R09 — misma clave, payload DISTINTO ⇒ conflicto explícito (nunca se
+        # reutiliza la solicitud previa como si fuera este envío).
+        if req.get("payload_fingerprint") and req["payload_fingerprint"] != fingerprint:
+            raise HTTPException(
+                status_code=409,
+                detail=("Esa clave de envío ya se usó para una solicitud distinta. "
+                        "Crea un envío nuevo (no reutilices una operación anterior)."))
         st = req.get("status")
         if st == "initializing":
             # Reintento/concurrencia: RETOMAR con el MISMO reqid y payload guardado.
@@ -699,13 +742,31 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
     job = await ensure_delivery_job(
         "company_delivery", req_for_job, km=0, fee_usdt=fee, actor_id=cid)
 
-    # --- FASE 4: activar (initializing → requested) y enlazar la entrega. Las
-    # fases son idempotentes ⇒ dos POSTs con la misma clave convergen al MISMO
-    # envío/cargo/reserva.
-    await db.company_delivery_requests.update_one(
-        {"id": reqid},
+    # --- FASE 4: activar (initializing → requested) y enlazar la entrega.
+    # R03 — CAS sobre 'initializing': la ACTIVACIÓN y la COMPENSACIÓN comparten
+    # la MISMA decisión terminal. Si el recuperador ya reclamó la fila
+    # (initializing → failed_init) y la compensó, este update NO modifica nada
+    # y NO resucitamos una solicitud ya revertida: deshacemos el trabajo recién
+    # creado y pedimos recrear el envío. Las fases son idempotentes ⇒ dos POSTs
+    # con la misma clave convergen al MISMO envío/cargo/reserva.
+    activated = await db.company_delivery_requests.update_one(
+        {"id": reqid, "status": "initializing"},
         {"$set": {"status": "requested", "delivery_id": job["id"],
                   "updated_at": iso(now_utc())}})
+    if activated.modified_count == 0:
+        from services.deliveries import cancel_active_delivery
+        await cancel_active_delivery(
+            "company_delivery", reqid, actor_id="system",
+            note="alta de envío revertida (carrera con el recuperador)")
+        current = await db.company_delivery_requests.find_one(
+            {"id": reqid}, {"_id": 0, "status": 1})
+        if (current or {}).get("status") == "requested":
+            # Un POST concurrente con la MISMA clave ya la activó → idempotente.
+            final = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+            return {**final, "delivery_status": await _delivery_status_for(final)}
+        raise HTTPException(
+            status_code=409,
+            detail="Ese envío no se completó y fue revertido. Vuelve a crearlo.")
     final = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
     return {**final, "delivery_status": job.get("status", "available")}
 

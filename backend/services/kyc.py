@@ -261,22 +261,17 @@ async def submit_company_verification(
     Reusa la misma cola de revisión y el mismo `kyc_status` → al aprobarse
     habilita el retiro igual que el KYC individual.
     """
-    active = await get_active_verification(db, user["user_id"])
-    if active:
-        if active.get("status") == "verified":
-            # Revalidación (E34-03): cambiar datos/documentos ya aprobados NO
-            # conserva la aprobación en silencio. La verificación empresarial
-            # anterior se marca 'superseded' y la cuenta vuelve a 'pending'
-            # hasta una nueva revisión → los retiros quedan bloqueados mientras
-            # tanto (la nueva fila pending se crea más abajo).
-            ts = iso(now_utc())
-            await db.kyc_verifications.update_one(
-                {"id": active["id"], "status": "verified"},
-                {"$set": {"status": "superseded",
-                          "superseded_at": ts, "updated_at": ts}},
-            )
-        else:
-            raise ValueError(f"already_active_verification:{active['status']}")
+    # R05/R10 — orden SEGURO: (1) decidir si se admite el envío según el estado
+    # MÁS RECIENTE, (2) validar y normalizar TODOS los datos ANTES de tocar nada,
+    # (3) insertar el expediente nuevo PRIMERO y solo DESPUÉS marcar el anterior
+    # 'superseded'. Así, datos inválidos nunca retiran una aprobación vigente y
+    # un fallo de persistencia nunca deja la cuenta sin expediente.
+    latest = await get_latest_verification(db, user["user_id"])
+    if latest and latest.get("status") == "pending":
+        # Ya hay un envío EN REVISIÓN → no se admite un duplicado simultáneo.
+        raise ValueError("already_active_verification:pending")
+    # needs_more_info / verified / rejected / superseded / (ninguno) → se admite
+    # (re)enviar: subsanación (R05) o revalidación (R10).
 
     if len(documents) < 2:
         raise ValueError("missing_documents")
@@ -318,7 +313,19 @@ async def submit_company_verification(
         "created_at": now,
         "updated_at": now,
     }
+    # (3) Insertar el expediente nuevo PRIMERO: desde este momento el expediente
+    # MÁS RECIENTE es 'pending' → el guard de retiro ya NO considera verificada a
+    # la empresa (usa el último expediente 'company'). Si algo falla aquí, la
+    # aprobación anterior permanece intacta.
     await db.kyc_verifications.insert_one(doc)
+    # Solo DESPUÉS, retirar la aprobación/solicitud anterior (auditoría), con CAS
+    # sobre su estado para no pisar una transición concurrente.
+    if latest and latest.get("status") in ("verified", "needs_more_info"):
+        await db.kyc_verifications.update_one(
+            {"id": latest["id"], "status": latest["status"]},
+            {"$set": {"status": "superseded",
+                      "superseded_at": now, "updated_at": now}},
+        )
     await db.users.update_one(
         {"user_id": user["user_id"]},
         {"$set": {"kyc_status": "pending", "kyc_last_submit_at": now}},

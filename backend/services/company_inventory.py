@@ -377,12 +377,15 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
         return "invalid"
 
     async def _apply(oid: str) -> str:
-        # E34-05 — si la tienda de origen YA NO EXISTE (cerrada/borrada), la
-        # mercancía NO puede volver a un `by_store` huérfano: se devuelve al
-        # ALMACÉN CENTRAL (central = stock − distributed ⇒ sube `stock` sin
-        # tocar `distributed`). Si la tienda existe, se restaura su estantería.
+        # E34-05/R06 — si la tienda de origen YA NO EXISTE o está EN CIERRE
+        # ('closing': su estantería se está desmantelando), la mercancía NO
+        # puede volver a un `by_store` que el borrado dejaría huérfano: se
+        # devuelve al ALMACÉN CENTRAL (central = stock − distributed ⇒ sube
+        # `stock` sin tocar `distributed`). Solo una tienda VIGENTE recupera su
+        # estantería. Esto evita la carrera cierre↔devolución.
         store = await db.stores.find_one(
-            {"id": store_id, "company_id": company_id}, {"_id": 0, "name": 1})
+            {"id": store_id, "company_id": company_id,
+             "status": {"$ne": "closing"}}, {"_id": 0, "name": 1})
         if store is not None:
             set_stage = {
                 "stock": {"$round": [
@@ -418,6 +421,26 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
     return await _run_idempotent(
         company_id, op_id, "dispatch_return",
         {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
+
+
+async def dispatch_applied(company_id: str, op_id: str) -> bool:
+    """¿La RESERVA de inventario (dispatch) de este `op_id` se aplicó de forma
+    DURADERA? Fuente de verdad: el registro permanente `company_inventory_ops`
+    (result 'applied'/'duplicate') o, como respaldo ante un crash entre la
+    mutación y su sellado, el guard embebido `inv_ops` del producto.
+
+    R02 — un recuperador debe devolver stock SOLO si la reserva realmente
+    ocurrió, nunca a partir de un flag de la solicitud que pudo quedar atrasado
+    (ni sellar una devolución ficticia que añadiría inventario inexistente)."""
+    rec = await db.company_inventory_ops.find_one(
+        {"company_id": company_id, "op_key": op_id},
+        {"_id": 0, "status": 1, "result": 1})
+    if rec and rec.get("status") == "done" \
+            and rec.get("result") in ("applied", "duplicate"):
+        return True
+    prod = await db.products.find_one(
+        {"company_id": company_id, "inv_ops": op_id}, {"_id": 1})
+    return prod is not None
 
 
 # ============================================================
@@ -632,6 +655,38 @@ async def release_store(company_id: str, store_id: str) -> None:
         {"_id": 0, "id": 1}).to_list(5000)]
     for pid in pids:
         await _release_one(company_id, store_id, pid)
+
+
+async def reclaim_store_shelf_to_central(company_id: str, store_id: str) -> int:
+    """R06 — barrido FINAL de cierre: reubica al CENTRAL cualquier existencia
+    residual que haya quedado en `by_store[store_id]` (p. ej. una devolución que
+    ganó la carrera contra el borrado de la tienda). Mueve la cantidad a central
+    (distributed −= q; `stock` total intacto) y elimina la clave. Idempotente:
+    tras ejecutarse `by_store[store_id]` no existe, por lo que un reintento no
+    reaplica. Se ejecuta DESPUÉS de borrar la tienda, cuando ya no pueden
+    llegar nuevas devoluciones a su estantería. Devuelve nº de productos saneados."""
+    pids = [p["id"] for p in await db.products.find(
+        {"company_id": company_id, f"by_store.{store_id}": {"$gt": 0}},
+        {"_id": 0, "id": 1}).to_list(5000)]
+    reclaimed = 0
+    for pid in pids:
+        before = await db.products.find_one_and_update(
+            {"id": pid, "company_id": company_id,
+             f"by_store.{store_id}": {"$gt": 0}},
+            [{"$set": {"distributed": {"$round": [{"$subtract": [
+                {"$ifNull": ["$distributed", 0]},
+                {"$ifNull": [f"$by_store.{store_id}", 0]}]}, QTY_DECIMALS]}}},
+             {"$unset": f"by_store.{store_id}"}],
+            projection={"_id": 0, "id": 1, "name": 1, f"by_store.{store_id}": 1},
+            return_document=ReturnDocument.BEFORE)
+        if before is None:
+            continue
+        qty = _q((before.get("by_store") or {}).get(store_id))
+        if qty > 0:
+            await _log_move(company_id, before, "dispatch_return_central", qty,
+                            f"orphan-reclaim:{store_id}:{pid}:{uuid.uuid4().hex}")
+            reclaimed += 1
+    return reclaimed
 
 
 async def build_inventory_rows(company_id: str) -> list:

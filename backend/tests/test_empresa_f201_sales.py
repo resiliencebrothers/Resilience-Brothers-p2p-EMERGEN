@@ -40,6 +40,15 @@ async def _mk(stock, distributed, by_store):
         "by_store": {k: float(v) for k, v in by_store.items()},
         "is_active": True, "owner_id": COMPANY, "company_id": COMPANY,
         "approval_status": "approved"})
+    # E34-05 — las devoluciones restauran la estantería SOLO si la tienda existe.
+    # Sembramos la tienda real de cada clave de by_store para que el reverso del
+    # despacho vuelva a su tienda (y no al central).
+    for sid in by_store:
+        await db.stores.update_one(
+            {"id": sid, "company_id": COMPANY},
+            {"$setOnInsert": {"id": sid, "company_id": COMPANY,
+                              "name": f"Store {sid}", "active": True}},
+            upsert=True)
     return pid
 
 
@@ -47,6 +56,7 @@ async def _clean(pid):
     await db.products.delete_one({"id": pid})
     await db.stock_ops.delete_many({"product_id": pid})
     await db.company_inventory_moves.delete_many({"company_id": COMPANY})
+    await db.stores.delete_many({"company_id": COMPANY})
 
 
 async def _row(pid):

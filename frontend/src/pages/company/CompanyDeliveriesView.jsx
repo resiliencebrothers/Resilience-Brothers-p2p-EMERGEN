@@ -86,6 +86,10 @@ export default function CompanyDeliveriesView() {
       clientKeyRef.current = null;  // nuevo envío ⇒ nueva clave
       setOpen(false); setForm(emptyForm); load();
     } catch (e) {
+      // R09 — si el backend revirtió este intento (failed_init) o la clave ya se
+      // usó para OTRO envío (conflicto de payload), descarta la clave para que
+      // un nuevo intento obtenga una IDENTIDAD nueva (no reutilice la anterior).
+      if (e.response?.status === 409) clientKeyRef.current = null;
       toast.error(e.response?.data?.detail || "No se pudo crear la solicitud");
     } finally { setBusy(false); }
   };
