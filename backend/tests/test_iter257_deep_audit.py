@@ -219,6 +219,30 @@ class TestD09RecoveryCodes(_Sandbox):
         assert len(doc.get("totp_recovery_codes") or []) == 1, \
             "solo se retira el hash que coincidió"
 
+    def test_all_numeric_recovery_code_is_accepted(self):
+        # Regresión fix-2FA: ~0.9% de los códigos hex son TODO NÚMEROS; el
+        # discriminador NO debe rechazarlos por 'no tener letras' (antes
+        # devolvía False → bloqueo de cuenta con un código VÁLIDO).
+        code = "01234-56789"
+        hashed = [bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()]
+        uid = f"u_{MARK}_{uuid.uuid4().hex[:8]}"
+        _db().users.insert_one({
+            "user_id": uid, "email": f"{uid}@test.local", "role": "client",
+            "totp_enabled": True, "totp_recovery_codes": hashed,
+            "created_at": OLD_TS})
+        try:
+            async def flow():
+                from auth_utils import _try_recovery_code
+                from db_client import db
+                user = await db.users.find_one({"user_id": uid}, {"_id": 0})
+                return await _try_recovery_code(user, code)
+
+            assert _run(flow) is True
+            doc = _db().users.find_one({"user_id": uid}, {"_id": 0})
+            assert (doc.get("totp_recovery_codes") or []) == []
+        finally:
+            _db().users.delete_one({"user_id": uid})
+
 
 # ======================================================================
 # D12 — cambio de contraseña sin 2FA activado

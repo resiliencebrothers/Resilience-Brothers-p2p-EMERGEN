@@ -375,8 +375,15 @@ async def _try_recovery_code(user: dict, submitted: str) -> bool:
     Raises 401 only when it looks like a recovery code but fails to match.
     iter257(D09) — el consumo es ATÓMICO: se retira exactamente el hash que
     coincidió, condicionado a que siga presente. Dos peticiones concurrentes
-    con el mismo código autorizan una sola; códigos distintos no se pisan."""
-    if len(submitted) < 10 or not any(c.isalpha() for c in submitted):
+    con el mismo código autorizan una sola; códigos distintos no se pisan.
+
+    fix 2FA — un código de recuperación se distingue por su FORMATO (`XXXXX-XXXXX`
+    alfanumérico, con o sin guion), NO por 'contener una letra': `token_hex` hace
+    que ~0.9% de los códigos sean TODO NÚMEROS (p. ej. 01234-56789) y el
+    heurístico `not any(isalpha)` los rechazaba como válidos → riesgo de bloqueo
+    de cuenta. Un TOTP de 6 dígitos no cumple este formato y sigue el camino TOTP."""
+    normalized = (submitted or "").strip().replace(" ", "")
+    if not re.fullmatch(r"[0-9A-Za-z]{5}-?[0-9A-Za-z]{5}", normalized):
         return False
     codes = user.get("totp_recovery_codes", []) or []
     ok, remaining = totp_service.consume_recovery_code(codes, submitted)

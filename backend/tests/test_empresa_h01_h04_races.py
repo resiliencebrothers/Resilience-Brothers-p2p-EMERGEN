@@ -156,11 +156,18 @@ async def test_h01_losing_post_does_not_cancel_winning_delivery(monkeypatch):
     finally:
         monkeypatch.undo()
         await _clean()
-        if saved and saved.get("company_delivery_fee_usdt") is not None:
+        # Restaura EXACTAMENTE el estado previo del ajuste global compartido
+        # (valor anterior o AUSENTE): nunca dejar un valor filtrado que pudiera
+        # acoplar otros tests que leen la tarifa global.
+        orig_fee = (saved or {}).get("company_delivery_fee_usdt")
+        if orig_fee is not None:
             await db.settings.update_one(
                 {"id": "global"},
-                {"$set": {"company_delivery_fee_usdt":
-                          saved["company_delivery_fee_usdt"]}})
+                {"$set": {"company_delivery_fee_usdt": orig_fee}})
+        else:
+            await db.settings.update_one(
+                {"id": "global"},
+                {"$unset": {"company_delivery_fee_usdt": ""}})
 
 
 # ─────────────────────────────────────────────────────────────────────── H02
@@ -434,4 +441,73 @@ async def test_h02r_first_phase_failure_does_not_block_retries(monkeypatch):
         assert rg["fee_status"] == "refunded" and rg.get("comp_sealed") is True
     finally:
         monkeypatch.undo()
+        await _clean()
+
+
+# ─────────────────────────────────────────────────────────────────── H03-R
+# La prohibición de reservar TARDE no puede vivir solo en el array `inv_ops`
+# (truncado a 1000): debe ser una decisión TERMINAL DURADERA en
+# company_inventory_ops que sobreviva a la rotación del array.
+async def test_h03r_burn_decision_survives_inv_ops_rotation():
+    await _clean()
+    reqid = str(uuid.uuid4())
+    opid = f"cdeliv:{reqid}"
+    burn_token = f"{opid}:burn"
+    try:
+        pid, sid = await _seed_company()   # stock 10, by_store {sid: 3}
+        # El recuperador CONGELA una reserva aún NO ejecutada (aborto).
+        assert await ci.freeze_dispatch(CID, pid, sid, 3, opid) is False
+        # Decisión TERMINAL DURADERA registrada (independiente del array).
+        rec = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": opid}, {"_id": 0})
+        assert rec and rec["status"] == "done" and rec["result"] == "burned"
+        # Simula la ROTACIÓN del guard embebido (>1000 movimientos lo desalojan).
+        await db.products.update_one(
+            {"id": pid}, {"$pull": {"inv_ops": burn_token}})
+        p = await db.products.find_one({"id": pid}, {"_id": 0, "inv_ops": 1})
+        assert burn_token not in (p.get("inv_ops") or [])
+        # El creador REANUDA la reserva: pese a que el token salió del array, la
+        # decisión duradera fuerza 'burned' y NO descuenta stock fantasma.
+        status = await ci.dispatch_from_store(CID, pid, sid, 3, op_id=opid)
+        assert status == "burned"
+        assert await _stock(pid) == 10.0
+        assert await _shelf(pid, sid) == 3.0
+    finally:
+        await _clean()
+
+
+# ─────────────────────────────────────────────────────────────────── H04-R
+# Muchos productos SANOS no pueden tapar a un huérfano: el barrido filtra
+# huérfanos ANTES de limitar, así que el cupo no se agota con productos sanos.
+async def test_h04r_orphan_reclaimed_despite_many_healthy_products():
+    await _clean()
+    try:
+        _pid, sid = await _seed_company()
+        healthy_ids = []
+        for i in range(5):
+            hid = str(uuid.uuid4())
+            healthy_ids.append(hid)
+            await db.products.insert_one({
+                "id": hid, "name": f"H{i}", "company_id": CID, "owner_id": CID,
+                "stock": 10.0, "distributed": 2.0, "by_store": {sid: 2.0},
+                "unit": "unidad", "is_active": True})
+        orphan = str(uuid.uuid4())
+        await db.products.insert_one({
+            "id": orphan, "name": "ORPHAN", "company_id": CID, "owner_id": CID,
+            "stock": 10.0, "distributed": 2.0, "by_store": {"GONE-STORE": 2.0},
+            "unit": "unidad", "is_active": True})
+
+        # Con límite PEQUEÑO (1): los sanos NO consumen el cupo (se filtran antes
+        # de limitar) → el huérfano se recupera igualmente en la misma pasada.
+        n = await ci.heal_orphan_store_shelves(company_id=CID, limit=1)
+        assert n >= 1
+        p = await db.products.find_one({"id": orphan}, {"_id": 0})
+        assert "GONE-STORE" not in (p.get("by_store") or {})
+        assert round(float(p.get("distributed") or 0), 3) == 0.0
+        # Los productos sanos NO se tocaron.
+        for hid in healthy_ids:
+            hp = await db.products.find_one({"id": hid}, {"_id": 0, "by_store": 1})
+            assert round(float((hp.get("by_store") or {}).get(sid) or 0), 3) == 2.0
+    finally:
+        await db.products.delete_many({"company_id": CID})
         await _clean()

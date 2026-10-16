@@ -474,23 +474,49 @@ async def dispatch_applied(company_id: str, op_id: str) -> bool:
     return prod is not None
 
 
-async def freeze_dispatch(company_id: str, product_id: str, op_id: str) -> bool:
-    """H03 — decisión TERMINAL de la reserva de un envío de Empresa: empuja el
-    TOKEN de quema `op:burn` al guard embebido del producto ANTES de comprobar
-    nada, de modo que una reserva TARDÍA del creador (`dispatch_from_store` con
-    el mismo `op_id`) NO pueda aplicarse DESPUÉS de que el recuperador decidió
-    abortar. Devuelve si la reserva YA se había aplicado de forma DURADERA (en
-    cuyo caso el llamador debe devolverla con `return_dispatch`).
+async def freeze_dispatch(company_id: str, product_id: str, store_id: str,
+                          qty: float, op_id: str) -> bool:
+    """H03/H03-R — decisión TERMINAL Y DURADERA de la reserva de un envío: si el
+    recuperador abortó este intento, una reserva TARDÍA del creador
+    (`dispatch_from_store` con el mismo `op_id`) NO puede aplicarse NUNCA.
+    Devuelve si la reserva YA se había aplicado de forma DURADERA (en cuyo caso
+    el llamador debe devolverla con `return_dispatch`).
 
-    Cierra la carrera en la escritura del producto, no en una lectura previa:
-    tras poner el token, el estado de la reserva queda CONGELADO —o ya aplicada,
-    o jamás podrá aplicarse—. Mirror de `burn_or_undo_pickup` para la recogida."""
+    Dos candados complementarios:
+    (1) TOKEN `op:burn` en el guard embebido del producto — cierra la ventana EN
+        VUELO (una mutación simultánea del creador se bloquea en la MISMA
+        escritura). Pero ese array se trunca a INV_OPS_CAP y puede DESALOJARSE
+        con suficiente actividad del producto → no es durable.
+    (2) H03-R — resultado TERMINAL 'burned' en `company_inventory_ops` (registro
+        PERMANENTE de idempotencia). Un creador que reanude —incluso tras rotar
+        el array— encuentra ese resultado en `_run_idempotent` y recibe 'burned'
+        SIN llegar jamás a `apply_fn`. Se sella con el MISMO payload_hash que
+        usaría `dispatch_from_store` (si no, se leería como 'conflict'), y de
+        forma CONDICIONAL para no pisar un 'applied'/'duplicate' real."""
     burn_token = f"{op_id}:burn"
     await db.products.update_one(
         {"id": product_id, "company_id": company_id,
          "inv_ops": {"$ne": burn_token}},
         {"$push": {"inv_ops": burn_token}})
-    return await dispatch_applied(company_id, op_id)
+    if await dispatch_applied(company_id, op_id):
+        return True
+    phash = _payload_hash("dispatch", {"product_id": product_id,
+                                       "store_id": store_id, "qty": _q(qty)})
+    try:
+        await db.company_inventory_ops.update_one(
+            {"company_id": company_id, "op_key": op_id,
+             "result": {"$nin": ["applied", "duplicate"]}},
+            {"$set": {"op_type": "dispatch", "payload_hash": phash,
+                      "status": "done", "result": "burned",
+                      "done_at": iso(now_utc())},
+             "$setOnInsert": {"company_id": company_id, "op_key": op_id,
+                              "created_at": iso(now_utc())}},
+            upsert=True)
+    except DuplicateKeyError:
+        # Existe un registro que NO cumple el filtro (ya 'applied'/'duplicate'):
+        # la reserva ganó la carrera del token → el llamador debe devolverla.
+        return True
+    return False
 
 
 
@@ -752,34 +778,58 @@ async def reclaim_store_shelf_to_central(company_id: str, store_id: str) -> int:
 
 async def heal_orphan_store_shelves(company_id: Optional[str] = None,
                                     limit: int = 2000) -> int:
-    """H04 — reconciliación DURADERA de estanterías HUÉRFANAS: reubica al
+    """H04/H04-R — reconciliación DURADERA de estanterías HUÉRFANAS: reubica al
     ALMACÉN CENTRAL cualquier `by_store[sid]` que referencie una tienda que ya
     NO EXISTE (o está en cierre). Garantiza que una devolución con lectura
     antigua reanudada DESPUÉS del barrido final —o interrumpida antes de su
-    self-heal— no deje unidades colgando sin tienda, también tras fallos. Un
-    único barrido en el borrado no da esa garantía (la escritura en vuelo puede
-    llegar después); este reconciliador periódico sí. Idempotente y reanudable.
+    self-heal— no deje unidades colgando sin tienda, también tras fallos.
+
+    H04-R — se SELECCIONAN los HUÉRFANOS ANTES de limitar (agregación con
+    `$lookup` a `stores`): si se limitara primero por `by_store` no vacío, una
+    multitud de productos SANOS podría ocupar siempre el lote y dejar fuera a un
+    huérfano para siempre. Al filtrar a huérfanos antes del `$limit`, los sanos
+    nunca consumen cupo y pasadas sucesivas DRENAN todos los candidatos
+    (progreso garantizado). Idempotente, reanudable y aislado por producto.
     Devuelve el nº de estanterías huérfanas saneadas."""
-    q: dict = {"by_store": {"$exists": True, "$nin": [None, {}]}}
+    match: dict = {"by_store": {"$exists": True, "$nin": [None, {}]}}
     if company_id:
-        q["company_id"] = company_id
-    prods = await db.products.find(
-        q, {"_id": 0, "id": 1, "company_id": 1, "by_store": 1}).to_list(limit)
+        match["company_id"] = company_id
+    pipe = [
+        {"$match": match},
+        {"$project": {"id": 1, "company_id": 1,
+                      "shelves": {"$objectToArray": "$by_store"}}},
+        {"$unwind": "$shelves"},
+        {"$match": {"shelves.v": {"$gt": 0}}},
+        {"$lookup": {
+            "from": "stores",
+            "let": {"cid": "$company_id", "sid": "$shelves.k"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$company_id", "$$cid"]},
+                    {"$eq": ["$id", "$$sid"]},
+                    {"$ne": ["$status", "closing"]},
+                ]}}},
+                {"$project": {"_id": 1}},
+            ],
+            "as": "store"}},
+        {"$match": {"store": {"$eq": []}}},   # estantería sin tienda viva = huérfana
+        {"$group": {"_id": "$id",
+                    "company_id": {"$first": "$company_id"},
+                    "sids": {"$addToSet": "$shelves.k"}}},
+        {"$limit": int(limit)},
+    ]
+    rows = await db.products.aggregate(pipe).to_list(int(limit))
     reclaimed = 0
-    for p in prods:
-        cid = p["company_id"]
-        shelf_ids = [sid for sid, qv in (p.get("by_store") or {}).items()
-                     if _q(qv) > 0]
-        if not shelf_ids:
-            continue
-        live = {s["id"] for s in await db.stores.find(
-            {"company_id": cid, "id": {"$in": shelf_ids},
-             "status": {"$ne": "closing"}},
-            {"_id": 0, "id": 1}).to_list(len(shelf_ids))}
-        for sid in shelf_ids:
-            if sid not in live \
-                    and await _reclaim_one_shelf_to_central(cid, p["id"], sid) > 0:
-                reclaimed += 1
+    for r in rows:
+        for sid in r.get("sids") or []:
+            try:
+                if await _reclaim_one_shelf_to_central(
+                        r["company_id"], r["_id"], sid) > 0:
+                    reclaimed += 1
+            except Exception as e:  # noqa: BLE001
+                # Un fallo por producto NO debe bloquear el resto de la cola.
+                logger.error("[orphan-shelf] falló %s/%s: %s",
+                             r.get("_id"), sid, e)
     return reclaimed
 
 

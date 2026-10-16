@@ -81,7 +81,8 @@ async def _compensate_request_effects(req: dict) -> dict:
         # devolución (lo que dejaría unidades descontadas sin envío válido). El
         # resultado dice si la reserva YA estaba aplicada de forma duradera.
         if await company_inventory.freeze_dispatch(
-                cid, req["product_id"], f"cdeliv:{reqid}"):
+                cid, req["product_id"], req["origin_store_id"],
+                req.get("quantity") or 0, f"cdeliv:{reqid}"):
             if await return_delivery_inventory(req):
                 updates["inv_returned"] = True
             # si no se pudo devolver → incidencia dejada por return_delivery_inventory
