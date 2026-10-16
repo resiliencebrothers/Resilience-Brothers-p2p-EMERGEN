@@ -728,6 +728,14 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
             await billing.refund_fee(cid, reqid, fee)
             await db.company_delivery_requests.delete_one(
                 {"id": reqid, "status": "initializing"})
+            # H03 — 'burned': el recuperador YA decidió abortar este intento y
+            # colocó el token de quema; la reserva NUNCA se aplicará (no hay
+            # stock fantasma descontado). Se pide recrear el envío.
+            if status == "burned":
+                raise HTTPException(
+                    status_code=409,
+                    detail=("Ese envío se revirtió mientras se procesaba. "
+                            "Vuelve a crearlo."))
             detail = ("La tienda no tiene suficiente stock para este envío."
                       if status == "insufficient" else "No se pudo reservar el stock")
             raise HTTPException(
@@ -754,16 +762,22 @@ async def create_company_delivery(payload: CompanyDeliveryCreate,
         {"$set": {"status": "requested", "delivery_id": job["id"],
                   "updated_at": iso(now_utc())}})
     if activated.modified_count == 0:
+        # H01 — el CAS puede perderse por DOS causas distintas y hay que
+        # DISTINGUIRLAS ANTES de cancelar nada: si cancelamos primero,
+        # destruiríamos el envío que un POST hermano acaba de activar
+        # correctamente (la entrega es la MISMA, idempotente por active_key).
+        #   (a) status == 'requested' → otro POST concurrente con la MISMA clave
+        #       ya ganó: NO se toca la entrega; se devuelve su resultado.
+        #   (b) cualquier otro estado (failed_init…) → DECISIÓN DURADERA de
+        #       abortar del recuperador: solo entonces se deshace el trabajo.
+        current = await db.company_delivery_requests.find_one(
+            {"id": reqid}, {"_id": 0})
+        if (current or {}).get("status") == "requested":
+            return {**current, "delivery_status": await _delivery_status_for(current)}
         from services.deliveries import cancel_active_delivery
         await cancel_active_delivery(
             "company_delivery", reqid, actor_id="system",
             note="alta de envío revertida (carrera con el recuperador)")
-        current = await db.company_delivery_requests.find_one(
-            {"id": reqid}, {"_id": 0, "status": 1})
-        if (current or {}).get("status") == "requested":
-            # Un POST concurrente con la MISMA clave ya la activó → idempotente.
-            final = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
-            return {**final, "delivery_status": await _delivery_status_for(final)}
         raise HTTPException(
             status_code=409,
             detail="Ese envío no se completó y fue revertido. Vuelve a crearlo.")

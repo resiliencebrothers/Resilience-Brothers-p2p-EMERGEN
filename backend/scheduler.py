@@ -331,6 +331,11 @@ async def run_credit_recovery():
         from services.company_delivery_recovery import (
             heal_cancelled_company_deliveries)
         n += await heal_cancelled_company_deliveries()
+        # H04 — reconciliación DURADERA de estanterías huérfanas: reubica al
+        # central cualquier `by_store` que apunte a una tienda ya inexistente
+        # (devolución con lectura antigua reanudada tras el cierre). Idempotente.
+        from services.company_inventory import heal_orphan_store_shelves
+        n += await heal_orphan_store_shelves()
         # iter257(D06) — compactación de registros embebidos: retira solo ops
         # con log duradero confirmado; los 'pending' se conservan como
         # evidencia (sustituye al viejo $slice ciego).

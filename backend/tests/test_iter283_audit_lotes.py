@@ -482,8 +482,13 @@ class TestME02DeliveryRaces:
         did = _mk_delivery(status="delivered", courier_id=COURIER_ID)
         _db().deliveries.update_one(
             {"id": did}, {"$set": {"payout_credited": True}})
+        # OP01/MEN22 — la cancelación admin declara el estado/ciclo observados
+        # (CAS). Aun declarándolos, una entrega con la comisión YA pagada
+        # (`payout_credited`) NO puede cancelarse: el filtro no la empareja → 409.
         r = requests.post(f"{API}/admin/deliveries/{did}/cancel",
-                          headers=_hdr(ADMIN_TOKEN), json={})
+                          headers=_hdr(ADMIN_TOKEN),
+                          json={"expected_status": "delivered",
+                                "expected_uid": None})
         assert r.status_code == 409, r.text
         assert _db().deliveries.find_one(
             {"id": did}, {"_id": 0})["status"] == "delivered"

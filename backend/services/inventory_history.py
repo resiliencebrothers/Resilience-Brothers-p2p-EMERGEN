@@ -25,7 +25,8 @@ sin rellenarlo con el stock/costo de hoy.
 """
 from typing import Optional
 
-from services.inventory import (_COMPANY_FILTER, _day_bounds, OUTPUT_TYPES)
+from services.inventory import (_COMPANY_FILTER, _day_bounds, OUTPUT_TYPES,
+                                havana_date)
 from db_client import db
 
 STORE_CURRENCY = "CUP"
@@ -121,7 +122,7 @@ async def _audited_opening_dates(pids: list) -> dict:
         {"$group": {"_id": "$product_id", "first": {"$min": "$created_at"}}},
     ]
     rows = await db.inventory_movements.aggregate(pipe).to_list(500000)
-    return {r["_id"]: (r["first"] or "")[:10] for r in rows if r.get("first")}
+    return {r["_id"]: havana_date(r["first"]) for r in rows if r.get("first")}
 
 
 async def build_cutoff_report(cutoff: str,
@@ -292,7 +293,7 @@ async def build_cutoff_report(cutoff: str,
         elif pid in opening_dates:
             reliable_from = opening_dates[pid]
         elif mlist:
-            reliable_from = mlist[0]["created_at"][:10]
+            reliable_from = havana_date(mlist[0]["created_at"])
         else:
             reliable_from = None
         value = _r(final_stock * wac, 2)

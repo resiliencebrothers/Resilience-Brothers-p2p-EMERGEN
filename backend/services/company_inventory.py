@@ -335,9 +335,14 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
         return "invalid"
 
     async def _apply(oid: str) -> str:
+        # H03 — TOKEN de quema: si el recuperador decidió ABORTAR este intento
+        # (puso `op:burn`), la reserva NO puede aplicarse TARDE. La carrera se
+        # cierra en la MISMA escritura del producto (igual que la recogida en
+        # tienda), no con una lectura de estado previa que dejaría un hueco.
+        burn_token = f"{oid}:burn"
         res = await db.products.find_one_and_update(
             {"id": product_id, "company_id": company_id,
-             "inv_ops": {"$nin": [oid]},
+             "inv_ops": {"$nin": [oid, burn_token]},
              "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
             [{"$set": {
                 "stock": {"$round": [
@@ -358,6 +363,11 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
         if await _relog_if_applied(company_id, product_id, oid, "dispatch", qty,
                                    store_id=store_id, actor=actor):
             return "applied"
+        # TOKEN de quema presente → decisión terminal: jamás muta.
+        if await db.products.find_one(
+                {"id": product_id, "company_id": company_id, "inv_ops": burn_token},
+                {"_id": 1}):
+            return "burned"
         exists = await db.products.find_one(
             {"id": product_id, "company_id": company_id}, {"_id": 1})
         return "insufficient" if exists else "not_found"
@@ -410,6 +420,27 @@ async def return_dispatch(company_id: str, product_id: str, store_id: str,
             projection={"_id": 0, "id": 1, "name": 1},
             return_document=ReturnDocument.AFTER)
         if res is not None:
+            # H04 — carrera lectura-antigua ↔ cierre de tienda: si decidimos
+            # devolver a una ESTANTERÍA (la tienda estaba vigente al LEERLA)
+            # pero se cerró/borró ANTES de esta escritura, la cantidad quedaría
+            # HUÉRFANA en `by_store` sin documento de tienda. Se RE-VERIFICA tras
+            # escribir y, si la tienda ya no está vigente, se reubica esa
+            # estantería al CENTRAL ahora mismo (self-heal). El reconciliador
+            # duradero `heal_orphan_store_shelves` cubre además el caso de un
+            # fallo entre esta escritura y la reubicación.
+            if move_type == "dispatch_return":
+                still = await db.stores.find_one(
+                    {"id": store_id, "company_id": company_id,
+                     "status": {"$ne": "closing"}}, {"_id": 1})
+                if still is None:
+                    moved = await _reclaim_one_shelf_to_central(
+                        company_id, product_id, store_id)
+                    if moved > 0:
+                        # El reclaim ya registró el movimiento al central: no
+                        # duplicar el log de esta devolución.
+                        return "applied"
+                    move_type, move_sid, move_sname = \
+                        "dispatch_return_central", "", ""
             await _log_move(company_id, res, move_type, qty, oid,
                             store_id=move_sid, store_name=move_sname, actor=actor)
             return "applied"
@@ -441,6 +472,26 @@ async def dispatch_applied(company_id: str, op_id: str) -> bool:
     prod = await db.products.find_one(
         {"company_id": company_id, "inv_ops": op_id}, {"_id": 1})
     return prod is not None
+
+
+async def freeze_dispatch(company_id: str, product_id: str, op_id: str) -> bool:
+    """H03 — decisión TERMINAL de la reserva de un envío de Empresa: empuja el
+    TOKEN de quema `op:burn` al guard embebido del producto ANTES de comprobar
+    nada, de modo que una reserva TARDÍA del creador (`dispatch_from_store` con
+    el mismo `op_id`) NO pueda aplicarse DESPUÉS de que el recuperador decidió
+    abortar. Devuelve si la reserva YA se había aplicado de forma DURADERA (en
+    cuyo caso el llamador debe devolverla con `return_dispatch`).
+
+    Cierra la carrera en la escritura del producto, no en una lectura previa:
+    tras poner el token, el estado de la reserva queda CONGELADO —o ya aplicada,
+    o jamás podrá aplicarse—. Mirror de `burn_or_undo_pickup` para la recogida."""
+    burn_token = f"{op_id}:burn"
+    await db.products.update_one(
+        {"id": product_id, "company_id": company_id,
+         "inv_ops": {"$ne": burn_token}},
+        {"$push": {"inv_ops": burn_token}})
+    return await dispatch_applied(company_id, op_id)
+
 
 
 # ============================================================
@@ -657,6 +708,30 @@ async def release_store(company_id: str, store_id: str) -> None:
         await _release_one(company_id, store_id, pid)
 
 
+async def _reclaim_one_shelf_to_central(company_id: str, product_id: str,
+                                        store_id: str) -> float:
+    """Reubica al CENTRAL toda la existencia residual de `by_store[store_id]` de
+    UN producto (distributed −= q; `stock` total intacto) y elimina la clave.
+    Atómico en un solo documento e idempotente (tras ejecutarse la clave ya no
+    existe). Devuelve la cantidad reubicada (0 si no había estantería)."""
+    before = await db.products.find_one_and_update(
+        {"id": product_id, "company_id": company_id,
+         f"by_store.{store_id}": {"$gt": 0}},
+        [{"$set": {"distributed": {"$round": [{"$subtract": [
+            {"$ifNull": ["$distributed", 0]},
+            {"$ifNull": [f"$by_store.{store_id}", 0]}]}, QTY_DECIMALS]}}},
+         {"$unset": f"by_store.{store_id}"}],
+        projection={"_id": 0, "id": 1, "name": 1, f"by_store.{store_id}": 1},
+        return_document=ReturnDocument.BEFORE)
+    if before is None:
+        return 0.0
+    qty = _q((before.get("by_store") or {}).get(store_id))
+    if qty > 0:
+        await _log_move(company_id, before, "dispatch_return_central", qty,
+                        f"orphan-reclaim:{store_id}:{product_id}:{uuid.uuid4().hex}")
+    return qty
+
+
 async def reclaim_store_shelf_to_central(company_id: str, store_id: str) -> int:
     """R06 — barrido FINAL de cierre: reubica al CENTRAL cualquier existencia
     residual que haya quedado en `by_store[store_id]` (p. ej. una devolución que
@@ -670,22 +745,41 @@ async def reclaim_store_shelf_to_central(company_id: str, store_id: str) -> int:
         {"_id": 0, "id": 1}).to_list(5000)]
     reclaimed = 0
     for pid in pids:
-        before = await db.products.find_one_and_update(
-            {"id": pid, "company_id": company_id,
-             f"by_store.{store_id}": {"$gt": 0}},
-            [{"$set": {"distributed": {"$round": [{"$subtract": [
-                {"$ifNull": ["$distributed", 0]},
-                {"$ifNull": [f"$by_store.{store_id}", 0]}]}, QTY_DECIMALS]}}},
-             {"$unset": f"by_store.{store_id}"}],
-            projection={"_id": 0, "id": 1, "name": 1, f"by_store.{store_id}": 1},
-            return_document=ReturnDocument.BEFORE)
-        if before is None:
-            continue
-        qty = _q((before.get("by_store") or {}).get(store_id))
-        if qty > 0:
-            await _log_move(company_id, before, "dispatch_return_central", qty,
-                            f"orphan-reclaim:{store_id}:{pid}:{uuid.uuid4().hex}")
+        if await _reclaim_one_shelf_to_central(company_id, pid, store_id) > 0:
             reclaimed += 1
+    return reclaimed
+
+
+async def heal_orphan_store_shelves(company_id: Optional[str] = None,
+                                    limit: int = 2000) -> int:
+    """H04 — reconciliación DURADERA de estanterías HUÉRFANAS: reubica al
+    ALMACÉN CENTRAL cualquier `by_store[sid]` que referencie una tienda que ya
+    NO EXISTE (o está en cierre). Garantiza que una devolución con lectura
+    antigua reanudada DESPUÉS del barrido final —o interrumpida antes de su
+    self-heal— no deje unidades colgando sin tienda, también tras fallos. Un
+    único barrido en el borrado no da esa garantía (la escritura en vuelo puede
+    llegar después); este reconciliador periódico sí. Idempotente y reanudable.
+    Devuelve el nº de estanterías huérfanas saneadas."""
+    q: dict = {"by_store": {"$exists": True, "$nin": [None, {}]}}
+    if company_id:
+        q["company_id"] = company_id
+    prods = await db.products.find(
+        q, {"_id": 0, "id": 1, "company_id": 1, "by_store": 1}).to_list(limit)
+    reclaimed = 0
+    for p in prods:
+        cid = p["company_id"]
+        shelf_ids = [sid for sid, qv in (p.get("by_store") or {}).items()
+                     if _q(qv) > 0]
+        if not shelf_ids:
+            continue
+        live = {s["id"] for s in await db.stores.find(
+            {"company_id": cid, "id": {"$in": shelf_ids},
+             "status": {"$ne": "closing"}},
+            {"_id": 0, "id": 1}).to_list(len(shelf_ids))}
+        for sid in shelf_ids:
+            if sid not in live \
+                    and await _reclaim_one_shelf_to_central(cid, p["id"], sid) > 0:
+                reclaimed += 1
     return reclaimed
 
 

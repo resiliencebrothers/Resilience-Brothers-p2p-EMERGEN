@@ -526,7 +526,10 @@ async def _last_activity_date(product_id: str) -> Optional[str]:
         sort=[("count_date", -1)])
     dates = []
     if mov and mov.get("created_at"):
-        dates.append(mov["created_at"][:10])
+        # `created_at` es una marca UTC → convertir a fecha de Cuba (coherente
+        # con today_havana/los cortes). `count_date` ya es fecha de Cuba.
+        from services.inventory import havana_date
+        dates.append(havana_date(mov["created_at"]))
     if cnt and cnt.get("count_date"):
         dates.append(cnt["count_date"][:10])
     return max(dates) if dates else None

@@ -89,6 +89,26 @@ def today_havana() -> str:
     return datetime.now(ZoneInfo("America/Havana")).strftime("%Y-%m-%d")
 
 
+def havana_date(ts: Optional[str]) -> str:
+    """iter350b (RV-03/H04) — fecha de CUBA (YYYY-MM-DD) de una marca de tiempo
+    ISO (normalmente en UTC). Cerca de medianoche la fecha UTC y la de Cuba
+    difieren; el histórico/corte usa SIEMPRE la de Cuba (coherente con
+    today_havana/_day_bounds), así que derivar una fecha de negocio por un
+    simple `created_at[:10]` (UTC) es incorrecto a esas horas."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timezone
+    if not ts:
+        return ""
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return ts[:10]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("America/Havana")).strftime("%Y-%m-%d")
+
+
+
 async def _rejected_marketplace_refs() -> set:
     """iter256(S11) — ids de canjes RECHAZADOS: sus movimientos de venta (y
     sus reversos) no deben contar en control/rotación/dashboard."""

@@ -729,4 +729,34 @@ async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> in
             {"id": reqid}, {"$set": updates})
         healed += 1
         logger.warning("alta de envío Empresa incompleta revertida: %s", reqid)
+
+    # H02 — REINTENTO de compensaciones INTERRUMPIDAS: si un fallo transitorio
+    # (reembolso, devolución o escritura posterior) dejó una fila YA en
+    # 'failed_init' con efectos sin restituir, NUNCA volvería a entrar en la
+    # consulta de arriba (que solo mira 'initializing'). Se seleccionan también
+    # los abortos INCOMPLETOS y se reintenta su compensación por efectos
+    # duraderos hasta sellar TODO (o dejar una incidencia manual explícita).
+    # Idempotente: `_compensate_request_effects` solo actúa sobre lo no sellado.
+    retry_rows = await db.company_delivery_requests.find(
+        {"status": "failed_init",
+         "$or": [
+             {"fee_status": "held"},
+             {"inv_reserved": True, "inv_returned": {"$ne": True},
+              "inv_return_incident": {"$ne": True},
+              "product_id": {"$ne": None}, "origin_store_id": {"$ne": None}},
+         ]},
+        {"_id": 0}).to_list(100)
+    for r in retry_rows:
+        try:
+            updates = await _compensate_request_effects(r)
+            if updates:
+                updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+                await db.company_delivery_requests.update_one(
+                    {"id": r["id"]}, {"$set": updates})
+                healed += 1
+                logger.warning(
+                    "compensación de alta Empresa reintentada hasta sellar: %s",
+                    r["id"])
+        except Exception as e:  # noqa: BLE001
+            logger.error("[cdeliv-init-retry] falló %s: %s", r.get("id"), e)
     return healed

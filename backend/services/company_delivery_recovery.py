@@ -76,12 +76,18 @@ async def _compensate_request_effects(req: dict) -> dict:
         # cualquier otro resultado → no sellar (se reintenta la próxima pasada)
     if not req.get("inv_returned") and req.get("product_id") \
             and req.get("origin_store_id"):
-        if await company_inventory.dispatch_applied(cid, f"cdeliv:{reqid}"):
+        # H03 — CONGELA la reserva (token de quema) ANTES de decidir: así un
+        # creador lento NO puede reservar stock DESPUÉS de que marquemos la
+        # devolución (lo que dejaría unidades descontadas sin envío válido). El
+        # resultado dice si la reserva YA estaba aplicada de forma duradera.
+        if await company_inventory.freeze_dispatch(
+                cid, req["product_id"], f"cdeliv:{reqid}"):
             if await return_delivery_inventory(req):
                 updates["inv_returned"] = True
             # si no se pudo devolver → incidencia dejada por return_delivery_inventory
         else:
-            # la reserva nunca se aplicó de forma duradera → nada que devolver
+            # la reserva nunca se aplicó y el token impide aplicarla tarde →
+            # nada que devolver (no se añade inventario fantasma).
             updates["inv_returned"] = True
     return updates
 
