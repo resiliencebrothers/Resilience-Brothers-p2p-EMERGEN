@@ -311,3 +311,127 @@ async def test_h04_durable_reconciler_sweeps_orphan_shelves():
         assert await ci.heal_orphan_store_shelves(company_id=CID) == 0
     finally:
         await _clean()
+
+
+
+# ─────────────────────────────────────────────────────────────────── H02-R
+# El reintento NO puede depender de marcas atrasadas (fee_status/inv_reserved):
+# R02 incluye efectos aplicados ANTES de escribir esas marcas. La selección usa
+# el estado INDEPENDIENTE `comp_sealed`.
+async def test_h02r_retry_selects_despite_stale_fee_flag(monkeypatch):
+    await _clean()
+    reqid = str(uuid.uuid4())
+    try:
+        await _seed_company()
+        # Débito REAL aplicado (saldo 95) pero la marca fee_status NO se escribió
+        # (quedó 'pending'): efecto aplicado ANTES de la marca → la marca MIENTE.
+        assert await billing.hold_fee(CID, reqid, 5) == "applied"
+        assert await _bal() == 95.0
+        await db.company_delivery_requests.insert_one({
+            "id": reqid, "company_id": CID, "client_key": reqid,
+            "product_id": None, "origin_store_id": None, "quantity": 0,
+            "fee_usdt": 5, "fee_status": "pending",   # marca ATRASADA
+            "inv_reserved": False, "inv_returned": False,
+            "status": "failed_init", "delivery_id": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00"})
+
+        # 1ª pasada: fallo transitorio al reembolsar → NO sella, saldo sigue 95,
+        # pero la fila DEBE seguir siendo seleccionable (no se perdió).
+        async def boom_refund(*a, **k):
+            raise RuntimeError("fallo transitorio de reembolso")
+        monkeypatch.setattr(billing, "refund_fee", boom_refund)
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        monkeypatch.undo()
+        assert await _bal() == 95.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r.get("comp_sealed") is not True
+
+        # 2ª pasada sin fallo: la fila SIGUE seleccionada pese a fee_status
+        # 'pending' → se reconcilia por EFECTO DURADERO → saldo 100 y sellada.
+        n = await heal_initializing_company_deliveries(max_age_seconds=0)
+        assert n >= 1
+        assert await _bal() == 100.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["fee_status"] == "refunded" and r.get("comp_sealed") is True
+    finally:
+        monkeypatch.undo()
+        await _clean()
+
+
+async def test_h02r_retry_selects_despite_stale_inv_flag():
+    await _clean()
+    reqid = str(uuid.uuid4())
+    try:
+        pid, sid = await _seed_company()
+        # Reserva REAL aplicada de forma duradera (stock 7) pero inv_reserved NO
+        # se escribió (quedó False): con la selección ANTIGUA ({inv_reserved:
+        # True}) esta fila jamás se reintentaría → stock atascado en 7.
+        assert await ci.dispatch_from_store(
+            CID, pid, sid, 3, op_id=f"cdeliv:{reqid}") == "applied"
+        assert await _stock(pid) == 7.0
+        await db.company_delivery_requests.insert_one({
+            "id": reqid, "company_id": CID, "client_key": reqid,
+            "product_id": pid, "origin_store_id": sid, "quantity": 3,
+            "fee_usdt": 0, "fee_status": "none",
+            "inv_reserved": False,    # marca ATRASADA (la reserva SÍ se aplicó)
+            "inv_returned": False,
+            "status": "failed_init", "delivery_id": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00"})
+
+        n = await heal_initializing_company_deliveries(max_age_seconds=0)
+        assert n >= 1
+        # Seleccionada pese a inv_reserved=False → devolución por efecto duradero.
+        assert await _stock(pid) == 10.0 and await _shelf(pid, sid) == 3.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["inv_returned"] is True and r.get("comp_sealed") is True
+    finally:
+        await _clean()
+
+
+async def test_h02r_first_phase_failure_does_not_block_retries(monkeypatch):
+    await _clean()
+    bad = str(uuid.uuid4())    # 'initializing' que hará fallar la FASE 1
+    good = str(uuid.uuid4())   # 'failed_init' pendiente que debe reintentarse igual
+    try:
+        await _seed_company()
+        # 'good': débito REAL (saldo 95), failed_init sin sellar.
+        assert await billing.hold_fee(CID, good, 5) == "applied"
+        assert await _bal() == 95.0
+        await db.company_delivery_requests.insert_one({
+            "id": good, "company_id": CID, "client_key": good,
+            "product_id": None, "origin_store_id": None, "quantity": 0,
+            "fee_usdt": 5, "fee_status": "held",
+            "inv_reserved": False, "inv_returned": False,
+            "status": "failed_init", "delivery_id": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00"})
+        # 'bad': initializing antiguo cuya cancelación en FASE 1 lanzará error.
+        await db.company_delivery_requests.insert_one({
+            "id": bad, "company_id": CID, "client_key": bad,
+            "product_id": None, "origin_store_id": None, "quantity": 0,
+            "fee_usdt": 0, "fee_status": "none",
+            "inv_reserved": False, "inv_returned": False,
+            "status": "initializing", "delivery_id": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00"})
+
+        real_cancel = deliv_svc.cancel_active_delivery
+
+        async def selective_cancel(kind, ref_id, **kw):
+            if ref_id == bad:
+                raise RuntimeError("fallo transitorio de FASE 1")
+            return await real_cancel(kind, ref_id, **kw)
+
+        monkeypatch.setattr(deliv_svc, "cancel_active_delivery", selective_cancel)
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        monkeypatch.undo()
+
+        # Pese al fallo aislado en 'bad' (FASE 1), 'good' SÍ se reintentó y selló.
+        assert await _bal() == 100.0
+        rg = await db.company_delivery_requests.find_one({"id": good}, {"_id": 0})
+        assert rg["fee_status"] == "refunded" and rg.get("comp_sealed") is True
+    finally:
+        monkeypatch.undo()
+        await _clean()

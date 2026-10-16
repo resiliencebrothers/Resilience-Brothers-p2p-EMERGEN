@@ -689,7 +689,7 @@ async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> in
     R02 — la compensación (reembolso de tarifa + devolución de inventario) se basa
     en EFECTOS DURADEROS, no en flags que pudieron quedar atrasados, y solo sella
     'refunded'/'inv_returned' cuando el efecto real se produjo."""
-    from services.company_delivery_recovery import _compensate_request_effects
+    from services.company_delivery_recovery import _compensate_and_maybe_seal
     from services.deliveries import cancel_active_delivery
     cutoff = (datetime.now(timezone.utc)
               - timedelta(seconds=max_age_seconds)).isoformat()
@@ -698,65 +698,65 @@ async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> in
         {"_id": 0}).to_list(100)
     healed = 0
     for r in rows:
-        claim = await db.company_delivery_requests.update_one(
-            {"id": r["id"], "status": "initializing"},
-            {"$set": {"status": "failed_init",
-                      "updated_at": datetime.now(timezone.utc).isoformat()}})
-        if claim.modified_count == 0:
-            continue  # el creador activó primero: NO compensar
-        reqid = r["id"]
-        # Cancela el trabajo si llegó a crearse y COMPRUEBA el resultado (R03).
-        cancel_res = await cancel_active_delivery(
-            "company_delivery", reqid, actor_id="system",
-            note="alta de envío incompleta revertida")
-        if cancel_res.matched_count == 0:
-            # No se pudo cancelar: ¿porque ya está sellada (delivered/confirmed)?
-            d = await db.deliveries.find_one(
-                {"kind": "company_delivery", "ref_id": reqid},
-                {"_id": 0, "id": 1, "status": 1})
-            if d and d.get("status") in ("delivered", "confirmed"):
-                # Entrega REAL en curso → reactivar como solicitud válida; NO
-                # reembolsar ni devolver stock de una entrega física sellada.
-                await db.company_delivery_requests.update_one(
-                    {"id": reqid, "status": "failed_init"},
-                    {"$set": {"status": "requested", "delivery_id": d["id"],
-                              "updated_at": datetime.now(timezone.utc).isoformat()}})
-                continue
-        # Compensa por efectos duraderos y sella el estado verdadero (R02).
-        updates = await _compensate_request_effects(r)
-        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-        await db.company_delivery_requests.update_one(
-            {"id": reqid}, {"$set": updates})
-        healed += 1
-        logger.warning("alta de envío Empresa incompleta revertida: %s", reqid)
+        # H02-R — AÍSLA cada fila: un fallo aquí (cancelación, reembolso…) NO
+        # debe abortar el resto de la fase ni la fase de reintentos posterior.
+        try:
+            claim = await db.company_delivery_requests.update_one(
+                {"id": r["id"], "status": "initializing"},
+                {"$set": {"status": "failed_init",
+                          "updated_at": datetime.now(timezone.utc).isoformat()}})
+            if claim.modified_count == 0:
+                continue  # el creador activó primero: NO compensar
+            reqid = r["id"]
+            # Cancela el trabajo si llegó a crearse y COMPRUEBA el resultado (R03).
+            cancel_res = await cancel_active_delivery(
+                "company_delivery", reqid, actor_id="system",
+                note="alta de envío incompleta revertida")
+            if cancel_res.matched_count == 0:
+                # No se pudo cancelar: ¿porque ya está sellada (delivered/confirmed)?
+                d = await db.deliveries.find_one(
+                    {"kind": "company_delivery", "ref_id": reqid},
+                    {"_id": 0, "id": 1, "status": 1})
+                if d and d.get("status") in ("delivered", "confirmed"):
+                    # Entrega REAL en curso → reactivar como solicitud válida; NO
+                    # reembolsar ni devolver stock de una entrega física sellada.
+                    await db.company_delivery_requests.update_one(
+                        {"id": reqid, "status": "failed_init"},
+                        {"$set": {"status": "requested", "delivery_id": d["id"],
+                                  "updated_at": datetime.now(timezone.utc).isoformat()}})
+                    continue
+            # Compensa por efectos duraderos y sella SOLO si todo queda resuelto.
+            updates = await _compensate_and_maybe_seal(r)
+            updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await db.company_delivery_requests.update_one(
+                {"id": reqid}, {"$set": updates})
+            healed += 1
+            logger.warning("alta de envío Empresa incompleta revertida: %s", reqid)
+        except Exception as e:  # noqa: BLE001
+            logger.error("[cdeliv-init] falló %s: %s", r.get("id"), e)
 
-    # H02 — REINTENTO de compensaciones INTERRUMPIDAS: si un fallo transitorio
-    # (reembolso, devolución o escritura posterior) dejó una fila YA en
-    # 'failed_init' con efectos sin restituir, NUNCA volvería a entrar en la
-    # consulta de arriba (que solo mira 'initializing'). Se seleccionan también
-    # los abortos INCOMPLETOS y se reintenta su compensación por efectos
-    # duraderos hasta sellar TODO (o dejar una incidencia manual explícita).
-    # Idempotente: `_compensate_request_effects` solo actúa sobre lo no sellado.
+    # H02/H02-R — REINTENTO de compensaciones INTERRUMPIDAS. La selección NO
+    # puede depender de fee_status/inv_reserved: R02 incluye efectos aplicados
+    # ANTES de escribir esas marcas (si esa escritura falló, la marca miente y
+    # el aborto quedaría fuera del barrido PARA SIEMPRE). Se usa un estado de
+    # compensación INDEPENDIENTE (`comp_sealed`): se seleccionan TODOS los
+    # abortos 'failed_init' aún NO sellados, y `_compensate_and_maybe_seal`
+    # reconcilia por EFECTOS DURADEROS, sellando solo cuando todo queda resuelto
+    # (o se dejó una incidencia manual explícita). Idempotente y aislado por fila.
     retry_rows = await db.company_delivery_requests.find(
-        {"status": "failed_init",
-         "$or": [
-             {"fee_status": "held"},
-             {"inv_reserved": True, "inv_returned": {"$ne": True},
-              "inv_return_incident": {"$ne": True},
-              "product_id": {"$ne": None}, "origin_store_id": {"$ne": None}},
-         ]},
-        {"_id": 0}).to_list(100)
+        {"status": "failed_init", "comp_sealed": {"$ne": True}},
+        {"_id": 0}).to_list(200)
     for r in retry_rows:
         try:
-            updates = await _compensate_request_effects(r)
+            updates = await _compensate_and_maybe_seal(r)
             if updates:
                 updates["updated_at"] = datetime.now(timezone.utc).isoformat()
                 await db.company_delivery_requests.update_one(
                     {"id": r["id"]}, {"$set": updates})
                 healed += 1
                 logger.warning(
-                    "compensación de alta Empresa reintentada hasta sellar: %s",
-                    r["id"])
+                    "compensación de alta Empresa reintentada: %s (sellada=%s)",
+                    r["id"], updates.get("comp_sealed", False))
         except Exception as e:  # noqa: BLE001
             logger.error("[cdeliv-init-retry] falló %s: %s", r.get("id"), e)
     return healed

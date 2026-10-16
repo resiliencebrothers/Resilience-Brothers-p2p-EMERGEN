@@ -92,6 +92,34 @@ async def _compensate_request_effects(req: dict) -> dict:
     return updates
 
 
+async def _compensate_and_maybe_seal(req: dict) -> dict:
+    """H02-R — aplica la compensación por EFECTOS DURADEROS y, SOLO si queda
+    TOTALMENTE reconciliada, marca `comp_sealed` (estado de compensación
+    INDEPENDIENTE de las marcas atrasadas).
+
+    La selección de reintentos NO puede depender de fee_status/inv_reserved: R02
+    incluye efectos aplicados ANTES de escribir esas marcas — si esa escritura
+    falló, la marca MIENTE (débito real con fee_status != 'held', o reserva real
+    con inv_reserved=false) y el aborto quedaría fuera del barrido para siempre.
+    Por eso el barrido selecciona por `comp_sealed != True` y aquí se decide el
+    cierre reconciliando los efectos reales:
+
+    Se sella SOLO cuando la tarifa está en {refunded, void, none} Y el inventario
+    está resuelto (sin inventario · ya devuelto · o con incidencia manual
+    explícita). Si algo quedó pendiente (fallo transitorio), NO se sella y la
+    fila se reintenta en el próximo ciclo."""
+    updates = await _compensate_request_effects(req)
+    merged = {**req, **updates}
+    fee_done = merged.get("fee_status") in ("refunded", "void", "none")
+    has_inv = bool(merged.get("product_id") and merged.get("origin_store_id"))
+    inv_done = (not has_inv
+                or merged.get("inv_returned") is True
+                or merged.get("inv_return_incident") is True)
+    if fee_done and inv_done:
+        updates["comp_sealed"] = True
+    return updates
+
+
 async def reconcile_cancelled_request(req: dict) -> bool:
     """Reconcilia EXACTAMENTE UNA VEZ una solicitud cuyo envío quedó cancelado:
     reembolsa la tarifa retenida y devuelve el inventario reservado, basándose en
