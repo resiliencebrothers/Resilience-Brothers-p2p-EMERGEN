@@ -56,6 +56,7 @@ from routes.municipality_rates import router as municipality_rates_router  # noq
 from routes.vip_ledger_ops import router as vip_ledger_ops_router  # noqa: E402
 from routes.deposits import router as deposits_router  # noqa: E402
 from routes.cash_boxes import router as cash_boxes_router  # noqa: E402
+from routes.profit_scenarios import router as profit_scenarios_router  # noqa: E402
 from routes.referrals import router as referrals_router  # noqa: E402
 from routes.payment_accounts import router as payment_accounts_router  # noqa: E402
 from routes.qr_poster import router as qr_poster_router  # noqa: E402
@@ -122,6 +123,7 @@ api_router.include_router(municipality_rates_router)
 api_router.include_router(vip_ledger_ops_router)
 api_router.include_router(deposits_router)
 api_router.include_router(cash_boxes_router)
+api_router.include_router(profit_scenarios_router)
 api_router.include_router(payment_accounts_router)
 api_router.include_router(referrals_router)
 api_router.include_router(qr_poster_router)

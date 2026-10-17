@@ -24,6 +24,7 @@ export default function CashBoxView() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const isStaff = ["admin", "employee"].includes(user?.role);
+  const isEmpresa = user?.role === "empresa";
   const [boxes, setBoxes] = useState(null);
   const [boxId, setBoxId] = useState(null);
   const [fund, setFund] = useState("CUP");
@@ -31,6 +32,8 @@ export default function CashBoxView() {
   const [movs, setMovs] = useState([]);
   const [newName, setNewName] = useState("");
   const [newScope, setNewScope] = useState("personal");
+  const [newStoreId, setNewStoreId] = useState("");
+  const [stores, setStores] = useState([]);
   const [movOpen, setMovOpen] = useState(false);
   const [editMov, setEditMov] = useState(null);
   const [arqueoOpen, setArqueoOpen] = useState(false);
@@ -47,6 +50,12 @@ export default function CashBoxView() {
     if (r.data.length && !r.data.find((b) => b.id === boxId)) setBoxId(r.data[0].id);
   }, [boxId]);
   useEffect(() => { loadBoxes().catch(() => setBoxes([])); }, [loadBoxes]);
+
+  useEffect(() => {
+    if (!isEmpresa) return;
+    axios.get(`${API}/stores`, { withCredentials: true })
+      .then((r) => setStores(r.data || [])).catch(() => setStores([]));
+  }, [isEmpresa]);
 
   const loadFund = useCallback(async () => {
     if (!boxId) return;
@@ -65,9 +74,10 @@ export default function CashBoxView() {
     if (newName.trim().length < 2) return toast.error(t("cashbox.nameRequired"));
     setBusy(true);
     try {
-      const r = await axios.post(`${API}/cashbox/boxes`,
-        { name: newName.trim(), scope: newScope }, { withCredentials: true });
-      setNewName("");
+      const body = { name: newName.trim(), scope: newScope };
+      if (newScope === "negocio" && newStoreId) body.store_id = newStoreId;
+      const r = await axios.post(`${API}/cashbox/boxes`, body, { withCredentials: true });
+      setNewName(""); setNewStoreId("");
       await loadBoxes();
       setBoxId(r.data.id);
       toast.success(t("cashbox.boxCreated"));
@@ -133,11 +143,14 @@ export default function CashBoxView() {
         {boxes.map((b) => (
           <button key={b.id} data-testid={`cashbox-chip-${b.id}`} onClick={() => setBoxId(b.id)}
             className={`px-3 h-9 text-xs border flex items-center gap-1.5 transition-colors ${b.id === boxId ? "bg-[#8B5CF6] border-[#8B5CF6] text-white" : "border-white/15 text-neutral-400 hover:text-white"}`}>
-            {b.scope === "empresa" && <Building2 className="w-3.5 h-3.5" />}
+            {(b.scope === "empresa" || b.scope === "negocio") && <Building2 className="w-3.5 h-3.5" />}
             {b.name}
+            {b.scope === "negocio" && b.store_name && (
+              <span className="text-[0.6rem] opacity-70">· {b.store_name}</span>
+            )}
           </button>
         ))}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Input data-testid="cashbox-new-name" value={newName} maxLength={60}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && createBox()}
@@ -148,6 +161,22 @@ export default function CashBoxView() {
               className="h-9 bg-[#0a0a0a] border border-white/10 text-xs px-2 text-white">
               <option value="personal">{t("cashbox.scopePersonal")}</option>
               <option value="empresa">{t("cashbox.scopeEmpresa")}</option>
+            </select>
+          )}
+          {isEmpresa && (
+            <select data-testid="cashbox-new-scope" value={newScope} onChange={(e) => setNewScope(e.target.value)}
+              className="h-9 bg-[#0a0a0a] border border-white/10 text-xs px-2 text-white">
+              <option value="personal">{t("cashbox.scopePersonal")}</option>
+              <option value="negocio">{t("cashbox.scopeNegocio")}</option>
+            </select>
+          )}
+          {isEmpresa && newScope === "negocio" && (
+            <select data-testid="cashbox-new-store" value={newStoreId} onChange={(e) => setNewStoreId(e.target.value)}
+              className="h-9 bg-[#0a0a0a] border border-white/10 text-xs px-2 text-white max-w-[160px]">
+              <option value="">{t("cashbox.storeNone")}</option>
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
             </select>
           )}
           <Button data-testid="cashbox-create-btn" onClick={createBox} disabled={busy} size="sm"

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import CalculatorPanel from "@/pages/admin/profitability/CalculatorPanel";
 import ProjectionsTable from "@/pages/admin/profitability/ProjectionsTable";
+import ProfitScenariosBar from "./ProfitScenariosBar";
 
 const DEFAULT_CALC = {
   mode: "combined",
@@ -21,6 +22,7 @@ export default function ProfitCalculatorSection() {
   return (
     <div className="space-y-4" data-testid="vip-profit-calculator">
       <p className="text-xs text-neutral-500">{t("assetsView.calcNote")}</p>
+      <ProfitScenariosBar calc={calc} setCalc={setCalc} />
       <CalculatorPanel calc={calc} setCalc={setCalc} />
       <ProjectionsTable calc={calc} setCalc={setCalc} />
     </div>

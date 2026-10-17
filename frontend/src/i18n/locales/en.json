@@ -5010,7 +5010,10 @@
     "reportDay": "Day",
     "reportTotal": "Total",
     "exportExcel": "Excel",
-    "exportDone": "Backup Excel downloaded"
+    "exportDone": "Backup Excel downloaded",
+    "scopeNegocio": "Business",
+    "storeNone": "No store",
+    "reportExcel": "Download Excel"
   },
   "tools": {
     "eyebrow": "Tools",
@@ -5019,6 +5022,18 @@
     "tabs": {
       "cashbox": "Cash Box",
       "profitability": "Profitability"
+    },
+    "scenarios": {
+      "title": "Saved scenarios",
+      "namePlaceholder": "Scenario name",
+      "save": "Save",
+      "saved": "Scenario saved",
+      "updated": "Scenario updated",
+      "loaded": "Loaded: {{name}}",
+      "overwrite": "Overwrite with current values",
+      "nameRequired": "Enter a name",
+      "deleteConfirm": "Delete this scenario?",
+      "empty": "No saved scenarios yet. Adjust the calculator and press Save."
     }
   }
 }

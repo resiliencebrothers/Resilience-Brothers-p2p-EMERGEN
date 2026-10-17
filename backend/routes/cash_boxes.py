@@ -32,12 +32,14 @@ _TZ = ZoneInfo("America/Havana")
 
 class BoxCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=60)
-    scope: Literal["personal", "empresa"] = "personal"
+    scope: Literal["personal", "empresa", "negocio"] = "personal"
+    store_id: Optional[str] = None
 
 
 class BoxUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=60)
     is_active: Optional[bool] = None
+    store_id: Optional[str] = None
 
 
 class InitialSet(BaseModel):
@@ -70,6 +72,22 @@ class ArqueoCreate(BaseModel):
 
 def _is_staff(user: dict) -> bool:
     return user.get("role") in ("admin", "employee")
+
+
+def _is_empresa(user: dict) -> bool:
+    return user.get("role") == "empresa"
+
+
+async def _resolve_store(company_id: str, store_id: Optional[str]) -> tuple:
+    """Caja de NEGOCIO (cliente Empresa): valida que la tienda opcional
+    pertenezca a la cuenta Empresa. Devuelve (store_id, store_name)."""
+    if not store_id:
+        return None, None
+    store = await db.stores.find_one(
+        {"id": store_id, "company_id": company_id}, {"_id": 0, "id": 1, "name": 1})
+    if not store:
+        raise HTTPException(status_code=400, detail="Tienda no válida")
+    return store["id"], store.get("name") or ""
 
 
 # H01/V02 — movimientos espejados desde el Fondo de Empresa (origen contable)
@@ -131,6 +149,10 @@ async def _get_box_checked(box_id: str, user: dict) -> dict:
     if box["scope"] == "personal":
         if box["owner_id"] != user["user_id"]:
             raise HTTPException(status_code=403, detail="No es tu caja")
+    elif box["scope"] == "negocio":
+        if not _is_empresa(user) or box.get("company_id") != user["user_id"]:
+            raise HTTPException(status_code=403,
+                                detail="No es una caja de tu negocio")
     elif not _is_staff(user):
         raise HTTPException(status_code=403,
                             detail="Solo el staff maneja las cajas de empresa")
@@ -157,6 +179,8 @@ async def list_boxes(request: Request) -> Any:
         {"scope": "personal", "owner_id": user["user_id"]}]}
     if _is_staff(user):
         q["$or"].append({"scope": "empresa"})
+    if _is_empresa(user):
+        q["$or"].append({"scope": "negocio", "company_id": user["user_id"]})
     boxes = await db.cash_boxes.find(q, {"_id": 0}).sort("created_at", 1).to_list(200)
     for b in boxes:
         b["balances"] = {f: await _fund_balance(b, f) for f in FUNDS}
@@ -166,14 +190,23 @@ async def list_boxes(request: Request) -> Any:
 @router.post("/cashbox/boxes")
 async def create_box(payload: BoxCreate, request: Request) -> Any:
     user = await require_user(request)
+    store_id = store_name = None
     if payload.scope == "empresa" and not _is_staff(user):
         raise HTTPException(status_code=403,
                             detail="Solo el staff crea cajas de empresa")
+    if payload.scope == "negocio":
+        if not _is_empresa(user):
+            raise HTTPException(status_code=403,
+                                detail="Solo las cuentas Empresa crean cajas de negocio")
+        store_id, store_name = await _resolve_store(user["user_id"], payload.store_id)
     doc = {
         "id": f"cbox_{uuid.uuid4().hex[:12]}",
         "name": payload.name.strip(),
         "scope": payload.scope,
         "owner_id": user["user_id"] if payload.scope == "personal" else "",
+        "company_id": user["user_id"] if payload.scope == "negocio" else "",
+        "store_id": store_id,
+        "store_name": store_name,
         "created_by_id": user["user_id"],
         "created_by_name": user.get("name") or user.get("email") or "",
         "created_at": iso(now_utc()),
@@ -194,6 +227,12 @@ async def update_box(box_id: str, payload: BoxUpdate, request: Request) -> Any:
         upd["name"] = payload.name.strip()
     if payload.is_active is not None:
         upd["is_active"] = payload.is_active
+    # Reasignar tienda (solo cajas de negocio): "" limpia la asignación.
+    if payload.store_id is not None and box["scope"] == "negocio":
+        sid, sname = await _resolve_store(
+            user["user_id"], payload.store_id or None)
+        upd["store_id"] = sid
+        upd["store_name"] = sname
     if upd:
         await db.cash_boxes.update_one({"id": box["id"]}, {"$set": upd})
     return await db.cash_boxes.find_one({"id": box["id"]}, {"_id": 0})
@@ -647,6 +686,68 @@ async def export_xlsx(box_id: str, fund: str, request: Request) -> Any:
     wb.save(buf)
     buf.seek(0)
     fname = f"caja_{fund}_{datetime.now(_TZ).strftime('%Y-%m-%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/cashbox/boxes/{box_id}/reporte.xlsx")
+async def export_monthly_report_xlsx(box_id: str, fund: str, month: str,
+                                     request: Request) -> Any:
+    """Reporte MENSUAL en Excel: desglose por día (entradas/salidas/neto) +
+    totales del mes. Mismo contenido que el reporte en pantalla."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    user = await require_user(request)
+    box = await _get_box_checked(box_id, user)
+    if fund not in FUNDS:
+        raise HTTPException(status_code=400, detail="Fondo inválido")
+    try:
+        datetime.strptime(month + "-01", "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Mes inválido (YYYY-MM)")
+    start, end = _month_range_utc(month)
+    days: Dict[str, Dict[str, float]] = {}
+    async for m in db.cash_box_movements.find(
+            {"box_id": box["id"], "fund": fund,
+             "created_at": {"$gte": start, "$lt": end}},
+            {"_id": 0, "type": 1, "amount": 1, "created_at": 1}):
+        local_day = datetime.fromisoformat(m["created_at"]) \
+            .astimezone(_TZ).strftime("%Y-%m-%d")
+        row = days.setdefault(local_day, {"entradas": 0.0, "salidas": 0.0})
+        row["entradas" if m["type"] == "entrada" else "salidas"] += m["amount"]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Reporte {month}"
+    bold = Font(bold=True)
+    ws.append([f"Caja: {box['name']} — Fondo {fund} — Mes {month}"])
+    ws["A1"].font = bold
+    ws.append([])
+    ws.append(["Día", "Entradas", "Salidas", "Neto"])
+    for c in ws[3]:
+        c.font = bold
+    tot_e = tot_s = 0.0
+    for d, v in sorted(days.items()):
+        e, s = round(v["entradas"], 2), round(v["salidas"], 2)
+        tot_e += e
+        tot_s += s
+        ws.append([d, e, s, round(e - s, 2)])
+    ws.append([])
+    foot = ["TOTAL", round(tot_e, 2), round(tot_s, 2), round(tot_e - tot_s, 2)]
+    ws.append(foot)
+    for c in ws[ws.max_row]:
+        c.font = bold
+    for col, w in zip("ABCD", (16, 16, 16, 16)):
+        ws.column_dimensions[col].width = w
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"reporte_caja_{fund}_{month}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

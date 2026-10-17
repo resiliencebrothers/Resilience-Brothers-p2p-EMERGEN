@@ -5010,7 +5010,10 @@
     "reportDay": "Día",
     "reportTotal": "Total",
     "exportExcel": "Excel",
-    "exportDone": "Excel de respaldo descargado"
+    "exportDone": "Excel de respaldo descargado",
+    "scopeNegocio": "Negocio",
+    "storeNone": "Sin tienda",
+    "reportExcel": "Descargar Excel"
   },
   "tools": {
     "eyebrow": "Herramientas",
@@ -5019,6 +5022,18 @@
     "tabs": {
       "cashbox": "Caja de Efectivo",
       "profitability": "Rentabilidad"
+    },
+    "scenarios": {
+      "title": "Escenarios guardados",
+      "namePlaceholder": "Nombre del escenario",
+      "save": "Guardar",
+      "saved": "Escenario guardado",
+      "updated": "Escenario actualizado",
+      "loaded": "Cargado: {{name}}",
+      "overwrite": "Sobrescribir con los valores actuales",
+      "nameRequired": "Escribe un nombre",
+      "deleteConfirm": "¿Borrar este escenario?",
+      "empty": "Aún no has guardado escenarios. Ajusta la calculadora y pulsa Guardar."
     }
   }
 }
