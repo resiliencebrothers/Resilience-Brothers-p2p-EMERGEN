@@ -846,3 +846,64 @@ async def test_p01_pickup_restored_by_recoverer_after_rotation():
     finally:
         await db.redemptions.delete_one({"id": rid})
         await _clean()
+
+
+# ───────────────────────────────────────────────────────────────── OBS-01
+# Observabilidad del guard `inv_burned`: tamaño por producto reportado.
+async def test_obs_inv_burned_stats_reports_sizes():
+    await _clean()
+    try:
+        pid, sid = await _seed_company()
+        await db.products.update_one(
+            {"id": pid}, {"$set": {"inv_burned": [f"g{i}" for i in range(7)]}})
+        stats = await ci.inv_burned_stats(threshold=7)
+        assert stats["products_with_guards"] >= 1
+        assert stats["total_guard_entries"] >= 7
+        mine = next((p for p in stats["top"] if p["id"] == pid), None)
+        assert mine and mine["size"] == 7
+        # Con umbral 7 mi producto (size 7) aparece como sobre-umbral.
+        assert pid in [p["id"] for p in stats["over_threshold"]]
+        assert stats["over_threshold_count"] >= 1
+        # Con umbral 8 ya NO está sobre-umbral.
+        stats8 = await ci.inv_burned_stats(threshold=8)
+        assert pid not in [p["id"] for p in stats8["over_threshold"]]
+    finally:
+        await _clean()
+
+
+# RETENCIÓN SEGURA: la poda retira SOLO guards de operaciones terminales
+# ('done') y antiguas; NUNCA toca un guard 'pending'/en vuelo ni uno sin
+# evidencia terminal → jamás se elimina un candado que aún protege una escritura.
+async def test_obs_prune_removes_only_terminal_old_guards():
+    await _clean()
+    try:
+        pid, sid = await _seed_company()
+        await db.products.update_one(
+            {"id": pid}, {"$set": {"inv_burned": [
+                "old_done", "recent_done", "pending_op", "no_record_op"]}})
+        old = iso(now_utc() - timedelta(days=120))
+        recent = iso(now_utc() - timedelta(days=1))
+        await db.company_inventory_ops.insert_many([
+            {"company_id": CID, "op_key": "old_done", "op_type": "pickup",
+             "status": "done", "result": "burned", "done_at": old, "created_at": old},
+            {"company_id": CID, "op_key": "recent_done", "op_type": "pickup",
+             "status": "done", "result": "burned", "done_at": recent, "created_at": recent},
+            {"company_id": CID, "op_key": "pending_op", "op_type": "pickup",
+             "status": "pending", "created_at": recent},
+            # 'no_record_op' a propósito SIN registro en company_inventory_ops.
+        ])
+        pruned = await ci.prune_inv_burned_guards(retention_days=90)
+        assert pruned == 1  # solo 'old_done'
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
+        remaining = set(prod.get("inv_burned") or [])
+        assert "old_done" not in remaining               # terminal y antiguo → podado
+        assert "recent_done" in remaining                # terminal pero reciente → se conserva
+        assert "pending_op" in remaining                 # EN VUELO → NUNCA se poda
+        assert "no_record_op" in remaining               # sin evidencia → NUNCA se poda
+        # Idempotente: una segunda pasada no retira nada más.
+        assert await ci.prune_inv_burned_guards(retention_days=90) == 0
+        prod2 = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
+        assert set(prod2.get("inv_burned") or []) == remaining
+    finally:
+        await _clean()
+

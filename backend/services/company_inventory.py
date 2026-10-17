@@ -22,6 +22,7 @@ import json
 import hashlib
 import logging
 from typing import Any, Awaitable, Callable, Optional
+from datetime import timedelta
 
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -1030,3 +1031,75 @@ async def maybe_alert_store_out_of_stock(company_id: str, product_id: str,
                 {"$set": {f"store_low_alerted.{store_id}": False}})
     except Exception as e:  # noqa: BLE001
         logger.error(f"maybe_alert_store_out_of_stock failed: {e}")
+
+
+# ============================================================
+# OBS-01 — observabilidad y RETENCIÓN SEGURA del guard durable `inv_burned`
+# ------------------------------------------------------------
+# `inv_burned` es un conjunto DURADERO (no truncado) de op_ids de reservas
+# abortadas; en la MISMA escritura del producto impide que una reserva TARDÍA o
+# EN VUELO con ese op_id vuelva a aplicarse (H03-R / H03-R2). Como solo crece,
+# se vigila su tamaño y se poda de forma SEGURA: un guard se retira ÚNICAMENTE
+# cuando su operación está TERMINALMENTE resuelta en `company_inventory_ops`
+# (`status=done`) y es ANTIGUA. Un ejecutor EN VUELO/pausado deja su op en
+# 'pending' (nunca 'done'), así que su guard JAMÁS se poda → nunca se retira un
+# candado que aún proteja una escritura en vuelo.
+# ============================================================
+
+INV_BURNED_ALERT_THRESHOLD = 5000
+INV_BURNED_RETENTION_DAYS = 90
+
+
+async def inv_burned_stats(threshold: int = INV_BURNED_ALERT_THRESHOLD,
+                           top: int = 50) -> dict:
+    """Observabilidad: tamaño del guard `inv_burned` por producto. Devuelve los
+    agregados y el detalle de los productos que SUPERAN `threshold`."""
+    cursor = db.products.aggregate([
+        {"$match": {"inv_burned": {"$exists": True, "$ne": []}}},
+        {"$project": {"_id": 0, "id": 1, "company_id": 1, "name": 1,
+                      "size": {"$size": {"$ifNull": ["$inv_burned", []]}}}},
+        {"$sort": {"size": -1}},
+    ])
+    rows = [r async for r in cursor]
+    over = [r for r in rows if r["size"] >= threshold]
+    return {
+        "threshold": threshold,
+        "products_with_guards": len(rows),
+        "total_guard_entries": sum(r["size"] for r in rows),
+        "max_size": rows[0]["size"] if rows else 0,
+        "over_threshold_count": len(over),
+        "over_threshold": over[:top],
+        "top": rows[:top],
+    }
+
+
+async def prune_inv_burned_guards(retention_days: int = INV_BURNED_RETENTION_DAYS,
+                                  max_products: int = 500) -> int:
+    """Retención SEGURA del guard `inv_burned`: retira los op_ids cuya operación
+    está `done` en `company_inventory_ops` y cuyo `done_at` es MÁS ANTIGUO que
+    la ventana. NUNCA retira el guard de una operación 'pending'/en vuelo ni de
+    una sin evidencia terminal. Devuelve el nº total de guards podados."""
+    cutoff = iso(now_utc() - timedelta(days=retention_days))
+    pruned = 0
+    cursor = db.products.find(
+        {"inv_burned": {"$exists": True, "$ne": []}},
+        {"_id": 0, "id": 1, "company_id": 1, "inv_burned": 1}).limit(max_products)
+    async for prod in cursor:
+        guards = prod.get("inv_burned") or []
+        if not guards:
+            continue
+        # Solo op_ids TERMINALMENTE resueltos ('done') y antiguos son podables.
+        terminal = [r["op_key"] async for r in db.company_inventory_ops.find(
+            {"company_id": prod["company_id"], "op_key": {"$in": guards},
+             "status": "done", "done_at": {"$lt": cutoff}},
+            {"_id": 0, "op_key": 1})]
+        if not terminal:
+            continue
+        res = await db.products.update_one(
+            {"id": prod["id"], "company_id": prod["company_id"]},
+            {"$pull": {"inv_burned": {"$in": terminal}}})
+        if res.modified_count:
+            pruned += len(terminal)
+            logger.info(
+                f"[inv-burned-prune] product={prod['id']} podados={len(terminal)}")
+    return pruned

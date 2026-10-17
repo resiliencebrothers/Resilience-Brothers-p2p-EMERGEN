@@ -456,6 +456,39 @@ async def run_daily_reorder_digest(db):
 
 
 
+async def run_inv_burned_maintenance(db):
+    """OBS-01 — mantenimiento del guard durable `inv_burned`: (1) PODA SEGURA
+    (solo op_ids con operación terminal 'done' y >90 días; nunca toca guards de
+    operaciones en vuelo) y (2) AVISO a admins si algún producto supera el
+    umbral de guards acumulados de reservas abortadas. Diario 04:00 UTC."""
+    try:
+        from services.company_inventory import (prune_inv_burned_guards,
+                                                 inv_burned_stats,
+                                                 INV_BURNED_ALERT_THRESHOLD,
+                                                 INV_BURNED_RETENTION_DAYS)
+        pruned = await prune_inv_burned_guards()
+        if pruned:
+            logger.info("[inv-burned] %s guard(s) podados (terminales y antiguos)",
+                        pruned)
+        stats = await inv_burned_stats()
+        if stats["over_threshold_count"]:
+            top = ", ".join(f"{p['name']} ({p['size']})"
+                            for p in stats["over_threshold"][:5])
+            body = (f"{stats['over_threshold_count']} producto(s) superan "
+                    f"{INV_BURNED_ALERT_THRESHOLD} candados de reservas abortadas "
+                    f"(inv_burned). Mayores: {top}. Puede indicar abortos "
+                    f"anómalos; la poda automática solo retira candados terminales "
+                    f"de más de {INV_BURNED_RETENTION_DAYS} días.")
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db, title="Candados de inventario acumulados (inv_burned)",
+                body=body, url_path="/admin/inventory")
+            logger.warning("[inv-burned] %s producto(s) sobre umbral (%s)",
+                           stats["over_threshold_count"], INV_BURNED_ALERT_THRESHOLD)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[inv-burned-maintenance] failed: {e}")
+
+
 def start_scheduler(db, build_timeseries):
     """Start APScheduler with the monthly jobs + security scan.
 
@@ -644,6 +677,17 @@ def start_scheduler(db, build_timeseries):
         CronTrigger(hour=7, minute=45, timezone="America/Havana"),
         kwargs={"db": db},
         id="daily_reorder_digest",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+    )
+    # OBS-01 — mantenimiento diario del guard `inv_burned` (poda segura +
+    # aviso de umbral) a las 04:00 UTC.
+    _scheduler.add_job(
+        run_inv_burned_maintenance,
+        CronTrigger(hour=4, minute=0, timezone="UTC"),
+        kwargs={"db": db},
+        id="inv_burned_maintenance",
         replace_existing=True,
         misfire_grace_time=3600,
         coalesce=True,

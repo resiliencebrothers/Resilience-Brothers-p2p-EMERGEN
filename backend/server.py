@@ -64,6 +64,7 @@ from routes.reconciliation import router as reconciliation_router  # noqa: E402
 from routes.ops_report import router as ops_report_router  # noqa: E402
 from routes.inventory import router as inventory_router  # noqa: E402
 from routes.stores import router as stores_router  # noqa: E402
+from routes.admin_inventory_health import router as admin_inventory_health_router  # noqa: E402
 from routes.company import router as company_router  # noqa: E402
 from routes.vendor_products import router as vendor_products_router  # noqa: E402
 from routes.pos import router as pos_router  # noqa: E402
@@ -129,6 +130,7 @@ api_router.include_router(reconciliation_router)
 api_router.include_router(ops_report_router)
 api_router.include_router(inventory_router)
 api_router.include_router(stores_router)
+api_router.include_router(admin_inventory_health_router)
 api_router.include_router(company_router)
 api_router.include_router(vendor_products_router)
 api_router.include_router(pos_router)
