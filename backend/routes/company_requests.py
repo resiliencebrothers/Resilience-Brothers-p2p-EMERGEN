@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import uuid
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Awaitable, Callable
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
@@ -156,14 +156,21 @@ async def _notify_staff_new_request(req: dict) -> None:
             logger.error(f"[company_requests] staff notify {uid} failed: {e}")
 
 
-async def _notify_client_decision(req: dict, approved: bool, admin_note: str = "") -> None:
-    """Notifica al solicitante sobre la aprobación / rechazo."""
+async def _notify_client_decision(req: dict, approved: bool, admin_note: str = "") -> bool:
+    """Notifica al solicitante sobre la aprobación / rechazo.
+
+    P02-R — devuelve un RESULTADO DE ÉXITO explícito. El aviso en-app (campana)
+    es el canal PERSISTENTE y su fallo NO se absorbe: si no se pudo insertar,
+    retorna `False` para que el canal NO se selle y el recuperador lo reintente.
+    El push es best-effort (se intenta solo si la campana quedó registrada) y su
+    fallo no invalida el canal. Como la inserción es lo único persistente y es
+    atómica, reintentar tras un fallo no duplica (nada quedó escrito)."""
     try:
         from routes.notifications import _insert_notification
         from push_service import send_push_to_user
     except Exception as e:  # noqa: BLE001
         logger.error(f"[company_requests] notify import failed: {e}")
-        return
+        return False
     uid = req["user_id"]
     if approved:
         title = "¡Solicitud de Empresa aprobada!"
@@ -183,6 +190,10 @@ async def _notify_client_decision(req: dict, approved: bool, admin_note: str = "
             message=message,
             data={"request_id": req["id"]},
         )
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] client notify {uid} bell insert failed: {e}")
+        return False  # persistente: NO entregado → el canal no se sella y se reintenta
+    try:
         await send_push_to_user(db, uid, {
             "title": title,
             "body": message[:140],
@@ -191,7 +202,8 @@ async def _notify_client_decision(req: dict, approved: bool, admin_note: str = "
             "url": "/dashboard/profile",
         })
     except Exception as e:  # noqa: BLE001
-        logger.error(f"[company_requests] client notify {uid} failed: {e}")
+        logger.error(f"[company_requests] client push {uid} failed (best-effort): {e}")
+    return True
 
 
 async def _publish(event_type: str, data: dict, *, user_id: Optional[str] = None,
@@ -551,14 +563,22 @@ async def _finalize_company_approval(req_id: str, staff_id: Optional[str] = None
     lang = acc.get("preferred_language") or "es"
     done = set(doc.get("notify_channels") or [])
 
-    async def _run_channel(name: str, fn) -> None:
+    async def _run_channel(name: str, fn: Callable[[], Awaitable[Any]]) -> None:
+        """Ejecuta un canal y lo sella SOLO ante éxito EXPLÍCITO. El canal se
+        considera entregado si `fn()` no lanza Y no devuelve `False`. Un `False`
+        (p. ej. correo rechazado o entrega parcial al personal) deja el canal
+        SIN sellar para que el recuperador lo reintente (patrón outbox)."""
         if name in done:
             return
         try:
-            await fn()
+            ok = await fn()
         except Exception as e:  # noqa: BLE001
             logger.error(f"[company_requests] notify channel '{name}' failed: {e}")
             return  # NO se marca → el recuperador lo reintenta (outbox)
+        if ok is False:
+            logger.warning(
+                f"[company_requests] notify channel '{name}' incompleto; se reintentará")
+            return  # entrega fallida/parcial → no sellar
         await db.company_requests.update_one(
             {"id": req_id}, {"$addToSet": {"notify_channels": name}})
         done.add(name)
@@ -571,14 +591,18 @@ async def _finalize_company_approval(req_id: str, staff_id: Optional[str] = None
             details={"requester": doc["user_id"], "new_user_id": acc["user_id"],
                      "account_email": acc.get("email")})
 
-    async def _email() -> None:
+    async def _email() -> bool:
         import email_service
-        email_service.notify_email_verification(
-            acc["email"], acc.get("name", ""), acc.get("verification_token", ""), lang=lang)
+        # notify_email_verification devuelve bool: False = envío fallido (p. ej.
+        # sin API key o error de Resend). Se comprueba para NO sellar en fallo.
+        return bool(email_service.notify_email_verification(
+            acc["email"], acc.get("name", ""), acc.get("verification_token", ""), lang=lang))
 
-    async def _staff() -> None:
+    async def _staff() -> bool:
         from routes.notifications import notify_staff_new_pending_user
-        await notify_staff_new_pending_user(acc)
+        # Devuelve True solo si TODOS los destinatarios del staff recibieron el
+        # aviso persistente; una entrega parcial retorna False (reintento).
+        return await notify_staff_new_pending_user(acc)
 
     await _run_channel("audit", _audit)
     await _run_channel("email", _email)

@@ -24,6 +24,18 @@ pytestmark = pytest.mark.asyncio
 REQUESTER = "user_test_vip01"
 
 
+@pytest.fixture(autouse=True)
+def _stub_verification_email(monkeypatch):
+    """Hermético + determinista: el correo de verificación NO golpea Resend en
+    los tests y devuelve éxito (True) por defecto, así el canal 'email' sella
+    como en producción cuando el envío funciona. Los tests que necesitan simular
+    un FALLO de correo (P02-R) sobreescriben este stub con su propio monkeypatch
+    (aplicado después → gana)."""
+    import email_service
+    monkeypatch.setattr(email_service, "notify_email_verification", lambda *a, **k: True)
+    yield
+
+
 class _Kill(BaseException):
     """Simula terminación del proceso: NO la captura ningún `except Exception`."""
 
@@ -516,4 +528,158 @@ async def test_p02_fresh_lease_blocks_duplicate_worker():
         assert await db.notifications.count_documents(
             {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 0
     finally:
+        await _cleanup(rid, email)
+
+
+
+# ============================================================
+# P02-R — UN CANAL NO SE SELLA SI SU ENVÍO FALLA (éxito explícito)
+# El bug: `_run_channel` sellaba cualquier canal que no lanzara excepción. Pero
+# (a) el correo devuelve un bool y `False` no se comprobaba; (b) el aviso al
+# cliente absorbía errores de inserción y retornaba normal; (c) el fan-out al
+# staff absorbía fallos por destinatario. Resultado: audit/email/staff/client se
+# marcaban como completados y `notified_at` se sellaba aunque NO se entregaran,
+# dejando al reconciliador sin nada que reintentar. Fix: resultado de éxito
+# EXPLÍCITO por canal; no sellar en fallo; reintento idempotente por destinatario.
+# ============================================================
+
+async def _backdate_lease(rid):
+    """Expira el lease para permitir que el recuperador vuelva a reclamar."""
+    await db.company_requests.update_one(
+        {"id": rid}, {"$set": {"notify_claimed_at": iso(now_utc() - timedelta(minutes=5))}})
+
+
+async def test_p02r_email_false_does_not_seal_then_recovers(monkeypatch):
+    """El correo devuelve False (envío fallido): el canal 'email' NO se sella y
+    `notified_at` queda sin confirmar. Cuando el correo vuelve a funcionar, el
+    recuperador completa SOLO 'email' y sella, sin reenviar los demás canales ni
+    duplicar el aviso al cliente."""
+    rid, new_uid, email = await _seed_approved_unnotified()
+    try:
+        import email_service
+        state = {"ok": False}
+        monkeypatch.setattr(email_service, "notify_email_verification",
+                            lambda *a, **k: state["ok"])
+
+        # 1ª pasada: email devuelve False.
+        await cr._finalize_company_approval(rid)
+        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        chans = set(mid.get("notify_channels") or [])
+        assert "email" not in chans, "email NO debe sellarse si el envío devolvió False"
+        assert not mid.get("notified_at"), "no debe confirmarse con un canal pendiente"
+        # Los canales persistentes que SÍ se entregaron quedaron sellados.
+        assert {"audit", "client"}.issubset(chans)
+        # Control: el aviso al cliente se entregó una vez pese al fallo del correo.
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
+
+        # Recuperación: el correo ahora funciona.
+        state["ok"] = True
+        await _backdate_lease(rid)
+        await cr.recover_company_approvals()
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert "email" in set(fresh.get("notify_channels") or [])
+        assert fresh.get("notified_at"), "debe confirmar cuando todos los canales se completan"
+        # El cliente NO fue notificado dos veces (dedup por canal).
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
+    finally:
+        monkeypatch.undo()
+        await db.notifications.delete_many({"data.target_user_id": new_uid})
+        await _cleanup(rid, email)
+
+
+async def test_p02r_client_insert_error_absorbed_does_not_seal(monkeypatch):
+    """Un error de inserción del aviso al cliente (absorbido en el helper) ya NO
+    se trata como éxito: el canal 'client' no se sella y no hay confirmación.
+    Al recuperarse, el aviso se entrega EXACTAMENTE una vez (sin duplicar)."""
+    rid, new_uid, email = await _seed_approved_unnotified()
+    try:
+        import routes.notifications as notif
+        orig_insert = notif._insert_notification
+        state = {"fail_client": True}
+
+        async def _insert_guard(**kw):
+            if kw.get("type") == "company_request_approved" and state["fail_client"]:
+                raise RuntimeError("DB caída al insertar el aviso del cliente")
+            return await orig_insert(**kw)
+        monkeypatch.setattr(notif, "_insert_notification", _insert_guard)
+
+        await cr._finalize_company_approval(rid)
+        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert "client" not in set(mid.get("notify_channels") or [])
+        assert not mid.get("notified_at")
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 0
+
+        # Recuperación: la inserción del cliente ya funciona.
+        state["fail_client"] = False
+        await _backdate_lease(rid)
+        await cr.recover_company_approvals()
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert "client" in set(fresh.get("notify_channels") or [])
+        assert fresh.get("notified_at")
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
+    finally:
+        monkeypatch.undo()
+        await db.notifications.delete_many({"data.target_user_id": new_uid})
+        await _cleanup(rid, email)
+
+
+async def test_p02r_staff_partial_delivery_retries_only_failed(monkeypatch):
+    """Entrega PARCIAL al personal: si la inserción a un destinatario falla, el
+    canal 'staff' no se sella. Al recuperarse se reintenta SOLO al destinatario
+    pendiente (idempotente por `target_user_id`): el que ya recibió el aviso no
+    se duplica y, cuando todos lo tienen, el canal sella."""
+    rid, new_uid, email = await _seed_approved_unnotified()
+    s1 = f"staff_ok_{uuid.uuid4().hex[:8]}"
+    s2 = f"staff_fail_{uuid.uuid4().hex[:8]}"
+    await db.users.insert_many([
+        {"user_id": s1, "role": "admin", "email": f"{s1}@resilience.com"},
+        {"user_id": s2, "role": "admin", "email": f"{s2}@resilience.com"},
+    ])
+    try:
+        import routes.notifications as notif
+        orig_insert = notif._insert_notification
+        state = {"fail_s2": True}
+
+        async def _insert_guard(**kw):
+            if (kw.get("type") == "new_user_pending"
+                    and kw.get("recipient_user_id") == s2 and state["fail_s2"]):
+                raise RuntimeError("broker de avisos caído para s2")
+            return await orig_insert(**kw)
+        monkeypatch.setattr(notif, "_insert_notification", _insert_guard)
+
+        await cr._finalize_company_approval(rid)
+        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert "staff" not in set(mid.get("notify_channels") or []), \
+            "staff NO debe sellarse con una entrega parcial"
+        assert not mid.get("notified_at")
+        # s1 recibió su aviso; s2 no.
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": s1, "type": "new_user_pending",
+             "data.target_user_id": new_uid}) == 1
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": s2, "type": "new_user_pending",
+             "data.target_user_id": new_uid}) == 0
+
+        # Recuperación: s2 ya no falla.
+        state["fail_s2"] = False
+        await _backdate_lease(rid)
+        await cr.recover_company_approvals()
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert "staff" in set(fresh.get("notify_channels") or [])
+        assert fresh.get("notified_at")
+        # s1 NO duplicado (sigue en 1); s2 ahora entregado (1).
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": s1, "type": "new_user_pending",
+             "data.target_user_id": new_uid}) == 1
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": s2, "type": "new_user_pending",
+             "data.target_user_id": new_uid}) == 1
+    finally:
+        monkeypatch.undo()
+        await db.users.delete_many({"user_id": {"$in": [s1, s2]}})
+        await db.notifications.delete_many({"data.target_user_id": new_uid})
         await _cleanup(rid, email)

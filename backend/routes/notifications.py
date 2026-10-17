@@ -64,10 +64,17 @@ async def _insert_notification(*, recipient_user_id: str, type: str, title: str,
     return doc["id"]
 
 
-async def notify_staff_new_pending_user(target_user: dict) -> Any:
+async def notify_staff_new_pending_user(target_user: dict) -> bool:
     """Fan-out a notification to every admin and every employee with
     can_manage_blocklist=True, so they see a new user is waiting for verification.
-    Also delivers a Web Push notification to each recipient's registered devices."""
+    Also delivers a Web Push notification to each recipient's registered devices.
+
+    P02-R — entrega IDEMPOTENTE y por destinatario. Devuelve True solo si TODOS
+    los destinatarios tienen su aviso persistente (campana); si la inserción de
+    alguno falla, devuelve False (entrega PARCIAL) para que el llamador no selle
+    el canal y reintente. El reintento no duplica: si el destinatario ya tiene su
+    aviso (`new_user_pending` del mismo `target_user_id`) se omite su inserción.
+    El push es best-effort y su fallo nunca invalida la entrega."""
     recipients_cursor = db.users.find(
         {"$or": [
             {"role": "admin"},
@@ -79,25 +86,40 @@ async def notify_staff_new_pending_user(target_user: dict) -> Any:
     name = target_user.get("name") or target_user.get("email") or "Usuario"
     phone = target_user.get("phone") or "-"
     email = target_user.get("email") or "-"
+    target_id = target_user["user_id"]
     data = {
-        "target_user_id": target_user["user_id"],
+        "target_user_id": target_id,
         "email": target_user.get("email"),
         "phone": target_user.get("phone"),
         "name": target_user.get("name"),
     }
+    all_delivered = True
     for r in recipients:
         uid = r["user_id"]
         lang = r.get("preferred_language")
         try:
+            already = await db.notifications.find_one(
+                {"recipient_user_id": uid, "type": "new_user_pending",
+                 "data.target_user_id": target_id},
+                {"_id": 1},
+            )
+            if already:
+                continue  # ya entregado a este destinatario → idempotente, no reenviar
             await _insert_notification(
                 recipient_user_id=uid, type="new_user_pending",
                 title=_t("new_user_pending", lang, "title"),
                 message=_t("new_user_pending", lang, "message", name=name, email=email, phone=phone),
                 data=data,
             )
-            await send_push_to_user(db, uid, build_new_pending_user_payload(target_user, lang=lang))
         except Exception as e:
             logger.error(f"Failed to deliver pending-user notification to {uid}: {e}")
+            all_delivered = False
+            continue  # entrega PARCIAL: no sellar; se reintenta solo a este destinatario
+        try:
+            await send_push_to_user(db, uid, build_new_pending_user_payload(target_user, lang=lang))
+        except Exception as e:
+            logger.error(f"Failed to push pending-user notification to {uid} (best-effort): {e}")
+    return all_delivered
 
 
 async def notify_user_withdrawal_step(w: dict, step: str, note: str = "") -> Any:

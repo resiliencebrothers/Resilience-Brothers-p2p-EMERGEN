@@ -1,3 +1,12 @@
+## Changelog — 17 Oct 2026 (P02-R)
+
+### P02-R — Un canal de aviso ya NO se sella si su envío falla (resultado de éxito explícito)
+Reporte: `_run_channel` sellaba cualquier canal que no lanzara excepción, pero (a) el correo devuelve `bool` y `False` no se comprobaba; (b) `_notify_client_decision` absorbía errores de inserción y retornaba normal; (c) el fan-out al staff absorbía fallos por destinatario. Resultado: audit/email/staff/client se marcaban como completados y `notified_at` se sellaba aunque la entrega fallara, dejando al reconciliador sin nada que reintentar.
+- **`routes/company_requests.py`**: `_run_channel(name, fn)` ahora exige ÉXITO EXPLÍCITO — sella solo si `fn()` no lanza Y no devuelve `False`; un `False` (correo rechazado / entrega parcial) deja el canal sin sellar para reintento (patrón outbox). `_email` comprueba y propaga el bool de `notify_email_verification`. `_staff` devuelve el resultado del fan-out. `_notify_client_decision` devuelve `bool`: la campana (persistente) NO absorbe su error → `False` si no se insertó; el push es best-effort. La confirmación `notified_at` sigue gated por el set `done`, que ahora solo incluye canales realmente entregados.
+- **`routes/notifications.py`**: `notify_staff_new_pending_user` es IDEMPOTENTE por destinatario (omite a quien ya tiene su `new_user_pending` del mismo `target_user_id`) y devuelve `bool` (True solo si TODOS entregados; `False` en entrega parcial). El push sigue best-effort. Compatible con callers existentes (auth/me ignoran el retorno).
+- **Tests** (`tests/test_company_request_decision_race.py`): fixture autouse hace el correo determinista (sin Resend). 3 nuevas pruebas P02-R: correo `False` no sella→recupera; error de inserción del cliente absorbido no sella→recupera una sola vez; entrega parcial al staff reintenta SOLO al pendiente (sin duplicar al ya entregado). Suite 15/15; iter30 fan-out 11/11; ruff + mypy limpios. **Control negativo**: desactivado el guard de éxito, las 3 pruebas fallan como se esperaba; restaurado → verdes.
+
+
 ## Changelog — 17 Oct 2026
 
 ### Herramientas: Caja de Negocio (Empresa), Escenarios de Rentabilidad y Reporte mensual Excel
