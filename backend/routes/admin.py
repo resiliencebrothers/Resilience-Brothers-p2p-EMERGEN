@@ -223,6 +223,7 @@ async def admin_pending_counts(request: Request) -> Any:
     orders = await db.orders.count_documents(
         {"status": {"$in": ["pending", "requires_double_approval"]}})
     recon = await db.bank_transactions.count_documents({"status": "manual_review"})
+    company_reqs = await db.company_requests.count_documents({"status": "pending"})
     return {
         "withdrawals": wd,
         "deposits": dep,
@@ -231,6 +232,7 @@ async def admin_pending_counts(request: Request) -> Any:
         "vip_batches": vip_items,
         "orders": orders,
         "reconciliation": recon,
+        "company_requests": company_reqs,
     }
 
 

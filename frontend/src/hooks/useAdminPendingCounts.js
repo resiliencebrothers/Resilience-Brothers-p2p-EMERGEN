@@ -12,7 +12,7 @@ import { useLiveEvent } from "@/hooks/useLiveStream";
 
 const EMPTY = {
   withdrawals_hub: 0, withdrawals: 0, deposits: 0, capital_requests: 0,
-  vip_batches: 0, orders: 0, reconciliation: 0,
+  vip_batches: 0, orders: 0, reconciliation: 0, company_requests: 0,
 };
 
 export function useAdminPendingCounts() {
@@ -40,6 +40,8 @@ export function useAdminPendingCounts() {
   useLiveEvent(enabled ? "deposit_created" : null, refresh);
   useLiveEvent(enabled ? "order_status_changed" : null, refresh);
   useLiveEvent(enabled ? "reconciliation_import" : null, refresh);
+  useLiveEvent(enabled ? "company_request_created" : null, refresh);
+  useLiveEvent(enabled ? "company_request_updated" : null, refresh);
 
   return { counts, refresh };
 }

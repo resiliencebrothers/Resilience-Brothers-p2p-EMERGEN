@@ -210,3 +210,25 @@ class TestCompanyProgramRequests:
         after = requests.get(f"{API}/admin/company-requests/pending-count",
                              headers=_h(STAFF_TOKEN)).json()["pending"]
         assert after == before + 1
+
+    def test_pending_counts_includes_company_requests(self):
+        before = requests.get(f"{API}/admin/pending-counts",
+                              headers=_h(STAFF_TOKEN)).json().get("company_requests", 0)
+        self._submit(CLIENT_TOKEN)
+        after = requests.get(f"{API}/admin/pending-counts",
+                             headers=_h(STAFF_TOKEN)).json()["company_requests"]
+        assert after == before + 1
+
+    def test_me_shows_company_account_kyb_after_approval(self):
+        r, body = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        ap = requests.post(f"{API}/admin/company-requests/{req_id}/approve",
+                           headers=_h(STAFF_TOKEN))
+        assert ap.status_code == 200, ap.text
+        me = requests.get(f"{API}/company-requests/me", headers=_h(CLIENT_TOKEN)).json()
+        assert me["request"]["status"] == "approved"
+        acc = me["company_account"]
+        assert acc is not None
+        assert acc["account_status"] == "under_review"
+        assert acc["phone_verified"] is False
+        assert acc["email_verified"] is False

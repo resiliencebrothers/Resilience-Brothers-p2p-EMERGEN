@@ -129,14 +129,19 @@ export default function AdminPanel() {
       // teléfonos/emails asociados a usuarios).
       ...(has("users") || has("appeals") || has("kyc")
          || has("profile_changes") || has("support")
-         || has("blocked_contacts") ? [
+         || has("blocked_contacts") || has("company_requests") ? [
         {
           to: "/admin/users", icon: Users, label: t("sidebar.admin.users"),
           id: "admin-nav-users",
           highlight: has("kyc"),
-          // iter107.1 — Show a red pill with the pending support ticket
-          // count so staff see queued client help right from the sidebar.
-          badge: has("support") && supportUnread > 0 ? supportUnread : null,
+          // iter107.1 — Pill rojo con pendientes de esta sección: tickets de
+          // soporte sin leer + solicitudes de Empresa pendientes (ambas colas
+          // viven bajo "Usuarios").
+          badge: (() => {
+            const n = (has("support") ? supportUnread : 0)
+              + (has("company_requests") ? (pendingCounts.company_requests || 0) : 0);
+            return n > 0 ? n : null;
+          })(),
           children: [
             ...(has("support") ? [
               { to: "/admin/support", icon: HelpCircle, label: t("sidebar.admin.support"), id: "admin-nav-support" },

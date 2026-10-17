@@ -2593,6 +2593,15 @@
     "rejectedNoNote": "El equipo no dejó comentario adicional.",
     "cooldownRemaining": "Podrás volver a solicitar en {{days}} día(s).",
     "approvedBody": "¡Tu cuenta de Empresa fue creada! Inicia sesión con {{email}} (y revisa ese correo para verificar el email). El staff debe verificar el teléfono antes de que puedas operar.",
+    "account": {
+      "title": "Estado de tu cuenta Empresa",
+      "statusActive": "Cuenta Empresa activa — ya puedes iniciar sesión y operar.",
+      "underReviewNote": "Tu cuenta Empresa está en revisión. Un miembro del staff verificará el teléfono para activarla.",
+      "emailDone": "Email verificado",
+      "emailPending": "Verifica el email (revisa la bandeja de la cuenta Empresa)",
+      "phoneDone": "Teléfono verificado por el staff",
+      "phonePending": "Teléfono pendiente de verificación por el staff"
+    },
     "status": {
       "pending": "En revisión",
       "approved": "Aprobada",

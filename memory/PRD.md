@@ -2999,3 +2999,8 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - i18n ES/EN: claves `companyRequest.*`, `adminCompanyRequests.*`, `usersHub.tabs.companyRequests`.
 
 **Pruebas:** `backend/tests/test_company_program_requests.py` (12/12 passed; añadido a la suite Empresa del Makefile). Testing agent E2E frontend: 7/7 flujos OK, sin bugs; verificado que la cuenta nueva es `empresa`/`under_review`, la personal mantiene su rol, y que el hash nunca se expone. ruff limpio. UI verificada desktop + móvil (390px) sin overflow nuevo.
+
+### Mejoras Programa Empresas (oct 2026)
+- **Badge admin:** `/admin/pending-counts` ahora incluye `company_requests` (conteo de pendientes). `useAdminPendingCounts.js` lo refresca con SSE (`company_request_created`/`company_request_updated`); el ítem "Usuarios" del sidebar (`AdminPanel.jsx`) suma este conteo al pill rojo junto a tickets de soporte. Nav visible también con solo permiso `company_requests`. Verificado en vivo (badge "1").
+- **Estado KYB en perfil:** `GET /company-requests/me` adjunta `company_account` {account_status, email_verified, phone_verified} de la cuenta Empresa creada. `RequestCompanyCard.jsx` muestra en estado aprobado un bloque "Estado de tu cuenta Empresa" (checklist email/teléfono con íconos ✓/pendiente + nota de revisión por staff), o "activa" si ya lo está. i18n `companyRequest.account.*` ES/EN. Verificado en vivo.
+- Pruebas: `test_company_program_requests.py` ampliado a **14/14** (incluye `/me` company_account y `/admin/pending-counts` company_requests). ruff limpio.

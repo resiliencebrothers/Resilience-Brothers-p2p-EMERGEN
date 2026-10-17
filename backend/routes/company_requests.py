@@ -313,7 +313,11 @@ async def create_company_request(payload: CompanyRequestCreate, request: Request
 
 @router.get("/company-requests/me")
 async def get_my_company_request(request: Request) -> Any:
-    """Última solicitud del cliente (cualquier estado) para la tarjeta de perfil."""
+    """Última solicitud del cliente (cualquier estado) para la tarjeta de perfil.
+
+    Si la solicitud fue aprobada, adjunta el estado KYB básico de la cuenta
+    Empresa creada (account_status + verificación de email/teléfono) para que
+    el solicitante vea qué falta antes de poder operar."""
     user = await require_user(request)
     doc = await db.company_requests.find_one(
         {"user_id": user["user_id"]}, {"_id": 0}, sort=[("created_at", -1)],
@@ -321,8 +325,23 @@ async def get_my_company_request(request: Request) -> Any:
     cooldown_days_left = 0
     if doc and doc.get("status") == "rejected" and doc.get("reviewed_at"):
         cooldown_days_left = _cooldown_remaining(doc["reviewed_at"])
+
+    company_account = None
+    if doc and doc.get("status") == "approved" and doc.get("new_user_id"):
+        acc = await db.users.find_one(
+            {"user_id": doc["new_user_id"]},
+            {"_id": 0, "account_status": 1, "email_verified": 1, "phone_verified": 1},
+        )
+        if acc:
+            company_account = {
+                "account_status": acc.get("account_status"),
+                "email_verified": bool(acc.get("email_verified")),
+                "phone_verified": bool(acc.get("phone_verified")),
+            }
+
     return {
         "request": _serialize(doc) if doc else None,
+        "company_account": company_account,
         "cooldown_days_left": cooldown_days_left,
         "can_submit": (
             user.get("role") in ("normal", "vip")

@@ -2593,6 +2593,15 @@
     "rejectedNoNote": "The team left no additional comment.",
     "cooldownRemaining": "You can apply again in {{days}} day(s).",
     "approvedBody": "Your Business account was created! Log in with {{email}} (and check that inbox to verify the email). Staff must verify the phone before you can operate.",
+    "account": {
+      "title": "Your Business account status",
+      "statusActive": "Business account active — you can now log in and operate.",
+      "underReviewNote": "Your Business account is under review. A staff member will verify the phone to activate it.",
+      "emailDone": "Email verified",
+      "emailPending": "Verify the email (check the Business account inbox)",
+      "phoneDone": "Phone verified by staff",
+      "phonePending": "Phone pending verification by staff"
+    },
     "status": {
       "pending": "Under review",
       "approved": "Approved",
