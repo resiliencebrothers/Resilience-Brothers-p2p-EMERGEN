@@ -149,8 +149,12 @@ async def _run_idempotent(company_id: str, op_key: Optional[str], op_type: str,
         # 'pending': intento previo incompleto o concurrente → se sigue a apply;
         # el guard inv_ops impide una segunda mutación.
     result = await apply_fn(oid)
+    # H03-R2 — CIERRE CONDICIONAL: una decisión TERMINAL DURADERA de aborto
+    # ('burned', sellada por freeze_dispatch/burn_or_undo_pickup mientras este
+    # intento estaba PAUSADO) JAMÁS puede ser sobrescrita por un ejecutor EN
+    # VUELO que resucita tras el aborto. Nunca pisamos un 'burned' con 'applied'.
     await db.company_inventory_ops.update_one(
-        {"company_id": company_id, "op_key": oid},
+        {"company_id": company_id, "op_key": oid, "result": {"$ne": "burned"}},
         {"$set": {"status": "done", "result": result, "done_at": iso(now_utc())}})
     return result
 
@@ -335,14 +339,17 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
         return "invalid"
 
     async def _apply(oid: str) -> str:
-        # H03 — TOKEN de quema: si el recuperador decidió ABORTAR este intento
-        # (puso `op:burn`), la reserva NO puede aplicarse TARDE. La carrera se
-        # cierra en la MISMA escritura del producto (igual que la recogida en
-        # tienda), no con una lectura de estado previa que dejaría un hueco.
-        burn_token = f"{oid}:burn"
+        # H03/H03-R2 — GUARD DE ABORTO DURADERO: si el recuperador decidió
+        # ABORTAR este intento (freeze_dispatch marcó `inv_burned`), la reserva
+        # NO puede aplicarse TARDE. El marcador vive en `inv_burned` (conjunto
+        # NO truncado del propio producto), así la carrera se cierra en la MISMA
+        # escritura y la decisión SOBREVIVE a la rotación de `inv_ops`: un
+        # ejecutor EN VUELO que resucita tras el aborto se bloquea aquí. Un token
+        # dentro del array acotado podía desalojarse y dejar pasar esa reserva.
         res = await db.products.find_one_and_update(
             {"id": product_id, "company_id": company_id,
-             "inv_ops": {"$nin": [oid, burn_token]},
+             "inv_ops": {"$nin": [oid]},
+             "inv_burned": {"$nin": [oid]},
              "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
             [{"$set": {
                 "stock": {"$round": [
@@ -363,9 +370,9 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
         if await _relog_if_applied(company_id, product_id, oid, "dispatch", qty,
                                    store_id=store_id, actor=actor):
             return "applied"
-        # TOKEN de quema presente → decisión terminal: jamás muta.
+        # Decisión TERMINAL DURADERA de aborto presente → jamás muta.
         if await db.products.find_one(
-                {"id": product_id, "company_id": company_id, "inv_ops": burn_token},
+                {"id": product_id, "company_id": company_id, "inv_burned": oid},
                 {"_id": 1}):
             return "burned"
         exists = await db.products.find_one(
@@ -483,21 +490,22 @@ async def freeze_dispatch(company_id: str, product_id: str, store_id: str,
     el llamador debe devolverla con `return_dispatch`).
 
     Dos candados complementarios:
-    (1) TOKEN `op:burn` en el guard embebido del producto — cierra la ventana EN
-        VUELO (una mutación simultánea del creador se bloquea en la MISMA
-        escritura). Pero ese array se trunca a INV_OPS_CAP y puede DESALOJARSE
-        con suficiente actividad del producto → no es durable.
+    (1) GUARD DURADERO `inv_burned` en el propio producto — un conjunto
+        (`$addToSet`) que NO se trunca (solo crece con abortos, que son raros).
+        La reserva TARDÍA de un creador se bloquea en la MISMA escritura del
+        producto (`inv_burned: {$nin:[op_id]}`) y, al no vivir en el array
+        acotado `inv_ops`, la decisión SOBREVIVE a la rotación: un ejecutor EN
+        VUELO que resucite tras el aborto NO puede aplicar (H03-R2).
     (2) H03-R — resultado TERMINAL 'burned' en `company_inventory_ops` (registro
         PERMANENTE de idempotencia). Un creador que reanude —incluso tras rotar
         el array— encuentra ese resultado en `_run_idempotent` y recibe 'burned'
         SIN llegar jamás a `apply_fn`. Se sella con el MISMO payload_hash que
         usaría `dispatch_from_store` (si no, se leería como 'conflict'), y de
         forma CONDICIONAL para no pisar un 'applied'/'duplicate' real."""
-    burn_token = f"{op_id}:burn"
+    # (1) GUARD DURADERO no truncado en el producto.
     await db.products.update_one(
-        {"id": product_id, "company_id": company_id,
-         "inv_ops": {"$ne": burn_token}},
-        {"$push": {"inv_ops": burn_token}})
+        {"id": product_id, "company_id": company_id},
+        {"$addToSet": {"inv_burned": op_id}})
     if await dispatch_applied(company_id, op_id):
         return True
     phash = _payload_hash("dispatch", {"product_id": product_id,
@@ -540,18 +548,20 @@ async def reserve_pickup(company_id: str, product_id: str, store_id: str,
     """Reserva de ubicación de una venta con recogida en tienda: descuenta
     `qty` de la ESTANTERÍA (by_store[sid]) y de `distributed`, SIN tocar
     `stock` (el total lo descuenta la capa de stock del canje). Exige
-    by_store[sid] ≥ qty. IDEMPOTENTE y DURADERA por `op_id`; respeta el TOKEN
-    de quema `op:burn` (decisión terminal del healer). 'applied'|'insufficient'
-    |'burned'|'not_found'|'invalid'."""
+    by_store[sid] ≥ qty. IDEMPOTENTE y DURADERA por `op_id`; respeta el GUARD
+    DURADERO de aborto `inv_burned` (decisión terminal del healer). 'applied'
+    |'insufficient'|'burned'|'not_found'|'invalid'."""
     qty = _q(qty)
     if qty <= 0:
         return "invalid"
 
     async def _apply(oid: str) -> str:
-        burn_token = f"{oid}:burn"
+        # H03-R2 — GUARD DE ABORTO DURADERO (igual que dispatch): `inv_burned`
+        # NO truncado cierra la ventana EN VUELO y sobrevive a la rotación.
         res = await db.products.find_one_and_update(
             {"id": product_id, "company_id": company_id,
-             "inv_ops": {"$nin": [oid, burn_token]},
+             "inv_ops": {"$nin": [oid]},
+             "inv_burned": {"$nin": [oid]},
              "$expr": {"$gte": [{"$ifNull": [f"$by_store.{store_id}", 0]}, qty]}},
             [{"$set": {
                 f"by_store.{store_id}": {"$round": [
@@ -570,9 +580,9 @@ async def reserve_pickup(company_id: str, product_id: str, store_id: str,
         if await _relog_if_applied(company_id, product_id, oid, "pickup_sale", qty,
                                    store_id=store_id, actor=actor):
             return "applied"
-        # TOKEN de quema presente → decisión terminal: jamás muta.
+        # Decisión TERMINAL DURADERA de aborto presente → jamás muta.
         if await db.products.find_one(
-                {"id": product_id, "company_id": company_id, "inv_ops": burn_token},
+                {"id": product_id, "company_id": company_id, "inv_burned": oid},
                 {"_id": 1}):
             return "burned"
         exists = await db.products.find_one(
@@ -627,18 +637,16 @@ async def burn_or_undo_pickup(company_id: str, product_id: str, store_id: str,
                               qty: float, op_id: str,
                               actor: Optional[dict] = None) -> str:
     """Decisión TERMINAL para la reserva de ubicación de una recogida en tienda
-    (mirror de burn_or_undo_stock): empuja PRIMERO el TOKEN de quema `op:burn`
-    al guard embebido y LUEGO comprueba si la reserva llegó a aplicarse. Si YA
-    se aplicó (inv_ops contiene `op_id`), la deshace con `restore_pickup`
-    (`op:undo`, idempotente); si no, el token impide que un creador lento la
-    aplique más tarde. Empujar el token antes de comprobar cierra la carrera:
-    la reserva tardía fracasa (guard) o se detecta ya aplicada. 'undone'|'burned'."""
+    (mirror de burn_or_undo_stock): marca PRIMERO el GUARD DURADERO `inv_burned`
+    (conjunto no truncado del producto) y LUEGO comprueba si la reserva llegó a
+    aplicarse. Si YA se aplicó (inv_ops contiene `op_id`), la deshace con
+    `restore_pickup` (`op:undo`, idempotente); si no, el guard impide que un
+    creador lento —incluso un ejecutor EN VUELO que resucite tras rotar
+    `inv_ops`— la aplique más tarde (H03-R2). 'undone'|'burned'."""
     qty = _q(qty)
-    burn_token = f"{op_id}:burn"
     await db.products.update_one(
-        {"id": product_id, "company_id": company_id,
-         "inv_ops": {"$ne": burn_token}},
-        {"$push": {"inv_ops": burn_token}})
+        {"id": product_id, "company_id": company_id},
+        {"$addToSet": {"inv_burned": op_id}})
     if await db.products.find_one(
             {"id": product_id, "company_id": company_id, "inv_ops": op_id},
             {"_id": 1}):

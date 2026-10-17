@@ -476,6 +476,67 @@ async def test_h03r_burn_decision_survives_inv_ops_rotation():
         await _clean()
 
 
+# ────────────────────────────────────────────────────────────────── H03-R2
+# Un ejecutor de la reserva YA EN VUELO (leyó 'pending' y está a punto de
+# escribir el producto) debe respetar la decisión de aborto DURADERA aunque el
+# array acotado `inv_ops` rote por completo mientras estaba pausado. La decisión
+# vive en `inv_burned` (conjunto no truncado), no en el array que puede
+# desalojarse, y `_run_idempotent` no pisa 'burned' con 'applied'.
+async def test_h03r2_inflight_reservation_respects_durable_abort(monkeypatch):
+    await _clean()
+    reqid = str(uuid.uuid4())
+    opid = f"cdeliv:{reqid}"
+    try:
+        pid, sid = await _seed_company()   # stock 10, by_store {sid: 3}
+        real_db = ci_mod.db
+        state = {"fired": False}
+
+        async def _abort_and_rotate():
+            # El recuperador ABORTA (congela) este intento aún no ejecutado…
+            assert await ci.freeze_dispatch(CID, pid, sid, 3, opid) is False
+            # …y suficiente actividad del producto ROTA el array acotado inv_ops
+            # (desalojaría cualquier marcador que viviese dentro de él).
+            for i in range(ci.INV_OPS_CAP + 5):
+                assert await ci.receive_central(
+                    CID, pid, 1, op_key=f"recv:{reqid}:{i}") == "applied"
+
+        class _Products:
+            def __getattr__(self, n):
+                return getattr(real_db.products, n)
+
+            async def find_one_and_update(self, *a, **k):
+                # La PRIMERA escritura de producto es la reserva EN VUELO: justo
+                # ANTES de ejecutarla ocurren el aborto y la rotación.
+                if not state["fired"]:
+                    state["fired"] = True
+                    await _abort_and_rotate()
+                return await real_db.products.find_one_and_update(*a, **k)
+
+        products_proxy = _Products()
+
+        class _Db:
+            def __getattr__(self, n):
+                if n == "products":
+                    return products_proxy
+                return getattr(real_db, n)
+
+        monkeypatch.setattr(ci_mod, "db", _Db())
+        status = await ci.dispatch_from_store(CID, pid, sid, 3, op_id=opid)
+        monkeypatch.undo()
+
+        # La reserva tardía NO se aplica pese a la rotación total de inv_ops.
+        assert status == "burned"
+        assert await _stock(pid) == float(10 + ci.INV_OPS_CAP + 5)  # solo receives
+        assert await _shelf(pid, sid) == 3.0                        # estantería intacta
+        # El registro duradero sigue 'burned' (el ejecutor en vuelo no lo pisó).
+        rec = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": opid}, {"_id": 0, "result": 1})
+        assert rec and rec["result"] == "burned"
+    finally:
+        monkeypatch.undo()
+        await _clean()
+
+
 # ─────────────────────────────────────────────────────────────────── H04-R
 # Muchos productos SANOS no pueden tapar a un huérfano: el barrido filtra
 # huérfanos ANTES de limitar, así que el cupo no se agota con productos sanos.
