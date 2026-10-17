@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend E2E testing of nuevo subsistema KYB · Company verification. Verificado: (a) formulario empresa /company/kyc exige los 3 documentos (tax_certificate, operating_license, legal_rep_id) y el botón Enviar permanece deshabilitado si falta legal_rep_id; envío a /kyc/company/submit responde OK y pasa a 'En revisión'. (b) En /admin/users existe la pestaña 'Company KYB' (data-testid=users-hub-tab-company-kyb) junto a 'KYC' y 'Business requests'; abre admin-company-kyb-page con título 'KYB · Company verification' y lista la verificación recién creada con badge COMPANY. (c) El diálogo de Aprobación muestra kyc-company-badge, kyc-company-fields (nombre empresa, código fiscal, dirección) y kyc-documents-panel con los 3 slots (FISCAL CODE / CERTIFICATE, OPERATING LICENSE, LEGAL REP. ID). Confirmar aprueba, muestra toast 'Client verified', mueve el counter Verified 0→1 y Pending 1→0, y quita la fila del Pending. (d) Separación KYC/KYB OK: tras el envío, la pestaña 'KYC' (admin-kyc-page) NO muestra la verificación de empresa (empresa.e2e no aparece en HTML; counters distintos: KYC Users=123, KYB Users=13).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Nota menor: en el diálogo kyc-documents-panel el <img> de cada documento carga desde base64 pero por el visor del admin se ven algo pequeños/vacíos cuando el archivo subido es una imagen 1x1 (artefacto del test, no bug). Para QA real sería útil un fallback visible 'Documento sin preview' en caso de imágenes muy pequeñas.",
+    "Separación KYC/KYB está correctamente implementada en backend (kind filter) y frontend (prop kind). Los counters en Company KYB (TOTAL USERS=13) parecen contar sólo usuarios con cuentas empresa, lo cual es consistente."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped)", "frontend": "100%" },
+  "test_credentials": "Cookies session_token: 'kyb_dbg_admin' (admin) y 'test_session_empresa_e2e_X' (empresa). Ambas re-sembradas con TTL +2 días al inicio del test.",
+  "seed_data_creation": "Antes del test: borré kyc_verifications(kind=company, user=user_test_empresa_e2e) y reseteé users.kyc_status a 'unverified'. Durante el test se creó 1 verificación de empresa y se aprobó (users.kyc_status quedó 'verified'). No se limpió al final (la verificación aprobada queda en Verified de Company KYB).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Los flujos de Rechazar (kyc-reject-btn-<id>) y More info (kyc-more-info-btn-<id>) sobre una verificación de empresa quedaron SIN probar porque sólo había una verificación y se aprobó. Si se requiere, re-sembrar borrando la verif y re-enviando desde /company/kyc. El diálogo de Rechazar exige al menos 1 reason; Más info exige notes con ≥5 chars.",
+  "rca of the issue": "N/A — todos los flujos solicitados funcionan como se diseñó."
+}

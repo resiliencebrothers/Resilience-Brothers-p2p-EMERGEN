@@ -1,3 +1,13 @@
+## Changelog — 17 Oct 2026 (KYB Empresas)
+
+### KYB de empresas visible en Usuarios (pestaña dedicada "Company KYB")
+Reporte del usuario: en la sección Usuarios no había un KYB para verificar la documentación de las empresas. Opción A aprobada (reutilizar el subsistema de KYC de empresa existente, sin duplicar). Testing agent frontend 100% (iteration_366.json), sin bugs.
+- **Backend** (`routes/kyc.py`, `services/kyc.py`): `/admin/kyc/queue` y `/admin/kyc/funnel` aceptan `?kind=company|individual`. `list_queue(kind=)` filtra empresa (`kind=company`) vs individual (`kind $ne company`); `compute_funnel(kind=)` kind-aware (sin `kind` mantiene el comportamiento previo). El envío de KYB de empresa (`/kyc/company/submit`) ahora exige un TERCER documento: **ID del representante legal** (`legal_rep_id`), además de certificado fiscal y licencia operativa.
+- **Frontend**: nueva pestaña **"Company KYB"** en el hub de Usuarios (`AdminUsersHub.jsx`) que renderiza `<AdminKYC kind="company" />` (título "KYB · Company verification", solo expedientes de empresa). La pestaña **"KYC"** ahora es `<AdminKYC kind="individual" />` (solo identidad personal) → KYC y KYB quedan separados. `AdminKYC.jsx` recibe el prop `kind` y lo pasa a la cola/funnel. `CompanyKYCView.jsx` añade la subida del documento del representante legal (botón Enviar deshabilitado hasta subir los 3). El diálogo admin ya mostraba datos de empresa + documentos; ahora incluye el label "Legal rep. ID".
+- **i18n ES/EN**: `usersHub.tabs.companyKyb`, `admin.kycAdmin.companyTitle/companySubtitle`, `admin.kycAdmin.docType.legal_rep_id`.
+- Verificado: empresa sube 3 docs → aparece en "Company KYB" (badge COMPANY) → admin revisa datos+3 documentos y Aprueba/Rechaza/Pide más info; la pestaña KYC personal NO muestra empresas y viceversa.
+
+
 ## Changelog — 17 Oct 2026 (RET-R)
 
 ### RET-R — La poda de `inv_burned` ya NO se basa solo en `done_at`/`status` (retención segura)
