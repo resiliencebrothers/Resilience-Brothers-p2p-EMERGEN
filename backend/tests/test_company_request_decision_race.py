@@ -7,6 +7,7 @@ transición CAS condicionada a `pending` ya no coincide → 409, SIN pisar el
 estado ni crear/0 notificar éxito. Solo una decisión gana.
 """
 import uuid
+import asyncio
 
 import pytest
 from fastapi import HTTPException
@@ -19,6 +20,10 @@ from routes.company_requests import CompanyRequestReject
 pytestmark = pytest.mark.asyncio
 
 REQUESTER = "user_test_vip01"
+
+
+class _Kill(BaseException):
+    """Simula terminación del proceso: NO la captura ningún `except Exception`."""
 
 
 async def _seed_pending():
@@ -39,10 +44,11 @@ async def _seed_pending():
 
 async def _cleanup(rid, email):
     await db.company_requests.delete_many({"id": rid})
-    await db.users.delete_many({"email": email})
+    await db.users.delete_many({"$or": [{"email": email}, {"parent_user_id": REQUESTER}]})
     await db.notifications.delete_many(
         {"recipient_user_id": REQUESTER,
-         "type": {"$in": ["company_request_approved", "company_request_rejected"]}})
+         "type": {"$in": ["company_request_approved", "company_request_rejected",
+                          "company_account_activated", "new_company_request"]}})
 
 
 async def _fake_perm(request, perm):
@@ -111,10 +117,10 @@ async def test_a02_approve_loses_to_concurrent_rejection(monkeypatch):
                 return getattr(real_db.company_requests, n)
 
             async def update_one(self, flt, update, *a, **k):
-                # Intercepta la CAS de aprobación (status→approved): justo ANTES,
+                # Intercepta la CAS de CLAIM (status→approving): justo ANTES,
                 # el revisor B completa el RECHAZO entero.
                 if (not state["fired"] and isinstance(update, dict)
-                        and update.get("$set", {}).get("status") == "approved"):
+                        and update.get("$set", {}).get("status") == "approving"):
                     state["fired"] = True
                     await cr.admin_reject_company_request(
                         rid, CompanyRequestReject(admin_note="rechazo gana"), None)
@@ -145,3 +151,185 @@ async def test_a02_approve_loses_to_concurrent_rejection(monkeypatch):
     finally:
         monkeypatch.undo()
         await _cleanup(rid, email)
+
+
+# ────────────────────────────────────────────────────────── A03 crash-safety
+
+async def _seed_approving(reviewed_at, with_account=False):
+    """Siembra una solicitud ya reclamada ('approving') con identidad estable."""
+    rid = f"coreq_{uuid.uuid4().hex[:12]}"
+    new_uid = f"coacct_{uuid.uuid4().hex[:12]}"
+    email = f"empresa_{uuid.uuid4().hex[:10]}@mibodega.com"
+    phone = "+1" + "".join(str(int(c, 16) % 10) for c in uuid.uuid4().hex[:10])
+    now = iso(now_utc())
+    await db.company_requests.insert_one({
+        "id": rid, "user_id": REQUESTER, "user_email": "vip.test@resilience.com",
+        "user_name": "VIP", "company_name": "Reanudable S.A.", "account_email": email,
+        "company_phone": phone, "tax_id": "RNC-A03", "address": "Calle A03 #1",
+        "password_hash": _hash_password("CompanyPass123!"), "status": "approving",
+        "created_at": now, "updated_at": now, "reviewed_by": "user_test_admin01",
+        "reviewed_at": reviewed_at, "admin_note": None, "new_user_id": new_uid,
+    })
+    if with_account:
+        await db.users.insert_one(cr._build_company_user_doc(
+            await db.company_requests.find_one({"id": rid}, {"_id": 0}), new_uid, "es"))
+    return rid, new_uid, email
+
+
+async def test_a03_crash_before_insert_is_recoverable(monkeypatch):
+    rid, email, _ = await _seed_pending()
+    try:
+        monkeypatch.setattr(cr, "require_permission", _fake_perm)
+        real_db = cr.db
+        boom = {"armed": True}
+
+        class _Users:
+            def __getattr__(self, n):
+                return getattr(real_db.users, n)
+
+            async def update_one(self, *a, **k):
+                if boom["armed"]:           # la 1ª escritura de users = upsert de la cuenta
+                    boom["armed"] = False
+                    raise _Kill("process killed mid-insert")
+                return await real_db.users.update_one(*a, **k)
+
+        users_proxy = _Users()
+
+        class _Db:
+            def __getattr__(self, n):
+                if n == "users":
+                    return users_proxy
+                return getattr(real_db, n)
+
+        monkeypatch.setattr(cr, "db", _Db())
+        with pytest.raises(_Kill):
+            await cr.admin_approve_company_request(rid, None)
+        monkeypatch.undo()
+
+        # Estado RECUPERABLE: 'approving' con new_user_id pero SIN cuenta fantasma.
+        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert mid["status"] == "approving"
+        assert mid["new_user_id"]
+        assert await db.users.find_one({"user_id": mid["new_user_id"]}) is None
+
+        # Reintento del endpoint → completa idempotentemente (una sola cuenta).
+        monkeypatch.setattr(cr, "require_permission", _fake_perm)
+        fresh = await cr.admin_approve_company_request(rid, None)
+        assert fresh["status"] == "approved"
+        acc = await db.users.find_one({"user_id": fresh["new_user_id"]})
+        assert acc and acc["account_status"] == "under_review" and acc["email"] == email
+        assert await db.users.count_documents({"email": email}) == 1
+        assert "password_hash" not in fresh
+    finally:
+        monkeypatch.undo()
+        await _cleanup(rid, email)
+
+
+async def test_a03_crash_before_seal_is_recoverable(monkeypatch):
+    rid, email, _ = await _seed_pending()
+    try:
+        monkeypatch.setattr(cr, "require_permission", _fake_perm)
+        real_db = cr.db
+        boom = {"armed": True}
+
+        class _CReq:
+            def __getattr__(self, n):
+                return getattr(real_db.company_requests, n)
+
+            async def update_one(self, flt, update, *a, **k):
+                # Muere JUSTO en el sellado approving→approved (cuenta ya creada).
+                if (boom["armed"] and isinstance(update, dict)
+                        and update.get("$set", {}).get("status") == "approved"):
+                    boom["armed"] = False
+                    raise _Kill("process killed before seal")
+                return await real_db.company_requests.update_one(flt, update, *a, **k)
+
+        creq = _CReq()
+
+        class _Db:
+            def __getattr__(self, n):
+                if n == "company_requests":
+                    return creq
+                return getattr(real_db, n)
+
+        monkeypatch.setattr(cr, "db", _Db())
+        with pytest.raises(_Kill):
+            await cr.admin_approve_company_request(rid, None)
+        monkeypatch.undo()
+
+        # La cuenta YA existe pero la solicitud quedó 'approving' (sin sellar).
+        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert mid["status"] == "approving"
+        assert await db.users.find_one({"user_id": mid["new_user_id"]}) is not None
+
+        # Reintento → sella sin duplicar la cuenta.
+        monkeypatch.setattr(cr, "require_permission", _fake_perm)
+        fresh = await cr.admin_approve_company_request(rid, None)
+        assert fresh["status"] == "approved"
+        assert await db.users.count_documents({"email": email}) == 1
+    finally:
+        monkeypatch.undo()
+        await _cleanup(rid, email)
+
+
+async def test_a03_recoverer_completes_stuck_approving():
+    from datetime import timedelta
+    # reviewed_at 5 min atrás → supera el cutoff de 120s del recuperador.
+    reviewed = iso(now_utc() - timedelta(minutes=5))
+    rid, new_uid, email = await _seed_approving(reviewed, with_account=False)
+    try:
+        healed = await cr.recover_company_approvals()
+        assert healed >= 1
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert fresh["status"] == "approved"
+        assert fresh.get("notified_at")
+        acc = await db.users.find_one({"user_id": new_uid})
+        assert acc and acc["account_status"] == "under_review"
+        assert await db.users.count_documents({"email": email}) == 1
+        assert "password_hash" not in fresh
+    finally:
+        await _cleanup(rid, email)
+
+
+async def test_a03_recoverer_finalizes_pending_notifications():
+    from datetime import timedelta
+    reviewed = iso(now_utc() - timedelta(minutes=5))
+    rid, new_uid, email = await _seed_approving(reviewed, with_account=True)
+    # Simula: cuenta creada y sellada, pero el proceso murió antes de notificar.
+    await db.company_requests.update_one(
+        {"id": rid}, {"$set": {"status": "approved"}, "$unset": {"password_hash": ""}})
+    try:
+        await cr.recover_company_approvals()
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert fresh.get("notified_at")
+        note = await db.notifications.find_one(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"})
+        assert note is not None
+        # No duplica la cuenta.
+        assert await db.users.count_documents({"user_id": new_uid}) == 1
+    finally:
+        await _cleanup(rid, email)
+
+
+async def test_a03_concurrent_complete_creates_single_account():
+    from datetime import timedelta
+    reviewed = iso(now_utc() - timedelta(minutes=5))
+    rid, new_uid, email = await _seed_approving(reviewed, with_account=False)
+    try:
+        # Dos completadores concurrentes (p. ej. reintento + recuperador) →
+        # identidad estable + índice único garantizan UNA sola cuenta.
+        await asyncio.gather(
+            cr._complete_company_approval(rid, "user_test_admin01"),
+            cr._complete_company_approval(rid, None),
+            return_exceptions=True,
+        )
+        assert await db.users.count_documents({"user_id": new_uid}) == 1
+        assert await db.users.count_documents({"email": email}) == 1
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert fresh["status"] == "approved"
+        # Aviso enviado exactamente una vez.
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
+    finally:
+        await _cleanup(rid, email)
+

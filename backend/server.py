@@ -266,6 +266,13 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"deliveries index setup failed: {e}")
 
+    # A03 — índice único users.user_id (altas Empresa idempotentes, sin duplicar).
+    try:
+        from routes.company_requests import ensure_indexes as company_requests_indexes
+        await company_requests_indexes()
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"company_requests index setup failed: {e}")
+
     # FX06/FX07 — integridad del catálogo de monedas y tasas (normalización,
     # consolidación de duplicados e índices únicos) + índices del registro
     # durable de conversiones (FX09). Idempotente.

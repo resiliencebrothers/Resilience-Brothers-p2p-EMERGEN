@@ -336,6 +336,11 @@ async def run_credit_recovery():
         # (devolución con lectura antigua reanudada tras el cierre). Idempotente.
         from services.company_inventory import heal_orphan_store_shelves
         n += await heal_orphan_store_shelves()
+        # A03 — completa altas Empresa interrumpidas: 'approving' sin cuenta
+        # sellada (crash entre claim e insert) y 'approved' sin avisos enviados.
+        # Idempotente; identidad estable new_user_id → nunca duplica cuentas.
+        from routes.company_requests import recover_company_approvals
+        n += await recover_company_approvals()
         # iter257(D06) — compactación de registros embebidos: retira solo ops
         # con log duradero confirmado; los 'pending' se conservan como
         # evidencia (sustituye al viejo $slice ciego).

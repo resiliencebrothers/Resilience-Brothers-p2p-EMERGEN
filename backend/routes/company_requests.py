@@ -50,6 +50,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, EmailStr
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import (
@@ -421,6 +422,186 @@ async def admin_list_company_requests(
     return {"items": items, "pending": pending}
 
 
+# ============================================================
+# A03 — alta Empresa crash-safe: claim → ensure → seal → notify.
+# Cada fase es idempotente y reanudable (por reintento del endpoint o por el
+# recuperador del scheduler), con identidad ESTABLE `new_user_id` para que el
+# insert nunca duplique, incluso si la respuesta de la inserción se pierde.
+# ============================================================
+
+def _build_company_user_doc(doc: dict, new_user_id: str, lang: str) -> dict:
+    now = iso(now_utc())
+    return {
+        "user_id": new_user_id,
+        "email": _normalize_email(doc["account_email"]),
+        "name": doc["company_name"],
+        "picture": "",
+        "role": "empresa",
+        "auth_provider": "password",
+        "password_hash": doc["password_hash"],  # copiar el hash — NUNCA re-hashear
+        "email_verified": False,
+        "verification_token": uuid.uuid4().hex + uuid.uuid4().hex,
+        "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
+        "vip_balance_usd": 0.0,
+        "onboarding_completed": False,
+        "phone": normalize_phone(doc["company_phone"]),
+        "phone_verified": False,
+        "account_status": "under_review",
+        "under_review_since": now,
+        "preferred_language": lang,
+        "created_at": now,
+        "account_type": "business",
+        "company_name": doc["company_name"],
+        "tax_id": doc["tax_id"],
+        "address": doc["address"],
+        "parent_user_id": doc["user_id"],
+    }
+
+
+async def _complete_company_approval(req_id: str, staff_id: Optional[str]) -> Optional[dict]:
+    """FASES 2-4 idempotentes para una solicitud ya reclamada ('approving'):
+    (2) asegura la cuenta Empresa por `new_user_id` ESTABLE (upsert → nunca
+        duplica, resuelve la inserción de respuesta perdida),
+    (3) sella 'approving'→'approved' (CAS) borrando el hash, y
+    (4) finaliza avisos una sola vez. Reanudable tras cualquier interrupción."""
+    doc = await db.company_requests.find_one({"id": req_id}, {"_id": 0})
+    if not doc or doc.get("status") not in ("approving", "approved"):
+        return doc  # revertida a pending/rejected por otro camino → nada que hacer
+    new_user_id = doc.get("new_user_id")
+    if not new_user_id:
+        return doc
+
+    # FASE 2 — asegurar la cuenta (idempotente por user_id estable).
+    acc = await db.users.find_one({"user_id": new_user_id}, {"_id": 0})
+    if not acc:
+        account_email = _normalize_email(doc["account_email"])
+        company_phone = normalize_phone(doc["company_phone"])
+        # Revalidar unicidad EXCLUYENDO nuestra propia cuenta (idempotente).
+        clash = await db.users.find_one(
+            {"user_id": {"$ne": new_user_id},
+             "$or": [{"email": account_email}, {"phone": company_phone}]},
+            {"_id": 0, "user_id": 1})
+        if clash:
+            # No podemos crear → revertir a pending para que el staff corrija/rechace.
+            await db.company_requests.update_one(
+                {"id": req_id, "status": "approving"},
+                {"$set": {"status": "pending", "reviewed_at": None,
+                          "reviewed_by": None, "new_user_id": None,
+                          "updated_at": iso(now_utc())}})
+            raise HTTPException(
+                status_code=409,
+                detail="El email o teléfono ya está en uso; rechaza o pide corregir la solicitud.")
+        if not doc.get("password_hash"):
+            raise HTTPException(
+                status_code=409,
+                detail="La solicitud no tiene credenciales válidas; pide al cliente que la reenvíe.")
+        requester = await db.users.find_one(
+            {"user_id": doc["user_id"]}, {"_id": 0, "preferred_language": 1})
+        lang = (requester or {}).get("preferred_language") or "es"
+        user_doc = _build_company_user_doc(doc, new_user_id, lang)
+        try:
+            await db.users.update_one(
+                {"user_id": new_user_id}, {"$setOnInsert": user_doc}, upsert=True)
+        except DuplicateKeyError:
+            pass  # otro ejecutor la creó entre el find y el upsert → idempotente
+        acc = await db.users.find_one({"user_id": new_user_id}, {"_id": 0})
+
+    # FASE 3 — sellar 'approving'→'approved' + borrar el hash (CAS idempotente).
+    await db.company_requests.update_one(
+        {"id": req_id, "status": "approving"},
+        {"$set": {"status": "approved", "updated_at": iso(now_utc())},
+         "$unset": {"password_hash": ""}})
+
+    # FASE 4 — finalizar avisos exactamente una vez.
+    await _finalize_company_approval(req_id, staff_id=staff_id)
+    return await db.company_requests.find_one({"id": req_id}, {"_id": 0})
+
+
+async def _finalize_company_approval(req_id: str, staff_id: Optional[str] = None) -> None:
+    """FASE 4 — correo de verificación + cola de verificación de nuevos usuarios
+    + aviso al cliente + SSE, UNA sola vez (CAS sobre `notified_at`). Un reintento
+    o el recuperador no reenvían si ya se finalizó. Requiere estado 'approved' y
+    la cuenta creada."""
+    claim = await db.company_requests.update_one(
+        {"id": req_id, "status": "approved", "notified_at": {"$exists": False}},
+        {"$set": {"notified_at": iso(now_utc())}})
+    if claim.modified_count != 1:
+        return  # ya finalizado por otro ejecutor (o aún no 'approved')
+    doc = await db.company_requests.find_one({"id": req_id}, {"_id": 0})
+    acc = await db.users.find_one({"user_id": doc.get("new_user_id")}, {"_id": 0})
+    if not acc:
+        return
+    lang = acc.get("preferred_language") or "es"
+    try:
+        await log_action(
+            db=db, actor={"user_id": staff_id or doc.get("reviewed_by")},
+            action="company_request.approve", entity_type="company_request",
+            entity_id=req_id,
+            details={"requester": doc["user_id"], "new_user_id": acc["user_id"],
+                     "account_email": acc.get("email")})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] approve log_action failed: {e}")
+    try:
+        import email_service
+        email_service.notify_email_verification(
+            acc["email"], acc.get("name", ""), acc.get("verification_token", ""), lang=lang)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] verification email failed: {e}")
+    try:
+        from routes.notifications import notify_staff_new_pending_user
+        await notify_staff_new_pending_user(acc)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] pending-user notify failed: {e}")
+    await _notify_client_decision(doc, approved=True)
+    await _publish("company_request_approved", {"request_id": req_id}, user_id=doc["user_id"])
+    await _publish("company_request_updated", {"request_id": req_id}, admin=True)
+
+
+async def recover_company_approvals() -> int:
+    """Recuperador (scheduler): completa altas Empresa interrumpidas. (1) las
+    'approving' cuyo claim supera el cutoff (crash entre claim e insert/seal) →
+    asegura cuenta + sella + finaliza; (2) las 'approved' sin `notified_at` →
+    finaliza avisos. Idempotente; el cutoff evita tocar una aprobación en vuelo."""
+    cutoff = iso(now_utc() - timedelta(seconds=120))
+    healed = 0
+    stuck = [r["id"] async for r in db.company_requests.find(
+        {"status": "approving", "reviewed_at": {"$lt": cutoff}}, {"_id": 0, "id": 1})]
+    for rid in stuck:
+        try:
+            await _complete_company_approval(rid, staff_id=None)
+            healed += 1
+        except HTTPException:
+            pass  # clash de email/teléfono → revertida a pending; el staff decidirá
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[company_requests] recover approving {rid} failed: {e}")
+    pend = [r["id"] async for r in db.company_requests.find(
+        {"status": "approved", "notified_at": {"$exists": False}}, {"_id": 0, "id": 1})]
+    for rid in pend:
+        try:
+            await _finalize_company_approval(rid)
+            healed += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[company_requests] recover notify {rid} failed: {e}")
+    return healed
+
+
+async def ensure_indexes() -> None:
+    """A03 — unicidad de identidad para altas idempotentes: `users.user_id`
+    único garantiza que un reintento/recuperador concurrente nunca cree una
+    segunda cuenta Empresa con el mismo id estable."""
+    try:
+        await db.users.create_index("user_id", unique=True, name="uniq_user_id")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[company_requests] user_id unique index skipped: {e}")
+    try:
+        await db.company_requests.create_index("id", unique=True, name="uniq_company_request_id")
+        await db.company_requests.create_index(
+            [("status", 1), ("reviewed_at", 1)], name="company_requests_recovery")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[company_requests] company_requests indexes skipped: {e}")
+
+
+
 @router.post("/admin/company-requests/{req_id}/approve")
 async def admin_approve_company_request(req_id: str, request: Request) -> Any:
     """Aprueba una solicitud → crea una cuenta Empresa NUEVA e independiente."""
@@ -428,11 +609,19 @@ async def admin_approve_company_request(req_id: str, request: Request) -> Any:
     doc = await db.company_requests.find_one({"id": req_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Solicitud de Empresa no encontrada.")
-    if doc["status"] != "pending":
+    status = doc.get("status")
+    if status == "approving":
+        # A03 — aprobación INTERRUMPIDA (claim hecho, cuenta sin sellar):
+        # reanuda idempotentemente hasta dejar cuenta creada + estado 'approved'.
+        return _serialize(await _complete_company_approval(req_id, staff["user_id"]))
+    if status == "approved":
+        # Ya resuelta; sana avisos pendientes (sin duplicar) y marca conflicto.
+        await _finalize_company_approval(req_id)
+        raise HTTPException(status_code=409, detail="La solicitud ya fue procesada.")
+    if status != "pending":
         raise HTTPException(status_code=409, detail="La solicitud ya fue procesada.")
 
-    password_hash = doc.get("password_hash")
-    if not password_hash:
+    if not doc.get("password_hash"):
         raise HTTPException(
             status_code=409,
             detail="La solicitud no tiene credenciales válidas; pide al cliente que la reenvíe.",
@@ -440,8 +629,9 @@ async def admin_approve_company_request(req_id: str, request: Request) -> Any:
 
     account_email = _normalize_email(doc["account_email"])
     company_phone = normalize_phone(doc["company_phone"])
-
-    # Revalidar unicidad + bloqueos (la solicitud pudo quedar pendiente días).
+    # Revalidar unicidad + bloqueos antes de reclamar (la solicitud pudo quedar
+    # pendiente días). La creación real (fase 2) revalida de nuevo EXCLUYENDO la
+    # propia cuenta, por si un intento anterior la creó parcialmente.
     await assert_not_blocked(email=account_email, phone=company_phone)
     if await db.users.find_one({"email": account_email}, {"_id": 0, "user_id": 1}):
         raise HTTPException(
@@ -454,100 +644,25 @@ async def admin_approve_company_request(req_id: str, request: Request) -> Any:
             detail="Ese teléfono ya está en uso por otra cuenta; rechaza o pide corregir la solicitud.",
         )
 
-    requester = await db.users.find_one(
-        {"user_id": doc["user_id"]}, {"_id": 0, "preferred_language": 1})
-    lang = (requester or {}).get("preferred_language") or "es"
-
     now = iso(now_utc())
-    new_user_id = f"user_{uuid.uuid4().hex[:12]}"
-
-    # CAS: solo UN aprobador puede marcar pending→approved (evita doble alta).
+    new_user_id = f"coacct_{uuid.uuid4().hex[:12]}"
+    # FASE 1 — CLAIM atómico pending→approving con identidad ESTABLE persistida.
+    # El estado definitivo 'approved' NO se sella hasta que la cuenta exista
+    # (fase 3), así una interrupción jamás deja 'approved' sin cuenta: queda
+    # 'approving' (recuperable por el reintento del endpoint o el scheduler).
     cas = await db.company_requests.update_one(
         {"id": req_id, "status": "pending"},
-        {"$set": {
-            "status": "approved",
-            "updated_at": now,
-            "reviewed_at": now,
-            "reviewed_by": staff["user_id"],
-            "admin_note": None,
-            "new_user_id": new_user_id,
-        }},
+        {"$set": {"status": "approving", "updated_at": now, "reviewed_at": now,
+                  "reviewed_by": staff["user_id"], "admin_note": None,
+                  "new_user_id": new_user_id}},
     )
     if cas.modified_count != 1:
+        other = await db.company_requests.find_one({"id": req_id}, {"_id": 0, "status": 1})
+        if other and other.get("status") == "approving":
+            return _serialize(await _complete_company_approval(req_id, staff["user_id"]))
         raise HTTPException(status_code=409, detail="La solicitud ya fue procesada.")
 
-    verification_token = uuid.uuid4().hex + uuid.uuid4().hex
-    user_doc = {
-        "user_id": new_user_id,
-        "email": account_email,
-        "name": doc["company_name"],
-        "picture": "",
-        "role": "empresa",
-        "auth_provider": "password",
-        "password_hash": password_hash,  # copiar el hash — NUNCA re-hashear
-        "email_verified": False,
-        "verification_token": verification_token,
-        "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
-        "vip_balance_usd": 0.0,
-        "onboarding_completed": False,
-        "phone": company_phone,
-        "phone_verified": False,
-        "account_status": "under_review",
-        "under_review_since": now,
-        "preferred_language": lang,
-        "created_at": now,
-        # Metadatos de empresa + traza a la cuenta personal solicitante.
-        "account_type": "business",
-        "company_name": doc["company_name"],
-        "tax_id": doc["tax_id"],
-        "address": doc["address"],
-        "parent_user_id": doc["user_id"],
-    }
-    try:
-        await db.users.insert_one(user_doc)
-    except Exception as e:  # noqa: BLE001
-        # Revertir la solicitud a pendiente para no dejarla aprobada sin cuenta.
-        await db.company_requests.update_one(
-            {"id": req_id},
-            {"$set": {"status": "pending", "reviewed_at": None,
-                      "reviewed_by": None, "new_user_id": None, "updated_at": iso(now_utc())}},
-        )
-        logger.error(f"[company_requests] account creation failed for {req_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="No se pudo crear la cuenta Empresa. Inténtalo de nuevo.",
-        )
-
-    # Éxito → borrar el hash de la solicitud (ya vive en la cuenta nueva).
-    await db.company_requests.update_one({"id": req_id}, {"$unset": {"password_hash": ""}})
-
-    fresh = await db.company_requests.find_one({"id": req_id}, {"_id": 0})
-    await log_action(
-        db=db, actor=staff, action="company_request.approve",
-        entity_type="company_request", entity_id=req_id,
-        details={"requester": doc["user_id"], "new_user_id": new_user_id,
-                 "account_email": account_email},
-    )
-
-    # Verificación de email de la cuenta nueva (best-effort).
-    try:
-        import email_service
-        email_service.notify_email_verification(
-            account_email, doc["company_name"], verification_token, lang=lang)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[company_requests] verification email failed: {e}")
-
-    # La cuenta Empresa entra a la cola de verificación de nuevos usuarios.
-    try:
-        from routes.notifications import notify_staff_new_pending_user
-        await notify_staff_new_pending_user(user_doc)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[company_requests] pending-user notify failed: {e}")
-
-    await _notify_client_decision(fresh, approved=True)
-    await _publish("company_request_approved", {"request_id": req_id}, user_id=doc["user_id"])
-    await _publish("company_request_updated", {"request_id": req_id}, admin=True)
-    return _serialize(fresh)
+    return _serialize(await _complete_company_approval(req_id, staff["user_id"]))
 
 
 @router.post("/admin/company-requests/{req_id}/reject")
