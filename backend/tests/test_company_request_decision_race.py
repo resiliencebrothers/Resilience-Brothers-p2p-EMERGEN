@@ -11,6 +11,7 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 
 from db_client import db
 from auth_utils import now_utc, iso, _hash_password
@@ -333,3 +334,77 @@ async def test_a03_concurrent_complete_creates_single_account():
     finally:
         await _cleanup(rid, email)
 
+
+# ============================================================
+# A04 — DOS ENVÍOS SIMULTÁNEOS NO PUEDEN CREAR DOS PENDIENTES
+# ============================================================
+
+def _pending_doc(uid):
+    rid = f"coreq_{uuid.uuid4().hex[:12]}"
+    email = f"empresa_{uuid.uuid4().hex[:10]}@mibodega.com"
+    phone = "+1" + "".join(str(int(c, 16) % 10) for c in uuid.uuid4().hex[:10])
+    now = iso(now_utc())
+    return {
+        "id": rid, "user_id": uid, "user_email": "a04.test@resilience.com",
+        "user_name": "A04", "company_name": "Carrera A04 S.A.", "account_email": email,
+        "company_phone": phone, "tax_id": "RNC-A04", "address": "Calle A04 #1",
+        "password_hash": _hash_password("CompanyPass123!"), "status": "pending",
+        "created_at": now, "updated_at": now, "reviewed_by": None,
+        "reviewed_at": None, "admin_note": None, "new_user_id": None,
+    }
+
+
+async def test_a04_concurrent_inserts_keep_single_pending():
+    """Dos POST concurrentes del mismo usuario: el índice único parcial deja
+    pasar UNA sola pendiente; el otro recibe DuplicateKeyError (→409 en el
+    endpoint). Tras resolver (rechazo), puede volver a solicitar."""
+    await cr.ensure_indexes()  # garantiza el índice único parcial
+    uid = f"user_a04_{uuid.uuid4().hex[:8]}"
+    try:
+        results = await asyncio.gather(
+            db.company_requests.insert_one(_pending_doc(uid)),
+            db.company_requests.insert_one(_pending_doc(uid)),
+            return_exceptions=True,
+        )
+        errors = [r for r in results if isinstance(r, BaseException)]
+        assert len(errors) == 1
+        assert isinstance(errors[0], DuplicateKeyError)
+        assert await db.company_requests.count_documents(
+            {"user_id": uid, "status": "pending"}) == 1
+
+        # Resuelta (rechazada) → ya no cuenta para el índice parcial → re-solicitar OK.
+        await db.company_requests.update_many(
+            {"user_id": uid, "status": "pending"}, {"$set": {"status": "rejected"}})
+        await db.company_requests.insert_one(_pending_doc(uid))
+        assert await db.company_requests.count_documents(
+            {"user_id": uid, "status": "pending"}) == 1
+    finally:
+        await db.company_requests.delete_many({"user_id": uid})
+
+
+async def test_a04_dedup_resolves_existing_duplicates_before_index():
+    """El pre-paso de dedup colapsa pendientes duplicadas preexistentes a UNA
+    (la más reciente) para que la creación del índice único parcial no falle."""
+    uid = f"user_a04dup_{uuid.uuid4().hex[:8]}"
+    try:
+        # Simula duplicados anteriores al índice: se insertan SIN el guard.
+        await db.company_requests.drop_index("uniq_company_request_pending_user")
+        d1 = _pending_doc(uid)
+        d1["created_at"] = iso(now_utc())
+        d2 = _pending_doc(uid)
+        d2["created_at"] = iso(now_utc())
+        await db.company_requests.insert_one(d1)
+        await db.company_requests.insert_one(d2)
+        assert await db.company_requests.count_documents(
+            {"user_id": uid, "status": "pending"}) == 2
+
+        await cr._dedup_pending_requests()
+        assert await db.company_requests.count_documents(
+            {"user_id": uid, "status": "pending"}) == 1
+        # El índice vuelve a crearse sin error tras el dedup.
+        await cr.ensure_indexes()
+        info = await db.company_requests.index_information()
+        assert "uniq_company_request_pending_user" in info
+    finally:
+        await db.company_requests.delete_many({"user_id": uid})
+        await cr.ensure_indexes()

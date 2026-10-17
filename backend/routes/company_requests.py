@@ -342,7 +342,13 @@ async def create_company_request(payload: CompanyRequestCreate, request: Request
         "admin_note": None,
         "new_user_id": None,
     }
-    await db.company_requests.insert_one(doc)
+    try:
+        await db.company_requests.insert_one(doc)
+    except DuplicateKeyError:
+        # A04 — dos POST concurrentes del mismo usuario: el índice único parcial
+        # (user_id + status=pending) deja pasar solo UNA pendiente; el perdedor
+        # recibe el MISMO conflicto que la comprobación de lectura previa.
+        raise HTTPException(status_code=409, detail="Ya tienes una solicitud de Empresa en revisión.")
     await log_action(
         db=db, actor=user, action="company_request.create",
         entity_type="company_request", entity_id=doc["id"],
@@ -585,10 +591,36 @@ async def recover_company_approvals() -> int:
     return healed
 
 
+async def _dedup_pending_requests() -> None:
+    """A04 — colapsa solicitudes `pending` duplicadas por usuario ANTES de crear
+    el índice único parcial (si no, su creación fallaría). Conserva la MÁS
+    reciente (`created_at`) y elimina las pendientes sobrantes; borrar una
+    pending nunca procesada no tiene efectos aguas abajo (no hay cuenta creada)."""
+    dupes = db.company_requests.aggregate([
+        {"$match": {"status": "pending"}},
+        {"$group": {"_id": "$user_id", "ids": {"$addToSet": "$id"}, "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+    ])
+    async for grp in dupes:
+        rows = await db.company_requests.find(
+            {"user_id": grp["_id"], "status": "pending"},
+            {"_id": 0, "id": 1, "created_at": 1},
+        ).sort("created_at", -1).to_list(length=None)
+        keep = rows[0]["id"]  # el más reciente
+        drop = [r["id"] for r in rows[1:]]
+        if drop:
+            await db.company_requests.delete_many({"id": {"$in": drop}})
+            logger.warning(
+                f"[company_requests] A04 dedup user={grp['_id']} kept={keep} dropped={drop}")
+
+
 async def ensure_indexes() -> None:
     """A03 — unicidad de identidad para altas idempotentes: `users.user_id`
     único garantiza que un reintento/recuperador concurrente nunca cree una
-    segunda cuenta Empresa con el mismo id estable."""
+    segunda cuenta Empresa con el mismo id estable.
+    A04 — índice único PARCIAL por `user_id` con `status=pending` garantiza a
+    nivel de BD una única solicitud pendiente por usuario (dos POST concurrentes
+    ya no pueden crear dos pendientes)."""
     try:
         await db.users.create_index("user_id", unique=True, name="uniq_user_id")
     except Exception as e:  # noqa: BLE001
@@ -599,6 +631,14 @@ async def ensure_indexes() -> None:
             [("status", 1), ("reviewed_at", 1)], name="company_requests_recovery")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[company_requests] company_requests indexes skipped: {e}")
+    try:
+        await _dedup_pending_requests()
+        await db.company_requests.create_index(
+            [("user_id", 1)], unique=True,
+            partialFilterExpression={"status": "pending"},
+            name="uniq_company_request_pending_user")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[company_requests] pending-unique index skipped: {e}")
 
 
 
