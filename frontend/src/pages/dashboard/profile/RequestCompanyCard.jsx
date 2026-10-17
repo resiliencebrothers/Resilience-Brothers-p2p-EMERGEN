@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
-import { Building2, Clock, XCircle, CheckCircle2, Mail, Phone, ShieldCheck } from "lucide-react";
+import { Building2, Clock, XCircle, CheckCircle2, Mail, Phone, ShieldCheck, RefreshCw } from "lucide-react";
 import RequestCompanyDialog from "./RequestCompanyDialog";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 
@@ -44,6 +45,7 @@ export default function RequestCompanyCard({ userRole }) {
 
   useLiveEvent(eligible ? "company_request_approved" : null, refresh);
   useLiveEvent(eligible ? "company_request_rejected" : null, refresh);
+  useLiveEvent(eligible ? "company_account_activated" : null, refresh);
 
   if (!eligible) return null;
   if (loading) return null;
@@ -157,7 +159,28 @@ export default function RequestCompanyCard({ userRole }) {
 
 function KybStatus({ account }) {
   const { t } = useTranslation();
+  const [resending, setResending] = useState(false);
   const active = account.account_status === "active";
+
+  const resend = async () => {
+    setResending(true);
+    try {
+      const r = await axios.post(
+        `${API}/company-requests/resend-verification`, {},
+        { withCredentials: true },
+      );
+      if (r.data?.status === "already_verified") {
+        toast.success(t("companyRequest.account.alreadyVerifiedToast"));
+      } else {
+        toast.success(t("companyRequest.account.resendSuccess"));
+      }
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : t("companyRequest.account.resendError"));
+    } finally {
+      setResending(false);
+    }
+  };
 
   if (active) {
     return (
@@ -188,6 +211,18 @@ function KybStatus({ account }) {
         labelPending={t("companyRequest.account.phonePending")}
         testid="company-account-phone"
       />
+      {!account.email_verified && (
+        <Button
+          onClick={resend}
+          disabled={resending}
+          data-testid="company-resend-verification"
+          variant="ghost"
+          className="rounded-none border border-[#8B5CF6]/40 text-[#A78BFA] hover:bg-[#8B5CF6]/10 h-8 px-3 text-xs disabled:opacity-40 mt-1"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 mr-2 ${resending ? "animate-spin" : ""}`} />
+          {t("companyRequest.account.resendCta")}
+        </Button>
+      )}
       <div className="text-[0.65rem] text-amber-400/90 leading-relaxed pt-1">
         {t("companyRequest.account.underReviewNote")}
       </div>

@@ -2600,7 +2600,11 @@
       "emailDone": "Email verified",
       "emailPending": "Verify the email (check the Business account inbox)",
       "phoneDone": "Phone verified by staff",
-      "phonePending": "Phone pending verification by staff"
+      "phonePending": "Phone pending verification by staff",
+      "resendCta": "Resend verification email",
+      "resendSuccess": "Verification email resent to the Business account. The link expires in 24h.",
+      "alreadyVerifiedToast": "The Business account email is already verified.",
+      "resendError": "Could not resend the email. Please try again later."
     },
     "status": {
       "pending": "Under review",

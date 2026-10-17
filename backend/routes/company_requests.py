@@ -64,6 +64,7 @@ router = APIRouter(tags=["Company Requests"])
 
 REJECTION_COOLDOWN_DAYS = 7
 BCRYPT_MAX_BYTES = 72
+RESEND_COOLDOWN_SECONDS = 60
 
 
 # ============================================================
@@ -202,6 +203,46 @@ async def _publish(event_type: str, data: dict, *, user_id: Optional[str] = None
             await live_publish(event_type, data, user_id=user_id)
     except Exception as e:  # noqa: BLE001
         logger.error(f"[company_requests] live publish {event_type} failed: {e}")
+
+
+async def notify_requester_company_active(empresa_user: dict) -> None:
+    """Avisa al SOLICITANTE (cuenta personal) que su cuenta Empresa ya está
+    activa. Se llama desde el flujo de staff `verify-phone` cuando una cuenta
+    Empresa (con `parent_user_id`) pasa a `active`."""
+    parent_id = empresa_user.get("parent_user_id")
+    if not parent_id:
+        return
+    try:
+        from routes.notifications import _insert_notification
+        from push_service import send_push_to_user
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] notify import failed: {e}")
+        return
+    company = empresa_user.get("company_name") or empresa_user.get("name") or "tu empresa"
+    email = empresa_user.get("email", "")
+    title = "¡Tu cuenta Empresa ya está activa!"
+    message = (f"La cuenta Empresa «{company}» ({email}) fue verificada por el equipo. "
+               "Inicia sesión y empieza a operar.")
+    try:
+        await _insert_notification(
+            recipient_user_id=parent_id,
+            type="company_account_activated",
+            title=title,
+            message=message,
+            data={"company_user_id": empresa_user.get("user_id")},
+        )
+        await send_push_to_user(db, parent_id, {
+            "title": title,
+            "body": message[:140],
+            "icon": "/icons/icon-192.png",
+            "tag": f"company-active-{empresa_user.get('user_id')}",
+            "url": "/dashboard/profile",
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] active notify {parent_id} failed: {e}")
+    await _publish("company_account_activated",
+                   {"company_user_id": empresa_user.get("user_id")}, user_id=parent_id)
+
 
 
 # ============================================================
@@ -542,3 +583,77 @@ async def admin_reject_company_request(
     await _publish("company_request_rejected", {"request_id": req_id}, user_id=doc["user_id"])
     await _publish("company_request_updated", {"request_id": req_id}, admin=True)
     return _serialize(fresh)
+
+
+
+# ============================================================
+# Reenvío de verificación de email de la cuenta Empresa (solicitante)
+# ============================================================
+
+@router.post("/company-requests/resend-verification")
+async def resend_company_verification(request: Request) -> Any:
+    """El SOLICITANTE (cuenta personal) reenvía el correo de verificación de
+    SU cuenta Empresa aprobada. Autenticado + acotado por propiedad
+    (`parent_user_id`), con enfriamiento de 60s. Regenera el token (invalida el
+    anterior) y lo manda al email de la cuenta Empresa."""
+    user = await require_user(request)
+    doc = await db.company_requests.find_one(
+        {"user_id": user["user_id"], "status": "approved"},
+        {"_id": 0, "new_user_id": 1},
+        sort=[("reviewed_at", -1), ("created_at", -1)],
+    )
+    if not doc or not doc.get("new_user_id"):
+        raise HTTPException(status_code=404, detail="No tienes una cuenta Empresa aprobada.")
+
+    acc = await db.users.find_one({"user_id": doc["new_user_id"]}, {"_id": 0})
+    # Cadena de propiedad: la cuenta debe apuntar de vuelta al solicitante.
+    if (not acc or acc.get("parent_user_id") != user["user_id"]
+            or acc.get("role") != "empresa"):
+        raise HTTPException(status_code=404, detail="No tienes una cuenta Empresa aprobada.")
+
+    if acc.get("email_verified"):
+        return {"ok": True, "status": "already_verified"}
+
+    last = acc.get("last_resend_at")
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+            elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+            if elapsed < RESEND_COOLDOWN_SECONDS:
+                wait = int(RESEND_COOLDOWN_SECONDS - elapsed)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Espera {wait}s antes de reenviar el correo.",
+                )
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+
+    new_token = uuid.uuid4().hex + uuid.uuid4().hex
+    await db.users.update_one(
+        {"user_id": acc["user_id"]},
+        {"$set": {
+            "verification_token": new_token,
+            "verification_expires_at": iso(now_utc() + timedelta(hours=24)),
+            "last_resend_at": iso(now_utc()),
+        }},
+    )
+    try:
+        import email_service
+        email_service.notify_email_verification(
+            acc["email"], acc.get("name", ""), new_token,
+            lang=acc.get("preferred_language") or "es",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] resend verification email failed: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo enviar el correo. Inténtalo más tarde.",
+        )
+    await log_action(
+        db=db, actor=user, action="company_request.resend_verification",
+        entity_type="user", entity_id=acc["user_id"],
+        details={"account_email": acc.get("email")},
+    )
+    return {"ok": True, "status": "sent"}

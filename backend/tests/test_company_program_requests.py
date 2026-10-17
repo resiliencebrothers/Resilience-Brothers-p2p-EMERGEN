@@ -17,7 +17,7 @@ import uuid
 import requests
 from pymongo import MongoClient
 
-from tests.conftest import BASE_URL, EMPLOYEE_TOKEN, VIP_TOKEN
+from tests.conftest import BASE_URL, EMPLOYEE_TOKEN, VIP_TOKEN, ADMIN_TOKEN, make_admin_totp
 
 API = f"{BASE_URL}/api"
 
@@ -72,6 +72,8 @@ class TestCompanyProgramRequests:
         if self._emails:
             db.users.delete_many(
                 {"email": {"$in": list(self._emails)}, "parent_user_id": CLIENT_UID})
+        db.notifications.delete_many(
+            {"recipient_user_id": CLIENT_UID, "type": "company_account_activated"})
 
     def _submit(self, tok, **over):
         body = _payload(**over)
@@ -232,3 +234,67 @@ class TestCompanyProgramRequests:
         assert acc["account_status"] == "under_review"
         assert acc["phone_verified"] is False
         assert acc["email_verified"] is False
+
+    # ---------- reenvío de verificación de la cuenta Empresa ----------
+
+    def test_resend_verification_regenerates_and_cooldown(self):
+        r, body = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        ap = requests.post(f"{API}/admin/company-requests/{req_id}/approve",
+                           headers=_h(STAFF_TOKEN))
+        assert ap.status_code == 200, ap.text
+        db = _db()
+        before = db.users.find_one({"email": body["account_email"].lower()})["verification_token"]
+        # primer reenvío OK → token regenerado
+        rs = requests.post(f"{API}/company-requests/resend-verification",
+                           headers=_h(CLIENT_TOKEN))
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "sent"
+        after = db.users.find_one({"email": body["account_email"].lower()})["verification_token"]
+        assert after and after != before
+        # segundo reenvío inmediato → 429 (enfriamiento 60s)
+        rs2 = requests.post(f"{API}/company-requests/resend-verification",
+                            headers=_h(CLIENT_TOKEN))
+        assert rs2.status_code == 429, rs2.text
+
+    def test_resend_without_approved_account_404(self):
+        rs = requests.post(f"{API}/company-requests/resend-verification",
+                           headers=_h(CLIENT_TOKEN))
+        assert rs.status_code == 404, rs.text
+
+    def test_resend_already_verified_returns_status(self):
+        r, body = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        requests.post(f"{API}/admin/company-requests/{req_id}/approve", headers=_h(STAFF_TOKEN))
+        # marcar email verificado directamente
+        _db().users.update_one({"email": body["account_email"].lower()},
+                               {"$set": {"email_verified": True}})
+        rs = requests.post(f"{API}/company-requests/resend-verification",
+                           headers=_h(CLIENT_TOKEN))
+        assert rs.status_code == 200, rs.text
+        assert rs.json()["status"] == "already_verified"
+
+    # ---------- aviso al solicitante al activarse la cuenta Empresa ----------
+
+    def test_activation_notifies_requester(self):
+        r, body = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        ap = requests.post(f"{API}/admin/company-requests/{req_id}/approve",
+                           headers=_h(STAFF_TOKEN))
+        assert ap.status_code == 200, ap.text
+        empresa_uid = ap.json()["new_user_id"]
+        # staff verifica el teléfono → cuenta pasa a active (requiere TOTP step-up)
+        vp = requests.post(
+            f"{API}/admin/users/{empresa_uid}/verify-phone",
+            headers=_h(ADMIN_TOKEN), json={"totp_code": make_admin_totp()},
+        )
+        assert vp.status_code == 200, vp.text
+        # el SOLICITANTE recibe notificación de activación
+        note = _db().notifications.find_one(
+            {"recipient_user_id": CLIENT_UID, "type": "company_account_activated"})
+        assert note is not None
+        assert note["data"].get("company_user_id") == empresa_uid
+        # /me ahora refleja la cuenta Empresa activa
+        me = requests.get(f"{API}/company-requests/me", headers=_h(CLIENT_TOKEN)).json()
+        assert me["company_account"]["account_status"] == "active"
+        assert me["company_account"]["phone_verified"] is True

@@ -2600,7 +2600,11 @@
       "emailDone": "Email verificado",
       "emailPending": "Verifica el email (revisa la bandeja de la cuenta Empresa)",
       "phoneDone": "Teléfono verificado por el staff",
-      "phonePending": "Teléfono pendiente de verificación por el staff"
+      "phonePending": "Teléfono pendiente de verificación por el staff",
+      "resendCta": "Reenviar correo de verificación",
+      "resendSuccess": "Correo de verificación reenviado a la cuenta Empresa. El enlace caduca en 24 h.",
+      "alreadyVerifiedToast": "El email de la cuenta Empresa ya está verificado.",
+      "resendError": "No se pudo reenviar el correo. Inténtalo más tarde."
     },
     "status": {
       "pending": "En revisión",

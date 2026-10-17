@@ -295,6 +295,14 @@ async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
         await notify_user_phone_verified(fresh)
     except Exception as e:
         logger.error(f"verify-phone notify failed: {e}")
+    # Si es una cuenta Empresa creada vía el Programa Empresas, avisar también
+    # al SOLICITANTE (cuenta personal) que su cuenta Empresa ya está activa.
+    if fresh and fresh.get("role") == "empresa" and fresh.get("parent_user_id"):
+        try:
+            from routes.company_requests import notify_requester_company_active
+            await notify_requester_company_active(fresh)
+        except Exception as e:
+            logger.error(f"company-active notify failed: {e}")
     await log_action(
         db, requester, "user.verify_phone_manual", "user", user_id,
         summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
