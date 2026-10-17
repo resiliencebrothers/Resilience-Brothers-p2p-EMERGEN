@@ -562,9 +562,13 @@ async def admin_reject_company_request(
 
     now = iso(now_utc())
     note = (payload.admin_note or "").strip() or None
-    # Rechazar y borrar el hash (ya no se usará).
-    await db.company_requests.update_one(
-        {"id": req_id},
+    # A02 — DECISIÓN ATÓMICA: transición CAS pending→rejected (mismo protocolo
+    # que approve). Si otro revisor ya APROBÓ (y creó la cuenta Empresa) o
+    # rechazó entre nuestra lectura y esta escritura, perdemos la carrera:
+    # modified_count=0 → 409 SIN tocar el estado ni notificar éxito. El filtro
+    # por id solo (sin status) permitía pisar un 'approved' con cuenta ya creada.
+    cas = await db.company_requests.update_one(
+        {"id": req_id, "status": "pending"},
         {"$set": {
             "status": "rejected",
             "updated_at": now,
@@ -573,6 +577,9 @@ async def admin_reject_company_request(
             "admin_note": note,
         }, "$unset": {"password_hash": ""}},
     )
+    if cas.modified_count != 1:
+        raise HTTPException(status_code=409, detail="La solicitud ya fue procesada.")
+
     fresh = await db.company_requests.find_one({"id": req_id}, {"_id": 0})
     await log_action(
         db=db, actor=staff, action="company_request.reject",

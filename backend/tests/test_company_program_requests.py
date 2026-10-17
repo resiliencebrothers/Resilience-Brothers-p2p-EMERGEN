@@ -180,6 +180,44 @@ class TestCompanyProgramRequests:
                            headers=_h(STAFF_TOKEN))
         assert a2.status_code == 409, a2.text
 
+    def test_approve_then_reject_conflicts_and_keeps_account(self):
+        r, body = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        ap = requests.post(f"{API}/admin/company-requests/{req_id}/approve",
+                           headers=_h(STAFF_TOKEN))
+        assert ap.status_code == 200, ap.text
+        rj = requests.post(f"{API}/admin/company-requests/{req_id}/reject",
+                           headers=_h(STAFF_TOKEN), json={"admin_note": "tarde"})
+        assert rj.status_code == 409, rj.text
+        db = _db()
+        fresh = db.company_requests.find_one({"id": req_id})
+        assert fresh["status"] == "approved"          # el rechazo NO pisó nada
+        assert db.users.find_one({"email": body["account_email"].lower()}) is not None
+
+    def test_reject_then_approve_conflicts_no_account(self):
+        r, body = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        rj = requests.post(f"{API}/admin/company-requests/{req_id}/reject",
+                           headers=_h(STAFF_TOKEN), json={"admin_note": "no"})
+        assert rj.status_code == 200, rj.text
+        ap = requests.post(f"{API}/admin/company-requests/{req_id}/approve",
+                           headers=_h(STAFF_TOKEN))
+        assert ap.status_code == 409, ap.text
+        db = _db()
+        assert db.company_requests.find_one({"id": req_id})["status"] == "rejected"
+        # el aprobador perdedor NO creó cuenta (CAS antes del insert)
+        assert db.users.find_one({"email": body["account_email"].lower()}) is None
+
+    def test_two_rejects_conflict(self):
+        r, _ = self._submit(CLIENT_TOKEN)
+        req_id = r.json()["id"]
+        r1 = requests.post(f"{API}/admin/company-requests/{req_id}/reject",
+                           headers=_h(STAFF_TOKEN), json={"admin_note": "a"})
+        assert r1.status_code == 200, r1.text
+        r2 = requests.post(f"{API}/admin/company-requests/{req_id}/reject",
+                           headers=_h(STAFF_TOKEN), json={"admin_note": "b"})
+        assert r2.status_code == 409, r2.text
+
     # ---------- staff: rechazo + enfriamiento ----------
 
     def test_reject_sets_note_and_cooldown(self):
