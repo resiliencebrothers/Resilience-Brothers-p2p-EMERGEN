@@ -4201,7 +4201,8 @@
       "history": "Historical",
       "review": "Review",
       "print": "Register",
-      "incidents": "Incidents"
+      "incidents": "Incidents",
+      "guards": "Locks"
     },
     "print": {
       "title": "Register / Printing (SUNMI)",
@@ -4842,6 +4843,38 @@
       "offerActive": "This product is on offer in the web store (−{{pct}}%).",
       "offerClear": "Remove offer",
       "offerCleared": "Offer tag removed (price kept)."
+    },
+    "guards": {
+      "hint": "Health of `inv_burned` guards: durable locks that prevent aborted or in-flight reservations from applying late. They only grow; the scheduler prunes them safely (only terminal operations older than 90 days).",
+      "refresh": "Refresh",
+      "abortedDispatch": "Aborted dispatch reservations",
+      "abortedPickup": "Aborted pickup reservations",
+      "blockedDispatch": "Late blocked (dispatch)",
+      "blockedPickup": "Late blocked (pickup)",
+      "productsWithGuards": "Products with guards",
+      "totalEntries": "Total guards",
+      "maxSize": "Max per product",
+      "overThreshold": "Over threshold ({{threshold}})",
+      "rankingTitle": "Products with the most guards",
+      "rankingHint": "Products with the largest accumulation of aborted-reservation guards. Tap “View detail” to inspect each guard.",
+      "colProduct": "Product",
+      "colCompany": "Company (ID)",
+      "colSize": "Guards",
+      "colAction": "Action",
+      "empty": "No guards",
+      "viewDetail": "View detail",
+      "detailTitle": "Guards · {{name}}",
+      "loading": "Loading…",
+      "detailSummary": "{{total}} guards total · showing {{shown}}",
+      "dOp": "Operation (op_id)",
+      "dType": "Type",
+      "dResult": "Result",
+      "dBlocked": "Late block",
+      "dDone": "Resolved",
+      "dPrunable": "Prunable",
+      "yes": "Yes",
+      "no": "No",
+      "detailFoot": "“Prunable” = terminal operation older than 90 days; the scheduler's automatic prune removes it safely without touching in-flight guards."
     }
   },
   "vendorProducts": {

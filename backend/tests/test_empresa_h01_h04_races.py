@@ -907,3 +907,82 @@ async def test_obs_prune_removes_only_terminal_old_guards():
     finally:
         await _clean()
 
+
+
+# OBS-01 — métricas de abortos y detalle por producto.
+async def test_obs_product_detail_and_abort_metrics():
+    await _clean()
+    try:
+        pid, sid = await _seed_company()
+        old = iso(now_utc() - timedelta(days=120))
+        recent = iso(now_utc() - timedelta(days=1))
+        await db.products.update_one(
+            {"id": pid}, {"$set": {"inv_burned": ["d_old", "d_new", "p_old", "norec"]}})
+        before = await ci.inventory_abort_metrics()
+        await db.company_inventory_ops.insert_many([
+            {"company_id": CID, "op_key": "d_old", "op_type": "dispatch",
+             "status": "done", "result": "burned", "done_at": old, "created_at": old,
+             "guard_blocked_at": recent, "guard_block_count": 3},
+            {"company_id": CID, "op_key": "d_new", "op_type": "dispatch",
+             "status": "done", "result": "burned", "done_at": recent, "created_at": recent},
+            {"company_id": CID, "op_key": "p_old", "op_type": "pickup",
+             "status": "done", "result": "burned", "done_at": old, "created_at": old},
+            # 'norec' a propósito SIN registro en company_inventory_ops.
+        ])
+        after = await ci.inventory_abort_metrics()
+        assert after["aborted_dispatch"] - before["aborted_dispatch"] == 2
+        assert after["aborted_pickup"] - before["aborted_pickup"] == 1
+        assert after["blocked_late_dispatch"] - before["blocked_late_dispatch"] == 1
+        assert after["blocked_late_attempts"] - before["blocked_late_attempts"] == 3
+
+        detail = await ci.inv_burned_product_detail(pid)
+        assert detail["total_guards"] == 4 and detail["shown"] == 4
+        by = {e["op_id"]: e for e in detail["entries"]}
+        assert by["d_old"]["prunable"] is True and by["d_old"]["blocked_late"] is True
+        assert by["d_old"]["block_attempts"] == 3
+        assert by["d_new"]["prunable"] is False                 # terminal pero reciente
+        assert by["p_old"]["prunable"] is True
+        assert by["norec"]["op_type"] is None and by["norec"]["prunable"] is False
+    finally:
+        await _clean()
+
+
+# OBS-01 — la métrica 'bloqueo tardío' se incrementa SOLO cuando el guard
+# `inv_burned` impide EN VUELO una reserva (no en una llamada tardía que
+# resuelve por idempotencia). Reproduce el intercalado real.
+async def test_obs_blocked_late_metric_on_inflight_block(monkeypatch):
+    await _clean()
+    try:
+        pid, sid = await _seed_company()
+        before = await ci.inventory_abort_metrics()
+        real_db = ci_mod.db
+        state = {"fired": False}
+
+        class _Products:
+            def __getattr__(self, n):
+                return getattr(real_db.products, n)
+
+            async def find_one_and_update(self, *a, **k):
+                if not state["fired"]:
+                    state["fired"] = True
+                    await ci.freeze_dispatch(CID, pid, sid, 3, "dx")  # aborta en vuelo
+                return await real_db.products.find_one_and_update(*a, **k)
+
+        class _Db:
+            def __getattr__(self, n):
+                return products_proxy if n == "products" else getattr(real_db, n)
+
+        products_proxy = _Products()
+        monkeypatch.setattr(ci_mod, "db", _Db())
+        assert await ci.dispatch_from_store(CID, pid, sid, 3, op_id="dx") == "burned"
+        monkeypatch.undo()
+
+        after = await ci.inventory_abort_metrics()
+        assert after["blocked_late_dispatch"] - before["blocked_late_dispatch"] == 1
+        op = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": "dx"}, {"_id": 0, "guard_blocked_at": 1})
+        assert op and op.get("guard_blocked_at")
+    finally:
+        monkeypatch.undo()
+        await _clean()
+

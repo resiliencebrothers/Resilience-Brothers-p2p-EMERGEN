@@ -109,6 +109,20 @@ def _payload_hash(op_type: str, payload: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+async def _mark_guard_blocked(company_id: str, op_id: str) -> None:
+    """OBS-01 — métrica de 'reserva TARDÍA bloqueada': una reserva (en vuelo o
+    reanudada) fue impedida de aplicarse por el guard durable `inv_burned`.
+    Marca el registro de operación para contabilizarla. Cold path (solo ocurre
+    en el escenario H03-R, raro)."""
+    try:
+        await db.company_inventory_ops.update_one(
+            {"company_id": company_id, "op_key": op_id},
+            {"$set": {"guard_blocked_at": iso(now_utc())},
+             "$inc": {"guard_block_count": 1}})
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[inv-guard-blocked] mark failed op={op_id}: {e}")
+
+
 async def _run_idempotent(company_id: str, op_key: Optional[str], op_type: str,
                           payload: dict,
                           apply_fn: "Callable[[str], Awaitable[str]]") -> str:
@@ -375,6 +389,7 @@ async def dispatch_from_store(company_id: str, product_id: str, store_id: str,
         if await db.products.find_one(
                 {"id": product_id, "company_id": company_id, "inv_burned": oid},
                 {"_id": 1}):
+            await _mark_guard_blocked(company_id, oid)
             return "burned"
         exists = await db.products.find_one(
             {"id": product_id, "company_id": company_id}, {"_id": 1})
@@ -585,6 +600,7 @@ async def reserve_pickup(company_id: str, product_id: str, store_id: str,
         if await db.products.find_one(
                 {"id": product_id, "company_id": company_id, "inv_burned": oid},
                 {"_id": 1}):
+            await _mark_guard_blocked(company_id, oid)
             return "burned"
         exists = await db.products.find_one(
             {"id": product_id, "company_id": company_id}, {"_id": 1})
@@ -1103,3 +1119,70 @@ async def prune_inv_burned_guards(retention_days: int = INV_BURNED_RETENTION_DAY
             logger.info(
                 f"[inv-burned-prune] product={prod['id']} podados={len(terminal)}")
     return pruned
+
+
+async def inventory_abort_metrics() -> dict:
+    """OBS-01 — contadores de reservas ABORTADAS ('burned') por tipo (dispatch/
+    pickup) y de reservas TARDÍAS BLOQUEADAS por el guard `inv_burned`."""
+    burned: dict = {}
+    async for r in db.company_inventory_ops.aggregate([
+            {"$match": {"result": "burned"}},
+            {"$group": {"_id": "$op_type", "count": {"$sum": 1}}}]):
+        burned[r["_id"]] = r["count"]
+    blocked: dict = {}
+    async for r in db.company_inventory_ops.aggregate([
+            {"$match": {"guard_blocked_at": {"$exists": True}}},
+            {"$group": {"_id": "$op_type", "ops": {"$sum": 1},
+                        "attempts": {"$sum": {"$ifNull": ["$guard_block_count", 1]}}}}]):
+        blocked[r["_id"]] = {"ops": r["ops"], "attempts": r["attempts"]}
+    return {
+        "aborted_dispatch": burned.get("dispatch", 0),
+        "aborted_pickup": burned.get("pickup", 0),
+        "aborted_total": sum(burned.values()),
+        "blocked_late_dispatch": blocked.get("dispatch", {}).get("ops", 0),
+        "blocked_late_pickup": blocked.get("pickup", {}).get("ops", 0),
+        "blocked_late_total": sum(v["ops"] for v in blocked.values()),
+        "blocked_late_attempts": sum(v["attempts"] for v in blocked.values()),
+    }
+
+
+async def inv_burned_product_detail(product_id: str, limit: int = 200) -> Optional[dict]:
+    """OBS-01 — detalle de los candados `inv_burned` de UN producto: por cada
+    op_id, su operación en `company_inventory_ops` (tipo, resultado, estado,
+    bloqueo tardío) y si es PODABLE (terminal 'done' + más de la ventana)."""
+    prod = await db.products.find_one(
+        {"id": product_id},
+        {"_id": 0, "id": 1, "company_id": 1, "name": 1, "inv_burned": 1})
+    if not prod:
+        return None
+    all_guards = prod.get("inv_burned") or []
+    guards = all_guards[:limit]
+    cutoff = iso(now_utc() - timedelta(days=INV_BURNED_RETENTION_DAYS))
+    ops: dict = {}
+    async for o in db.company_inventory_ops.find(
+            {"company_id": prod["company_id"], "op_key": {"$in": guards}},
+            {"_id": 0, "op_key": 1, "op_type": 1, "result": 1, "status": 1,
+             "done_at": 1, "guard_blocked_at": 1, "guard_block_count": 1}):
+        ops[o["op_key"]] = o
+    entries = []
+    for op_id in guards:
+        o = ops.get(op_id, {})
+        done_at = o.get("done_at")
+        entries.append({
+            "op_id": op_id,
+            "op_type": o.get("op_type"),
+            "result": o.get("result"),
+            "status": o.get("status"),
+            "done_at": done_at,
+            "blocked_late": bool(o.get("guard_blocked_at")),
+            "block_attempts": o.get("guard_block_count", 0),
+            "prunable": bool(o.get("status") == "done" and done_at and done_at < cutoff),
+        })
+    return {
+        "product_id": prod["id"],
+        "name": prod.get("name"),
+        "company_id": prod["company_id"],
+        "total_guards": len(all_guards),
+        "shown": len(entries),
+        "entries": entries,
+    }

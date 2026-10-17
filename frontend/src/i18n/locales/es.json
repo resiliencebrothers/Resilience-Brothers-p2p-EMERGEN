@@ -4201,7 +4201,8 @@
       "history": "Histórico",
       "review": "Revisión",
       "print": "Caja",
-      "incidents": "Incidencias"
+      "incidents": "Incidencias",
+      "guards": "Candados"
     },
     "print": {
       "title": "Caja / Impresión (SUNMI)",
@@ -4842,6 +4843,38 @@
       "offerActive": "Este producto está en oferta en la tienda web (−{{pct}}%).",
       "offerClear": "Quitar oferta",
       "offerCleared": "Etiqueta de oferta retirada (se mantiene el precio)."
+    },
+    "guards": {
+      "hint": "Salud de los candados `inv_burned`: candados durables que impiden que reservas abortadas o en vuelo se apliquen tarde. Solo crecen; el scheduler los poda con seguridad (solo operaciones terminales de más de 90 días).",
+      "refresh": "Actualizar",
+      "abortedDispatch": "Reservas despacho abortadas",
+      "abortedPickup": "Reservas recogida abortadas",
+      "blockedDispatch": "Tardías bloqueadas (despacho)",
+      "blockedPickup": "Tardías bloqueadas (recogida)",
+      "productsWithGuards": "Productos con candados",
+      "totalEntries": "Candados totales",
+      "maxSize": "Máximo por producto",
+      "overThreshold": "Sobre umbral ({{threshold}})",
+      "rankingTitle": "Ranking de productos con más candados",
+      "rankingHint": "Productos con mayor acumulación de candados de reservas abortadas. Toca «Ver detalle» para inspeccionar cada candado.",
+      "colProduct": "Producto",
+      "colCompany": "Empresa (ID)",
+      "colSize": "Candados",
+      "colAction": "Acción",
+      "empty": "Sin candados",
+      "viewDetail": "Ver detalle",
+      "detailTitle": "Candados · {{name}}",
+      "loading": "Cargando…",
+      "detailSummary": "{{total}} candados en total · mostrando {{shown}}",
+      "dOp": "Operación (op_id)",
+      "dType": "Tipo",
+      "dResult": "Resultado",
+      "dBlocked": "Bloqueo tardío",
+      "dDone": "Resuelto",
+      "dPrunable": "Podable",
+      "yes": "Sí",
+      "no": "No",
+      "detailFoot": "«Podable» = operación terminal de más de 90 días; la poda automática del scheduler la retira con seguridad sin tocar candados en vuelo."
     }
   },
   "vendorProducts": {

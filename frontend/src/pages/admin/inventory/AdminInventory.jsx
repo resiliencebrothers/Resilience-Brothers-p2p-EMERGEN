@@ -18,12 +18,14 @@ import InventoryPrintTab from "./InventoryPrintTab";
 import InventoryStoresTab from "./InventoryStoresTab";
 import InventoryIncidentsTab from "./InventoryIncidentsTab";
 import InventoryReorderPanel from "./InventoryReorderPanel";
+import InventoryGuardsTab from "./InventoryGuardsTab";
 import LabelsDialog from "./LabelsDialog";
 
 // iter217 — Control de flujo de inventario de la tienda física (réplica del
 // Excel del operador: Control Inventario + Movimientos + Dashboard).
 // iter333 (IPV Fase 3) — pestaña "incidents": reposición + seguimiento de incidencias.
-const TABS = ["control", "scan", "movements", "close", "valuation", "history", "review", "print", "stores", "dashboard", "incidents"];
+// OBS-01 — pestaña "guards": salud del guard `inv_burned` (ranking + métricas de abortos).
+const TABS = ["control", "scan", "movements", "close", "valuation", "history", "review", "print", "stores", "dashboard", "incidents", "guards"];
 
 export default function AdminInventory() {
   const { t } = useTranslation();
@@ -115,6 +117,7 @@ export default function AdminInventory() {
           <InventoryIncidentsTab />
         </div>
       )}
+      {tab === "guards" && <InventoryGuardsTab />}
       <LabelsDialog open={labelsOpen} onOpenChange={setLabelsOpen} />
     </div>
   );
