@@ -8,6 +8,7 @@ estado ni crear/0 notificar éxito. Solo una decisión gana.
 """
 import uuid
 import asyncio
+from datetime import timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -274,7 +275,6 @@ async def test_a03_crash_before_seal_is_recoverable(monkeypatch):
 
 
 async def test_a03_recoverer_completes_stuck_approving():
-    from datetime import timedelta
     # reviewed_at 5 min atrás → supera el cutoff de 120s del recuperador.
     reviewed = iso(now_utc() - timedelta(minutes=5))
     rid, new_uid, email = await _seed_approving(reviewed, with_account=False)
@@ -293,7 +293,6 @@ async def test_a03_recoverer_completes_stuck_approving():
 
 
 async def test_a03_recoverer_finalizes_pending_notifications():
-    from datetime import timedelta
     reviewed = iso(now_utc() - timedelta(minutes=5))
     rid, new_uid, email = await _seed_approving(reviewed, with_account=True)
     # Simula: cuenta creada y sellada, pero el proceso murió antes de notificar.
@@ -313,7 +312,6 @@ async def test_a03_recoverer_finalizes_pending_notifications():
 
 
 async def test_a03_concurrent_complete_creates_single_account():
-    from datetime import timedelta
     reviewed = iso(now_utc() - timedelta(minutes=5))
     rid, new_uid, email = await _seed_approving(reviewed, with_account=False)
     try:
@@ -408,3 +406,114 @@ async def test_a04_dedup_resolves_existing_duplicates_before_index():
     finally:
         await db.company_requests.delete_many({"user_id": uid})
         await cr.ensure_indexes()
+
+
+
+# ============================================================
+# P02 — AVISOS SELLADOS ANTES DE ENVIARSE DEBEN RECUPERARSE
+# El bug: `notified_at` se escribía como RECLAMO (antes de enviar). Un proceso
+# muerto tras ese marcador quedaba fuera del recuperador para siempre. Ahora el
+# reclamo es un LEASE recuperable (`notify_claimed_at`) y `notified_at` es la
+# CONFIRMACIÓN final, sellada solo tras completar todos los canales; cada canal
+# se marca en `notify_channels` para no reenviarse (idempotencia por canal).
+# ============================================================
+
+async def _seed_approved_unnotified():
+    """Solicitud 'approved' con cuenta creada, SIN avisos finalizados."""
+    reviewed = iso(now_utc() - timedelta(minutes=5))
+    rid, new_uid, email = await _seed_approving(reviewed, with_account=True)
+    await db.company_requests.update_one(
+        {"id": rid}, {"$set": {"status": "approved"}, "$unset": {"password_hash": ""}})
+    return rid, new_uid, email
+
+
+async def test_p02_crash_after_claim_is_still_recoverable(monkeypatch):
+    """Muerte del proceso DESPUÉS del reclamo del lease y ANTES de enviar: el
+    registro NO queda excluido para siempre; el recuperador lo completa."""
+    rid, new_uid, email = await _seed_approved_unnotified()
+    try:
+        def _kill(*a, **k):
+            raise _Kill("process killed mid-notify (antes del primer canal)")
+
+        # El PRIMER canal persistente ('audit' = log_action) muere con BaseException.
+        monkeypatch.setattr(cr, "log_action", _kill)
+        with pytest.raises(_Kill):
+            await cr._finalize_company_approval(rid)
+        monkeypatch.undo()
+
+        # Lease reclamado pero SIN confirmación: aún recuperable (notified_at falta).
+        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert mid.get("notify_claimed_at")
+        assert not mid.get("notified_at")
+        assert not mid.get("notify_channels")
+        # NINGÚN aviso al cliente todavía.
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 0
+
+        # "Reinicio": el lease expira (backdate) y el recuperador lo completa.
+        await db.company_requests.update_one(
+            {"id": rid}, {"$set": {"notify_claimed_at": iso(now_utc() - timedelta(minutes=5))}})
+        await cr.recover_company_approvals()
+
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert fresh.get("notified_at")
+        assert set(fresh.get("notify_channels") or []) >= {"audit", "email", "staff", "client"}
+        # Aviso al cliente entregado EXACTAMENTE una vez.
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
+        assert await db.users.count_documents({"user_id": new_uid}) == 1
+    finally:
+        monkeypatch.undo()
+        await _cleanup(rid, email)
+
+
+async def test_p02_per_channel_idempotency_no_duplicate_resend(monkeypatch):
+    """Recuperación de un aviso interrumpido a mitad: completa SOLO los canales
+    faltantes sin reenviar los ya enviados (dedup por `notify_channels`)."""
+    rid, new_uid, email = await _seed_approved_unnotified()
+    try:
+        # Simula: audit+email+staff ya enviados; solo falta 'client'. Lease viejo.
+        await db.company_requests.update_one(
+            {"id": rid}, {"$set": {
+                "notify_channels": ["audit", "email", "staff"],
+                "notify_claimed_at": iso(now_utc() - timedelta(minutes=5))}})
+        calls = {"email": 0}
+
+        import email_service
+
+        def _count_email(*a, **k):
+            calls["email"] += 1
+        monkeypatch.setattr(email_service, "notify_email_verification", _count_email)
+
+        await cr.recover_company_approvals()
+        monkeypatch.undo()
+
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert fresh.get("notified_at")
+        assert set(fresh["notify_channels"]) >= {"audit", "email", "staff", "client"}
+        # El correo NO se reenvió (ya estaba en notify_channels).
+        assert calls["email"] == 0
+        # El canal faltante 'client' se completó una sola vez.
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
+    finally:
+        monkeypatch.undo()
+        await _cleanup(rid, email)
+
+
+async def test_p02_fresh_lease_blocks_duplicate_worker():
+    """Un lease VIVO (reciente) impide que un segundo ejecutor reenvíe: no hay
+    confirmación ni avisos duplicados mientras el titular del lease trabaja."""
+    rid, new_uid, email = await _seed_approved_unnotified()
+    try:
+        # Lease fresco (ahora mismo) tomado por otro ejecutor "vivo".
+        await db.company_requests.update_one(
+            {"id": rid}, {"$set": {"notify_claimed_at": iso(now_utc())}})
+        # Un segundo intento NO debe reclamar ni enviar.
+        await cr._finalize_company_approval(rid)
+        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
+        assert not fresh.get("notified_at")
+        assert await db.notifications.count_documents(
+            {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 0
+    finally:
+        await _cleanup(rid, email)

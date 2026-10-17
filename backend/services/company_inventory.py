@@ -633,23 +633,68 @@ async def restore_pickup(company_id: str, product_id: str, store_id: str,
         {"product_id": product_id, "store_id": store_id, "qty": qty}, _apply)
 
 
+async def pickup_applied(company_id: str, op_id: str) -> bool:
+    """P01 — ¿La RESERVA de UBICACIÓN (pickup) de este `op_id` se aplicó de
+    forma DURADERA? Igual criterio que `dispatch_applied` pero para la capa de
+    ubicación: fuente de verdad el registro PERMANENTE `company_inventory_ops`
+    (result 'applied'/'duplicate'), con respaldo en el guard embebido `inv_ops`
+    del producto ante un crash entre la mutación y su sellado.
+
+    `burn_or_undo_pickup` debe restituir la tienda SIEMPRE que la reserva
+    realmente ocurrió, aunque el token haya salido del array acotado `inv_ops`
+    por rotación (>1000 operaciones) — mirar solo `inv_ops` perdía la devolución."""
+    rec = await db.company_inventory_ops.find_one(
+        {"company_id": company_id, "op_key": op_id},
+        {"_id": 0, "status": 1, "result": 1})
+    if rec and rec.get("status") == "done" \
+            and rec.get("result") in ("applied", "duplicate"):
+        return True
+    prod = await db.products.find_one(
+        {"company_id": company_id, "inv_ops": op_id}, {"_id": 1})
+    return prod is not None
+
+
 async def burn_or_undo_pickup(company_id: str, product_id: str, store_id: str,
                               qty: float, op_id: str,
                               actor: Optional[dict] = None) -> str:
     """Decisión TERMINAL para la reserva de ubicación de una recogida en tienda
     (mirror de burn_or_undo_stock): marca PRIMERO el GUARD DURADERO `inv_burned`
-    (conjunto no truncado del producto) y LUEGO comprueba si la reserva llegó a
-    aplicarse. Si YA se aplicó (inv_ops contiene `op_id`), la deshace con
-    `restore_pickup` (`op:undo`, idempotente); si no, el guard impide que un
-    creador lento —incluso un ejecutor EN VUELO que resucite tras rotar
-    `inv_ops`— la aplique más tarde (H03-R2). 'undone'|'burned'."""
+    (conjunto no truncado del producto) y LUEGO resuelve el efecto por EVIDENCIA
+    DURADERA (`pickup_applied`, no solo el array acotado `inv_ops`):
+
+    - Si la reserva YA se aplicó de forma duradera, la deshace con
+      `restore_pickup` (`op:undo`, idempotente) y conserva intacta la evidencia
+      'applied' original (reverso en una clave separada). P01 — esto funciona
+      aunque `op_id` haya salido de `inv_ops` por rotación (>1000 ops).
+    - Si NUNCA se aplicó, SELLA la decisión terminal 'burned' en
+      `company_inventory_ops` (igual que `freeze_dispatch`) para trazabilidad
+      duradera y para que un creador que reanude reciba 'burned' por
+      `_run_idempotent`; el guard `inv_burned` bloquea además al ejecutor EN
+      VUELO que resucite tras rotar `inv_ops` (H03-R2). 'undone'|'burned'."""
     qty = _q(qty)
     await db.products.update_one(
         {"id": product_id, "company_id": company_id},
         {"$addToSet": {"inv_burned": op_id}})
-    if await db.products.find_one(
-            {"id": product_id, "company_id": company_id, "inv_ops": op_id},
-            {"_id": 1}):
+    if await pickup_applied(company_id, op_id):
+        await restore_pickup(company_id, product_id, store_id, qty,
+                             f"{op_id}:undo", actor=actor)
+        return "undone"
+    # Nunca aplicada → sella la decisión TERMINAL 'burned' de forma DURADERA.
+    phash = _payload_hash("pickup", {"product_id": product_id,
+                                     "store_id": store_id, "qty": qty})
+    try:
+        await db.company_inventory_ops.update_one(
+            {"company_id": company_id, "op_key": op_id,
+             "result": {"$nin": ["applied", "duplicate"]}},
+            {"$set": {"op_type": "pickup", "payload_hash": phash,
+                      "status": "done", "result": "burned",
+                      "done_at": iso(now_utc())},
+             "$setOnInsert": {"company_id": company_id, "op_key": op_id,
+                              "created_at": iso(now_utc())}},
+            upsert=True)
+    except DuplicateKeyError:
+        # Carrera: apareció un registro 'applied'/'duplicate' entretanto → la
+        # reserva ganó el token; deshacer en vez de quemar (sin doble efecto).
         await restore_pickup(company_id, product_id, store_id, qty,
                              f"{op_id}:undo", actor=actor)
         return "undone"

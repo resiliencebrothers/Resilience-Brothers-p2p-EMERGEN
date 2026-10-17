@@ -525,42 +525,73 @@ async def _complete_company_approval(req_id: str, staff_id: Optional[str]) -> Op
 
 async def _finalize_company_approval(req_id: str, staff_id: Optional[str] = None) -> None:
     """FASE 4 — correo de verificación + cola de verificación de nuevos usuarios
-    + aviso al cliente + SSE, UNA sola vez (CAS sobre `notified_at`). Un reintento
-    o el recuperador no reenvían si ya se finalizó. Requiere estado 'approved' y
-    la cuenta creada."""
+    + aviso al cliente + SSE + auditoría.
+
+    P02 — recuperable y con idempotencia POR CANAL. `notified_at` NO es la
+    prueba de reclamo sino la CONFIRMACIÓN final: se sella solo DESPUÉS de que
+    todos los canales persistentes se completaron. El reclamo es un LEASE
+    (`notify_claimed_at`) que el recuperador puede re-tomar si quedó obsoleto
+    (crash entre el reclamo y los envíos), y cada canal se marca en
+    `notify_channels` para no reenviarse. Así un proceso interrumpido se
+    completa en una pasada posterior sin duplicar avisos ni perder la cola."""
+    now = now_utc()
+    lease_cutoff = iso(now - timedelta(seconds=120))
+    # Reclamo RECUPERABLE (lease): solo si NO está confirmado y no hay lease vivo.
     claim = await db.company_requests.update_one(
-        {"id": req_id, "status": "approved", "notified_at": {"$exists": False}},
-        {"$set": {"notified_at": iso(now_utc())}})
+        {"id": req_id, "status": "approved", "notified_at": {"$exists": False},
+         "$or": [{"notify_claimed_at": {"$exists": False}},
+                 {"notify_claimed_at": {"$lt": lease_cutoff}}]},
+        {"$set": {"notify_claimed_at": iso(now)}})
     if claim.modified_count != 1:
-        return  # ya finalizado por otro ejecutor (o aún no 'approved')
+        return  # ya confirmado, aún no 'approved', o reclamado por otro ejecutor vivo
     doc = await db.company_requests.find_one({"id": req_id}, {"_id": 0})
     acc = await db.users.find_one({"user_id": doc.get("new_user_id")}, {"_id": 0})
     if not acc:
-        return
+        return  # la cuenta se asegura antes; si falta, el lease expira y se reintenta
     lang = acc.get("preferred_language") or "es"
-    try:
+    done = set(doc.get("notify_channels") or [])
+
+    async def _run_channel(name: str, fn) -> None:
+        if name in done:
+            return
+        try:
+            await fn()
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[company_requests] notify channel '{name}' failed: {e}")
+            return  # NO se marca → el recuperador lo reintenta (outbox)
+        await db.company_requests.update_one(
+            {"id": req_id}, {"$addToSet": {"notify_channels": name}})
+        done.add(name)
+
+    async def _audit() -> None:
         await log_action(
             db=db, actor={"user_id": staff_id or doc.get("reviewed_by")},
             action="company_request.approve", entity_type="company_request",
             entity_id=req_id,
             details={"requester": doc["user_id"], "new_user_id": acc["user_id"],
                      "account_email": acc.get("email")})
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[company_requests] approve log_action failed: {e}")
-    try:
+
+    async def _email() -> None:
         import email_service
         email_service.notify_email_verification(
             acc["email"], acc.get("name", ""), acc.get("verification_token", ""), lang=lang)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[company_requests] verification email failed: {e}")
-    try:
+
+    async def _staff() -> None:
         from routes.notifications import notify_staff_new_pending_user
         await notify_staff_new_pending_user(acc)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[company_requests] pending-user notify failed: {e}")
-    await _notify_client_decision(doc, approved=True)
+
+    await _run_channel("audit", _audit)
+    await _run_channel("email", _email)
+    await _run_channel("staff", _staff)
+    await _run_channel("client", lambda: _notify_client_decision(doc, approved=True))
+    # SSE efímero (barato e idempotente): se publica siempre, no es canal persistente.
     await _publish("company_request_approved", {"request_id": req_id}, user_id=doc["user_id"])
     await _publish("company_request_updated", {"request_id": req_id}, admin=True)
+
+    # CONFIRMACIÓN: solo cuando TODOS los canales persistentes se completaron.
+    if {"audit", "email", "staff", "client"}.issubset(done):
+        await db.company_requests.update_one(
+            {"id": req_id}, {"$set": {"notified_at": iso(now_utc())}})
 
 
 async def recover_company_approvals() -> int:

@@ -61,6 +61,11 @@ async def _shelf(pid, sid):
     return round(float(((p or {}).get("by_store") or {}).get(sid) or 0), 3)
 
 
+async def _dist(pid):
+    p = await db.products.find_one({"id": pid}, {"_id": 0, "distributed": 1})
+    return round(float((p or {}).get("distributed") or 0), 3)
+
+
 async def _clean():
     await db.users.delete_one({"user_id": CID})
     await db.user_sessions.delete_one({"session_token": TOKEN})
@@ -675,4 +680,169 @@ async def test_h04r_orphan_reclaimed_despite_many_healthy_products():
             assert round(float((hp.get("by_store") or {}).get(sid) or 0), 3) == 2.0
     finally:
         await db.products.delete_many({"company_id": CID})
+
+
+# ───────────────────────────────────────────────────────────────── P01
+# PICKUP: abortar una reserva YA APLICADA debe RESTITUIR la tienda aunque el
+# token haya salido del array acotado `inv_ops` por rotación. El bug:
+# `burn_or_undo_pickup` miraba solo `inv_ops` y, tras la rotación, devolvía
+# 'burned' omitiendo el reverso → la estantería quedaba sin restituir. Se usan
+# MÁS DE 2.000 movimientos sanos (2×INV_OPS_CAP) para que la expulsión del
+# token del array acotado sea INEQUÍVOCA.
+async def test_p01_pickup_undo_restores_shelf_after_inv_ops_rotation():
+    await _clean()
+    ROT = 2 * ci.INV_OPS_CAP + 5          # > 2.000 movimientos sanos
+    try:
+        pid, sid = await _seed_company()          # stock 10, by_store {sid:3}, distributed 3
+        # Reserva de ubicación de una recogida: aplica (tienda 3→0, distributed 3→0).
+        assert await ci.reserve_pickup(CID, pid, sid, 3, op_id="pickup") == "applied"
+        assert await _shelf(pid, sid) == 0.0
+        assert await _dist(pid) == 0.0
+        # Rotar `inv_ops` con >2.000 recepciones expulsa 'pickup' del array acotado.
+        for i in range(ROT):
+            assert await ci.receive_central(CID, pid, 1, op_key=f"recv:{i}") == "applied"
+        # La evidencia DURADERA en company_inventory_ops es ahora la ÚNICA fuente de
+        # verdad: el token NO está en inv_ops, pero `pickup_applied` lo confirma.
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_ops": 1})
+        assert "pickup" not in (prod.get("inv_ops") or [])
+        assert await ci.pickup_applied(CID, "pickup") is True
+        # Abortar la MISMA reserva: restituye la tienda pese a la rotación (P01).
+        assert await ci.burn_or_undo_pickup(CID, pid, sid, 3, op_id="pickup") == "undone"
+        assert await _shelf(pid, sid) == 3.0
+        assert await _dist(pid) == 3.0
+        # Repetir el aborto NO duplica cantidades.
+        assert await ci.burn_or_undo_pickup(CID, pid, sid, 3, op_id="pickup") == "undone"
+        assert await _shelf(pid, sid) == 3.0
+        assert await _dist(pid) == 3.0
+        # La evidencia ORIGINAL de la reserva se conserva 'applied' (reverso en
+        # clave separada 'pickup:undo'); no se pisó con 'burned'.
+        rec = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": "pickup"}, {"_id": 0, "result": 1})
+        assert rec["result"] == "applied"
+        # Stock total = 10 + recepciones (pickup no toca el total).
+        assert await _stock(pid) == float(10 + ROT)
+    finally:
+        await _clean()
+
+
+# PICKUP: abortar una reserva que NUNCA se aplicó sella la decisión TERMINAL
+# 'burned' de forma DURADERA (trazabilidad), bloquea una reserva tardía y es
+# idempotente al repetir.
+async def test_p01_pickup_burn_seals_terminal_when_never_applied():
+    await _clean()
+    try:
+        pid, sid = await _seed_company()
+        assert await ci.burn_or_undo_pickup(CID, pid, sid, 3, op_id="never") == "burned"
+        rec = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": "never"}, {"_id": 0, "status": 1, "result": 1})
+        assert rec and rec["status"] == "done" and rec["result"] == "burned"
+        # Una reserva TARDÍA con esa clave recibe 'burned' por _run_idempotent, sin mutar.
+        assert await ci.reserve_pickup(CID, pid, sid, 3, op_id="never") == "burned"
+        assert await _shelf(pid, sid) == 3.0
+        assert await _dist(pid) == 3.0
+        # Repetir el aborto: idempotente, sin efectos adicionales.
+        assert await ci.burn_or_undo_pickup(CID, pid, sid, 3, op_id="never") == "burned"
+        assert await _shelf(pid, sid) == 3.0
+    finally:
+        await _clean()
+
+
+# PICKUP (H03-R, capa de ubicación): un ejecutor de reserva EN VUELO (op
+# 'pending', pausado antes del write) se reanuda tras que el recuperador abortó
+# (inv_burned + sellado 'burned') y tras rotar `inv_ops`: devuelve 'burned', NO
+# descuenta la estantería y el registro duradero queda 'burned' (no pisado).
+async def test_p01_pickup_inflight_reservation_is_burned_and_sealed(monkeypatch):
+    await _clean()
+    try:
+        pid, sid = await _seed_company()
+        real_db = ci_mod.db
+        state = {"fired": False}
+
+        async def _abort_then_rotate():
+            # Recuperador: congela (inv_burned) + sella 'burned' en los ops.
+            assert await ci.burn_or_undo_pickup(CID, pid, sid, 3, op_id="pk") == "burned"
+            for i in range(2 * ci.INV_OPS_CAP + 5):   # >2.000 movimientos sanos
+                assert await ci.receive_central(CID, pid, 1, op_key=f"r:{i}") == "applied"
+
+        class _Products:
+            def __getattr__(self, n):
+                return getattr(real_db.products, n)
+
+            async def find_one_and_update(self, *a, **k):
+                if not state["fired"]:
+                    state["fired"] = True
+                    await _abort_then_rotate()
+                return await real_db.products.find_one_and_update(*a, **k)
+
+        class _Db:
+            def __getattr__(self, n):
+                return products_proxy if n == "products" else getattr(real_db, n)
+
+        products_proxy = _Products()
+        monkeypatch.setattr(ci_mod, "db", _Db())
+        status = await ci.reserve_pickup(CID, pid, sid, 3, op_id="pk")
+        monkeypatch.undo()
+
+        assert status == "burned"
+        assert await _shelf(pid, sid) == 3.0          # estantería intacta
+        assert await _dist(pid) == 3.0
+        rec = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": "pk"}, {"_id": 0, "result": 1})
+        assert rec["result"] == "burned"             # no pisado con 'applied'
+    finally:
+        monkeypatch.undo()
+        await _clean()
+
+
+# P01 end-to-end — RECUPERADOR TRAS CAÍDA/REINICIO: un canje con recogida en
+# tienda cuya reserva de ubicación SÍ se aplicó pero quedó 'initializing'
+# (proceso interrumpido). Tras rotar >2.000 movimientos y EJECUTAR EL
+# RECUPERADOR real (`heal_initializing_ops`, el mismo job del scheduler que
+# corre al reiniciar el proceso), la estantería debe restituirse exactamente
+# una vez por EVIDENCIA DURADERA, no por el array acotado `inv_ops`.
+async def test_p01_pickup_restored_by_recoverer_after_rotation():
+    await _clean()
+    rid = str(uuid.uuid4())
+    uid = f"buyer_{uuid.uuid4().hex[:8]}"
+    loc_op = f"locpk:{rid}"
+    ROT = 2 * ci.INV_OPS_CAP + 5
+    try:
+        pid, sid = await _seed_company()
+        # La reserva de UBICACIÓN del canje se aplicó (tienda 3→0, distributed 3→0).
+        assert await ci.reserve_pickup(CID, pid, sid, 3, op_id=loc_op) == "applied"
+        assert await _shelf(pid, sid) == 0.0
+        # Canje interrumpido a medio crear (como lo dejaría una caída de proceso).
+        await db.redemptions.insert_one({
+            "id": rid, "user_id": uid, "status": "initializing",
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "product_id": pid, "quantity": 3,
+            "loc_op_id": loc_op, "pickup_from_store": True,
+            "store_id": sid, "pickup_company_id": CID,
+            "settlement_currency": "USDT", "total_usd": 0, "courier_fee_usd": 0})
+        # Rotación >2.000 → el token sale de inv_ops; solo queda la evidencia durable.
+        for i in range(ROT):
+            assert await ci.receive_central(CID, pid, 1, op_key=f"rc:{i}") == "applied"
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_ops": 1})
+        assert loc_op not in (prod.get("inv_ops") or [])
+
+        # EL RECUPERADOR (job del scheduler que corre al reiniciar) restituye.
+        from services.credit_recovery import heal_initializing_ops
+        await heal_initializing_ops(max_age_seconds=-5)
+
+        assert await _shelf(pid, sid) == 3.0          # estantería restituida
+        assert await _dist(pid) == 3.0
+        r = await db.redemptions.find_one({"id": rid}, {"_id": 0, "status": 1})
+        assert r["status"] == "failed_init"
+        # La evidencia ORIGINAL sigue 'applied'; el reverso vive en loc_op:undo.
+        assert await ci.pickup_applied(CID, loc_op) is True
+        undo = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": f"{loc_op}:undo"}, {"_id": 0, "result": 1})
+        assert undo and undo["result"] == "applied"
+
+        # Repetir el recuperador NO duplica la restitución (idempotente).
+        await heal_initializing_ops(max_age_seconds=-5)
+        assert await _shelf(pid, sid) == 3.0
+        assert await _dist(pid) == 3.0
+    finally:
+        await db.redemptions.delete_one({"id": rid})
         await _clean()
