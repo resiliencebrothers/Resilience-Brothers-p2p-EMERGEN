@@ -1,3 +1,12 @@
+## Changelog — 17 Oct 2026 (RET-R)
+
+### RET-R — La poda de `inv_burned` ya NO se basa solo en `done_at`/`status` (retención segura)
+Reporte: `prune_inv_burned_guards` retiraba un guard `inv_burned` si la op estaba `done` y `done_at` superaba 90 días. Pero `freeze_dispatch` deja la op `done`+`burned` de inmediato mientras un ESCRITOR que ya pasó su lectura de idempotencia puede seguir SUSPENDIDO; el tiempo y el estado terminal no lo invalidan. Al podar el guard (única protección atómica), ese escritor, al reanudarse, aplicaría tarde (stock fantasma 10→7) aunque la op siga `burned`.
+- **`services/company_inventory.py`**: la poda retira un guard SOLO si la op es `done`, antigua Y lleva una INVALIDACIÓN VERIFICABLE del escritor (`writer_invalidated_at`), fijada atómicamente por fencing. Sin ese sello, las marcas se CONSERVAN (retención ilimitada segura; el tamaño se vigila con el umbral de alerta). El indicador `prunable` de `inv_burned_product_detail` usa el MISMO criterio estricto (y ahora expone `writer_invalidated_at`). Comentario de cabecera OBS-01→RET-R actualizado.
+- **`scheduler.py`** (`run_inv_burned_maintenance`): docstring + aviso a admins actualizados (la poda solo retira candados con invalidación verificable, no por antigüedad); import sobrante eliminado.
+- **Tests** (`tests/test_empresa_h01_h04_races.py`): actualizadas `test_retr_prune_requires_verifiable_writer_invalidation` y la de `prunable` al nuevo criterio (antiguo+done SIN sello → se conserva / no podable). NUEVA prueba de concurrencia con reloj simulado `test_retr_suspended_writer_blocked_even_after_prune`: escritor suspendido → freeze → +91 días → poda → reanuda; verifica que el stock NO cambia (10→10), la reserva tardía devuelve `burned` y el guard permanece. Suite 21/21, ruff limpio, `company_inventory.py` mypy limpio (los 18 avisos de `scheduler.py` son PREEXISTENTES). **Control negativo**: con el criterio viejo (solo tiempo/estado) ambas pruebas RET-R fallan; restaurado → verdes.
+
+
 ## Changelog — 17 Oct 2026 (P02-R)
 
 ### P02-R — Un canal de aviso ya NO se sella si su envío falla (resultado de éxito explícito)

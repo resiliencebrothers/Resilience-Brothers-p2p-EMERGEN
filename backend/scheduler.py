@@ -457,15 +457,16 @@ async def run_daily_reorder_digest(db):
 
 
 async def run_inv_burned_maintenance(db):
-    """OBS-01 — mantenimiento del guard durable `inv_burned`: (1) PODA SEGURA
-    (solo op_ids con operación terminal 'done' y >90 días; nunca toca guards de
-    operaciones en vuelo) y (2) AVISO a admins si algún producto supera el
+    """OBS-01 / RET-R — mantenimiento del guard durable `inv_burned`: (1) PODA
+    SEGURA (solo op_ids con operación terminal 'done', antiguos Y con
+    invalidación verificable del escritor `writer_invalidated_at`; el tiempo y
+    el estado por sí solos NO podan, para no retirar un candado que aún proteja
+    a un escritor suspendido) y (2) AVISO a admins si algún producto supera el
     umbral de guards acumulados de reservas abortadas. Diario 04:00 UTC."""
     try:
         from services.company_inventory import (prune_inv_burned_guards,
                                                  inv_burned_stats,
-                                                 INV_BURNED_ALERT_THRESHOLD,
-                                                 INV_BURNED_RETENTION_DAYS)
+                                                 INV_BURNED_ALERT_THRESHOLD)
         pruned = await prune_inv_burned_guards()
         if pruned:
             logger.info("[inv-burned] %s guard(s) podados (terminales y antiguos)",
@@ -478,7 +479,7 @@ async def run_inv_burned_maintenance(db):
                     f"{INV_BURNED_ALERT_THRESHOLD} candados de reservas abortadas "
                     f"(inv_burned). Mayores: {top}. Puede indicar abortos "
                     f"anómalos; la poda automática solo retira candados terminales "
-                    f"de más de {INV_BURNED_RETENTION_DAYS} días.")
+                    f"con invalidación verificable del escritor (no por antigüedad).")
             from admin_alerts import notify_all_admins
             await notify_all_admins(
                 db, title="Candados de inventario acumulados (inv_burned)",

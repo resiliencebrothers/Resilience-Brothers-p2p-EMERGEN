@@ -1050,16 +1050,26 @@ async def maybe_alert_store_out_of_stock(company_id: str, product_id: str,
 
 
 # ============================================================
-# OBS-01 — observabilidad y RETENCIÓN SEGURA del guard durable `inv_burned`
+# OBS-01 / RET-R — observabilidad y RETENCIÓN SEGURA del guard durable `inv_burned`
 # ------------------------------------------------------------
 # `inv_burned` es un conjunto DURADERO (no truncado) de op_ids de reservas
 # abortadas; en la MISMA escritura del producto impide que una reserva TARDÍA o
-# EN VUELO con ese op_id vuelva a aplicarse (H03-R / H03-R2). Como solo crece,
-# se vigila su tamaño y se poda de forma SEGURA: un guard se retira ÚNICAMENTE
-# cuando su operación está TERMINALMENTE resuelta en `company_inventory_ops`
-# (`status=done`) y es ANTIGUA. Un ejecutor EN VUELO/pausado deja su op en
-# 'pending' (nunca 'done'), así que su guard JAMÁS se poda → nunca se retira un
-# candado que aún proteja una escritura en vuelo.
+# EN VUELO con ese op_id vuelva a aplicarse (H03-R / H03-R2). Es la ÚNICA
+# protección ATÓMICA contra un escritor que ya pasó su lectura de idempotencia y
+# quedó SUSPENDIDO antes de mutar el stock: si se retira ese candado, ese
+# escritor, al reanudarse, aplicaría tarde (stock fantasma).
+#
+# RET-R — POR QUÉ `done_at`/`status` NO BASTAN PARA PODAR:
+#   `freeze_dispatch`/`burn_or_undo_pickup` dejan la operación `done`+`burned` de
+#   inmediato, pero eso NO invalida a un escritor en vuelo: el tiempo transcurrido
+#   y el estado terminal no prueban que no quede una corrutina suspendida que, al
+#   despertar, ejecute su `find_one_and_update` sobre el producto. Por eso la poda
+#   ya NO se basa en tiempo+estado: retira un guard SOLO cuando la operación lleva
+#   una INVALIDACIÓN VERIFICABLE del escritor (`writer_invalidated_at`), fijada
+#   atómicamente por un mecanismo de fencing/generación. Mientras ese sello no
+#   exista, las marcas se CONSERVAN (la retención ilimitada es segura; su tamaño
+#   se vigila con el umbral de alerta). El indicador `prunable` usa el MISMO
+#   criterio estricto.
 # ============================================================
 
 INV_BURNED_ALERT_THRESHOLD = 5000
@@ -1091,10 +1101,15 @@ async def inv_burned_stats(threshold: int = INV_BURNED_ALERT_THRESHOLD,
 
 async def prune_inv_burned_guards(retention_days: int = INV_BURNED_RETENTION_DAYS,
                                   max_products: int = 500) -> int:
-    """Retención SEGURA del guard `inv_burned`: retira los op_ids cuya operación
-    está `done` en `company_inventory_ops` y cuyo `done_at` es MÁS ANTIGUO que
-    la ventana. NUNCA retira el guard de una operación 'pending'/en vuelo ni de
-    una sin evidencia terminal. Devuelve el nº total de guards podados."""
+    """Retención SEGURA del guard `inv_burned` (RET-R).
+
+    Un guard se retira SOLO cuando su operación está `done`, es MÁS ANTIGUA que
+    la ventana Y lleva una INVALIDACIÓN VERIFICABLE del escritor
+    (`writer_invalidated_at`). El estado terminal y la antigüedad por sí solos NO
+    bastan: no prueban que no quede un escritor en vuelo/suspendido que, al
+    reanudarse, aplicaría tarde. Sin ese sello de fencing, las marcas se
+    CONSERVAN (nunca se retira un candado que aún pueda proteger una escritura).
+    Devuelve el nº total de guards podados."""
     cutoff = iso(now_utc() - timedelta(days=retention_days))
     pruned = 0
     cursor = db.products.find(
@@ -1104,10 +1119,11 @@ async def prune_inv_burned_guards(retention_days: int = INV_BURNED_RETENTION_DAY
         guards = prod.get("inv_burned") or []
         if not guards:
             continue
-        # Solo op_ids TERMINALMENTE resueltos ('done') y antiguos son podables.
+        # Podable SOLO con invalidación VERIFICABLE del escritor (no por tiempo/estado).
         terminal = [r["op_key"] async for r in db.company_inventory_ops.find(
             {"company_id": prod["company_id"], "op_key": {"$in": guards},
-             "status": "done", "done_at": {"$lt": cutoff}},
+             "status": "done", "done_at": {"$lt": cutoff},
+             "writer_invalidated_at": {"$exists": True}},
             {"_id": 0, "op_key": 1})]
         if not terminal:
             continue
@@ -1149,7 +1165,10 @@ async def inventory_abort_metrics() -> dict:
 async def inv_burned_product_detail(product_id: str, limit: int = 200) -> Optional[dict]:
     """OBS-01 — detalle de los candados `inv_burned` de UN producto: por cada
     op_id, su operación en `company_inventory_ops` (tipo, resultado, estado,
-    bloqueo tardío) y si es PODABLE (terminal 'done' + más de la ventana)."""
+    bloqueo tardío) y si es PODABLE. RET-R: `prunable` exige el MISMO criterio
+    estricto que la poda — terminal 'done', más antiguo que la ventana Y con
+    invalidación verificable del escritor (`writer_invalidated_at`); el tiempo y
+    el estado por sí solos NO lo hacen podable."""
     prod = await db.products.find_one(
         {"id": product_id},
         {"_id": 0, "id": 1, "company_id": 1, "name": 1, "inv_burned": 1})
@@ -1162,21 +1181,25 @@ async def inv_burned_product_detail(product_id: str, limit: int = 200) -> Option
     async for o in db.company_inventory_ops.find(
             {"company_id": prod["company_id"], "op_key": {"$in": guards}},
             {"_id": 0, "op_key": 1, "op_type": 1, "result": 1, "status": 1,
-             "done_at": 1, "guard_blocked_at": 1, "guard_block_count": 1}):
+             "done_at": 1, "guard_blocked_at": 1, "guard_block_count": 1,
+             "writer_invalidated_at": 1}):
         ops[o["op_key"]] = o
     entries = []
     for op_id in guards:
         o = ops.get(op_id, {})
         done_at = o.get("done_at")
+        invalidated = o.get("writer_invalidated_at")
         entries.append({
             "op_id": op_id,
             "op_type": o.get("op_type"),
             "result": o.get("result"),
             "status": o.get("status"),
             "done_at": done_at,
+            "writer_invalidated_at": invalidated,
             "blocked_late": bool(o.get("guard_blocked_at")),
             "block_attempts": o.get("guard_block_count", 0),
-            "prunable": bool(o.get("status") == "done" and done_at and done_at < cutoff),
+            "prunable": bool(o.get("status") == "done" and done_at and done_at < cutoff
+                             and invalidated),
         })
     return {
         "product_id": prod["id"],

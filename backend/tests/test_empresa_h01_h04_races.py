@@ -871,33 +871,43 @@ async def test_obs_inv_burned_stats_reports_sizes():
         await _clean()
 
 
-# RETENCIÓN SEGURA: la poda retira SOLO guards de operaciones terminales
-# ('done') y antiguas; NUNCA toca un guard 'pending'/en vuelo ni uno sin
-# evidencia terminal → jamás se elimina un candado que aún protege una escritura.
-async def test_obs_prune_removes_only_terminal_old_guards():
+# RET-R — RETENCIÓN SEGURA: la poda retira un guard SOLO cuando la operación es
+# terminal ('done'), antigua Y lleva una INVALIDACIÓN VERIFICABLE del escritor
+# (`writer_invalidated_at`). El tiempo + estado por sí solos NO bastan (no prueban
+# que no quede un escritor suspendido), así que SIN el sello las marcas se conservan.
+async def test_retr_prune_requires_verifiable_writer_invalidation():
     await _clean()
     try:
         pid, sid = await _seed_company()
         await db.products.update_one(
             {"id": pid}, {"$set": {"inv_burned": [
-                "old_done", "recent_done", "pending_op", "no_record_op"]}})
+                "old_sealed", "old_unsealed", "recent_sealed",
+                "pending_op", "no_record_op"]}})
         old = iso(now_utc() - timedelta(days=120))
         recent = iso(now_utc() - timedelta(days=1))
         await db.company_inventory_ops.insert_many([
-            {"company_id": CID, "op_key": "old_done", "op_type": "pickup",
+            # terminal + antiguo + INVALIDACIÓN VERIFICABLE → ÚNICO podable
+            {"company_id": CID, "op_key": "old_sealed", "op_type": "pickup",
+             "status": "done", "result": "burned", "done_at": old, "created_at": old,
+             "writer_invalidated_at": old},
+            # terminal + antiguo PERO SIN sello → se CONSERVA (tiempo/estado no bastan)
+            {"company_id": CID, "op_key": "old_unsealed", "op_type": "pickup",
              "status": "done", "result": "burned", "done_at": old, "created_at": old},
-            {"company_id": CID, "op_key": "recent_done", "op_type": "pickup",
-             "status": "done", "result": "burned", "done_at": recent, "created_at": recent},
+            # terminal + sellado pero RECIENTE → se conserva
+            {"company_id": CID, "op_key": "recent_sealed", "op_type": "pickup",
+             "status": "done", "result": "burned", "done_at": recent, "created_at": recent,
+             "writer_invalidated_at": recent},
             {"company_id": CID, "op_key": "pending_op", "op_type": "pickup",
              "status": "pending", "created_at": recent},
             # 'no_record_op' a propósito SIN registro en company_inventory_ops.
         ])
         pruned = await ci.prune_inv_burned_guards(retention_days=90)
-        assert pruned == 1  # solo 'old_done'
+        assert pruned == 1  # solo 'old_sealed'
         prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
         remaining = set(prod.get("inv_burned") or [])
-        assert "old_done" not in remaining               # terminal y antiguo → podado
-        assert "recent_done" in remaining                # terminal pero reciente → se conserva
+        assert "old_sealed" not in remaining             # terminal+antiguo+sellado → podado
+        assert "old_unsealed" in remaining               # antiguo+done SIN sello → CONSERVADO
+        assert "recent_sealed" in remaining              # sellado pero reciente → se conserva
         assert "pending_op" in remaining                 # EN VUELO → NUNCA se poda
         assert "no_record_op" in remaining               # sin evidencia → NUNCA se poda
         # Idempotente: una segunda pasada no retira nada más.
@@ -920,11 +930,14 @@ async def test_obs_product_detail_and_abort_metrics():
             {"id": pid}, {"$set": {"inv_burned": ["d_old", "d_new", "p_old", "norec"]}})
         before = await ci.inventory_abort_metrics()
         await db.company_inventory_ops.insert_many([
+            # terminal + antiguo + INVALIDACIÓN VERIFICABLE → prunable True
             {"company_id": CID, "op_key": "d_old", "op_type": "dispatch",
              "status": "done", "result": "burned", "done_at": old, "created_at": old,
-             "guard_blocked_at": recent, "guard_block_count": 3},
+             "guard_blocked_at": recent, "guard_block_count": 3,
+             "writer_invalidated_at": old},
             {"company_id": CID, "op_key": "d_new", "op_type": "dispatch",
              "status": "done", "result": "burned", "done_at": recent, "created_at": recent},
+            # terminal + antiguo PERO SIN sello verificable → prunable False
             {"company_id": CID, "op_key": "p_old", "op_type": "pickup",
              "status": "done", "result": "burned", "done_at": old, "created_at": old},
             # 'norec' a propósito SIN registro en company_inventory_ops.
@@ -938,10 +951,14 @@ async def test_obs_product_detail_and_abort_metrics():
         detail = await ci.inv_burned_product_detail(pid)
         assert detail["total_guards"] == 4 and detail["shown"] == 4
         by = {e["op_id"]: e for e in detail["entries"]}
+        # d_old: terminal+antiguo+sellado → PODABLE
         assert by["d_old"]["prunable"] is True and by["d_old"]["blocked_late"] is True
         assert by["d_old"]["block_attempts"] == 3
+        assert by["d_old"]["writer_invalidated_at"] == old
         assert by["d_new"]["prunable"] is False                 # terminal pero reciente
-        assert by["p_old"]["prunable"] is True
+        # p_old: terminal+antiguo PERO SIN sello verificable → NO podable (fix RET-R)
+        assert by["p_old"]["prunable"] is False
+        assert by["p_old"]["writer_invalidated_at"] is None
         assert by["norec"]["op_type"] is None and by["norec"]["prunable"] is False
     finally:
         await _clean()
@@ -986,3 +1003,58 @@ async def test_obs_blocked_late_metric_on_inflight_block(monkeypatch):
         monkeypatch.undo()
         await _clean()
 
+
+
+# RET-R — PRUEBA DE CONCURRENCIA (reloj simulado, sin esperar 91 días):
+# un escritor que ya pasó su lectura de idempotencia y quedó SUSPENDIDO antes de
+# mutar el stock NO modifica el stock aunque la LIMPIEZA corra pasada la ventana.
+# Secuencia: (1) pausa el escritor antes de la escritura del producto;
+# (2) cancela/congela (inv_burned + sello 'burned'); (3) adelanta 91 días y corre
+# la poda; (4) reanuda el escritor. La poda CONSERVA el guard (no hay invalidación
+# verificable), así la reserva tardía fracasa ('burned') y el stock sigue intacto.
+async def test_retr_suspended_writer_blocked_even_after_prune(monkeypatch):
+    await _clean()
+    try:
+        pid, sid = await _seed_company(stock=10.0)  # central=7, estantería=3
+        real_db = ci_mod.db
+        state = {"fired": False}
+
+        class _Products:
+            def __getattr__(self, n):
+                return getattr(real_db.products, n)
+
+            async def find_one_and_update(self, *a, **k):
+                # Se dispara en la escritura del producto del escritor (su `apply`),
+                # DESPUÉS de que `_run_idempotent` registró la op como 'pending'.
+                if not state["fired"]:
+                    state["fired"] = True
+                    # (2) el recuperador ABORTA este intento: congela + sella 'burned'.
+                    await ci.freeze_dispatch(CID, pid, sid, 3, "susp")
+                    # (3) "adelanta 91 días": la op burned queda antigua...
+                    old = iso(now_utc() - timedelta(days=91))
+                    await real_db.company_inventory_ops.update_one(
+                        {"company_id": CID, "op_key": "susp"}, {"$set": {"done_at": old}})
+                    # ...y corre la LIMPIEZA. NO debe retirar el guard (sin sello verificable).
+                    pruned = await ci.prune_inv_burned_guards(retention_days=90)
+                    assert pruned == 0, "la poda NO debe retirar un guard sin invalidación verificable"
+                return await real_db.products.find_one_and_update(*a, **k)
+
+        class _Db:
+            def __getattr__(self, n):
+                return products_proxy if n == "products" else getattr(real_db, n)
+
+        products_proxy = _Products()
+        monkeypatch.setattr(ci_mod, "db", _Db())
+        # (4) el escritor REANUDA su escritura tras la limpieza.
+        res = await ci.dispatch_from_store(CID, pid, sid, 3, op_id="susp")
+        monkeypatch.undo()
+
+        assert res == "burned", "la reserva tardía NO debe aplicarse tras la limpieza"
+        assert await _stock(pid) == 10.0, "el stock NO debe cambiar (10 → 10)"
+        assert await _shelf(pid, sid) == 3.0, "la estantería NO debe cambiar"
+        # El guard permanece: retención segura mientras no haya invalidación verificable.
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
+        assert "susp" in set(prod.get("inv_burned") or [])
+    finally:
+        monkeypatch.undo()
+        await _clean()
