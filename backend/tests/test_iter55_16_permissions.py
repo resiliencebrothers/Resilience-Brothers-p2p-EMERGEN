@@ -84,10 +84,12 @@ def test_permissions_catalog_returns_13_items():
     # Baseline lifted from 21 → 22 (iter202: deliveries/Mensajería).
     # MEN-01 — `deliveries_assign` (separa asignar repartos de gestionarlos).
     # Baseline lifted from 22 → 23.
+    # Programa Empresas — `company_requests` (revisar/aprobar altas de cuenta
+    # Empresa). Baseline lifted from 23 → 24.
     r = requests.get(f"{API}/admin/permissions/catalog", headers=_hdr(ADMIN_TOKEN))
     assert r.status_code == 200
     items = r.json()["items"]
-    assert len(items) == 23
+    assert len(items) == 24
     codes = {i["code"] for i in items}
     assert codes == {
         "orders", "withdrawals", "deliveries", "deliveries_assign", "kyc",
@@ -96,7 +98,7 @@ def test_permissions_catalog_returns_13_items():
         "transactions", "quick_view", "profile_changes",
         "user_stats", "user_functions", "view_user_sensitive",
         "support", "vip_requests", "profitability", "payment_accounts",
-        "reconciliation",
+        "reconciliation", "company_requests",
     }
     # Each item has label + description
     for it in items:

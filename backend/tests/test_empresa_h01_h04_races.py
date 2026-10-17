@@ -537,6 +537,110 @@ async def test_h03r2_inflight_reservation_respects_durable_abort(monkeypatch):
         await _clean()
 
 
+# ───────────────────────────────────────────────────────────────── H03-R3
+# CIERRE del residual A- : el ejecutor EN VUELO de la reserva (op 'pending',
+# pausado justo ANTES de escribir el producto) se reanuda DESPUÉS de que la
+# RUTA COMPLETA DE RECUPERACIÓN abortó la solicitud (freeze + reembolso +
+# comp_sealed) y de que el array acotado `inv_ops` rotó por completo. Se
+# verifica CONJUNTAMENTE (criterio de cierre del informe H03-R): stock total y
+# por ubicación intactos, resultado terminal 'burned' no sobrescrito, saldo
+# correcto (tarifa reembolsada), NINGUNA entrega válida, y que nuevas pasadas
+# de recuperación + un reintento del creador NO producen efectos adicionales.
+async def test_h03r3_inflight_reservation_through_full_recovery_is_burned(monkeypatch):
+    await _clean()
+    reqid = str(uuid.uuid4())
+    opid = f"cdeliv:{reqid}"
+    try:
+        pid, sid = await _seed_company()          # stock 10, by_store {sid: 3}, saldo 100
+        # El creador alcanzó FASE 1 (tarifa retenida, saldo 95) y la intención
+        # 'initializing' quedó registrada SIN reservar aún (inv_reserved=False).
+        assert await billing.hold_fee(CID, reqid, 5) == "applied"
+        await db.company_delivery_requests.insert_one({
+            "id": reqid, "company_id": CID, "client_key": reqid,
+            "product_id": pid, "origin_store_id": sid, "quantity": 3,
+            "fee_usdt": 5, "fee_status": "held",
+            "inv_reserved": False, "inv_returned": False,
+            "status": "initializing", "delivery_id": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00"})
+        assert await _bal() == 95.0 and await _stock(pid) == 10.0
+
+        real_db = ci_mod.db
+        state = {"fired": False}
+
+        async def _full_recovery_then_rotate():
+            # RUTA COMPLETA de recuperación: reclama initializing→failed_init,
+            # reembolsa la tarifa, CONGELA la reserva (inv_burned durable) y
+            # SELLA la compensación (comp_sealed) — todo sin ver reserva aplicada.
+            healed = await heal_initializing_company_deliveries(max_age_seconds=0)
+            assert healed >= 1
+            r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+            assert r["status"] == "failed_init"
+            assert r["inv_returned"] is True and r.get("comp_sealed") is True
+            assert await _bal() == 100.0          # tarifa reembolsada
+            # …y la actividad del producto ROTA por completo el array acotado.
+            for i in range(ci.INV_OPS_CAP + 5):
+                assert await ci.receive_central(
+                    CID, pid, 1, op_key=f"recv:{reqid}:{i}") == "applied"
+
+        class _Products:
+            def __getattr__(self, n):
+                return getattr(real_db.products, n)
+
+            async def find_one_and_update(self, *a, **k):
+                # La PRIMERA escritura de producto = la reserva EN VUELO del
+                # creador. Justo ANTES ocurren la recuperación COMPLETA y la rotación.
+                if not state["fired"]:
+                    state["fired"] = True
+                    await _full_recovery_then_rotate()
+                return await real_db.products.find_one_and_update(*a, **k)
+
+        class _Db:
+            def __getattr__(self, n):
+                if n == "products":
+                    return products_proxy
+                return getattr(real_db, n)
+
+        products_proxy = _Products()
+        monkeypatch.setattr(ci_mod, "db", _Db())
+        # El creador REANUDA su reserva tardía (mismo op_id que congeló el recuperador).
+        status = await ci.dispatch_from_store(CID, pid, sid, 3, op_id=opid)
+        monkeypatch.undo()
+
+        # (1) Resultado TERMINAL: la reserva tardía fracasa, NO descuenta stock.
+        assert status == "burned"
+        # (2) Stock total y por ubicación INTACTOS (solo cuentan los receives).
+        assert await _stock(pid) == float(10 + ci.INV_OPS_CAP + 5)
+        assert await _shelf(pid, sid) == 3.0
+        # (3) Registro duradero sigue 'burned' (el ejecutor en vuelo no lo pisó).
+        rec = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": opid}, {"_id": 0, "status": 1, "result": 1})
+        assert rec and rec["status"] == "done" and rec["result"] == "burned"
+        # (4) Saldo correcto (tarifa reembolsada, sin doble cargo).
+        assert await _bal() == 100.0
+        # (5) NINGUNA entrega válida para esta solicitud.
+        assert await db.deliveries.count_documents(
+            {"kind": "company_delivery", "ref_id": reqid,
+             "status": {"$ne": "cancelled"}}) == 0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["status"] == "failed_init" and r.get("comp_sealed") is True
+
+        # (6) Nuevas pasadas de recuperación + reintento del creador: SIN efectos.
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        from services.company_delivery_recovery import heal_cancelled_company_deliveries
+        await heal_cancelled_company_deliveries()
+        assert await ci.dispatch_from_store(CID, pid, sid, 3, op_id=opid) == "burned"
+        assert await _stock(pid) == float(10 + ci.INV_OPS_CAP + 5)
+        assert await _shelf(pid, sid) == 3.0
+        assert await _bal() == 100.0
+        rec2 = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": opid}, {"_id": 0, "result": 1})
+        assert rec2["result"] == "burned"
+    finally:
+        monkeypatch.undo()
+        await _clean()
+
+
 # ─────────────────────────────────────────────────────────────────── H04-R
 # Muchos productos SANOS no pueden tapar a un huérfano: el barrido filtra
 # huérfanos ANTES de limitar, así que el cupo no se agota con productos sanos.
