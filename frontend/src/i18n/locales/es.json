@@ -47,7 +47,8 @@
       "deliveries": "Mis Entregas",
       "assets": "Activos",
       "myProducts": "Mis Productos",
-      "cashbox": "Caja de Efectivo"
+      "cashbox": "Caja de Efectivo",
+      "tools": "Herramientas"
     },
     "admin": {
       "overview": "Resumen",
@@ -5010,5 +5011,14 @@
     "reportTotal": "Total",
     "exportExcel": "Excel",
     "exportDone": "Excel de respaldo descargado"
+  },
+  "tools": {
+    "eyebrow": "Herramientas",
+    "title": "Herramientas",
+    "subtitle": "Módulos financieros operativos que facilitan tu negocio: tu caja de efectivo y la calculadora de rentabilidad. No afectan tus balances de la plataforma.",
+    "tabs": {
+      "cashbox": "Caja de Efectivo",
+      "profitability": "Rentabilidad"
+    }
   }
 }

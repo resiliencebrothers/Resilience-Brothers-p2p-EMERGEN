@@ -5,7 +5,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/context/AuthContext";
 import { API } from "@/App";
-import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike, Wallet } from "lucide-react";
+import { LogOut, LayoutDashboard, ListOrdered, Star, Boxes, Shield, Menu, UserCircle, ChevronRight, HelpCircle, Gift, Coins, Bike, Wrench } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import ExchangeView from "@/pages/dashboard/ExchangeView";
@@ -25,7 +25,7 @@ import ProfileView from "@/pages/dashboard/ProfileView";
 import NotificationsView from "@/pages/dashboard/NotificationsView";
 import SupportView from "@/pages/dashboard/SupportView";
 import ReferralsView from "@/pages/dashboard/ReferralsView";
-import CashBoxView from "@/pages/dashboard/cashbox/CashBoxView";
+import ToolsView from "@/pages/dashboard/ToolsView";
 import OnboardingDialog from "@/components/OnboardingDialog";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
@@ -50,6 +50,9 @@ export default function Dashboard() {
   const isStaff = user?.role === "admin" || user?.role === "employee";
   // iter14: any non-staff client (normal + vip) may see balance & withdraw panel.
   const isClient = user && !isStaff;
+  // Herramientas (Caja de efectivo + Rentabilidad) — exclusiva de VIP en el
+  // dashboard de cliente; las cuentas Empresa la tienen en su propio panel.
+  const isVip = user?.role === "vip";
   const [mobileOpen, setMobileOpen] = useState(false);
   // Onboarding shows ONLY for users explicitly marked as not-onboarded (legacy users have the field missing and are treated as completed).
   const [showOnboarding, setShowOnboarding] = useState(user?.onboarding_completed === false);
@@ -89,7 +92,9 @@ export default function Dashboard() {
     ...(user?.is_courier ? [
       { to: "/dashboard/deliveries", icon: Bike, label: t("sidebar.client.deliveries"), id: "nav-deliveries" },
     ] : []),
-    { to: "/dashboard/cashbox", icon: Wallet, label: t("sidebar.client.cashbox"), id: "nav-cashbox" },
+    ...(isVip ? [
+      { to: "/dashboard/tools", icon: Wrench, label: t("sidebar.client.tools"), id: "nav-tools", hasSubsections: true },
+    ] : []),
     { to: "/dashboard/support", icon: HelpCircle, label: t("sidebar.client.support"), id: "nav-support" },
   ];
 
@@ -276,7 +281,8 @@ export default function Dashboard() {
             <Route path="my-products" element={<MyProductsView />} />
             <Route path="deliveries" element={<CourierPanel />} />
             <Route path="referrals" element={<ReferralsView />} />
-            <Route path="cashbox" element={<CashBoxView />} />
+            <Route path="tools" element={<ToolsView />} />
+            <Route path="cashbox" element={<Navigate to="/dashboard/tools" replace />} />
             <Route path="support" element={<SupportView />} />
           </Routes>
         </div>

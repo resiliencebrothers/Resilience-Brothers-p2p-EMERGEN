@@ -4,7 +4,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -15,6 +15,7 @@ import CompanyWalletView from "@/pages/company/CompanyWalletView";
 import CompanyDeliveriesView from "@/pages/company/CompanyDeliveriesView";
 import CompanyKYCView from "@/pages/company/CompanyKYCView";
 import SecuritySettings from "@/pages/dashboard/SecuritySettings";
+import ToolsPanel from "@/pages/dashboard/tools/ToolsPanel";
 
 // Panel independiente para cuentas Empresa (rol business). Mientras la cuenta
 // está en revisión, solo se muestra el aviso de aprobación pendiente.
@@ -28,6 +29,7 @@ const TABS = [
   { id: "inventory", label: "Inventario", icon: Warehouse },
   { id: "deliveries", label: "Mensajería", icon: Truck },
   { id: "wallet", label: "Saldo", icon: Wallet },
+  { id: "tools", label: "Herramientas", icon: Wrench },
 ];
 // Pantallas comunes de cuenta (verificación de identidad + 2FA). Son requisito
 // para retirar/liquidar; antes la Empresa no tenía forma de alcanzarlas.
@@ -156,6 +158,7 @@ export default function CompanyPanel() {
             {tab === "inventory" && <CompanyInventoryView />}
             {tab === "deliveries" && <CompanyDeliveriesView />}
             {tab === "wallet" && <CompanyWalletView />}
+            {tab === "tools" && <ToolsPanel />}
             {tab === "kyc" && <CompanyKYCView />}
             {tab === "security" && <SecuritySettings embedded />}
           </>

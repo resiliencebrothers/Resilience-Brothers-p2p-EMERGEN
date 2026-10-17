@@ -2,12 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
-import { Wallet, ArrowRightLeft, Calculator } from "lucide-react";
+import { Wallet, ArrowRightLeft } from "lucide-react";
 import CurrencyIcon from "@/components/CurrencyIcon";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import { FlashNumber } from "@/components/FlashNumber";
-import ProfitCalculatorSection from "./ProfitCalculatorSection";
-import { useAuth } from "@/context/AuthContext";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 
 /**
@@ -18,12 +16,9 @@ import { useLiveEvent } from "@/hooks/useLiveStream";
  */
 export default function AssetsView() {
   const { t } = useTranslation();
-  const { user } = useAuth();
-  const isVip = user?.role === "vip";
   const [data, setData] = useState({ balances: [], total_usdt: 0 });
   const [loading, setLoading] = useState(true);
   const [showConverter, setShowConverter] = useState(false);
-  const [showCalculator, setShowCalculator] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -70,20 +65,7 @@ export default function AssetsView() {
           <ArrowRightLeft className="w-4 h-4" />
           {showConverter ? t("assetsView.hideConverter") : t("assetsView.convertBtn")}
         </button>
-        {isVip && (
-          <button
-            type="button"
-            data-testid="assets-calc-btn"
-            onClick={() => setShowCalculator((v) => !v)}
-            className="relative mt-6 ml-3 inline-flex items-center gap-2 border border-[#8B5CF6]/50 text-[#A78BFA] hover:bg-[#8B5CF6]/10 px-5 py-2.5 font-mono text-xs uppercase tracking-wider transition-colors"
-          >
-            <Calculator className="w-4 h-4" />
-            {showCalculator ? t("assetsView.hideCalc") : t("assetsView.calcBtn")}
-          </button>
-        )}
       </div>
-
-      {isVip && showCalculator && <ProfitCalculatorSection />}
 
       {showConverter && (
         <div data-testid="assets-converter-wrap">

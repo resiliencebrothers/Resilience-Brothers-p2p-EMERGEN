@@ -47,7 +47,8 @@
       "deliveries": "My Deliveries",
       "assets": "Assets",
       "myProducts": "My Products",
-      "cashbox": "Cash Box"
+      "cashbox": "Cash Box",
+      "tools": "Tools"
     },
     "admin": {
       "overview": "Overview",
@@ -5010,5 +5011,14 @@
     "reportTotal": "Total",
     "exportExcel": "Excel",
     "exportDone": "Backup Excel downloaded"
+  },
+  "tools": {
+    "eyebrow": "Tools",
+    "title": "Tools",
+    "subtitle": "Operational financial modules that power your business: your cash box and the profitability calculator. They don't affect your platform balances.",
+    "tabs": {
+      "cashbox": "Cash Box",
+      "profitability": "Profitability"
+    }
   }
 }
