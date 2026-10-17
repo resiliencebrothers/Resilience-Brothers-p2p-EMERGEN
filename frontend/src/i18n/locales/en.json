@@ -85,7 +85,8 @@
       "vipRequests": "VIP requests",
       "companyRequests": "Business requests",
       "kyc": "KYC",
-      "changes": "Profile changes"
+      "changes": "Profile changes",
+      "companyKyb": "Company KYB"
     }
   },
   "overviewHub": {
@@ -1152,7 +1153,8 @@
         "id_back": "ID (back)",
         "selfie": "Selfie with ID",
         "tax_certificate": "Fiscal code / certificate",
-        "operating_license": "Operating license"
+        "operating_license": "Operating license",
+        "legal_rep_id": "Legal rep. ID"
       },
       "riskSignals": "Risk signals",
       "documentsPanel": "Uploaded documents ({{n}})",
@@ -1188,7 +1190,9 @@
       "kbdBulkApprove": "Approve all selected",
       "kbdConfirmDialog": "Confirm open dialog",
       "kbdCloseDialog": "Close dialog",
-      "kbdShowHelp": "Show this help"
+      "kbdShowHelp": "Show this help",
+      "companyTitle": "KYB · Company verification",
+      "companySubtitle": "Review each company's documents (fiscal certificate, operating license and legal representative ID) and approve, reject or request more info."
     },
     "capitalRequests": {
       "eyebrow": "/ Capital requests",

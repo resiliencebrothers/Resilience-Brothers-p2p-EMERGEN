@@ -416,11 +416,17 @@ async def request_more_info(
 
 async def list_queue(
     db: Any, status: Optional[str] = None, search: str = "",
-    min_risk: int = 0, limit: int = 100,
+    min_risk: int = 0, limit: int = 100, kind: Optional[str] = None,
 ) -> list[dict]:
     q: dict = {}
     if status:
         q["status"] = status
+    # kind: "company" → solo expedientes de empresa (KYB); "individual" → el
+    # resto (los individuales no llevan campo `kind`, por eso `$ne company`).
+    if kind == "company":
+        q["kind"] = "company"
+    elif kind == "individual":
+        q["kind"] = {"$ne": "company"}
     if min_risk:
         q["risk_score"] = {"$gte": min_risk}
     if search:
@@ -436,17 +442,31 @@ async def list_queue(
     return await cursor.to_list(limit)
 
 
-async def compute_funnel(db: Any) -> dict:
+async def compute_funnel(db: Any, kind: Optional[str] = None) -> dict:
     """Aggregate counts per status + total registered users for the admin
-    dashboard header card."""
-    total_users = await db.users.count_documents({})
-    total_pending = await db.kyc_verifications.count_documents({"status": "pending"})
-    total_verified = await db.users.count_documents({"kyc_status": "verified"})
-    total_rejected = await db.kyc_verifications.count_documents({"status": "rejected"})
-    total_needs_info = await db.kyc_verifications.count_documents({"status": "needs_more_info"})
+    dashboard header card. `kind` filtra la foto por tipo de expediente:
+    "company" (KYB de empresas) o "individual" (identidad personal)."""
+    if kind == "company":
+        base: dict = {"kind": "company"}
+    elif kind == "individual":
+        base = {"kind": {"$ne": "company"}}
+    else:
+        base = {}
+    total_pending = await db.kyc_verifications.count_documents({**base, "status": "pending"})
+    total_rejected = await db.kyc_verifications.count_documents({**base, "status": "rejected"})
+    total_needs_info = await db.kyc_verifications.count_documents(
+        {**base, "status": "needs_more_info"})
     high_risk = await db.kyc_verifications.count_documents({
-        "status": "pending", "risk_score": {"$gte": 40},
+        **base, "status": "pending", "risk_score": {"$gte": 40},
     })
+    if kind:
+        total_verified = await db.kyc_verifications.count_documents(
+            {**base, "status": "verified"})
+        total_users = await db.users.count_documents(
+            {"role": "empresa"} if kind == "company" else {"role": {"$ne": "empresa"}})
+    else:
+        total_verified = await db.users.count_documents({"kyc_status": "verified"})
+        total_users = await db.users.count_documents({})
     return {
         "total_users": total_users,
         "pending": total_pending,

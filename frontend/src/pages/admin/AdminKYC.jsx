@@ -4,7 +4,7 @@ import { useTranslation, Trans } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { IdCard, Keyboard } from "lucide-react";
+import { IdCard, Keyboard, Building2 } from "lucide-react";
 import { extractDetailMessage } from "@/utils/apiErrors";
 
 import KYCFunnelCards from "./kyc/KYCFunnelCards";
@@ -24,8 +24,9 @@ import { useKycKeyboard } from "./kyc/useKycKeyboard";
  * keyboard shortcut handler. All UI blocks live in ./kyc/ so each piece
  * stays small, focused and testable in isolation.
  */
-export default function AdminKYC() {
+export default function AdminKYC({ kind }) {
   const { t } = useTranslation();
+  const isCompany = kind === "company";
 
   const [tab, setTab] = useState("pending");
   const [items, setItems] = useState([]);
@@ -49,10 +50,10 @@ export default function AdminKYC() {
     try {
       const [q, f] = await Promise.all([
         axios.get(`${API}/admin/kyc/queue`, {
-          params: { status: tab, search: search || undefined, min_risk: minRisk || undefined },
+          params: { status: tab, search: search || undefined, min_risk: minRisk || undefined, kind: kind || undefined },
           withCredentials: true,
         }),
-        axios.get(`${API}/admin/kyc/funnel`, { withCredentials: true }),
+        axios.get(`${API}/admin/kyc/funnel`, { params: { kind: kind || undefined }, withCredentials: true }),
       ]);
       setItems(q.data.items || []);
       setFunnel(f.data);
@@ -63,7 +64,7 @@ export default function AdminKYC() {
     } finally {
       setLoading(false);
     }
-  }, [tab, search, minRisk, t]);
+  }, [tab, search, minRisk, kind, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -173,22 +174,28 @@ export default function AdminKYC() {
   }, [focusedIdx]);
 
   return (
-    <div className="space-y-6" data-testid="admin-kyc-page">
+    <div className="space-y-6" data-testid={isCompany ? "admin-company-kyb-page" : "admin-kyc-page"}>
       <header className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
-            <IdCard className="w-8 h-8 text-[#8B5CF6]" />
-            {t("admin.kycAdmin.title")}
+            {isCompany
+              ? <Building2 className="w-8 h-8 text-[#8B5CF6]" />
+              : <IdCard className="w-8 h-8 text-[#8B5CF6]" />}
+            {isCompany ? t("admin.kycAdmin.companyTitle") : t("admin.kycAdmin.title")}
           </h1>
-          <p className="text-sm text-neutral-500 mt-1">
-            <Trans
-              i18nKey="admin.kycAdmin.subtitle"
-              components={{
-                1: <kbd className="kbd" />, 2: <kbd className="kbd" />, 3: <kbd className="kbd" />,
-                4: <kbd className="kbd" />, 5: <kbd className="kbd" />, 6: <kbd className="kbd" />,
-              }}
-            />
-          </p>
+          {isCompany ? (
+            <p className="text-sm text-neutral-500 mt-1">{t("admin.kycAdmin.companySubtitle")}</p>
+          ) : (
+            <p className="text-sm text-neutral-500 mt-1">
+              <Trans
+                i18nKey="admin.kycAdmin.subtitle"
+                components={{
+                  1: <kbd className="kbd" />, 2: <kbd className="kbd" />, 3: <kbd className="kbd" />,
+                  4: <kbd className="kbd" />, 5: <kbd className="kbd" />, 6: <kbd className="kbd" />,
+                }}
+              />
+            </p>
+          )}
         </div>
         <Button
           data-testid="kyc-help-btn"

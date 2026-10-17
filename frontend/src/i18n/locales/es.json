@@ -85,7 +85,8 @@
       "vipRequests": "Solicitudes VIP",
       "companyRequests": "Solicitudes Empresa",
       "kyc": "KYC",
-      "changes": "Cambios de datos"
+      "changes": "Cambios de datos",
+      "companyKyb": "KYB Empresas"
     }
   },
   "overviewHub": {
@@ -1152,7 +1153,8 @@
         "id_back": "Identificación (dorso)",
         "selfie": "Selfie con identificación",
         "tax_certificate": "Código / certificado fiscal",
-        "operating_license": "Licencia operativa"
+        "operating_license": "Licencia operativa",
+        "legal_rep_id": "ID del representante legal"
       },
       "riskSignals": "Señales de riesgo",
       "documentsPanel": "Documentos subidos ({{n}})",
@@ -1188,7 +1190,9 @@
       "kbdBulkApprove": "Aprobar todas las seleccionadas",
       "kbdConfirmDialog": "Confirmar diálogo abierto",
       "kbdCloseDialog": "Cerrar diálogo",
-      "kbdShowHelp": "Mostrar esta ayuda"
+      "kbdShowHelp": "Mostrar esta ayuda",
+      "companyTitle": "KYB · Verificación de empresas",
+      "companySubtitle": "Revisa la documentación de las empresas (certificado fiscal, licencia operativa e ID del representante legal) y aprueba, rechaza o pide más información."
     },
     "capitalRequests": {
       "eyebrow": "/ Solicitudes de fondos",
