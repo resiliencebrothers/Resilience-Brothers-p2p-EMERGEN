@@ -1,3 +1,20 @@
+## Changelog — 17 Oct 2026
+
+### Herramientas: Caja de Negocio (Empresa), Escenarios de Rentabilidad y Reporte mensual Excel
+Tres funciones nuevas dentro de la sección **Herramientas** (VIP `/dashboard/tools`, Empresa `/company/tools`). Testing agent: backend 10/10, frontend 100% (iteration_365.json). Sin bugs.
+
+1. **Caja de Negocio (Empresa).** La cuenta Empresa puede crear cajas de ámbito `negocio` (además de `personal`), con asignación OPCIONAL a una de sus tiendas.
+   - Backend (`routes/cash_boxes.py`): `BoxCreate`/`BoxUpdate` admiten `scope:"negocio"` + `store_id` opcional. Solo rol `empresa` puede crear `negocio` (VIP/normal → 403). `_resolve_store(company_id, store_id)` valida que la tienda pertenezca a la Empresa (tienda ajena/inexistente → 400) y guarda `store_id`+`store_name`. `list_boxes` incluye las cajas negocio del Empresa (`company_id = user_id`); VIP no las ve. `_get_box_checked` protege negocio por `company_id`.
+   - Frontend (`CashBoxView.jsx`): selector de ámbito (`cashbox-new-scope`) ofrece "Negocio" para Empresa; al elegirlo aparece el selector de tienda (`cashbox-new-store`, opción "Sin tienda"). Los chips muestran icono/tienda del negocio.
+2. **Escenarios de Rentabilidad (privados por cuenta).** VIP/Empresa guardan/renombran/cargan/borran escenarios de la calculadora.
+   - Backend nuevo (`routes/profit_scenarios.py`): CRUD `/api/profit/scenarios` (GET/POST/PUT/DELETE), colección `profit_scenarios`, aislado por `owner_id=user_id` (privacidad cruzada verificada). Registrado en `server.py`.
+   - Frontend nuevo (`ProfitScenariosBar.jsx`), montado encima de la calculadora en `ProfitCalculatorSection.jsx`: guardar (nombre + valores actuales del `calc`), cargar (restaura el `calc`), sobrescribir, renombrar y borrar.
+3. **Reporte mensual en Excel.** Botón "Descargar Excel" en el panel de reporte mensual de caja.
+   - Backend (`routes/cash_boxes.py`): `GET /api/cashbox/boxes/{box_id}/reporte.xlsx?fund=&month=` genera XLSX con desglose diario (entradas/salidas/neto) + totales vía `openpyxl` (`StreamingResponse`). Mes/fondo inválidos → 400.
+   - Frontend (`ReportPanel.jsx`): botón `report-export-btn` descarga el XLSX del mes seleccionado.
+   - i18n ES/EN: `cashbox.scopeNegocio/storeNone/reportExcel`, `tools.scenarios.*`.
+
+
 ## Changelog — 12 Feb 2026
 
 ### Cancelar una reserva pendiente ahora avisa al mensajero reservado

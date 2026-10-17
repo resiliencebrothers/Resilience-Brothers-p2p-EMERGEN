@@ -3,6 +3,8 @@
 ## Original Problem Statement
 Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empresas y clientes mediante una plataforma global de comercio P2P. Dos secciones: intercambio de criptomonedas por dinero Fiat, y marketplace de mercancías para clientes VIP. Admin gestiona monedas (cripto + fiat) y tasas de cambio. Diferenciación clientes VIP (sin comisión, tasas preferenciales, saldo acumulado, canje por mercancía) vs Normales (5% comisión).
 
+> **Última entrega (17 Oct 2026):** Herramientas (VIP/Empresa) ampliada con: Caja de **Negocio** para Empresa (con tienda opcional), **Escenarios de Rentabilidad** privados por cuenta (CRUD) y **Reporte mensual de caja en Excel**. Backend `routes/profit_scenarios.py` (nuevo) + `routes/cash_boxes.py` (ext.); frontend `ProfitScenariosBar.jsx` (nuevo), `CashBoxView.jsx`, `ReportPanel.jsx`. Verificado por testing agent (iteration_365.json, 100%). Ver CHANGELOG.md.
+
 ## Architecture
 - **Backend**: FastAPI (Python) + Motor (MongoDB async) at `/app/backend/server.py`. All routes prefixed `/api`.
 - **Frontend**: React 19 + React Router + Tailwind + Shadcn UI at `/app/frontend/src`.

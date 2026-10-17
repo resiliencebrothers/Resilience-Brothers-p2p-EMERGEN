@@ -1,0 +1,23 @@
+{
+  "summary": "Tested new Tools features: (1) Caja de Negocio (scope negocio + optional store), (2) Reporte mensual .xlsx, (3) Profit Scenarios CRUD + privacy. Backend: 10/10 pytest cases pass covering empresa-creates-negocio, invalid store 400, empresa list includes negocio, VIP 403 on negocio, VIP list excludes negocio, store assignment persists store_id/store_name, reporte.xlsx 200 + correct content-type with month/fund validation (400), scenarios CRUD + cross-account privacy. Frontend: Empresa /company/tools > Caja de Efectivo — scope selector offers 'Negocio', store selector appears when negocio chosen, chip created, report-panel present with Descargar Excel returning HTTP 200. VIP /dashboard/tools > Rentabilidad — profit-scenarios-bar visible, save/list/rename/load/delete all work. Empresa Rentabilidad bar also saves correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_tools_cashbox_profit.py",
+    "/app/test_reports/pytest/tools_cashbox_profit.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "cash_boxes.py (~755 lines) is above the 700-line soft limit; consider splitting arqueo/report/export into separate modules.",
+    "CashBoxView.jsx duplicates two <select data-testid='cashbox-new-scope'> blocks (one for staff, one for empresa). Both share the same data-testid — could be unified into a single select with role-conditional <option>s to reduce duplication while keeping the testid stable.",
+    "profit_scenarios.py: delete endpoint has no soft-delete/audit trail — acceptable for private user data but worth noting."
+  ],
+  "updated_files": ["/app/backend/tests/test_tools_cashbox_profit.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "session_token cookie: VIP=test_session_vip_X, Empresa=test_session_empresa_e2e_X (per /app/memory/test_credentials.md).",
+  "seed_data_creation": "Created temporary TEST_ store (via /api/company/stores), TEST_ cashboxes (negocio), and TEST_ profit scenarios during testing. All test resources were cleaned up via DELETE at end of each test; residual UI-created items also deleted manually via API.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/test_tools_cashbox_profit.py and cover negocio-scope, store validation, VIP 403, reporte.xlsx (200/400) and scenarios CRUD+privacy. IMPORTANT: /api/stores does NOT exist — company stores live at /api/company/stores (company_router has prefix='/company'). The review_request's reference 'POST /api/stores' is a typo. UI tests used cookies via Playwright context.add_cookies with session_token.",
+  "rca of the issue": "N/A — no bugs found. Minor path discrepancy in review_request: it referenced POST /api/stores but the real endpoint is POST /api/company/stores. Corrected in the test file."
+}
