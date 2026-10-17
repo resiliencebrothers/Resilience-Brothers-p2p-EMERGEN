@@ -2968,3 +2968,34 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 
 ### Estado de la suite crítica tras este delta (fork 2026-06)
 `make test-critical` = **1352 passed** con los 13 tests nuevos de este trabajo (H01-H04 + H02-R×3 + H03-R + H04-R + 2FA). En la última pasada completa quedaron 2 fallos NO deterministas, ambos PASAN en aislamiento y NINGUNO causado por los cambios de este delta: (1) `test_empresa_company_delivery_fee_admin::test_put_persists_and_get_reflects` → `assert 502 == 200`, un **502 transitorio del gateway** (backend momentáneamente inalcanzable bajo carga del HTTP, blip de infraestructura); (2) `test_iter282_u01::test_interrupted_converge_rev_bump_recovered` → flake de ORDEN conocido del clúster de caja (dominio ya señalado como sensible al orden). Mitigación aplicada: el test H01 ahora restaura EXACTAMENTE el ajuste global `company_delivery_fee_usdt` (valor o ausente) para no acoplar a otros tests. Los flakes de caja (iter271/274/279/281/282) y los 502 bajo carga son pre-existentes y de infraestructura/orden, no regresiones.
+
+---
+
+## Programa Empresas — solicitud de alta de cuenta Empresa independiente (fork 2026-06, jun/oct 2026)
+
+**Petición del usuario:** igual que un cliente puede solicitar unirse al Programa VIP desde su perfil, agregar en "Mi Perfil" una tarjeta "Programa Empresas". A diferencia de VIP (que cambia el rol de la MISMA cuenta), aprobar una solicitud de empresa crea una cuenta Empresa NUEVA, SEPARADA e INDEPENDIENTE de la cuenta personal (login propio, rol `empresa`), que queda `under_review` hasta verificación KYB/teléfono por staff. La cuenta personal NO cambia de rol.
+
+**Decisiones del usuario:**
+- Credenciales: email + contraseña DISTINTOS indicados en el formulario (opción a).
+- Pueden solicitar: usuarios rol `normal` y `vip`.
+- Campos del formulario: nombre comercial/legal, email de acceso, contraseña (+ confirmación), teléfono de contacto, identificación fiscal, dirección.
+- Tras aprobar: cuenta Empresa `under_review`.
+
+**Integración (consultado `integration_expert` por ser flujo de auth):**
+- Se guarda SOLO el hash bcrypt (`_hash_password`) en la solicitud; al aprobar se COPIA el hash a la cuenta nueva (nunca se re-hashea) y se BORRA de la solicitud. Nunca se guarda ni retorna la contraseña en claro ni el hash.
+- Email/teléfono únicos globalmente y distintos a los personales; se revalida unicidad + `assert_not_blocked` también al aprobar (la solicitud puede quedar días pendiente).
+- Aprobación con CAS (pending→approved, único aprobador) + rollback de la solicitud si falla el insert; se envía verificación de email de la cuenta nueva y entra a la cola de verificación de nuevos usuarios (`notify_staff_new_pending_user`).
+- No se tocan sesiones ni el login existente; cada cuenta inicia sesión por separado.
+
+**Backend** (`backend/routes/company_requests.py`, nuevo; registrado en `server.py`):
+- Colección `company_requests` {id, user_id/email/name (solicitante), company_name, account_email, company_phone, tax_id, address, password_hash (efímero), status pending|approved|rejected, created_at, updated_at, reviewed_by/at, admin_note, new_user_id}.
+- `POST /api/company-requests` (normal/vip), `GET /api/company-requests/me`, `GET /api/admin/company-requests`, `GET /api/admin/company-requests/pending-count`, `POST /api/admin/company-requests/{id}/approve`, `POST /api/admin/company-requests/{id}/reject`.
+- Reglas: una pendiente por usuario; enfriamiento 7 días tras rechazo; email/phone ≠ personales y no en uso; password confirm + cap 72 bytes.
+- Permiso nuevo `company_requests` en `services/permissions.py` (categoría users). SSE: `company_request_created`/`company_request_updated` (admin), `company_request_approved`/`company_request_rejected` (cliente).
+
+**Frontend:**
+- `pages/dashboard/profile/RequestCompanyCard.jsx` + `RequestCompanyDialog.jsx` (render para role normal/vip), integradas en `ProfileView.jsx` tras la tarjeta VIP.
+- `pages/admin/AdminCompanyRequests.jsx` como tab `company-requests` en `AdminUsersHub.jsx` (perm `company_requests`).
+- i18n ES/EN: claves `companyRequest.*`, `adminCompanyRequests.*`, `usersHub.tabs.companyRequests`.
+
+**Pruebas:** `backend/tests/test_company_program_requests.py` (12/12 passed; añadido a la suite Empresa del Makefile). Testing agent E2E frontend: 7/7 flujos OK, sin bugs; verificado que la cuenta nueva es `empresa`/`under_review`, la personal mantiene su rol, y que el hash nunca se expone. ruff limpio. UI verificada desktop + móvil (390px) sin overflow nuevo.

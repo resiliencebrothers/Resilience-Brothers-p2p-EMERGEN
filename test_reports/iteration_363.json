@@ -1,0 +1,20 @@
+{
+  "summary": "Frontend E2E testing of the new 'Programa Empresas' feature. All 7 flows passed: (1) VIP sees the company request card and CTA on /dashboard/profile; (2) dialog opens, password-mismatch validation disables submit and shows company-password-mismatch; (3) submitting a valid payload with a unique email + E.164 phone succeeds, toast fires, dialog closes, and card transitions to 'En revisión' (company-request-status-pending); (4) admin at /admin/users?tab=company-requests sees the pending row with account email, phone, taxid and address (no password_hash leaked); (5) Approve creates a NEW empresa account (verified via DB: role='empresa', account_status='under_review', parent_user_id=user_test_vip01) while VIP's personal role remains 'vip'; (6) Normal user rejection flow works — card shows 'Rechazada' with admin note and cooldown notice (company-cooldown-notice, 7 días); (7) Permission gate: client GET /api/admin/company-requests returns 403.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_company_program_requests.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "RequestCompanyCard & AdminCompanyRequests are clean, with data-testid coverage for all interactive elements and status badges. Permission 403 handled server-side correctly.",
+    "RequestCompanyDialog uses client-side validation that mirrors backend regex (E.164, email, >=8 chars); submit button is correctly disabled when any field invalid.",
+    "Admin table never renders password hash — DB stores it but API response excludes it (verified: no $2b$ or password_hash in rendered HTML)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only round)", "frontend": "100%"},
+  "test_credentials": "VIP cookie=test_session_vip_X, Normal=test_session_normal_X, Admin=test_session_admin_X",
+  "seed_data_creation": "Re-ran /app/backend/scripts/seed_test_users.py; created transient company_requests + empresa users then cleaned both collections at end of run (parent_user_id in user_test_vip01/user_test_normal01).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Feature is fully working end-to-end. If retesting, remember to use UNIQUE account_email and UNIQUE E.164 company_phone each run — backend enforces uniqueness. Use wait_until='domcontentloaded' + fixed wait (SSE keeps networkidle open).",
+  "rca of the issue": "No bugs encountered."
+}
