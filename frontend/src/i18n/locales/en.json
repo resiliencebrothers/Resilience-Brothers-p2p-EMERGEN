@@ -82,6 +82,7 @@
       "appeals": "Appeals",
       "support": "Support",
       "vipRequests": "VIP requests",
+      "companyRequests": "Business requests",
       "kyc": "KYC",
       "changes": "Profile changes"
     }
@@ -2579,6 +2580,72 @@
     },
     "rejectDialogTitle": "Reject VIP request",
     "rejectDialogBody": "The client {{name}} will receive a notification with your note. They can request again in 7 days.",
+    "rejectDialogPlaceholder": "Reason for rejection (optional but recommended)…"
+  },
+  "companyRequest": {
+    "sectionTitle": "Business Program",
+    "emptyBody": "Own a business? Apply to the Business Program. If Resilience approves your request, a BRAND-NEW, independent business account (with its own login) will be created — separate from your personal account — to publish products, manage stores and inventory, and use delivery.",
+    "ctaFirstTime": "Apply for a Business account",
+    "ctaRetry": "Apply again",
+    "pendingTitle": "Your request is under review",
+    "pendingBody": "Business «{{company}}» with login {{email}}. A team member will review it shortly — we'll notify you with the decision.",
+    "rejectedTitle": "Request rejected",
+    "rejectedNoNote": "The team left no additional comment.",
+    "cooldownRemaining": "You can apply again in {{days}} day(s).",
+    "approvedBody": "Your Business account was created! Log in with {{email}} (and check that inbox to verify the email). Staff must verify the phone before you can operate.",
+    "status": {
+      "pending": "Under review",
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
+    "dialog": {
+      "title": "Apply for a Business account",
+      "body": "This request creates a BRAND-NEW business account, independent from your personal account. Set its login credentials (a different email and password) and the business details. If Resilience approves it, you'll be able to log in with those credentials.",
+      "credentialsSection": "Business account credentials",
+      "businessSection": "Business details",
+      "companyNameLabel": "Commercial / legal name",
+      "companyNamePlaceholder": "e.g. Distribuidora La Habana S.A.",
+      "accountEmailLabel": "Business login email",
+      "accountEmailHint": "Must be different from your personal account email.",
+      "passwordLabel": "Password",
+      "passwordConfirmLabel": "Repeat password",
+      "passwordMismatch": "Passwords do not match.",
+      "phoneLabel": "Contact phone",
+      "phoneHint": "International format, e.g. +5350123456. Must differ from your personal one.",
+      "taxIdLabel": "Tax ID",
+      "taxIdPlaceholder": "e.g. tax / business registry number",
+      "addressLabel": "Address",
+      "addressPlaceholder": "Company's tax / main address",
+      "submit": "Submit request",
+      "successToast": "Request sent. We'll notify you with the decision.",
+      "errorToast": "Could not submit the request."
+    }
+  },
+  "adminCompanyRequests": {
+    "eyebrow": "USERS",
+    "title": "Business requests",
+    "loadError": "Could not load the business requests queue",
+    "empty": "No requests in this queue.",
+    "colRequester": "Requester",
+    "colCompany": "Business",
+    "colAccount": "New login",
+    "colDetails": "Address",
+    "colCreated": "Requested",
+    "colStatus": "Status",
+    "colActions": "Actions",
+    "approve": "Approve",
+    "reject": "Reject",
+    "approvedToast": "Request approved — the business account was created.",
+    "rejectedToast": "Request rejected.",
+    "actionError": "Could not process the action.",
+    "filter": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "all": "All"
+    },
+    "rejectDialogTitle": "Reject business request",
+    "rejectDialogBody": "«{{name}}» will receive a notification with your comment. The client can apply again in 7 days.",
     "rejectDialogPlaceholder": "Reason for rejection (optional but recommended)…"
   },
   "adminAppeals": {

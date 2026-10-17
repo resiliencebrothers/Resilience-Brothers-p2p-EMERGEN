@@ -1,13 +1,14 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Users, MessageSquare, IdCard, UserCog, HelpCircle, Crown } from "lucide-react";
+import { Users, MessageSquare, IdCard, UserCog, HelpCircle, Crown, Building2 } from "lucide-react";
 import AdminUsers from "./AdminUsers";
 import AdminAppeals from "./AdminAppeals";
 import AdminKYC from "./AdminKYC";
 import AdminProfileChangeRequests from "./AdminProfileChangeRequests";
 import AdminSupport from "./AdminSupport";
 import AdminVipRequests from "./AdminVipRequests";
+import AdminCompanyRequests from "./AdminCompanyRequests";
 import { useAuth } from "@/context/AuthContext";
 
 /**
@@ -35,6 +36,7 @@ const ALL_TABS = [
   { id: "appeals",      labelKey: "usersHub.tabs.appeals",      icon: MessageSquare,  Component: AdminAppeals,              perm: "appeals" },
   { id: "support",      labelKey: "usersHub.tabs.support",      icon: HelpCircle,     Component: AdminSupport,              perm: "support" },
   { id: "vip-requests", labelKey: "usersHub.tabs.vipRequests",  icon: Crown,          Component: AdminVipRequests,          perm: "vip_requests" },
+  { id: "company-requests", labelKey: "usersHub.tabs.companyRequests", icon: Building2, Component: AdminCompanyRequests,    perm: "company_requests" },
   { id: "kyc",          labelKey: "usersHub.tabs.kyc",          icon: IdCard,         Component: AdminKYC,                  perm: "kyc" },
   { id: "changes",      labelKey: "usersHub.tabs.changes",      icon: UserCog,        Component: AdminProfileChangeRequests, perm: "profile_changes" },
 ];

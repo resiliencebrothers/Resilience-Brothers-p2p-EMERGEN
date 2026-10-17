@@ -82,6 +82,7 @@
       "appeals": "Apelaciones",
       "support": "Soporte",
       "vipRequests": "Solicitudes VIP",
+      "companyRequests": "Solicitudes Empresa",
       "kyc": "KYC",
       "changes": "Cambios de datos"
     }
@@ -2579,6 +2580,72 @@
     },
     "rejectDialogTitle": "Rechazar solicitud VIP",
     "rejectDialogBody": "El cliente {{name}} recibirá una notificación con tu comentario. Podrá volver a solicitar en 7 días.",
+    "rejectDialogPlaceholder": "Motivo del rechazo (opcional pero recomendado)…"
+  },
+  "companyRequest": {
+    "sectionTitle": "Programa Empresas",
+    "emptyBody": "¿Tienes un negocio? Solicita unirte al Programa Empresas. Si Resilience aprueba tu solicitud, se creará una cuenta de empresa NUEVA e independiente (con su propio acceso), separada de tu cuenta personal, para publicar productos, gestionar tiendas e inventario y usar la mensajería.",
+    "ctaFirstTime": "Solicitar cuenta de Empresa",
+    "ctaRetry": "Volver a solicitar",
+    "pendingTitle": "Tu solicitud está en revisión",
+    "pendingBody": "Empresa «{{company}}» con acceso {{email}}. Un miembro del equipo la revisará en breve — te notificaremos con la decisión.",
+    "rejectedTitle": "Solicitud rechazada",
+    "rejectedNoNote": "El equipo no dejó comentario adicional.",
+    "cooldownRemaining": "Podrás volver a solicitar en {{days}} día(s).",
+    "approvedBody": "¡Tu cuenta de Empresa fue creada! Inicia sesión con {{email}} (y revisa ese correo para verificar el email). El staff debe verificar el teléfono antes de que puedas operar.",
+    "status": {
+      "pending": "En revisión",
+      "approved": "Aprobada",
+      "rejected": "Rechazada"
+    },
+    "dialog": {
+      "title": "Solicitar cuenta de Empresa",
+      "body": "Esta solicitud crea una cuenta de empresa NUEVA e independiente de tu cuenta personal. Define sus credenciales de acceso (email y contraseña distintos) y los datos del negocio. Si Resilience la aprueba, podrás iniciar sesión con esas credenciales.",
+      "credentialsSection": "Credenciales de la cuenta Empresa",
+      "businessSection": "Datos del negocio",
+      "companyNameLabel": "Nombre comercial / legal",
+      "companyNamePlaceholder": "Ej: Distribuidora La Habana S.A.",
+      "accountEmailLabel": "Email de acceso de la Empresa",
+      "accountEmailHint": "Debe ser distinto al email de tu cuenta personal.",
+      "passwordLabel": "Contraseña",
+      "passwordConfirmLabel": "Repetir contraseña",
+      "passwordMismatch": "Las contraseñas no coinciden.",
+      "phoneLabel": "Teléfono de contacto",
+      "phoneHint": "Formato internacional, ej. +5350123456. Debe ser distinto al personal.",
+      "taxIdLabel": "Identificación fiscal",
+      "taxIdPlaceholder": "Ej: RNC / NIF / registro mercantil",
+      "addressLabel": "Dirección",
+      "addressPlaceholder": "Dirección fiscal / principal de la empresa",
+      "submit": "Enviar solicitud",
+      "successToast": "Solicitud enviada. Te notificaremos con la decisión.",
+      "errorToast": "No se pudo enviar la solicitud."
+    }
+  },
+  "adminCompanyRequests": {
+    "eyebrow": "USUARIOS",
+    "title": "Solicitudes de Empresa",
+    "loadError": "No se pudo cargar la cola de solicitudes de Empresa",
+    "empty": "No hay solicitudes en esta cola.",
+    "colRequester": "Solicitante",
+    "colCompany": "Empresa",
+    "colAccount": "Acceso nuevo",
+    "colDetails": "Dirección",
+    "colCreated": "Solicitada",
+    "colStatus": "Estado",
+    "colActions": "Acciones",
+    "approve": "Aprobar",
+    "reject": "Rechazar",
+    "approvedToast": "Solicitud aprobada — se creó la cuenta de Empresa.",
+    "rejectedToast": "Solicitud rechazada.",
+    "actionError": "No se pudo procesar la acción.",
+    "filter": {
+      "pending": "Pendientes",
+      "approved": "Aprobadas",
+      "rejected": "Rechazadas",
+      "all": "Todas"
+    },
+    "rejectDialogTitle": "Rechazar solicitud de Empresa",
+    "rejectDialogBody": "«{{name}}» recibirá una notificación con tu comentario. El cliente podrá volver a solicitar en 7 días.",
     "rejectDialogPlaceholder": "Motivo del rechazo (opcional pero recomendado)…"
   },
   "adminAppeals": {

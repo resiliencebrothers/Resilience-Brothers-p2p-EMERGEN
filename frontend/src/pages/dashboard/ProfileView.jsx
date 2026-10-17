@@ -13,6 +13,7 @@ import TotpPromptDialog, { handleTotpError } from "@/components/TotpPromptDialog
 import CopyableText from "@/components/CopyableText";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 import RequestVipCard from "@/pages/dashboard/profile/RequestVipCard";
+import RequestCompanyCard from "@/pages/dashboard/profile/RequestCompanyCard";
 import {
   User, Mail, Phone, Globe, ShieldCheck, IdCard, Clock, CheckCircle2,
   AlertTriangle, Pencil, Fingerprint, Star,
@@ -109,6 +110,9 @@ export default function ProfileView() {
 
       {/* --- VIP request card (iter109) — only for role="normal" --- */}
       <RequestVipCard userRole={user?.role} />
+
+      {/* --- Programa Empresas — crea una cuenta Empresa independiente --- */}
+      <RequestCompanyCard userRole={user?.role} />
 
       {/* --- KYC card --- */}
       <section className="tactile-card p-6 space-y-3" data-testid="profile-kyc">

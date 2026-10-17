@@ -48,6 +48,7 @@ from routes.capital_requests import router as capital_requests_router  # noqa: E
 from routes.live import router as live_router  # noqa: E402
 from routes.support import router as support_router  # noqa: E402
 from routes.vip_requests import router as vip_requests_router  # noqa: E402
+from routes.company_requests import router as company_requests_router  # noqa: E402
 from routes.vip_batches import router as vip_batches_router  # noqa: E402
 from routes.deliveries import router as deliveries_router  # noqa: E402
 from routes.delivery_chat import router as delivery_chat_router  # noqa: E402
@@ -112,6 +113,7 @@ api_router.include_router(capital_requests_router)
 api_router.include_router(live_router)
 api_router.include_router(support_router)
 api_router.include_router(vip_requests_router)
+api_router.include_router(company_requests_router)
 api_router.include_router(vip_batches_router)
 api_router.include_router(deliveries_router)
 api_router.include_router(delivery_chat_router)
