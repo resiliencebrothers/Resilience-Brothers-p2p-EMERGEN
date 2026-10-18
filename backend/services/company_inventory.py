@@ -1120,10 +1120,12 @@ async def prune_inv_burned_guards(retention_days: int = INV_BURNED_RETENTION_DAY
         if not guards:
             continue
         # Podable SOLO con invalidación VERIFICABLE del escritor (no por tiempo/estado).
+        # `$ne: None` exige un valor VÁLIDO presente (no null ni ausente), unificando
+        # el criterio con el indicador `prunable` (que usa un valor verdadero).
         terminal = [r["op_key"] async for r in db.company_inventory_ops.find(
             {"company_id": prod["company_id"], "op_key": {"$in": guards},
              "status": "done", "done_at": {"$lt": cutoff},
-             "writer_invalidated_at": {"$exists": True}},
+             "writer_invalidated_at": {"$ne": None}},
             {"_id": 0, "op_key": 1})]
         if not terminal:
             continue

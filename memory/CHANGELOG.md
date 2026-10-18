@@ -1,3 +1,18 @@
+## Changelog — 17 Oct 2026 (Auditoría rol Empresa · commit ebec943)
+
+Correcciones de la auditoría estática del rol Empresa + 2 funciones pedidas. Cada fix con regresión y CONTROL NEGATIVO (sin el fix, las pruebas fallan). mypy limpio (119 archivos), ESLint 0 errores, pytest de las áreas tocadas 62/62.
+
+- **EMP-A01 (alta) — compensación sin cancelación acreditada** [`services/credit_recovery.py`]: la fase de REINTENTO (`retry_rows`) compensaba tarifa/inventario sin verificar la cancelación de la entrega. Nuevo helper `_cancel_or_resolve_delivery(reqid)` usado en AMBAS fases: antes de compensar, cancela y RE-VERIFICA la entrega vinculada → `delivered/confirmed` ⇒ reactivar como `requested` (no reembolsar); entrega aún activa/incierta ⇒ dejar PENDIENTE sin sellar (reintento); `cancelled`/inexistente ⇒ compensar. Tests: `test_empa01_*` (4) en `test_empresa_r02_r03_durable.py`.
+- **EMP-A02 (alta) — fuga de credenciales en verify/reject phone** [`routes/blocklist.py`]: las 3 ramas (`verify`, ya-verificado, `reject`) devolvían el user completo (`password_hash`, `verification_token`, secretos 2FA). Ahora pasan por `strip_credential_fields`. Tests: `test_empa02_*` (3).
+- **EMP-A03 (alta) — bloqueo masivo omitía empresa** [`routes/blocklist.py`]: `bulk_import` suspendía solo `normal/vip`. Añadido `empresa` al filtro → una empresa con teléfono recién bloqueado pasa a `under_review` y pierde `phone_verified`. Test: `test_empa03_bulk_import_suspends_empresa_too`.
+- **EMP-A04 (media) — aviso sellado como completado**: YA corregido en P02-R (`_run_channel` exige éxito explícito; `_notify_client_decision` devuelve bool). Regresión verde (`test_company_request_decision_race.py`).
+- **EMP-A05 (media) — CI**: (a) mypy `_run_channel fn` sin anotar → YA corregido en P02-R (mypy 119 archivos OK); (b) ESLint `InventoryGuardsTab.jsx:144` `rb-local/no-dialog-without-scroll` → añadido `max-h-[85vh] overflow-y-auto` al `DialogContent` (ESLint 0 errores).
+- **RET-R (obs. baja) — criterio de poda unificado** [`services/company_inventory.py`]: `prune_inv_burned_guards` cambiaba `writer_invalidated_at: {$exists: True}` (admite `null`) por `{$ne: None}` (valor VÁLIDO presente), unificando con el `prunable` del detalle.
+- **Feature — Gate de Retiros (KYB)**: YA implementado — `/vip/withdraw` llama `assert_user_fully_verified`, que para empresa exige el último expediente `kind=company` en `verified`. Confirmado.
+- **Feature — Aviso al Representante** [`email_service.py`, `routes/kyc.py`]: además del aviso in-app ya existente, al decidir un KYB de EMPRESA se envía EMAIL company-aware con el motivo — `notify_company_kyb_approved/rejected/needs_info`, despachadas por `_maybe_email_company_kyb(v, decision, reason)` en approve/reject/more-info/bulk-approve (solo `kind=company`). Test: `test_feature2_company_kyb_decision_emails_the_representative`.
+- **EMP-O01 (observación, no error)**: la secuencia es teléfono verificado → cuenta activa → envío de KYB → aprobación. Se deja documentada; no se cambió la UI (fuera del alcance "errores").
+
+
 ## Changelog — 17 Oct 2026 (KYB Empresas)
 
 ### KYB de empresas visible en Usuarios (pestaña dedicada "Company KYB")

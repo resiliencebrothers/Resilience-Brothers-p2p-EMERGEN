@@ -141,7 +141,7 @@ export default function InventoryGuardsTab() {
 
       {/* Modal de detalle por producto */}
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-3xl"
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-3xl max-h-[85vh] overflow-y-auto"
           data-testid="guards-detail-dialog">
           <DialogHeader>
             <DialogTitle className="font-display">

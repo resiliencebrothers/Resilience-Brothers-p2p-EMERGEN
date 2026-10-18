@@ -20,6 +20,7 @@ nunca se duplica, y el reintento no queda bloqueado.
 """
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from db_client import db
 # Re-export: los call sites históricos importan estas primitivas desde aquí.
@@ -671,6 +672,57 @@ async def heal_initializing_ops(max_age_seconds: int = 120) -> int:
 
 
 
+async def _cancel_or_resolve_delivery(reqid: str) -> str:
+    """EMP-A01 — asegura el PRERREQUISITO de cancelación de la entrega vinculada
+    a un alta de envío Empresa abortada ANTES de compensar tarifa/inventario.
+
+    El cambio de estado de la SOLICITUD (failed_init) y el tiempo transcurrido NO
+    acreditan que la ENTREGA física se cancelara: un `cancel_active_delivery` que
+    falla o lanza puede dejar la entrega aún activa — o incluso ya entregada.
+    Reembolsar la tarifa o restituir el stock en ese estado sería indebido (una
+    entrega física completada no es un alta fallida). Devuelve:
+      - 'compensate' : la entrega está cancelada o nunca existió → seguro compensar.
+      - 'reactivated': la entrega avanzó a delivered/confirmed → se reactiva la
+                       solicitud como 'requested'; NO se compensa.
+      - 'pending'    : la entrega sigue activa y no se pudo cancelar (estado
+                       incierto) → NO compensar; se reintenta en el próximo ciclo.
+    """
+    from services.deliveries import cancel_active_delivery
+
+    async def _lookup() -> Optional[dict]:
+        return await db.deliveries.find_one(
+            {"kind": "company_delivery", "ref_id": reqid},
+            {"_id": 0, "id": 1, "status": 1})
+
+    async def _reactivate(d: dict) -> None:
+        await db.company_delivery_requests.update_one(
+            {"id": reqid, "status": "failed_init"},
+            {"$set": {"status": "requested", "delivery_id": d["id"],
+                      "updated_at": datetime.now(timezone.utc).isoformat()}})
+
+    d = await _lookup()
+    if not d:
+        return "compensate"  # nunca se creó entrega → nada que cancelar
+    st = d.get("status")
+    if st in ("delivered", "confirmed"):
+        await _reactivate(d)
+        return "reactivated"
+    if st == "cancelled":
+        return "compensate"
+    # Entrega todavía activa → intenta cancelar y RE-VERIFICA el efecto real.
+    await cancel_active_delivery(
+        "company_delivery", reqid, actor_id="system",
+        note="alta de envío incompleta revertida")
+    d2 = await _lookup()
+    st2 = (d2 or {}).get("status")
+    if st2 == "cancelled":
+        return "compensate"
+    if st2 in ("delivered", "confirmed") and d2:
+        await _reactivate(d2)
+        return "reactivated"
+    return "pending"  # estado incierto → no sellar éxito; reintentar
+
+
 async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> int:
     """E34-02/R02/R03 — compensa de forma DURADERA las altas de envío de Empresa
     que quedaron a medias ('initializing' por un crash entre fases).
@@ -690,7 +742,6 @@ async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> in
     en EFECTOS DURADEROS, no en flags que pudieron quedar atrasados, y solo sella
     'refunded'/'inv_returned' cuando el efecto real se produjo."""
     from services.company_delivery_recovery import _compensate_and_maybe_seal
-    from services.deliveries import cancel_active_delivery
     cutoff = (datetime.now(timezone.utc)
               - timedelta(seconds=max_age_seconds)).isoformat()
     rows = await db.company_delivery_requests.find(
@@ -708,23 +759,13 @@ async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> in
             if claim.modified_count == 0:
                 continue  # el creador activó primero: NO compensar
             reqid = r["id"]
-            # Cancela el trabajo si llegó a crearse y COMPRUEBA el resultado (R03).
-            cancel_res = await cancel_active_delivery(
-                "company_delivery", reqid, actor_id="system",
-                note="alta de envío incompleta revertida")
-            if cancel_res.matched_count == 0:
-                # No se pudo cancelar: ¿porque ya está sellada (delivered/confirmed)?
-                d = await db.deliveries.find_one(
-                    {"kind": "company_delivery", "ref_id": reqid},
-                    {"_id": 0, "id": 1, "status": 1})
-                if d and d.get("status") in ("delivered", "confirmed"):
-                    # Entrega REAL en curso → reactivar como solicitud válida; NO
-                    # reembolsar ni devolver stock de una entrega física sellada.
-                    await db.company_delivery_requests.update_one(
-                        {"id": reqid, "status": "failed_init"},
-                        {"$set": {"status": "requested", "delivery_id": d["id"],
-                                  "updated_at": datetime.now(timezone.utc).isoformat()}})
-                    continue
+            # EMP-A01 — ANTES de compensar, asegura el PRERREQUISITO de
+            # cancelación de la entrega (el cambio de estado de la solicitud no
+            # basta): cancela y RE-VERIFICA. delivered/confirmed → reactivar;
+            # entrega aún activa o estado incierto → dejar pendiente sin sellar.
+            gate = await _cancel_or_resolve_delivery(reqid)
+            if gate != "compensate":
+                continue
             # Compensa por efectos duraderos y sella SOLO si todo queda resuelto.
             updates = await _compensate_and_maybe_seal(r)
             updates["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -748,6 +789,14 @@ async def heal_initializing_company_deliveries(max_age_seconds: int = 120) -> in
         {"_id": 0}).to_list(200)
     for r in retry_rows:
         try:
+            # EMP-A01 — el reintento DEBE reanudar también el PRERREQUISITO de
+            # cancelación, no solo los efectos económicos: verifica/cancela la
+            # entrega vinculada antes de compensar. delivered/confirmed →
+            # reactivar; estado incierto → se queda pendiente (no se sella) y se
+            # reintenta en el próximo ciclo.
+            gate = await _cancel_or_resolve_delivery(r["id"])
+            if gate != "compensate":
+                continue
             updates = await _compensate_and_maybe_seal(r)
             if updates:
                 updates["updated_at"] = datetime.now(timezone.utc).isoformat()

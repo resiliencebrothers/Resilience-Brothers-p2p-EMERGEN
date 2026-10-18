@@ -23,6 +23,7 @@ from pydantic import BaseModel, EmailStr, Field
 from db_client import db
 from auth_utils import (
     require_staff, normalize_phone, now_utc, iso, _enforce_totp_step_up,
+    strip_credential_fields,
 )
 from audit_log import log_action
 from services.anti_scam import mark_user_under_review, mark_user_active
@@ -221,10 +222,13 @@ async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Requ
         imported.append(phone)
     affected_users = 0
     if imported:
-        # iter46 — set status + stamp under_review_since only if missing,
-        # preserving the open-ticket timestamp on users already flagged.
+        # EMP-A03 — incluir también el rol `empresa`: una cuenta Empresa cuyo
+        # teléfono acaba de bloquearse debe pasar a revisión y perder
+        # phone_verified igual que normal/vip (si no, su sesión abierta seguiría
+        # operando pese al bloqueo). under_review_since se sella solo si falta,
+        # preservando el ticket abierto de cuentas ya marcadas.
         res = await db.users.update_many(
-            {"phone": {"$in": imported}, "role": {"$in": ["normal", "vip"]}},
+            {"phone": {"$in": imported}, "role": {"$in": ["normal", "vip", "empresa"]}},
             [{"$set": {
                 "account_status": "under_review",
                 "phone_verified": False,
@@ -288,7 +292,7 @@ async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
             },
         )
     if target.get("phone_verified") and target.get("account_status") == "active":
-        return {"ok": True, "already_verified": True, "user": target}
+        return {"ok": True, "already_verified": True, "user": strip_credential_fields(target)}
     await mark_user_active(user_id)
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     try:
@@ -308,7 +312,7 @@ async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
         summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
         details={"email": target.get("email"), "phone": target.get("phone")},
     )
-    return {"ok": True, "already_verified": False, "user": fresh}
+    return {"ok": True, "already_verified": False, "user": strip_credential_fields(fresh)}
 
 
 @router.post("/admin/users/{user_id}/reject-phone")
@@ -350,4 +354,4 @@ async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, req
         summary=f"Rechazó teléfono y bloqueó a {target.get('email','')} ({phone})",
         details={"phone": phone, "reason": payload.reason},
     )
-    return {"ok": True, "user": fresh}
+    return {"ok": True, "user": strip_credential_fields(fresh)}

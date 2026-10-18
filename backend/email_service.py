@@ -507,6 +507,79 @@ def notify_phone_change_rejected(to: str, name: str, new_phone_masked: str,
     return _send(to, subject, _base_template(_L("Cambio de teléfono rechazado", "Phone change rejected", lang), body, lang))
 
 
+def notify_company_kyb_approved(to: str, name: str, lang: str = "es") -> bool:
+    """E34 — la verificación de EMPRESA (KYB) fue aprobada: la cuenta Empresa ya
+    puede operar y retirar fondos."""
+    subject = _L("Tu verificación de empresa (KYB) fue aprobada · Resilience Brothers",
+                 "Your company verification (KYB) was approved · Resilience Brothers", lang)
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        {_L(f"Hola {name or 'empresa'} — el equipo revisó la documentación de tu empresa (código fiscal, licencia operativa e identificación del representante legal) y la APROBÓ.",
+            f"Hi {name or 'company'} — the team reviewed your company documents (fiscal code, operating license and legal representative ID) and APPROVED them.", lang)}
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(34,197,94,0.4);padding:18px;">
+        <p style="margin:0;color:#22C55E;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Empresa verificada", "Company verified", lang)}</p>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        {_L("Ya puedes operar con normalidad y solicitar retiros desde tu panel Empresa → Saldo.",
+            "You can now operate normally and request withdrawals from your Company panel → Balance.", lang)}
+      </p>
+    """
+    return _send(to, subject,
+                 _base_template(_L("Empresa verificada", "Company verified", lang), body, lang),
+                 kind="company_kyb_approved")
+
+
+def notify_company_kyb_rejected(to: str, name: str, reason: str, lang: str = "es") -> bool:
+    """E34 — la verificación de EMPRESA (KYB) fue rechazada, con el motivo. La
+    empresa puede volver a enviar su documentación."""
+    subject = _L("Tu verificación de empresa (KYB) fue rechazada · Resilience Brothers",
+                 "Your company verification (KYB) was rejected · Resilience Brothers", lang)
+    safe_reason = (reason or "").strip()[:600] or _L("Sin motivo especificado", "No reason provided", lang)
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        {_L(f"Hola {name or 'empresa'} — el equipo revisó la documentación de tu empresa y, por ahora, NO pudo aprobarla.",
+            f"Hi {name or 'company'} — the team reviewed your company documents and, for now, could NOT approve them.", lang)}
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(239,68,68,0.4);padding:18px;">
+        <p style="margin:0 0 8px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Motivo", "Reason", lang)}</p>
+        <p style="margin:0;color:#fff;font-size:13px;line-height:1.6;white-space:pre-line;">{safe_reason}</p>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        {_L("Puedes volver a enviar tu documentación corregida desde tu panel Empresa → Verificación.",
+            "You can resubmit corrected documents from your Company panel → Verification.", lang)}
+      </p>
+    """
+    return _send(to, subject,
+                 _base_template(_L("Verificación de empresa rechazada", "Company verification rejected", lang), body, lang),
+                 kind="company_kyb_rejected")
+
+
+def notify_company_kyb_needs_info(to: str, name: str, notes: str, lang: str = "es") -> bool:
+    """E34 — el equipo pide información/documentación adicional para el KYB."""
+    subject = _L("Tu verificación de empresa (KYB) necesita más información · Resilience Brothers",
+                 "Your company verification (KYB) needs more information · Resilience Brothers", lang)
+    safe_notes = (notes or "").strip()[:600] or _L("Revisa que los documentos sean legibles y vigentes.",
+                                                    "Check that the documents are legible and current.", lang)
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
+        {_L(f"Hola {name or 'empresa'} — el equipo necesita información adicional para completar la verificación de tu empresa.",
+            f"Hi {name or 'company'} — the team needs additional information to complete your company verification.", lang)}
+      </p>
+      <div style="background:#0a0a0a;border:1px solid rgba(234,179,8,0.4);padding:18px;">
+        <p style="margin:0 0 8px;color:#EAB308;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Qué necesitamos", "What we need", lang)}</p>
+        <p style="margin:0;color:#fff;font-size:13px;line-height:1.6;white-space:pre-line;">{safe_notes}</p>
+      </div>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        {_L("Vuelve a enviar la documentación desde tu panel Empresa → Verificación.",
+            "Resubmit your documents from your Company panel → Verification.", lang)}
+      </p>
+    """
+    return _send(to, subject,
+                 _base_template(_L("Verificación de empresa: más información", "Company verification: more info", lang), body, lang),
+                 kind="company_kyb_needs_info")
+
+
 def notify_email_verification(to: str, name: str, token: str, lang: str = "es") -> bool:
     link = f"{_app_url()}/auth/verify-email/{token}"
     body = f"""

@@ -9,7 +9,6 @@ R03: el creador y el recuperador comparten la decisión terminal (CAS sobre
      la solicitud; si la entrega ya avanzó (delivered/confirmed), el recuperador
      NO la trata como alta incompleta ni reembolsa.
 """
-import asyncio
 import uuid
 
 import pytest
@@ -154,5 +153,99 @@ async def test_r03_delivered_is_not_refunded():
         assert await _bal() == 95.0 and await _stock(pid) == 7.0
         r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
         assert r["status"] == "requested"  # reactivada como válida
+    finally:
+        await _clean()
+
+
+
+# ============================================================
+# EMP-A01 — la COMPENSACIÓN exige acreditar la CANCELACIÓN de la entrega, también
+# en la FASE DE REINTENTO. Antes, un alta que quedó 'failed_init' porque la
+# cancelación FALLÓ/lanzó (entrega aún activa o ya entregada) era compensada por
+# retry_rows sin comprobar la entrega → reembolso/restitución indebidos.
+# ============================================================
+
+async def _seed_failed_init_with_delivery(reqid, delivery_status, **deliv_extra):
+    """Deja la solicitud en 'failed_init' (efecto real aplicado: saldo 95, stock 7)
+    con una entrega vinculada en el estado indicado, simulando el estado tras un
+    fallo de cancelación en la fase 1."""
+    pid, sid = await _seed_real(reqid, held_flag=True, reserved_flag=True)
+    await db.company_delivery_requests.update_one(
+        {"id": reqid}, {"$set": {"status": "failed_init"}})
+    doc = {"id": f"d-{reqid}", "kind": "company_delivery", "ref_id": reqid,
+           "status": delivery_status, "created_by": CID,
+           "created_at": "2020-01-01T00:00:00+00:00"}
+    doc.update(deliv_extra)
+    await db.deliveries.insert_one(doc)
+    return pid, sid
+
+
+async def test_empa01_retry_does_not_compensate_delivered_delivery():
+    await _clean()
+    reqid = str(uuid.uuid4())
+    try:
+        # Entrega ENTREGADA (movimiento físico sellado) pero la solicitud quedó
+        # failed_init sin sellar compensación (la cancelación no la canceló).
+        pid, sid = await _seed_failed_init_with_delivery(reqid, "delivered")
+        assert await _bal() == 95.0 and await _stock(pid) == 7.0
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        # EMP-A01: NO se reembolsa ni se devuelve stock de una entrega física.
+        assert await _bal() == 95.0 and await _stock(pid) == 7.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["status"] == "requested"          # reactivada, NO compensada
+        assert r.get("comp_sealed") is not True
+        assert r.get("fee_status") != "refunded"
+    finally:
+        await _clean()
+
+
+async def test_empa01_retry_keeps_pending_when_delivery_uncancellable():
+    await _clean()
+    reqid = str(uuid.uuid4())
+    try:
+        # Entrega AÚN ACTIVA que cancel_active_delivery NO puede cancelar (payout
+        # ya acreditado) y que NO está delivered/confirmed → estado INCIERTO.
+        pid, sid = await _seed_failed_init_with_delivery(
+            reqid, "active", payout_credited=True)
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        # EMP-A01: estado incierto → NO compensar ni sellar; se reintenta.
+        assert await _bal() == 95.0 and await _stock(pid) == 7.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["status"] == "failed_init"
+        assert r.get("comp_sealed") is not True
+        assert r.get("fee_status") != "refunded"
+    finally:
+        await _clean()
+
+
+async def test_empa01_retry_compensates_when_delivery_cancelled():
+    await _clean()
+    reqid = str(uuid.uuid4())
+    try:
+        # Entrega CANCELADA → prerrequisito cumplido: la compensación SÍ procede.
+        pid, sid = await _seed_failed_init_with_delivery(reqid, "cancelled")
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        assert await _bal() == 100.0 and await _stock(pid) == 10.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["status"] == "failed_init"
+        assert r["fee_status"] == "refunded" and r["inv_returned"] is True
+        assert r.get("comp_sealed") is True
+    finally:
+        await _clean()
+
+
+async def test_empa01_retry_cancels_active_delivery_then_compensates():
+    await _clean()
+    reqid = str(uuid.uuid4())
+    try:
+        # Entrega activa CANCELABLE: el reintento la cancela y, ya acreditada la
+        # cancelación, compensa. (No deja envíos activos sin su solicitud.)
+        pid, sid = await _seed_failed_init_with_delivery(reqid, "assigned")
+        await heal_initializing_company_deliveries(max_age_seconds=0)
+        d = await db.deliveries.find_one({"ref_id": reqid}, {"_id": 0, "status": 1})
+        assert d["status"] == "cancelled"
+        assert await _bal() == 100.0 and await _stock(pid) == 10.0
+        r = await db.company_delivery_requests.find_one({"id": reqid}, {"_id": 0})
+        assert r["fee_status"] == "refunded" and r.get("comp_sealed") is True
     finally:
         await _clean()

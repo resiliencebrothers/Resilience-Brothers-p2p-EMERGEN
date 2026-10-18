@@ -272,6 +272,31 @@ async def admin_kyc_detail(verification_id: str, request: Request) -> Any:
     return v
 
 
+async def _maybe_email_company_kyb(v: dict, decision: str, reason: str = "") -> None:
+    """E34 — si la verificación es de EMPRESA (KYB), avisa por EMAIL al
+    representante de la decisión (además del aviso in-app ya existente), con el
+    motivo cuando aplica. Best-effort: un fallo de correo no altera la decisión."""
+    if not v or v.get("kind") != "company":
+        return
+    try:
+        u = await db.users.find_one(
+            {"user_id": v["user_id"]},
+            {"_id": 0, "email": 1, "name": 1, "preferred_language": 1})
+        if not u or not u.get("email"):
+            return
+        import email_service
+        to, name = u["email"], (u.get("name") or "")
+        lang = u.get("preferred_language") or "es"
+        if decision == "approved":
+            email_service.notify_company_kyb_approved(to, name, lang=lang)
+        elif decision == "rejected":
+            email_service.notify_company_kyb_rejected(to, name, reason, lang=lang)
+        elif decision == "needs_info":
+            email_service.notify_company_kyb_needs_info(to, name, reason, lang=lang)
+    except Exception:  # noqa: BLE001
+        logger.exception(f"company KYB email ({decision}) failed for {v.get('user_id')}")
+
+
 @router.post("/admin/kyc/bulk-approve")
 async def admin_kyc_bulk_approve(
     payload: _KYCBulkApprovePayload, request: Request,
@@ -299,6 +324,7 @@ async def admin_kyc_bulk_approve(
                 await notify_user_kyc_verified(db, v["user_id"])
             except Exception:  # noqa: BLE001
                 logger.exception(f"notify_user_kyc_verified failed for {v['user_id']}")
+            await _maybe_email_company_kyb(v, "approved")
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"bulk approve failed for {vid}")
             failed.append({"id": vid, "reason": str(exc)[:100]})
@@ -323,6 +349,7 @@ async def admin_kyc_approve(
         await notify_user_kyc_verified(db, v["user_id"])
     except Exception:  # noqa: BLE001
         logger.exception(f"notify_user_kyc_verified failed for {v['user_id']}")
+    await _maybe_email_company_kyb(v, "approved")
     return v
 
 
@@ -346,6 +373,10 @@ async def admin_kyc_reject(
         await notify_user_kyc_rejected(db, v["user_id"], payload.reasons, payload.notes)
     except Exception:  # noqa: BLE001
         logger.exception(f"notify_user_kyc_rejected failed for {v['user_id']}")
+    reason = " · ".join(payload.reasons)
+    if payload.notes:
+        reason = f"{reason}\n{payload.notes}" if reason else payload.notes
+    await _maybe_email_company_kyb(v, "rejected", reason)
     return v
 
 
@@ -365,4 +396,5 @@ async def admin_kyc_request_more(
         await notify_user_kyc_needs_more_info(db, v["user_id"], payload.notes)
     except Exception:  # noqa: BLE001
         logger.exception(f"notify_user_kyc_needs_more_info failed for {v['user_id']}")
+    await _maybe_email_company_kyb(v, "needs_info", payload.notes)
     return v
