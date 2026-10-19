@@ -466,7 +466,13 @@ async def run_inv_burned_maintenance(db):
     try:
         from services.company_inventory import (prune_inv_burned_guards,
                                                  inv_burned_stats,
+                                                 seal_invalidated_writers,
                                                  INV_BURNED_ALERT_THRESHOLD)
+        # RET-R(fencing) — PRIMERO sella la invalidación verificable del escritor en
+        # las ops abortadas sin lease en vuelo; SOLO entonces la poda puede retirarlas.
+        sealed = await seal_invalidated_writers()
+        if sealed:
+            logger.info("[inv-burned] %s op(s) con invalidación de escritor sellada", sealed)
         pruned = await prune_inv_burned_guards()
         if pruned:
             logger.info("[inv-burned] %s guard(s) podados (terminales y antiguos)",

@@ -163,7 +163,23 @@ async def _run_idempotent(company_id: str, op_key: Optional[str], op_type: str,
             return prior.get("result", "applied")
         # 'pending': intento previo incompleto o concurrente → se sigue a apply;
         # el guard inv_ops impide una segunda mutación.
-    result = await apply_fn(oid)
+    # RET-R(fencing) — LEASE de ESCRITOR EN VUELO: registra un intento ANTES de la
+    # mutación y lo retira SIEMPRE al terminar (incluso ante excepción). Mientras
+    # `apply_in_flight` no esté vacío hay un escritor entre su lectura de
+    # idempotencia y su escritura: su guard `inv_burned` NO es podable (es la
+    # INVALIDACIÓN VERIFICABLE del escritor). Como una op 'done'/'burned'
+    # cortocircuita arriba a los intentos futuros, el lease solo DECRECE: una vez
+    # vacío lo es de forma permanente y el candado puede retirarse con seguridad.
+    attempt = uuid.uuid4().hex
+    await db.company_inventory_ops.update_one(
+        {"company_id": company_id, "op_key": oid},
+        {"$addToSet": {"apply_in_flight": attempt}})
+    try:
+        result = await apply_fn(oid)
+    finally:
+        await db.company_inventory_ops.update_one(
+            {"company_id": company_id, "op_key": oid},
+            {"$pull": {"apply_in_flight": attempt}})
     # H03-R2 — CIERRE CONDICIONAL: una decisión TERMINAL DURADERA de aborto
     # ('burned', sellada por freeze_dispatch/burn_or_undo_pickup mientras este
     # intento estaba PAUSADO) JAMÁS puede ser sobrescrita por un ejecutor EN
@@ -1065,15 +1081,37 @@ async def maybe_alert_store_out_of_stock(company_id: str, product_id: str,
 #   y el estado terminal no prueban que no quede una corrutina suspendida que, al
 #   despertar, ejecute su `find_one_and_update` sobre el producto. Por eso la poda
 #   ya NO se basa en tiempo+estado: retira un guard SOLO cuando la operación lleva
-#   una INVALIDACIÓN VERIFICABLE del escritor (`writer_invalidated_at`), fijada
-#   atómicamente por un mecanismo de fencing/generación. Mientras ese sello no
-#   exista, las marcas se CONSERVAN (la retención ilimitada es segura; su tamaño
-#   se vigila con el umbral de alerta). El indicador `prunable` usa el MISMO
-#   criterio estricto.
+#   una INVALIDACIÓN VERIFICABLE del escritor (`writer_invalidated_at`).
+#
+# RET-R(fencing) — CÓMO SE OBTIENE ESA INVALIDACIÓN VERIFICABLE:
+#   `_run_idempotent` mantiene un LEASE `apply_in_flight` (un id por intento)
+#   mientras un escritor está entre su lectura de idempotencia y su escritura.
+#   `seal_invalidated_writers()` sella `writer_invalidated_at` SOLO en las ops
+#   abortadas cuyo lease está VACÍO (ningún escritor en vuelo). Como una op 'done'
+#   cortocircuita a los intentos futuros, el lease, una vez vacío, lo es para
+#   siempre → el sello es permanente y fiable. La poda exige ese sello Y re-verifica
+#   el lease vacío en el momento de podar. Un escritor suspendido mantiene su lease
+#   ⇒ su guard NUNCA se poda. El indicador `prunable` usa el MISMO criterio.
 # ============================================================
 
 INV_BURNED_ALERT_THRESHOLD = 5000
 INV_BURNED_RETENTION_DAYS = 90
+
+# apply_in_flight vacío = ausente, null o lista vacía.
+_NO_WRITER_IN_FLIGHT: dict = {"apply_in_flight": {"$in": [None, []]}}
+
+
+async def seal_invalidated_writers() -> int:
+    """RET-R(fencing) — sella `writer_invalidated_at` en las reservas ABORTADAS
+    ('done'+'burned') que YA no tienen ningún escritor en vuelo (`apply_in_flight`
+    vacío). Es la INVALIDACIÓN VERIFICABLE y permanente requisito para poder
+    retirar el guard `inv_burned`. Devuelve cuántas operaciones selló."""
+    res = await db.company_inventory_ops.update_many(
+        {"status": "done", "result": "burned",
+         "writer_invalidated_at": {"$exists": False},
+         **_NO_WRITER_IN_FLIGHT},
+        {"$set": {"writer_invalidated_at": iso(now_utc())}})
+    return res.modified_count
 
 
 async def inv_burned_stats(threshold: int = INV_BURNED_ALERT_THRESHOLD,
@@ -1120,12 +1158,13 @@ async def prune_inv_burned_guards(retention_days: int = INV_BURNED_RETENTION_DAY
         if not guards:
             continue
         # Podable SOLO con invalidación VERIFICABLE del escritor (no por tiempo/estado).
-        # `$ne: None` exige un valor VÁLIDO presente (no null ni ausente), unificando
-        # el criterio con el indicador `prunable` (que usa un valor verdadero).
+        # `$ne: None` exige un valor VÁLIDO presente; además se RE-VERIFICA el lease
+        # `apply_in_flight` vacío en el instante de podar (ningún escritor en vuelo).
         terminal = [r["op_key"] async for r in db.company_inventory_ops.find(
             {"company_id": prod["company_id"], "op_key": {"$in": guards},
              "status": "done", "done_at": {"$lt": cutoff},
-             "writer_invalidated_at": {"$ne": None}},
+             "writer_invalidated_at": {"$ne": None},
+             **_NO_WRITER_IN_FLIGHT},
             {"_id": 0, "op_key": 1})]
         if not terminal:
             continue
@@ -1184,13 +1223,14 @@ async def inv_burned_product_detail(product_id: str, limit: int = 200) -> Option
             {"company_id": prod["company_id"], "op_key": {"$in": guards}},
             {"_id": 0, "op_key": 1, "op_type": 1, "result": 1, "status": 1,
              "done_at": 1, "guard_blocked_at": 1, "guard_block_count": 1,
-             "writer_invalidated_at": 1}):
+             "writer_invalidated_at": 1, "apply_in_flight": 1}):
         ops[o["op_key"]] = o
     entries = []
     for op_id in guards:
         o = ops.get(op_id, {})
         done_at = o.get("done_at")
         invalidated = o.get("writer_invalidated_at")
+        in_flight = bool(o.get("apply_in_flight"))
         entries.append({
             "op_id": op_id,
             "op_type": o.get("op_type"),
@@ -1198,10 +1238,11 @@ async def inv_burned_product_detail(product_id: str, limit: int = 200) -> Option
             "status": o.get("status"),
             "done_at": done_at,
             "writer_invalidated_at": invalidated,
+            "writer_in_flight": in_flight,
             "blocked_late": bool(o.get("guard_blocked_at")),
             "block_attempts": o.get("guard_block_count", 0),
             "prunable": bool(o.get("status") == "done" and done_at and done_at < cutoff
-                             and invalidated),
+                             and invalidated and not in_flight),
         })
     return {
         "product_id": prod["id"],

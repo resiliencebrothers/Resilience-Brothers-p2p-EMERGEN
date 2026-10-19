@@ -1058,3 +1058,73 @@ async def test_retr_suspended_writer_blocked_even_after_prune(monkeypatch):
     finally:
         monkeypatch.undo()
         await _clean()
+
+
+# RET-R(fencing) — INVALIDACIÓN VERIFICABLE end-to-end: mientras un escritor está
+# EN VUELO (lease `apply_in_flight` activo) la op abortada NO se sella como
+# invalidada y su guard NO se poda; cuando el escritor termina (lease vacío), el
+# sellador invalida y la poda retira el guard de forma SEGURA.
+async def test_retr_fencing_seals_only_when_no_writer_in_flight(monkeypatch):
+    await _clean()
+    try:
+        pid, sid = await _seed_company(stock=10.0)  # central=7, estantería=3
+        real_db = ci_mod.db
+        cap = {}
+
+        class _Products:
+            def __getattr__(self, n):
+                return getattr(real_db.products, n)
+
+            async def find_one_and_update(self, *a, **k):
+                # En PLENO apply del escritor (su lease está activo): se aborta la op.
+                if not cap.get("fired"):
+                    cap["fired"] = True
+                    await ci.freeze_dispatch(CID, pid, sid, 3, "fx")
+                    # El sellador NO debe invalidar: hay un escritor EN VUELO.
+                    cap["sealed_mid"] = await ci.seal_invalidated_writers()
+                    op = await real_db.company_inventory_ops.find_one(
+                        {"company_id": CID, "op_key": "fx"},
+                        {"_id": 0, "apply_in_flight": 1, "writer_invalidated_at": 1})
+                    cap["inflight_mid"] = op.get("apply_in_flight")
+                    cap["stamp_mid"] = op.get("writer_invalidated_at")
+                return await real_db.products.find_one_and_update(*a, **k)
+
+        class _Db:
+            def __getattr__(self, n):
+                return products_proxy if n == "products" else getattr(real_db, n)
+
+        products_proxy = _Products()
+        monkeypatch.setattr(ci_mod, "db", _Db())
+        res = await ci.dispatch_from_store(CID, pid, sid, 3, op_id="fx")
+        monkeypatch.undo()
+
+        assert res == "burned"
+        # DURANTE el vuelo: lease NO vacío (un id de intento) y sin sellar.
+        assert cap["inflight_mid"] and len(cap["inflight_mid"]) == 1
+        assert cap["sealed_mid"] == 0 and cap["stamp_mid"] is None
+        # TRAS terminar el apply, el lease quedó vacío (se retiró en el finally).
+        op = await db.company_inventory_ops.find_one(
+            {"company_id": CID, "op_key": "fx"}, {"_id": 0, "apply_in_flight": 1})
+        assert not op.get("apply_in_flight")
+        # El stock no cambió (reserva tardía bloqueada) y el guard sigue puesto.
+        assert await _stock(pid) == 10.0
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
+        assert "fx" in set(prod.get("inv_burned") or [])
+
+        # Antes de sellar, aunque la op sea antigua, la poda NO retira (sin sello).
+        await db.company_inventory_ops.update_one(
+            {"company_id": CID, "op_key": "fx"},
+            {"$set": {"done_at": iso(now_utc() - timedelta(days=91))}})
+        assert await ci.prune_inv_burned_guards(retention_days=90) == 0
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
+        assert "fx" in set(prod.get("inv_burned") or [])
+
+        # Ahora el sellador SÍ invalida (lease vacío) y la poda retira el guard.
+        assert await ci.seal_invalidated_writers() >= 1
+        assert await ci.prune_inv_burned_guards(retention_days=90) == 1
+        prod = await db.products.find_one({"id": pid}, {"_id": 0, "inv_burned": 1})
+        assert "fx" not in set(prod.get("inv_burned") or [])
+    finally:
+        monkeypatch.undo()
+        await _clean()
+

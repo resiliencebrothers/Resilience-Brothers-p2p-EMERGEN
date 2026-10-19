@@ -4,7 +4,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -37,6 +37,8 @@ const ACCOUNT_TABS = [
   { id: "kyc", label: "Verificación", icon: IdCard },
   { id: "security", label: "Seguridad", icon: ShieldCheck },
 ];
+// EMP-O01 — durante la revisión la Empresa SÍ puede preparar su KYB y su 2FA.
+const REVIEW_TABS = [{ id: "overview", label: "Estado", icon: Clock }, ...ACCOUNT_TABS];
 const VALID_IDS = [...TABS, ...ACCOUNT_TABS].map((tb) => tb.id);
 
 export default function CompanyPanel() {
@@ -44,6 +46,7 @@ export default function CompanyPanel() {
   const location = useLocation();
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
+  const [kybVerified, setKybVerified] = useState(false);
 
   const seg = location.pathname.split("/")[2] || "overview";
   const tab = VALID_IDS.includes(seg) ? seg : "overview";
@@ -59,6 +62,13 @@ export default function CompanyPanel() {
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
+  // Insignia "Empresa verificada": refleja el estado del KYB (aprobado = verified).
+  useEffect(() => {
+    axios.get(`${API}/kyc/my-status`, { withCredentials: true })
+      .then((r) => setKybVerified(r.data?.status === "verified"))
+      .catch(() => {});
+  }, [tab]);
+
   if (user && user.role !== "empresa") {
     return <Navigate to="/" replace />;
   }
@@ -73,6 +83,13 @@ export default function CompanyPanel() {
               <div className="micro-label text-[#8B5CF6] leading-none">Panel Empresa</div>
               <div className="font-display text-base leading-tight" data-testid="company-name">{user?.name}</div>
             </div>
+            {kybVerified && (
+              <span data-testid="company-verified-badge"
+                title="Documentación de empresa (KYB) verificada por Resilience"
+                className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-[11px] font-semibold uppercase tracking-wide rounded-full">
+                <BadgeCheck className="w-3.5 h-3.5" /> Empresa verificada
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <NotificationBell />
@@ -88,14 +105,48 @@ export default function CompanyPanel() {
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         {!active ? (
-          <div className="tactile-card p-8 text-center max-w-xl mx-auto" data-testid="company-pending-banner">
-            <Clock className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-            <h1 className="font-display text-2xl mb-2">Tu cuenta Empresa está en revisión</h1>
-            <p className="text-neutral-400 text-sm">
-              Un administrador de Resilience revisará tu solicitud y activará tu
-              cuenta pronto. Recibirás una notificación cuando puedas empezar a
-              gestionar tus tiendas y publicar productos.
-            </p>
+          <div className="space-y-6">
+            <nav className="flex gap-1 border-b border-white/10 overflow-x-auto scrollbar-none"
+              data-testid="company-review-nav">
+              {REVIEW_TABS.map((tItem) => (
+                <button key={tItem.id} data-testid={`company-tab-${tItem.id}`}
+                  onClick={() => go(tItem.id)}
+                  className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
+                    tab === tItem.id
+                      ? "border-[#8B5CF6] text-white"
+                      : "border-transparent text-white/50 hover:text-white"
+                  }`}>
+                  <tItem.icon className="w-4 h-4" /> {tItem.label}
+                </button>
+              ))}
+            </nav>
+            {tab === "kyc" ? (
+              <CompanyKYCView />
+            ) : tab === "security" ? (
+              <SecuritySettings embedded />
+            ) : (
+              <div className="tactile-card p-8 text-center max-w-xl mx-auto" data-testid="company-pending-banner">
+                <Clock className="w-12 h-12 text-amber-400 mx-auto mb-4" />
+                <h1 className="font-display text-2xl mb-2">Tu cuenta Empresa está en revisión</h1>
+                <p className="text-neutral-400 text-sm">
+                  Un administrador de Resilience revisará tu solicitud y activará tu
+                  cuenta pronto. Recibirás una notificación cuando puedas empezar a
+                  gestionar tus tiendas y publicar productos.
+                </p>
+                <p className="text-neutral-400 text-sm mt-4">
+                  Mientras tanto, adelanta tu{" "}
+                  <button onClick={() => go("kyc")} data-testid="company-pending-goto-kyc"
+                    className="text-[#8B5CF6] underline underline-offset-2 hover:text-[#A78BFA]">
+                    verificación de empresa (KYB)
+                  </button>{" "}
+                  y configura tu{" "}
+                  <button onClick={() => go("security")} data-testid="company-pending-goto-security"
+                    className="text-[#8B5CF6] underline underline-offset-2 hover:text-[#A78BFA]">
+                    seguridad (2FA)
+                  </button>.
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <>
