@@ -3154,6 +3154,8 @@
     "addressRequired": "Dirección requerida",
     "successPending": "Canje solicitado. Pendiente de aprobación.",
     "soldBy": "Vende",
+    "verifiedCompany": "Empresa verificada",
+    "verifiedCompanyHint": "Documentación de empresa (KYB) verificada por Resilience",
     "searchPlaceholder": "Buscar producto, categoría o vendedor…",
     "searchEmpty": "Ningún producto coincide con tu búsqueda.",
     "categoryAll": "Todos",

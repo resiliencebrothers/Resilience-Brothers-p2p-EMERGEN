@@ -3154,6 +3154,8 @@
     "addressRequired": "Address required",
     "successPending": "Redemption requested. Pending approval.",
     "soldBy": "Sold by",
+    "verifiedCompany": "Verified business",
+    "verifiedCompanyHint": "Business documentation (KYB) verified by Resilience",
     "searchPlaceholder": "Search product, category or vendor…",
     "searchEmpty": "No products match your search.",
     "categoryAll": "All",

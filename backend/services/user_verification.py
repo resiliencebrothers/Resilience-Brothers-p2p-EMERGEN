@@ -62,6 +62,32 @@ async def _kyc_is_verified(
     return doc is not None
 
 
+async def verified_company_owner_ids(
+    db: Any, owner_ids: List[str],
+) -> set[str]:
+    """Batch sibling of `_kyc_is_verified(role='empresa')`.
+
+    Given a list of marketplace product owner ids, return the subset whose
+    LATEST company (KYB) expediente is approved. Mirrors R10 — the most recent
+    `kind='company'` verification decides, so a re-submission in progress
+    (pending / needs_more_info) un-badges the company until re-approved. Used
+    to show the "Empresa verificada" trust badge next to products.
+    """
+    ids = list({o for o in owner_ids if o})
+    if not ids:
+        return set()
+    verified: set[str] = set()
+    cursor = db.kyc_verifications.aggregate([
+        {"$match": {"user_id": {"$in": ids}, "kind": "company"}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$user_id", "status": {"$first": "$status"}}},
+    ])
+    async for row in cursor:
+        if row.get("status") == "verified":
+            verified.add(row["_id"])
+    return verified
+
+
 async def get_user_verification_state(db: Any, user: dict) -> dict:
     """Snapshot the three verification flags for one user.
 

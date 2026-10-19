@@ -5,6 +5,8 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 
 > **Última entrega (17 Oct 2026):** Herramientas (VIP/Empresa) ampliada con: Caja de **Negocio** para Empresa (con tienda opcional), **Escenarios de Rentabilidad** privados por cuenta (CRUD) y **Reporte mensual de caja en Excel**. Backend `routes/profit_scenarios.py` (nuevo) + `routes/cash_boxes.py` (ext.); frontend `ProfitScenariosBar.jsx` (nuevo), `CashBoxView.jsx`, `ReportPanel.jsx`. Verificado por testing agent (iteration_365.json, 100%). Ver CHANGELOG.md.
 
+> **Fork 2026-06 (confianza Empresa):** (1) **Reenvío de KYB rechazado** — banner rojo en `CompanyPanel.jsx` con motivos + nota + botón "Corregir y reenviar documentación" cuando el último expediente KYB está `rejected`/`needs_more_info`. (2) **Insignia "Empresa verificada" en marketplace** — `GET /products` inyecta `owner_verified` vía `services/user_verification.verified_company_owner_ids`; `MarketplaceView.jsx` muestra la insignia verde junto a los productos de empresas con KYB verificado. Ambas solo LECTURA del estado KYB existente. Verificado E2E en preview (datos QA sembrados y limpiados). Ver CHANGELOG.md.
+
 ## Architecture
 - **Backend**: FastAPI (Python) + Motor (MongoDB async) at `/app/backend/server.py`. All routes prefixed `/api`.
 - **Frontend**: React 19 + React Router + Tailwind + Shadcn UI at `/app/frontend/src`.

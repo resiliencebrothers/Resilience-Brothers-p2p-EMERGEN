@@ -2500,3 +2500,20 @@ Fix (según recomendación: retirar stock de metadatos; entradas/salidas/ajustes
 - Frontend `CompanyInventoryView.jsx` — botón 'Ajustar' por producto (`company-inv-adjust-<id>`), diálogo que pide el NUEVO total (muestra total actual + distribuido, avisa del mínimo), POST a /inventory/adjust con `expected_total` (= total visto). MOVE_LABEL añade 'Ajuste de total' y 'Devuelto por cierre de tienda'.
 - Pruebas: `tests/test_empresa_f204_catalog_stock.py` 9/9 (editar metadatos no toca el stock aunque se envíe; 'libra' conserva 2,5 tras editar descripción; stock inicial auditado como 'receive'; 'unidad' rechaza fracción 400 (recibir y crear); 'kg' admite 2,5; ajuste con expected correcto aplica + traza; expected obsoleto → 409; por debajo de distribuido → 409; idempotente por op_id). Suite Empresa: 44/44. mypy limpio (114 archivos). Smoke UI frontend (testing agent iteration_361): 16/16 flujos del panel Empresa (edición oculta stock + nota; alta muestra stock+unidad; Inventario Ajustar con CAS 409 below_distributed y éxito con traza 'Ajuste de total'). Añadido a `Makefile::test-critical`.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## EMP (fork 2026-06) — Reenvío de KYB rechazado (panel Empresa) + Insignia "Empresa verificada" en marketplace
+Dos mejoras de confianza del rol Empresa (ambas solo LECTURA del estado KYB existente; sin tocar auth/sesión/roles).
+
+**1. Reenvío de KYB rechazado — panel Empresa (`frontend/src/pages/CompanyPanel.jsx`)**
+- El panel ahora consulta el estado COMPLETO de `/kyc/my-status` (antes solo el booleano de "verificada"). Guarda `{status, verification.rejection_reasons, verification.review_notes}`.
+- Cuando el expediente KYB más reciente está `rejected` o `needs_more_info`, se muestra un banner rojo prominente en la parte superior del panel (`company-kyb-rejected-banner`) con: título según estado, lista de motivos (`company-kyb-rejected-reasons`), nota del equipo (`company-kyb-rejected-notes`) y botón `company-kyb-resubmit-btn` → "Corregir y reenviar documentación" que lleva a la pestaña Verificación (KYB), donde `CompanyKYCView` ya detalla motivos + formulario de reenvío.
+- El banner se oculta en la propia pestaña `kyc` (evita redundancia) y en cualquier otra pestaña del panel. Insignia verde "Empresa verificada" sigue intacta (solo con KYB `verified`).
+
+**2. Insignia "Empresa verificada" en marketplace (`routes/market.py`, `services/user_verification.py`, `frontend/src/pages/dashboard/MarketplaceView.jsx`)**
+- Nuevo helper `services/user_verification.verified_company_owner_ids(db, owner_ids)` — sibling por lotes de `_kyc_is_verified(role='empresa')`: una sola agregación sobre `kyc_verifications` (match kind=company + sort created_at desc + group $first) devuelve el subconjunto de owners cuyo ÚLTIMO expediente KYB está `verified`. Respeta R10 (un reenvío en curso des-insignia hasta re-aprobación).
+- `GET /products` inyecta `owner_verified: bool` en cada producto (true solo si tiene owner_id y ese owner es una Empresa con KYB verificado).
+- La tarjeta de producto muestra una insignia verde `product-verified-company-{id}` ("Empresa verificada" / "Verified business") bajo el "Vende {owner_name}". Claves i18n `marketplace.verifiedCompany` + `marketplace.verifiedCompanyHint` (es/en).
+
+**Verificación (fork 2026-06)**: mypy limpio (`user_verification.py`); `yarn lint` 0 errores (2 warnings preexistentes no relacionados). E2E en preview con datos sembrados (y limpiados): `/products` devuelve `owner_verified=true` para producto de empresa con KYB verificado; screenshot marketplace (desktop+móvil) muestra "EMPRESA VERIFICADA"; panel Empresa con KYB rechazado muestra banner rojo con 2 motivos + nota + botón, y al pulsar navega a la pestaña Verificación con el formulario de reenvío; sin insignia verde cuando el KYB no está verificado. Datos QA eliminados; usuario E2E restaurado a `kyc_status=unverified`.
+- Estado: en preview; pendiente de re-despliegue a producción.

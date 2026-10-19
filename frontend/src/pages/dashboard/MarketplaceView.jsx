@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag } from "lucide-react";
+import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag, BadgeCheck } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
@@ -275,9 +275,20 @@ export default function MarketplaceView() {
               <div className="flex items-center justify-between gap-2 mb-1">
                 <div className="micro-label text-neutral-500">{p.category}</div>
                 {p.owner_name && (
-                  <span className="text-[0.6rem] uppercase tracking-wider px-1.5 py-0.5 bg-amber-500/10 text-amber-300 border border-amber-500/20" data-testid={`product-vendor-${p.id}`}>
-                    {t("marketplace.soldBy")} {p.owner_name}
-                  </span>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-[0.6rem] uppercase tracking-wider px-1.5 py-0.5 bg-amber-500/10 text-amber-300 border border-amber-500/20" data-testid={`product-vendor-${p.id}`}>
+                      {t("marketplace.soldBy")} {p.owner_name}
+                    </span>
+                    {p.owner_verified && (
+                      <span
+                        data-testid={`product-verified-company-${p.id}`}
+                        title={t("marketplace.verifiedCompanyHint")}
+                        className="inline-flex items-center gap-1 text-[0.6rem] uppercase tracking-wider px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30"
+                      >
+                        <BadgeCheck className="w-3 h-3" /> {t("marketplace.verifiedCompany")}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
               <h3 className="font-display text-lg mb-2">{p.name}</h3>

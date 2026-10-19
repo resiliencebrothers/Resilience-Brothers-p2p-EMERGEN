@@ -847,6 +847,13 @@ async def list_products(request: Request) -> Any:
     from services.marketplace_fx import augment_products_fx
     user = await get_session_user(request)
     out = await augment_products_fx(rows, role=(user or {}).get("role"))
+    # Empresa verificada — distintivo de confianza junto a los productos cuya
+    # cuenta Empresa propietaria tiene el KYB aprobado (último expediente).
+    from services.user_verification import verified_company_owner_ids
+    verified_owners = await verified_company_owner_ids(
+        db, [p.get("owner_id") for p in out if p.get("owner_id")])
+    for p in out:
+        p["owner_verified"] = bool(p.get("owner_id")) and p["owner_id"] in verified_owners
     # iter324 — las ofertas se muestran primero (orden estable: conserva la
     # fecha dentro de cada grupo).
     out.sort(key=lambda p: 0 if p.get("on_offer") else 1)

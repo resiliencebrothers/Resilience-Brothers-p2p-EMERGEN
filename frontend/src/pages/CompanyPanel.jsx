@@ -4,7 +4,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck, AlertTriangle, RefreshCw } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -46,7 +46,7 @@ export default function CompanyPanel() {
   const location = useLocation();
   const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
-  const [kybVerified, setKybVerified] = useState(false);
+  const [kyb, setKyb] = useState(null);
 
   const seg = location.pathname.split("/")[2] || "overview";
   const tab = VALID_IDS.includes(seg) ? seg : "overview";
@@ -62,12 +62,19 @@ export default function CompanyPanel() {
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  // Insignia "Empresa verificada": refleja el estado del KYB (aprobado = verified).
+  // Insignia "Empresa verificada" + aviso de KYB rechazado: reflejan el
+  // estado del expediente KYB (verified = aprobado; rejected/needs_more_info
+  // = requiere corrección y reenvío).
   useEffect(() => {
     axios.get(`${API}/kyc/my-status`, { withCredentials: true })
-      .then((r) => setKybVerified(r.data?.status === "verified"))
+      .then((r) => setKyb(r.data))
       .catch(() => {});
   }, [tab]);
+
+  const kybVerified = kyb?.status === "verified";
+  const kybNeedsAction = kyb?.status === "rejected" || kyb?.status === "needs_more_info";
+  const kybReasons = kyb?.verification?.rejection_reasons || [];
+  const kybNotes = kyb?.verification?.review_notes || "";
 
   if (user && user.role !== "empresa") {
     return <Navigate to="/" replace />;
@@ -104,6 +111,45 @@ export default function CompanyPanel() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        {/* Aviso de KYB rechazado / con correcciones — visible en todo el panel
+            (excepto en la propia pestaña de Verificación, que ya detalla los
+            motivos y ofrece el formulario de reenvío). */}
+        {kybNeedsAction && tab !== "kyc" && (
+          <div
+            data-testid="company-kyb-rejected-banner"
+            className="mb-6 border border-[#EF4444]/40 bg-[#EF4444]/5 p-5 flex flex-col sm:flex-row sm:items-start gap-4"
+          >
+            <AlertTriangle className="w-6 h-6 text-[#EF4444] shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h3 className="font-display text-lg text-[#FEE2E2]" data-testid="company-kyb-rejected-title">
+                {kyb?.status === "rejected"
+                  ? "Tu verificación de empresa (KYB) fue rechazada"
+                  : "Tu verificación de empresa (KYB) necesita correcciones"}
+              </h3>
+              <p className="text-sm text-neutral-400 mt-1">
+                Corrige la documentación y vuelve a enviarla para poder operar y
+                solicitar retiros.
+              </p>
+              {kybReasons.length > 0 && (
+                <ul className="mt-3 text-xs text-neutral-300 space-y-1 list-disc pl-5" data-testid="company-kyb-rejected-reasons">
+                  {kybReasons.map((r) => (<li key={r}>{r}</li>))}
+                </ul>
+              )}
+              {kybNotes && (
+                <p className="mt-2 text-xs text-neutral-400 italic" data-testid="company-kyb-rejected-notes">
+                  Nota del equipo: {kybNotes}
+                </p>
+              )}
+            </div>
+            <Button
+              data-testid="company-kyb-resubmit-btn"
+              onClick={() => go("kyc")}
+              className="bg-[#EF4444] hover:bg-[#EF4444]/90 text-white rounded-none shrink-0 self-start"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" /> Corregir y reenviar documentación
+            </Button>
+          </div>
+        )}
         {!active ? (
           <div className="space-y-6">
             <nav className="flex gap-1 border-b border-white/10 overflow-x-auto scrollbar-none"
