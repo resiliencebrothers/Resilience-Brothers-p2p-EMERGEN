@@ -221,14 +221,20 @@ async def bulk_import_blocked_contacts(payload: BulkImportPayload, request: Requ
         await db.blocked_contacts.insert_one(doc)
         imported.append(phone)
     affected_users = 0
-    if imported:
-        # EMP-A03 — incluir también el rol `empresa`: una cuenta Empresa cuyo
-        # teléfono acaba de bloquearse debe pasar a revisión y perder
-        # phone_verified igual que normal/vip (si no, su sesión abierta seguiría
-        # operando pese al bloqueo). under_review_since se sella solo si falta,
-        # preservando el ticket abierto de cuentas ya marcadas.
+    # EMP-A03 (saneamiento idempotente) — re-moderar TODAS las cuentas aún
+    # ACTIVAS cuyo teléfono queda bloqueado tras esta importación, no solo las
+    # recién insertadas. Un teléfono YA bloqueado por una importación anterior
+    # se salta como "duplicado"; si por el código de entonces su cuenta (p. ej.
+    # una Empresa) quedó activa, volver a importar ese teléfono ahora la corrige.
+    # Se incluye el rol `empresa` y se filtra por `account_status="active"` para
+    # NO degradar una cuenta ya `blocked` ni re-sellar una que ya está en revisión
+    # (preserva su `under_review_since`/ticket abierto).
+    blocked_phones = imported + skipped_duplicates
+    if blocked_phones:
         res = await db.users.update_many(
-            {"phone": {"$in": imported}, "role": {"$in": ["normal", "vip", "empresa"]}},
+            {"phone": {"$in": blocked_phones},
+             "role": {"$in": ["normal", "vip", "empresa"]},
+             "account_status": "active"},
             [{"$set": {
                 "account_status": "under_review",
                 "phone_verified": False,

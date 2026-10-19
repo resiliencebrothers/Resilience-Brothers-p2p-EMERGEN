@@ -2517,3 +2517,23 @@ Dos mejoras de confianza del rol Empresa (ambas solo LECTURA del estado KYB exis
 
 **Verificación (fork 2026-06)**: mypy limpio (`user_verification.py`); `yarn lint` 0 errores (2 warnings preexistentes no relacionados). E2E en preview con datos sembrados (y limpiados): `/products` devuelve `owner_verified=true` para producto de empresa con KYB verificado; screenshot marketplace (desktop+móvil) muestra "EMPRESA VERIFICADA"; panel Empresa con KYB rechazado muestra banner rojo con 2 motivos + nota + botón, y al pulsar navega a la pestaña Verificación con el formulario de reenvío; sin insignia verde cuando el KYB no está verificado. Datos QA eliminados; usuario E2E restaurado a `kyc_status=unverified`.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## EMP-A03/A04 cierre de auditoría (fork 2026-06) — saneamiento idempotente de bloqueos + aviso al cliente "exactamente uno" + pruebas en CI crítica
+Tres acciones de cierre de la auditoría del rol Empresa (ebec943).
+
+**1. CI crítica ahora cubre las regresiones nuevas (`Makefile::test-critical`)**
+- Añadidos a la suite crítica (la que corre en cada push): `test_empresa_audit_ebec943.py` (EMP-A02 sin fuga de credenciales + EMP-A03 suspende Empresa + correo al representante), `test_empresa_a03_blocklist_sanitize.py` (nuevo), `test_empresa_a04_notify_idempotent.py` (nuevo). Antes solo estaban en `test-all` (nocturno), por lo que un push verde no las acreditaba.
+
+**2. EMP-A03 — saneamiento idempotente del conjunto histórico (`routes/blocklist.py`)**
+- `bulk_import_blocked_contacts` antes solo re-moderaba cuentas cuyo teléfono se acababa de INSERTAR; un teléfono ya bloqueado (saltado como "duplicado") no corregía una cuenta que hubiera quedado activa. Ahora el barrido de moderación corre sobre TODOS los teléfonos referenciados en la importación confirmados como bloqueados (`imported + skipped_duplicates`), filtrando por `account_status="active"` e incluyendo el rol `empresa`. Así re-importar un teléfono ya bloqueado corrige la cuenta activa rezagada, sin degradar una ya `blocked` ni re-sellar el `under_review_since` de una ya en revisión.
+- Regresión `test_empresa_a03_blocklist_sanitize.py`: (a) empieza desde «teléfono ya bloqueado + Empresa todavía ACTIVA» → re-import la pasa a under_review + phone_verified False; (b) control: cuenta `blocked` no se degrada y `under_review` conserva su ticket. Control negativo (solo `imported`): el caso (a) falla.
+
+**3. EMP-A04 — aviso al cliente idempotente ante interrupción (`routes/notifications.py`, `routes/company_requests.py`)**
+- `_insert_notification` admite `dedup_key` opcional: con clave se escribe con UPSERT atómico (`$setOnInsert`), de modo que un reintento (crash entre guardar el aviso y sellar el canal, o el recuperador re-ejecutando) NO crea un segundo aviso; devuelve el id persistido. Sin clave, comportamiento anterior intacto.
+- `_notify_client_decision` pasa `dedup_key="company-decision:{req_id}:{approved|rejected}:{uid}"` → una sola notificación persistente por (solicitud, decisión, destinatario).
+- `company_requests.ensure_indexes` crea índice único PARCIAL `uniq_notification_dedup_key` sobre `notifications.dedup_key` (solo docs con la clave) → garantía a nivel de BD incluso ante dos escritores concurrentes. Verificado creado en arranque.
+- Regresión `test_empresa_a04_notify_idempotent.py`: (a) reproduce la interrupción — primera pasada completa, se simula la marca de canal perdida (`$pull client` + `$unset notified_at/notify_claimed_at`), el recuperador re-ejecuta el canal → sigue habiendo UN aviso y el canal vuelve a sellar; (b) doble llamada directa → un único doc con el `dedup_key` esperado. Control negativo (sin `dedup_key`): ambas producen 2 avisos.
+
+**Verificación (fork 2026-06)**: 9/9 (ebec943 + a03 + a04); 54/54 en suites relacionadas (decision_race, program_requests, delete_notifications, blocklist_push); mypy limpio (notifications/company_requests/blocklist); ruff F821/F822/F632 limpio; índice parcial confirmado en `notifications`. Controles negativos confirmados para A03 y A04.
+- Estado: en preview; pendiente de re-despliegue a producción.

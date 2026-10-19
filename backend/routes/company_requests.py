@@ -189,6 +189,8 @@ async def _notify_client_decision(req: dict, approved: bool, admin_note: str = "
             title=title,
             message=message,
             data={"request_id": req["id"]},
+            dedup_key=(f"company-decision:{req['id']}:"
+                       f"{'approved' if approved else 'rejected'}:{uid}"),
         )
     except Exception as e:  # noqa: BLE001
         logger.error(f"[company_requests] client notify {uid} bell insert failed: {e}")
@@ -694,6 +696,16 @@ async def ensure_indexes() -> None:
             name="uniq_company_request_pending_user")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[company_requests] pending-unique index skipped: {e}")
+    try:
+        # A04 — único PARCIAL por `dedup_key`: garantiza a nivel de BD un solo
+        # aviso persistente por (solicitud, decisión, destinatario) aunque el
+        # recuperador re-ejecute el canal tras un crash entre insert y sellado.
+        await db.notifications.create_index(
+            "dedup_key", unique=True,
+            partialFilterExpression={"dedup_key": {"$exists": True}},
+            name="uniq_notification_dedup_key")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[company_requests] notification dedup index skipped: {e}")
 
 
 

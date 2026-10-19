@@ -48,9 +48,19 @@ router = APIRouter(tags=["Notifications"])
 # ============================================================
 
 async def _insert_notification(*, recipient_user_id: str, type: str, title: str,
-                                 message: str, data: Optional[dict] = None) -> str:
-    doc = {
-        "id": uuid.uuid4().hex,
+                                 message: str, data: Optional[dict] = None,
+                                 dedup_key: Optional[str] = None) -> str:
+    """Inserta un aviso en la campana del destinatario.
+
+    A04 — idempotencia OPCIONAL por `dedup_key`. Cuando se pasa una clave estable
+    (p. ej. `request:decision:recipient`), la escritura es un UPSERT atómico sobre
+    esa clave: un reintento (crash entre el insert y el sellado del canal, o el
+    recuperador re-ejecutando) NO crea un segundo aviso. Devuelve el id del aviso
+    persistido (el existente si ya había uno con esa clave). El índice único
+    parcial sobre `dedup_key` (ver company_requests.ensure_indexes) lo garantiza
+    también ante dos escritores concurrentes."""
+    doc_id = uuid.uuid4().hex
+    base = {
         "recipient_user_id": recipient_user_id,
         "type": type,
         "title": title,
@@ -60,8 +70,20 @@ async def _insert_notification(*, recipient_user_id: str, type: str, title: str,
         "created_at": iso(now_utc()),
         "read_at": None,
     }
-    await db.notifications.insert_one(doc)
-    return doc["id"]
+    if dedup_key:
+        base["dedup_key"] = dedup_key
+        res = await db.notifications.update_one(
+            {"dedup_key": dedup_key},
+            {"$setOnInsert": {"id": doc_id, **base}},
+            upsert=True,
+        )
+        if res.upserted_id is None:
+            existing = await db.notifications.find_one(
+                {"dedup_key": dedup_key}, {"_id": 0, "id": 1})
+            return (existing or {}).get("id", doc_id)
+        return doc_id
+    await db.notifications.insert_one({"id": doc_id, **base})
+    return doc_id
 
 
 async def notify_staff_new_pending_user(target_user: dict) -> bool:

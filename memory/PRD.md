@@ -7,6 +7,8 @@ Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empre
 
 > **Fork 2026-06 (confianza Empresa):** (1) **Reenvío de KYB rechazado** — banner rojo en `CompanyPanel.jsx` con motivos + nota + botón "Corregir y reenviar documentación" cuando el último expediente KYB está `rejected`/`needs_more_info`. (2) **Insignia "Empresa verificada" en marketplace** — `GET /products` inyecta `owner_verified` vía `services/user_verification.verified_company_owner_ids`; `MarketplaceView.jsx` muestra la insignia verde junto a los productos de empresas con KYB verificado. Ambas solo LECTURA del estado KYB existente. Verificado E2E en preview (datos QA sembrados y limpiados). Ver CHANGELOG.md.
 
+> **Fork 2026-06 (cierre auditoría EMP-A03/A04):** (1) Suite crítica (`Makefile::test-critical`) ahora incluye `test_empresa_audit_ebec943.py` + 2 regresiones nuevas (antes solo en el nocturno). (2) **EMP-A03 saneamiento idempotente** — `blocklist.bulk_import` re-modera cuentas aún ACTIVAS sobre TODOS los teléfonos bloqueados referenciados (`imported + skipped_duplicates`), corrigiendo una Empresa rezagada al re-importar su teléfono ya bloqueado. (3) **EMP-A04 aviso "exactamente uno"** — `_insert_notification` con `dedup_key` (upsert atómico) + índice único parcial `uniq_notification_dedup_key`; el aviso al cliente usa clave estable por (solicitud, decisión, destinatario) → el recuperador no duplica tras un crash entre insert y sellado. Controles negativos confirmados. Ver CHANGELOG.md.
+
 ## Architecture
 - **Backend**: FastAPI (Python) + Motor (MongoDB async) at `/app/backend/server.py`. All routes prefixed `/api`.
 - **Frontend**: React 19 + React Router + Tailwind + Shadcn UI at `/app/frontend/src`.
