@@ -1,3 +1,12 @@
+## Changelog — 19 Oct 2026 (Empresa: Insignia verificada · Onboarding EMP-O01 · Fencing de retención)
+
+Tres mejoras del rol Empresa. Backend con pytest + control negativo; frontend con testing agent 100% (iteration_367.json).
+
+- **Insignia "Empresa verificada"** [`frontend/src/pages/CompanyPanel.jsx`]: el panel Empresa consulta `GET /kyc/my-status` y muestra una insignia verde `company-verified-badge` en el header cuando el KYB está `verified`. Ausente si no está verificado.
+- **Onboarding EMP-O01** [`CompanyPanel.jsx`]: una cuenta Empresa `under_review` ahora puede acceder a **Verificación (KYB)** y **Seguridad (2FA)** durante la revisión (nav de revisión Estado/Verificación/Seguridad; `REVIEW_TABS`), manteniendo OCULTAS las pestañas comerciales. El banner de revisión incluye CTAs directos a KYB y 2FA. Así la Empresa prepara su documentación mientras el staff verifica el teléfono. Verificado: formulario KYB (3 documentos) y 2FA accesibles en revisión; comerciales ausentes.
+- **Fencing de retención (`inv_burned`) REAL** [`services/company_inventory.py`, `scheduler.py`]: `_run_idempotent` mantiene un LEASE `apply_in_flight` (un id por intento) mientras un escritor está entre su lectura de idempotencia y su escritura. Nuevo `seal_invalidated_writers()` sella `writer_invalidated_at` SOLO en las reservas abortadas (`done`+`burned`) con lease VACÍO — invalidación verificable y permanente (una op `done` cortocircuita a los intentos futuros, el lease solo decrece). La poda exige ese sello Y re-verifica lease vacío al podar; el detalle expone `writer_in_flight`. El scheduler sella antes de podar. Un escritor suspendido mantiene su lease ⇒ su guard NUNCA se poda; al terminar, se sella y la poda lo retira con seguridad. Tests: `test_retr_fencing_seals_only_when_no_writer_in_flight` + control negativo (sin lease, falla). Suite inventario 22/22, mypy limpio, ESLint 0 errores.
+
+
 ## Changelog — 17 Oct 2026 (Auditoría rol Empresa · commit ebec943)
 
 Correcciones de la auditoría estática del rol Empresa + 2 funciones pedidas. Cada fix con regresión y CONTROL NEGATIVO (sin el fix, las pruebas fallan). mypy limpio (119 archivos), ESLint 0 errores, pytest de las áreas tocadas 62/62.

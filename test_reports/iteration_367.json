@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only E2E testing of 3 Empresa role improvements (verified badge, review-mode onboarding EMP-O01, badge absence without KYB). All 4 required points PASS end-to-end via cookie session_token authentication on preview URL.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "1_verified_badge_active": "PASS - company-verified-badge visible in header next to 'Empresa E2E QA'. All commercial tabs rendered: overview, stores, products, inventory, deliveries (Mensajería), wallet, tools + kyc + security. No review-nav.",
+    "2_onboarding_review_EMP-O01": "PASS - kyb_review_sess shows company-review-nav with exactly 3 tabs (company-tab-overview/kyc/security). All commercial tabs (stores, products, wallet, inventory, deliveries, tools) correctly ABSENT. company-pending-banner shown with company-pending-goto-kyc and company-pending-goto-security CTAs.",
+    "3_kyb_accessible_in_review": "PASS - CTA goto-kyc and company-tab-kyc both load company-kyc-page (Verificación de empresa) with Código fiscal, Dirección legal textarea, and the 3 documents (Código/certificado fiscal, Licencia operativa, ID del representante legal). Seguridad tab loads 2FA 'Verificación en Dos Pasos' screen.",
+    "4_badge_absent_without_KYB": "PASS - company-verified-badge NOT present in header for kyb_review_sess (under_review account without verified KYB)."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: label 'Mensajería' uses tab id 'deliveries' (not 'messaging'). Current test request listed 'company-tab-messaging' which does not exist; actual testid is company-tab-deliveries. No bug — just a naming inconsistency between label and id."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% (4/4 scenarios)"},
+  "seed_data_creation": "None (preserved existing seeded accounts test_session_empresa_e2e_X and kyb_review_sess).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Cookie-based auth is required (login by email blocked by captcha). Use context.add_cookies with session_token value for domain p2p-exchange-hub-2.preview.emergentagent.com. Use wait_until='domcontentloaded' not 'networkidle' (posthog keeps network busy). CompanyPanel REVIEW_TABS live in /app/frontend/src/pages/CompanyPanel.jsx; the Mensajería tab id is 'deliveries' not 'messaging'."
+}
