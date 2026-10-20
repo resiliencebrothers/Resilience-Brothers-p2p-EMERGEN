@@ -2665,6 +2665,7 @@
     },
     "rejectDialogTitle": "Reject business request",
     "rejectDialogBody": "«{{name}}» will receive a notification with your comment. The client can apply again in 7 days.",
+    "rejectDialogBodyAnon": "«{{name}}» will get an email with your comment and a one-click link to resubmit corrected documents (no 7-day wait).",
     "rejectDialogPlaceholder": "Reason for rejection (optional but recommended)…"
   },
   "adminAppeals": {

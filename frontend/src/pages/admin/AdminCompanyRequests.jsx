@@ -264,7 +264,9 @@ function RejectDialog({ open, request, onClose, onDone }) {
           <DialogTitle>{t("adminCompanyRequests.rejectDialogTitle")}</DialogTitle>
         </DialogHeader>
         <p className="text-xs text-neutral-400">
-          {t("adminCompanyRequests.rejectDialogBody", {
+          {t(request?.requester_anonymous
+            ? "adminCompanyRequests.rejectDialogBodyAnon"
+            : "adminCompanyRequests.rejectDialogBody", {
             name: request?.company_name || request?.user_email || "",
           })}
         </p>

@@ -160,6 +160,9 @@ def _serialize(doc: Optional[dict]) -> Optional[dict]:
     d = dict(doc)
     d.pop("_id", None)
     d.pop("password_hash", None)
+    # No exponer los digests de enlaces (internos) en la API de admin.
+    for k in ("status_token_digest", "resubmit_token_digest"):
+        d.pop(k, None)
     return d
 
 
@@ -570,16 +573,28 @@ async def company_signup_status_link(
         "seguimiento. Revisa tu bandeja (y la carpeta de spam).")}
     email = _normalize_email(str(payload.email))
     doc = await db.company_requests.find_one(
-        {"account_email": email}, {"_id": 0, "id": 1, "company_name": 1, "status": 1},
+        {"account_email": email},
+        {"_id": 0, "id": 1, "company_name": 1, "status": 1, "status_link_sent_at": 1},
         sort=[("created_at", -1)])
     if not doc:
         return generic
+    # Anti-bombardeo: no reenviar (ni rotar el token) si ya mandamos un enlace
+    # hace menos de 10 min — así un enlace recién enviado sigue siendo válido.
+    last_sent = doc.get("status_link_sent_at")
+    if last_sent:
+        try:
+            prev = datetime.fromisoformat(str(last_sent).replace("Z", "+00:00"))
+            if (now_utc() - prev).total_seconds() < 600:
+                return generic
+        except (ValueError, AttributeError):
+            pass
     raw = _new_link_token()
     await db.company_requests.update_one(
         {"id": doc["id"]},
         {"$set": {
             "status_token_digest": _token_digest(raw),
             "status_token_expires_at": iso(now_utc() + timedelta(hours=STATUS_TOKEN_TTL_HOURS)),
+            "status_link_sent_at": iso(now_utc()),
         }})
     try:
         import email_service
@@ -645,11 +660,13 @@ async def company_signup_resubmit_prefill(token: str) -> Any:
 async def company_signup_resubmit(
     token: str, payload: CompanySignupCreate, request: Request) -> Any:
     """Reenvío de una solicitud rechazada con documentación corregida. El token
-    (un solo uso) autoriza SALTARSE el enfriamiento de 7 días. Crea una nueva
-    solicitud `pending` y consume el token de forma atómica."""
+    (un solo uso) autoriza SALTARSE el enfriamiento de 7 días. El token queda
+    atado al email de la solicitud rechazada: NO sirve para registrar otro
+    correo distinto."""
     digest = _token_digest(token)
     doc = await db.company_requests.find_one(
         {"resubmit_token_digest": digest}, {"_id": 0, "id": 1, "status": 1,
+                                            "account_email": 1,
                                             "resubmit_token_used_at": 1,
                                             "resubmit_token_expires_at": 1})
     if (not doc or doc.get("status") != "rejected"
@@ -657,16 +674,28 @@ async def company_signup_resubmit(
             or not _is_future_iso(doc.get("resubmit_token_expires_at"))):
         raise HTTPException(status_code=404, detail="Enlace no válido, caducado o ya utilizado.")
 
-    # Crea la nueva solicitud (valida captcha, unicidad, sube documentos). El
-    # índice único parcial (account_email, pending) impide duplicados; dos
-    # reenvíos concurrentes → uno crea, el otro recibe 409.
-    new_doc = await _persist_company_signup(payload, request, skip_cooldown=True)
+    # El reenvío es SOLO para el correo de la solicitud rechazada (el token no
+    # es un bypass genérico del enfriamiento para cualquier email).
+    if _normalize_email(str(payload.account_email)) != doc.get("account_email"):
+        raise HTTPException(
+            status_code=400,
+            detail="El correo no coincide con la solicitud rechazada original.")
 
-    # Consumo del token de un solo uso (CAS idempotente). La solicitud ya quedó
-    # creada; marcar el token evita reutilizar el mismo enlace.
-    await db.company_requests.update_one(
+    # Reclama el token (un solo uso) ANTES de crear la solicitud: el CAS atómico
+    # garantiza que dos reenvíos concurrentes no se cuelen. Si la creación falla
+    # (p. ej. captcha o unicidad), se libera el token para permitir reintentar.
+    claim = await db.company_requests.update_one(
         {"id": doc["id"], "resubmit_token_used_at": None},
         {"$set": {"resubmit_token_used_at": iso(now_utc())}})
+    if claim.modified_count != 1:
+        raise HTTPException(status_code=404, detail="Enlace no válido, caducado o ya utilizado.")
+    try:
+        new_doc = await _persist_company_signup(payload, request, skip_cooldown=True)
+    except Exception:
+        # libera el token para que el usuario pueda corregir y reintentar
+        await db.company_requests.update_one(
+            {"id": doc["id"]}, {"$set": {"resubmit_token_used_at": None}})
+        raise
     return {"ok": True, "request_id": new_doc["id"],
             "message": "Solicitud reenviada. Te avisaremos por correo cuando el equipo la revise."}
 

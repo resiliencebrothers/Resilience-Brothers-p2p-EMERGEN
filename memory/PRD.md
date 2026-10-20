@@ -3100,3 +3100,17 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - **Decisiones del usuario:** (1) vía única unificada; (2) un visitante nuevo puede llenar el formulario, la cuenta solo se activa tras aprobación + verificación de correo; (3) el teléfono va incluido en el formulario (se elimina la verificación de teléfono por staff); (4) se quita el certificado fiscal (el código fiscal lo sustituye → KYB de 2 documentos); (5) todo se revisa en "KYB Empresas" y se elimina la pestaña "Solicitudes Empresa".
 - **Resultado:** `CompanySignupDialog` (formulario público) + `POST /api/company-signup` (solicitud pendiente, captcha/cooldown/blocklist/índice único por correo pendiente) → aprobación crea cuenta `active`+`phone_verified`+`email_verified=False`+KYB verificado → gate de login hasta verificar correo. Admin "KYB Empresas" muestra las solicitudes con columna Documentos; se retiró "Programa Empresas" del perfil y la pestaña "Solicitudes Empresa". Detalle y verificación completa en CHANGELOG (fork 2026-06).
 - **Estado:** en preview; pendiente de re-despliegue a producción.
+
+### EMP-UNIFY-02 — Correo de rechazo con reenvío 1-clic + seguimiento público + recordatorio 48h (jun 2026, iter369) ✅ IMPLEMENTADO
+- **Objetivo del usuario:** 3 mejoras sobre el alta Empresa unificada.
+  - (1) **Correo de rechazo mejorado:** enlace directo para reenviar la documentación corregida en un clic.
+  - (2) **Panel de seguimiento:** la empresa consulta el estado (pendiente/aprobada/rechazada) desde una página pública con su correo.
+  - (3) **Recordatorio de verificación:** recordatorio automático si la empresa aprobada no verifica su correo en 48h.
+- **Decisiones del usuario:** (a) seguimiento por **magic-link** (se envía un enlace al correo; no revela estado a terceros); (b) el enlace de reenvío **salta el enfriamiento de 7 días**; (c) **un único** recordatorio ~48h tras aprobar.
+- **Resultado:**
+  - Reenvío: `GET/POST /api/company-signup/resubmit/{token}` (prefill + reenvío); token opaco de un solo uso (+72h), atado al correo original, claim CAS antes de crear + release si falla; frontend `pages/CompanyResubmit.jsx` reusa `CompanySignupDialog` (email deshabilitado). Correo de rechazo con botón "REENVIAR DOCUMENTACIÓN".
+  - Seguimiento: `POST /api/company-signup/status-link` (email+captcha, respuesta genérica, cooldown 10 min) → correo con `/empresa/seguimiento/{token}`; `GET /api/company-signup/status/{token}` (estado + metadatos públicos). Frontend `pages/CompanyRequestStatus.jsx` (`/empresa/seguimiento` y `/empresa/seguimiento/:token`).
+  - Recordatorio: `run_company_verification_reminder()` (scheduler cada 2 min, ventana 48–120h, flag `verification_reminder_sent_at`, claim CAS idempotente, regenera token 24h).
+- **Rutas públicas nuevas:** `/empresa/seguimiento`, `/empresa/seguimiento/:token`, `/empresa/reenviar/:token`.
+- **Verificación:** in-process ALL PASS + testing_agent iter369 (backend 11/11, frontend 100%) + 4 estados UI por screenshot a 390px sin overflow. Detalle en CHANGELOG.
+- **Estado:** en preview; pendiente de re-despliegue a producción.

@@ -1,0 +1,35 @@
+{
+  "summary": "Live HTTP + admin-UI test of Empresa public flow additions (status magic-link, resubmit-after-reject token, admin reject wiring). Backend: 11/11 executed tests PASS (2 skipped only because tests/conftest.py auto-injects the captcha bypass header; captcha enforcement checked manually with curl: empty token -> 400 CAPTCHA_REQUIRED, 'x' token -> 400 CAPTCHA_FAILED). Signup regression OK (pending doc, 2 documents, no users doc, duplicate pending -> 409). status-link gives the same generic 200 for unknown and known emails (also case-insensitive); for the known email it stores a 64-char status_token_digest + expires_at. Bad status/resubmit tokens -> 404, malformed resubmit body -> 422. Admin reject via API AND via admin UI (/admin/users?tab=company-kyb: row shows, reject dialog, note, confirm, toast 'Request rejected', row leaves the pending filter) leaves the DB with status=rejected, admin_note=<reason>, resubmit_token_digest/expires_at (+72h) set, resubmit_token_used_at=null, password_hash removed, reviewed_by=admin. Rejecting a second time -> 409; normal signup with the same email afterwards -> 429 (7-day cooldown, as intended). No unhandled exceptions in the reject path. The only email errors were Resend refusing @example.com recipients, which is expected and caught. Frontend: /empresa/seguimiento renders the email input, a Turnstile widget and a send button (disabled until the captcha is solved, which is expected). 'Volver al inicio' goes to '/'. /empresa/seguimiento/<bad> shows company-status-error and /empresa/reenviar/<bad> shows company-resubmit-error, both in Spanish.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/company-signup/resubmit/{token}", "issue": "The payload's account_email is not required to match the rejected request's email. A valid resubmit token therefore skips the 7-day cooldown for ANY email. It also creates a new pending request for that email, even one that is not tied to the rejection. Suggest forcing account_email = the original doc's email (or rejecting a mismatch)."},
+      {"endpoint": "POST /api/company-signup/resubmit/{token}", "issue": "The token is consumed AFTER _persist_company_signup. Two concurrent resubmits that use different emails could both succeed, because the unique pending index is per email. Suggest claiming the token with a CAS update before persisting, and releasing it if persisting fails."},
+      {"endpoint": "POST /api/company-signup/status-link", "issue": "There is no rate limit or per-email cooldown, so anyone who passes the captcha can repeatedly trigger emails to an address that has a request. Each call also rotates the token, which invalidates earlier links. Consider a short per-request resend cooldown."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Users > Company KYB reject dialog", "issues": ["The copy 'El cliente podrá volver a solicitar en 7 días' (adminCompanyRequests.rejectDialogBody, es.json:2667) is now wrong for anonymous public requests: they get a resubmit link that skips the cooldown. Update the text or make it conditional on requester_anonymous."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter_company_status_resubmit.py", "/app/test_reports/pytest/pytest_company_status_resubmit.xml"],
+  "action_items": [
+    "Bind the resubmit POST to the original account_email, or validate that it matches",
+    "Claim the resubmit token atomically before creating the new request",
+    "Optional: add a per-email cooldown to status-link",
+    "Update the reject-dialog copy for anonymous requests (resubmit link, no 7-day wait)"
+  ],
+  "critical_code_review_comments": [
+    "routes/company_requests.py is 1329 lines; consider splitting the public signup/status/resubmit endpoints into their own module",
+    "The reject email and token storage sit in a single try/except. If the token update succeeds but email sending fails, only an error is logged and the admin is not told the applicant never received the link"
+  ],
+  "updated_files": ["/app/backend/tests/test_iter_company_status_resubmit.py"],
+  "success_rate": {"backend": "100% (11/11 executed, 2 skipped by design)", "frontend": "100%"},
+  "seed_data_creation": "Temporary company_requests with test_*@example.com emails were created and all deleted at the end. No users docs were created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "tests/conftest.py auto-adds the X-Captcha-Bypass header to requests calls, so negative captcha tests have to use curl. Admin KYB lives at /admin/users?tab=company-kyb; testids are company-request-row-<id>, company-reject-<id>, company-reject-note and company-reject-confirm. Resend rejects @example.com recipients (expected, the error is caught)."
+}

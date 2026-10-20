@@ -2665,6 +2665,7 @@
     },
     "rejectDialogTitle": "Rechazar solicitud de Empresa",
     "rejectDialogBody": "«{{name}}» recibirá una notificación con tu comentario. El cliente podrá volver a solicitar en 7 días.",
+    "rejectDialogBodyAnon": "«{{name}}» recibirá un correo con tu comentario y un enlace para reenviar la documentación corregida en un clic (sin esperar los 7 días).",
     "rejectDialogPlaceholder": "Motivo del rechazo (opcional pero recomendado)…"
   },
   "adminAppeals": {

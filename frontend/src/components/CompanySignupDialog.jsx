@@ -197,7 +197,8 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
               <div className="micro-label text-[#8B5CF6] mb-2">Credenciales de acceso</div>
               <Field id="cs-email" testid="company-signup-email" type="email"
                 label="Email de la empresa" value={form.account_email} onChange={set("account_email")}
-                placeholder="empresa@correo.com" />
+                placeholder="empresa@correo.com" disabled={isResubmit}
+                hint={isResubmit ? "El reenvío se hace con el mismo correo de la solicitud original." : undefined} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                 <Field id="cs-pass" testid="company-signup-password" type="password"
                   label="Contraseña" value={form.password} onChange={set("password")}
@@ -311,13 +312,13 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
   );
 }
 
-function Field({ id, testid, label, hint, value, onChange, placeholder, type = "text", autoComplete, invalid }) {
+function Field({ id, testid, label, hint, value, onChange, placeholder, type = "text", autoComplete, invalid, disabled }) {
   return (
     <div>
       <Label htmlFor={id} className="micro-label text-neutral-500">{label}</Label>
       <Input id={id} data-testid={testid} type={type} value={value} onChange={onChange}
-        placeholder={placeholder} autoComplete={autoComplete}
-        className={`rounded-none bg-black/40 text-white h-10 mt-1 ${invalid ? "border-[#EF4444]/60" : "border-white/10"}`} />
+        placeholder={placeholder} autoComplete={autoComplete} disabled={disabled}
+        className={`rounded-none bg-black/40 text-white h-10 mt-1 ${invalid ? "border-[#EF4444]/60" : "border-white/10"} ${disabled ? "opacity-70 cursor-not-allowed" : ""}`} />
       {hint && <div className="text-[0.65rem] text-neutral-500 mt-1">{hint}</div>}
     </div>
   );
