@@ -2537,3 +2537,11 @@ Tres acciones de cierre de la auditoría del rol Empresa (ebec943).
 
 **Verificación (fork 2026-06)**: 9/9 (ebec943 + a03 + a04); 54/54 en suites relacionadas (decision_race, program_requests, delete_notifications, blocklist_push); mypy limpio (notifications/company_requests/blocklist); ruff F821/F822/F632 limpio; índice parcial confirmado en `notifications`. Controles negativos confirmados para A03 y A04.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## Endpoint /health (fork 2026-06) — sonda de origen para readiness/liveness
+Tras el 520 de Cloudflare del 2026-10-20 (RCA del deployer: desalojo de pod por consolidación de nodo + cold-pull de imagen de 836MB → ~5 min sin backend; la sonda de la plataforma golpeaba `127.0.0.1:8001/health` y la app devolvía 404). NO fue bug de código ni deploy fallido; se autorrecuperó. Hardening solicitado: añadir una sonda de salud ligera.
+- `server.py`: `@app.get("/health")` (nivel app, SIN prefijo /api) para la sonda del ORIGEN que la plataforma golpea directamente en :8001, y `@api_router.get("/health")` → `/api/health` para monitoreo externo a través del ingress público. Ambas devuelven `{"status":"ok"}` sin tocar la BD (liveness pura).
+- Verificado por curl: `/health` (origen) 200, `/api/health` (origen) 200, `/api/health` (externo por ingress/Cloudflare) 200.
+- Nota infra (escalado a Emergent por el deployer): aplicar PodDisruptionBudget para que la consolidación no desaloje todas las réplicas a la vez y pre-cachear/aligerar la imagen (836MB) para reducir la ventana de reinicio que produjo el 520.
+- Estado: en preview; pendiente de re-despliegue a producción.

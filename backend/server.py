@@ -90,6 +90,22 @@ async def root() -> dict:
     return {"service": "Resilience Brothers P2P", "status": "ok"}
 
 
+@api_router.get("/health", tags=["System"])
+async def api_health() -> dict:
+    """Liveness/readiness ligera (sin tocar la BD) para monitoreo externo a
+    través del ingress público: GET /api/health."""
+    return {"status": "ok"}
+
+
+@app.get("/health", tags=["System"], include_in_schema=False)
+async def health() -> dict:
+    """Sonda del ORIGEN. El readiness/startup probe de la plataforma golpea
+    nginx → uvicorn en `127.0.0.1:8001/health` (SIN el prefijo /api). Devolver
+    200 de inmediato evita que un reinicio de pod deje el origen marcado como
+    no-listo (lo que Cloudflare mostró como 520). Sin dependencias a propósito."""
+    return {"status": "ok"}
+
+
 # Wire up domain routers
 api_router.include_router(auth_router)
 api_router.include_router(notifications_router)
