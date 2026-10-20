@@ -443,8 +443,8 @@ async def company_signup(payload: CompanySignupCreate, request: Request) -> Any:
     revisa en "KYB Empresas". Al aprobarse se crea la cuenta Empresa (activa,
     con el teléfono ya dado por aprobado), se envía la verificación de correo y
     el KYB queda verificado; al verificar el correo la cuenta puede operar."""
-    await _persist_company_signup(payload, request, skip_cooldown=False)
-    return {"ok": True,
+    doc = await _persist_company_signup(payload, request, skip_cooldown=False)
+    return {"ok": True, "status_token": doc.get("_status_token"),
             "message": "Solicitud recibida. Te avisaremos por correo cuando el equipo la revise."}
 
 
@@ -517,6 +517,10 @@ async def _persist_company_signup(
         documents.append({"doc_type": doc_type, "ref": ref})
 
     now = iso(now_utc())
+    # Token de seguimiento emitido al crear la solicitud: permite al propio
+    # solicitante (que acaba de enviarla) abrir su estado en 1 clic desde la
+    # pantalla de éxito, sin volver a pedir el correo. Solo se persiste el digest.
+    status_raw = _new_link_token()
     doc = {
         "id": f"coreq_{uuid.uuid4().hex[:12]}",
         # user_id sintético ÚNICO: no hay cuenta solicitante (alta pública). Evita
@@ -539,6 +543,8 @@ async def _persist_company_signup(
         "reviewed_at": None,
         "admin_note": None,
         "new_user_id": None,
+        "status_token_digest": _token_digest(status_raw),
+        "status_token_expires_at": iso(now_utc() + timedelta(hours=STATUS_TOKEN_TTL_HOURS)),
     }
     try:
         await db.company_requests.insert_one(doc)
@@ -552,6 +558,9 @@ async def _persist_company_signup(
         details={"company_name": doc["company_name"], "account_email": account_email})
     await _notify_staff_new_request(doc)
     await _publish("company_request_created", {"request_id": doc["id"]}, admin=True)
+    # token en claro SOLO para la respuesta (no se persiste); el llamador lo usa
+    # para construir el enlace de seguimiento directo.
+    doc["_status_token"] = status_raw
     return doc
 
 
@@ -697,6 +706,7 @@ async def company_signup_resubmit(
             {"id": doc["id"]}, {"$set": {"resubmit_token_used_at": None}})
         raise
     return {"ok": True, "request_id": new_doc["id"],
+            "status_token": new_doc.get("_status_token"),
             "message": "Solicitud reenviada. Te avisaremos por correo cuando el equipo la revise."}
 
 

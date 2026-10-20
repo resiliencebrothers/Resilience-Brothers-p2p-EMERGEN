@@ -3114,3 +3114,5 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - **Rutas públicas nuevas:** `/empresa/seguimiento`, `/empresa/seguimiento/:token`, `/empresa/reenviar/:token`.
 - **Verificación:** in-process ALL PASS + testing_agent iter369 (backend 11/11, frontend 100%) + 4 estados UI por screenshot a 390px sin overflow. Detalle en CHANGELOG.
 - **Estado:** en preview; pendiente de re-despliegue a producción.
+
+- **EMP-UNIFY-02b (iter369b):** la pantalla de éxito del alta Empresa ofrece el enlace de seguimiento directo en 1 clic (el backend emite un `status_token` al crear la solicitud y lo devuelve en la respuesta), sin volver a pedir el correo. ✅ IMPLEMENTADO.

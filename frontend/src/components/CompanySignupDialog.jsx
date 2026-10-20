@@ -9,7 +9,7 @@ import { Turnstile } from "@marsidev/react-turnstile";
 import { getTheme } from "@/lib/theme";
 import { toast } from "sonner";
 import {
-  Building2, Upload, Check, X, FileText, FileImage, Send, Loader2, ShieldCheck, Mail,
+  Building2, Upload, Check, X, FileText, FileImage, Send, Loader2, ShieldCheck, Mail, Search,
 } from "lucide-react";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -46,6 +46,7 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
   const [docs, setDocs] = useState({ operating_license: null, legal_rep_id: null });
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [trackToken, setTrackToken] = useState("");
   const fileRefs = { operating_license: useRef(), legal_rep_id: useRef() };
 
   const [captchaCfg, setCaptchaCfg] = useState(null);
@@ -65,6 +66,7 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
     setForm(initialForm);
     setDocs({ operating_license: null, legal_rep_id: null });
     setDone(false);
+    setTrackToken("");
     setSubmitting(false);
     setCaptchaToken("");
     setCaptchaKey((k) => k + 1);
@@ -112,7 +114,7 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
     setSubmitting(true);
     try {
       const url = isResubmit ? `${API}/company-signup/resubmit/${resubmitToken}` : `${API}/company-signup`;
-      await axios.post(url, {
+      const r = await axios.post(url, {
         company_name: form.company_name.trim(),
         account_email: form.account_email.trim().toLowerCase(),
         password: form.password,
@@ -124,6 +126,7 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
         legal_rep_id: docs.legal_rep_id.data,
         ...(captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {}),
       });
+      setTrackToken(r.data?.status_token || "");
       setDone(true);
     } catch (err) {
       const detail = err?.response?.data?.detail;
@@ -181,10 +184,17 @@ export default function CompanySignupDialog({ open, onClose, prefill = null, res
               Entendido
             </Button>
             <div className="pt-1">
-              <a href="/empresa/seguimiento" data-testid="company-signup-track-link"
-                className="text-xs text-[#8B5CF6] hover:underline">
-                Consultar el estado de mi solicitud
-              </a>
+              {trackToken ? (
+                <a href={`/empresa/seguimiento/${trackToken}`} data-testid="company-signup-track-link"
+                  className="inline-flex items-center gap-1.5 text-xs text-[#8B5CF6] hover:underline">
+                  <Search className="w-3.5 h-3.5" /> Ver el estado de mi solicitud
+                </a>
+              ) : (
+                <a href="/empresa/seguimiento" data-testid="company-signup-track-link"
+                  className="text-xs text-[#8B5CF6] hover:underline">
+                  Consultar el estado de mi solicitud
+                </a>
+              )}
             </div>
           </div>
         ) : (
