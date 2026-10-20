@@ -325,6 +325,12 @@ def notify_security_selfaudit(to: str, report: dict) -> bool:
 
 def _app_url() -> str:
     return APP_URL.rstrip("/") if APP_URL else "https://p2p.resiliencebrothers.com"
+
+
+def app_url() -> str:
+    """URL pública base de la app (para construir enlaces en otros módulos)."""
+    return _app_url()
+
 def _ops_row(cols) -> str:
     tds = "".join(
         f'<td style="padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.06);color:#D4D4D4;font-size:12px;">{c}</td>'
@@ -530,12 +536,36 @@ def notify_company_kyb_approved(to: str, name: str, lang: str = "es") -> bool:
                  kind="company_kyb_approved")
 
 
-def notify_company_kyb_rejected(to: str, name: str, reason: str, lang: str = "es") -> bool:
+def notify_company_kyb_rejected(to: str, name: str, reason: str, lang: str = "es",
+                                resubmit_url: str | None = None) -> bool:
     """E34 — la verificación de EMPRESA (KYB) fue rechazada, con el motivo. La
-    empresa puede volver a enviar su documentación."""
+    empresa puede volver a enviar su documentación. Si `resubmit_url` viene,
+    se muestra un botón de reenvío directo (un clic)."""
     subject = _L("Tu verificación de empresa (KYB) fue rechazada · Resilience Brothers",
                  "Your company verification (KYB) was rejected · Resilience Brothers", lang)
     safe_reason = (reason or "").strip()[:600] or _L("Sin motivo especificado", "No reason provided", lang)
+    if resubmit_url:
+        cta = f"""
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:22px 0 6px;">
+          <a href="{resubmit_url}" style="background:#8B5CF6;color:#000;text-decoration:none;
+             padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
+             display:inline-block;">{_L("REENVIAR DOCUMENTACIÓN", "RESUBMIT DOCUMENTS", lang)}</a>
+        </td></tr>
+      </table>
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:10px 0 0;">
+        {_L("Corrige lo indicado y reenvía tus documentos en un clic con el botón de arriba. No necesitas crear la solicitud de nuevo.",
+            "Fix the issues above and resubmit your documents in one click with the button above. No need to start over.", lang)}
+      </p>
+      <p style="color:#666;font-size:11px;word-break:break-all;margin:8px 0 0;">{_L("O copia:", "Or copy:", lang)} {resubmit_url}</p>
+    """
+    else:
+        cta = f"""
+      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
+        {_L("Puedes volver a enviar tu documentación corregida desde tu panel Empresa → Verificación.",
+            "You can resubmit corrected documents from your Company panel → Verification.", lang)}
+      </p>
+    """
     body = f"""
       <p style="color:#A3A3A3;font-size:14px;line-height:1.6;margin:0 0 20px;">
         {_L(f"Hola {name or 'empresa'} — el equipo revisó la documentación de tu empresa y, por ahora, NO pudo aprobarla.",
@@ -545,10 +575,7 @@ def notify_company_kyb_rejected(to: str, name: str, reason: str, lang: str = "es
         <p style="margin:0 0 8px;color:#EF4444;font-size:12px;text-transform:uppercase;letter-spacing:2px;font-weight:bold;">{_L("Motivo", "Reason", lang)}</p>
         <p style="margin:0;color:#fff;font-size:13px;line-height:1.6;white-space:pre-line;">{safe_reason}</p>
       </div>
-      <p style="color:#A3A3A3;font-size:13px;line-height:1.6;margin:22px 0 0;">
-        {_L("Puedes volver a enviar tu documentación corregida desde tu panel Empresa → Verificación.",
-            "You can resubmit corrected documents from your Company panel → Verification.", lang)}
-      </p>
+      {cta}
     """
     return _send(to, subject,
                  _base_template(_L("Verificación de empresa rechazada", "Company verification rejected", lang), body, lang),
@@ -600,6 +627,61 @@ def notify_email_verification(to: str, name: str, token: str, lang: str = "es") 
     return _send(to, _L("Verifica tu correo · Resilience Brothers", "Verify your email · Resilience Brothers", lang),
                  _base_template(_L("Verifica tu cuenta", "Verify your account", lang), body, lang),
                  kind="email_verification")
+
+
+def notify_company_verification_reminder(to: str, name: str, token: str, lang: str = "es") -> bool:
+    """Recordatorio (~48 h) para una cuenta Empresa aprobada que aún no verificó
+    su correo. Reusa el mismo enlace de verificación que `/auth/verify-email`."""
+    link = f"{_app_url()}/auth/verify-email/{token}"
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">
+        {_L(f"Hola {name or 'empresa'} 👋<br><br>Tu cuenta de empresa en <strong style='color:#fff;'>Resilience Brothers</strong> ya fue <strong style='color:#22C55E;'>aprobada</strong>, pero aún no has verificado tu correo. Verifícalo para poder iniciar sesión y empezar a operar.",
+            f"Hi {name or 'company'} 👋<br><br>Your company account at <strong style='color:#fff;'>Resilience Brothers</strong> is already <strong style='color:#22C55E;'>approved</strong>, but you haven't verified your email yet. Verify it to sign in and start trading.", lang)}
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0 24px;">
+          <a href="{link}" style="background:#8B5CF6;color:#000;text-decoration:none;
+             padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
+             display:inline-block;">{_L("VERIFICAR MI EMAIL", "VERIFY MY EMAIL", lang)}</a>
+        </td></tr>
+      </table>
+      <p style="color:#666;font-size:12px;margin:0 0 6px;">{_L("El enlace expira en 24 horas.", "The link expires in 24 hours.", lang)}</p>
+      <p style="color:#666;font-size:11px;word-break:break-all;">{_L("O copia:", "Or copy:", lang)} {link}</p>
+    """
+    return _send(to, _L("Recordatorio: verifica tu correo · Resilience Brothers",
+                        "Reminder: verify your email · Resilience Brothers", lang),
+                 _base_template(_L("Verifica tu cuenta de empresa", "Verify your company account", lang), body, lang),
+                 kind="company_verification_reminder")
+
+
+def notify_company_status_link(to: str, company_name: str, status: str, url: str,
+                               lang: str = "es") -> bool:
+    """Enlace mágico de seguimiento del estado de una solicitud de Empresa."""
+    labels = {
+        "pending": _L("en revisión", "under review", lang),
+        "approved": _L("aprobada", "approved", lang),
+        "rejected": _L("rechazada", "rejected", lang),
+    }
+    status_label = labels.get(status, labels["pending"])
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">
+        {_L(f"Hola {company_name or 'empresa'} 👋<br><br>Pediste consultar el estado de tu solicitud de cuenta Empresa en <strong style='color:#fff;'>Resilience Brothers</strong>. Ahora mismo figura como <strong style='color:#fff;'>{status_label}</strong>.",
+            f"Hi {company_name or 'company'} 👋<br><br>You requested the status of your Company account application at <strong style='color:#fff;'>Resilience Brothers</strong>. It is currently <strong style='color:#fff;'>{status_label}</strong>.", lang)}
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr><td align="center" style="padding:8px 0 24px;">
+          <a href="{url}" style="background:#8B5CF6;color:#000;text-decoration:none;
+             padding:14px 36px;font-weight:bold;font-family:Arial;letter-spacing:1px;
+             display:inline-block;">{_L("VER ESTADO DE MI SOLICITUD", "VIEW MY APPLICATION STATUS", lang)}</a>
+        </td></tr>
+      </table>
+      <p style="color:#666;font-size:12px;margin:0 0 6px;">{_L("El enlace de seguimiento expira en 7 días.", "The tracking link expires in 7 days.", lang)}</p>
+      <p style="color:#666;font-size:11px;word-break:break-all;">{_L("O copia:", "Or copy:", lang)} {url}</p>
+    """
+    return _send(to, _L("Estado de tu solicitud de empresa · Resilience Brothers",
+                        "Your company application status · Resilience Brothers", lang),
+                 _base_template(_L("Seguimiento de tu solicitud", "Track your application", lang), body, lang),
+                 kind="company_status_link")
 
 
 def notify_password_reset(to: str, name: str, token: str, lang: str = "es") -> bool:

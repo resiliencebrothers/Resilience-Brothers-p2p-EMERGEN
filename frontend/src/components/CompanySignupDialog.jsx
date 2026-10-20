@@ -32,8 +32,17 @@ const EMPTY = {
  * los 2 documentos del KYB y los envía a `/company-signup`. La cuenta se crea y
  * activa cuando el equipo aprueba la solicitud y el usuario verifica su correo.
  */
-export default function CompanySignupDialog({ open, onClose }) {
-  const [form, setForm] = useState(EMPTY);
+export default function CompanySignupDialog({ open, onClose, prefill = null, resubmitToken = null, rejectionReason = "" }) {
+  const isResubmit = !!resubmitToken;
+  const initialForm = useMemo(() => ({
+    ...EMPTY,
+    company_name: prefill?.company_name || "",
+    account_email: prefill?.account_email || "",
+    company_phone: prefill?.company_phone || "",
+    tax_id: prefill?.tax_id || "",
+    address: prefill?.address || "",
+  }), [prefill]);
+  const [form, setForm] = useState(initialForm);
   const [docs, setDocs] = useState({ operating_license: null, legal_rep_id: null });
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -53,7 +62,7 @@ export default function CompanySignupDialog({ open, onClose }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const reset = () => {
-    setForm(EMPTY);
+    setForm(initialForm);
     setDocs({ operating_license: null, legal_rep_id: null });
     setDone(false);
     setSubmitting(false);
@@ -102,7 +111,8 @@ export default function CompanySignupDialog({ open, onClose }) {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      await axios.post(`${API}/company-signup`, {
+      const url = isResubmit ? `${API}/company-signup/resubmit/${resubmitToken}` : `${API}/company-signup`;
+      await axios.post(url, {
         company_name: form.company_name.trim(),
         account_email: form.account_email.trim().toLowerCase(),
         password: form.password,
@@ -133,18 +143,28 @@ export default function CompanySignupDialog({ open, onClose }) {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Building2 className="w-5 h-5 text-[#8B5CF6]" /> Abrir cuenta de Empresa
+            <Building2 className="w-5 h-5 text-[#8B5CF6]" /> {isResubmit ? "Reenviar documentación" : "Abrir cuenta de Empresa"}
           </DialogTitle>
           <DialogDescription className="text-neutral-500 text-xs">
-            Completa los datos y sube los documentos. Tu cuenta se activa cuando
-            el equipo aprueba la solicitud y verificas tu correo.
+            {isResubmit
+              ? "Corrige lo indicado, vuelve a subir tus documentos y reenvía tu solicitud."
+              : "Completa los datos y sube los documentos. Tu cuenta se activa cuando el equipo aprueba la solicitud y verificas tu correo."}
           </DialogDescription>
         </DialogHeader>
+
+        {isResubmit && rejectionReason && !done && (
+          <div className="border border-[#EF4444]/40 bg-[#EF4444]/5 p-3" data-testid="company-resubmit-reason">
+            <div className="micro-label text-[#EF4444] mb-1 flex items-center gap-1.5">
+              <X className="w-3.5 h-3.5" /> Motivo del rechazo anterior
+            </div>
+            <p className="text-sm text-neutral-200 whitespace-pre-line">{rejectionReason}</p>
+          </div>
+        )}
 
         {done ? (
           <div className="py-6 text-center space-y-4" data-testid="company-signup-success">
             <ShieldCheck className="w-12 h-12 text-emerald-400 mx-auto" />
-            <div className="text-lg font-semibold">¡Solicitud enviada!</div>
+            <div className="text-lg font-semibold">{isResubmit ? "¡Solicitud reenviada!" : "¡Solicitud enviada!"}</div>
             <p className="text-sm text-neutral-400 leading-relaxed flex items-start gap-2 text-left">
               <Mail className="w-4 h-4 mt-0.5 shrink-0 text-[#8B5CF6]" />
               <span>
@@ -160,6 +180,12 @@ export default function CompanySignupDialog({ open, onClose }) {
             >
               Entendido
             </Button>
+            <div className="pt-1">
+              <a href="/empresa/seguimiento" data-testid="company-signup-track-link"
+                className="text-xs text-[#8B5CF6] hover:underline">
+                Consultar el estado de mi solicitud
+              </a>
+            </div>
           </div>
         ) : (
           <div className="space-y-3 mt-1">

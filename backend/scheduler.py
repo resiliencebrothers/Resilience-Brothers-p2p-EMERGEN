@@ -341,6 +341,10 @@ async def run_credit_recovery():
         # Idempotente; identidad estable new_user_id → nunca duplica cuentas.
         from routes.company_requests import recover_company_approvals
         n += await recover_company_approvals()
+        # Recordatorio ÚNICO de verificación de correo a cuentas Empresa
+        # aprobadas que no verificaron su email ~48 h después del alta.
+        from routes.company_requests import run_company_verification_reminder
+        n += await run_company_verification_reminder()
         # iter257(D06) — compactación de registros embebidos: retira solo ops
         # con log duradero confirmado; los 'pending' se conservan como
         # evidencia (sustituye al viejo $slice ciego).

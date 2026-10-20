@@ -288,7 +288,9 @@ async def _maybe_email_company_kyb(v: dict, decision: str, reason: str = "") -> 
         if decision == "approved":
             email_service.notify_company_kyb_approved(to, name, lang=lang)
         elif decision == "rejected":
-            email_service.notify_company_kyb_rejected(to, name, reason, lang=lang)
+            resubmit_url = f"{email_service.app_url()}/company/kyc"
+            email_service.notify_company_kyb_rejected(
+                to, name, reason, lang=lang, resubmit_url=resubmit_url)
         elif decision == "needs_info":
             email_service.notify_company_kyb_needs_info(to, name, reason, lang=lang)
     except Exception:  # noqa: BLE001

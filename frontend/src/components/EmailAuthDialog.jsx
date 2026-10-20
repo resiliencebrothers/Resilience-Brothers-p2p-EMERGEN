@@ -275,6 +275,12 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 >
                   Continuar con el registro de Empresa <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
+                <div className="text-center mt-3">
+                  <a href="/empresa/seguimiento" data-testid="company-track-status-link"
+                    className="text-xs text-neutral-400 hover:text-[#8B5CF6]">
+                    ¿Ya enviaste tu solicitud? Consulta su estado
+                  </a>
+                </div>
               </div>
             ) : (
               <>

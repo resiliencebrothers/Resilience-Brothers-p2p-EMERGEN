@@ -7,6 +7,8 @@ import axios from "axios";
 import Landing from "@/pages/Landing";
 import VerifyEmail from "@/pages/VerifyEmail";
 import ResetPassword from "@/pages/ResetPassword";
+import CompanyRequestStatus from "@/pages/CompanyRequestStatus";
+import CompanyResubmit from "@/pages/CompanyResubmit";
 import PrivacyPolicy from "@/pages/PrivacyPolicy";
 import TermsOfService from "@/pages/TermsOfService";
 import Dashboard from "@/pages/Dashboard";
@@ -63,6 +65,9 @@ function AppRouter() {
       <Route path="/terms" element={<TermsOfService />} />
       <Route path="/auth/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/auth/reset-password/:token" element={<ResetPassword />} />
+      <Route path="/empresa/seguimiento" element={<CompanyRequestStatus />} />
+      <Route path="/empresa/seguimiento/:token" element={<CompanyRequestStatus />} />
+      <Route path="/empresa/reenviar/:token" element={<CompanyResubmit />} />
       <Route path="/dashboard/*" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/company/*" element={<ProtectedRoute companyRoute><CompanyPanel /></ProtectedRoute>} />
       <Route path="/admin/*" element={<ProtectedRoute staffOnly><AdminPanel /></ProtectedRoute>} />

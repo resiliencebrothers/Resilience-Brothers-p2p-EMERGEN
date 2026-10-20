@@ -44,6 +44,8 @@ Reglas:
 from __future__ import annotations
 
 import uuid
+import hashlib
+import secrets
 import logging
 from typing import Any, Optional, Awaitable, Callable
 from datetime import datetime, timezone, timedelta
@@ -67,6 +69,31 @@ router = APIRouter(tags=["Company Requests"])
 REJECTION_COOLDOWN_DAYS = 7
 BCRYPT_MAX_BYTES = 72
 RESEND_COOLDOWN_SECONDS = 60
+# Enlaces públicos opacos (magic-link de seguimiento + reenvío tras rechazo).
+STATUS_TOKEN_TTL_HOURS = 7 * 24   # 7 días, enlace reutilizable (solo lectura)
+RESUBMIT_TOKEN_TTL_HOURS = 72     # 72 h, enlace de un solo uso
+
+
+def _new_link_token() -> str:
+    """Token opaco de 256 bits (CSPRNG), URL-safe y no enumerable."""
+    return secrets.token_urlsafe(32)
+
+
+def _token_digest(token: str) -> str:
+    """Se guarda SOLO el digest; el token en claro nunca se persiste. SHA-256
+    es suficiente porque el token ya tiene alta entropía (256 bits)."""
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _is_future_iso(value: Optional[str]) -> bool:
+    """True si `value` (ISO) es una fecha aún no vencida."""
+    if not value:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return False
+    return dt > datetime.now(timezone.utc)
 
 
 # ============================================================
@@ -113,6 +140,13 @@ class CompanySignupCreate(BaseModel):
         if not v or not (v.startswith("data:image/") or v.startswith("data:application/pdf")):
             raise ValueError("Debe ser una imagen o un PDF en formato data:...;base64.")
         return v
+
+
+class CompanyStatusLinkRequest(BaseModel):
+    """Solicita por email el enlace mágico de seguimiento de la solicitud."""
+    model_config = ConfigDict(extra="ignore")
+    email: EmailStr
+    captcha_token: str = ""
 
 
 # ============================================================
@@ -406,6 +440,17 @@ async def company_signup(payload: CompanySignupCreate, request: Request) -> Any:
     revisa en "KYB Empresas". Al aprobarse se crea la cuenta Empresa (activa,
     con el teléfono ya dado por aprobado), se envía la verificación de correo y
     el KYB queda verificado; al verificar el correo la cuenta puede operar."""
+    await _persist_company_signup(payload, request, skip_cooldown=False)
+    return {"ok": True,
+            "message": "Solicitud recibida. Te avisaremos por correo cuando el equipo la revise."}
+
+
+async def _persist_company_signup(
+    payload: CompanySignupCreate, request: Request, *, skip_cooldown: bool,
+) -> dict:
+    """Valida + sube documentos + crea la solicitud `pending` (alta pública).
+    Reutilizado por `/company-signup` (con enfriamiento) y por el reenvío tras
+    rechazo (`skip_cooldown=True`, el token válido autoriza el bypass)."""
     from captcha import verify_captcha_token
     from services.balances import assert_not_defensive
 
@@ -440,15 +485,17 @@ async def company_signup(payload: CompanySignupCreate, request: Request) -> Any:
             detail="Ya hay una solicitud de Empresa en revisión para ese email.")
 
     # Enfriamiento de 7 días tras el último rechazo (por email, sin sesión).
-    last_rejected = await db.company_requests.find_one(
-        {"account_email": account_email, "status": "rejected"},
-        {"_id": 0, "reviewed_at": 1}, sort=[("reviewed_at", -1)])
-    if last_rejected and last_rejected.get("reviewed_at"):
-        remaining = _cooldown_remaining(last_rejected["reviewed_at"])
-        if remaining > 0:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Debes esperar {remaining} día(s) antes de volver a solicitar.")
+    # El reenvío con token válido lo omite (skip_cooldown).
+    if not skip_cooldown:
+        last_rejected = await db.company_requests.find_one(
+            {"account_email": account_email, "status": "rejected"},
+            {"_id": 0, "reviewed_at": 1}, sort=[("reviewed_at", -1)])
+        if last_rejected and last_rejected.get("reviewed_at"):
+            remaining = _cooldown_remaining(last_rejected["reviewed_at"])
+            if remaining > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Debes esperar {remaining} día(s) antes de volver a solicitar.")
 
     # Subir los 2 documentos a almacenamiento (ref /api/files/... servida por el
     # proxy autenticado; el admin puede verlas al revisar el KYB).
@@ -502,8 +549,127 @@ async def company_signup(payload: CompanySignupCreate, request: Request) -> Any:
         details={"company_name": doc["company_name"], "account_email": account_email})
     await _notify_staff_new_request(doc)
     await _publish("company_request_created", {"request_id": doc["id"]}, admin=True)
-    return {"ok": True,
-            "message": "Solicitud recibida. Te avisaremos por correo cuando el equipo la revise."}
+    return doc
+
+
+# ============================================================
+# Seguimiento público (magic-link) + reenvío tras rechazo
+# ============================================================
+
+@router.post("/company-signup/status-link")
+async def company_signup_status_link(
+    payload: CompanyStatusLinkRequest, request: Request) -> Any:
+    """Envía al correo indicado un enlace mágico de seguimiento SOLO si existe
+    una solicitud para ese email. Respuesta SIEMPRE genérica (no revela a
+    terceros si el email tiene o no una solicitud)."""
+    from captcha import verify_captcha_token
+    await verify_captcha_token(payload.captcha_token, request)
+
+    generic = {"ok": True, "message": (
+        "Si existe una solicitud para ese correo, te enviamos un enlace de "
+        "seguimiento. Revisa tu bandeja (y la carpeta de spam).")}
+    email = _normalize_email(str(payload.email))
+    doc = await db.company_requests.find_one(
+        {"account_email": email}, {"_id": 0, "id": 1, "company_name": 1, "status": 1},
+        sort=[("created_at", -1)])
+    if not doc:
+        return generic
+    raw = _new_link_token()
+    await db.company_requests.update_one(
+        {"id": doc["id"]},
+        {"$set": {
+            "status_token_digest": _token_digest(raw),
+            "status_token_expires_at": iso(now_utc() + timedelta(hours=STATUS_TOKEN_TTL_HOURS)),
+        }})
+    try:
+        import email_service
+        url = f"{email_service.app_url()}/empresa/seguimiento/{raw}"
+        email_service.notify_company_status_link(
+            email, doc.get("company_name", ""), doc.get("status", "pending"), url, lang="es")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[company_requests] status-link email failed: {e}")
+    return generic
+
+
+@router.get("/company-signup/status/{token}")
+async def company_signup_status(token: str) -> Any:
+    """Estado de la solicitud asociada al token de seguimiento (reutilizable
+    hasta expirar). Devuelve SOLO estado + metadatos públicos, nunca datos
+    sensibles (contraseña, documentos, hash)."""
+    doc = await db.company_requests.find_one(
+        {"status_token_digest": _token_digest(token)}, {"_id": 0})
+    if not doc or not _is_future_iso(doc.get("status_token_expires_at")):
+        raise HTTPException(status_code=404, detail="Enlace no válido o caducado.")
+    status = doc.get("status", "pending")
+    out = {
+        "status": status,
+        "company_name": doc.get("company_name", ""),
+        "account_email": doc.get("account_email", ""),
+        "created_at": doc.get("created_at"),
+        "reviewed_at": doc.get("reviewed_at"),
+        "rejection_reason": doc.get("admin_note") if status == "rejected" else None,
+        "email_verified": None,
+    }
+    # Si ya fue aprobada, informar si el correo está verificado para guiar al
+    # usuario ("revisa tu correo" vs "inicia sesión").
+    if status == "approved" and doc.get("new_user_id"):
+        acc = await db.users.find_one(
+            {"user_id": doc["new_user_id"]}, {"_id": 0, "email_verified": 1})
+        if acc:
+            out["email_verified"] = bool(acc.get("email_verified"))
+    return out
+
+
+@router.get("/company-signup/resubmit/{token}")
+async def company_signup_resubmit_prefill(token: str) -> Any:
+    """Prefill del formulario de reenvío tras rechazo. Devuelve SOLO los campos
+    editables (nunca contraseña ni documentos) + el motivo del rechazo."""
+    doc = await db.company_requests.find_one(
+        {"resubmit_token_digest": _token_digest(token)}, {"_id": 0})
+    if (not doc or doc.get("status") != "rejected"
+            or doc.get("resubmit_token_used_at")
+            or not _is_future_iso(doc.get("resubmit_token_expires_at"))):
+        raise HTTPException(status_code=404, detail="Enlace no válido, caducado o ya utilizado.")
+    return {
+        "valid": True,
+        "company_name": doc.get("company_name", ""),
+        "account_email": doc.get("account_email", ""),
+        "company_phone": doc.get("company_phone", ""),
+        "tax_id": doc.get("tax_id", ""),
+        "address": doc.get("address", ""),
+        "rejection_reason": doc.get("admin_note") or "",
+    }
+
+
+@router.post("/company-signup/resubmit/{token}")
+async def company_signup_resubmit(
+    token: str, payload: CompanySignupCreate, request: Request) -> Any:
+    """Reenvío de una solicitud rechazada con documentación corregida. El token
+    (un solo uso) autoriza SALTARSE el enfriamiento de 7 días. Crea una nueva
+    solicitud `pending` y consume el token de forma atómica."""
+    digest = _token_digest(token)
+    doc = await db.company_requests.find_one(
+        {"resubmit_token_digest": digest}, {"_id": 0, "id": 1, "status": 1,
+                                            "resubmit_token_used_at": 1,
+                                            "resubmit_token_expires_at": 1})
+    if (not doc or doc.get("status") != "rejected"
+            or doc.get("resubmit_token_used_at")
+            or not _is_future_iso(doc.get("resubmit_token_expires_at"))):
+        raise HTTPException(status_code=404, detail="Enlace no válido, caducado o ya utilizado.")
+
+    # Crea la nueva solicitud (valida captcha, unicidad, sube documentos). El
+    # índice único parcial (account_email, pending) impide duplicados; dos
+    # reenvíos concurrentes → uno crea, el otro recibe 409.
+    new_doc = await _persist_company_signup(payload, request, skip_cooldown=True)
+
+    # Consumo del token de un solo uso (CAS idempotente). La solicitud ya quedó
+    # creada; marcar el token evita reutilizar el mismo enlace.
+    await db.company_requests.update_one(
+        {"id": doc["id"], "resubmit_token_used_at": None},
+        {"$set": {"resubmit_token_used_at": iso(now_utc())}})
+    return {"ok": True, "request_id": new_doc["id"],
+            "message": "Solicitud reenviada. Te avisaremos por correo cuando el equipo la revise."}
+
 
 
 @router.get("/company-requests/me")
@@ -836,6 +1002,48 @@ async def recover_company_approvals() -> int:
     return healed
 
 
+async def run_company_verification_reminder() -> int:
+    """Recordatorio ÚNICO de verificación de correo para cuentas Empresa
+    aprobadas que no verificaron su email ~48 h después del alta. Regenera el
+    token de verificación (patrón del reenvío) y reenvía el correo. Idempotente:
+    el flag `verification_reminder_sent_at` garantiza un solo recordatorio por
+    cuenta; el claim CAS evita recordar una cuenta que acaba de verificarse."""
+    now = now_utc()
+    lower = iso(now - timedelta(hours=120))  # no recordar cuentas muy antiguas
+    due = iso(now - timedelta(hours=48))
+    cursor = db.users.find(
+        {"role": "empresa", "email_verified": False,
+         "created_at": {"$gte": lower, "$lte": due},
+         "verification_reminder_sent_at": {"$exists": False}},
+        {"_id": 0, "user_id": 1, "email": 1, "name": 1, "preferred_language": 1})
+    reminded = 0
+    async for acc in cursor:
+        new_token = uuid.uuid4().hex + uuid.uuid4().hex
+        # Claim CAS: solo si SIGUE sin verificar y sin recordatorio previo.
+        claim = await db.users.update_one(
+            {"user_id": acc["user_id"], "email_verified": False,
+             "verification_reminder_sent_at": {"$exists": False}},
+            {"$set": {
+                "verification_token": new_token,
+                "verification_expires_at": iso(now + timedelta(hours=24)),
+                "verification_reminder_sent_at": iso(now),
+            }})
+        if claim.modified_count != 1:
+            continue  # otra ejecución la recordó o el usuario ya verificó
+        try:
+            import email_service
+            email_service.notify_company_verification_reminder(
+                acc["email"], acc.get("name", ""), new_token,
+                lang=acc.get("preferred_language") or "es")
+            reminded += 1
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[company_requests] verification reminder {acc['user_id']} failed: {e}")
+    if reminded:
+        logger.info("[company-verif-reminder] %s recordatorio(s) enviados", reminded)
+    return reminded
+
+
+
 async def _dedup_pending_requests() -> None:
     """A04 — colapsa solicitudes `pending` duplicadas por usuario ANTES de crear
     el índice único parcial (si no, su creación fallaría). Conserva la MÁS
@@ -893,6 +1101,18 @@ async def ensure_indexes() -> None:
             name="uniq_company_request_pending_email")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[company_requests] pending-email-unique index skipped: {e}")
+    try:
+        # Enlaces públicos: búsqueda por digest del token (seguimiento + reenvío).
+        await db.company_requests.create_index(
+            "status_token_digest", name="company_requests_status_token", sparse=True)
+        await db.company_requests.create_index(
+            "resubmit_token_digest", name="company_requests_resubmit_token", sparse=True)
+        # Recordatorio de verificación: filtra cuentas Empresa sin verificar.
+        await db.users.create_index(
+            [("role", 1), ("email_verified", 1), ("verification_reminder_sent_at", 1)],
+            name="empresa_verification_reminder")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[company_requests] link/reminder indexes skipped: {e}")
     try:
         # A04 — único PARCIAL por `dedup_key`: garantiza a nivel de BD un solo
         # aviso persistente por (solicitud, decisión, destinatario) aunque el
@@ -1006,13 +1226,26 @@ async def admin_reject_company_request(
         details={"requester": doc["user_id"], "note": note},
     )
     # Alta pública/anónima: el solicitante no tiene cuenta/campana → se le avisa
-    # por correo del rechazo. Flujo heredado (con cuenta solicitante): aviso in-app.
+    # por correo del rechazo, con un enlace de UN CLIC para reenviar la
+    # documentación corregida (salta el enfriamiento de 7 días). Flujo heredado
+    # (con cuenta solicitante): aviso in-app.
     if doc.get("requester_anonymous"):
         try:
             import email_service
+            resubmit_raw = _new_link_token()
+            await db.company_requests.update_one(
+                {"id": req_id},
+                {"$set": {
+                    "resubmit_token_digest": _token_digest(resubmit_raw),
+                    "resubmit_token_expires_at": iso(
+                        now_utc() + timedelta(hours=RESUBMIT_TOKEN_TTL_HOURS)),
+                    "resubmit_token_used_at": None,
+                }})
+            resubmit_url = f"{email_service.app_url()}/empresa/reenviar/{resubmit_raw}"
             email_service.notify_company_kyb_rejected(
                 _normalize_email(doc.get("account_email", "")),
-                doc.get("company_name", ""), note or "", lang="es")
+                doc.get("company_name", ""), note or "", lang="es",
+                resubmit_url=resubmit_url)
         except Exception as e:  # noqa: BLE001
             logger.error(f"[company_requests] anon reject email failed: {e}")
     else:
