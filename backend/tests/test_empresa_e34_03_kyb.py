@@ -161,8 +161,8 @@ class TestKYBWithdrawGuard:
         old_id = _insert_verif(EMP_ID, status="verified", kind="company")
         r = requests.post(f"{API}/kyc/company/submit", headers=_hdr(EMP_TOKEN), json={
             "fiscal_code": "RB-REVAL", "legal_address": "Dir nueva 456",
-            "company_name": "Empresa E3403", "tax_certificate": PNG,
-            "operating_license": PNG})
+            "company_name": "Empresa E3403", "operating_license": PNG,
+            "legal_rep_id": PNG})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "pending"
         db = _db()

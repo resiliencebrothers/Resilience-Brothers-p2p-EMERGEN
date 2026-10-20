@@ -112,7 +112,7 @@ async def test_a02_reject_loses_to_concurrent_approval(monkeypatch):
         assert fresh["new_user_id"]
         acc = await real_db.users.find_one({"user_id": fresh["new_user_id"]})
         assert acc is not None
-        assert acc["account_status"] == "under_review"
+        assert acc["account_status"] == "active"
         assert acc["email"] == email
     finally:
         monkeypatch.undo()
@@ -231,7 +231,7 @@ async def test_a03_crash_before_insert_is_recoverable(monkeypatch):
         fresh = await cr.admin_approve_company_request(rid, None)
         assert fresh["status"] == "approved"
         acc = await db.users.find_one({"user_id": fresh["new_user_id"]})
-        assert acc and acc["account_status"] == "under_review" and acc["email"] == email
+        assert acc and acc["account_status"] == "active" and acc["email"] == email
         assert await db.users.count_documents({"email": email}) == 1
         assert "password_hash" not in fresh
     finally:
@@ -297,7 +297,7 @@ async def test_a03_recoverer_completes_stuck_approving():
         assert fresh["status"] == "approved"
         assert fresh.get("notified_at")
         acc = await db.users.find_one({"user_id": new_uid})
-        assert acc and acc["account_status"] == "under_review"
+        assert acc and acc["account_status"] == "active"
         assert await db.users.count_documents({"email": email}) == 1
         assert "password_hash" not in fresh
     finally:
@@ -469,7 +469,7 @@ async def test_p02_crash_after_claim_is_still_recoverable(monkeypatch):
 
         fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
         assert fresh.get("notified_at")
-        assert set(fresh.get("notify_channels") or []) >= {"audit", "email", "staff", "client"}
+        assert set(fresh.get("notify_channels") or []) >= {"audit", "email", "client"}
         # Aviso al cliente entregado EXACTAMENTE una vez.
         assert await db.notifications.count_documents(
             {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
@@ -484,10 +484,10 @@ async def test_p02_per_channel_idempotency_no_duplicate_resend(monkeypatch):
     faltantes sin reenviar los ya enviados (dedup por `notify_channels`)."""
     rid, new_uid, email = await _seed_approved_unnotified()
     try:
-        # Simula: audit+email+staff ya enviados; solo falta 'client'. Lease viejo.
+        # Simula: audit+email ya enviados; solo falta 'client'. Lease viejo.
         await db.company_requests.update_one(
             {"id": rid}, {"$set": {
-                "notify_channels": ["audit", "email", "staff"],
+                "notify_channels": ["audit", "email"],
                 "notify_claimed_at": iso(now_utc() - timedelta(minutes=5))}})
         calls = {"email": 0}
 
@@ -502,7 +502,7 @@ async def test_p02_per_channel_idempotency_no_duplicate_resend(monkeypatch):
 
         fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
         assert fresh.get("notified_at")
-        assert set(fresh["notify_channels"]) >= {"audit", "email", "staff", "client"}
+        assert set(fresh["notify_channels"]) >= {"audit", "email", "client"}
         # El correo NO se reenvió (ya estaba en notify_channels).
         assert calls["email"] == 0
         # El canal faltante 'client' se completó una sola vez.
@@ -623,63 +623,5 @@ async def test_p02r_client_insert_error_absorbed_does_not_seal(monkeypatch):
             {"recipient_user_id": REQUESTER, "type": "company_request_approved"}) == 1
     finally:
         monkeypatch.undo()
-        await db.notifications.delete_many({"data.target_user_id": new_uid})
-        await _cleanup(rid, email)
-
-
-async def test_p02r_staff_partial_delivery_retries_only_failed(monkeypatch):
-    """Entrega PARCIAL al personal: si la inserción a un destinatario falla, el
-    canal 'staff' no se sella. Al recuperarse se reintenta SOLO al destinatario
-    pendiente (idempotente por `target_user_id`): el que ya recibió el aviso no
-    se duplica y, cuando todos lo tienen, el canal sella."""
-    rid, new_uid, email = await _seed_approved_unnotified()
-    s1 = f"staff_ok_{uuid.uuid4().hex[:8]}"
-    s2 = f"staff_fail_{uuid.uuid4().hex[:8]}"
-    await db.users.insert_many([
-        {"user_id": s1, "role": "admin", "email": f"{s1}@resilience.com"},
-        {"user_id": s2, "role": "admin", "email": f"{s2}@resilience.com"},
-    ])
-    try:
-        import routes.notifications as notif
-        orig_insert = notif._insert_notification
-        state = {"fail_s2": True}
-
-        async def _insert_guard(**kw):
-            if (kw.get("type") == "new_user_pending"
-                    and kw.get("recipient_user_id") == s2 and state["fail_s2"]):
-                raise RuntimeError("broker de avisos caído para s2")
-            return await orig_insert(**kw)
-        monkeypatch.setattr(notif, "_insert_notification", _insert_guard)
-
-        await cr._finalize_company_approval(rid)
-        mid = await db.company_requests.find_one({"id": rid}, {"_id": 0})
-        assert "staff" not in set(mid.get("notify_channels") or []), \
-            "staff NO debe sellarse con una entrega parcial"
-        assert not mid.get("notified_at")
-        # s1 recibió su aviso; s2 no.
-        assert await db.notifications.count_documents(
-            {"recipient_user_id": s1, "type": "new_user_pending",
-             "data.target_user_id": new_uid}) == 1
-        assert await db.notifications.count_documents(
-            {"recipient_user_id": s2, "type": "new_user_pending",
-             "data.target_user_id": new_uid}) == 0
-
-        # Recuperación: s2 ya no falla.
-        state["fail_s2"] = False
-        await _backdate_lease(rid)
-        await cr.recover_company_approvals()
-        fresh = await db.company_requests.find_one({"id": rid}, {"_id": 0})
-        assert "staff" in set(fresh.get("notify_channels") or [])
-        assert fresh.get("notified_at")
-        # s1 NO duplicado (sigue en 1); s2 ahora entregado (1).
-        assert await db.notifications.count_documents(
-            {"recipient_user_id": s1, "type": "new_user_pending",
-             "data.target_user_id": new_uid}) == 1
-        assert await db.notifications.count_documents(
-            {"recipient_user_id": s2, "type": "new_user_pending",
-             "data.target_user_id": new_uid}) == 1
-    finally:
-        monkeypatch.undo()
-        await db.users.delete_many({"user_id": {"$in": [s1, s2]}})
         await db.notifications.delete_many({"data.target_user_id": new_uid})
         await _cleanup(rid, email)

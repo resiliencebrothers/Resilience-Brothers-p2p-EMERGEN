@@ -15,7 +15,6 @@ import {
 // dirección legal (en vez del documento de identidad personal + selfie).
 // Reusa /kyc/my-status para el estado y POSTea a /kyc/company/submit.
 const DOC_STEPS = [
-  { key: "tax_certificate", label: "Código / certificado fiscal", hint: "Foto, escaneo o PDF del documento que acredita tu código fiscal." },
   { key: "operating_license", label: "Licencia operativa", hint: "Foto, escaneo o PDF de la licencia que autoriza tu actividad comercial." },
   { key: "legal_rep_id", label: "ID del representante legal", hint: "Foto, escaneo o PDF del documento de identidad del representante legal de la empresa." },
 ];
@@ -38,8 +37,8 @@ export default function CompanyKYCView() {
   const [fiscalCode, setFiscalCode] = useState("");
   const [legalAddress, setLegalAddress] = useState("");
   const [companyName, setCompanyName] = useState(user?.name || "");
-  const [docs, setDocs] = useState({ tax_certificate: null, operating_license: null, legal_rep_id: null });
-  const fileRefs = { tax_certificate: useRef(), operating_license: useRef(), legal_rep_id: useRef() };
+  const [docs, setDocs] = useState({ operating_license: null, legal_rep_id: null });
+  const fileRefs = { operating_license: useRef(), legal_rep_id: useRef() };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -74,22 +73,21 @@ export default function CompanyKYCView() {
   };
 
   const allReady = fiscalCode.trim() && legalAddress.trim()
-    && docs.tax_certificate && docs.operating_license && docs.legal_rep_id;
+    && docs.operating_license && docs.legal_rep_id;
 
   const submit = async () => {
-    if (!allReady) { toast.error("Completa el código fiscal, la dirección y sube los tres documentos."); return; }
+    if (!allReady) { toast.error("Completa el código fiscal, la dirección y sube los dos documentos."); return; }
     setSubmitting(true);
     try {
       await axios.post(`${API}/kyc/company/submit`, {
         fiscal_code: fiscalCode.trim(),
         legal_address: legalAddress.trim(),
         company_name: companyName.trim(),
-        tax_certificate: docs.tax_certificate.data,
         operating_license: docs.operating_license.data,
         legal_rep_id: docs.legal_rep_id.data,
       }, { withCredentials: true });
       toast.success("Verificación enviada. El equipo la revisará pronto.");
-      setDocs({ tax_certificate: null, operating_license: null, legal_rep_id: null });
+      setDocs({ operating_license: null, legal_rep_id: null });
       setReverify(false);
       for (const k of Object.keys(fileRefs)) { if (fileRefs[k].current) fileRefs[k].current.value = ""; }
       await load();
@@ -264,7 +262,7 @@ export default function CompanyKYCView() {
                 </Button>
                 <p className="text-xs text-neutral-500">El equipo suele responder en menos de 48 h.</p>
                 {s === "verified" && reverify && (
-                  <Button variant="ghost" size="sm" onClick={() => { setReverify(false); removeFile("tax_certificate"); removeFile("operating_license"); removeFile("legal_rep_id"); }}
+                  <Button variant="ghost" size="sm" onClick={() => { setReverify(false); removeFile("operating_license"); removeFile("legal_rep_id"); }}
                     className="text-neutral-400 hover:text-white"
                     data-testid="company-kyc-cancel-reverify-btn">
                     Cancelar

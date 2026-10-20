@@ -55,27 +55,27 @@ class TestCompanyKYC:
     def test_company_submit_creates_company_verification(self):
         r = requests.post(f"{API}/kyc/company/submit", headers=_hdr(EMP_TOKEN), json={
             "fiscal_code": "RB-12345678", "legal_address": "Calle 1 #2, Centro, La Habana",
-            "company_name": "Resilience Store SA", "tax_certificate": PNG,
-            "operating_license": PNG})
+            "company_name": "Resilience Store SA", "operating_license": PNG,
+            "legal_rep_id": PNG})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "pending"
         doc = _db().kyc_verifications.find_one({"user_id": EMP_ID}, {"_id": 0})
         assert doc["kind"] == "company"
         assert doc["company_fields"]["fiscal_code"] == "RB-12345678"
         assert doc["company_fields"]["legal_address"].startswith("Calle 1")
-        assert {d["doc_type"] for d in doc["documents"]} == {"tax_certificate", "operating_license"}
+        assert {d["doc_type"] for d in doc["documents"]} == {"operating_license", "legal_rep_id"}
 
     def test_company_submit_requires_fiscal_and_address(self):
         # Espacios en blanco pasan min_length pero el backend los rechaza.
         r = requests.post(f"{API}/kyc/company/submit", headers=_hdr(EMP_TOKEN), json={
             "fiscal_code": "   ", "legal_address": "      ",
-            "tax_certificate": PNG, "operating_license": PNG})
+            "operating_license": PNG, "legal_rep_id": PNG})
         assert r.status_code == 400, r.text
 
     def test_non_company_role_forbidden(self):
         r = requests.post(f"{API}/kyc/company/submit", headers=_hdr(NORMAL_TOKEN), json={
             "fiscal_code": "X-1", "legal_address": "addr addr",
-            "tax_certificate": PNG, "operating_license": PNG})
+            "operating_license": PNG, "legal_rep_id": PNG})
         assert r.status_code == 403, r.text
 
     def test_company_blocked_from_individual_kyc(self):
@@ -86,7 +86,7 @@ class TestCompanyKYC:
     def test_admin_approval_sets_kyc_verified(self):
         requests.post(f"{API}/kyc/company/submit", headers=_hdr(EMP_TOKEN), json={
             "fiscal_code": "RB-999", "legal_address": "Dir legal 123",
-            "tax_certificate": PNG, "operating_license": PNG})
+            "operating_license": PNG, "legal_rep_id": PNG})
         doc = _db().kyc_verifications.find_one({"user_id": EMP_ID})
         rid = doc["id"]
         r = requests.post(f"{API}/admin/kyc/{rid}/approve", headers=_hdr(ADMIN_TOKEN),

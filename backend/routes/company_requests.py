@@ -610,7 +610,8 @@ def _build_company_user_doc(doc: dict, new_user_id: str, lang: str) -> dict:
         "company_name": doc["company_name"],
         "tax_id": doc["tax_id"],
         "address": doc["address"],
-        "parent_user_id": doc["user_id"],
+        # Alta pública/anónima: no hay cuenta personal solicitante → sin padre.
+        "parent_user_id": None if doc.get("requester_anonymous") else doc["user_id"],
     }
 
 

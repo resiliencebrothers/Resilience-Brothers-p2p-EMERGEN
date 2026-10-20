@@ -147,9 +147,11 @@ export default function CompanySignupDialog({ open, onClose }) {
             <div className="text-lg font-semibold">¡Solicitud enviada!</div>
             <p className="text-sm text-neutral-400 leading-relaxed flex items-start gap-2 text-left">
               <Mail className="w-4 h-4 mt-0.5 shrink-0 text-[#8B5CF6]" />
-              El equipo revisará tu solicitud. Cuando la apruebe, recibirás un
-              correo en <strong className="text-neutral-200">{form.account_email || "tu email"}</strong> para
-              verificar tu cuenta. Al verificarlo, tu cuenta Empresa quedará activa.
+              <span>
+                El equipo revisará tu solicitud. Cuando la apruebe, recibirás un
+                correo en <strong className="text-neutral-200 break-all">{form.account_email || "tu email"}</strong> para
+                verificar tu cuenta. Al verificarlo, tu cuenta Empresa quedará activa.
+              </span>
             </p>
             <Button
               data-testid="company-signup-done-btn"

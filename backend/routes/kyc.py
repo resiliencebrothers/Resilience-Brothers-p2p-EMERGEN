@@ -79,11 +79,10 @@ class _KYCCompanySubmitPayload(BaseModel):
     legal_address: str = Field(..., min_length=5, max_length=300,
                                description="Dirección legal / fiscal de la empresa")
     company_name: str = Field("", max_length=160)
-    tax_certificate: str = Field(..., description="base64 data URL (imagen o PDF) del código/certificado fiscal")
     operating_license: str = Field(..., description="base64 data URL (imagen o PDF) de la licencia operativa")
     legal_rep_id: str = Field(..., description="base64 data URL (imagen o PDF) del documento de identidad del representante legal")
 
-    @field_validator("tax_certificate", "operating_license", "legal_rep_id")
+    @field_validator("operating_license", "legal_rep_id")
     @classmethod
     def _must_be_data_url(cls, v: str) -> str:
         if not v or not (v.startswith("data:image/") or v.startswith("data:application/pdf")):
@@ -165,7 +164,6 @@ async def submit_company_kyc(payload: _KYCCompanySubmitPayload, request: Request
 
     documents = []
     for doc_type, data_url in [
-        ("tax_certificate", payload.tax_certificate),
         ("operating_license", payload.operating_license),
         ("legal_rep_id", payload.legal_rep_id),
     ]:

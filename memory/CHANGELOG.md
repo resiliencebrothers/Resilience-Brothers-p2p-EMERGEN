@@ -2545,3 +2545,20 @@ Tras el 520 de Cloudflare del 2026-10-20 (RCA del deployer: desalojo de pod por 
 - Verificado por curl: `/health` (origen) 200, `/api/health` (origen) 200, `/api/health` (externo por ingress/Cloudflare) 200.
 - Nota infra (escalado a Emergent por el deployer): aplicar PodDisruptionBudget para que la consolidación no desaloje todas las réplicas a la vez y pre-cachear/aligerar la imagen (836MB) para reducir la ventana de reinicio que produjo el 520.
 - Estado: en preview; pendiente de re-despliegue a producción.
+
+
+## Alta Empresa unificada en un solo paso (fork 2026-06) — registro público + KYB + revisión en "KYB Empresas"
+Problema: había TRES caminos solapados para abrir una cuenta Empresa (registro directo, "Programa Empresas" para usuario autenticado, y KYB posterior), pidiendo datos duplicados. El usuario pidió una ÚNICA vía pública de un paso.
+
+**Flujo nuevo (aprobado por el usuario e integration_expert)**:
+- En el registro de la web, al elegir "Empresa" se abre un formulario público único (`CompanySignupDialog`): nombre de empresa, correo, contraseña, teléfono, código fiscal, dirección legal, licencia operativa (doc) e ID del representante legal (doc). NO se pide certificado fiscal (el código fiscal lo sustituye) → KYB de 2 documentos.
+- `POST /api/company-signup` (anónimo): persiste una SOLICITUD PENDIENTE (no crea cuenta operativa), con `password_hash` (bcrypt, nunca sale en la API), captcha Turnstile (enforced), blocklist, cooldown 7 días e índice parcial único `uniq_company_request_pending_email` (una sola solicitud pendiente por correo).
+- Al APROBAR desde "KYB Empresas": se crea la cuenta Empresa idempotente con `account_status=active`, `phone_verified=True` (el teléfono va en el formulario, el staff lo da por aprobado), `email_verified=False`; se crea el expediente `kyc_verifications` (kind=company, status=verified) con los 2 documentos y `company_fields`; se envía el correo de verificación. El GATE de login existente bloquea el acceso hasta verificar el correo → al verificar, la cuenta opera sin rehacer KYB.
+- Rechazo: no crea cuenta; aviso al representante (correo + motivo). Reenvío de KYB rechazado sigue disponible vía `CompanyKYCView` (resubmit, también 2 documentos).
+
+**Backend** (`routes/company_requests.py`): modelo `CompanySignupCreate` (2 docs, sin tax_certificate); endpoint público `company_signup` (se quitó `@limiter.limit` por incompatibilidad de slowapi con `from __future__ import annotations` que rompía el parseo del body → captcha+cooldown+unicidad+blocklist cubren el abuso); `_build_company_user_doc` → `account_status=active`, `parent_user_id=None` para altas anónimas; `_finalize_company_approval` elimina el canal `staff` (ya no hay verificación de teléfono por staff), canales requeridos `{audit,email}` (anónimo) / `{audit,email,client}` (heredado). `routes/kyc.py`: `_KYCCompanySubmitPayload` alineado a 2 docs (operating_license + legal_rep_id), sin tax_certificate.
+
+**Frontend**: `CompanySignupDialog.jsx` (nuevo, formulario público con todos los `data-testid`); `EmailAuthDialog.jsx` (selector Personal/Empresa → CTA abre el diálogo unificado); se retiró "Programa Empresas" de `ProfileView.jsx` (`RequestCompanyCard`); `AdminUsersHub.jsx` eliminó la pestaña "Solicitudes Empresa" y "KYB Empresas" ahora muestra la revisión de solicitudes (`AdminCompanyRequests`) con columna **Documentos** (enlaces `/api/files`); `CompanyKYCView.jsx` resubmit a 2 documentos.
+
+**Verificación**: E2E por curl (signup 201 → sin cuenta previa → duplicado 409 → aprobar admin → cuenta active+phone_verified+KYB verified+hash borrado+notificado → login bloqueado `EMAIL_NOT_VERIFIED` → verify-email → login OK). pytest: 34/34 decision_race (contrato nuevo: `active`, sin canal staff), 12/12 kyc_company+e34_03_kyb (2 docs), 191+ en el glob `test_empresa_*`, iter368 11/11. testing_agent full-stack PASS (incl. aprobar/rechazar por UI, gate de login, perfil sin "Programa Empresas"). ESLint 0 errores; mypy limpio; ruff F821/F822/F632 limpio. Datos de QA limpiados.
+- Estado: en preview; pendiente de re-despliegue a producción.

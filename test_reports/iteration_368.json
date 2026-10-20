@@ -1,0 +1,34 @@
+{
+  "summary": "E2E validation of unified Empresa signup (public POST /company-signup -> admin approve in 'Company KYB' -> EMAIL_NOT_VERIFIED login gate -> verify-email -> login OK). Backend pytest 11/11 pass. UI: register dialog Personal/Empresa selector, CompanySignupDialog (all fields + 2 uploads + password-mismatch msg + submit gating), success screen, admin Company KYB tab (no company-requests tab, Documents column with working /api/files links 200 image/png), Approve and Reject via UI, profile without 'Programa Empresas' - all PASS. One UI layout bug in success screen found and fixed by testing agent. All QA data cleaned.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "admin approve (_build_company_user_doc)", "issue": "For anonymous signups parent_user_id is set to the synthetic 'anon_xxx' id; notify_requester_company_active / blocklist verify-phone path would try to notify a non-existent user. Harmless now (account is born active) but should be None when requester_anonymous=true."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CompanySignupDialog success screen", "issue": "<p> had 'flex items-start gap-2' with raw text nodes + <strong>, so the message split into 3 narrow columns. FIXED by wrapping text in a <span> (+break-all on email). Verified via screenshot.", "selector": "[data-testid='company-signup-success']", "priority": "MEDIUM (fixed)"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CompanySignupDialog", "issues": ["All strings are hardcoded Spanish (no t()/i18n) while EmailAuthDialog and admin use i18n; English users see a Spanish form."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter368_company_unified_signup.py", "/app/test_reports/pytest/pytest_iter368.xml"],
+  "action_items": [
+    "Optional: set parent_user_id=None for requester_anonymous company accounts in _build_company_user_doc",
+    "Optional: i18n the CompanySignupDialog strings"
+  ],
+  "critical_code_review_comments": [
+    "conftest.py globally injects X-Captcha-Bypass into requests; tests checking CAPTCHA_REQUIRED must override header with a wrong value (done in new test).",
+    "Frontend submit is disabled while Turnstile token is missing (correct); headless Playwright cannot solve Turnstile, so UI tests mock GET /api/captcha/config to enforced:false while the backend still enforces and is passed via X-Captcha-Bypass header.",
+    "Validated: duplicate pending email 409, existing-user email 409, password mismatch 422, invalid data URL 422, reject removes password_hash and 7-day cooldown returns 429, login without captcha 400."
+  ],
+  "updated_files": ["/app/frontend/src/components/CompanySignupDialog.jsx", "/app/backend/tests/test_iter368_company_unified_signup.py"],
+  "success_rate": {"backend": "100%", "frontend": "100% (after 1 minor layout fix)"},
+  "seed_data_creation": "Created qa.iter368.*@gmail.com company_requests/users/kyc/sessions; all deleted at end. Persistent test users untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest tests/test_iter368_company_unified_signup.py (self-cleaning). For UI: new browser context with extra_http_headers X-Captcha-Bypass and ctx.route('**/api/captcha/config') -> {enabled:false,enforced:false}; use wait_until='domcontentloaded' (SSE prevents networkidle); landing does a few client-side re-navigations, wait ~4-6s before clicking header-login-btn."
+}
