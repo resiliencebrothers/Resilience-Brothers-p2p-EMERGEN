@@ -16,7 +16,8 @@ import { AuthCredentialsFields } from "./auth/AuthCredentialsFields";
 import { Turnstile } from "@marsidev/react-turnstile";
 import { getTheme } from "@/lib/theme";
 import { roleHome } from "@/lib/roleHome";
-import { User, Building2 } from "lucide-react";
+import { User, Building2, ArrowRight } from "lucide-react";
+import CompanySignupDialog from "./CompanySignupDialog";
 
 const TITLES = {
   register: "Crear cuenta",
@@ -47,6 +48,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [accountType, setAccountType] = useState("personal"); // "personal" | "business"
+  const [companyOpen, setCompanyOpen] = useState(false);
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
@@ -174,6 +176,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   };
 
   const handleClose = () => { onClose?.(); reset(); };
+  const businessRegister = mode === "register" && accountType === "business";
 
   const switchToRegisterFromNotice = () => {
     setNotice(null);
@@ -186,6 +189,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const useGoogleFromNotice = () => { onClose?.(); login(); };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }}>
       <DialogContent
         data-testid="email-auth-dialog"
@@ -216,11 +220,13 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
 
             <GoogleAuthButton onClick={() => { onClose?.(); login(); }} />
 
-            <div className="relative flex items-center text-[0.65rem] text-neutral-600 micro-label">
-              <div className="flex-1 h-px bg-white/10" />
-              <span className="px-3">o</span>
-              <div className="flex-1 h-px bg-white/10" />
-            </div>
+            {!businessRegister && (
+              <div className="relative flex items-center text-[0.65rem] text-neutral-600 micro-label">
+                <div className="flex-1 h-px bg-white/10" />
+                <span className="px-3">o</span>
+                <div className="flex-1 h-px bg-white/10" />
+              </div>
+            )}
 
             {mode === "register" && (
               <div data-testid="account-type-selector">
@@ -253,12 +259,25 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 </div>
                 {accountType === "business" && (
                   <p className="text-xs text-neutral-500 mt-2" data-testid="account-type-business-hint">
-                    Las cuentas Empresa quedan en revisión hasta que un administrador las aprueba.
+                    El registro de Empresa se hace en un solo formulario (datos + documentos). La cuenta se activa cuando el equipo aprueba la solicitud y verificas tu correo.
                   </p>
                 )}
               </div>
             )}
 
+            {businessRegister ? (
+              <div className="space-y-3" data-testid="company-signup-cta-panel">
+                <Button
+                  type="button"
+                  data-testid="open-company-signup-btn"
+                  onClick={() => { onClose?.(); reset(); setCompanyOpen(true); }}
+                  className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
+                >
+                  Continuar con el registro de Empresa <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            ) : (
+              <>
             <AuthCredentialsFields
               mode={mode}
               name={name} setName={setName}
@@ -308,6 +327,8 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
             >
               {loading ? "..." : SUBMIT_LABELS[mode]}
             </Button>
+              </>
+            )}
 
             <div className="flex flex-col gap-2 items-center">
               <button
@@ -348,5 +369,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
         )}
       </DialogContent>
     </Dialog>
+    <CompanySignupDialog open={companyOpen} onClose={() => setCompanyOpen(false)} />
+    </>
   );
 }

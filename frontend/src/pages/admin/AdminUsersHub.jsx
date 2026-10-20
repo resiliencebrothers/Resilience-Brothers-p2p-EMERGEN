@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Users, MessageSquare, IdCard, UserCog, HelpCircle, Crown, Building2, ShieldCheck } from "lucide-react";
+import { Users, MessageSquare, IdCard, UserCog, HelpCircle, Crown, ShieldCheck } from "lucide-react";
 import AdminUsers from "./AdminUsers";
 import AdminAppeals from "./AdminAppeals";
 import AdminKYC from "./AdminKYC";
@@ -11,10 +11,10 @@ import AdminVipRequests from "./AdminVipRequests";
 import AdminCompanyRequests from "./AdminCompanyRequests";
 import { useAuth } from "@/context/AuthContext";
 
-// KYC personal (identidad) y KYB de empresas comparten el mismo motor de
-// revisión (AdminKYC) pero se muestran en pestañas separadas vía el prop `kind`.
+// KYC personal (identidad) usa AdminKYC. El KYB de Empresas se revisa ahora en
+// la cola unificada de altas (AdminCompanyRequests): la solicitud trae ya los
+// documentos, así que "Solicitudes" y "KYB" son una sola pestaña.
 const AdminKYCIndividual = () => <AdminKYC kind="individual" />;
-const AdminKYCCompany = () => <AdminKYC kind="company" />;
 
 /**
  * iter55.31 — Consolidates 4 admin user-management sections under a single
@@ -41,8 +41,7 @@ const ALL_TABS = [
   { id: "appeals",      labelKey: "usersHub.tabs.appeals",      icon: MessageSquare,  Component: AdminAppeals,              perm: "appeals" },
   { id: "support",      labelKey: "usersHub.tabs.support",      icon: HelpCircle,     Component: AdminSupport,              perm: "support" },
   { id: "vip-requests", labelKey: "usersHub.tabs.vipRequests",  icon: Crown,          Component: AdminVipRequests,          perm: "vip_requests" },
-  { id: "company-requests", labelKey: "usersHub.tabs.companyRequests", icon: Building2, Component: AdminCompanyRequests,    perm: "company_requests" },
-  { id: "company-kyb",  labelKey: "usersHub.tabs.companyKyb",   icon: ShieldCheck,    Component: AdminKYCCompany,           perm: "kyc" },
+  { id: "company-kyb",  labelKey: "usersHub.tabs.companyKyb",   icon: ShieldCheck,    Component: AdminCompanyRequests,      perm: "company_requests" },
   { id: "kyc",          labelKey: "usersHub.tabs.kyc",          icon: IdCard,         Component: AdminKYCIndividual,        perm: "kyc" },
   { id: "changes",      labelKey: "usersHub.tabs.changes",      icon: UserCog,        Component: AdminProfileChangeRequests, perm: "profile_changes" },
 ];

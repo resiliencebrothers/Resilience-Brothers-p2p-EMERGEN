@@ -49,7 +49,7 @@ from typing import Any, Optional, Awaitable, Callable
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 from pymongo.errors import DuplicateKeyError
 
 from db_client import db
@@ -58,6 +58,7 @@ from auth_utils import (
     _hash_password, normalize_phone, assert_not_blocked,
 )
 from audit_log import log_action
+from services.proof_upload import maybe_upload_proof
 
 logger = logging.getLogger("company_requests")
 
@@ -87,6 +88,31 @@ class CompanyRequestCreate(BaseModel):
 class CompanyRequestReject(BaseModel):
     model_config = ConfigDict(extra="ignore")
     admin_note: str = Field(default="", max_length=500)
+
+
+class CompanySignupCreate(BaseModel):
+    """Alta PÚBLICA (sin sesión) de una cuenta Empresa en UN solo paso: datos de
+    la empresa + credenciales + los 2 documentos del KYB (licencia operativa e
+    ID del representante legal). El código fiscal sustituye al certificado
+    fiscal, así que no se pide por separado."""
+    model_config = ConfigDict(extra="ignore")
+    company_name: str = Field(..., min_length=2, max_length=160)
+    account_email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    password_confirm: str = Field(..., min_length=8, max_length=128)
+    company_phone: str = Field(..., min_length=8, max_length=20)
+    tax_id: str = Field(..., min_length=3, max_length=80)
+    address: str = Field(..., min_length=5, max_length=400)
+    operating_license: str = Field(..., description="data URL (imagen o PDF) de la licencia operativa")
+    legal_rep_id: str = Field(..., description="data URL (imagen o PDF) del ID del representante legal")
+    captcha_token: str = ""
+
+    @field_validator("operating_license", "legal_rep_id")
+    @classmethod
+    def _must_be_data_url(cls, v: str) -> str:
+        if not v or not (v.startswith("data:image/") or v.startswith("data:application/pdf")):
+            raise ValueError("Debe ser una imagen o un PDF en formato data:...;base64.")
+        return v
 
 
 # ============================================================
@@ -150,7 +176,7 @@ async def _notify_staff_new_request(req: dict) -> None:
                 "body": f"{name} — {company}",
                 "icon": "/icons/icon-192.png",
                 "tag": f"company-req-{req['id']}",
-                "url": "/admin/users?tab=company-requests",
+                "url": "/admin/users?tab=company-kyb",
             })
         except Exception as e:  # noqa: BLE001
             logger.error(f"[company_requests] staff notify {uid} failed: {e}")
@@ -373,6 +399,113 @@ async def create_company_request(payload: CompanyRequestCreate, request: Request
     return _serialize(doc)
 
 
+@router.post("/company-signup")
+async def company_signup(payload: CompanySignupCreate, request: Request) -> Any:
+    """Alta PÚBLICA (sin sesión) de una cuenta Empresa en UN paso: datos +
+    documentos KYB. NO crea cuenta — crea una solicitud `pending` que el staff
+    revisa en "KYB Empresas". Al aprobarse se crea la cuenta Empresa (activa,
+    con el teléfono ya dado por aprobado), se envía la verificación de correo y
+    el KYB queda verificado; al verificar el correo la cuenta puede operar."""
+    from captcha import verify_captcha_token
+    from services.balances import assert_not_defensive
+
+    await verify_captcha_token(payload.captcha_token, request)
+    await assert_not_defensive("nuevos registros")
+
+    if payload.password != payload.password_confirm:
+        raise HTTPException(status_code=422, detail="Las contraseñas no coinciden.")
+    if len(payload.password.encode("utf-8")) > BCRYPT_MAX_BYTES:
+        raise HTTPException(status_code=422, detail="La contraseña es demasiado larga (máximo 72 bytes).")
+
+    account_email = _normalize_email(str(payload.account_email))
+    company_phone = normalize_phone(payload.company_phone)
+    if payload.password.casefold() == account_email.casefold():
+        raise HTTPException(status_code=422, detail="La contraseña no puede ser igual al email.")
+
+    # Bloqueos + unicidad global (se revalida también al aprobar).
+    await assert_not_blocked(email=account_email, phone=company_phone)
+    if await db.users.find_one({"email": account_email}, {"_id": 0, "user_id": 1}):
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email.")
+    if await db.users.find_one({"phone": company_phone}, {"_id": 0, "user_id": 1}):
+        raise HTTPException(
+            status_code=409,
+            detail="Este número de teléfono ya está asociado a otra cuenta.")
+
+    # Una solicitud pendiente por email (lectura previa; el índice único parcial
+    # `account_email + status=pending` es la garantía real anti-carrera).
+    if await db.company_requests.find_one(
+            {"account_email": account_email, "status": "pending"}, {"_id": 0, "id": 1}):
+        raise HTTPException(
+            status_code=409,
+            detail="Ya hay una solicitud de Empresa en revisión para ese email.")
+
+    # Enfriamiento de 7 días tras el último rechazo (por email, sin sesión).
+    last_rejected = await db.company_requests.find_one(
+        {"account_email": account_email, "status": "rejected"},
+        {"_id": 0, "reviewed_at": 1}, sort=[("reviewed_at", -1)])
+    if last_rejected and last_rejected.get("reviewed_at"):
+        remaining = _cooldown_remaining(last_rejected["reviewed_at"])
+        if remaining > 0:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Debes esperar {remaining} día(s) antes de volver a solicitar.")
+
+    # Subir los 2 documentos a almacenamiento (ref /api/files/... servida por el
+    # proxy autenticado; el admin puede verlas al revisar el KYB).
+    documents = []
+    for doc_type, data_url in [("operating_license", payload.operating_license),
+                               ("legal_rep_id", payload.legal_rep_id)]:
+        try:
+            ref = maybe_upload_proof(data_url, folder="kyc")
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"[company_signup] upload {doc_type} failed: {e}")
+            raise HTTPException(status_code=500, detail=f"No se pudo subir el documento ({doc_type}).")
+        if not ref:
+            raise HTTPException(status_code=400, detail=f"Documento inválido: {doc_type}.")
+        documents.append({"doc_type": doc_type, "ref": ref})
+
+    now = iso(now_utc())
+    doc = {
+        "id": f"coreq_{uuid.uuid4().hex[:12]}",
+        # user_id sintético ÚNICO: no hay cuenta solicitante (alta pública). Evita
+        # chocar con el índice único parcial `user_id + status=pending`.
+        "user_id": f"anon_{uuid.uuid4().hex[:16]}",
+        "requester_anonymous": True,
+        "user_email": account_email,
+        "user_name": payload.company_name.strip(),
+        "company_name": payload.company_name.strip(),
+        "account_email": account_email,
+        "company_phone": company_phone,
+        "tax_id": payload.tax_id.strip(),
+        "address": payload.address.strip(),
+        "documents": documents,
+        "password_hash": _hash_password(payload.password),
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "admin_note": None,
+        "new_user_id": None,
+    }
+    try:
+        await db.company_requests.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=409,
+            detail="Ya hay una solicitud de Empresa en revisión para ese email.")
+    await log_action(
+        db=db, actor={"user_id": None}, action="company_request.signup",
+        entity_type="company_request", entity_id=doc["id"],
+        details={"company_name": doc["company_name"], "account_email": account_email})
+    await _notify_staff_new_request(doc)
+    await _publish("company_request_created", {"request_id": doc["id"]}, admin=True)
+    return {"ok": True,
+            "message": "Solicitud recibida. Te avisaremos por correo cuando el equipo la revise."}
+
+
 @router.get("/company-requests/me")
 async def get_my_company_request(request: Request) -> Any:
     """Última solicitud del cliente (cualquier estado) para la tarjeta de perfil.
@@ -465,9 +598,12 @@ def _build_company_user_doc(doc: dict, new_user_id: str, lang: str) -> dict:
         "vip_balance_usd": 0.0,
         "onboarding_completed": False,
         "phone": normalize_phone(doc["company_phone"]),
-        "phone_verified": False,
-        "account_status": "under_review",
-        "under_review_since": now,
+        "phone_verified": True,
+        # El teléfono va en el formulario y el staff lo da por aprobado al
+        # aprobar el KYB → la cuenta nace ACTIVA. El único gate restante es la
+        # verificación de correo (el login sigue bloqueado hasta verificar).
+        "account_status": "active",
+        "under_review_since": None,
         "preferred_language": lang,
         "created_at": now,
         "account_type": "business",
@@ -476,6 +612,50 @@ def _build_company_user_doc(doc: dict, new_user_id: str, lang: str) -> dict:
         "address": doc["address"],
         "parent_user_id": doc["user_id"],
     }
+
+
+async def _ensure_company_kyb_verified(doc: dict, acc: dict) -> None:
+    """Al aprobar el alta unificada, el KYB queda VERIFICADO automáticamente:
+    crea un expediente `kyc_verifications` (kind=company, status=verified) con
+    los documentos y datos de la solicitud. Así la cuenta nunca tiene que
+    re-hacer el KYB, y el gate de retiro + la insignia "Empresa verificada"
+    siguen funcionando (usan el último expediente company). Idempotente."""
+    if not doc.get("documents"):
+        return  # solicitud heredada sin documentos → no hay KYB que sellar
+    existing = await db.kyc_verifications.find_one(
+        {"user_id": acc["user_id"], "kind": "company"}, {"_id": 0, "id": 1})
+    if existing:
+        return
+    now = iso(now_utc())
+    await db.kyc_verifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": acc["user_id"],
+        "user_email": acc.get("email", ""),
+        "user_name": doc.get("company_name") or acc.get("name", ""),
+        "user_phone": acc.get("phone", ""),
+        "kind": "company",
+        "company_fields": {
+            "company_name": doc.get("company_name", ""),
+            "fiscal_code": doc.get("tax_id", ""),
+            "legal_address": doc.get("address", ""),
+        },
+        "status": "verified",
+        "documents": doc.get("documents", []),
+        "risk_score": 0,
+        "risk_flags": [],
+        "submit_ip": "",
+        "submit_user_agent": "",
+        "reviewed_by": doc.get("reviewed_by"),
+        "reviewed_by_email": None,
+        "reviewed_at": now,
+        "review_notes": "Verificada junto con el alta de la cuenta Empresa.",
+        "rejection_reasons": [],
+        "created_at": now,
+        "updated_at": now,
+    })
+    await db.users.update_one(
+        {"user_id": acc["user_id"]},
+        {"$set": {"kyc_status": "verified", "kyc_verified_at": now}})
 
 
 async def _complete_company_approval(req_id: str, staff_id: Optional[str]) -> Optional[dict]:
@@ -525,6 +705,11 @@ async def _complete_company_approval(req_id: str, staff_id: Optional[str]) -> Op
         except DuplicateKeyError:
             pass  # otro ejecutor la creó entre el find y el upsert → idempotente
         acc = await db.users.find_one({"user_id": new_user_id}, {"_id": 0})
+
+    # KYB auto-verificado (idempotente): el alta unificada ya trae los
+    # documentos, así que la cuenta queda verificada sin re-hacer el KYB.
+    if acc:
+        await _ensure_company_kyb_verified(doc, acc)
 
     # FASE 3 — sellar 'approving'→'approved' + borrar el hash (CAS idempotente).
     await db.company_requests.update_one(
@@ -600,22 +785,24 @@ async def _finalize_company_approval(req_id: str, staff_id: Optional[str] = None
         return bool(email_service.notify_email_verification(
             acc["email"], acc.get("name", ""), acc.get("verification_token", ""), lang=lang))
 
-    async def _staff() -> bool:
-        from routes.notifications import notify_staff_new_pending_user
-        # Devuelve True solo si TODOS los destinatarios del staff recibieron el
-        # aviso persistente; una entrega parcial retorna False (reintento).
-        return await notify_staff_new_pending_user(acc)
+    # Alta unificada: el teléfono ya va aprobado en el formulario, así que NO hay
+    # cola de "verificación de teléfono por staff" → se elimina el canal `staff`.
+    is_anon = bool(doc.get("requester_anonymous"))
 
     await _run_channel("audit", _audit)
     await _run_channel("email", _email)
-    await _run_channel("staff", _staff)
-    await _run_channel("client", lambda: _notify_client_decision(doc, approved=True))
+    # El aviso in-app al solicitante solo aplica cuando hay una cuenta personal
+    # solicitante (flujo heredado). En el alta pública/anónima el correo de
+    # verificación ES la notificación.
+    if not is_anon:
+        await _run_channel("client", lambda: _notify_client_decision(doc, approved=True))
     # SSE efímero (barato e idempotente): se publica siempre, no es canal persistente.
     await _publish("company_request_approved", {"request_id": req_id}, user_id=doc["user_id"])
     await _publish("company_request_updated", {"request_id": req_id}, admin=True)
 
-    # CONFIRMACIÓN: solo cuando TODOS los canales persistentes se completaron.
-    if {"audit", "email", "staff", "client"}.issubset(done):
+    # CONFIRMACIÓN: solo cuando TODOS los canales persistentes requeridos se completaron.
+    required = {"audit", "email"} if is_anon else {"audit", "email", "client"}
+    if required.issubset(done):
         await db.company_requests.update_one(
             {"id": req_id}, {"$set": {"notified_at": iso(now_utc())}})
 
@@ -696,6 +883,15 @@ async def ensure_indexes() -> None:
             name="uniq_company_request_pending_user")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[company_requests] pending-unique index skipped: {e}")
+    try:
+        # Alta pública: una única solicitud pendiente por email de empresa
+        # (dos envíos anónimos concurrentes del mismo email ya no crean dos).
+        await db.company_requests.create_index(
+            [("account_email", 1)], unique=True,
+            partialFilterExpression={"status": "pending"},
+            name="uniq_company_request_pending_email")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[company_requests] pending-email-unique index skipped: {e}")
     try:
         # A04 — único PARCIAL por `dedup_key`: garantiza a nivel de BD un solo
         # aviso persistente por (solicitud, decisión, destinatario) aunque el
@@ -808,7 +1004,18 @@ async def admin_reject_company_request(
         entity_type="company_request", entity_id=req_id,
         details={"requester": doc["user_id"], "note": note},
     )
-    await _notify_client_decision(fresh, approved=False, admin_note=note or "")
+    # Alta pública/anónima: el solicitante no tiene cuenta/campana → se le avisa
+    # por correo del rechazo. Flujo heredado (con cuenta solicitante): aviso in-app.
+    if doc.get("requester_anonymous"):
+        try:
+            import email_service
+            email_service.notify_company_kyb_rejected(
+                _normalize_email(doc.get("account_email", "")),
+                doc.get("company_name", ""), note or "", lang="es")
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[company_requests] anon reject email failed: {e}")
+    else:
+        await _notify_client_decision(fresh, approved=False, admin_note=note or "")
     await _publish("company_request_rejected", {"request_id": req_id}, user_id=doc["user_id"])
     await _publish("company_request_updated", {"request_id": req_id}, admin=True)
     return _serialize(fresh)

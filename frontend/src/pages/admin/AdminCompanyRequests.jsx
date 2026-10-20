@@ -7,13 +7,20 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Building2, Check, X, Clock, Hash, MapPin, Phone } from "lucide-react";
+import { Building2, Check, X, Clock, Hash, MapPin, Phone, FileText } from "lucide-react";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import AdminPageHeader from "@/components/AdminPageHeader";
 
+// Etiquetas de documentos del KYB Empresa (orden fijo).
+const DOC_LABELS = {
+  operating_license: "Licencia operativa",
+  legal_rep_id: "ID representante legal",
+  tax_certificate: "Certificado fiscal",
+};
+
 /**
  * Cola admin de solicitudes del Programa Empresas.
- * Tab dentro de AdminUsersHub (`/admin/users?tab=company-requests`).
+ * Tab dentro de AdminUsersHub (`/admin/users?tab=company-kyb`).
  * Requiere permiso `company_requests` (el admin pasa siempre).
  *
  * Aprobar → crea una cuenta Empresa NUEVA e independiente (el backend lo
@@ -93,6 +100,7 @@ export default function AdminCompanyRequests() {
               <th className="px-4 py-3 micro-label text-neutral-500">{t("adminCompanyRequests.colCompany")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("adminCompanyRequests.colAccount")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("adminCompanyRequests.colDetails")}</th>
+              <th className="px-4 py-3 micro-label text-neutral-500">{t("adminCompanyRequests.colDocuments")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500 whitespace-nowrap">{t("adminCompanyRequests.colCreated")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("adminCompanyRequests.colStatus")}</th>
               <th className="px-4 py-3 micro-label text-neutral-500">{t("adminCompanyRequests.colActions")}</th>
@@ -100,12 +108,12 @@ export default function AdminCompanyRequests() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan="7" className="text-center text-neutral-500 py-8">
+              <tr><td colSpan="8" className="text-center text-neutral-500 py-8">
                 {t("admin.common.loadingEllipsis")}
               </td></tr>
             )}
             {!loading && items.length === 0 && (
-              <tr><td colSpan="7" className="text-center text-neutral-500 py-8" data-testid="admin-company-requests-empty">
+              <tr><td colSpan="8" className="text-center text-neutral-500 py-8" data-testid="admin-company-requests-empty">
                 {t("adminCompanyRequests.empty")}
               </td></tr>
             )}
@@ -135,6 +143,27 @@ export default function AdminCompanyRequests() {
                     <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
                     <span className="line-clamp-3">{it.address}</span>
                   </div>
+                </td>
+                <td className="px-4 py-3 text-xs">
+                  {(it.documents || []).length === 0 ? (
+                    <span className="text-neutral-600">—</span>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {it.documents.map((d) => (
+                        <a
+                          key={d.doc_type}
+                          href={d.ref}
+                          target="_blank"
+                          rel="noreferrer"
+                          data-testid={`company-doc-${it.id}-${d.doc_type}`}
+                          className="inline-flex items-center gap-1 text-[#8B5CF6] hover:underline"
+                        >
+                          <FileText className="w-3 h-3 shrink-0" />
+                          {DOC_LABELS[d.doc_type] || d.doc_type}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-xs text-neutral-500 whitespace-nowrap">
                   {new Date(it.created_at).toLocaleDateString()}
