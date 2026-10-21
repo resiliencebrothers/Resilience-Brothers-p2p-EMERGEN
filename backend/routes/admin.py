@@ -490,10 +490,11 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
         logger.error(f"vendor credit balance event failed: {e}")
     try:
         from routes.notifications import _insert_notification
+        net_str = f"{net:.6f}".rstrip("0").rstrip(".")
         await _insert_notification(
             recipient_user_id=owner_id, type="vendor_credit",
             title="Venta acreditada",
-            message=(f"Se acreditaron {net:.2f} USD a tu saldo por la venta de "
+            message=(f"Se acreditaron {net_str} {settle_cur} a tu saldo por la venta de "
                      f"{r['quantity']}× {r['product_name']} (comisión {pct:g}%)."),
             data={"redemption_id": r["id"], "net": net, "commission_pct": pct})
     except Exception as e:

@@ -3116,3 +3116,11 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - **Estado:** en preview; pendiente de re-despliegue a producción.
 
 - **EMP-UNIFY-02b (iter369b):** la pantalla de éxito del alta Empresa ofrece el enlace de seguimiento directo en 1 clic (el backend emite un `status_token` al crear la solicitud y lo devuelve en la respuesta), sin volver a pedir el correo. ✅ IMPLEMENTADO.
+
+### MKT-EMP-01 — Recogida Empresa + Ofertas + Banners + Comisión 1% (jun 2026, iter370) ✅ IMPLEMENTADO
+- **Origen:** informe "Productos Empresa, Ofertas y Comisión" (21/10/2026) + petición del usuario (revisar publicación, banners de rebajas, comisión 1% por compra a Empresa).
+- **Decisiones:** comisión 1% con 6 decimales, aplicada al ENTREGAR; ofertas activadas por la Empresa (sin aprobación admin), con fecha de fin opcional.
+- **Entregado:** (1) Fix recogida en Empresa (frontend `MarketplaceView`, distingue `company_id`); (2) Ofertas de Empresa (`augment_products_fx` nativo USDT + vencimiento; `POST/DELETE /api/company/products/{pid}/offer`; UI en `CompanyProductsView`); (3) Banners `GET /api/products/offers` + `OffersBanner` en `OverviewView`, con deep-links `?product=`/`?offers=1`; (4) Comisión 1% (`settings.vendor_commission_pct=1.0`, defaults 1.0, precisión 6 dec en `_credit_vendor_for_redemption`/`_record_vendor_commission_inflow`, `record_auto_fund_adjustment(precision=6)`, textos "Empresas").
+- **Fuera de alcance:** desglose interno del 1% para inventario propio Resilience; acumulación de residuos por debajo de 1e-6; snapshot de tasa en compra (se decidió al entregar).
+- **Verificación:** in-process ALL PASS + testing_agent iter370 (backend 12/12, compra→entrega→comisión y sub-céntimo) + screenshots. Detalle en CHANGELOG.
+- **Estado:** en preview; pendiente de re-despliegue a producción.

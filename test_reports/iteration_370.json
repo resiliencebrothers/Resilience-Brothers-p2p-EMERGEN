@@ -1,0 +1,26 @@
+{
+  "summary": "Backend-only LIVE HTTP verification of Empresa offers, pickup store exposure and the full purchase -> pickup-ready -> delivered -> 1% commission money path. 12/12 pytest PASS. Offer DELETE restores 100; POST 80 -> on_offer, pct 20, original 100; 999 and 100 -> 422; past ends_at -> 422 (price unchanged); future ends_at (+3d) -> 200 with offer_ends_at; normal/anon -> 401/403. /api/products/offers includes prod_qaoff (price_usdt 80, offer_original_price_usdt 100, pct 20) and excludes it after DELETE. /api/stores?product_id=prod_qaoff returns st_qaoff available_qty=5. Real HTTP purchase (POST /api/vip/redeem store_pickup st_qaoff) of 90 USDT -> admin pickup-ready (approved) -> PUT status delivered: vendor_credit_net=89.1, vendor_commission_pct=1.0, fund adj dedupe 'vendor-fund:{rid}:c0' inflow USDT 0.9 'Marketplace Empresas', company vip_balances.USDT +89.1, net+commission=90; repeated PUT delivered is idempotent (no double credit, 1 fund adj). Sub-cent: offer price set to 0.10 via HTTP, real purchase+delivery -> net 0.099, fund adj amount 0.001 (CORRECT, no regression), company +0.099.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "QA seed data", "issue": "user_test_normal01 was seeded with balances.USDT=500 but the app reads vip_balances.USDT (get_user_balance). Purchase initially failed 'Saldo USDT insuficiente'. Test fixture temporarily sets vip_balances.USDT=500 and restores. Not a product bug — fix the seed if it is reused."},
+      {"endpoint": "admin._credit_vendor_for_redemption notification", "issue": "Vendor notification text says 'Se acreditaron {net:.2f} USD' — currency is USDT and 2-decimal formatting shows 0.099 as '0.10' (display-only inconsistency with 6-dec precision)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter370_company_offers_commission.py", "/app/test_reports/pytest/pytest_iter370.xml"],
+  "action_items": [
+    "Optional: fix QA seed for user_test_normal01 to use vip_balances.USDT",
+    "Optional: vendor credit notification should say USDT and avoid :.2f rounding for sub-cent nets"
+  ],
+  "critical_code_review_comments": [
+    "set_product_offer validates discount against the ORIGINAL price when already on offer (e.g. on-offer at 90, discount 95 is accepted as it's < 100) — consistent with 'no chained discounts' design; just confirm intended.",
+    "offer_discount_pct rounded to 1 decimal; fine."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter370_company_offers_commission.py"],
+  "success_rate": {"backend": "100%", "frontend": "not tested (backend only)"},
+  "seed_data_creation": "None persisted. Test snapshots prod_qaoff, usr_qaoff_co, user_test_normal01 docs and restores them on teardown; deletes created redemptions, their company_fund_adjustments, notifications and deliveries. Verified: prod_qaoff back to price 90 on offer, by_store 5, stock 8; 0 leftover redemptions/fund adjs. (Balance op-ledger / inventory move docs keyed by op_id may remain.)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run pytest tests/test_iter370_company_offers_commission.py — self-contained & self-restoring. Marketplace balances live in users.vip_balances.<CUR>. Pickup flow: POST /api/admin/redemptions/{rid}/pickup-ready (pending->approved) then PUT /api/admin/redemptions/{rid}/status {status:'delivered'} works directly (courier gate skipped for store_pickup); client on-my-way not required."
+}
