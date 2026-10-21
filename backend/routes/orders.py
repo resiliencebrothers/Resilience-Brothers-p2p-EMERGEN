@@ -99,6 +99,15 @@ class Redemption(BaseModel):
     vendor_credited_at: str = ""
     vendor_credit_net: float = 0.0
     vendor_commission_pct: float = 0.0
+    # E01 — snapshot CONGELADO al confirmar la compra: la tasa de comisión
+    # vigente, la base (venta en USDT), la comisión y el neto. Entrega,
+    # recuperación, rechazo y devolución usan ESTOS valores, no la config
+    # global al momento de entregar. `None` = canje heredado sin snapshot.
+    vendor_commission_pct_snapshot: Optional[float] = None
+    vendor_commission_base_usdt: float = 0.0
+    vendor_commission_usdt: float = 0.0
+    vendor_net_usdt: float = 0.0
+    vendor_commission_snapshot_at: str = ""
     vendor_credit_reversed_at: str = ""
     # iter229 — entrada automática del capital de la venta al fondo empresa.
     fund_inflow_at: str = ""
@@ -530,6 +539,24 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             detail=("Saldo USDT insuficiente"
                     + (f" (incluye {courier_fee_usd} USDT de mensajería)"
                        if courier_fee_usd > 0 else "")))
+    # E01 — congelar la comisión de empresa a la TASA VIGENTE AL COMPRAR, de
+    # modo que entrega/recuperación/rechazo/devolución usen esta misma comisión
+    # aunque la configuración global cambie después. Solo aplica a productos de
+    # vendedor (owner_id); los de la empresa central no llevan esta comisión.
+    vendor_pct_snap: Optional[float] = None
+    vendor_base_snap = 0.0
+    vendor_commission_snap = 0.0
+    vendor_net_snap = 0.0
+    vendor_snap_at = ""
+    if product.get("owner_id"):
+        _sdoc = await db.settings.find_one(
+            {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
+        _rawpct = _sdoc.get("vendor_commission_pct")
+        vendor_pct_snap = float(_rawpct) if _rawpct is not None else 1.0
+        vendor_base_snap = round(float(total), 6)
+        vendor_net_snap = round(vendor_base_snap * (1 - vendor_pct_snap / 100.0), 6)
+        vendor_commission_snap = round(vendor_base_snap - vendor_net_snap, 6)
+        vendor_snap_at = iso(now_utc())
     r = Redemption(
         user_id=user["user_id"],
         user_email=user["email"],
@@ -554,6 +581,11 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         courier_min_fee_snapshot=cq["min_fee_usdt"],
         vendor_owner_id=product.get("owner_id") or "",
         vendor_owner_name=product.get("owner_name") or "",
+        vendor_commission_pct_snapshot=vendor_pct_snap,
+        vendor_commission_base_usdt=vendor_base_snap,
+        vendor_commission_usdt=vendor_commission_snap,
+        vendor_net_usdt=vendor_net_snap,
+        vendor_commission_snapshot_at=vendor_snap_at,
         total_store=store_total,
         cost_store=store_cost,
         store_currency=store_currency,

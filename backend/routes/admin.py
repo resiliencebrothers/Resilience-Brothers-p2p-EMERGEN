@@ -456,12 +456,23 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
     owner_id = r.get("vendor_owner_id") or ""
     if not owner_id:
         return
-    settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
-    raw_pct = settings.get("vendor_commission_pct")
-    pct = float(raw_pct) if raw_pct is not None else 1.0
-    # Precisión fina (6 decimales): al 1% una venta de 0,10 USDT genera 0,001;
-    # redondear a céntimos la perdería. base = neto + comisión se conserva.
-    net = round(float(r["total_usd"]) * (1 - pct / 100.0), 6)
+    # E01 — usar la comisión CONGELADA al confirmar la compra. El canje llevaba
+    # ya la tasa, base y neto sellados; la config global vigente al entregar NO
+    # puede alterar el resultado. Un canje heredado (sin snapshot) recurre a la
+    # configuración global como antes.
+    snap_pct = r.get("vendor_commission_pct_snapshot")
+    if snap_pct is not None:
+        pct = float(snap_pct)
+        snap_net = r.get("vendor_net_usdt")
+        net = round(float(snap_net), 6) if snap_net is not None \
+            else round(float(r["total_usd"]) * (1 - pct / 100.0), 6)
+    else:
+        settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        raw_pct = settings.get("vendor_commission_pct")
+        pct = float(raw_pct) if raw_pct is not None else 1.0
+        # Precisión fina (6 decimales): al 1% una venta de 0,10 USDT genera
+        # 0,001; redondear a céntimos la perdería.
+        net = round(float(r["total_usd"]) * (1 - pct / 100.0), 6)
     # iter249 — intención de abono en el MISMO claim atómico; abono idempotente
     # por op_id y healer si el proceso muere entre pasos.
     # iter254(R07) — el vendedor cobra en la moneda de liquidación del canje.

@@ -1719,7 +1719,11 @@
       "colOrders": "Orders",
       "topEarner": "Top commission",
       "emptyCompany": "No companies with commissions in this period.",
-      "companyHint": "Tap a company to see its orders."
+      "companyHint": "Tap a company to see its orders.",
+      "exportCsv": "Export CSV",
+      "exporting": "Exporting…",
+      "exportedToast": "Commissions CSV downloaded.",
+      "exportError": "Could not export the commissions CSV."
     },
 
     "companyFunds": {

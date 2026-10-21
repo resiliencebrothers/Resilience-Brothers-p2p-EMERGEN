@@ -179,3 +179,42 @@ async def migrate_assignment_uid_for_accepted_deliveries(db: Any) -> int:
     if n:
         logger.info(f"Sealed assignment_uid on {n} legacy accepted deliveries (M01-B)")
     return n
+
+
+
+async def migrate_backfill_vendor_commission_snapshot(db: Any) -> int:
+    """E01 — congela la comisión de empresa en los canjes YA existentes que
+    aún no se han entregado y no tienen snapshot. Decisión de producto
+    (efectiva desde el despliegue): cada canje pendiente/aprobado queda sellado
+    con la tasa global vigente (p. ej. 1%), base = total_usd y el neto/comisión
+    derivados, para que la entrega posterior no dependa de la config global.
+    Idempotente: solo toca canjes de vendedor (vendor_owner_id) no entregados
+    sin `vendor_commission_pct_snapshot`; una segunda ejecución no hace nada."""
+    from datetime import datetime, timezone
+    sdoc = await db.settings.find_one(
+        {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
+    raw = sdoc.get("vendor_commission_pct")
+    pct = float(raw) if raw is not None else 1.0
+    now = datetime.now(timezone.utc).isoformat()
+    n = 0
+    rows = await db.redemptions.find(
+        {"vendor_owner_id": {"$nin": [None, ""]},
+         "status": {"$in": ["pending", "approved"]},
+         "vendor_commission_pct_snapshot": {"$exists": False}},
+        {"_id": 0, "id": 1, "total_usd": 1}).to_list(10000)
+    for d in rows:
+        base = round(float(d.get("total_usd") or 0), 6)
+        net = round(base * (1 - pct / 100.0), 6)
+        commission = round(base - net, 6)
+        res = await db.redemptions.update_one(
+            {"id": d["id"],
+             "vendor_commission_pct_snapshot": {"$exists": False}},
+            {"$set": {"vendor_commission_pct_snapshot": pct,
+                      "vendor_commission_base_usdt": base,
+                      "vendor_commission_usdt": commission,
+                      "vendor_net_usdt": net,
+                      "vendor_commission_snapshot_at": now}})
+        n += res.modified_count
+    if n:
+        logger.info(f"E01 — sellada comisión congelada ({pct}%) en {n} canjes pendientes")
+    return n

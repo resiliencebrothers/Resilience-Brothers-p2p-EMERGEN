@@ -1719,7 +1719,11 @@
       "colOrders": "Pedidos",
       "topEarner": "Mayor comisión",
       "emptyCompany": "No hay empresas con comisiones en este periodo.",
-      "companyHint": "Pulsa una empresa para ver sus pedidos."
+      "companyHint": "Pulsa una empresa para ver sus pedidos.",
+      "exportCsv": "Exportar CSV",
+      "exporting": "Exportando…",
+      "exportedToast": "CSV de comisiones descargado.",
+      "exportError": "No se pudo exportar el CSV de comisiones."
     },
 
     "companyFunds": {

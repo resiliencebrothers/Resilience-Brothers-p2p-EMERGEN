@@ -1827,6 +1827,44 @@ async def list_company_fund_adjustments(
 _COMMISSION_ACTIVE = {"$in": [{"$ifNull": ["$fund_inflow_reversed_at", ""]}, ["", None]]}
 
 
+def _commissions_query(days: Optional[int], company: Optional[str],
+                       company_id: Optional[str]) -> Dict[str, Any]:
+    """Filtro de canjes del Marketplace Empresas compartido por el panel JSON y
+    la exportación CSV (mismo periodo/empresa → exactamente los mismos datos)."""
+    from datetime import timedelta
+    import re
+    q: Dict[str, Any] = {"vendor_owner_id": {"$nin": [None, ""]}}
+    if company_id and company_id.strip():
+        q["vendor_owner_id"] = company_id.strip()
+    elif company and company.strip():
+        q["vendor_owner_name"] = {"$regex": re.escape(company.strip()), "$options": "i"}
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["fund_inflow_at"] = {"$gte": cutoff}
+    else:
+        q["fund_inflow_at"] = {"$nin": [None, ""]}
+    return q
+
+
+def _commissions_by_company_pipeline(q: Dict[str, Any], limit: int = 200) -> List[dict]:
+    """Agregación de subtotales por empresa ordenada por comisión activa desc."""
+    return [
+        {"$match": q},
+        {"$group": {
+            "_id": "$vendor_owner_id",
+            "company": {"$first": "$vendor_owner_name"},
+            "gross": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
+            "commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
+            "net": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$vendor_credit_net", 0]}, 0]}},
+            "orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 1, 0]}},
+            "reversed_commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, {"$ifNull": ["$fund_inflow_amount", 0]}]}},
+            "reversed_orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, 1]}},
+        }},
+        {"$sort": {"commission": -1, "orders": -1}},
+        {"$limit": limit},
+    ]
+
+
 @router.get("/admin/company-funds/commissions")
 async def company_funds_commissions(
     request: Request, days: Optional[int] = None,
@@ -1845,21 +1883,9 @@ async def company_funds_commissions(
     vista agrupada). Devuelve además `by_company`: subtotales por empresa
     ordenados por comisión descendente para ver quién genera más comisión."""
     await require_permission(request, "company_funds")
-    from datetime import timedelta
-    import re
     skip = max(0, int(skip))
     limit = max(1, min(int(limit), 200))
-
-    q: Dict[str, Any] = {"vendor_owner_id": {"$nin": [None, ""]}}
-    if company_id and company_id.strip():
-        q["vendor_owner_id"] = company_id.strip()
-    elif company and company.strip():
-        q["vendor_owner_name"] = {"$regex": re.escape(company.strip()), "$options": "i"}
-    if days and days > 0:
-        cutoff = (now_utc() - timedelta(days=days)).isoformat()
-        q["fund_inflow_at"] = {"$gte": cutoff}
-    else:
-        q["fund_inflow_at"] = {"$nin": [None, ""]}
+    q = _commissions_query(days, company, company_id)
 
     totals_pipeline = [
         {"$match": q},
@@ -1886,21 +1912,7 @@ async def company_funds_commissions(
 
     # Subtotales por empresa (sobre el conjunto filtrado completo), ordenados
     # por comisión activa descendente → "quién genera más comisión".
-    by_company_pipeline = [
-        {"$match": q},
-        {"$group": {
-            "_id": "$vendor_owner_id",
-            "company": {"$first": "$vendor_owner_name"},
-            "gross": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
-            "commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
-            "net": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$vendor_credit_net", 0]}, 0]}},
-            "orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 1, 0]}},
-            "reversed_commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, {"$ifNull": ["$fund_inflow_amount", 0]}]}},
-            "reversed_orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, 1]}},
-        }},
-        {"$sort": {"commission": -1, "orders": -1}},
-        {"$limit": 200},
-    ]
+    by_company_pipeline = _commissions_by_company_pipeline(q)
     comp_agg = await db.redemptions.aggregate(by_company_pipeline).to_list(200)
     by_company = [{
         "company_id": c.get("_id") or "",
@@ -1943,6 +1955,88 @@ async def company_funds_commissions(
 
     return {"rows": rows, "total": total, "skip": skip, "limit": limit,
             "totals": totals, "by_company": by_company}
+
+
+@router.get("/admin/company-funds/commissions/export.csv")
+async def export_commissions_csv(
+    request: Request, days: Optional[int] = None,
+    company: Optional[str] = None, company_id: Optional[str] = None,
+    group: str = "orders",
+) -> Any:
+    """Exporta el desglose de comisiones del Marketplace Empresas a CSV,
+    respetando los mismos filtros de periodo/empresa que el panel.
+    `group=orders` → una fila por pedido; `group=company` → subtotales por
+    empresa (ranking por comisión). Requiere permiso `company_funds`."""
+    import csv
+    import io
+    from io import BytesIO
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+
+    await require_permission(request, "company_funds")
+    q = _commissions_query(days, company, company_id)
+    group = "company" if str(group).lower() == "company" else "orders"
+
+    text_buf = io.StringIO()
+    writer = csv.writer(text_buf, quoting=csv.QUOTE_ALL)
+
+    if group == "company":
+        writer.writerow([
+            "rank", "company_id", "company", "orders", "gross_usdt",
+            "commission_usdt", "net_usdt", "reversed_orders",
+            "reversed_commission_usdt",
+        ])
+        comp_agg = await db.redemptions.aggregate(
+            _commissions_by_company_pipeline(q, limit=1000)).to_list(1000)
+        for i, c in enumerate(comp_agg, start=1):
+            writer.writerow([
+                i, c.get("_id") or "", c.get("company") or "—",
+                int(c.get("orders") or 0),
+                f"{float(c.get('gross') or 0):.6f}",
+                f"{float(c.get('commission') or 0):.6f}",
+                f"{float(c.get('net') or 0):.6f}",
+                int(c.get("reversed_orders") or 0),
+                f"{float(c.get('reversed_commission') or 0):.6f}",
+            ])
+    else:
+        writer.writerow([
+            "date", "company", "product", "quantity", "customer",
+            "gross_usdt", "commission_pct", "commission_usdt", "net_usdt",
+            "currency", "reversed",
+        ])
+        cursor = db.redemptions.find(
+            q,
+            {"_id": 0, "fund_inflow_at": 1, "delivered_at": 1,
+             "product_name": 1, "quantity": 1, "vendor_owner_name": 1,
+             "total_usd": 1, "fund_inflow_amount": 1, "fund_inflow_currency": 1,
+             "vendor_credit_net": 1, "vendor_commission_pct": 1,
+             "fund_inflow_reversed_at": 1, "user_name": 1, "user_email": 1},
+        ).sort("fund_inflow_at", -1)
+        async for d in cursor:
+            writer.writerow([
+                d.get("fund_inflow_at") or d.get("delivered_at") or "",
+                d.get("vendor_owner_name") or "—",
+                d.get("product_name") or "—",
+                d.get("quantity") or 0,
+                d.get("user_name") or d.get("user_email") or "—",
+                f"{float(d.get('total_usd') or 0):.6f}",
+                f"{float(d.get('vendor_commission_pct') or 0):g}",
+                f"{float(d.get('fund_inflow_amount') or 0):.6f}",
+                f"{float(d.get('vendor_credit_net') or 0):.6f}",
+                d.get("fund_inflow_currency") or "USDT",
+                "si" if d.get("fund_inflow_reversed_at") else "no",
+            ])
+
+    buf = BytesIO()
+    buf.write(text_buf.getvalue().encode("utf-8-sig"))
+    buf.seek(0)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"comisiones_{group}_{ts}.csv"
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 

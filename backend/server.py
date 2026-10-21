@@ -234,6 +234,14 @@ async def start_background_jobs() -> None:
     except Exception as e:  # noqa: BLE001
         logger.error(f"Single sell-rate migration failed: {e}")
 
+    # E01 — congela la comisión de empresa en los canjes pendientes YA
+    # existentes con la tasa global vigente (efectivo desde el despliegue).
+    try:
+        from services.db_migrations import migrate_backfill_vendor_commission_snapshot
+        await migrate_backfill_vendor_commission_snapshot(db)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"vendor commission snapshot backfill failed: {e}")
+
     # ABA (A08) — sella assignment_uid en reservas heredadas vivas para que el
     # blindaje contra aceptar/rechazar atrasados cubra también los datos previos.
     try:

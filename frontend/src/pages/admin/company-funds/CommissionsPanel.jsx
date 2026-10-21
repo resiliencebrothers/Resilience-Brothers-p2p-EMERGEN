@@ -17,7 +17,7 @@ import { API } from "@/App";
 import { toast } from "sonner";
 import {
   Percent, TrendingUp, Banknote, Package, ChevronLeft, ChevronRight,
-  RotateCcw, Search, X, Trophy, Building2,
+  RotateCcw, Search, X, Trophy, Building2, Download,
 } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -61,6 +61,7 @@ export default function CommissionsPanel() {
   const [companyLabel, setCompanyLabel] = useState("");
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   // Debounce del buscador de texto.
   useEffect(() => {
@@ -109,6 +110,36 @@ export default function CommissionsPanel() {
     setPage(0);
   };
 
+  // Descarga CSV del desglose, respetando periodo + filtro de empresa + vista
+  // activa ("orders" → por pedido, "company" → subtotales por empresa).
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (days !== "all") params.set("days", String(parseInt(days)));
+      if (companyId) params.set("company_id", companyId);
+      else if (debounced) params.set("company", debounced);
+      params.set("group", view);
+      const url = `${API}/admin/company-funds/commissions/export.csv?${params.toString()}`;
+      const r = await axios.get(url, { responseType: "blob", withCredentials: true });
+      const blobUrl = URL.createObjectURL(
+        new Blob([r.data], { type: r.headers["content-type"] || "text/csv" }));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      a.download = `comisiones_${view}_${ts}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast.success(t("admin.commissions.exportedToast"));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || t("admin.commissions.exportError"));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const totals = data?.totals || {};
   const rows = data?.rows || [];
   const byCompany = data?.by_company || [];
@@ -130,20 +161,32 @@ export default function CommissionsPanel() {
             {t("admin.commissions.subtitle")}
           </p>
         </div>
-        <Select value={days} onValueChange={onPeriodChange}>
-          <SelectTrigger
-            data-testid="commissions-period"
-            className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40"
+        <div className="flex items-center gap-2">
+          <Button
+            data-testid="commissions-export"
+            onClick={exportCsv}
+            disabled={exporting || loading}
+            variant="outline"
+            className="rounded-none border-white/15 hover:bg-white/5 h-10 text-xs uppercase tracking-wide"
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
-            <SelectItem value="all">{t("admin.commissions.allTime")}</SelectItem>
-            <SelectItem value="7">{t("admin.commissions.last7")}</SelectItem>
-            <SelectItem value="30">{t("admin.commissions.last30")}</SelectItem>
-            <SelectItem value="90">{t("admin.commissions.last90")}</SelectItem>
-          </SelectContent>
-        </Select>
+            <Download className="w-3.5 h-3.5 mr-2" />
+            {exporting ? t("admin.commissions.exporting") : t("admin.commissions.exportCsv")}
+          </Button>
+          <Select value={days} onValueChange={onPeriodChange}>
+            <SelectTrigger
+              data-testid="commissions-period"
+              className="rounded-none bg-[#0a0a0a] border-white/10 h-10 w-40"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white rounded-none">
+              <SelectItem value="all">{t("admin.commissions.allTime")}</SelectItem>
+              <SelectItem value="7">{t("admin.commissions.last7")}</SelectItem>
+              <SelectItem value="30">{t("admin.commissions.last30")}</SelectItem>
+              <SelectItem value="90">{t("admin.commissions.last90")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Summary tiles */}
