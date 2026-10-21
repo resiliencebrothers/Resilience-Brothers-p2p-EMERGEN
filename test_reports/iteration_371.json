@@ -1,0 +1,23 @@
+{
+  "summary": "Backend-only live HTTP verification of the Empresa offers audit fixes. 11/11 pytest pass. E02: an expired offer (price_usd=80, original=100, ends_at in the past) gets redemption total_usd=100 and the USDT debit is 100. An active offer charges 80. 409 guard: expected_total_usdt=80 on the expired product returns 409 with 'PRICE_CHANGED|...', creates no redemption and leaves the balance unchanged. expected_total_usdt=100 succeeds. E04: /products/offers lists prod_qaE_active and leaves out the expired product and the closing-store-only product. Product detail by id returns the augmented fields and 404 for unknown ids, and the /products/offers route is not shadowed by /products/{pid}. E03: a description edit with an unchanged price_usd=80 keeps the offer (on_offer stays true, original stays 100). A change to price_usd=75 retires the offer. E01-B: GET /api/admin/settings returns vendor_commission_pct=1.0.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "seed data (not code)", "issue": "The prod_qaE_closing seed (shelf only in the 'closing' store st_qaE_closing) does not hold. Within seconds the scheduler's heal_orphan_store_shelves moves that shelf back to central (by_store={}, distributed=0, stock=5). The product then becomes buyable by delivery and correctly appears in the offers list. My first run failed for this reason. The test now re-seeds inline right before the GET. Working as designed."},
+      {"endpoint": "seed data (not code)", "issue": "The prod_qaE_expired and prod_qaE_active seeds have by_store={'st_qaE':5} with distributed=0, which breaks the invariant distributed == sum(by_store). Pickup redemptions still worked."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iter371_offer_pricing.py", "/app/test_reports/pytest/pytest_iter371.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "The 409 guard only runs when the client sends expected_total_usdt. MarketplaceView.jsx sends it and handles PRICE_CHANGED; any other client that calls /vip/redeem without it gets no protection (charging is still correct because it uses the effective price).",
+    "The extra offer-matrix checks (/tmp/e04.py) passed: a product whose only stock is in a closing store or an inactive store is left out of the offers list; a shelf in an active store or central stock > 0 is included; zero stock is left out. Redeeming at a closing store returns 404 'Tienda no encontrada o inactiva'."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter371_offer_pricing.py"],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped as requested)"},
+  "seed_data_creation": "None persisted. The test takes a snapshot first, then deletes its redemptions for prod_qaE_* and user_test_normal01 and restores the products and user_test_normal01.vip_balances (USDT=2000). Side records such as stock movements or notifications from the pickup redemptions may remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run pytest /app/backend/tests/test_iter371_offer_pricing.py. Sessions: qa_e_n (normal), qa_e_co (company), test_session_admin_X (admin). The closing-store seed gets healed by the scheduler, so re-seed it right before asserting. Company products have owner_id set, so the redeem total is unit_price*qty with no FX."
+}

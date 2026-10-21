@@ -3126,3 +3126,5 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - **Estado:** en preview; pendiente de re-despliegue a producción.
 
 - **MKT-EMP-01b (iter371):** banners de ofertas — ocultar agotados (`/api/products/offers` filtra por stock comprable: central vendible o estantería de tienda; revalida al abrir con aviso si no disponible) + carrusel auto-rotatorio/deslizable con puntos (`OffersBanner` sobre embla). ✅ IMPLEMENTADO (verificado in-process + screenshots móvil/escritorio).
+
+- **MKT-EMP-01c (iter371):** correcciones de auditoría — oferta vencida restituye precio normal en catálogo/banner/compra (`effective_price_usd`), guard 409 `PRICE_CHANGED`, editar metadatos ya no borra la oferta, banner valida tiendas activas/no-closing + endpoint de detalle por id, refresco por foco/60 s + accesibilidad del carrusel, defaults de comisión a 1%, "Ganado" en USDT. Verificado (testing_agent 11/11 + in-process). Decisiones reafirmadas: comisión al entregar, activación directa de ofertas, auto-rotación. ✅ IMPLEMENTADO.
