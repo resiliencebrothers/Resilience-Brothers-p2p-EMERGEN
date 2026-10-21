@@ -16,6 +16,7 @@ import { QRCodeCanvas } from "qrcode.react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import CourierQuotePicker from "@/components/CourierQuotePicker";
+import OffersBanner from "@/components/OffersBanner";
 import { extractDetailMessage } from "@/utils/apiErrors";
 import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/units";
 
@@ -278,6 +279,8 @@ export default function MarketplaceView() {
         </div>
       )}
 
+
+      {!onlyOffers && !query.trim() && <OffersBanner />}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {products.length === 0 && <p className="text-neutral-500 col-span-full text-center py-12">{t("marketplace.empty")}</p>}
         {products.length > 0 && visibleProducts.length === 0 && (
