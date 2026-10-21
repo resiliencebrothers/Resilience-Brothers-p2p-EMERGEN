@@ -862,16 +862,18 @@ async def list_products(request: Request) -> Any:
     return out
 
 
-def _offer_is_buyable(p: dict) -> bool:
+def _offer_is_buyable(p: dict, active_store_ids: set) -> bool:
     """True si el producto tiene stock COMPRABLE: almacén central vendible
-    (stock − distribuido, para entrega) O alguna estantería de tienda permitida
-    (by_store, para recogida). Igual criterio que valida la compra."""
+    (stock − distribuido, para entrega) O estantería de una sucursal REALMENTE
+    disponible para recoger (activa, no 'closing', permitida y con existencias).
+    Mismo criterio que la compra y `/stores`."""
     central = float(p.get("stock") or 0) - float(p.get("distributed") or 0)
     if central > 0:
         return True
     allowed = p.get("available_store_ids") or []
     for sid, qty in (p.get("by_store") or {}).items():
-        if (not allowed or sid in allowed) and float(qty or 0) > 0:
+        if ((not allowed or sid in allowed) and sid in active_store_ids
+                and float(qty or 0) > 0):
             return True
     return False
 
@@ -879,27 +881,59 @@ def _offer_is_buyable(p: dict) -> bool:
 @router.get("/products/offers")
 async def list_offers(request: Request) -> Any:
     """Ofertas de rebaja ACTIVAS para los banners del resumen del cliente:
-    producto aprobado, activo, marcado en oferta y dentro de vigencia. Se
-    cargan desde el servidor con filtro (no de los primeros N del catálogo) y
-    `augment_products_fx` revalida la vigencia; devuelve hasta 6."""
+    producto aprobado, activo, marcado en oferta y dentro de vigencia, con stock
+    comprable real. Se cargan desde el servidor con filtro (incluido el
+    vencimiento, para no gastar el límite en ofertas caducadas) y
+    `augment_products_fx` revalida; devuelve hasta 6."""
+    now_iso = iso(now_utc())
     rows = await db.products.find(
         {"is_active": True, "on_offer": True,
-         "$or": [{"approval_status": {"$exists": False}},
-                 {"approval_status": "approved"}]}, {"_id": 0}) \
-        .sort("offer_at", -1).to_list(100)
+         "$and": [
+             {"$or": [{"approval_status": {"$exists": False}},
+                      {"approval_status": "approved"}]},
+             # Excluir vencidas ya en la consulta (ISO ordena cronológicamente).
+             {"$or": [{"offer_ends_at": {"$in": [None, ""]}},
+                      {"offer_ends_at": {"$exists": False}},
+                      {"offer_ends_at": {"$gt": now_iso}}]},
+         ]}, {"_id": 0}).sort("offer_at", -1).to_list(200)
     from auth_utils import get_session_user
     from services.marketplace_fx import augment_products_fx
     user = await get_session_user(request)
     out = await augment_products_fx(rows, role=(user or {}).get("role"))
-    # augment_products_fx apaga on_offer si la oferta venció o le falta precio
-    # anterior → conservar solo las que siguen siendo oferta real.
-    offers = [p for p in out if p.get("on_offer") and _offer_is_buyable(p)]
+    # Sucursales REALMENTE disponibles (activas, no 'closing') de las empresas
+    # candidatas → valida la recogida con el mismo criterio que la compra.
+    company_ids = [p.get("company_id") for p in out if p.get("company_id")]
+    active_store_ids: set = set()
+    if company_ids:
+        async for s in db.stores.find(
+                {"company_id": {"$in": company_ids}, "active": True,
+                 "status": {"$ne": "closing"}}, {"_id": 0, "id": 1}):
+            active_store_ids.add(s["id"])
+    offers = [p for p in out if p.get("on_offer") and _offer_is_buyable(p, active_store_ids)]
     from services.user_verification import verified_company_owner_ids
     verified = await verified_company_owner_ids(
         db, [p.get("owner_id") for p in offers if p.get("owner_id")])
     for p in offers:
         p["owner_verified"] = bool(p.get("owner_id")) and p["owner_id"] in verified
     return offers[:6]
+
+
+@router.get("/products/{pid}")
+async def product_detail(pid: str, request: Request) -> Any:
+    """Detalle de UN producto activo+aprobado (con FX/oferta aplicada). Permite
+    que el enlace del banner resuelva cualquier oferta por id, sin depender de
+    los primeros N del catálogo."""
+    doc = await db.products.find_one(
+        {"id": pid, "is_active": True,
+         "$or": [{"approval_status": {"$exists": False}},
+                 {"approval_status": "approved"}]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Producto no disponible.")
+    from auth_utils import get_session_user
+    from services.marketplace_fx import augment_products_fx
+    user = await get_session_user(request)
+    out = await augment_products_fx([doc], role=(user or {}).get("role"))
+    return out[0]
 
 
 def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool) -> Any:

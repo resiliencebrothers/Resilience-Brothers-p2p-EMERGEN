@@ -34,6 +34,25 @@ def _offer_expired(ends_at: Optional[str]) -> bool:
     return dt <= datetime.now(timezone.utc)
 
 
+def offer_is_active(product: dict) -> bool:
+    """La oferta está vigente (marcada, con precio anterior y sin vencer)."""
+    return bool(product.get("on_offer")) \
+        and float(product.get("offer_original_price") or 0) > 0 \
+        and not _offer_expired(product.get("offer_ends_at"))
+
+
+def effective_price_usd(product: dict) -> float:
+    """Precio efectivo a cobrar (en la moneda base del producto). Si la oferta
+    VENCIÓ se restituye el precio normal (`offer_original_price`) aunque no haya
+    tarea programada que lo reescriba en la BD; si está vigente es el rebajado
+    (`price_usd`); sin oferta es `price_usd`. Misma lógica para catálogo,
+    banner y compra."""
+    orig = float(product.get("offer_original_price") or 0)
+    if product.get("on_offer") and orig > 0 and _offer_expired(product.get("offer_ends_at")):
+        return orig
+    return float(product.get("price_usd") or 0)
+
+
 def _rate_field_for(role: Optional[str]) -> str:
     return "rate_vip" if role in ("vip", "admin") else "rate_normal"
 
@@ -70,22 +89,24 @@ async def augment_products_fx(products: list,
     (equivalente en efectivo de la tienda, solo productos de la empresa)."""
     fx = await get_store_fx(role=role)
     for p in products:
+        # Precio EFECTIVO: si la oferta venció, se usa el precio normal (aunque
+        # la BD aún guarde el rebajado) → el catálogo y la compra coinciden.
+        eff = effective_price_usd(p)
         if p.get("owner_id"):
-            p["price_usdt"] = float(p.get("price_usd") or 0)
+            p["price_usdt"] = round(eff, 2)
             p["price_store"] = None
             p["store_currency"] = None
             p["fx_rate"] = None
         else:
-            p["price_store"] = float(p.get("price_usd") or 0)
+            p["price_store"] = eff
             p["store_currency"] = fx["store_currency"]
-            p["price_usdt"] = to_usdt(p["price_store"], fx["rate"])
+            p["price_usdt"] = to_usdt(eff, fx["rate"])
             p["fx_rate"] = fx["rate"] or None
         # iter324 — oferta/liquidación: precio anterior tachado en la web.
         # Empresa/vendedor (owner_id): precios NATIVOS en USDT (sin conversión).
         # Inventario propio Resilience (sin owner_id): precio en moneda de tienda.
         orig = float(p.get("offer_original_price") or 0)
-        if (p.get("on_offer") and orig > 0
-                and not _offer_expired(p.get("offer_ends_at"))):
+        if offer_is_active(p):
             p["on_offer"] = True
             if p.get("owner_id"):
                 p["offer_original_price_store"] = None
@@ -94,5 +115,6 @@ async def augment_products_fx(products: list,
                 p["offer_original_price_store"] = orig
                 p["offer_original_price_usdt"] = to_usdt(orig, fx["rate"])
         else:
+            # sin oferta o vencida → no se anuncia rebaja y el precio ya es el normal
             p["on_offer"] = False
     return products

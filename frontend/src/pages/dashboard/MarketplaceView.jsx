@@ -111,27 +111,37 @@ export default function MarketplaceView() {
       .catch(() => setStores([]));
   }, [open]);
 
-  // Enlace directo desde los banners de ofertas del resumen:
+  // Enlace directo desde los banners de ofertas (resumen o mercado):
   // ?product=<id> abre ese producto; ?offers=1 activa el filtro Ofertas.
-  // Al abrir se revalida con el catálogo recién cargado: si la oferta ya no
-  // está disponible (agotada/retirada), se avisa en vez de abrir en vano.
+  // Se revalida con el catálogo; si no está en la lista (p. ej. fuera de los
+  // primeros N) se consulta el detalle por id; si no hay stock, se avisa.
   useEffect(() => {
     if (searchParams.get("offers") === "1") setOnlyOffers(true);
     const pid = searchParams.get("product");
-    if (pid && products.length && !open) {
-      const found = products.find((p) => p.id === pid);
-      const sellableCentral = Number(found?.stock || 0) - Number(found?.distributed || 0);
-      const hasPickup = found?.by_store && Object.values(found.by_store).some((q) => Number(q) > 0);
-      const buyable = found && (sellableCentral > 0 || hasPickup) && found.price_usdt != null;
-      if (buyable) {
-        setOpen(found);
-      } else {
-        toast.info("Esta oferta ya no está disponible.");
-      }
+    if (!pid || !products.length || open) return;
+    const clearParam = () => {
       const next = new URLSearchParams(searchParams);
       next.delete("product");
       setSearchParams(next, { replace: true });
-    }
+    };
+    const isBuyable = (prod) => {
+      if (!prod || prod.price_usdt == null) return false;
+      const central = Number(prod.stock || 0) - Number(prod.distributed || 0);
+      const pickup = prod.by_store && Object.values(prod.by_store).some((q) => Number(q) > 0);
+      return central > 0 || pickup;
+    };
+    (async () => {
+      let prod = products.find((p) => p.id === pid);
+      if (!prod) {
+        try {
+          const r = await axios.get(`${API}/products/${pid}`, { withCredentials: true });
+          prod = r.data;
+        } catch { prod = null; }
+      }
+      if (isBuyable(prod)) setOpen(prod);
+      else toast.info("Esta oferta ya no está disponible.");
+      clearParam();
+    })();
   }, [products, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // iter237 — el cliente avisa que va en camino a recoger.
@@ -163,6 +173,7 @@ export default function MarketplaceView() {
       await axios.post(`${API}/vip/redeem`, {
         product_id: open.id,
         quantity: qtyNum,
+        expected_total_usdt: Number(((open.price_usdt || 0) * qtyNum).toFixed(2)),
         ...(pickup
           ? { fulfillment: "store_pickup", store_id: storeId }
           : {
@@ -185,7 +196,19 @@ export default function MarketplaceView() {
       const h = await axios.get(`${API}/vip/redemptions/mine`, { withCredentials: true }); setHistory(h.data);
       await loadBalances();
     } catch (e) {
-      toast.error(extractDetailMessage(e, "Error al canjear"));
+      const detail = e?.response?.data?.detail;
+      // El precio cambió desde que se abrió el diálogo (p. ej. oferta vencida):
+      // avisar y refrescar el producto para que confirme el nuevo precio.
+      if (e?.response?.status === 409 && typeof detail === "string" && detail.startsWith("PRICE_CHANGED")) {
+        toast.warning(detail.split("|")[1] || "El precio cambió. Revisa el nuevo precio.");
+        try {
+          const fresh = await axios.get(`${API}/products/${open.id}`, { withCredentials: true });
+          setOpen(fresh.data);
+          const all = await axios.get(`${API}/products`, { withCredentials: true }); setProducts(all.data);
+        } catch { /* producto ya no disponible */ setOpen(null); }
+      } else {
+        toast.error(extractDetailMessage(e, "Error al canjear"));
+      }
     } finally { setBusy(false); }
   };
 

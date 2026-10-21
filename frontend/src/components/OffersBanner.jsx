@@ -75,6 +75,18 @@ export default function OffersBanner() {
   useEffect(() => { load(); }, [load]);
   useLiveEvent("products_changed", load);
 
+  // E05 — refrescar al volver a la pestaña y cada 60 s, para que una sesión
+  // abierta no conserve ofertas vencidas aunque no llegue ningún evento.
+  useEffect(() => {
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    const id = setInterval(load, 60000);
+    return () => { window.removeEventListener("focus", onFocus); clearInterval(id); };
+  }, [load]);
+
+  const reduceMotion = typeof window !== "undefined" && window.matchMedia
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
   // Estado del carrusel (para los puntos de navegación).
   useEffect(() => {
     if (!api) return;
@@ -85,12 +97,13 @@ export default function OffersBanner() {
     return () => { api.off("select", sync); api.off("reInit", sync); };
   }, [api]);
 
-  // Rotación automática (se pausa al pasar el ratón / interactuar).
+  // Rotación automática (se pausa al pasar el ratón, con foco de teclado, o si
+  // el usuario prefiere movimiento reducido).
   useEffect(() => {
-    if (!api || offers.length <= 1 || paused) return;
+    if (!api || offers.length <= 1 || paused || reduceMotion) return;
     const id = setInterval(() => api.scrollNext(), 4500);
     return () => clearInterval(id);
-  }, [api, offers.length, paused]);
+  }, [api, offers.length, paused, reduceMotion]);
 
   const open = (pid) => navigate(`/dashboard/marketplace?product=${pid}`);
 
@@ -98,7 +111,8 @@ export default function OffersBanner() {
 
   return (
     <section data-testid="offers-banner" className="space-y-3"
-      onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+      onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}
+      onFocusCapture={() => setPaused(true)} onBlurCapture={() => setPaused(false)}>
       <div className="flex items-end justify-between gap-3">
         <h2 className="font-display text-lg flex items-center gap-2">
           <Tag className="w-5 h-5 text-[#8B5CF6]" /> {t("offers.title")}

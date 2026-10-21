@@ -1496,7 +1496,7 @@ async def get_admin_settings(request: Request) -> Any:
             "courier_share_pct": 80.0,
             "office_latitude": None,
             "office_longitude": None,
-            "vendor_commission_pct": 5.0,
+            "vendor_commission_pct": 1.0,
             "low_stock_threshold": 5,
             "store_currency_code": None,
         }
@@ -1524,7 +1524,7 @@ async def get_admin_settings(request: Request) -> Any:
         "office_latitude": doc.get("office_latitude"),
         "office_longitude": doc.get("office_longitude"),
         "vendor_commission_pct": float(doc.get("vendor_commission_pct")
-                                       if doc.get("vendor_commission_pct") is not None else 5.0),
+                                       if doc.get("vendor_commission_pct") is not None else 1.0),
         "low_stock_threshold": int(doc.get("low_stock_threshold")
                                    if doc.get("low_stock_threshold") is not None else 5),
         "store_currency_code": doc.get("store_currency_code"),

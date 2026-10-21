@@ -138,6 +138,9 @@ class RedemptionCreate(BaseModel):
     # del texto de la dirección).
     receiver_name: Optional[str] = Field(None, max_length=120)
     receiver_phone: Optional[str] = Field(None, max_length=40)
+    # Precio total en USDT que vio el cliente al abrir el diálogo. Si cambió
+    # (p. ej. la oferta venció), el backend rechaza con 409 PRICE_CHANGED.
+    expected_total_usdt: Optional[float] = Field(None, ge=0)
 
 
 class WithdrawalRequest(BaseModel):
@@ -445,8 +448,12 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     store_cost = 0.0
     fx_rate = 0.0
     store_currency = ""
+    # Precio EFECTIVO (misma lógica que catálogo/banner): una oferta vencida
+    # cobra el precio normal, nunca el rebajado caducado.
+    from services.marketplace_fx import effective_price_usd
+    unit_price = effective_price_usd(product)
     if product.get("owner_id"):
-        total = product["price_usd"] * payload.quantity
+        total = unit_price * payload.quantity
         cost = float(product.get("cost_usd") or 0) * payload.quantity
     else:
         from services.marketplace_fx import get_store_fx, to_usdt
@@ -458,10 +465,18 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
                         "no se puede calcular el precio en USDT. Contacta al administrador."))
         fx_rate = fx["rate"]
         store_currency = fx["store_currency"]
-        store_total = round(float(product["price_usd"]) * payload.quantity, 2)
+        store_total = round(unit_price * payload.quantity, 2)
         store_cost = round(float(product.get("cost_usd") or 0) * payload.quantity, 2)
         total = to_usdt(store_total, fx_rate)
         cost = to_usdt(store_cost, fx_rate) or 0.0
+    # Control anti-sorpresa: si el precio cambió desde que el cliente abrió el
+    # diálogo (p. ej. la oferta venció), se rechaza para que confirme el nuevo.
+    if payload.expected_total_usdt is not None and total is not None \
+            and abs(float(total) - float(payload.expected_total_usdt)) > 0.01:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"PRICE_CHANGED|El precio cambió a {float(total):.2f} USDT. "
+                    "Revisa el nuevo precio antes de confirmar."))
     # iter236 / F2-B — recogida en tienda: sin mensajería ni costo de envío
     # (pickup_store ya se resolvió y validó arriba, incluido el stock de la
     # estantería elegida para productos de Empresa).

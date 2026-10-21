@@ -205,7 +205,7 @@ export default function CompanyProductsView({ onChanged }) {
                     )}
                   </div>
                   <div className="text-xs text-neutral-500">Stock: {p.stock}</div>
-                  <div className="text-xs text-emerald-400 mt-1">Vendido: {p.sold_qty || 0} · Ganado: {(p.earned_usd || 0).toFixed(2)} USD</div>
+                  <div className="text-xs text-emerald-400 mt-1">Vendido: {p.sold_qty || 0} · Ganado: {Number(p.earned_usdt ?? p.earned_usd ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDT</div>
                 </div>
                 <div className="flex gap-2">
                   {p.approval_status === "approved" && (

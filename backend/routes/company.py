@@ -238,7 +238,8 @@ async def list_my_products(request: Request) -> Any:
     for d in docs:
         st = stats.get(d["id"], {})
         d["sold_qty"] = round(float(st.get("sold_qty", 0) or 0), 3)
-        d["earned_usd"] = round(float(st.get("earned") or 0), 2)
+        d["earned_usdt"] = round(float(st.get("earned") or 0), 6)
+        d["earned_usd"] = d["earned_usdt"]  # compat
     return docs
 
 
@@ -303,19 +304,25 @@ async def update_my_product(pid: str, payload: CompanyProductUpdate,
     if "available_store_ids" in updates:
         updates["available_store_ids"] = await _validate_store_ids(
             updates["available_store_ids"], user["user_id"])
-    if not updates:
-        return doc
     if "image_url" in updates:
         updates["image_url"] = maybe_upload_proof(
             updates["image_url"], "products") or ""
+    # El formulario SIEMPRE envía price_usd; si el valor no cambió, lo quitamos
+    # para no tocar el precio ni retirar la oferta por editar descripción/imagen.
     if "price_usd" in updates:
-        updates["price_usd"] = round(float(updates["price_usd"]), 2)
+        new_price = round(float(updates["price_usd"]), 2)
+        if new_price == round(float(doc.get("price_usd") or 0), 2):
+            del updates["price_usd"]
+        else:
+            updates["price_usd"] = new_price
+    if not updates:
+        return doc
     resubmitted = doc.get("approval_status") == "rejected"
     if resubmitted:
         updates["approval_status"] = "pending"
         updates["rejection_reason"] = ""
-    # Si cambia el precio mientras hay una oferta activa, se retira la oferta
-    # (el "precio anterior" guardado dejaría de ser coherente con el nuevo precio).
+    # Solo si el precio CAMBIÓ realmente se retira la oferta (el "precio anterior"
+    # guardado dejaría de ser coherente con el nuevo precio).
     if "price_usd" in updates and doc.get("on_offer"):
         updates["on_offer"] = False
         updates["offer_original_price"] = 0.0
