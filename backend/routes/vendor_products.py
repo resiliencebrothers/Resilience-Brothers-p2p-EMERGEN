@@ -31,7 +31,7 @@ from services.proof_upload import maybe_upload_proof
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["VendorProducts"])
 
-DEFAULT_COMMISSION_PCT = 5.0
+DEFAULT_COMMISSION_PCT = 1.0
 MAX_PRODUCTS_PER_VENDOR = 50
 
 _VENDOR_FILTER = {"owner_id": {"$nin": [None, ""]}}

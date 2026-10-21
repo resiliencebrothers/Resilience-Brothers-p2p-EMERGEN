@@ -1,4 +1,9 @@
 {
+  "offers": {
+    "title": "Offers & deals",
+    "seeAll": "See all",
+    "view": "View offer"
+  },
   "common": {
     "loading": "Loading...",
     "save": "Save",

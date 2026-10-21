@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -21,6 +22,7 @@ import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/
 export default function MarketplaceView() {
   const { refresh } = useAuth();
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
   const [open, setOpen] = useState(null);
   // iter285 — la cantidad vive como texto: el usuario puede borrar el «1»
@@ -96,7 +98,10 @@ export default function MarketplaceView() {
   useEffect(() => {
     if (!open) return;
     setFulfillment("delivery"); setStoreId("");
-    if (open.owner_id) { setStores([]); return; }
+    // Solo los vendedores LEGACY (owner_id sin company_id) no tienen recogida.
+    // Los productos de Empresa (con company_id) SÍ pueden recogerse en sus
+    // tiendas: se consultan sus sucursales con stock del producto.
+    if (open.owner_id && !open.company_id) { setStores([]); return; }
     axios.get(`${API}/stores`, { params: { product_id: open.id }, withCredentials: true })
       .then((r) => {
         setStores(r.data);
@@ -104,6 +109,22 @@ export default function MarketplaceView() {
       })
       .catch(() => setStores([]));
   }, [open]);
+
+  // Enlace directo desde los banners de ofertas del resumen:
+  // ?product=<id> abre ese producto; ?offers=1 activa el filtro Ofertas.
+  useEffect(() => {
+    if (searchParams.get("offers") === "1") setOnlyOffers(true);
+    const pid = searchParams.get("product");
+    if (pid && products.length && !open) {
+      const found = products.find((p) => p.id === pid);
+      if (found) {
+        setOpen(found);
+        const next = new URLSearchParams(searchParams);
+        next.delete("product");
+        setSearchParams(next, { replace: true });
+      }
+    }
+  }, [products, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // iter237 — el cliente avisa que va en camino a recoger.
   const onMyWay = async (id) => {

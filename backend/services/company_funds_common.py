@@ -16,19 +16,23 @@ from auth_utils import now_utc, iso
 async def record_auto_fund_adjustment(*, adjustment_type: str, currency: str,
                                       amount: float, source_name: str,
                                       note: str = "", ref_id: str = "",
-                                      dedupe_key: str = "") -> dict:
+                                      dedupe_key: str = "",
+                                      precision: int = 2) -> dict:
     """iter219 — movimiento AUTOMÁTICO de capital (ventas del marketplace,
     comisiones de vendedores VIP). Usa el mismo esquema que los ajustes
     manuales para que `_aggregate_manual_adjustments` lo refleje directo en
     el fondo de la empresa.
     iter257(D08) — `dedupe_key` (índice único sparse) hace el asiento
-    IDEMPOTENTE: reintentos y healers pueden re-ejecutar sin duplicar."""
+    IDEMPOTENTE: reintentos y healers pueden re-ejecutar sin duplicar.
+    `precision` — decimales a conservar del importe. Por defecto 2 (céntimos);
+    la comisión del 1% usa 6 para no perder importes sub-céntimo en ventas
+    pequeñas (0,10 USDT → comisión 0,001)."""
     global _ADJ_DEDUPE_INDEX_READY
     doc = {
         "id": str(uuid.uuid4()),
         "adjustment_type": adjustment_type,
         "currency": currency,
-        "amount": round(float(amount), 2),
+        "amount": round(float(amount), precision),
         "method": "transfer",
         "source_name": source_name,
         "source_account": "",

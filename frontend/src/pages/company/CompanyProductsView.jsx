@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { Boxes, Plus, Edit2, Trash2, Package } from "lucide-react";
+import { Boxes, Plus, Edit2, Trash2, Package, Tag } from "lucide-react";
 import { toast } from "sonner";
 
 // Catálogo de la Empresa. Los productos nuevos quedan 'pending' hasta que un
@@ -34,6 +34,11 @@ export default function CompanyProductsView({ onChanged }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
+  // Oferta/rebaja sobre un producto YA aprobado.
+  const [offerFor, setOfferFor] = useState(null);
+  const [offerPrice, setOfferPrice] = useState("");
+  const [offerEnd, setOfferEnd] = useState("");
+  const [offerBusy, setOfferBusy] = useState(false);
 
   const load = useCallback(() => {
     axios.get(`${API}/company/products`, { withCredentials: true })
@@ -106,6 +111,36 @@ export default function CompanyProductsView({ onChanged }) {
     } catch (e) { toast.error(e.response?.data?.detail || "No se pudo eliminar"); }
   };
 
+  const openOffer = (p) => {
+    setOfferFor(p);
+    setOfferPrice("");
+    setOfferEnd(p.offer_ends_at ? String(p.offer_ends_at).slice(0, 10) : "");
+  };
+
+  const saveOffer = async () => {
+    if (!offerFor) return;
+    const price = parseFloat(offerPrice);
+    if (!price || price <= 0) return toast.error("Indica el precio de oferta");
+    if (price >= Number(offerFor.price_usd)) return toast.error("El precio de oferta debe ser menor que el precio actual");
+    setOfferBusy(true);
+    try {
+      await axios.post(`${API}/company/products/${offerFor.id}/offer`,
+        { discount_price: price, ends_at: offerEnd || null }, { withCredentials: true });
+      toast.success("Oferta activada");
+      setOfferFor(null); load(); onChanged?.();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo activar la oferta");
+    } finally { setOfferBusy(false); }
+  };
+
+  const removeOffer = async (p) => {
+    try {
+      await axios.delete(`${API}/company/products/${p.id}/offer`, { withCredentials: true });
+      toast.success("Oferta retirada");
+      load(); onChanged?.();
+    } catch (e) { toast.error(e.response?.data?.detail || "No se pudo retirar la oferta"); }
+  };
+
   return (
     <div className="space-y-6" data-testid="company-products-view">
       <div className="flex items-end justify-between flex-wrap gap-4">
@@ -152,16 +187,36 @@ export default function CompanyProductsView({ onChanged }) {
                 </span>
               </div>
               <h3 className="font-display text-lg mt-1">{p.name}</h3>
+              {p.on_offer && (
+                <span data-testid={`company-product-offer-badge-${p.id}`}
+                  className="inline-flex items-center gap-1 self-start mt-1 text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border bg-[#EF4444]/10 text-[#EF4444] border-[#EF4444]/30">
+                  <Tag className="w-3 h-3" /> Oferta -{Number(p.offer_discount_pct || 0).toFixed(0)}%
+                </span>
+              )}
               {p.approval_status === "rejected" && p.rejection_reason && (
                 <div className="text-xs text-red-400 mt-1">Motivo: {p.rejection_reason}</div>
               )}
               <div className="mt-auto pt-3 flex items-center justify-between">
                 <div>
-                  <div className="font-display text-xl text-[#8B5CF6]">{p.price_usd} <span className="text-xs text-neutral-500">USDT</span></div>
+                  <div className="font-display text-xl text-[#8B5CF6] flex items-baseline gap-2">
+                    {p.price_usd} <span className="text-xs text-neutral-500">USDT</span>
+                    {p.on_offer && p.offer_original_price > 0 && (
+                      <span className="text-xs text-neutral-500 line-through">{p.offer_original_price}</span>
+                    )}
+                  </div>
                   <div className="text-xs text-neutral-500">Stock: {p.stock}</div>
                   <div className="text-xs text-emerald-400 mt-1">Vendido: {p.sold_qty || 0} · Ganado: {(p.earned_usd || 0).toFixed(2)} USD</div>
                 </div>
                 <div className="flex gap-2">
+                  {p.approval_status === "approved" && (
+                    p.on_offer ? (
+                      <button data-testid={`company-product-offer-remove-${p.id}`} onClick={() => removeOffer(p)}
+                        className="text-[#EF4444] hover:opacity-80" title="Retirar oferta"><Tag className="w-4 h-4" /></button>
+                    ) : (
+                      <button data-testid={`company-product-offer-${p.id}`} onClick={() => openOffer(p)}
+                        className="text-neutral-400 hover:text-[#EF4444]" title="Poner en oferta"><Tag className="w-4 h-4" /></button>
+                    )
+                  )}
                   <button data-testid={`company-product-edit-${p.id}`} onClick={() => { setEditing(p); setForm({ ...emptyForm, ...p, price_usd: String(p.price_usd), available_store_ids: p.available_store_ids || [] }); setOpen(true); }}
                     className="text-neutral-400 hover:text-[#8B5CF6]" title="Editar"><Edit2 className="w-4 h-4" /></button>
                   <button data-testid={`company-product-delete-${p.id}`} onClick={() => remove(p)}
@@ -260,6 +315,47 @@ export default function CompanyProductsView({ onChanged }) {
               {busy ? "…" : "Guardar"}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!offerFor} onOpenChange={(v) => !v && setOfferFor(null)}>
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto" data-testid="company-offer-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2">
+              <Tag className="w-5 h-5 text-[#EF4444]" /> Poner en oferta
+            </DialogTitle>
+          </DialogHeader>
+          {offerFor && (
+            <div className="space-y-4">
+              <div className="text-sm text-neutral-400">
+                «{offerFor.name}» — precio actual <span className="text-[#8B5CF6] font-mono">{offerFor.price_usd} USDT</span>.
+                Este será el <strong className="text-neutral-200">precio anterior</strong> (tachado) y se mostrará la rebaja.
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">Precio de oferta (USDT)</Label>
+                <Input data-testid="company-offer-price" type="number" step="any" min="0" value={offerPrice}
+                  onChange={(e) => setOfferPrice(e.target.value)}
+                  placeholder={`menor que ${offerFor.price_usd}`}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
+                {parseFloat(offerPrice) > 0 && parseFloat(offerPrice) < Number(offerFor.price_usd) && (
+                  <p className="text-xs text-emerald-400 mt-1" data-testid="company-offer-pct-preview">
+                    Rebaja del {Math.round((1 - parseFloat(offerPrice) / Number(offerFor.price_usd)) * 100)}%
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label className="micro-label text-neutral-500">Fin de la oferta (opcional)</Label>
+                <Input data-testid="company-offer-end" type="date" value={offerEnd}
+                  onChange={(e) => setOfferEnd(e.target.value)}
+                  className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+                <p className="text-xs text-neutral-500 mt-1">Al llegar esta fecha, la oferta se oculta sola. Déjalo vacío para que dure hasta que la retires.</p>
+              </div>
+              <Button data-testid="company-offer-save" onClick={saveOffer} disabled={offerBusy}
+                className="w-full bg-[#EF4444] hover:bg-[#dc2626] text-white font-bold rounded-none h-11">
+                {offerBusy ? "…" : "Activar oferta"}
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

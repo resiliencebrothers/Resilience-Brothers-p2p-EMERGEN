@@ -14,7 +14,7 @@ import uuid
 import json
 import hashlib
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Request, HTTPException
@@ -314,6 +314,14 @@ async def update_my_product(pid: str, payload: CompanyProductUpdate,
     if resubmitted:
         updates["approval_status"] = "pending"
         updates["rejection_reason"] = ""
+    # Si cambia el precio mientras hay una oferta activa, se retira la oferta
+    # (el "precio anterior" guardado dejaría de ser coherente con el nuevo precio).
+    if "price_usd" in updates and doc.get("on_offer"):
+        updates["on_offer"] = False
+        updates["offer_original_price"] = 0.0
+        updates["offer_discount_pct"] = 0.0
+        updates["offer_at"] = ""
+        updates["offer_ends_at"] = ""
     await db.products.update_one(
         {"id": pid, "company_id": user["user_id"]}, {"$set": updates})
     if resubmitted:
@@ -350,6 +358,90 @@ async def delete_my_product(pid: str, request: Request) -> Any:
     await db.products.delete_one({"id": pid, "company_id": user["user_id"]})
     await _publish_products_changed(pid)
     return {"ok": True}
+
+
+# ============================================================
+# Ofertas / rebajas — la Empresa las activa directamente sobre un producto YA
+# aprobado (sin nueva revisión del admin). El precio vigente pasa a ser el
+# rebajado; el "precio anterior" se muestra tachado en la web y en los banners.
+# ============================================================
+
+class CompanyOfferPayload(BaseModel):
+    # Precio REBAJADO (vigente). Debe ser > 0 y < precio anterior.
+    discount_price: float = Field(..., gt=0)
+    # Fin opcional de la oferta (ISO date o datetime). Vacío = sin fecha de fin.
+    ends_at: Optional[str] = None
+
+
+def _parse_offer_end(value: Optional[str]) -> str:
+    """Normaliza la fecha de fin a ISO. 'YYYY-MM-DD' → fin de ese día (UTC).
+    Rechaza fechas pasadas. Vacío → '' (sin vigencia)."""
+    if not value or not str(value).strip():
+        return ""
+    raw = str(value).strip()
+    try:
+        if len(raw) == 10:  # YYYY-MM-DD → hasta el final del día
+            dt = datetime.fromisoformat(raw).replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=422, detail="Fecha de fin de oferta no válida.")
+    if dt <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=422, detail="La fecha de fin de la oferta debe ser futura.")
+    return dt.isoformat()
+
+
+@router.post("/products/{pid}/offer")
+async def set_product_offer(pid: str, payload: CompanyOfferPayload,
+                            request: Request) -> Any:
+    user = await require_company(request)
+    doc = await _owned_product_or_404(pid, user["user_id"])
+    if doc.get("approval_status") not in (None, "", "approved"):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo puedes poner en oferta un producto ya aprobado.")
+    # El "precio anterior" real: si ya hay una oferta activa, se conserva el
+    # original previo (no el precio ya rebajado) para no encadenar descuentos.
+    prev_original = float(doc.get("offer_original_price") or 0)
+    base_original = (prev_original if doc.get("on_offer") and prev_original > 0
+                     else float(doc.get("price_usd") or 0))
+    disc = round(float(payload.discount_price), 2)
+    if not (0 < disc < base_original):
+        raise HTTPException(
+            status_code=422,
+            detail="El precio de oferta debe ser mayor que 0 y menor que el precio actual.")
+    ends = _parse_offer_end(payload.ends_at)
+    pct = round((1 - disc / base_original) * 100, 1)
+    await db.products.update_one(
+        {"id": pid, "company_id": user["user_id"]},
+        {"$set": {"on_offer": True, "price_usd": disc,
+                  "offer_original_price": round(base_original, 2),
+                  "offer_discount_pct": pct, "offer_at": iso(now_utc()),
+                  "offer_ends_at": ends}})
+    await _publish_products_changed(pid)
+    return await db.products.find_one(
+        {"id": pid, "company_id": user["user_id"]}, {"_id": 0})
+
+
+@router.delete("/products/{pid}/offer")
+async def clear_product_offer(pid: str, request: Request) -> Any:
+    user = await require_company(request)
+    doc = await _owned_product_or_404(pid, user["user_id"])
+    updates: dict = {"on_offer": False}
+    restore = float(doc.get("offer_original_price") or 0)
+    if restore > 0:
+        updates["price_usd"] = round(restore, 2)  # restaura el precio anterior
+    await db.products.update_one(
+        {"id": pid, "company_id": user["user_id"]},
+        {"$set": updates,
+         "$unset": {"offer_original_price": "", "offer_discount_pct": "",
+                    "offer_at": "", "offer_ends_at": ""}})
+    await _publish_products_changed(pid)
+    return await db.products.find_one(
+        {"id": pid, "company_id": user["user_id"]}, {"_id": 0})
 
 
 # ============================================================

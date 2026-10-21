@@ -111,7 +111,7 @@ async def _reverse_fund_inflow_for_cycle(rid: str) -> None:
         source_name="Marketplace tienda",
         note=(f"Reverso por canje rechazado: {fresh.get('quantity')}× "
               f"{fresh.get('product_name', '')} (canje {rid[:8]})"),
-        ref_id=rid, dedupe_key=f"fund-reverse:{rid}:c{cycle}")
+        ref_id=rid, dedupe_key=f"fund-reverse:{rid}:c{cycle}", precision=6)
     await db.redemptions.update_one(
         {"id": rid, "fund_inflow_reversed_at": {"$in": [None, ""]}},
         {"$set": {"fund_inflow_reversed_at":

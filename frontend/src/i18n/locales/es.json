@@ -1,4 +1,9 @@
 {
+  "offers": {
+    "title": "Ofertas y rebajas",
+    "seeAll": "Ver todas",
+    "view": "Ver oferta"
+  },
   "common": {
     "loading": "Cargando...",
     "save": "Guardar",

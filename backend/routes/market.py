@@ -224,6 +224,8 @@ class Product(BaseModel):
     offer_original_price: float = 0.0
     offer_discount_pct: float = 0.0
     offer_at: str = ""
+    # Vigencia opcional de la oferta (ISO). Vacío = sin fecha de fin.
+    offer_ends_at: str = ""
 
 
 class ProductCreate(BaseModel):
@@ -858,6 +860,32 @@ async def list_products(request: Request) -> Any:
     # fecha dentro de cada grupo).
     out.sort(key=lambda p: 0 if p.get("on_offer") else 1)
     return out
+
+
+@router.get("/products/offers")
+async def list_offers(request: Request) -> Any:
+    """Ofertas de rebaja ACTIVAS para los banners del resumen del cliente:
+    producto aprobado, activo, marcado en oferta y dentro de vigencia. Se
+    cargan desde el servidor con filtro (no de los primeros N del catálogo) y
+    `augment_products_fx` revalida la vigencia; devuelve hasta 6."""
+    rows = await db.products.find(
+        {"is_active": True, "on_offer": True,
+         "$or": [{"approval_status": {"$exists": False}},
+                 {"approval_status": "approved"}]}, {"_id": 0}) \
+        .sort("offer_at", -1).to_list(100)
+    from auth_utils import get_session_user
+    from services.marketplace_fx import augment_products_fx
+    user = await get_session_user(request)
+    out = await augment_products_fx(rows, role=(user or {}).get("role"))
+    # augment_products_fx apaga on_offer si la oferta venció o le falta precio
+    # anterior → conservar solo las que siguen siendo oferta real.
+    offers = [p for p in out if p.get("on_offer")]
+    from services.user_verification import verified_company_owner_ids
+    verified = await verified_company_owner_ids(
+        db, [p.get("owner_id") for p in offers if p.get("owner_id")])
+    for p in offers:
+        p["owner_verified"] = bool(p.get("owner_id")) and p["owner_id"] in verified
+    return offers[:6]
 
 
 def _check_employee_product_perms(actor: dict, *, editing_price: bool, editing_image: bool) -> Any:

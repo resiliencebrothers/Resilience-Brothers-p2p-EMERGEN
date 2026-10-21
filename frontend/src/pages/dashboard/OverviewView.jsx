@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Activity, TrendingUp, Wallet, ArrowUpRight, CheckCircle, Clock, Boxes } from "lucide-react";
 import { Link } from "react-router-dom";
 import CurrencyPairIcon from "@/components/CurrencyPairIcon";
+import OffersBanner from "@/components/OffersBanner";
 import { FlashNumber } from "@/components/FlashNumber";
 import { useLiveEvent } from "@/hooks/useLiveStream";
 import {
@@ -139,6 +140,8 @@ export default function OverviewView() {
           testid="stat-estatus"
         />
       </div>
+
+      <OffersBanner />
 
       <div className="tactile-card p-6">
         <div className="flex items-center justify-between mb-6">

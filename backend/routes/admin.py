@@ -458,8 +458,10 @@ async def _credit_vendor_for_redemption(r: dict) -> None:
         return
     settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
     raw_pct = settings.get("vendor_commission_pct")
-    pct = float(raw_pct) if raw_pct is not None else 5.0
-    net = round(float(r["total_usd"]) * (1 - pct / 100.0), 2)
+    pct = float(raw_pct) if raw_pct is not None else 1.0
+    # Precisión fina (6 decimales): al 1% una venta de 0,10 USDT genera 0,001;
+    # redondear a céntimos la perdería. base = neto + comisión se conserva.
+    net = round(float(r["total_usd"]) * (1 - pct / 100.0), 6)
     # iter249 — intención de abono en el MISMO claim atómico; abono idempotente
     # por op_id y healer si el proceso muere entre pasos.
     # iter254(R07) — el vendedor cobra en la moneda de liquidación del canje.
@@ -595,7 +597,7 @@ async def _record_vendor_commission_inflow(r: dict) -> None:
         return
     if fresh.get("fund_inflow_at"):
         return  # ciclo ya liquidado
-    commission = round(float(r["total_usd"]) - float(fresh.get("vendor_credit_net") or 0), 2)
+    commission = round(float(r["total_usd"]) - float(fresh.get("vendor_credit_net") or 0), 6)
     if commission <= 0:
         return
     cycle = int(fresh.get("rejection_cycle") or 0)
@@ -603,11 +605,11 @@ async def _record_vendor_commission_inflow(r: dict) -> None:
         from services.company_funds_common import record_auto_fund_adjustment
         await record_auto_fund_adjustment(
             adjustment_type="inflow", currency="USDT", amount=commission,
-            source_name="Marketplace vendedores VIP",
-            note=(f"Comisión venta VIP: {r['quantity']}× {r['product_name']} "
+            source_name="Marketplace Empresas",
+            note=(f"Comisión venta Empresa: {r['quantity']}× {r['product_name']} "
                   f"(canje {r['id'][:8]})"),
             ref_id=r["id"],
-            dedupe_key=f"vendor-fund:{r['id']}:c{cycle}")
+            dedupe_key=f"vendor-fund:{r['id']}:c{cycle}", precision=6)
     except Exception as e:
         logger.error(f"vendor commission fund inflow failed: {e}")
         return
@@ -636,7 +638,7 @@ async def _reverse_fund_inflow_if_any(r: dict) -> None:
             note=(f"Reverso por canje rechazado: {r['quantity']}× "
                   f"{r['product_name']} (canje {r['id'][:8]})"),
             ref_id=r["id"],
-            dedupe_key=f"fund-reverse:{r['id']}:c{cycle}")
+            dedupe_key=f"fund-reverse:{r['id']}:c{cycle}", precision=6)
     except Exception as e:
         logger.error(f"fund inflow reversal failed: {e}")
         return

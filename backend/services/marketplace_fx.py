@@ -11,6 +11,7 @@ Config (settings.global):
 - store_currency_code: código de la moneda de la tienda (vacío = 'CUP').
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from db_client import db
@@ -18,6 +19,19 @@ from db_client import db
 logger = logging.getLogger(__name__)
 
 DEFAULT_STORE_CURRENCY = "CUP"
+
+
+def _offer_expired(ends_at: Optional[str]) -> bool:
+    """True si la oferta tiene fecha de fin y ya venció (ISO)."""
+    if not ends_at:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(ends_at).replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt <= datetime.now(timezone.utc)
 
 
 def _rate_field_for(role: Optional[str]) -> str:
@@ -67,12 +81,18 @@ async def augment_products_fx(products: list,
             p["price_usdt"] = to_usdt(p["price_store"], fx["rate"])
             p["fx_rate"] = fx["rate"] or None
         # iter324 — oferta/liquidación: precio anterior tachado en la web.
-        if (p.get("on_offer") and not p.get("owner_id")
-                and float(p.get("offer_original_price") or 0) > 0):
-            orig = float(p["offer_original_price"])
+        # Empresa/vendedor (owner_id): precios NATIVOS en USDT (sin conversión).
+        # Inventario propio Resilience (sin owner_id): precio en moneda de tienda.
+        orig = float(p.get("offer_original_price") or 0)
+        if (p.get("on_offer") and orig > 0
+                and not _offer_expired(p.get("offer_ends_at"))):
             p["on_offer"] = True
-            p["offer_original_price_store"] = orig
-            p["offer_original_price_usdt"] = to_usdt(orig, fx["rate"])
+            if p.get("owner_id"):
+                p["offer_original_price_store"] = None
+                p["offer_original_price_usdt"] = round(orig, 2)
+            else:
+                p["offer_original_price_store"] = orig
+                p["offer_original_price_usdt"] = to_usdt(orig, fx["rate"])
         else:
             p["on_offer"] = False
     return products
