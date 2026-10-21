@@ -112,17 +112,24 @@ export default function MarketplaceView() {
 
   // Enlace directo desde los banners de ofertas del resumen:
   // ?product=<id> abre ese producto; ?offers=1 activa el filtro Ofertas.
+  // Al abrir se revalida con el catálogo recién cargado: si la oferta ya no
+  // está disponible (agotada/retirada), se avisa en vez de abrir en vano.
   useEffect(() => {
     if (searchParams.get("offers") === "1") setOnlyOffers(true);
     const pid = searchParams.get("product");
     if (pid && products.length && !open) {
       const found = products.find((p) => p.id === pid);
-      if (found) {
+      const sellableCentral = Number(found?.stock || 0) - Number(found?.distributed || 0);
+      const hasPickup = found?.by_store && Object.values(found.by_store).some((q) => Number(q) > 0);
+      const buyable = found && (sellableCentral > 0 || hasPickup) && found.price_usdt != null;
+      if (buyable) {
         setOpen(found);
-        const next = new URLSearchParams(searchParams);
-        next.delete("product");
-        setSearchParams(next, { replace: true });
+      } else {
+        toast.info("Esta oferta ya no está disponible.");
       }
+      const next = new URLSearchParams(searchParams);
+      next.delete("product");
+      setSearchParams(next, { replace: true });
     }
   }, [products, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 

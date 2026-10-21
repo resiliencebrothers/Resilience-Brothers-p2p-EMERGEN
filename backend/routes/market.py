@@ -862,6 +862,20 @@ async def list_products(request: Request) -> Any:
     return out
 
 
+def _offer_is_buyable(p: dict) -> bool:
+    """True si el producto tiene stock COMPRABLE: almacén central vendible
+    (stock − distribuido, para entrega) O alguna estantería de tienda permitida
+    (by_store, para recogida). Igual criterio que valida la compra."""
+    central = float(p.get("stock") or 0) - float(p.get("distributed") or 0)
+    if central > 0:
+        return True
+    allowed = p.get("available_store_ids") or []
+    for sid, qty in (p.get("by_store") or {}).items():
+        if (not allowed or sid in allowed) and float(qty or 0) > 0:
+            return True
+    return False
+
+
 @router.get("/products/offers")
 async def list_offers(request: Request) -> Any:
     """Ofertas de rebaja ACTIVAS para los banners del resumen del cliente:
@@ -879,7 +893,7 @@ async def list_offers(request: Request) -> Any:
     out = await augment_products_fx(rows, role=(user or {}).get("role"))
     # augment_products_fx apaga on_offer si la oferta venció o le falta precio
     # anterior → conservar solo las que siguen siendo oferta real.
-    offers = [p for p in out if p.get("on_offer")]
+    offers = [p for p in out if p.get("on_offer") and _offer_is_buyable(p)]
     from services.user_verification import verified_company_owner_ids
     verified = await verified_company_owner_ids(
         db, [p.get("owner_id") for p in offers if p.get("owner_id")])

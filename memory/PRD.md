@@ -3124,3 +3124,5 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - **Fuera de alcance:** desglose interno del 1% para inventario propio Resilience; acumulación de residuos por debajo de 1e-6; snapshot de tasa en compra (se decidió al entregar).
 - **Verificación:** in-process ALL PASS + testing_agent iter370 (backend 12/12, compra→entrega→comisión y sub-céntimo) + screenshots. Detalle en CHANGELOG.
 - **Estado:** en preview; pendiente de re-despliegue a producción.
+
+- **MKT-EMP-01b (iter371):** banners de ofertas — ocultar agotados (`/api/products/offers` filtra por stock comprable: central vendible o estantería de tienda; revalida al abrir con aviso si no disponible) + carrusel auto-rotatorio/deslizable con puntos (`OffersBanner` sobre embla). ✅ IMPLEMENTADO (verificado in-process + screenshots móvil/escritorio).
