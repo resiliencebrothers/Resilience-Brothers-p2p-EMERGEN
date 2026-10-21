@@ -1709,7 +1709,17 @@
       "colNet": "Neto",
       "pageInfo": "Página {{page}} de {{pages}}",
       "loading": "Cargando comisiones…",
-      "empty": "Aún no hay comisiones de ventas a empresas en este periodo."
+      "empty": "Aún no hay comisiones de ventas a empresas en este periodo.",
+      "viewByOrder": "Por pedido",
+      "viewByCompany": "Por empresa",
+      "searchPlaceholder": "Buscar empresa…",
+      "clearSearch": "Limpiar filtro",
+      "filteringBy": "Filtrando por «{{name}}»",
+      "colRank": "#",
+      "colOrders": "Pedidos",
+      "topEarner": "Mayor comisión",
+      "emptyCompany": "No hay empresas con comisiones en este periodo.",
+      "companyHint": "Pulsa una empresa para ver sus pedidos."
     },
 
     "companyFunds": {

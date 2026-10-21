@@ -1,3 +1,12 @@
+## Changelog — 21 Oct 2026 (Comisiones: vista por empresa + filtro)
+
+Dos ampliaciones del Panel de Comisiones (Fondo Empresa). Aditivas y de solo lectura. Verificadas por curl (agrupación, filtros name/id, revertidas, sub-céntimo) y screenshot de la vista "Por empresa".
+
+- **Comisión por empresa** [`admin_company_funds.py` + `CommissionsPanel.jsx`]: el endpoint `GET /admin/company-funds/commissions` ahora devuelve `by_company` — subtotales por empresa (ventas, comisión activa, neto, pedidos, revertidas) ordenados por comisión descendente (aggregation `$group` por `vendor_owner_id`, `$sort` comisión desc, límite 200). La UI añade un toggle "Por pedido / Por empresa"; la vista agrupada muestra ranking con 🏆 en la de mayor comisión y es consciente del periodo/filtro.
+- **Filtro por empresa** [idem]: nuevos parámetros `company` (regex i sobre `vendor_owner_name`) y `company_id` (id exacto). La UI añade un buscador con debounce (400 ms) y, al pulsar una fila de la vista agrupada, fija `company_id` y salta al detalle de esa empresa con un chip "Filtrando por «…»" y botón de limpiar.
+- **i18n**: nuevas claves `admin.commissions.{viewByOrder,viewByCompany,searchPlaceholder,clearSearch,filteringBy,colRank,colOrders,topEarner,emptyCompany,companyHint}` en ES/EN.
+
+
 ## Changelog — 21 Oct 2026 (Panel de Comisiones · Marketplace Empresas)
 
 Panel de desglose de comisiones del 1 % dentro de la sección "Fondo Empresa" del dashboard de ingresos. Visible para admin o staff con permiso `company_funds`. Aditivo (nuevo endpoint de lectura + nuevo componente + i18n ES/EN). Verificado por curl (datos, gating 403, paginación, precisión sub-céntimo, exclusión de revertidas) y screenshots desktop + móvil.

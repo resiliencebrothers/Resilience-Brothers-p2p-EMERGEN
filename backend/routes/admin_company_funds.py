@@ -1830,6 +1830,7 @@ _COMMISSION_ACTIVE = {"$in": [{"$ifNull": ["$fund_inflow_reversed_at", ""]}, [""
 @router.get("/admin/company-funds/commissions")
 async def company_funds_commissions(
     request: Request, days: Optional[int] = None,
+    company: Optional[str] = None, company_id: Optional[str] = None,
     skip: int = 0, limit: int = 25,
 ) -> Any:
     """Panel de comisiones del Marketplace Empresas: desglose POR PEDIDO de la
@@ -1837,13 +1838,23 @@ async def company_funds_commissions(
     liquidado a la empresa vendedora. Solo entran canjes de productos de empresa
     cuya comisión ya entró al fondo (`fund_inflow_at`). Los canjes rechazados
     tras liquidar (`fund_inflow_reversed_at`) se marcan como revertidos y no
-    suman a los totales activos."""
+    suman a los totales activos.
+
+    Filtros opcionales: `company` (texto libre sobre el nombre de empresa) o
+    `company_id` (id exacto del propietario, p. ej. al pulsar una fila de la
+    vista agrupada). Devuelve además `by_company`: subtotales por empresa
+    ordenados por comisión descendente para ver quién genera más comisión."""
     await require_permission(request, "company_funds")
     from datetime import timedelta
+    import re
     skip = max(0, int(skip))
     limit = max(1, min(int(limit), 200))
 
     q: Dict[str, Any] = {"vendor_owner_id": {"$nin": [None, ""]}}
+    if company_id and company_id.strip():
+        q["vendor_owner_id"] = company_id.strip()
+    elif company and company.strip():
+        q["vendor_owner_name"] = {"$regex": re.escape(company.strip()), "$options": "i"}
     if days and days > 0:
         cutoff = (now_utc() - timedelta(days=days)).isoformat()
         q["fund_inflow_at"] = {"$gte": cutoff}
@@ -1873,6 +1884,36 @@ async def company_funds_commissions(
         "reversed_orders": int(g.get("reversed_orders") or 0),
     }
 
+    # Subtotales por empresa (sobre el conjunto filtrado completo), ordenados
+    # por comisión activa descendente → "quién genera más comisión".
+    by_company_pipeline = [
+        {"$match": q},
+        {"$group": {
+            "_id": "$vendor_owner_id",
+            "company": {"$first": "$vendor_owner_name"},
+            "gross": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
+            "commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
+            "net": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$vendor_credit_net", 0]}, 0]}},
+            "orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 1, 0]}},
+            "reversed_commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, {"$ifNull": ["$fund_inflow_amount", 0]}]}},
+            "reversed_orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, 1]}},
+        }},
+        {"$sort": {"commission": -1, "orders": -1}},
+        {"$limit": 200},
+    ]
+    comp_agg = await db.redemptions.aggregate(by_company_pipeline).to_list(200)
+    by_company = [{
+        "company_id": c.get("_id") or "",
+        "company": c.get("company") or "—",
+        "gross_usdt": round(float(c.get("gross") or 0), 6),
+        "commission_usdt": round(float(c.get("commission") or 0), 6),
+        "net_usdt": round(float(c.get("net") or 0), 6),
+        "orders": int(c.get("orders") or 0),
+        "reversed_commission_usdt": round(float(c.get("reversed_commission") or 0), 6),
+        "reversed_orders": int(c.get("reversed_orders") or 0),
+    } for c in comp_agg]
+
+
     total = await db.redemptions.count_documents(q)
     docs = await db.redemptions.find(
         q,
@@ -1901,7 +1942,7 @@ async def company_funds_commissions(
         })
 
     return {"rows": rows, "total": total, "skip": skip, "limit": limit,
-            "totals": totals}
+            "totals": totals, "by_company": by_company}
 
 
 

@@ -1709,7 +1709,17 @@
       "colNet": "Net",
       "pageInfo": "Page {{page}} of {{pages}}",
       "loading": "Loading commissions…",
-      "empty": "No company sales commissions in this period yet."
+      "empty": "No company sales commissions in this period yet.",
+      "viewByOrder": "By order",
+      "viewByCompany": "By company",
+      "searchPlaceholder": "Search company…",
+      "clearSearch": "Clear filter",
+      "filteringBy": "Filtering by \"{{name}}\"",
+      "colRank": "#",
+      "colOrders": "Orders",
+      "topEarner": "Top commission",
+      "emptyCompany": "No companies with commissions in this period.",
+      "companyHint": "Tap a company to see its orders."
     },
 
     "companyFunds": {
