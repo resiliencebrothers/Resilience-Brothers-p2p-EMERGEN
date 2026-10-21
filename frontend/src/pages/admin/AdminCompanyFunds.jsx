@@ -19,6 +19,7 @@ import FundCards from "@/pages/admin/company-funds/FundCards";
 import BatchesTodayCard from "@/pages/admin/company-funds/BatchesTodayCard";
 import TotalUsdtCard from "@/pages/admin/company-funds/TotalUsdtCard";
 import CompanyWithdrawalsTable from "@/pages/admin/company-funds/CompanyWithdrawalsTable";
+import CommissionsPanel from "@/pages/admin/company-funds/CommissionsPanel";
 import NewWithdrawalDialog from "@/pages/admin/company-funds/NewWithdrawalDialog";
 import PayCashBills from "@/pages/admin/company-funds/PayCashBills";
 import ExportCsvDialog from "@/pages/admin/company-funds/ExportCsvDialog";
@@ -53,6 +54,8 @@ export default function AdminCompanyFunds() {
       <BatchesTodayCard />
 
       <FundCards funds={cf.funds} />
+
+      <CommissionsPanel />
 
       <CompanyWithdrawalsTable
         rows={cf.moveRows}

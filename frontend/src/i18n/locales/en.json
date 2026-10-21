@@ -1687,6 +1687,31 @@
       "closeBtn": "Close",
       "loadError": "Error loading blocks"
     },
+    "commissions": {
+      "eyebrow": "/ Commissions",
+      "title": "Commissions Panel",
+      "subtitle": "Per-order breakdown of company sales: gross sale, the 1% commission the platform keeps in USDT, and the net settled to each company.",
+      "allTime": "All time",
+      "last7": "Last 7 days",
+      "last30": "Last 30 days",
+      "last90": "Last 90 days",
+      "totalSales": "Total sales",
+      "totalCommission": "Total commission",
+      "totalNet": "Net to companies",
+      "orders": "Orders",
+      "reversedNote": "{{n}} order(s) rejected after settlement — reversed commission: {{amount}} USDT (not counted in totals).",
+      "reversed": "Reversed",
+      "colDate": "Date",
+      "colCompany": "Company",
+      "colProduct": "Product",
+      "colSale": "Sale",
+      "colCommission": "Commission 1%",
+      "colNet": "Net",
+      "pageInfo": "Page {{page}} of {{pages}}",
+      "loading": "Loading commissions…",
+      "empty": "No company sales commissions in this period yet."
+    },
+
     "companyFunds": {
       "eyebrow": "/ Company Fund",
       "totalUsdt": {

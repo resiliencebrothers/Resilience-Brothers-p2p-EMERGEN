@@ -1824,6 +1824,87 @@ async def list_company_fund_adjustments(
     ).to_list(limit)
 
 
+_COMMISSION_ACTIVE = {"$in": [{"$ifNull": ["$fund_inflow_reversed_at", ""]}, ["", None]]}
+
+
+@router.get("/admin/company-funds/commissions")
+async def company_funds_commissions(
+    request: Request, days: Optional[int] = None,
+    skip: int = 0, limit: int = 25,
+) -> Any:
+    """Panel de comisiones del Marketplace Empresas: desglose POR PEDIDO de la
+    venta bruta (USDT), la comisión retenida por la plataforma (1 %) y el neto
+    liquidado a la empresa vendedora. Solo entran canjes de productos de empresa
+    cuya comisión ya entró al fondo (`fund_inflow_at`). Los canjes rechazados
+    tras liquidar (`fund_inflow_reversed_at`) se marcan como revertidos y no
+    suman a los totales activos."""
+    await require_permission(request, "company_funds")
+    from datetime import timedelta
+    skip = max(0, int(skip))
+    limit = max(1, min(int(limit), 200))
+
+    q: Dict[str, Any] = {"vendor_owner_id": {"$nin": [None, ""]}}
+    if days and days > 0:
+        cutoff = (now_utc() - timedelta(days=days)).isoformat()
+        q["fund_inflow_at"] = {"$gte": cutoff}
+    else:
+        q["fund_inflow_at"] = {"$nin": [None, ""]}
+
+    totals_pipeline = [
+        {"$match": q},
+        {"$group": {
+            "_id": None,
+            "gross": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
+            "commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$fund_inflow_amount", 0]}, 0]}},
+            "net": {"$sum": {"$cond": [_COMMISSION_ACTIVE, {"$ifNull": ["$vendor_credit_net", 0]}, 0]}},
+            "orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 1, 0]}},
+            "reversed_commission": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, {"$ifNull": ["$fund_inflow_amount", 0]}]}},
+            "reversed_orders": {"$sum": {"$cond": [_COMMISSION_ACTIVE, 0, 1]}},
+        }},
+    ]
+    agg = await db.redemptions.aggregate(totals_pipeline).to_list(1)
+    g = agg[0] if agg else {}
+    totals = {
+        "gross_usdt": round(float(g.get("gross") or 0), 6),
+        "commission_usdt": round(float(g.get("commission") or 0), 6),
+        "net_usdt": round(float(g.get("net") or 0), 6),
+        "orders": int(g.get("orders") or 0),
+        "reversed_commission_usdt": round(float(g.get("reversed_commission") or 0), 6),
+        "reversed_orders": int(g.get("reversed_orders") or 0),
+    }
+
+    total = await db.redemptions.count_documents(q)
+    docs = await db.redemptions.find(
+        q,
+        {"_id": 0, "id": 1, "fund_inflow_at": 1, "delivered_at": 1,
+         "product_name": 1, "quantity": 1, "vendor_owner_name": 1,
+         "total_usd": 1, "fund_inflow_amount": 1, "fund_inflow_currency": 1,
+         "vendor_credit_net": 1, "vendor_commission_pct": 1,
+         "fund_inflow_reversed_at": 1, "user_name": 1, "user_email": 1},
+    ).sort("fund_inflow_at", -1).skip(skip).limit(limit).to_list(limit)
+
+    rows = []
+    for d in docs:
+        rows.append({
+            "id": d.get("id"),
+            "date": d.get("fund_inflow_at") or d.get("delivered_at") or "",
+            "product_name": d.get("product_name") or "—",
+            "quantity": d.get("quantity") or 0,
+            "company": d.get("vendor_owner_name") or "—",
+            "customer": d.get("user_name") or d.get("user_email") or "—",
+            "gross_usdt": round(float(d.get("total_usd") or 0), 6),
+            "commission_usdt": round(float(d.get("fund_inflow_amount") or 0), 6),
+            "net_usdt": round(float(d.get("vendor_credit_net") or 0), 6),
+            "commission_pct": float(d.get("vendor_commission_pct") or 0),
+            "currency": d.get("fund_inflow_currency") or "USDT",
+            "reversed": bool(d.get("fund_inflow_reversed_at")),
+        })
+
+    return {"rows": rows, "total": total, "skip": skip, "limit": limit,
+            "totals": totals}
+
+
+
 # ============================================================
 # iter88 — Company funds export
 # ============================================================

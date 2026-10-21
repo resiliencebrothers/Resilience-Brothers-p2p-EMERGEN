@@ -1,3 +1,12 @@
+## Changelog — 21 Oct 2026 (Panel de Comisiones · Marketplace Empresas)
+
+Panel de desglose de comisiones del 1 % dentro de la sección "Fondo Empresa" del dashboard de ingresos. Visible para admin o staff con permiso `company_funds`. Aditivo (nuevo endpoint de lectura + nuevo componente + i18n ES/EN). Verificado por curl (datos, gating 403, paginación, precisión sub-céntimo, exclusión de revertidas) y screenshots desktop + móvil.
+
+- **Endpoint** [`backend/routes/admin_company_funds.py`]: `GET /admin/company-funds/commissions?days=&skip=&limit=`. Devuelve, por pedido de producto de empresa con comisión ya liquidada (`fund_inflow_at`): fecha, empresa (`vendor_owner_name`), producto/cantidad, cliente, venta bruta (`total_usd`), comisión (`fund_inflow_amount`, 1 %), neto a la empresa (`vendor_credit_net`), `%` y `reversed`. Totales vía aggregation (`gross/commission/net/orders` ACTIVOS + `reversed_commission/reversed_orders` aparte). Los canjes rechazados tras liquidar (`fund_inflow_reversed_at`) no suman a los totales activos pero se listan marcados. Precisión 6 decimales (preserva 0,001 en ventas de 0,10 USDT). Gate `require_permission("company_funds")` → 403 para cliente.
+- **UI** [`frontend/src/pages/admin/company-funds/CommissionsPanel.jsx`]: tarjeta con filtro de periodo (todo/7/30/90), 4 tiles (ventas, comisión, neto, pedidos), aviso de comisión revertida, tabla paginada y live-refresh (`ledger_changed`, `order_status_changed`). Integrado en `AdminCompanyFunds.jsx` bajo las tarjetas de fondo. `data-testid` en todos los elementos.
+- **i18n**: `admin.commissions.*` en `es.json` y `en.json`.
+
+
 ## Changelog — 19 Oct 2026 (Empresa: Insignia verificada · Onboarding EMP-O01 · Fencing de retención)
 
 Tres mejoras del rol Empresa. Backend con pytest + control negativo; frontend con testing agent 100% (iteration_367.json).

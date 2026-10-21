@@ -1687,6 +1687,31 @@
       "closeBtn": "Cerrar",
       "loadError": "Error al cargar bloqueos"
     },
+    "commissions": {
+      "eyebrow": "/ Comisiones",
+      "title": "Panel de Comisiones",
+      "subtitle": "Desglose por pedido de las ventas a empresas: venta bruta, la comisión del 1 % que retiene la plataforma en USDT y el neto liquidado a cada empresa.",
+      "allTime": "Todo el tiempo",
+      "last7": "Últimos 7 días",
+      "last30": "Últimos 30 días",
+      "last90": "Últimos 90 días",
+      "totalSales": "Ventas totales",
+      "totalCommission": "Comisión total",
+      "totalNet": "Neto a empresas",
+      "orders": "Pedidos",
+      "reversedNote": "{{n}} pedido(s) rechazado(s) tras liquidar — comisión revertida: {{amount}} USDT (no suma a los totales).",
+      "reversed": "Revertida",
+      "colDate": "Fecha",
+      "colCompany": "Empresa",
+      "colProduct": "Producto",
+      "colSale": "Venta",
+      "colCommission": "Comisión 1 %",
+      "colNet": "Neto",
+      "pageInfo": "Página {{page}} de {{pages}}",
+      "loading": "Cargando comisiones…",
+      "empty": "Aún no hay comisiones de ventas a empresas en este periodo."
+    },
+
     "companyFunds": {
       "eyebrow": "/ Fondo de la Empresa",
       "totalUsdt": {
