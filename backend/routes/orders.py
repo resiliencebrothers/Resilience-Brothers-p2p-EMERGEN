@@ -414,14 +414,17 @@ async def _compute_product_pricing(product: dict, quantity: float,
     from services.marketplace_fx import (
         effective_price_usd, get_store_fx, to_usdt, offer_is_active)
     unit_price = effective_price_usd(product)
+    on_offer = bool(offer_is_active(product))
+    orig_unit = float(product.get("offer_original_price") or 0)
     if product.get("owner_id"):
         total = round(unit_price * quantity, 2)
         cost = round(float(product.get("cost_usd") or 0) * quantity, 2)
+        original_total = round(orig_unit * quantity, 2) if (on_offer and orig_unit > 0) else None
         return {"configured": True, "total": total, "cost": cost,
                 "store_total": 0.0, "store_cost": 0.0, "fx_rate": 0.0,
                 "store_currency": "", "unit_price_base": unit_price,
                 "unit_price_usdt": round(unit_price, 2),
-                "on_offer": bool(offer_is_active(product))}
+                "on_offer": on_offer, "original_total_usdt": original_total}
     fx = await get_store_fx(role=role)
     if not fx["configured"]:
         return {"configured": False, "store_currency": fx["store_currency"]}
@@ -429,12 +432,14 @@ async def _compute_product_pricing(product: dict, quantity: float,
     store_cost = round(float(product.get("cost_usd") or 0) * quantity, 2)
     total = to_usdt(store_total, fx["rate"])
     cost = to_usdt(store_cost, fx["rate"]) or 0.0
+    original_total = to_usdt(round(orig_unit * quantity, 2), fx["rate"]) \
+        if (on_offer and orig_unit > 0) else None
     return {"configured": True, "total": total, "cost": cost,
             "store_total": store_total, "store_cost": store_cost,
             "fx_rate": fx["rate"], "store_currency": fx["store_currency"],
             "unit_price_base": unit_price,
             "unit_price_usdt": to_usdt(unit_price, fx["rate"]),
-            "on_offer": bool(offer_is_active(product))}
+            "on_offer": on_offer, "original_total_usdt": original_total}
 
 
 @router.get("/vip/redeem-quote")
@@ -471,6 +476,7 @@ async def redeem_quote(product_id: str, quantity: float,
         "store_currency": pricing["store_currency"],
         "fx_rate": pricing["fx_rate"],
         "on_offer": pricing["on_offer"],
+        "original_total_usdt": pricing.get("original_total_usdt"),
     }
 
 

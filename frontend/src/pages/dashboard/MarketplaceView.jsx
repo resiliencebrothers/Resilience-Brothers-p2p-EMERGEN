@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag, BadgeCheck } from "lucide-react";
+import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag, BadgeCheck, AlertTriangle } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
@@ -83,6 +83,27 @@ export default function MarketplaceView() {
     usdtRates
       .map((r) => `${(priceUsdt * Number(r.rate_convert ?? r.rate_vip)).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${r.to_code}`)
       .join(" · ");
+
+  // Stock EN VIVO del producto abierto: se lee de la lista `products` (que se
+  // refresca con el evento products_changed) sin reemplazar `open`, para no
+  // perder la elección de entrega/tienda del comprador. availableQty es lo que
+  // queda disponible según la modalidad (central para envío, estantería para
+  // recogida); si otro cliente agota las existencias, el aviso aparece solo.
+  const liveProduct = useMemo(
+    () => (open ? (products.find((p) => p.id === open.id) || open) : null),
+    [open, products],
+  );
+  const availableQty = useMemo(() => {
+    const p = liveProduct;
+    if (!p) return null;
+    if (fulfillment === "pickup") {
+      if (!storeId) return null;
+      return Number((p.by_store || {})[storeId] || 0);
+    }
+    if (p.company_id) return Math.max(0, Number(p.stock || 0) - Number(p.distributed || 0));
+    return Number(p.stock || 0);
+  }, [liveProduct, fulfillment, storeId]);
+  const stockBlocked = availableQty != null && qtyNum > 0 && qtyNum > availableQty;
 
   const loadBalances = () =>
     axios.get(`${API}/vip/balances`, { withCredentials: true })
@@ -182,6 +203,7 @@ export default function MarketplaceView() {
   const redeem = async () => {
     if (!open) return;
     if (qtyNum <= 0) return toast.error(t("marketplace.invalidQty"));
+    if (stockBlocked) return toast.error(t("marketplace.stockBlockedToast"));
     const pickup = fulfillment === "pickup";
     if (pickup && !storeId) return toast.error(t("marketplace.pickupStoreRequired"));
     if (pickup) {
@@ -600,6 +622,16 @@ export default function MarketplaceView() {
                 />
               </>
             )}
+            {stockBlocked && (
+              <div data-testid="redeem-stock-blocked" className="flex items-start gap-2 text-xs text-red-300 border border-red-500/30 bg-red-500/10 px-3 py-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  {availableQty <= 0
+                    ? t("marketplace.stockGoneZero")
+                    : t("marketplace.stockGoneSome", { qty: fmtQty(availableQty, open?.unit) })}
+                </span>
+              </div>
+            )}
             <div className="border border-white/10 p-3 font-mono text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
@@ -617,6 +649,16 @@ export default function MarketplaceView() {
                   ≈ {equivalents(quote?.total_usdt != null ? quote.total_usdt : (open.price_usdt ?? open.price_usd) * qtyNum)}
                 </div>
               )}
+              {quote?.on_offer && quote.original_total_usdt != null && Number(quote.original_total_usdt) > Number(quote.total_usdt) && (
+                <div className="flex justify-between items-baseline text-xs pt-1 border-t border-white/5 mt-1" data-testid="redeem-savings-line">
+                  <span className="text-neutral-500 line-through" data-testid="redeem-original-total">
+                    {Number(quote.original_total_usdt).toFixed(2)} USDT
+                  </span>
+                  <span className="text-[#22C55E] font-semibold" data-testid="redeem-savings-amount">
+                    {t("marketplace.youSave")} {(Number(quote.original_total_usdt) - Number(quote.total_usdt)).toFixed(2)} USDT ({Math.round((1 - Number(quote.total_usdt) / Number(quote.original_total_usdt)) * 100)}%)
+                  </span>
+                </div>
+              )}
               {courierQuote && fulfillment !== "pickup" && !courierQuote.free && !courierQuote.requires_manual_review && Number(courierQuote.fee_currency_amount) > 0 && (
                 <div className="flex justify-between text-xs" data-testid="redeem-courier-fee-line">
                   <span className="text-neutral-500">{t("marketplace.courierFeeLine")}:</span>
@@ -629,8 +671,8 @@ export default function MarketplaceView() {
                 </p>
               )}
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
-              {busy ? t("marketplace.processing") : quoteLoading ? t("marketplace.calculating") : t("marketplace.confirmRedeem")}
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
+              {busy ? t("marketplace.processing") : stockBlocked ? t("marketplace.stockBlockedBtn") : quoteLoading ? t("marketplace.calculating") : t("marketplace.confirmRedeem")}
             </Button>
           </div>
         </DialogContent>
