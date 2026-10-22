@@ -395,6 +395,86 @@ async def _load_pickup_store(store_id: Optional[str], product: dict) -> dict:
     return store
 
 
+async def _compute_product_pricing(product: dict, quantity: float,
+                                   role: str) -> dict:
+    """Cotización CANÓNICA de un producto para (cantidad, rol).
+
+    Es la ÚNICA fuente de verdad del total a cobrar: tanto la cotización de
+    servidor (`GET /vip/redeem-quote`) como la compra (`POST /vip/redeem`) la
+    usan, de modo que el total que ve el comprador y el que valida el backend
+    se calculan con la MISMA operación y el MISMO orden de redondeo. Antes el
+    frontend multiplicaba el precio unitario USDT ya redondeado por la cantidad
+    (p. ej. 0,12×3=0,36) mientras el backend convertía el importe local
+    agregado una sola vez (round(300/800,2)=0,38) → `PRICE_CHANGED` en falso.
+
+    Para productos de Empresa/vendedor (`owner_id`) el precio es NATIVO en USDT;
+    para el inventario propio Resilience el precio está en la moneda de la
+    tienda y se convierte agregando primero y redondeando una sola vez.
+    """
+    from services.marketplace_fx import (
+        effective_price_usd, get_store_fx, to_usdt, offer_is_active)
+    unit_price = effective_price_usd(product)
+    if product.get("owner_id"):
+        total = round(unit_price * quantity, 2)
+        cost = round(float(product.get("cost_usd") or 0) * quantity, 2)
+        return {"configured": True, "total": total, "cost": cost,
+                "store_total": 0.0, "store_cost": 0.0, "fx_rate": 0.0,
+                "store_currency": "", "unit_price_base": unit_price,
+                "unit_price_usdt": round(unit_price, 2),
+                "on_offer": bool(offer_is_active(product))}
+    fx = await get_store_fx(role=role)
+    if not fx["configured"]:
+        return {"configured": False, "store_currency": fx["store_currency"]}
+    store_total = round(unit_price * quantity, 2)
+    store_cost = round(float(product.get("cost_usd") or 0) * quantity, 2)
+    total = to_usdt(store_total, fx["rate"])
+    cost = to_usdt(store_cost, fx["rate"]) or 0.0
+    return {"configured": True, "total": total, "cost": cost,
+            "store_total": store_total, "store_cost": store_cost,
+            "fx_rate": fx["rate"], "store_currency": fx["store_currency"],
+            "unit_price_base": unit_price,
+            "unit_price_usdt": to_usdt(unit_price, fx["rate"]),
+            "on_offer": bool(offer_is_active(product))}
+
+
+@router.get("/vip/redeem-quote")
+async def redeem_quote(product_id: str, quantity: float,
+                       request: Request) -> Any:
+    """Cotización de servidor para el diálogo de compra: devuelve el total
+    CANÓNICO en USDT (y el equivalente en la moneda de tienda) que el comprador
+    debe ver y reenviar como `expected_total_usdt`. No crea nada ni mueve saldo.
+    """
+    user = await require_user(request)
+    product = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    from services.inventory import sells_fraction, norm_qty
+    if not sells_fraction(product) and float(quantity) != int(quantity):
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto se vende por unidad: elige una cantidad entera.")
+    quantity = norm_qty(product, quantity)
+    if quantity <= 0:
+        raise HTTPException(status_code=400, detail="Cantidad inválida")
+    pricing = await _compute_product_pricing(product, quantity, user["role"])
+    if not pricing.get("configured"):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"No hay tasa USDT→{pricing.get('store_currency')} configurada; "
+                    "no se puede calcular el precio en USDT. Contacta al administrador."))
+    return {
+        "product_id": product_id,
+        "quantity": quantity,
+        "unit_price_usdt": pricing["unit_price_usdt"],
+        "total_usdt": pricing["total"],
+        "store_total": pricing["store_total"],
+        "store_currency": pricing["store_currency"],
+        "fx_rate": pricing["fx_rate"],
+        "on_offer": pricing["on_offer"],
+    }
+
+
+
 @router.post("/vip/redeem")
 async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     user = await require_user(request)
@@ -453,31 +533,21 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     # iter229 — los productos de la EMPRESA tienen precios en la moneda de la
     # tienda física (CUP efectivo); en la web se cobran en USDT a la tasa
     # vigente. Los productos de vendedores VIP ya están en USDT.
-    store_total = 0.0
-    store_cost = 0.0
-    fx_rate = 0.0
-    store_currency = ""
-    # Precio EFECTIVO (misma lógica que catálogo/banner): una oferta vencida
-    # cobra el precio normal, nunca el rebajado caducado.
-    from services.marketplace_fx import effective_price_usd
-    unit_price = effective_price_usd(product)
-    if product.get("owner_id"):
-        total = unit_price * payload.quantity
-        cost = float(product.get("cost_usd") or 0) * payload.quantity
-    else:
-        from services.marketplace_fx import get_store_fx, to_usdt
-        fx = await get_store_fx(role=user["role"])
-        if not fx["configured"]:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"No hay tasa USDT→{fx['store_currency']} configurada; "
-                        "no se puede calcular el precio en USDT. Contacta al administrador."))
-        fx_rate = fx["rate"]
-        store_currency = fx["store_currency"]
-        store_total = round(unit_price * payload.quantity, 2)
-        store_cost = round(float(product.get("cost_usd") or 0) * payload.quantity, 2)
-        total = to_usdt(store_total, fx_rate)
-        cost = to_usdt(store_cost, fx_rate) or 0.0
+    # Cotización CANÓNICA compartida con /vip/redeem-quote: el frontend reenvía
+    # el total de esa cotización, así que no diverge salvo un cambio REAL de
+    # precio o tasa (lo que el guard PRICE_CHANGED sí debe detectar).
+    pricing = await _compute_product_pricing(product, payload.quantity, user["role"])
+    if not pricing.get("configured"):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"No hay tasa USDT→{pricing.get('store_currency')} configurada; "
+                    "no se puede calcular el precio en USDT. Contacta al administrador."))
+    total = pricing["total"]
+    cost = pricing["cost"]
+    store_total = pricing["store_total"]
+    store_cost = pricing["store_cost"]
+    fx_rate = pricing["fx_rate"]
+    store_currency = pricing["store_currency"]
     # Control anti-sorpresa: si el precio cambió desde que el cliente abrió el
     # diálogo (p. ej. la oferta venció), se rechaza para que confirme el nuevo.
     if payload.expected_total_usdt is not None and total is not None \

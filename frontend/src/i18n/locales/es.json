@@ -3196,6 +3196,7 @@
     "columnDate": "Fecha",
     "confirmRedeem": "Confirmar Canje",
     "processing": "Procesando…",
+    "calculating": "Calculando total…",
     "invalidQty": "Cantidad inválida",
     "addressRequired": "Dirección requerida",
     "successPending": "Canje solicitado. Pendiente de aprobación.",

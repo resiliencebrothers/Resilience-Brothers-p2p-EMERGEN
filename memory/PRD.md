@@ -3136,3 +3136,8 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - Decisiones del usuario (ask_human): (1) congelar los canjes pendientes YA existentes al 1% vigente (backfill en arranque); (2) efectivo desde el despliegue. Canjes heredados sin snapshot → fallback a la config global vigente.
 - **Exportar Comisiones CSV:** `GET /api/admin/company-funds/commissions/export.csv?group=orders|company` (filtros days/company/company_id, permiso `company_funds`); botón "Exportar CSV" en el Panel de Comisiones respeta periodo+filtro+vista.
 - Verificado in-process (neto 99 con settings 5% al entregar) + CSV 200 + UI escritorio/móvil. En preview; pendiente de re-despliegue a producción.
+
+### E07 — Falso PRICE_CHANGED por redondeo en compras con conversión (jun 2026, iter374) ✅ IMPLEMENTADO
+- **Bug (regresión del guard `expected_total_usdt`):** el frontend enviaba precio_unitario_USDT_redondeado × cantidad (0,12×3=0,36) y el backend convertía el agregado local una sola vez (round(300/800,2)=0,38) → 409 PRICE_CHANGED falso, irrecuperable al reintentar.
+- **Fix:** cotización de servidor canónica `_compute_product_pricing` compartida por `GET /vip/redeem-quote` (nuevo) y `POST /vip/redeem`; el frontend muestra y reenvía el total de la cotización. Sin ampliar tolerancia. Cubre inventario Resilience (conversión) y fracciones de productos nativos USDT.
+- Verificado in-process (qty 1/3/10 + fracción + cambio real 409 + oferta vencida) + endpoint E2E + screenshots. En preview; pendiente de re-despliegue a producción.

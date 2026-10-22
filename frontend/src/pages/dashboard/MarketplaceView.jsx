@@ -30,6 +30,12 @@ export default function MarketplaceView() {
   // inicial y escribir directamente el número (qtyNum = valor efectivo).
   const [qty, setQty] = useState("1");
   const qtyNum = Math.max(0, parseFloat(qty) || 0);
+  // Cotización canónica de servidor (misma operación/redondeo que la compra):
+  // el total a mostrar y reenviar como expected_total_usdt viene del backend,
+  // así multiplicar el precio unitario USDT ya redondeado por la cantidad no
+  // puede divergir del total agregado convertido (evita PRICE_CHANGED falso).
+  const [quote, setQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [addr, setAddr] = useState("");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -111,6 +117,24 @@ export default function MarketplaceView() {
       .catch(() => setStores([]));
   }, [open]);
 
+  // Cotización de servidor: al abrir el diálogo o cambiar la cantidad, pide el
+  // total canónico (con debounce para la escritura). Mientras carga, el botón
+  // de confirmar se deshabilita para no enviar un total obsoleto.
+  useEffect(() => {
+    if (!open || qtyNum <= 0) { setQuote(null); setQuoteLoading(false); return; }
+    let cancelled = false;
+    setQuoteLoading(true);
+    const id = setTimeout(() => {
+      axios.get(`${API}/vip/redeem-quote`, {
+        params: { product_id: open.id, quantity: qtyNum },
+        withCredentials: true,
+      })
+        .then((r) => { if (!cancelled) { setQuote(r.data); setQuoteLoading(false); } })
+        .catch(() => { if (!cancelled) { setQuote(null); setQuoteLoading(false); } });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [open, qtyNum]);
+
   // Enlace directo desde los banners de ofertas (resumen o mercado):
   // ?product=<id> abre ese producto; ?offers=1 activa el filtro Ofertas.
   // Se revalida con el catálogo; si no está en la lista (p. ej. fuera de los
@@ -173,7 +197,9 @@ export default function MarketplaceView() {
       await axios.post(`${API}/vip/redeem`, {
         product_id: open.id,
         quantity: qtyNum,
-        expected_total_usdt: Number(((open.price_usdt || 0) * qtyNum).toFixed(2)),
+        expected_total_usdt: quote?.total_usdt != null
+          ? quote.total_usdt
+          : Number(((open.price_usdt || 0) * qtyNum).toFixed(2)),
         ...(pickup
           ? { fulfillment: "store_pickup", store_id: storeId }
           : {
@@ -567,7 +593,7 @@ export default function MarketplaceView() {
                 </div>
                 <CourierQuotePicker
                   currency="USD"
-                  amount={(open?.price_usdt || 0) * qtyNum}
+                  amount={quote?.total_usdt != null ? quote.total_usdt : (open?.price_usdt || 0) * qtyNum}
                   addressText={addr}
                   onCoords={setDeliveryCoords}
                   onQuote={setCourierQuote}
@@ -577,16 +603,18 @@ export default function MarketplaceView() {
             <div className="border border-white/10 p-3 font-mono text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
-                <span className="text-[#8B5CF6]">{((open?.price_usdt || 0) * qtyNum).toFixed(2)} USDT</span>
+                <span className="text-[#8B5CF6]" data-testid="redeem-total-usdt">
+                  {(quote?.total_usdt != null ? quote.total_usdt : (open?.price_usdt || 0) * qtyNum).toFixed(2)} USDT
+                </span>
               </div>
               {open?.store_currency && open?.price_store != null && (
                 <div className="text-[0.65rem] text-neutral-500" data-testid="redeem-store-equiv">
-                  ≈ {(open.price_store * qtyNum).toLocaleString(undefined, { maximumFractionDigits: 2 })} {open.store_currency} {t("marketplace.cashSuffix")}
+                  ≈ {(quote?.store_total != null ? quote.store_total : open.price_store * qtyNum).toLocaleString(undefined, { maximumFractionDigits: 2 })} {open.store_currency} {t("marketplace.cashSuffix")}
                 </div>
               )}
               {!open?.store_currency && usdtRates.length > 0 && open && (
                 <div className="text-[0.65rem] text-neutral-500" data-testid="redeem-total-equivalents">
-                  ≈ {equivalents((open.price_usdt ?? open.price_usd) * qtyNum)}
+                  ≈ {equivalents(quote?.total_usdt != null ? quote.total_usdt : (open.price_usdt ?? open.price_usd) * qtyNum)}
                 </div>
               )}
               {courierQuote && fulfillment !== "pickup" && !courierQuote.free && !courierQuote.requires_manual_review && Number(courierQuote.fee_currency_amount) > 0 && (
@@ -601,8 +629,8 @@ export default function MarketplaceView() {
                 </p>
               )}
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
-              {busy ? t("marketplace.processing") : t("marketplace.confirmRedeem")}
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12">
+              {busy ? t("marketplace.processing") : quoteLoading ? t("marketplace.calculating") : t("marketplace.confirmRedeem")}
             </Button>
           </div>
         </DialogContent>

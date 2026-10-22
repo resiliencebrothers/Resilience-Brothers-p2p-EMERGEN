@@ -3196,6 +3196,7 @@
     "columnDate": "Date",
     "confirmRedeem": "Confirm Redemption",
     "processing": "Processing…",
+    "calculating": "Calculating total…",
     "invalidQty": "Invalid quantity",
     "addressRequired": "Address required",
     "successPending": "Redemption requested. Pending approval.",
