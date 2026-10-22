@@ -3141,3 +3141,9 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - **Bug (regresión del guard `expected_total_usdt`):** el frontend enviaba precio_unitario_USDT_redondeado × cantidad (0,12×3=0,36) y el backend convertía el agregado local una sola vez (round(300/800,2)=0,38) → 409 PRICE_CHANGED falso, irrecuperable al reintentar.
 - **Fix:** cotización de servidor canónica `_compute_product_pricing` compartida por `GET /vip/redeem-quote` (nuevo) y `POST /vip/redeem`; el frontend muestra y reenvía el total de la cotización. Sin ampliar tolerancia. Cubre inventario Resilience (conversión) y fracciones de productos nativos USDT.
 - Verificado in-process (qty 1/3/10 + fracción + cambio real 409 + oferta vencida) + endpoint E2E + screenshots. En preview; pendiente de re-despliegue a producción.
+
+### Marketplace iter375 — stock en vivo + ahorro en oferta + compra E2E ✅ IMPLEMENTADO
+- Bloqueo por stock EN VIVO en el diálogo de compra (banner + confirmar deshabilitado cuando otro cliente agota existencias); lee stock fresco sin perder la elección de entrega/tienda.
+- Ahorro mostrado cuando hay oferta: original tachado + "Ahorras X USDT (Y%)" (`original_total_usdt` del endpoint de cotización).
+- Compra E2E verificada por testing_agent (100%): saldo baja exacto, redención pending creada, stock decrementado, sin PRICE_CHANGED falso. Regresión: `backend/tests/test_marketplace_redeem_e2e_iter100.py`.
+- Backlog menor: traducir estados (PENDING→Pendiente) en "Mis Canjes" y añadir data-testid por fila.

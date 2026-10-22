@@ -1,0 +1,29 @@
+{
+  "summary": "Ran a real end-to-end marketplace purchase as VIP user_test_vip01, first through the UI and then through the API. UI: on /dashboard/marketplace I opened product 2a131436 (TEST_Default_1791625180579, 100 USDT, stock 5), set qty 2, typed an address and phone, and confirmed. The total shown was 200.00 USDT. Two GET /api/vip/redeem-quote calls were made (qty=1, then qty=2). Right after the quantity changed, confirm-redeem was disabled and read 'Calculando total…'. It re-enabled once the quote arrived. POST /api/vip/redeem returned 200 with expected_total_usdt=200. No PRICE_CHANGED error appeared. The success toast 'Canje solicitado. Pendiente de aprobación.' was visible in the screenshot. USDT balance went from 1000.0 to 800.0, a difference of exactly 200.0, matching redeem-total-usdt. No courier fee was charged (courier_fee_usd=0). The new redemption e5031362 exists with status=pending and is the first row of the 'Mis Canjes' table. The balance widget updated to 800 and product stock went from 5 to 3. API: a new pytest suite (6/6 passed) covers quote 401/404/400 (fraction and zero), quote scaling with quantity, a wrong expected_total giving 409 PRICE_CHANGED with no debit, and a real redeem of qty 1 whose debit equals the quote total plus courier fee. That run created a pending redemption and reduced stock by 1.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Marketplace history table", "issues": ["Rows in 'Mis Canjes' have no row-level data-testid; only the courier cell redemption-courier-<id> has one. Suggest data-testid='redemption-row-<id>' and a status-cell testid.", "The status column shows the raw English value 'PENDING' in an otherwise Spanish UI. Same for DELIVERED."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_marketplace_redeem_e2e_iter100.py", "/app/test_reports/pytest/pytest_iter100.xml"],
+  "action_items": [
+    "Optional: translate the redemption status values in the 'Mis Canjes' table (PENDING -> Pendiente, etc.).",
+    "Optional: add data-testid on history rows and status cells.",
+    "Note: courier_fee_status came back as 'none', not 'manual_review' as the request expected. In code that happens when quote_courier_fee reports the courier as not enabled (courier fee off in settings, presumably) or not free. Still no courier fee was charged, so the debit equals the product total as expected. Check this is the intended config state."
+  ],
+  "critical_code_review_comments": [
+    "MarketplaceView.jsx: the fallback for expected_total_usdt when the quote fails (price_usdt*qty) brings back the old rounding mismatch. Consider blocking confirm or showing an error when the quote request fails, instead of quietly falling back.",
+    "MarketplaceView.jsx is 705 lines, over the 700-line guideline. Consider extracting the redeem dialog component.",
+    "Right after confirming, the first toast seen was the generic 'Tu saldo se actualizó' (balance_changed socket event), stacked with the success toast. Harmless but redundant."
+  ],
+  "updated_files": ["/app/backend/tests/test_marketplace_redeem_e2e_iter100.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Not cleaned up, left in place on purpose (purchases are expected): 2 pending redemptions for user_test_vip01 on product 2a131436-e849-4a2b-9f4f-f386e2137f43 (UI qty 2 = 200 USDT, id e5031362-84da-427e-88fa-0ce5cc8daec4; pytest qty 1 = 100 USDT). VIP USDT balance is now 700, and that product's stock dropped 5 -> 2.",
+  "test_credentials": "Cookie session_token=test_session_vip_X (VIP). Taken from /app/memory/test_credentials.md.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The real E2E purchase works: balance is debited by exactly the quote total and a pending redemption appears in history and in /api/vip/redemptions/mine. All products seen use store currency CUPFX at fx_rate 1.0, so no non-trivial FX rounding was exercised live. Each run of the pytest suite spends about 100 USDT of the VIP balance and 1 unit of stock."
+}
