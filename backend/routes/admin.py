@@ -659,6 +659,74 @@ async def _reverse_fund_inflow_if_any(r: dict) -> None:
         {"$set": {"fund_inflow_reversed_at": iso(now_utc())}})
 
 
+async def _reserve_own_inventory_sale(r: dict) -> None:
+    """E06 — aparta el 1% de las ventas de INVENTARIO PROPIO Resilience a una
+    reserva. Al entregar, mueve el 1% del importe FUERA del fondo operativo
+    (salida etiquetada como reserva: NO es un ingreso de venta, así que no
+    duplica el asiento de la venta) y lo deja contabilizado como reserva
+    acumulada. Solo aplica a productos sin vendedor (`vendor_owner_id`) ni
+    empresa (`company_id`). Idempotente: primero el ASIENTO (dedupe por ciclo),
+    después la marca en el canje."""
+    if r.get("vendor_owner_id") or r.get("company_id"):
+        return
+    fresh = await db.redemptions.find_one({"id": r["id"]}, {"_id": 0}) or {}
+    if fresh.get("vendor_owner_id") or fresh.get("company_id"):
+        return
+    if fresh.get("reserve_at"):
+        return
+    settings = await db.settings.find_one(
+        {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
+    raw_pct = settings.get("vendor_commission_pct")
+    pct = float(raw_pct) if raw_pct is not None else 1.0
+    amount = round(float(fresh.get("total_usd") or 0) * pct / 100.0, 6)
+    if amount <= 0:
+        return
+    cycle = int(fresh.get("rejection_cycle") or 0)
+    try:
+        from services.company_funds_common import record_auto_fund_adjustment
+        await record_auto_fund_adjustment(
+            adjustment_type="outflow", currency="USDT", amount=amount,
+            source_name="Reserva inventario propio",
+            note=(f"Reserva {pct:g}% venta propia: {r['quantity']}× "
+                  f"{r['product_name']} (canje {r['id'][:8]})"),
+            ref_id=r["id"],
+            dedupe_key=f"own-reserve:{r['id']}:c{cycle}", precision=6)
+    except Exception as e:
+        logger.error(f"own-inventory reserve failed: {e}")
+        return
+    await db.redemptions.update_one(
+        {"id": r["id"], "reserve_at": {"$in": [None, ""]}},
+        {"$set": {"reserve_at": iso(now_utc()), "reserve_amount": amount,
+                  "reserve_pct": pct, "reserve_currency": "USDT"}})
+
+
+async def _reverse_own_reserve_if_any(r: dict) -> None:
+    """E06 — si una venta de inventario propio con reserva se rechaza tras la
+    entrega, devuelve el 1% al fondo operativo (entrada que ANULA la salida de
+    reserva; no es un ingreso de venta). Idempotente."""
+    fresh = await db.redemptions.find_one({"id": r["id"]}, {"_id": 0}) or {}
+    amt = float(fresh.get("reserve_amount") or 0)
+    if not fresh.get("reserve_at") or fresh.get("reserve_reversed_at") or amt <= 0:
+        return
+    cycle = int(fresh.get("rejection_cycle") or 1)
+    try:
+        from services.company_funds_common import record_auto_fund_adjustment
+        await record_auto_fund_adjustment(
+            adjustment_type="inflow",
+            currency=fresh.get("reserve_currency") or "USDT", amount=amt,
+            source_name="Reserva inventario propio",
+            note=(f"Reverso reserva por canje rechazado: {r['quantity']}× "
+                  f"{r['product_name']} (canje {r['id'][:8]})"),
+            ref_id=r["id"],
+            dedupe_key=f"own-reserve-reverse:{r['id']}:c{cycle}", precision=6)
+    except Exception as e:
+        logger.error(f"own-inventory reserve reversal failed: {e}")
+        return
+    await db.redemptions.update_one(
+        {"id": r["id"], "reserve_reversed_at": {"$in": [None, ""]}},
+        {"$set": {"reserve_reversed_at": iso(now_utc())}})
+
+
 def _fmt_pickup_code(code: str) -> str:
     return f"{code[:3]}-{code[3:]}" if len(code) == 6 else code
 
@@ -733,6 +801,7 @@ async def confirm_pickup_by_code(payload: dict, request: Request) -> Any:
             detail="El pedido cambió de estado (¿rechazado?); verifica y recarga.")
     await _credit_vendor_for_redemption(r)
     await _record_vendor_commission_inflow(r)
+    await _reserve_own_inventory_sale(r)
     await _log_redemption_status_change(actor, r, r["id"], "delivered",
                                         "entrega confirmada por código")
     # iter239 — el cliente recibe confirmación inmediata de su entrega.
@@ -839,6 +908,7 @@ async def _transition_redemption(r: dict, rid: str, new_status: str,
     if new_status == "delivered":
         await _credit_vendor_for_redemption(r)
         await _record_vendor_commission_inflow(r)
+        await _reserve_own_inventory_sale(r)
     if new_status == "rejected":
         await _apply_rejection_effects(r, rid, actor)
 
@@ -855,6 +925,7 @@ async def _resume_redemption_effects(r: dict, rid: str, new_status: str,
         # si el crédito quedó a medias (helpers idempotentes).
         await _credit_vendor_for_redemption(r)
         await _record_vendor_commission_inflow(r)
+        await _reserve_own_inventory_sale(r)
     await db.redemptions.update_one({"id": rid},
                                     {"$set": {"admin_note": note}})
 
@@ -1183,6 +1254,7 @@ async def _reactivate_rejected_redemption(r: dict, rid: str, new_status: str,
         fresh = await db.redemptions.find_one({"id": rid}, {"_id": 0}) or r
         await _credit_vendor_for_redemption(fresh)
         await _record_vendor_commission_inflow(fresh)
+        await _reserve_own_inventory_sale(fresh)
 
 
 async def _on_redemption_delivered(r: dict) -> None:  # pragma: no cover
@@ -1241,6 +1313,7 @@ async def _on_redemption_rejected(r: dict, rid: str, actor: dict,
                 logger.error(f"inventory reversal failed: {e}")
     await _reverse_vendor_credit_if_any(r)
     await _reverse_fund_inflow_if_any(r)
+    await _reverse_own_reserve_if_any(r)
     # iter205 — el canje rechazado cancela su trabajo de mensajería.
     # MSG03 — si el mensajero ya entregó, queda una incidencia visible en
     # vez de ocultar el movimiento físico.

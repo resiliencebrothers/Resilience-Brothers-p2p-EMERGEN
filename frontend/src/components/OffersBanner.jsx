@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "@/App";
@@ -75,6 +75,26 @@ export default function OffersBanner() {
   useEffect(() => { load(); }, [load]);
   useLiveEvent("products_changed", load);
 
+  // Retira la oferta del banner EN EL INSTANTE en que vence, sin esperar al
+  // refresco de 60 s: se filtran en cliente las vencidas y se programa un
+  // temporizador a la expiración más próxima (acotado a 65 s para no crear
+  // timers gigantes; el sondeo de 60 s cubre las que vencen más tarde).
+  const [nowTs, setNowTs] = useState(() => Date.now());
+  const visibleOffers = useMemo(
+    () => offers.filter((p) => !p.offer_ends_at || new Date(p.offer_ends_at).getTime() > nowTs),
+    [offers, nowTs],
+  );
+  useEffect(() => {
+    const future = offers
+      .map((p) => (p.offer_ends_at ? new Date(p.offer_ends_at).getTime() : 0))
+      .filter((ts) => ts > Date.now());
+    if (future.length === 0) return;
+    const delay = Math.min(...future) - Date.now();
+    if (delay > 65000) return;  // lo cubre el sondeo de 60 s
+    const id = setTimeout(() => { setNowTs(Date.now()); load(); }, Math.max(0, delay) + 50);
+    return () => clearTimeout(id);
+  }, [offers, nowTs, load]);
+
   // E05 — refrescar al volver a la pestaña y cada 60 s, para que una sesión
   // abierta no conserve ofertas vencidas aunque no llegue ningún evento.
   useEffect(() => {
@@ -100,14 +120,14 @@ export default function OffersBanner() {
   // Rotación automática (se pausa al pasar el ratón, con foco de teclado, o si
   // el usuario prefiere movimiento reducido).
   useEffect(() => {
-    if (!api || offers.length <= 1 || paused || reduceMotion) return;
+    if (!api || visibleOffers.length <= 1 || paused || reduceMotion) return;
     const id = setInterval(() => api.scrollNext(), 4500);
     return () => clearInterval(id);
-  }, [api, offers.length, paused, reduceMotion]);
+  }, [api, visibleOffers.length, paused, reduceMotion]);
 
   const open = (pid) => navigate(`/dashboard/marketplace?product=${pid}`);
 
-  if (offers.length === 0) return null;
+  if (visibleOffers.length === 0) return null;
 
   return (
     <section data-testid="offers-banner" className="space-y-3"
@@ -126,9 +146,9 @@ export default function OffersBanner() {
         </button>
       </div>
 
-      <Carousel setApi={setApi} opts={{ loop: offers.length > 1, align: "start" }} className="w-full">
+      <Carousel setApi={setApi} opts={{ loop: visibleOffers.length > 1, align: "start" }} className="w-full">
         <CarouselContent className="-ml-4">
-          {offers.map((p) => (
+          {visibleOffers.map((p) => (
             <CarouselItem key={p.id} className="pl-4 basis-full sm:basis-1/2 lg:basis-1/3">
               <OfferCard p={p} onOpen={open} />
             </CarouselItem>

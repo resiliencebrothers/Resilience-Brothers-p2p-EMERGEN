@@ -3154,3 +3154,9 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - mypy: `routes/orders.py` trata el Optional de `to_usdt` explícitamente; mypy OK en orders.py y market.py.
 - Regresiones nuevas: `tests/test_pricing_rounding_and_commission_snapshot.py` (E07 redondeo multi-unidad + E01 snapshot de comisión; 2 passed).
 - Abierto: E06 (1% interno, devoluciones parciales, Decimal/micro-USDT); limitaciones de banner (desfase 60s, autorrotación).
+
+### iter377 — R01 fix + banner al vencer + E06 reserva 1% inventario propio ✅ IMPLEMENTADO
+- R01 (bug del informe, alta): sin cotización de servidor válida no se autoriza la compra (se elimina el fallback local que reintroducía el PRICE_CHANGED falso); error+reintento en el diálogo. Verificado en navegador.
+- Banner: retira la oferta al vencer con temporizador de cliente, sin esperar el sondeo de 60 s. Verificado.
+- E06 (MOVIMIENTO REAL, decisión usuario): al entregar inventario propio se aparta el 1% como salida del fondo a reserva (idempotente + reverso al rechazar); sección "Inventario propio (1%)" en el panel. No es un segundo ingreso. Regresión `tests/test_own_inventory_reserve_e06.py` (3 passed).
+- Pendiente (informe): R02 tope MAX_SCAN=1500 en ofertas; R03 verificar 1% en producción; enlace de banner depende de products.length>0.

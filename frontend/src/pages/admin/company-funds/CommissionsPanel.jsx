@@ -17,7 +17,7 @@ import { API } from "@/App";
 import { toast } from "sonner";
 import {
   Percent, TrendingUp, Banknote, Package, ChevronLeft, ChevronRight,
-  RotateCcw, Search, X, Trophy, Building2, Download,
+  RotateCcw, Search, X, Trophy, Building2, Download, PiggyBank,
 } from "lucide-react";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -143,6 +143,8 @@ export default function CommissionsPanel() {
   const totals = data?.totals || {};
   const rows = data?.rows || [];
   const byCompany = data?.by_company || [];
+  const own = data?.own_inventory || {};
+  const ownPct = own.reserve_pct != null ? own.reserve_pct : 1;
   const total = data?.total || 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const activeFilter = companyId ? companyLabel : debounced;
@@ -223,6 +225,51 @@ export default function CommissionsPanel() {
             n: totals.reversed_orders,
             amount: fmtFine(totals.reversed_commission_usdt),
           })}
+        </div>
+      )}
+
+      {/* E06 — Inventario propio Resilience: el 1% apartado a la reserva */}
+      {(own.orders > 0 || Number(own.reserve_total_usdt) > 0) && (
+        <div className="space-y-3 border-t border-white/10 pt-4" data-testid="commissions-own-inventory">
+          <div className="flex items-center gap-2 text-[0.6rem] uppercase tracking-widest text-[#22C55E]">
+            <PiggyBank className="w-3.5 h-3.5" />
+            {t("admin.commissions.ownTitle", { pct: ownPct })}
+          </div>
+          <p className="text-neutral-400 text-xs -mt-1">{t("admin.commissions.ownSubtitle", { pct: ownPct })}</p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <SummaryTile
+              icon={Banknote} label={t("admin.commissions.ownGross")}
+              value={fmt2(own.gross_usdt)} unit="USDT"
+              testid="commissions-own-gross"
+            />
+            <SummaryTile
+              icon={Percent} label={t("admin.commissions.ownReserved", { pct: ownPct })}
+              value={fmtFine(own.reserve_usdt)} unit="USDT" accent="green"
+              testid="commissions-own-reserved"
+            />
+            <SummaryTile
+              icon={Package} label={t("admin.commissions.orders")}
+              value={String(own.orders ?? 0)}
+              testid="commissions-own-orders"
+            />
+            <SummaryTile
+              icon={PiggyBank} label={t("admin.commissions.ownReserveTotal")}
+              value={fmtFine(own.reserve_total_usdt)} unit="USDT" accent="green"
+              testid="commissions-own-reserve-total"
+            />
+          </div>
+          {own.reversed_orders > 0 && (
+            <div
+              className="flex items-center gap-2 text-xs text-[#F59E0B] border border-[#F59E0B]/25 bg-[#F59E0B]/5 px-3 py-2 rounded-sm"
+              data-testid="commissions-own-reversed-note"
+            >
+              <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+              {t("admin.commissions.ownReversedNote", {
+                n: own.reversed_orders,
+                amount: fmtFine(own.reversed_reserve_usdt),
+              })}
+            </div>
+          )}
         </div>
       )}
 

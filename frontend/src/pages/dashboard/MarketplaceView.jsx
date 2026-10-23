@@ -36,6 +36,8 @@ export default function MarketplaceView() {
   // puede divergir del total agregado convertido (evita PRICE_CHANGED falso).
   const [quote, setQuote] = useState(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState(false);
+  const [quoteReload, setQuoteReload] = useState(0);
   const [addr, setAddr] = useState("");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
@@ -139,22 +141,30 @@ export default function MarketplaceView() {
   }, [open]);
 
   // Cotización de servidor: al abrir el diálogo o cambiar la cantidad, pide el
-  // total canónico (con debounce para la escritura). Mientras carga, el botón
-  // de confirmar se deshabilita para no enviar un total obsoleto.
+  // total canónico (con debounce para la escritura). R01 — la cotización
+  // anterior se INVALIDA (quote=null) al cambiar producto/cantidad y si la
+  // petición falla; el total local jamás se usa como importe autorizado, así
+  // que un timeout/500 nunca habilita una compra con cálculo de cliente.
   useEffect(() => {
-    if (!open || qtyNum <= 0) { setQuote(null); setQuoteLoading(false); return; }
+    if (!open || qtyNum <= 0) {
+      setQuote(null); setQuoteLoading(false); setQuoteError(false); return;
+    }
     let cancelled = false;
-    setQuoteLoading(true);
+    setQuote(null); setQuoteError(false); setQuoteLoading(true);
     const id = setTimeout(() => {
       axios.get(`${API}/vip/redeem-quote`, {
         params: { product_id: open.id, quantity: qtyNum },
         withCredentials: true,
       })
         .then((r) => { if (!cancelled) { setQuote(r.data); setQuoteLoading(false); } })
-        .catch(() => { if (!cancelled) { setQuote(null); setQuoteLoading(false); } });
+        .catch(() => { if (!cancelled) { setQuote(null); setQuoteLoading(false); setQuoteError(true); } });
     }, 300);
     return () => { cancelled = true; clearTimeout(id); };
-  }, [open, qtyNum]);
+  }, [open, qtyNum, quoteReload]);
+
+  // Cotización válida = existe y corresponde al producto abierto. Mientras no
+  // la haya (cargando o error), no se puede confirmar la compra.
+  const validQuote = quote && open && quote.product_id === open.id ? quote : null;
 
   // Enlace directo desde los banners de ofertas (resumen o mercado):
   // ?product=<id> abre ese producto; ?offers=1 activa el filtro Ofertas.
@@ -204,6 +214,9 @@ export default function MarketplaceView() {
     if (!open) return;
     if (qtyNum <= 0) return toast.error(t("marketplace.invalidQty"));
     if (stockBlocked) return toast.error(t("marketplace.stockBlockedToast"));
+    // R01 — sin cotización de servidor válida para ESTE producto/cantidad no se
+    // autoriza la compra (nunca se cobra con un total calculado en el cliente).
+    if (!validQuote) return toast.error(t("marketplace.quoteRequired"));
     const pickup = fulfillment === "pickup";
     if (pickup && !storeId) return toast.error(t("marketplace.pickupStoreRequired"));
     if (pickup) {
@@ -219,9 +232,7 @@ export default function MarketplaceView() {
       await axios.post(`${API}/vip/redeem`, {
         product_id: open.id,
         quantity: qtyNum,
-        expected_total_usdt: quote?.total_usdt != null
-          ? quote.total_usdt
-          : Number(((open.price_usdt || 0) * qtyNum).toFixed(2)),
+        expected_total_usdt: validQuote.total_usdt,
         ...(pickup
           ? { fulfillment: "store_pickup", store_id: storeId }
           : {
@@ -632,6 +643,18 @@ export default function MarketplaceView() {
                 </span>
               </div>
             )}
+            {quoteError && !quoteLoading && (
+              <div data-testid="redeem-quote-error" className="flex items-center justify-between gap-2 text-xs text-red-300 border border-red-500/30 bg-red-500/10 px-3 py-2">
+                <span>{t("marketplace.quoteError")}</span>
+                <button
+                  data-testid="redeem-quote-retry"
+                  onClick={() => setQuoteReload((n) => n + 1)}
+                  className="shrink-0 underline font-semibold hover:text-red-200"
+                >
+                  {t("marketplace.retry")}
+                </button>
+              </div>
+            )}
             <div className="border border-white/10 p-3 font-mono text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-neutral-500">{t("marketplace.columnTotal")}:</span>
@@ -683,8 +706,8 @@ export default function MarketplaceView() {
                 </p>
               )}
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
-              {busy ? t("marketplace.processing") : stockBlocked ? t("marketplace.stockBlockedBtn") : quoteLoading ? t("marketplace.calculating") : t("marketplace.confirmRedeem")}
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
+              {busy ? t("marketplace.processing") : stockBlocked ? t("marketplace.stockBlockedBtn") : quoteLoading ? t("marketplace.calculating") : quoteError ? t("marketplace.quoteUnavailable") : t("marketplace.confirmRedeem")}
             </Button>
           </div>
         </DialogContent>

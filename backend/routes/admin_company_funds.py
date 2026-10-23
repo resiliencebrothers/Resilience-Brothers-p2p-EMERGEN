@@ -1953,8 +1953,56 @@ async def company_funds_commissions(
             "reversed": bool(d.get("fund_inflow_reversed_at")),
         })
 
+    # E06 — reserva del 1% sobre ventas de INVENTARIO PROPIO Resilience (sin
+    # empresa ni vendedor). Movimiento real: el 1% sale del fondo operativo a
+    # la reserva al entregar. Se agrega por `reserve_at` (periodo) y se excluye
+    # lo revertido de los totales activos.
+    from datetime import timedelta as _timedelta
+    _settings = await db.settings.find_one(
+        {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
+    _raw_pct = _settings.get("vendor_commission_pct")
+    _res_pct = float(_raw_pct) if _raw_pct is not None else 1.0
+    own_q: Dict[str, Any] = {"vendor_owner_id": {"$in": [None, ""]},
+                             "company_id": {"$in": [None, ""]}}
+    if days and days > 0:
+        own_q["reserve_at"] = {"$gte": (now_utc() - _timedelta(days=days)).isoformat()}
+    else:
+        own_q["reserve_at"] = {"$nin": [None, ""]}
+    _OWN_ACTIVE = {"$in": [{"$ifNull": ["$reserve_reversed_at", ""]}, ["", None]]}
+    own_pipeline = [
+        {"$match": own_q},
+        {"$group": {
+            "_id": None,
+            "gross": {"$sum": {"$cond": [_OWN_ACTIVE, {"$ifNull": ["$total_usd", 0]}, 0]}},
+            "reserve": {"$sum": {"$cond": [_OWN_ACTIVE, {"$ifNull": ["$reserve_amount", 0]}, 0]}},
+            "orders": {"$sum": {"$cond": [_OWN_ACTIVE, 1, 0]}},
+            "reversed_reserve": {"$sum": {"$cond": [_OWN_ACTIVE, 0, {"$ifNull": ["$reserve_amount", 0]}]}},
+            "reversed_orders": {"$sum": {"$cond": [_OWN_ACTIVE, 0, 1]}},
+        }},
+    ]
+    own_agg = await db.redemptions.aggregate(own_pipeline).to_list(1)
+    og = own_agg[0] if own_agg else {}
+    # Reserva ACUMULADA (todo el histórico, activa) — el "fondo de reserva".
+    total_agg = await db.redemptions.aggregate([
+        {"$match": {"vendor_owner_id": {"$in": [None, ""]},
+                    "company_id": {"$in": [None, ""]},
+                    "reserve_at": {"$nin": [None, ""]}}},
+        {"$group": {"_id": None,
+                    "reserve": {"$sum": {"$cond": [_OWN_ACTIVE, {"$ifNull": ["$reserve_amount", 0]}, 0]}}}},
+    ]).to_list(1)
+    own_inventory = {
+        "reserve_pct": _res_pct,
+        "gross_usdt": round(float(og.get("gross") or 0), 6),
+        "reserve_usdt": round(float(og.get("reserve") or 0), 6),
+        "orders": int(og.get("orders") or 0),
+        "reversed_reserve_usdt": round(float(og.get("reversed_reserve") or 0), 6),
+        "reversed_orders": int(og.get("reversed_orders") or 0),
+        "reserve_total_usdt": round(float((total_agg[0] if total_agg else {}).get("reserve") or 0), 6),
+    }
+
     return {"rows": rows, "total": total, "skip": skip, "limit": limit,
-            "totals": totals, "by_company": by_company}
+            "totals": totals, "by_company": by_company,
+            "own_inventory": own_inventory}
 
 
 @router.get("/admin/company-funds/commissions/export.csv")
