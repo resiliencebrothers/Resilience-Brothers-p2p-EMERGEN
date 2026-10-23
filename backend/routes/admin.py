@@ -674,10 +674,16 @@ async def _reserve_own_inventory_sale(r: dict) -> None:
         return
     if fresh.get("reserve_at"):
         return
-    settings = await db.settings.find_one(
-        {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
-    raw_pct = settings.get("vendor_commission_pct")
-    pct = float(raw_pct) if raw_pct is not None else 1.0
+    # R03 — usar el % de reserva CONGELADO al comprar; un canje heredado (sin
+    # snapshot) recurre a la configuración global vigente.
+    snap_pct = fresh.get("reserve_pct_snapshot")
+    if snap_pct is not None:
+        pct = float(snap_pct)
+    else:
+        settings = await db.settings.find_one(
+            {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
+        raw_pct = settings.get("vendor_commission_pct")
+        pct = float(raw_pct) if raw_pct is not None else 1.0
     amount = round(float(fresh.get("total_usd") or 0) * pct / 100.0, 6)
     if amount <= 0:
         return
@@ -720,8 +726,11 @@ async def _reverse_own_reserve_if_any(r: dict) -> None:
             ref_id=r["id"],
             dedupe_key=f"own-reserve-reverse:{r['id']}:c{cycle}", precision=6)
     except Exception as e:
+        # N02 — NO silenciar: propaga para que el rechazo NO se marque completo
+        # y el reverso pueda reintentarse. El asiento es idempotente por
+        # dedupe_key, así que un reintento concilia sin duplicar.
         logger.error(f"own-inventory reserve reversal failed: {e}")
-        return
+        raise
     await db.redemptions.update_one(
         {"id": r["id"], "reserve_reversed_at": {"$in": [None, ""]}},
         {"$set": {"reserve_reversed_at": iso(now_utc())}})
@@ -1165,6 +1174,19 @@ def _reactivation_final_update(r: dict, new_status: str,
                        "fund_inflow_currency": "",
                        "fund_inflow_reversed_at": ""})
         fund_cleared = True
+    # N01 — archivar y limpiar las marcas de RESERVA del ciclo revertido (como
+    # vendedor/fondo) para que el nuevo ciclo vuelva a apartar el 1% al
+    # entregar. NO se limpia `reserve_pct_snapshot`: el % congelado al comprar
+    # rige para todos los ciclos de entrega del mismo pedido.
+    if r.get("reserve_at") and r.get("reserve_reversed_at"):
+        archive.update({"reserve_at": r.get("reserve_at"),
+                        "reserve_amount": r.get("reserve_amount"),
+                        "reserve_pct": r.get("reserve_pct"),
+                        "reserve_currency": r.get("reserve_currency"),
+                        "reserve_reversed_at": r.get("reserve_reversed_at")})
+        unsets.update({"reserve_at": "", "reserve_amount": "",
+                       "reserve_pct": "", "reserve_currency": "",
+                       "reserve_reversed_at": ""})
     if new_status == "delivered":
         sets["delivered_at"] = iso(now_utc())
     update: dict = {"$set": sets, "$unset": unsets}

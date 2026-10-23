@@ -3163,3 +3163,9 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 
 ### iter378 — R02 ofertas sin tope ✅ IMPLEMENTADO
 - `list_offers` pagina hasta reunir 6 comprables o agotar (sin MAX_SCAN); índice `products(on_offer, offer_at)`. Verificado con 1600 agotadas + 1 comprable en posición 1601.
+
+### iter379 — N01/N02/R03 coherencia reserva 1% inventario propio ✅ IMPLEMENTADO
+- N01: la reactivación ahora limpia/archiva las marcas de reserva por ciclo → la reserva se repone tras reactivar (neto 10).
+- N02: el reverso de reserva propaga fallos (no se marca el rechazo completo hasta confirmarlo); reintento idempotente.
+- R03: `reserve_pct_snapshot` congela el 1% al comprar para inventario propio (no depende de la config al entregar).
+- Regresiones: `tests/test_own_inventory_reserve_e06.py` (6 passed). R02 ya resuelto (iter378). Pendiente: verificar 1% en producción; enlace de banner.

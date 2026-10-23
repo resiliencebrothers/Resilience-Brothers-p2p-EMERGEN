@@ -109,6 +109,9 @@ class Redemption(BaseModel):
     vendor_net_usdt: float = 0.0
     vendor_commission_snapshot_at: str = ""
     vendor_credit_reversed_at: str = ""
+    # R03 — % de reserva (inventario propio) CONGELADO al comprar: apartar el
+    # 1% al entregar usa este valor, no la config global vigente al entregar.
+    reserve_pct_snapshot: Optional[float] = None
     # iter229 — entrada automática del capital de la venta al fondo empresa.
     fund_inflow_at: str = ""
     fund_inflow_amount: float = 0.0
@@ -639,6 +642,15 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         vendor_net_snap = round(vendor_base_snap * (1 - vendor_pct_snap / 100.0), 6)
         vendor_commission_snap = round(vendor_base_snap - vendor_net_snap, 6)
         vendor_snap_at = iso(now_utc())
+    # R03 — congelar el % de reserva del inventario propio (sin vendedor ni
+    # empresa) a la tasa vigente al COMPRAR, para que apartar el 1% al entregar
+    # no cambie si la configuración global cambia entre compra y entrega.
+    reserve_pct_snap: Optional[float] = None
+    if not product.get("owner_id") and not product.get("company_id"):
+        _rdoc = await db.settings.find_one(
+            {"id": "global"}, {"_id": 0, "vendor_commission_pct": 1}) or {}
+        _rpct = _rdoc.get("vendor_commission_pct")
+        reserve_pct_snap = float(_rpct) if _rpct is not None else 1.0
     r = Redemption(
         user_id=user["user_id"],
         user_email=user["email"],
@@ -668,6 +680,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         vendor_commission_usdt=vendor_commission_snap,
         vendor_net_usdt=vendor_net_snap,
         vendor_commission_snapshot_at=vendor_snap_at,
+        reserve_pct_snapshot=reserve_pct_snap,
         total_store=store_total,
         cost_store=store_cost,
         store_currency=store_currency,
