@@ -3160,3 +3160,6 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - Banner: retira la oferta al vencer con temporizador de cliente, sin esperar el sondeo de 60 s. Verificado.
 - E06 (MOVIMIENTO REAL, decisión usuario): al entregar inventario propio se aparta el 1% como salida del fondo a reserva (idempotente + reverso al rechazar); sección "Inventario propio (1%)" en el panel. No es un segundo ingreso. Regresión `tests/test_own_inventory_reserve_e06.py` (3 passed).
 - Pendiente (informe): R02 tope MAX_SCAN=1500 en ofertas; R03 verificar 1% en producción; enlace de banner depende de products.length>0.
+
+### iter378 — R02 ofertas sin tope ✅ IMPLEMENTADO
+- `list_offers` pagina hasta reunir 6 comprables o agotar (sin MAX_SCAN); índice `products(on_offer, offer_at)`. Verificado con 1600 agotadas + 1 comprable en posición 1601.

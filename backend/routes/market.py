@@ -895,17 +895,37 @@ async def _buyable_offers(rows: list, role: Optional[str]) -> list:
             if p.get("on_offer") and _offer_is_buyable(p, active_store_ids)]
 
 
+_OFFERS_INDEX_READY = False
+
+
+async def _ensure_offers_index() -> None:
+    """Índice que respalda el escaneo ordenado de ofertas (R02): permite paginar
+    `on_offer` por `offer_at` sin coste de colección completa. Idempotente."""
+    global _OFFERS_INDEX_READY
+    if _OFFERS_INDEX_READY:
+        return
+    try:
+        await db.products.create_index(
+            [("on_offer", 1), ("offer_at", -1)], name="offers_on_offer_offer_at")
+    except Exception:  # noqa: BLE001
+        pass
+    _OFFERS_INDEX_READY = True
+
+
 @router.get("/products/offers")
 async def list_offers(request: Request) -> Any:
     """Ofertas de rebaja ACTIVAS para los banners del resumen del cliente:
     producto aprobado, activo, marcado en oferta y dentro de vigencia, con stock
     comprable real. Devuelve hasta 6.
 
-    E04 — se PAGINA por lotes (ordenados por `offer_at` desc) y se filtra la
-    disponibilidad comprable dentro de cada lote hasta acumular 6 válidas, en
-    vez de recortar a 200 candidatos ANTES de filtrar: así una oferta válida
-    posterior no queda oculta tras muchas ofertas vigentes pero agotadas. Un
-    tope de escaneo acota el trabajo en catálogos enormes."""
+    E04/R02 — se PAGINA el cursor por lotes (ordenados por `offer_at` desc) y se
+    filtra la disponibilidad comprable dentro de cada lote hasta reunir 6
+    válidas o AGOTAR las ofertas: sin tope de escaneo, de modo que una oferta
+    válida posterior nunca queda oculta tras muchas ofertas vigentes pero
+    agotadas. El conjunto de ofertas activas ya está acotado por el filtro
+    (activo/aprobado/vigente) y respaldado por un índice `(on_offer, offer_at)`,
+    y la salida temprana al llegar a 6 mantiene el coste bajo en el caso común."""
+    await _ensure_offers_index()
     now_iso = iso(now_utc())
     q = {"is_active": True, "on_offer": True,
          "$and": [
@@ -923,20 +943,17 @@ async def list_offers(request: Request) -> Any:
 
     NEED = 6
     BATCH = 150
-    MAX_SCAN = 1500  # tope de seguridad para catálogos muy grandes
     offers: list = []
     batch: list = []
-    scanned = 0
     cursor = db.products.find(q, {"_id": 0}).sort("offer_at", -1)
     async for row in cursor:
         batch.append(row)
         if len(batch) >= BATCH:
             offers.extend(await _buyable_offers(batch, role))
-            scanned += len(batch)
             batch = []
-            if len(offers) >= NEED or scanned >= MAX_SCAN:
+            if len(offers) >= NEED:
                 break
-    if len(offers) < NEED and batch and scanned < MAX_SCAN:
+    if len(offers) < NEED and batch:
         offers.extend(await _buyable_offers(batch, role))
 
     offers = offers[:NEED]
