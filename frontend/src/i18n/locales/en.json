@@ -3197,6 +3197,7 @@
     "confirmRedeem": "Confirm Redemption",
     "processing": "Processing…",
     "calculating": "Calculating total…",
+    "grandTotal": "Total to pay",
     "youSave": "You save",
     "stockGoneZero": "This product sold out while you were deciding. It is no longer available.",
     "stockGoneSome": "Stock dropped: only {{qty}} left. Adjust the quantity to continue.",

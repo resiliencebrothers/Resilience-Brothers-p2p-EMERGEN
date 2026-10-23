@@ -878,30 +878,12 @@ def _offer_is_buyable(p: dict, active_store_ids: set) -> bool:
     return False
 
 
-@router.get("/products/offers")
-async def list_offers(request: Request) -> Any:
-    """Ofertas de rebaja ACTIVAS para los banners del resumen del cliente:
-    producto aprobado, activo, marcado en oferta y dentro de vigencia, con stock
-    comprable real. Se cargan desde el servidor con filtro (incluido el
-    vencimiento, para no gastar el límite en ofertas caducadas) y
-    `augment_products_fx` revalida; devuelve hasta 6."""
-    now_iso = iso(now_utc())
-    rows = await db.products.find(
-        {"is_active": True, "on_offer": True,
-         "$and": [
-             {"$or": [{"approval_status": {"$exists": False}},
-                      {"approval_status": "approved"}]},
-             # Excluir vencidas ya en la consulta (ISO ordena cronológicamente).
-             {"$or": [{"offer_ends_at": {"$in": [None, ""]}},
-                      {"offer_ends_at": {"$exists": False}},
-                      {"offer_ends_at": {"$gt": now_iso}}]},
-         ]}, {"_id": 0}).sort("offer_at", -1).to_list(200)
-    from auth_utils import get_session_user
+async def _buyable_offers(rows: list, role: Optional[str]) -> list:
+    """Dado un lote de ofertas crudas, aplica FX/oferta y deja solo las que
+    tienen stock REALMENTE comprable (mismo criterio que la compra, incluida la
+    validación de sucursales activas para recogida). Preserva el orden."""
     from services.marketplace_fx import augment_products_fx
-    user = await get_session_user(request)
-    out = await augment_products_fx(rows, role=(user or {}).get("role"))
-    # Sucursales REALMENTE disponibles (activas, no 'closing') de las empresas
-    # candidatas → valida la recogida con el mismo criterio que la compra.
+    out = await augment_products_fx(rows, role=role)
     company_ids = [p.get("company_id") for p in out if p.get("company_id")]
     active_store_ids: set = set()
     if company_ids:
@@ -909,13 +891,60 @@ async def list_offers(request: Request) -> Any:
                 {"company_id": {"$in": company_ids}, "active": True,
                  "status": {"$ne": "closing"}}, {"_id": 0, "id": 1}):
             active_store_ids.add(s["id"])
-    offers = [p for p in out if p.get("on_offer") and _offer_is_buyable(p, active_store_ids)]
+    return [p for p in out
+            if p.get("on_offer") and _offer_is_buyable(p, active_store_ids)]
+
+
+@router.get("/products/offers")
+async def list_offers(request: Request) -> Any:
+    """Ofertas de rebaja ACTIVAS para los banners del resumen del cliente:
+    producto aprobado, activo, marcado en oferta y dentro de vigencia, con stock
+    comprable real. Devuelve hasta 6.
+
+    E04 — se PAGINA por lotes (ordenados por `offer_at` desc) y se filtra la
+    disponibilidad comprable dentro de cada lote hasta acumular 6 válidas, en
+    vez de recortar a 200 candidatos ANTES de filtrar: así una oferta válida
+    posterior no queda oculta tras muchas ofertas vigentes pero agotadas. Un
+    tope de escaneo acota el trabajo en catálogos enormes."""
+    now_iso = iso(now_utc())
+    q = {"is_active": True, "on_offer": True,
+         "$and": [
+             {"$or": [{"approval_status": {"$exists": False}},
+                      {"approval_status": "approved"}]},
+             # Excluir vencidas ya en la consulta (ISO ordena cronológicamente).
+             {"$or": [{"offer_ends_at": {"$in": [None, ""]}},
+                      {"offer_ends_at": {"$exists": False}},
+                      {"offer_ends_at": {"$gt": now_iso}}]},
+         ]}
+    from auth_utils import get_session_user
     from services.user_verification import verified_company_owner_ids
+    user = await get_session_user(request)
+    role = (user or {}).get("role")
+
+    NEED = 6
+    BATCH = 150
+    MAX_SCAN = 1500  # tope de seguridad para catálogos muy grandes
+    offers: list = []
+    batch: list = []
+    scanned = 0
+    cursor = db.products.find(q, {"_id": 0}).sort("offer_at", -1)
+    async for row in cursor:
+        batch.append(row)
+        if len(batch) >= BATCH:
+            offers.extend(await _buyable_offers(batch, role))
+            scanned += len(batch)
+            batch = []
+            if len(offers) >= NEED or scanned >= MAX_SCAN:
+                break
+    if len(offers) < NEED and batch and scanned < MAX_SCAN:
+        offers.extend(await _buyable_offers(batch, role))
+
+    offers = offers[:NEED]
     verified = await verified_company_owner_ids(
         db, [p.get("owner_id") for p in offers if p.get("owner_id")])
     for p in offers:
         p["owner_verified"] = bool(p.get("owner_id")) and p["owner_id"] in verified
-    return offers[:6]
+    return offers
 
 
 @router.get("/products/{pid}")

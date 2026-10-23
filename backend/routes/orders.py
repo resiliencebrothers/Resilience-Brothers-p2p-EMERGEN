@@ -430,7 +430,13 @@ async def _compute_product_pricing(product: dict, quantity: float,
         return {"configured": False, "store_currency": fx["store_currency"]}
     store_total = round(unit_price * quantity, 2)
     store_cost = round(float(product.get("cost_usd") or 0) * quantity, 2)
-    total = to_usdt(store_total, fx["rate"])
+    # to_usdt devuelve Optional (None si la tasa es <=0); como fx ya está
+    # "configured" la tasa es válida, pero se estrecha el tipo explícitamente
+    # para no usar un total None (mypy + seguridad real).
+    total_opt = to_usdt(store_total, fx["rate"])
+    if total_opt is None:
+        return {"configured": False, "store_currency": fx["store_currency"]}
+    total = total_opt
     cost = to_usdt(store_cost, fx["rate"]) or 0.0
     original_total = to_usdt(round(orig_unit * quantity, 2), fx["rate"]) \
         if (on_offer and orig_unit > 0) else None

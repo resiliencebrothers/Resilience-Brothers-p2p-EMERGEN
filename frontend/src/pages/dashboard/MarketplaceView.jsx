@@ -665,6 +665,18 @@ export default function MarketplaceView() {
                   <span className="text-amber-300">+${Number(courierQuote.fee_currency_amount).toFixed(2)}</span>
                 </div>
               )}
+              {(() => {
+                const feeUsd = (fulfillment !== "pickup" && courierQuote && !courierQuote.free && !courierQuote.requires_manual_review)
+                  ? Number(courierQuote.fee_currency_amount || 0) : 0;
+                if (feeUsd <= 0) return null;
+                const productTotal = quote?.total_usdt != null ? quote.total_usdt : (open?.price_usdt || 0) * qtyNum;
+                return (
+                  <div className="flex justify-between text-sm font-bold pt-1 border-t border-white/10 mt-1" data-testid="redeem-grand-total-line">
+                    <span>{t("marketplace.grandTotal")}:</span>
+                    <span className="text-[#8B5CF6]" data-testid="redeem-grand-total">{(productTotal + feeUsd).toFixed(2)} USDT</span>
+                  </div>
+                );
+              })()}
               {courierQuote?.requires_manual_review && fulfillment !== "pickup" && (
                 <p className="text-[0.65rem] text-amber-400 font-sans" data-testid="redeem-courier-manual-note">
                   {t("marketplace.courierManualNote")}

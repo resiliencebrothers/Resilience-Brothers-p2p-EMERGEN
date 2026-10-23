@@ -3197,6 +3197,7 @@
     "confirmRedeem": "Confirmar Canje",
     "processing": "Procesando…",
     "calculating": "Calculando total…",
+    "grandTotal": "Total a pagar",
     "youSave": "Ahorras",
     "stockGoneZero": "Se agotaron las existencias de este producto mientras decidías. Ya no está disponible.",
     "stockGoneSome": "Las existencias bajaron: solo quedan {{qty}}. Ajusta la cantidad para continuar.",

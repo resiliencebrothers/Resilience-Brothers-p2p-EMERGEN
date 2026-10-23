@@ -3147,3 +3147,10 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - Ahorro mostrado cuando hay oferta: original tachado + "Ahorras X USDT (Y%)" (`original_total_usdt` del endpoint de cotización).
 - Compra E2E verificada por testing_agent (100%): saldo baja exacto, redención pending creada, stock decrementado, sin PRICE_CHANGED falso. Regresión: `backend/tests/test_marketplace_redeem_e2e_iter100.py`.
 - Backlog menor: traducir estados (PENDING→Pendiente) en "Mis Canjes" y añadir data-testid por fila.
+
+### iter376 — Envío en el total + E04 ofertas + mypy + regresiones ✅ IMPLEMENTADO
+- Diálogo de compra: línea "Total a pagar" = producto + mensajería cuando aplica envío.
+- E04: `/products/offers` pagina y filtra disponibilidad hasta reunir 6 comprables (antes recortaba a 200 antes de filtrar). Verificado con oferta válida en posición 211.
+- mypy: `routes/orders.py` trata el Optional de `to_usdt` explícitamente; mypy OK en orders.py y market.py.
+- Regresiones nuevas: `tests/test_pricing_rounding_and_commission_snapshot.py` (E07 redondeo multi-unidad + E01 snapshot de comisión; 2 passed).
+- Abierto: E06 (1% interno, devoluciones parciales, Decimal/micro-USDT); limitaciones de banner (desfase 60s, autorrotación).
