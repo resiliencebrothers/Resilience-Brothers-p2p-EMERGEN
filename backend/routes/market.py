@@ -907,8 +907,11 @@ async def _ensure_offers_index() -> None:
     try:
         await db.products.create_index(
             [("on_offer", 1), ("offer_at", -1)], name="offers_on_offer_offer_at")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        # No marcamos listo: así la próxima llamada reintenta crear el índice
+        # en vez de quedarse sin respaldo de forma permanente.
+        logger.error(f"offers index creation failed, will retry: {e}")
+        return
     _OFFERS_INDEX_READY = True
 
 

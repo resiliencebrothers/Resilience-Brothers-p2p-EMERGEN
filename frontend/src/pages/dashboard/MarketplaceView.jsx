@@ -162,9 +162,19 @@ export default function MarketplaceView() {
     return () => { cancelled = true; clearTimeout(id); };
   }, [open, qtyNum, quoteReload]);
 
-  // Cotización válida = existe y corresponde al producto abierto. Mientras no
-  // la haya (cargando o error), no se puede confirmar la compra.
-  const validQuote = quote && open && quote.product_id === open.id ? quote : null;
+  // Cotización válida = existe, corresponde al producto abierto Y a la cantidad
+  // actual (normalizada igual que el backend: enteros por unidad, 3 decimales en
+  // fracción). La comparación por cantidad es un refuerzo: aunque el efecto ya
+  // invalida la cotización al cambiar `qtyNum`, esto evita reenviar un total que
+  // no corresponda a la cantidad mostrada. Mientras no la haya (cargando o
+  // error), no se puede confirmar la compra.
+  const normQty = isFractionUnit(open?.unit)
+    ? Math.round(qtyNum * 1000) / 1000
+    : Math.round(qtyNum);
+  const validQuote =
+    quote && open && quote.product_id === open.id
+      && Math.abs(Number(quote.quantity) - normQty) < 1e-6
+      ? quote : null;
 
   // Enlace directo desde los banners de ofertas (resumen o mercado):
   // ?product=<id> abre ese producto; ?offers=1 activa el filtro Ofertas.
