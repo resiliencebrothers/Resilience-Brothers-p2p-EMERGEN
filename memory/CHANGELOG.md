@@ -2702,3 +2702,10 @@ Informe Resilience_Revision_7e69777: R01 confirmado corregido y R02 ya resuelto 
 ## iter — Observaciones menores del informe (2026-06)
 - **Índice de ofertas (`market.py::_ensure_offers_index`):** ya no marca `_OFFERS_INDEX_READY=True` si `create_index` falla; registra el error y reintenta en la siguiente llamada (verificado con fallo transitorio).
 - **Refuerzo cotización (R01, `MarketplaceView.jsx`):** `validQuote` ahora exige coincidencia de producto **y** cantidad normalizada (enteros por unidad / 3 decimales en fracción, tolerancia 1e-6).
+
+## iter — Estadísticas de ventas para cuentas empresa (2026-06)
+- **Pedido:** añadir a las estadísticas del rol `empresa` sus ventas y el ranking de productos más vendidos.
+- **Modelo:** las ventas de una empresa son `db.redemptions` con `vendor_owner_id == empresa.user_id` (= `company_id`/`owner_id` del producto, company.py L9/270/276).
+- **Backend (`routes/admin_users.py`):** nuevo helper `_vendor_sales_summary(user_id)` (pipeline `$facet`): conteos por estado (entregadas/pendientes/rechazadas), ingreso bruto y neto (`vendor_credit_net`→`vendor_net_usdt`) de las ventas entregadas, actividad 30 días y top-5 productos por unidades. El endpoint `/admin/users/{id}/stats` incluye el bloque `sales` solo cuando `role == "empresa"` (null para otros roles).
+- **Frontend:** nuevo `user-stats/VendorSalesSection.jsx` (4 KPIs + chips de estado + tabla "Productos más vendidos"), renderizado en `AdminUserStatsPage` solo si llega `sales`.
+- **Verificado:** mypy OK; curl con 6 ventas de prueba → gross 105 / net 103.95 / 4 entregadas / 3 en 30d / top prodA 7.5lb(3) prodB 6u(1) — correcto; UI desktop y móvil (390px) OK; datos de prueba eliminados.

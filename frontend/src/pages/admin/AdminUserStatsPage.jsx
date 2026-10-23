@@ -9,6 +9,7 @@ import UserStatsHero from "./user-stats/UserStatsHero";
 import NetPositionCard from "./user-stats/NetPositionCard";
 import UserStatsPersonal from "./user-stats/UserStatsPersonal";
 import UserStatsKpis from "./user-stats/UserStatsKpis";
+import VendorSalesSection from "./user-stats/VendorSalesSection";
 import BalanceBreakdown from "./user-stats/BalanceBreakdown";
 import CapitalDebtsSection from "./user-stats/CapitalDebtsSection";
 import AuditTrailSection from "./user-stats/AuditTrailSection";
@@ -57,7 +58,7 @@ export default function AdminUserStatsPage() {
   }
   if (!data) return null;
 
-  const { user, kyc, balances, balance_total_usdt, orders, capital, net_position } = data;
+  const { user, kyc, balances, balance_total_usdt, orders, capital, net_position, sales } = data;
 
   return (
     <div className="space-y-6" data-testid="admin-user-stats-page">
@@ -65,6 +66,7 @@ export default function AdminUserStatsPage() {
       <NetPositionCard netPosition={net_position} />
       <UserStatsPersonal user={user} kyc={kyc} />
       <UserStatsKpis orders={orders} balanceTotalUsdt={balance_total_usdt} />
+      {sales && <VendorSalesSection sales={sales} />}
       <BalanceBreakdown balances={balances} />
       <CapitalDebtsSection capital={capital} />
       <AuditTrailSection

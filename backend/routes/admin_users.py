@@ -565,6 +565,72 @@ async def _favorite_currencies(user_id: str) -> tuple[List[dict], Optional[str],
     return top_codes, top_codes[0]["_id"], top_codes[0]["count"]
 
 
+async def _vendor_sales_summary(user_id: str) -> Dict[str, Any]:
+    """Resumen de VENTAS para cuentas vendedoras/empresa: canjes de `db.redemptions`
+    cuyo `vendor_owner_id` es este usuario (= `company_id`/`owner_id` del producto).
+    Devuelve conteos por estado, ingresos bruto/neto de las ventas entregadas,
+    actividad de 30 días y el top de productos más vendidos (por unidades)."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    pipeline = [
+        {"$match": {"vendor_owner_id": user_id}},
+        {"$facet": {
+            "by_status": [
+                {"$group": {"_id": "$status", "count": {"$sum": 1},
+                            "gross": {"$sum": {"$ifNull": ["$total_usd", 0]}}}},
+            ],
+            "delivered_net": [
+                {"$match": {"status": "delivered"}},
+                {"$group": {"_id": None, "net": {"$sum": {"$ifNull": [
+                    "$vendor_credit_net", {"$ifNull": ["$vendor_net_usdt", 0]}]}}}},
+            ],
+            "last_30d": [
+                {"$match": {"status": "delivered", "created_at": {"$gte": cutoff}}},
+                {"$group": {"_id": None, "count": {"$sum": 1},
+                            "gross": {"$sum": {"$ifNull": ["$total_usd", 0]}}}},
+            ],
+            "top_products": [
+                {"$match": {"status": "delivered"}},
+                {"$group": {"_id": {"pid": "$product_id", "name": "$product_name",
+                                    "unit": "$unit"},
+                            "quantity_sold": {"$sum": {"$ifNull": ["$quantity", 0]}},
+                            "orders": {"$sum": 1},
+                            "revenue": {"$sum": {"$ifNull": ["$total_usd", 0]}}}},
+                {"$sort": {"quantity_sold": -1, "orders": -1}},
+                {"$limit": 5},
+            ],
+        }},
+    ]
+    agg = await db.redemptions.aggregate(pipeline).to_list(1)
+    facet = agg[0] if agg else {}
+    by_status = {row["_id"]: row for row in facet.get("by_status", [])}
+    delivered = by_status.get("delivered", {})
+    total_count = sum(int(r.get("count") or 0) for r in by_status.values())
+    pending_count = (int(by_status.get("pending", {}).get("count") or 0)
+                     + int(by_status.get("approved", {}).get("count") or 0))
+    net_row = (facet.get("delivered_net") or [{}])[0] if facet.get("delivered_net") else {}
+    l30 = (facet.get("last_30d") or [{}])[0] if facet.get("last_30d") else {}
+    return {
+        "total_count": total_count,
+        "delivered_count": int(delivered.get("count") or 0),
+        "pending_count": pending_count,
+        "rejected_count": int(by_status.get("rejected", {}).get("count") or 0),
+        "gross_usdt": round(float(delivered.get("gross") or 0.0), 4),
+        "net_usdt": round(float(net_row.get("net") or 0.0), 4),
+        "count_last_30d": int(l30.get("count") or 0),
+        "gross_last_30d_usdt": round(float(l30.get("gross") or 0.0), 4),
+        "top_products": [
+            {"product_id": tp["_id"].get("pid", ""),
+             "product_name": tp["_id"].get("name", ""),
+             "unit": tp["_id"].get("unit", "unidad"),
+             "quantity_sold": round(float(tp.get("quantity_sold") or 0.0), 3),
+             "orders": int(tp.get("orders") or 0),
+             "revenue_usdt": round(float(tp.get("revenue") or 0.0), 4)}
+            for tp in facet.get("top_products", [])
+        ],
+    }
+
+
 async def _kyc_snapshot(user_id: str, user: dict) -> Dict[str, str]:
     kyc_doc = await db.kyc_verifications.find_one(
         {"user_id": user_id}, {"_id": 0},
@@ -655,9 +721,14 @@ async def admin_user_stats(user_id: str, request: Request) -> Any:
 
     kyc = await _kyc_snapshot(user_id, user)
 
+    sales = None
+    if user.get("role") == "empresa":
+        sales = await _vendor_sales_summary(user_id)
+
     return {
         "user": _user_identity_block(user),
         "kyc": kyc,
+        "sales": sales,
         "balances": {k: round(float(v), 4) for k, v in balances.items() if float(v) != 0},
         "balance_total_usdt": user.get("vip_balance_usdt", 0.0),
         "orders": {
