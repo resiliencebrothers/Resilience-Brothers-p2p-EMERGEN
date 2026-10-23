@@ -2693,3 +2693,12 @@ Informe Resilience_Revision_7e69777: R01 confirmado corregido y R02 ya resuelto 
 - **R03 (reserva) — el % se leía AL ENTREGAR, sin snapshot.** Si cambiaba de 1→5 antes de entregar una venta de 1.000 apartaría 50 en vez de 10. Fix: `orders.py` congela `reserve_pct_snapshot` AL COMPRAR para inventario propio (sin vendedor ni empresa); `_reserve_own_inventory_sale` usa ese snapshot (fallback a config vigente solo para canjes heredados). Unifica la política con E01.
 - **Verificación.** mypy OK (admin/orders). Regresiones nuevas en `tests/test_own_inventory_reserve_e06.py` (ahora 6 passed): ciclo de reactivación (N01, 2 salidas + 1 entrada = neto 10), fallo transitorio del reverso propaga y reintento idempotente (N02), snapshot congela el % (R03: 10 no 50; heredado usa 5%). Suite de precio/comisión sigue 2 passed. Datos QA limpiados; settings restaurado a 1.0.
 - **Pendientes reconocidos (informe):** R03-vendedor — confirmar el valor real del 1% en PRODUCCIÓN (en preview es 1.0); enlace de banner aún depende de `products.length>0`.
+
+## iter — Panel de estadísticas para cuentas de empresa (2026-06)
+- **Problema:** en la sección Usuarios, las cuentas con rol `empresa` no mostraban el botón "Estadísticas" ni el panel, a diferencia de `vip`/`normal`.
+- **Causa:** en `frontend/src/pages/admin/users/UsersTableRow.jsx`, el gate `canShowStats = role==="vip" || role==="normal"` excluía `empresa`. El backend (`/api/admin/users/{id}/stats`) ya soportaba cualquier rol.
+- **Fix:** `canShowStats` ahora incluye `empresa`; se separó el gate del badge KYC en un nuevo `isClientKyc` (vip/normal) para no alterar su comportamiento. Verificado en navegador: las 13 cuentas empresa muestran el botón y la página de stats carga completa (posición neta, KPIs, KYC, saldos) sin error.
+
+## iter — Observaciones menores del informe (2026-06)
+- **Índice de ofertas (`market.py::_ensure_offers_index`):** ya no marca `_OFFERS_INDEX_READY=True` si `create_index` falla; registra el error y reintenta en la siguiente llamada (verificado con fallo transitorio).
+- **Refuerzo cotización (R01, `MarketplaceView.jsx`):** `validQuote` ahora exige coincidencia de producto **y** cantidad normalizada (enteros por unidad / 3 decimales en fracción, tolerancia 1e-6).

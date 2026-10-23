@@ -38,7 +38,10 @@ export default function UsersTableRow({
   const { t } = useTranslation();
   const badgeClass = ROLE_BADGE_CLASSES[user.role] || ROLE_BADGE_CLASSES.normal;
   const needsEmailVerify = user.auth_provider === "password" && user.email_verified === false;
-  const canShowStats = user.role === "vip" || user.role === "normal";
+  // iter: las empresas también tienen panel de estadísticas (saldos, pedidos,
+  // posición neta). El badge KYC sigue siendo solo para clientes (vip/normal).
+  const canShowStats = user.role === "vip" || user.role === "normal" || user.role === "empresa";
+  const isClientKyc = user.role === "vip" || user.role === "normal";
 
   // iter106 — KYC only applies to client roles; admins/staff show "—".
   const kycStatus = user.effective_kyc_status || user.kyc_status || "not_started";
@@ -98,7 +101,7 @@ export default function UsersTableRow({
         </span>
       </td>
       <td className="px-4 py-3" data-testid={`kyc-cell-${user.user_id}`}>
-        {canShowStats ? (
+        {isClientKyc ? (
           <span
             data-testid={`kyc-badge-${user.user_id}`}
             title={kycMeta.label}
