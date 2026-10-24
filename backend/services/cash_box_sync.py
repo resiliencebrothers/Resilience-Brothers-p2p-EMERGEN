@@ -283,6 +283,10 @@ async def mirror_client_withdrawal_to_cash_box(
     del retiro). El momento efectivo es `paid_at`."""
     if (w.get("status") or "") != "paid":
         return None
+    # EF01 — si el retiro cash lo entregó un mensajero, la salida ya se
+    # reconoce consumiendo su custodia; la caja NO vuelve a bajar al pagar.
+    if w.get("courier_custody_outflow"):
+        return None
     fund = fund_for_currency(w.get("currency"))
     wid = str(w.get("id") or "")
     if not fund or not wid or not await _paid_from_is_cash_box(w):

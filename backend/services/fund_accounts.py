@@ -286,9 +286,17 @@ async def account_assigned_balances(code: str) -> Dict[str, float]:
 
     async for w in db.withdrawals.find(
         {"status": "paid", "currency": code, "paid_from_account_id": HAS_ACC},
-        {"_id": 0, "paid_from_account_id": 1, "amount_usd": 1},
+        {"_id": 0, "paid_from_account_id": 1, "amount_usd": 1,
+         "courier_custody_outflow": 1, "courier_custody_account_id": 1},
     ):
-        _add(w["paid_from_account_id"], -float(w.get("amount_usd") or 0.0))
+        amt = float(w.get("amount_usd") or 0.0)
+        # EF01 — retiro cash entregado por un mensajero: la salida externa
+        # consume el efectivo EN TRÁNSITO (custodia), no la caja (que ya bajó
+        # al entregar el efectivo al mensajero). Evita el doble descuento.
+        if w.get("courier_custody_outflow") and w.get("courier_custody_account_id"):
+            _add(w["courier_custody_account_id"], -amt)
+        else:
+            _add(w["paid_from_account_id"], -amt)
 
     async for cw in db.company_withdrawals.find(
         {"status": "paid", "currency": code, "paid_from_account_id": HAS_ACC},

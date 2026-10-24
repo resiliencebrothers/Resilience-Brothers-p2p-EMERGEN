@@ -976,12 +976,35 @@ async def admin_courier_cash_events(request: Request,
         q, {"_id": 0}).sort("at", -1).to_list(100)
 
 
+@router.get("/admin/courier-cash/options")
+async def admin_courier_cash_options(request: Request) -> Any:
+    """EF04 — monedas de efectivo físicas y cuentas de caja disponibles por
+    moneda para el formulario (excluye cuentas de custodia de mensajeros)."""
+    await require_permission(request, "deliveries")
+    from services.courier_cash import physical_cash_currencies
+    currencies = sorted(await physical_cash_currencies())
+    accounts: dict = {}
+    for code in currencies:
+        rows = []
+        async for fa in db.fund_accounts.find(
+            {"currency": code, "method": "cash", "is_active": True,
+             "courier_custody_id": {"$exists": False},
+             "merged_into": {"$exists": False}},
+            {"_id": 0, "id": 1, "name": 1},
+        ):
+            rows.append({"id": fa["id"], "label": fa.get("name") or fa["id"]})
+        accounts[code] = rows
+    return {"currencies": currencies, "accounts": accounts}
+
+
 @router.post("/admin/courier-cash")
 async def admin_courier_cash_register(payload: dict,
                                       request: Request) -> Any:
     """El admin registra la entrega de caja al mensajero (`issued`) o la
-    rendición recibida en caja (`returned`). Una diferencia se registra como
-    incidencia con nota — jamás como ajuste silencioso."""
+    rendición recibida en caja (`returned`) como TRASLADO DE CUSTODIA entre la
+    cuenta de caja elegida y la custodia del mensajero (EF01). Valida
+    disponibilidad (bloquea si no alcanza, EF02) e idempotencia (EF03). Una
+    diferencia se registra como incidencia con nota — jamás ajuste silencioso."""
     actor = await require_permission(request, "deliveries")
     kind = payload.get("kind")
     if kind not in ("issued", "returned"):
@@ -990,21 +1013,26 @@ async def admin_courier_cash_register(payload: dict,
     courier_id = (payload.get("courier_id") or "").strip()
     if not courier_id:
         raise HTTPException(status_code=400, detail="courier_id requerido")
+    account_id = (payload.get("account_id") or "").strip()
+    if not account_id:
+        raise HTTPException(status_code=400,
+                            detail="Elige la cuenta de caja de origen/destino")
     c = await db.users.find_one({"user_id": courier_id},
-                                {"_id": 0, "name": 1, "email": 1})
+                                {"_id": 0, "name": 1, "email": 1, "role": 1,
+                                 "is_courier": 1})
     if not c:
         raise HTTPException(status_code=404, detail="Mensajero no encontrado")
-    from services.courier_cash import record_cash_event
+    courier_name = c.get("name") or c.get("email") or ""
     discrepancy_note = (payload.get("discrepancy_note") or "").strip()
-    ev = await record_cash_event(
-        courier_id=courier_id,
-        courier_name=c.get("name") or c.get("email") or "",
-        kind=kind, currency=str(payload.get("currency") or ""),
-        amount=payload.get("amount"),
-        delivery_id=(payload.get("delivery_id") or None),
-        note=(payload.get("note") or ""),
-        by=actor["user_id"], by_name=actor.get("name") or "",
-        discrepancy=bool(discrepancy_note))
+    from services.courier_cash import issue_or_return_cash
+    result = await issue_or_return_cash(
+        courier_id=courier_id, courier_name=courier_name, kind=kind,
+        currency=str(payload.get("currency") or ""),
+        amount=payload.get("amount"), account_id=account_id,
+        note=(payload.get("note") or ""), discrepancy_note=discrepancy_note,
+        actor_id=actor["user_id"], actor_name=actor.get("name") or "",
+        op_key=(payload.get("operation_id") or None))
+    ev = result["event"]
     if not ev:
         raise HTTPException(status_code=500,
                             detail="No se pudo registrar el evento")
@@ -1014,7 +1042,7 @@ async def admin_courier_cash_register(payload: dict,
             await notify_all_admins(
                 db,
                 title="⚠️ Diferencia de efectivo en rendición",
-                body=(f"Rendición de {c.get('name') or courier_id} "
+                body=(f"Rendición de {courier_name or courier_id} "
                       f"({ev['amount']} {ev['currency']}) con diferencia: "
                       f"{discrepancy_note}"),
                 url_path="/admin/deliveries")
@@ -1023,6 +1051,8 @@ async def admin_courier_cash_register(payload: dict,
     await log_action(db, actor, "courier.cash_event", "user", courier_id,
                      details={"kind": kind, "currency": ev["currency"],
                               "amount": ev["amount"],
+                              "account_id": account_id,
+                              "transfer_id": result["transfer"]["id"],
                               "discrepancy": bool(discrepancy_note)})
     return ev
 

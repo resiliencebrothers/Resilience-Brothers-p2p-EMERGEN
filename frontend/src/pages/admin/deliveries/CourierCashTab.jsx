@@ -25,9 +25,12 @@ export default function CourierCashTab() {
   const [summary, setSummary] = useState([]);
   const [events, setEvents] = useState([]);
   const [couriers, setCouriers] = useState([]);
+  const [options, setOptions] = useState({ currencies: [], accounts: {} });
+  const newOpKey = () => (crypto?.randomUUID ? crypto.randomUUID() : `op_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  const [opKey, setOpKey] = useState(newOpKey());
   const [form, setForm] = useState({
     courier_id: "", kind: "issued", currency: "CUP", amount: "",
-    note: "", discrepancy_note: "",
+    account_id: "", note: "", discrepancy_note: "",
   });
   const [busy, setBusy] = useState(false);
 
@@ -38,20 +41,29 @@ export default function CourierCashTab() {
       .then((r) => setEvents(r.data || [])).catch(() => {});
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data || [])).catch(() => {});
+    axios.get(`${API}/admin/courier-cash/options`, { withCredentials: true })
+      .then((r) => setOptions({
+        currencies: r.data.currencies || [],
+        accounts: r.data.accounts || {},
+      })).catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  const accountsForCurrency = options.accounts[form.currency] || [];
+
   const submit = async () => {
-    if (!form.courier_id || !form.amount || !form.currency.trim()) {
+    if (!form.courier_id || !form.amount || !form.currency.trim() || !form.account_id) {
       toast.error(t("admin.cash.formErr"));
       return;
     }
     setBusy(true);
     try {
-      await axios.post(`${API}/admin/courier-cash`, form, { withCredentials: true });
+      await axios.post(`${API}/admin/courier-cash`,
+        { ...form, operation_id: opKey }, { withCredentials: true });
       toast.success(t("admin.cash.registered"));
       setForm({ ...form, amount: "", note: "", discrepancy_note: "" });
+      setOpKey(newOpKey());  // EF03 — nueva clave tras un registro exitoso
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error");
@@ -87,13 +99,19 @@ export default function CourierCashTab() {
               <SelectItem value="returned">{t("admin.cash.kindReturned")}</SelectItem>
             </SelectContent>
           </Select>
-          <Input
+          <Select
             value={form.currency}
-            onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
-            placeholder={t("admin.cash.currencyPh")}
-            data-testid="cash-currency-input"
-            className="rounded-none bg-[#0a0a0a] border-white/10 h-10 font-mono uppercase"
-          />
+            onValueChange={(v) => setForm({ ...form, currency: v, account_id: "" })}
+          >
+            <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 h-10 font-mono" data-testid="cash-currency-select">
+              <SelectValue placeholder={t("admin.cash.currencyPh")} />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white">
+              {options.currencies.map((cur) => (
+                <SelectItem key={cur} value={cur}>{cur}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Input
             value={form.amount}
             onChange={(e) => setForm({ ...form, amount: e.target.value })}
@@ -111,7 +129,23 @@ export default function CourierCashTab() {
             {busy ? "…" : t("admin.cash.submitBtn")}
           </Button>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+          <Select
+            value={form.account_id}
+            onValueChange={(v) => setForm({ ...form, account_id: v })}
+          >
+            <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 h-10" data-testid="cash-account-select">
+              <SelectValue placeholder={form.kind === "issued" ? t("admin.cash.accountFromPh") : t("admin.cash.accountToPh")} />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white max-h-64">
+              {accountsForCurrency.length === 0 && (
+                <div className="px-3 py-2 text-xs text-neutral-500">{t("admin.cash.noAccounts")}</div>
+              )}
+              {accountsForCurrency.map((a) => (
+                <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Input
             value={form.note}
             onChange={(e) => setForm({ ...form, note: e.target.value })}
