@@ -12,11 +12,26 @@ const fmt = (n) => Number(n || 0).toLocaleString(undefined, { maximumFractionDig
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
-function Kpi({ label, value, tone = "", testid }) {
+function Kpi({ label, value, tone = "", testid, delta, deltaShow = false, deltaSuffix = "" }) {
   return (
     <div className="tactile-card px-5 py-4" data-testid={testid}>
       <div className="micro-label text-neutral-500 mb-1">{label}</div>
       <div className={`font-display text-2xl ${tone}`}>{value}</div>
+      {deltaShow && (
+        delta === null || delta === undefined ? (
+          <div className="text-xs mt-1 text-neutral-600 flex items-center gap-1" data-testid={`${testid}-delta`}>
+            <Minus className="w-3 h-3" /> {deltaSuffix}
+          </div>
+        ) : (
+          <div
+            className={`text-xs mt-1 flex items-center gap-1 ${delta >= 0 ? "text-emerald-400" : "text-red-400"}`}
+            data-testid={`${testid}-delta`}
+          >
+            {delta >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+            {delta >= 0 ? "+" : ""}{fmt(delta)}% {deltaSuffix}
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -151,7 +166,8 @@ export default function InventoryDashboardTab() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <Kpi testid="kpi-units-sold" label={t("inventory.dashboard.unitsSold")} value={fmt(data.units_sold)} />
             <Kpi testid="kpi-revenue" label={t("inventory.dashboard.revenue")} value={fmt(data.sales_revenue)} tone="text-[#8B5CF6]" />
-            <Kpi testid="kpi-avg-ticket" label={t("inventory.dashboard.avgTicket")} value={fmt(data.sales_count > 0 ? data.sales_revenue / data.sales_count : 0)} tone="text-sky-300" />
+            <Kpi testid="kpi-avg-ticket" label={t("inventory.dashboard.avgTicket")} value={fmt(data.avg_ticket)} tone="text-sky-300"
+              deltaShow delta={data.avg_ticket_delta_pct} deltaSuffix={t("inventory.dashboard.vsPrev")} />
             <Kpi testid="kpi-cogs" label={t("inventory.dashboard.cogs")} value={fmt(data.cogs)} tone="text-neutral-300" />
             <Kpi testid="kpi-profit" label={t("inventory.dashboard.profit")} value={fmt(data.profit)} tone={data.profit >= 0 ? "text-emerald-400" : "text-red-400"} />
           </div>
@@ -240,12 +256,13 @@ export default function InventoryDashboardTab() {
             <h3 className="font-display text-lg mb-3">{t("inventory.dashboard.rotationTitle")}</h3>
             <p className="text-xs text-neutral-500 mb-3">{t("inventory.dashboard.rotationHint")}</p>
             <div className="tactile-card overflow-auto max-h-[55vh]" data-testid="inventory-rotation-table">
-              <table className="w-full text-sm min-w-[900px]">
+              <table className="w-full text-sm min-w-[1000px]">
                 <thead className="border-b border-white/10 bg-[#0a0a0a] sticky top-0 z-10">
                   <tr className="text-left">
                     <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.dashboard.rotProduct")}</th>
                     <th className="px-4 py-3 micro-label text-neutral-500">{t("inventory.dashboard.rotSuggestion")}</th>
                     <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.dashboard.rotSold")}</th>
+                    <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.dashboard.rotAvgTicket")}</th>
                     <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.dashboard.rotDaily")}</th>
                     <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.dashboard.rotStock")}</th>
                     <th className="px-4 py-3 micro-label text-neutral-500 text-right">{t("inventory.dashboard.rotSellout")}</th>
@@ -256,7 +273,7 @@ export default function InventoryDashboardTab() {
                 </thead>
                 <tbody>
                   {rotation.length === 0 && (
-                    <tr><td colSpan="9" className="text-center text-neutral-500 py-8">—</td></tr>
+                    <tr><td colSpan="10" className="text-center text-neutral-500 py-8">—</td></tr>
                   )}
                   {rotation.map((r) => (
                     <tr key={r.product_id} className={`border-b border-white/5 ${r.restock_suggestion === "ya" ? "bg-red-500/5" : ""}`} data-testid={`rotation-row-${r.product_id}`}>
@@ -275,6 +292,7 @@ export default function InventoryDashboardTab() {
                         {!r.restock_suggestion && <span className="text-neutral-600">—</span>}
                       </td>
                       <td className="px-4 py-3 font-mono text-right text-amber-300">{r.sold}</td>
+                      <td className="px-4 py-3 font-mono text-right text-sky-300" data-testid={`rotation-avg-ticket-${r.product_id}`}>{r.avg_ticket ? fmt(r.avg_ticket) : "—"}</td>
                       <td className="px-4 py-3 font-mono text-right">{fmt(r.daily_rate)}</td>
                       <td className="px-4 py-3 font-mono text-right">{r.stock}</td>
                       <td className={`px-4 py-3 font-mono text-right ${r.sellout_days !== null && r.sellout_days <= 3 ? "text-red-400" : ""}`}>

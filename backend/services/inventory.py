@@ -1422,9 +1422,13 @@ async def build_rotation(start: str, end: str,
                     "voided": {"$ne": True},
                     "$or": [{"source": {"$ne": "marketplace"}},
                             {"ref_id": {"$nin": list(refs)}}]}},
-        {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"}}},
+        {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"},
+                    "revenue": {"$sum": {"$ifNull": ["$total", 0]}},
+                    "sales_count": {"$sum": 1}}},
     ]).to_list(2000)
     sold_by = {a["_id"]: qnum(a["qty"]) for a in sold_agg}
+    revenue_by = {a["_id"]: round(float(a.get("revenue") or 0), 2) for a in sold_agg}
+    count_by = {a["_id"]: int(a.get("sales_count") or 0) for a in sold_agg}
     entradas = await db.inventory_movements.find(
         {"type": "entrada", "product_id": {"$in": ids}},
         {"_id": 0, "product_id": 1, "created_at": 1}).sort("created_at", 1).to_list(20000)
@@ -1437,6 +1441,9 @@ async def build_rotation(start: str, end: str,
         pid = p["id"]
         stock = qnum(p.get("stock"))
         sold = sold_by.get(pid, 0)
+        rev = revenue_by.get(pid, 0.0)
+        cnt = count_by.get(pid, 0)
+        avg_ticket = round(rev / cnt, 2) if cnt else 0.0
         daily = round(sold / days, 2) if days > 0 else 0.0
         sellout_days = round(stock / daily, 1) if daily > 0 and stock > 0 else None
         avg_inv = stock + sold / 2.0
@@ -1480,6 +1487,7 @@ async def build_rotation(start: str, end: str,
             "unit": product_unit(p),
             "stock": stock,
             "sold": sold,
+            "avg_ticket": avg_ticket,
             "daily_rate": daily,
             "sellout_days": sellout_days,
             "rotation": rotation,
@@ -1492,6 +1500,28 @@ async def build_rotation(start: str, end: str,
     rows.sort(key=lambda r: (_prio.get(r["restock_suggestion"], 2),
                              -r["sold"], r["name"].lower()))
     return rows
+
+
+async def _period_sales_totals(s_iso: str, e_iso: str,
+                               product_ids: Optional[list],
+                               rejected_refs: set) -> tuple:
+    """Ingresos y nº de ventas válidas de una ventana [s_iso, e_iso), con los
+    mismos filtros que el dashboard (sin ventas fallidas, anuladas ni de canjes
+    rechazados). Usado para comparar el ticket promedio con el período anterior."""
+    match: dict = {"type": "venta", "created_at": {"$gte": s_iso, "$lt": e_iso},
+                   "stock_apply_failed": {"$ne": True}, "voided": {"$ne": True},
+                   "$or": [{"source": {"$ne": "marketplace"}},
+                           {"ref_id": {"$nin": list(rejected_refs)}}]}
+    if product_ids:
+        match["product_id"] = {"$in": product_ids}
+    agg = await db.inventory_movements.aggregate([
+        {"$match": match},
+        {"$group": {"_id": None, "revenue": {"$sum": {"$ifNull": ["$total", 0]}},
+                    "count": {"$sum": 1}}},
+    ]).to_list(1)
+    if agg:
+        return round(float(agg[0]["revenue"]), 2), int(agg[0]["count"])
+    return 0.0, 0
 
 
 async def build_dashboard(start: str, end: str,
@@ -1551,6 +1581,25 @@ async def build_dashboard(start: str, end: str,
             vip_commission = round(float(agg[0]["gross"]) - float(agg[0]["net"]), 2)
         else:
             vip_commission = 0.0
+    sales_count = len(ventas)
+    avg_ticket = round(revenue / sales_count, 2) if sales_count else 0.0
+    # Comparación con el período anterior de IGUAL duración, inmediatamente
+    # previo al rango elegido (respeta el filtro de mercancía).
+    from datetime import datetime as _dt, timedelta as _td
+    d_start = _dt.strptime(start, "%Y-%m-%d")
+    d_end = _dt.strptime(end, "%Y-%m-%d")
+    span = (d_end - d_start).days + 1
+    prev_end_d = d_start - _td(days=1)
+    prev_start_d = prev_end_d - _td(days=span - 1)
+    prev_s, _ = _day_bounds(prev_start_d.strftime("%Y-%m-%d"))
+    _, prev_e = _day_bounds(prev_end_d.strftime("%Y-%m-%d"))
+    all_rejected = await _rejected_marketplace_refs()
+    prev_rev, prev_cnt = await _period_sales_totals(
+        prev_s, prev_e, product_ids, all_rejected)
+    avg_ticket_prev = round(prev_rev / prev_cnt, 2) if prev_cnt else 0.0
+    avg_ticket_delta_pct = (
+        round((avg_ticket - avg_ticket_prev) / avg_ticket_prev * 100, 2)
+        if avg_ticket_prev > 0 else None)
     return {
         "start": start,
         "end": end,
@@ -1569,5 +1618,10 @@ async def build_dashboard(start: str, end: str,
         "units_in_stock": units_in_stock,
         "vip_commission_earned": vip_commission,
         "movements_count": len(movs),
-        "sales_count": len(ventas),
+        "sales_count": sales_count,
+        "avg_ticket": avg_ticket,
+        "avg_ticket_prev": avg_ticket_prev,
+        "avg_ticket_delta_pct": avg_ticket_delta_pct,
+        "prev_start": prev_start_d.strftime("%Y-%m-%d"),
+        "prev_end": prev_end_d.strftime("%Y-%m-%d"),
     }

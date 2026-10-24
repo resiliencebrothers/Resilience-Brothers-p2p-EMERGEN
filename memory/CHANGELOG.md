@@ -2716,3 +2716,9 @@ Informe Resilience_Revision_7e69777: R01 confirmado corregido y R02 ya resuelto 
 - **Backend (`services/inventory.py::build_dashboard`):** se añade `sales_count` = nº de movimientos de venta válidos del período (ya excluye ventas fallidas, anuladas y de canjes rechazados).
 - **Frontend (`InventoryDashboardTab.jsx`):** nuevo KPI "Ticket promedio" = `sales_revenue / sales_count` (guarda ÷0), en la primera fila junto a Ingresos (grid pasa a `lg:grid-cols-5`). i18n `avgTicket` en es ("Ticket promedio") y en ("Average ticket").
 - **Verificado:** endpoint devuelve `sales_count` (607, revenue 228.441,9 → ticket 376,35); UI desktop y móvil (390px) OK. Respeta los filtros de fecha y de mercancía existentes.
+
+## iter — Ticket promedio: por mercancía, comparación y export (2026-06)
+- **1) Ticket promedio por mercancía:** `build_rotation` agrega `revenue` y `sales_count` por producto y devuelve `avg_ticket` (= ingresos ÷ ventas) por fila; la tabla de rotación muestra la columna "Ticket prom." (`rotAvgTicket`, sky-300). `min-w` de la tabla 900→1000px, colSpan vacío 9→10.
+- **2) Comparar con período anterior:** `build_dashboard` calcula el período anterior de IGUAL duración inmediatamente previo (respeta filtro de mercancía) vía nuevo helper `_period_sales_totals`; devuelve `avg_ticket`, `avg_ticket_prev`, `avg_ticket_delta_pct` (None si no hay datos previos) y `prev_start/prev_end`. El KPI "Ticket promedio" muestra un badge ↑/↓ % "vs período anterior" (verde/rojo; neutro si no hay base previa). i18n `vsPrev`.
+- **3) Export a Excel:** la hoja "Dashboard" de `export.xlsx` incluye filas Ticket promedio, Ticket promedio período anterior y Variación ticket promedio %.
+- **Verificado:** mypy OK; dashboard Oct 1-24 → avg 516.26 vs prev 240.42 = +114.73% (badge verde); rotación con columna Ticket prom.; xlsx con las 3 filas nuevas; UI desktop OK.
