@@ -1569,4 +1569,5 @@ async def build_dashboard(start: str, end: str,
         "units_in_stock": units_in_stock,
         "vip_commission_earned": vip_commission,
         "movements_count": len(movs),
+        "sales_count": len(ventas),
     }

@@ -148,9 +148,10 @@ export default function InventoryDashboardTab() {
 
       {data && (
         <>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <Kpi testid="kpi-units-sold" label={t("inventory.dashboard.unitsSold")} value={fmt(data.units_sold)} />
             <Kpi testid="kpi-revenue" label={t("inventory.dashboard.revenue")} value={fmt(data.sales_revenue)} tone="text-[#8B5CF6]" />
+            <Kpi testid="kpi-avg-ticket" label={t("inventory.dashboard.avgTicket")} value={fmt(data.sales_count > 0 ? data.sales_revenue / data.sales_count : 0)} tone="text-sky-300" />
             <Kpi testid="kpi-cogs" label={t("inventory.dashboard.cogs")} value={fmt(data.cogs)} tone="text-neutral-300" />
             <Kpi testid="kpi-profit" label={t("inventory.dashboard.profit")} value={fmt(data.profit)} tone={data.profit >= 0 ? "text-emerald-400" : "text-red-400"} />
           </div>

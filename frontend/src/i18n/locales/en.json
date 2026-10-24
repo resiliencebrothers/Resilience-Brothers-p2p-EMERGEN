@@ -4662,6 +4662,7 @@
       "apply": "Apply",
       "unitsSold": "Units sold",
       "revenue": "Sales revenue",
+      "avgTicket": "Average ticket",
       "cogs": "Cost of goods sold",
       "profit": "Realized profit",
       "margin": "Realized margin",

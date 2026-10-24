@@ -2709,3 +2709,10 @@ Informe Resilience_Revision_7e69777: R01 confirmado corregido y R02 ya resuelto 
 - **Backend (`routes/admin_users.py`):** nuevo helper `_vendor_sales_summary(user_id)` (pipeline `$facet`): conteos por estado (entregadas/pendientes/rechazadas), ingreso bruto y neto (`vendor_credit_net`→`vendor_net_usdt`) de las ventas entregadas, actividad 30 días y top-5 productos por unidades. El endpoint `/admin/users/{id}/stats` incluye el bloque `sales` solo cuando `role == "empresa"` (null para otros roles).
 - **Frontend:** nuevo `user-stats/VendorSalesSection.jsx` (4 KPIs + chips de estado + tabla "Productos más vendidos"), renderizado en `AdminUserStatsPage` solo si llega `sales`.
 - **Verificado:** mypy OK; curl con 6 ventas de prueba → gross 105 / net 103.95 / 4 entregadas / 3 en 30d / top prodA 7.5lb(3) prodB 6u(1) — correcto; UI desktop y móvil (390px) OK; datos de prueba eliminados.
+
+## iter — KPI "Ticket promedio" en el dashboard de la tienda física (2026-06)
+- **Pedido:** añadir el KPI de ticket promedio a las estadísticas de las tiendas de la plataforma.
+- **Ubicación:** la sección de inventario ES "la tienda física" de la plataforma (Resilience) — `InventoryDashboardTab.jsx` / endpoint `/admin/inventory/dashboard`.
+- **Backend (`services/inventory.py::build_dashboard`):** se añade `sales_count` = nº de movimientos de venta válidos del período (ya excluye ventas fallidas, anuladas y de canjes rechazados).
+- **Frontend (`InventoryDashboardTab.jsx`):** nuevo KPI "Ticket promedio" = `sales_revenue / sales_count` (guarda ÷0), en la primera fila junto a Ingresos (grid pasa a `lg:grid-cols-5`). i18n `avgTicket` en es ("Ticket promedio") y en ("Average ticket").
+- **Verificado:** endpoint devuelve `sales_count` (607, revenue 228.441,9 → ticket 376,35); UI desktop y móvil (390px) OK. Respeta los filtros de fecha y de mercancía existentes.
