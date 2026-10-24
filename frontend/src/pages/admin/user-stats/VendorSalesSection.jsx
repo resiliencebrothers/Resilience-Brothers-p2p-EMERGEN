@@ -1,4 +1,4 @@
-import { Package, ShoppingBag, Coins, TrendingUp, Trophy, Clock, XCircle } from "lucide-react";
+import { Package, ShoppingBag, Coins, TrendingUp, Trophy, Clock, XCircle, Receipt } from "lucide-react";
 import { fmtNum } from "./userStatsMeta";
 
 const UNIT_ABBR = { unidad: "u", libra: "lb", kg: "kg" };
@@ -11,6 +11,7 @@ const unitAbbr = (u) => UNIT_ABBR[u] || "u";
  */
 export default function VendorSalesSection({ sales }) {
   const top = sales.top_products || [];
+  const avgTicket = sales.delivered_count > 0 ? sales.gross_usdt / sales.delivered_count : 0;
   return (
     <div className="space-y-4" data-testid="user-stats-sales-section">
       <div className="flex items-center gap-2">
@@ -18,7 +19,7 @@ export default function VendorSalesSection({ sales }) {
         <h2 className="font-display text-lg">Ventas de la empresa</h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <SalesKpi
           testid="user-stats-sales-delivered"
           icon={Package}
@@ -39,6 +40,13 @@ export default function VendorSalesSection({ sales }) {
           label="Ingreso neto"
           value={fmtNum(sales.net_usdt, 2)}
           sub="USDT · acreditado al saldo"
+        />
+        <SalesKpi
+          testid="user-stats-sales-avg-ticket"
+          icon={Receipt}
+          label="Ticket promedio"
+          value={fmtNum(avgTicket, 2)}
+          sub="USDT · ingreso ÷ ventas"
         />
         <SalesKpi
           testid="user-stats-sales-30d"
