@@ -304,4 +304,17 @@ async def account_assigned_balances(code: str) -> Dict[str, float]:
     ):
         _add(cw["paid_from_account_id"], -float(cw.get("amount") or 0.0))
 
+    # EF01 fase 2 — depósito cash RECOGIDO por un mensajero: el efectivo queda
+    # físicamente en su CUSTODIA hasta que lo rinde. Se atribuye a la cuenta de
+    # custodia SOLO en el reparto por cuenta (no toca el total global, que ya
+    # cuenta el depósito confirmado en `in_deposits`). Evita el doble conteo.
+    async for dep in db.deposits.find(
+        {"status": "confirmed", "currency": code,
+         "courier_custody_inflow": True,
+         "courier_custody_account_id": HAS_ACC},
+        {"_id": 0, "amount": 1, "courier_custody_account_id": 1},
+    ):
+        _add(dep["courier_custody_account_id"],
+             float(dep.get("amount") or 0.0))
+
     return totals

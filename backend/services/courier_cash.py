@@ -272,7 +272,8 @@ async def auto_events_for_delivered(d: dict, actor_id: str) -> None:
     try:
         if cid and kind == "deposit":
             ref = await db.deposits.find_one(
-                {"id": d["ref_id"]}, {"_id": 0, "amount": 1, "currency": 1})
+                {"id": d["ref_id"]},
+                {"_id": 0, "amount": 1, "currency": 1, "method": 1})
             if ref and float(ref.get("amount") or 0) > 0:
                 await record_cash_event(
                     courier_id=cid, courier_name=d.get("courier_name") or "",
@@ -280,6 +281,21 @@ async def auto_events_for_delivered(d: dict, actor_id: str) -> None:
                     amount=float(ref["amount"]), delivery_id=did,
                     note="Recogida de depósito en efectivo", by=actor_id,
                     op_key=f"auto:{did}:collected")
+                # EF01 fase 2 — el efectivo recogido queda en la CUSTODIA del
+                # mensajero hasta que lo rinda; se atribuye ahí (no a la caja ni
+                # a "sin asignar"). Reconocido una sola vez: el depósito ya
+                # cuenta en el total al confirmarse. Solo efectivo, forward-only.
+                if ref.get("method") == "cash" and \
+                        (d.get("updated_at") or d.get("created_at") or "") \
+                        >= CUSTODY_EPOCH:
+                    custody = await get_or_create_courier_custody_account(
+                        cid, d.get("courier_name") or "",
+                        ref.get("currency") or "")
+                    await db.deposits.update_one(
+                        {"id": d["ref_id"],
+                         "courier_custody_inflow": {"$ne": True}},
+                        {"$set": {"courier_custody_inflow": True,
+                                  "courier_custody_account_id": custody["id"]}})
         elif cid and kind == "withdrawal":
             ref = await db.withdrawals.find_one(
                 {"id": d["ref_id"]},
