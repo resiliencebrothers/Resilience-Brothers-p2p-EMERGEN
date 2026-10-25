@@ -77,12 +77,14 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
                                kind: str, currency: str, amount: Any,
                                account_id: str, note: str = "",
                                discrepancy_note: str = "",
+                               denominations: Optional[dict] = None,
                                actor_id: str, actor_name: str = "",
                                op_key: Optional[str] = None) -> dict:
     """EF01/EF02/EF03 — entrega (`issued`) o rendición (`returned`) de efectivo
     como TRASLADO DE CUSTODIA entre la cuenta de caja elegida y la custodia del
     mensajero, conservando el total. Valida disponibilidad de forma atómica
-    (bloquea si no alcanza) e idempotente por `op_key`."""
+    (bloquea si no alcanza) e idempotente por `op_key`. Si se envía el desglose
+    de billetes (`denominations`), se valida y se guarda para cuadrar la caja."""
     if kind not in ("issued", "returned"):
         raise HTTPException(status_code=400, detail="kind inválido")
     try:
@@ -93,13 +95,21 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
         raise HTTPException(status_code=400, detail="Importe inválido")
 
     from services.currency_utils import norm_code as _norm_code
+    from services.denominations import get_cash_denominations
     code = _norm_code(currency)
     if not code:
         raise HTTPException(status_code=400, detail="Moneda inválida")
+    valid_denoms = (await get_cash_denominations()).get(code)
     if code not in await physical_cash_currencies():
         raise HTTPException(
             status_code=400,
             detail=f"«{code}» no es una moneda de efectivo física configurada")
+
+    clean_denoms = None
+    if denominations:
+        from routes.admin_company_funds import _validate_denominations
+        clean_denoms = _validate_denominations(
+            code, denominations, amt, valid_denoms)
 
     from services.fund_accounts import (resolve_payout_account,
                                          account_assigned_balances)
@@ -160,7 +170,7 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
             "to_account_id": to, "to_label": to_label,
             "amount": amt,
             "note": (f"Efectivo mensajero: {note}".strip())[:200],
-            "denominations": None,
+            "denominations": clean_denoms,
             "actor_id": actor_id, "actor_name": actor_name or "",
             "created_at": iso(now_utc()), "status": "pending",
             "operation_id": op_key or "",
@@ -203,7 +213,8 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
         courier_id=courier_id, courier_name=courier_name, kind=kind,
         currency=code, amount=amt, note=note, by=actor_id, by_name=actor_name,
         op_key=op_key, discrepancy=bool(discrepancy_note),
-        discrepancy_note=discrepancy_note, transfer_id=doc["id"])
+        discrepancy_note=discrepancy_note, transfer_id=doc["id"],
+        denominations=clean_denoms)
     if ev is None:  # el evento ya existía (reintento): devuelve el persistido
         ev = await db.courier_cash_events.find_one(
             {"op_key": op_key} if op_key else {"id": doc["id"]}, {"_id": 0})
@@ -227,7 +238,8 @@ async def record_cash_event(*, courier_id: str, courier_name: str, kind: str,
                             by_name: str = "", op_key: Optional[str] = None,
                             discrepancy: bool = False,
                             discrepancy_note: str = "",
-                            transfer_id: Optional[str] = None) -> Optional[dict]:
+                            transfer_id: Optional[str] = None,
+                            denominations: Optional[dict] = None) -> Optional[dict]:
     if kind not in EVENT_KINDS:
         raise HTTPException(status_code=400, detail="Tipo de evento inválido")
     try:
@@ -247,6 +259,7 @@ async def record_cash_event(*, courier_id: str, courier_name: str, kind: str,
         "by": by, "by_name": by_name or "",
         "discrepancy": bool(discrepancy),
         "discrepancy_note": (discrepancy_note or "")[:300],
+        "denominations": denominations or None,
         "transfer_id": transfer_id, "at": iso(now_utc()),
     }
     if op_key:
@@ -403,6 +416,7 @@ async def cash_pending(courier_id: Optional[str] = None) -> list:
         {"$group": {"_id": {"c": "$courier_id", "cur": "$currency",
                             "k": "$kind"},
                     "total": {"$sum": "$amount"},
+                    "oldest": {"$min": "$at"}, "latest": {"$max": "$at"},
                     "name": {"$last": "$courier_name"}}},
     ]).to_list(4000)
     acc: dict = {}
@@ -413,14 +427,56 @@ async def cash_pending(courier_id: Optional[str] = None) -> list:
                                  "currency": r["_id"]["cur"],
                                  "issued": 0.0, "collected": 0.0,
                                  "delivered_to_recipient": 0.0,
-                                 "returned": 0.0})
+                                 "returned": 0.0,
+                                 "oldest_at": None, "latest_at": None})
         e[r["_id"]["k"]] = round(float(r["total"]), 2)
         if r.get("name"):
             e["courier_name"] = r["name"]
+        if r.get("oldest") and (not e["oldest_at"] or r["oldest"] < e["oldest_at"]):
+            e["oldest_at"] = r["oldest"]
+        if r.get("latest") and (not e["latest_at"] or r["latest"] > e["latest_at"]):
+            e["latest_at"] = r["latest"]
     out = []
     for e in acc.values():
         e["pending"] = round(e["issued"] + e["collected"]
                              - e["delivered_to_recipient"] - e["returned"], 2)
         out.append(e)
     out.sort(key=lambda x: (-abs(x["pending"]), x["courier_name"]))
+    return out
+
+
+async def reconciliation_by_currency() -> list:
+    """Conciliación por moneda (sección 8 del informe): distingue efectivo en
+    CAJA física, en TRÁNSITO (custodia confirmada) y recogido PENDIENTE de
+    confirmar. `in_transit` es la custodia contable (cuentas de custodia);
+    `ledger_pending` es la vista operativa (ledger de eventos); su diferencia es
+    el efectivo recogido aún sin confirmar su depósito."""
+    from services.fund_accounts import account_assigned_balances
+    pend_by_cur: dict = {}
+    for r in await cash_pending():
+        pend_by_cur[r["currency"]] = round(
+            pend_by_cur.get(r["currency"], 0.0) + r["pending"], 2)
+    out = []
+    for code in sorted(await physical_cash_currencies()):
+        assigned = await account_assigned_balances(code)
+        box_ids: set = set()
+        custody_ids: set = set()
+        async for fa in db.fund_accounts.find(
+            {"currency": code, "merged_into": {"$exists": False}},
+            {"_id": 0, "id": 1, "method": 1, "courier_custody_id": 1},
+        ):
+            if fa.get("courier_custody_id"):
+                custody_ids.add(fa["id"])
+            elif fa.get("method") == "cash":
+                box_ids.add(fa["id"])
+        box = round(sum(v for k, v in assigned.items() if k in box_ids), 2)
+        transit = round(sum(v for k, v in assigned.items()
+                            if k in custody_ids), 2)
+        ledger = round(pend_by_cur.get(code, 0.0), 2)
+        out.append({
+            "currency": code, "box": box, "in_transit": transit,
+            "ledger_pending": ledger,
+            "collected_unconfirmed": round(ledger - transit, 2),
+            "total": round(box + transit, 2),
+        })
     return out

@@ -961,19 +961,95 @@ async def courier_cash_view(request: Request) -> Any:
 
 @router.get("/admin/courier-cash/summary")
 async def admin_courier_cash_summary(request: Request) -> Any:
-    """Efectivo en tránsito por mensajero y moneda (pendiente de rendición)."""
+    """Efectivo en tránsito por mensajero y moneda (pendiente de rendición),
+    con antigüedad del pendiente para alertar rendiciones atrasadas."""
     await require_permission(request, "deliveries")
     from services.courier_cash import cash_pending
     return {"couriers": await cash_pending()}
 
 
+@router.get("/admin/courier-cash/reconciliation")
+async def admin_courier_cash_reconciliation(request: Request) -> Any:
+    """Conciliación por moneda: caja física, tránsito (custodia confirmada),
+    recogido pendiente de confirmar y total."""
+    await require_permission(request, "deliveries")
+    from services.courier_cash import reconciliation_by_currency
+    return {"rows": await reconciliation_by_currency()}
+
+
+def _cash_events_query(courier_id: Optional[str], currency: Optional[str],
+                       kind: Optional[str], start: Optional[str],
+                       end: Optional[str]) -> dict:
+    q: dict = {}
+    if courier_id:
+        q["courier_id"] = courier_id
+    if currency:
+        q["currency"] = (currency or "").strip().upper()
+    if kind:
+        q["kind"] = kind
+    if start or end:
+        at: dict = {}
+        if start:
+            at["$gte"] = start
+        if end:
+            at["$lte"] = end + "T23:59:59.999999+00:00"
+        q["at"] = at
+    return q
+
+
 @router.get("/admin/courier-cash")
 async def admin_courier_cash_events(request: Request,
-                                    courier_id: Optional[str] = None) -> Any:
+                                    courier_id: Optional[str] = None,
+                                    currency: Optional[str] = None,
+                                    kind: Optional[str] = None,
+                                    start: Optional[str] = None,
+                                    end: Optional[str] = None,
+                                    skip: int = 0,
+                                    limit: int = 25) -> Any:
+    """Historial de movimientos de efectivo, paginado y filtrable."""
     await require_permission(request, "deliveries")
-    q = {"courier_id": courier_id} if courier_id else {}
-    return await db.courier_cash_events.find(
-        q, {"_id": 0}).sort("at", -1).to_list(100)
+    q = _cash_events_query(courier_id, currency, kind, start, end)
+    limit = max(1, min(int(limit or 25), 200))
+    skip = max(0, int(skip or 0))
+    total = await db.courier_cash_events.count_documents(q)
+    items = await db.courier_cash_events.find(q, {"_id": 0}).sort(
+        "at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+@router.get("/admin/courier-cash/export.csv")
+async def admin_courier_cash_export(request: Request,
+                                    courier_id: Optional[str] = None,
+                                    currency: Optional[str] = None,
+                                    kind: Optional[str] = None,
+                                    start: Optional[str] = None,
+                                    end: Optional[str] = None) -> Any:
+    """Exporta a CSV los movimientos de efectivo filtrados."""
+    await require_permission(request, "deliveries")
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    q = _cash_events_query(courier_id, currency, kind, start, end)
+    rows = await db.courier_cash_events.find(q, {"_id": 0}).sort(
+        "at", -1).to_list(20000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Fecha", "Mensajero", "Tipo", "Moneda", "Importe",
+                "Diferencia", "Nota", "Nota diferencia", "Desglose billetes",
+                "Registrado por"])
+    for r in rows:
+        denoms = r.get("denominations") or {}
+        denom_str = "; ".join(f"{k}x{v}" for k, v in denoms.items())
+        w.writerow([r.get("at", ""), r.get("courier_name") or r.get("courier_id") or "",
+                    r.get("kind", ""), r.get("currency", ""), r.get("amount", ""),
+                    "sí" if r.get("discrepancy") else "",
+                    r.get("note", ""), r.get("discrepancy_note", ""),
+                    denom_str, r.get("by_name") or r.get("by") or ""])
+    buf.seek(0)
+    fname = f"efectivo_mensajeria_{(start or 'inicio')}_{(end or 'hoy')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @router.get("/admin/courier-cash/options")
@@ -982,7 +1058,9 @@ async def admin_courier_cash_options(request: Request) -> Any:
     moneda para el formulario (excluye cuentas de custodia de mensajeros)."""
     await require_permission(request, "deliveries")
     from services.courier_cash import physical_cash_currencies
+    from services.denominations import get_cash_denominations
     currencies = sorted(await physical_cash_currencies())
+    denoms = await get_cash_denominations()
     accounts: dict = {}
     for code in currencies:
         rows = []
@@ -994,7 +1072,8 @@ async def admin_courier_cash_options(request: Request) -> Any:
         ):
             rows.append({"id": fa["id"], "label": fa.get("name") or fa["id"]})
         accounts[code] = rows
-    return {"currencies": currencies, "accounts": accounts}
+    return {"currencies": currencies, "accounts": accounts,
+            "denominations": {c: denoms.get(c, []) for c in currencies}}
 
 
 @router.post("/admin/courier-cash")
@@ -1030,6 +1109,7 @@ async def admin_courier_cash_register(payload: dict,
         currency=str(payload.get("currency") or ""),
         amount=payload.get("amount"), account_id=account_id,
         note=(payload.get("note") or ""), discrepancy_note=discrepancy_note,
+        denominations=(payload.get("denominations") or None),
         actor_id=actor["user_id"], actor_name=actor.get("name") or "",
         op_key=(payload.get("operation_id") or None))
     ev = result["event"]
