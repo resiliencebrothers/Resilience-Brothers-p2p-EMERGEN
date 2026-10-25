@@ -321,15 +321,15 @@ export default function CourierCashTab() {
                 <tr key={`${s.courier_id}-${s.currency}`} className="border-b border-white/5" data-testid={`cash-row-${s.courier_id}-${s.currency}`}>
                   <td className="px-3 py-3 text-xs">{s.courier_name || s.courier_id}</td>
                   <td className="px-3 py-3 font-mono text-xs">{s.currency}</td>
-                  <td className="px-3 py-3 font-mono text-xs">{s.issued}</td>
-                  <td className="px-3 py-3 font-mono text-xs">{s.collected}</td>
-                  <td className="px-3 py-3 font-mono text-xs">{s.delivered_to_recipient}</td>
-                  <td className="px-3 py-3 font-mono text-xs">{s.returned}</td>
+                  <td className="px-3 py-3 font-mono text-xs">{Number(s.issued).toLocaleString()}</td>
+                  <td className="px-3 py-3 font-mono text-xs">{Number(s.collected).toLocaleString()}</td>
+                  <td className="px-3 py-3 font-mono text-xs">{Number(s.delivered_to_recipient).toLocaleString()}</td>
+                  <td className="px-3 py-3 font-mono text-xs">{Number(s.returned).toLocaleString()}</td>
                   <td className={`px-3 py-3 font-mono text-sm font-semibold ${
                     s.pending > 0 ? "text-amber-300" : s.pending < 0 ? "text-[#EF4444]" : "text-[#22C55E]"
                   }`} data-testid={`cash-pending-${s.courier_id}-${s.currency}`}>
                     <span className="inline-flex items-center gap-1.5">
-                      {s.pending}
+                      {Number(s.pending).toLocaleString()}
                       {stale && (
                         <span className="inline-flex items-center gap-0.5 text-[0.6rem] text-[#EF4444] border border-[#EF4444]/40 px-1 rounded-sm" data-testid={`cash-stale-${s.courier_id}-${s.currency}`} title={t("admin.cash.staleTitle")}>
                           <Clock className="w-2.5 h-2.5" /> {age}d
@@ -416,7 +416,7 @@ export default function CourierCashTab() {
               )}
               {denomStr && <span className="text-sky-300/70 font-mono text-[0.6rem]">🧾 {denomStr}</span>}
               {ev.note && <span className="text-neutral-500 italic">· {ev.note}</span>}
-              <span className="text-neutral-600 font-mono text-[0.65rem] ml-auto">
+              <span className="text-neutral-400 font-mono text-[0.65rem] ml-auto">
                 {new Date(ev.at).toLocaleString()}
               </span>
             </div>

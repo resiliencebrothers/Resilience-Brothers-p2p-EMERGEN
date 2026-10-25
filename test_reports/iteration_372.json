@@ -1,0 +1,62 @@
+{
+  "summary": "Frontend-only UI test of Admin > Deliveries > Cash (Efectivo) tab: reconciliation by currency, custody panel with stale alerts, bill breakdown + mismatch validation, paginated history with filters, CSV export. All requested flows PASS. No successful cash movement was registered (0 POSTs to /api/admin/courier-cash were sent).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Cash tab - history list",
+        "issues": [
+          "Timestamps use text-neutral-600 on a dark background, so contrast is low"
+        ]
+      },
+      {
+        "screen": "Cash tab - custody table",
+        "issues": [
+          "Amounts are not formatted (153000), while the reconciliation cards are (165,800). Use toLocaleString the same way"
+        ]
+      },
+      {
+        "screen": "Cash tab - language",
+        "issues": [
+          "The test admin sees the UI in English even though the switcher says ES (probably this user's preference; es.json keys exist)"
+        ]
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: check whether 'Total custody' should include collected_unconfirmed. Today total = box + transit (USD shows Total -66 while 165,800 is unconfirmed)",
+    "Optional: USD IN BOX is -66 (negative physical box balance). Data worth investigating",
+    "Optional: format custody table numbers and raise timestamp contrast"
+  ],
+  "critical_code_review_comments": [
+    "CourierCashTab.jsx swallows API errors silently (.catch(()=>{})) and has no error or loading state",
+    "reconciliation total excludes collected_unconfirmed. Confirm the business rule"
+  ],
+  "verified": [
+    "Admin cookie auth works and the admin-tab-courier-cash tab opens",
+    "reconcile-CUP and reconcile-USD render numbers (USD box -66, transit 0, unconf 165,800)",
+    "Custody table has 6 rows; red stale badges: cash-stale-it288_courier_a-USD 32d (pending 153000), it283_courier-USD 32d, it295_courier_a-USD 31d",
+    "Bill breakdown panel opens; CUP has 12 denominations, USD has 7",
+    "Amount 100 with 50x1 shows the sum in red '≠ 100'; submit shows the error toast 'The bill breakdown does not match the amount'; no POST sent",
+    "50x2 shows 'matches ✓' in green (not submitted); changing currency resets the breakdown",
+    "CUP account select shows 'Fondo Resilience'",
+    "History: 198 movements, 1 / 8; Next goes to 2 / 8 with different rows; Prev works; Prev is disabled on page 1",
+    "Filters: issued gives 0; collected gives 193 and all rows are collected; CUP gives 0; USD gives 193",
+    "Export CSV opens a new tab and the UI stays intact; the endpoint returns 200 text/csv with an attachment header"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (skipped)",
+    "frontend": "100%"
+  },
+  "seed_data_creation": "None. No cash movements were created",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth: cookie session_token=test_session_admin_X, wait_until=domcontentloaded. Radix selects: click the trigger, wait 300ms, then click get_by_role('option'). Do not submit valid cash movements."
+}
