@@ -1759,7 +1759,6 @@
       "exportedToast": "Commissions CSV downloaded.",
       "exportError": "Could not export the commissions CSV."
     },
-
     "companyFunds": {
       "eyebrow": "/ Company Fund",
       "totalUsdt": {
@@ -2281,6 +2280,17 @@
         "collected": "Collected from client",
         "delivered_to_recipient": "Delivered to recipient",
         "returned": "Returned to box"
+      },
+      "colKind": "Type",
+      "colAmount": "Amount",
+      "colState": "State",
+      "colDate": "Date",
+      "incompleteTitle": "Transfer audit",
+      "incompleteDesc": "Half-finished cash retries: check whether a transfer was left unconfirmed, aborted, or confirmed without recording its ledger event.",
+      "incompleteReason": {
+        "confirmed_no_event": "Confirmed without event",
+        "pending_unconfirmed": "Pending confirmation",
+        "aborted": "Aborted (no money moved)"
       }
     }
   },

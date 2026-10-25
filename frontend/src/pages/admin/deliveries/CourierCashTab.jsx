@@ -34,6 +34,7 @@ export default function CourierCashTab() {
   const { t } = useTranslation();
   const [summary, setSummary] = useState([]);
   const [reconcile, setReconcile] = useState([]);
+  const [incomplete, setIncomplete] = useState([]);
   const [events, setEvents] = useState({ items: [], total: 0 });
   const [couriers, setCouriers] = useState([]);
   const [options, setOptions] = useState({ currencies: [], accounts: {}, denominations: {} });
@@ -64,6 +65,8 @@ export default function CourierCashTab() {
       .then((r) => setSummary(r.data.couriers || [])).catch(() => {});
     axios.get(`${API}/admin/courier-cash/reconciliation`, { withCredentials: true })
       .then((r) => setReconcile(r.data.rows || [])).catch(() => {});
+    axios.get(`${API}/admin/courier-cash/incomplete-transfers`, { withCredentials: true })
+      .then((r) => setIncomplete(r.data.rows || [])).catch(() => {});
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data || [])).catch(() => {});
     axios.get(`${API}/admin/courier-cash/options`, { withCredentials: true })
@@ -234,7 +237,49 @@ export default function CourierCashTab() {
         </div>
       </div>
 
-      {/* Registro manual: caja → mensajero / rendición recibida */}
+      {/* Auditoría de traslados — reintentos de efectivo a medias (EC01/EC02) */}
+      {incomplete.length > 0 && (
+        <div className="space-y-2" data-testid="cash-incomplete-transfers">
+          <div className="micro-label text-amber-300 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" /> {t("admin.cash.incompleteTitle")}
+          </div>
+          <p className="text-xs text-neutral-500">{t("admin.cash.incompleteDesc")}</p>
+          <div className="tactile-card overflow-x-auto">
+            <table className="w-full text-xs" data-testid="cash-incomplete-table">
+              <thead>
+                <tr className="text-left text-neutral-500 border-b border-white/10">
+                  <th className="px-3 py-2 font-medium">{t("admin.deliveries.colCourier")}</th>
+                  <th className="px-3 py-2 font-medium">{t("admin.cash.colKind")}</th>
+                  <th className="px-3 py-2 font-medium text-right">{t("admin.cash.colAmount")}</th>
+                  <th className="px-3 py-2 font-medium">{t("admin.cash.colState")}</th>
+                  <th className="px-3 py-2 font-medium">{t("admin.cash.colDate")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {incomplete.map((r) => {
+                  const c = couriers.find((x) => x.user_id === r.courier_id);
+                  const tone = r.incomplete_reason === "confirmed_no_event"
+                    ? "text-amber-300" : r.incomplete_reason === "aborted"
+                      ? "text-neutral-400" : "text-[#8B5CF6]";
+                  return (
+                    <tr key={r.id} className="border-b border-white/5" data-testid={`cash-incomplete-${r.id}`}>
+                      <td className="px-3 py-2">{c?.name || c?.email || r.courier_id || "—"}</td>
+                      <td className="px-3 py-2">{t(`admin.cash.kind.${r.courier_cash_kind}`, r.courier_cash_kind)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{Number(r.amount).toLocaleString()} {r.currency}</td>
+                      <td className={`px-3 py-2 ${tone}`} data-testid={`cash-incomplete-reason-${r.id}`}>
+                        {t(`admin.cash.incompleteReason.${r.incomplete_reason}`)}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-neutral-500">
+                        {r.created_at ? new Date(r.created_at).toLocaleString() : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       <div className="tactile-card p-4 space-y-3">
         <div className="micro-label text-neutral-500 flex items-center gap-2">
           <Banknote className="w-4 h-4 text-[#8B5CF6]" /> {t("admin.cash.registerTitle")}

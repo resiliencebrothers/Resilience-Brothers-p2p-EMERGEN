@@ -1759,7 +1759,6 @@
       "exportedToast": "CSV de comisiones descargado.",
       "exportError": "No se pudo exportar el CSV de comisiones."
     },
-
     "companyFunds": {
       "eyebrow": "/ Fondo de la Empresa",
       "totalUsdt": {
@@ -2281,6 +2280,17 @@
         "collected": "Recogido del cliente",
         "delivered_to_recipient": "Entregado al destinatario",
         "returned": "Rendido a caja"
+      },
+      "colKind": "Tipo",
+      "colAmount": "Importe",
+      "colState": "Estado",
+      "colDate": "Fecha",
+      "incompleteTitle": "Auditoría de traslados",
+      "incompleteDesc": "Reintentos de efectivo a medias: revisa si un traslado quedó sin confirmar, se abortó o se confirmó sin registrar su evento en el ledger.",
+      "incompleteReason": {
+        "confirmed_no_event": "Confirmado sin evento",
+        "pending_unconfirmed": "Pendiente de confirmar",
+        "aborted": "Abortado (sin mover dinero)"
       }
     }
   },

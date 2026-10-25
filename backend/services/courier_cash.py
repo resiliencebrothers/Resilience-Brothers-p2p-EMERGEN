@@ -73,6 +73,39 @@ async def get_or_create_courier_custody_account(courier_id: str,
     return {"id": fa["id"], "label": fa.get("name") or fa["id"]}
 
 
+async def courier_held_cash(courier_id: str, code: str) -> float:
+    """EC02 — efectivo que el mensajero tiene por rendir en `code`, de forma
+    ATÓMICA respecto al dinero ya movido. Parte del pendiente del ledger
+    (eventos) y lo AJUSTA con los traslados de custodia YA CONFIRMADOS que aún
+    no tienen su evento escrito (ventana entre confirmar el traslado y registrar
+    el evento). Sin este ajuste, dos rendiciones concurrentes leerían el mismo
+    pendiente anterior y podrían sobre-rendir. No se apoya solo en la proyección
+    del ledger, que se actualiza DESPUÉS de soltar el cerrojo."""
+    held = 0.0
+    for row in await cash_pending(courier_id):
+        if row["currency"] == code:
+            held = round(float(row["pending"]), 2)
+            break
+    trs = await db.fund_account_transfers.find(
+        {"courier_id": courier_id, "currency": code, "status": "confirmed",
+         "courier_cash_kind": {"$in": ["issued", "returned"]}},
+        {"_id": 0, "operation_id": 1, "courier_cash_kind": 1, "amount": 1},
+    ).to_list(5000)
+    op_keys = [t["operation_id"] for t in trs if t.get("operation_id")]
+    evented: set = set()
+    if op_keys:
+        async for e in db.courier_cash_events.find(
+                {"op_key": {"$in": op_keys}}, {"_id": 0, "op_key": 1}):
+            evented.add(e["op_key"])
+    for t in trs:
+        if t.get("operation_id") in evented:
+            continue  # ya reflejado en el ledger (eventos); no re-contar
+        amt = round(float(t.get("amount") or 0), 2)
+        held += amt if t.get("courier_cash_kind") == "issued" else -amt
+    return round(held, 2)
+
+
+
 async def issue_or_return_cash(*, courier_id: str, courier_name: str,
                                kind: str, currency: str, amount: Any,
                                account_id: str, note: str = "",
@@ -161,11 +194,7 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
                     detail=(f"Saldo insuficiente en «{account['label']}»: "
                             f"disponible {avail:.2f} {code}"))
         else:  # returned
-            held = 0.0
-            for row in await cash_pending(courier_id):
-                if row["currency"] == code:
-                    held = round(float(row["pending"]), 2)
-                    break
+            held = await courier_held_cash(courier_id, code)
             if amt > held + 1e-9:
                 raise HTTPException(
                     status_code=400,
@@ -280,15 +309,20 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
     except Exception as exc:  # el job periódico lo sana
         logger.error("espejo de caja del traslado %s falló: %s", doc["id"], exc)
 
+    # EC02 — el evento lleva SIEMPRE la misma clave que el `operation_id` del
+    # traslado (clave del cliente o, en su defecto, el id del traslado). Así el
+    # ajuste de custodia en vuelo (`courier_held_cash`) empareja traslado↔evento
+    # de forma fiable, incluso sin clave de idempotencia del cliente.
+    ev_key = doc.get("operation_id") or doc["id"]
     ev = await record_cash_event(
         courier_id=courier_id, courier_name=courier_name, kind=kind,
         currency=code, amount=amt, note=note, by=actor_id, by_name=actor_name,
-        op_key=op_key, discrepancy=bool(discrepancy_note),
+        op_key=ev_key, discrepancy=bool(discrepancy_note),
         discrepancy_note=discrepancy_note, transfer_id=doc["id"],
         denominations=clean_denoms)
     if ev is None:  # el evento ya existía (reintento): devuelve el persistido
         ev = await db.courier_cash_events.find_one(
-            {"op_key": op_key} if op_key else {"id": doc["id"]}, {"_id": 0})
+            {"op_key": ev_key}, {"_id": 0})
     return {"event": ev, "transfer": doc}
 
 
@@ -649,4 +683,43 @@ async def reconciliation_by_currency() -> list:
             "collected_unconfirmed": round(ledger - transit, 2),
             "total": round(box + transit, 2),
         })
+    return out
+
+
+
+async def incomplete_cash_transfers(limit: int = 100) -> list:
+    """Auditoría de traslados — reintentos de efectivo A MEDIAS que el operador
+    debería revisar: traslados PENDIENTES de confirmar, ABORTADOS (perdieron el
+    turno de gasto, sin mover dinero), o CONFIRMADOS cuyo evento del ledger aún
+    no se escribió (ventana de reintento EC01/EC02). Un traslado completo
+    (confirmado + evento) nunca aparece aquí."""
+    rows = await db.fund_account_transfers.find(
+        {"courier_cash_kind": {"$exists": True},
+         "status": {"$in": ["pending", "aborted", "confirmed"]}},
+        {"_id": 0, "id": 1, "operation_id": 1, "courier_id": 1,
+         "currency": 1, "amount": 1, "courier_cash_kind": 1, "status": 1,
+         "created_at": 1, "confirmed_at": 1, "aborted_reason": 1,
+         "from_label": 1, "to_label": 1, "actor_name": 1},
+    ).sort("created_at", -1).to_list(3000)
+    confirmed_keys = [r["operation_id"] for r in rows
+                      if r.get("status") == "confirmed" and r.get("operation_id")]
+    evented: set = set()
+    if confirmed_keys:
+        async for e in db.courier_cash_events.find(
+                {"op_key": {"$in": confirmed_keys}}, {"_id": 0, "op_key": 1}):
+            evented.add(e["op_key"])
+    out = []
+    for r in rows:
+        st = r.get("status")
+        if st == "confirmed":
+            if r.get("operation_id") in evented:
+                continue  # completo: traslado + evento
+            r["incomplete_reason"] = "confirmed_no_event"
+        elif st == "pending":
+            r["incomplete_reason"] = "pending_unconfirmed"
+        else:
+            r["incomplete_reason"] = "aborted"
+        out.append(r)
+        if len(out) >= limit:
+            break
     return out

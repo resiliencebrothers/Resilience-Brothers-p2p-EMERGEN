@@ -3225,3 +3225,21 @@ Verificación: ruff + AST OK, servicios RUNNING, curl autenticado de los 3 endpo
 - Rechazo (409) de reutilización de clave con importe, mensajero, moneda, cuenta o tipo distintos (`_assert_same_op`).
 **Verificación:** `tests/test_ec01_cash_idempotency.py` (contra DB real) — 4/4 PASS: fallo de evento+reintento (1 transf 20.000, 1 evento), abort+reintento (revive mismo doc), concurrencia misma clave (1 transf/1 evento), reutilización con parámetros distintos rechazada.
 **Pendiente (no abordado aún):** mejoras SLA solicitadas antes del bug — Alerta temprana a Despacho (aviso al 80% del SLA) y Umbral SLA por zona/servicio.
+
+## EC02 — Cerrojo liberado antes de actualizar la custodia (BUGFIX, 2026-10-25)
+**Severidad:** ALTA (análisis estático de intercalado). La rendición (`returned`) validaba disponibilidad con `cash_pending` (proyección del ledger de eventos), pero el evento se escribe DESPUÉS de confirmar el traslado y soltar el cerrojo. Dos rendiciones concurrentes con claves distintas podían leer el mismo pendiente anterior y sobre-rendir (p.ej. 2×15.000 sobre 20.000).
+**Corrección (backend/services/courier_cash.py):**
+- Nueva `courier_held_cash(courier_id, code)`: disponible = pendiente del ledger AJUSTADO por los traslados de custodia YA CONFIRMADOS que aún no tienen evento escrito (issued +, returned −). No se apoya solo en la proyección que se actualiza tras soltar el cerrojo; cubre también la ventana de recuperación EC01.
+- El evento lleva SIEMPRE `op_key == operation_id` del traslado (clave del cliente o id del traslado), para emparejar traslado↔evento de forma fiable.
+- La verificación de disponibilidad `returned` usa `courier_held_cash` dentro del cerrojo.
+**Verificación:** `tests/test_ec01_cash_idempotency.py` — 6/6 PASS (incluye EC02: rendiciones concurrentes distintas → solo 1 aprobada, pendiente final 5.000; y rechazo con traslado confirmado y evento en vuelo).
+
+## Auditoría de Traslados (FEATURE, 2026-10-25)
+- Backend: `GET /api/admin/courier-cash/incomplete-transfers` + `incomplete_cash_transfers()` — lista traslados de efectivo A MEDIAS (pendientes de confirmar, abortados, o confirmados sin evento). Excluye los completos.
+- Frontend: sección "Auditoría de traslados" en `CourierCashTab.jsx` (tabla con mensajero, tipo, importe, estado, fecha), solo visible si hay reintentos incompletos. i18n ES/EN.
+- Verificado: detección de los 3 estados (test directo) + render en preview (desktop).
+
+## Pendiente (solicitado, no implementado)
+- **Umbral por Zona (SLA):** SLA distinto por municipio o tipo de servicio (backend ya tiene `municipality` y `kind` por entrega). Diseño listo: `settings.global.delivery_sla_by_municipality` / `by_kind`, resolver `effective_sla_for`, reescribir `find_attention_items` para clasificar overdue/approaching por SLA efectivo, endpoints GET/PUT `/admin/deliveries/sla-config`, UI gestora. Al añadirlo, `cancel-overdue` y la métrica de cumplimiento deben usar el SLA efectivo.
+- **Alerta temprana a Despacho:** aviso al 80% del SLA (pre-breach) para cerrar antes de cancelar.
+- **Prueba de Carga de Efectivo:** arnés continuo de reintentos/concurrencia (base ya existe en `tests/test_ec01_cash_idempotency.py`).

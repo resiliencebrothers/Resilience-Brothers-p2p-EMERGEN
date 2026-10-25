@@ -70,6 +70,13 @@ def _issue(op_key, amount=20000.0):
         actor_id="admin_test", actor_name="Admin Test", op_key=op_key)
 
 
+def _return(op_key, amount):
+    return cc.issue_or_return_cash(
+        courier_id=COURIER, courier_name="Mensajero EC01", kind="returned",
+        currency=CODE, amount=amount, account_id=ACCT,
+        actor_id="admin_test", actor_name="Admin Test", op_key=op_key)
+
+
 async def test_event_failure_then_retry():
     """EC01 núcleo: transferencia+espejo OK, evento falla, reintento con la
     MISMA clave → UN traslado (20.000, no 40.000) y UN evento (20.000)."""
@@ -179,13 +186,83 @@ async def test_key_reuse_different_params_rejected():
     print("PASS test_key_reuse_different_params_rejected")
 
 
+async def test_ec02_concurrent_returns_no_overdraw():
+    """EC02: pendiente 20.000; dos rendiciones de 15.000 con claves DISTINTAS
+    concurrentes. Solo una debe aprobarse: no se puede rendir 30.000 de 20.000."""
+    await _setup()
+    # El mensajero recibe 20.000 (quedan por rendir).
+    await _issue("EC02-SEED-ISSUE", amount=20000.0)
+    held0 = await cc.courier_held_cash(COURIER, CODE)
+    assert held0 == 20000.0, f"pendiente inicial {held0} != 20000"
+
+    r = await asyncio.gather(
+        _return("EC02-RET-A", 15000.0), _return("EC02-RET-B", 15000.0),
+        return_exceptions=True)
+    oks = [x for x in r if not isinstance(x, Exception)]
+    errs = [x for x in r if isinstance(x, Exception)]
+    print("  rendiciones:", "ok=%d err=%d" % (len(oks), len(errs)),
+          [getattr(e, "detail", type(e).__name__)[:30] for e in errs])
+
+    ret_tr = await db.fund_account_transfers.find(
+        {"courier_id": COURIER, "courier_cash_kind": "returned",
+         "status": "confirmed"}, {"_id": 0}).to_list(100)
+    ret_total = round(sum(float(t["amount"]) for t in ret_tr), 2)
+    held_final = await cc.courier_held_cash(COURIER, CODE)
+    assert len(oks) == 1 and len(errs) == 1, \
+        f"EC02: debía aprobarse 1 y rechazarse 1 (ok={len(oks)}, err={len(errs)})"
+    assert ret_total == 15000.0, f"EC02: se rindió {ret_total}, no 15000"
+    assert held_final == 5000.0, f"EC02: pendiente final {held_final} != 5000"
+    print("PASS test_ec02_concurrent_returns_no_overdraw → 1 rendición 15000, "
+          "pendiente 5000")
+
+
+async def test_ec02_return_blocked_when_transfer_confirmed_event_pending():
+    """EC02 (ventana de evento): una rendición confirmada SIN evento aún debe
+    reducir el disponible para una segunda rendición distinta."""
+    await _setup()
+    await _issue("EC02-SEED2", amount=20000.0)
+    orig = cc.record_cash_event
+    calls = {"n": 0}
+
+    async def flaky(*a, **k):
+        # Falla SOLO el evento de la primera rendición: deja el traslado
+        # confirmado sin evento (ventana EC02).
+        if k.get("kind") == "returned" and calls["n"] == 0:
+            calls["n"] += 1
+            raise RuntimeError("fallo inyectado al guardar evento de rendición")
+        return await orig(*a, **k)
+
+    cc.record_cash_event = flaky
+    try:
+        try:
+            await _return("EC02-WINDOW-A", 15000.0)
+        except Exception as e:  # noqa: BLE001
+            print("  1ra rendición falló su evento:", type(e).__name__)
+        # Traslado confirmado, evento ausente → disponible real = 5.000.
+        held = await cc.courier_held_cash(COURIER, CODE)
+        assert held == 5000.0, f"disponible con evento pendiente {held} != 5000"
+        # Segunda rendición de 15.000 debe RECHAZARSE (solo quedan 5.000).
+        rejected = False
+        try:
+            await _return("EC02-WINDOW-B", 15000.0)
+        except HTTPException as e:
+            rejected = e.status_code == 400
+            print("  2da rendición rechazada:", e.status_code, e.detail[:40])
+        assert rejected, "EC02: la 2da rendición debió rechazarse (evento en vuelo)"
+    finally:
+        cc.record_cash_event = orig
+    print("PASS test_ec02_return_blocked_when_transfer_confirmed_event_pending")
+
+
 async def main():
     try:
         await test_event_failure_then_retry()
         await test_abort_then_retry()
         await test_concurrent_same_key()
         await test_key_reuse_different_params_rejected()
-        print("\nALL EC01 TESTS PASSED")
+        await test_ec02_concurrent_returns_no_overdraw()
+        await test_ec02_return_blocked_when_transfer_confirmed_event_pending()
+        print("\nALL EC01/EC02 TESTS PASSED")
     finally:
         await _reset()
 

@@ -977,6 +977,15 @@ async def admin_courier_cash_reconciliation(request: Request) -> Any:
     return {"rows": await reconciliation_by_currency()}
 
 
+@router.get("/admin/courier-cash/incomplete-transfers")
+async def admin_courier_cash_incomplete(request: Request) -> Any:
+    """Auditoría de traslados: reintentos de efectivo a medias (pendientes de
+    confirmar, abortados, o confirmados sin evento) para revisión del operador."""
+    await require_permission(request, "deliveries")
+    from services.courier_cash import incomplete_cash_transfers
+    return {"rows": await incomplete_cash_transfers()}
+
+
 def _cash_events_query(courier_id: Optional[str], currency: Optional[str],
                        kind: Optional[str], start: Optional[str],
                        end: Optional[str]) -> dict:
