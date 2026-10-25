@@ -3,7 +3,7 @@ import axios from "axios";
 import { API } from "@/App";
 import { useTranslation } from "react-i18next";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { BarChart3, Clock, AlertTriangle, Banknote } from "lucide-react";
+import { BarChart3, Clock, AlertTriangle, Banknote, ShieldCheck } from "lucide-react";
 
 // Mejora #8 (Fase C) — métricas operativas de mensajería: tiempos de
 // asignación/aceptación/entrega, % de incidencias, trabajos sin rendir y
@@ -13,6 +13,8 @@ function daysAgo(n) {
   const d = new Date(Date.now() - n * 86400000);
   return d.toISOString().slice(0, 10);
 }
+
+const pctColor = (p) => (p >= 90 ? "text-[#22C55E]" : p >= 70 ? "text-amber-300" : "text-[#EF4444]");
 
 function MetricCard({ label, value, suffix, accent = "", testid }) {
   return (
@@ -32,6 +34,7 @@ export default function DeliveryMetricsTab() {
   const [courierId, setCourierId] = useState("all");
   const [couriers, setCouriers] = useState([]);
   const [data, setData] = useState(null);
+  const [sla, setSla] = useState(null);
 
   useEffect(() => {
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
@@ -43,6 +46,8 @@ export default function DeliveryMetricsTab() {
     if (courierId !== "all") params.courier_id = courierId;
     axios.get(`${API}/admin/deliveries/metrics`, { params, withCredentials: true })
       .then((r) => setData(r.data)).catch(() => setData(null));
+    axios.get(`${API}/admin/deliveries/sla-compliance`, { params, withCredentials: true })
+      .then((r) => setSla(r.data)).catch(() => setSla(null));
   }, [from, to, courierId]);
 
   useEffect(() => { load(); }, [load]);
@@ -137,6 +142,80 @@ export default function DeliveryMetricsTab() {
               <MetricCard label={t("admin.deliveries.metricsPlatformNet")} value={m.platform_net_usdt} suffix="USDT" accent="text-[#8B5CF6]" testid="metric-platform-net" />
               <MetricCard label={t("admin.deliveries.metricsAvgFee")} value={m.avg_fee_usdt} suffix="USDT" testid="metric-avg-fee" />
             </div>
+          </div>
+
+          <div data-testid="metrics-sla-compliance">
+            <div className="micro-label text-[#A78BFA] mb-2 flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5" /> {t("admin.deliveries.metricsSlaTitle", { h: sla?.sla_hours ?? 36 })}
+            </div>
+            {!sla || sla.total_completed === 0 ? (
+              <p className="text-neutral-600 text-xs py-2" data-testid="metrics-sla-empty">
+                {t("admin.deliveries.metricsSlaNoData")}
+              </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <MetricCard label={t("admin.deliveries.metricsSlaPct")} value={sla.pct_within} suffix="%" accent={pctColor(sla.pct_within)} testid="metric-sla-pct" />
+                  <MetricCard label={t("admin.deliveries.metricsSlaWithin")} value={sla.within_sla} accent="text-[#22C55E]" testid="metric-sla-within" />
+                  <MetricCard label={t("admin.deliveries.metricsSlaBreached")} value={sla.breached} accent={sla.breached > 0 ? "text-[#EF4444]" : ""} testid="metric-sla-breached" />
+                  <MetricCard label={t("admin.deliveries.metricsSlaCompleted")} value={sla.total_completed} testid="metric-sla-completed" />
+                </div>
+                {sla.by_courier.length > 0 && (
+                  <div data-testid="metrics-sla-by-courier">
+                    <div className="micro-label text-neutral-500 mb-1">{t("admin.deliveries.metricsSlaByCourier")}</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[360px]">
+                        <thead className="border-b border-white/10 bg-[#0a0a0a]">
+                          <tr className="text-left">
+                            <th className="px-3 py-2 micro-label text-neutral-500">{t("admin.deliveries.metricsSlaColName")}</th>
+                            <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.deliveries.metricsSlaColCompleted")}</th>
+                            <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.deliveries.metricsSlaColWithin")}</th>
+                            <th className="px-3 py-2 micro-label text-neutral-500 text-right">%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sla.by_courier.map((r) => (
+                            <tr key={r.courier_id} className="border-b border-white/5" data-testid={`sla-courier-${r.courier_id}`}>
+                              <td className="px-3 py-1.5">{r.courier_name}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-xs">{r.total}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-xs text-[#22C55E]">{r.within}</td>
+                              <td className={`px-3 py-1.5 text-right font-mono text-xs ${pctColor(r.pct)}`}>{r.pct}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {sla.by_week.length > 0 && (
+                  <div data-testid="metrics-sla-by-week">
+                    <div className="micro-label text-neutral-500 mb-1">{t("admin.deliveries.metricsSlaByWeek")}</div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm min-w-[360px]">
+                        <thead className="border-b border-white/10 bg-[#0a0a0a]">
+                          <tr className="text-left">
+                            <th className="px-3 py-2 micro-label text-neutral-500">{t("admin.deliveries.metricsSlaColWeek")}</th>
+                            <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.deliveries.metricsSlaColCompleted")}</th>
+                            <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.deliveries.metricsSlaColWithin")}</th>
+                            <th className="px-3 py-2 micro-label text-neutral-500 text-right">%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sla.by_week.map((r) => (
+                            <tr key={r.week} className="border-b border-white/5" data-testid={`sla-week-${r.week}`}>
+                              <td className="px-3 py-1.5 font-mono text-xs">{r.week}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-xs">{r.total}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-xs text-[#22C55E]">{r.within}</td>
+                              <td className={`px-3 py-1.5 text-right font-mono text-xs ${pctColor(r.pct)}`}>{r.pct}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}

@@ -143,6 +143,13 @@ export default function CourierCashTab() {
     }
   };
 
+  const exportArqueoCsv = () => {
+    const qs = new URLSearchParams();
+    if (arqCourier) qs.set("courier_id", arqCourier);
+    if (arqCurrency) qs.set("currency", arqCurrency);
+    window.open(`${API}/admin/courier-cash/arqueo/export.csv?${qs.toString()}`, "_blank");
+  };
+
   const accountsForCurrency = options.accounts[form.currency] || [];
   const denomList = options.denominations[form.currency] || [];
   const denomSum = useMemo(
@@ -414,8 +421,19 @@ export default function CourierCashTab() {
 
       {/* Arqueo físico por denominación: cruza el conteo real contra lo esperado */}
       <div className="tactile-card p-4 space-y-3" data-testid="arqueo-card">
-        <div className="micro-label text-neutral-500 flex items-center gap-2">
-          <Calculator className="w-4 h-4 text-sky-300" /> {t("admin.cash.arqueo.title")}
+        <div className="flex items-center justify-between gap-2">
+          <div className="micro-label text-neutral-500 flex items-center gap-2">
+            <Calculator className="w-4 h-4 text-sky-300" /> {t("admin.cash.arqueo.title")}
+          </div>
+          {arqCourier && arqCurrency && (
+            <button
+              onClick={exportArqueoCsv}
+              data-testid="arqueo-export-btn"
+              className="inline-flex items-center gap-1.5 text-[0.7rem] text-sky-300 hover:text-sky-200 border border-sky-400/30 hover:border-sky-400/60 px-2.5 py-1 transition-colors"
+            >
+              <Download className="w-3 h-3" /> {t("admin.cash.arqueo.exportBtn")}
+            </button>
+          )}
         </div>
         <p className="text-xs text-neutral-500">{t("admin.cash.arqueo.help")}</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

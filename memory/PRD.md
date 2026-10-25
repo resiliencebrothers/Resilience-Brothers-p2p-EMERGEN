@@ -3192,3 +3192,24 @@ Dos requerimientos del usuario, verificados E2E vía curl + screenshots (desktop
 - i18n ES + EN: `admin.cash.arqueo.*` y `admin.deliveries.dispatch.*` (slaLabel/slaHours/slaSave/slaSaved/allClear/overdueGroup/cancelReturn/hAgo).
 
 Verificación: curl E2E de los 4 endpoints (SLA update persiste y refleja en attention; arqueo POST calcula diff_by_denom y persiste historial) + screenshots de DispatchCenter (SLA 36h + overdue) y tarjeta de arqueo; móvil 390px sin overflow nuevo.
+
+---
+## iter381 — Exportar arqueos (CSV) + Cancelación masiva por SLA + Panel de cumplimiento (2026-10-25)
+Tres mejoras sobre el SLA de 36 h y el arqueo físico:
+
+1. **Exportar arqueos a CSV** (auditoría contable)
+   - Backend: `GET /api/admin/courier-cash/arqueo/export.csv?courier_id=&currency=` → StreamingResponse CSV (Fecha, Mensajero, Moneda, totales, diferencias por billete, nota, registrado por). Permiso `deliveries`.
+   - Frontend: botón "Exportar CSV" en la tarjeta de arqueo (`CourierCashTab.jsx`, testid `arqueo-export-btn`), visible al elegir mensajero+moneda.
+
+2. **Cancelación masiva por SLA** (tras confirmación del admin)
+   - Backend: refactor del núcleo de cancelación individual a helper `_execute_cancel(...)` reutilizable; nuevo `POST /api/admin/deliveries/cancel-overdue` que recorre los vencidos de `find_attention_items()`, cancela cada uno (devolviendo dinero/mercancía al origen vía reconcile para envíos de empresa) y omite los que cambiaron de estado (409). Audit log `delivery.cancel_overdue_bulk`.
+   - Frontend: botón "Cancelar todas (n)" en el grupo de vencidos del Centro de Despacho + diálogo de confirmación (`AdminDeliveries.jsx`, testids `dispatch-cancel-all-overdue-btn`, `bulk-cancel-dialog`).
+   - Verificado por curl: canceló 12/12 vencidos, idempotente (2ª llamada 0/0).
+
+3. **Panel de cumplimiento del SLA** (% dentro de 36 h por mensajero y por semana)
+   - Backend: `GET /api/admin/deliveries/sla-compliance?date_from&date_to&courier_id` → {sla_hours, total_completed, within_sla, breached, pct_within, by_courier[], by_week[]}. Mide creación→entrega (timeline `delivered`/`confirmed`).
+   - Frontend: sección "SLA COMPLIANCE" en `DeliveryMetricsTab.jsx` con 4 tarjetas + tablas por mensajero y por semana ISO (testid `metrics-sla-compliance`).
+   - Verificado: 61 completadas, 100% dentro del SLA, tablas por mensajero/semana pobladas.
+
+i18n: nuevas claves ES/EN en `admin.deliveries.dispatch.*` (cancelAllOverdue, bulkCancel*), `admin.deliveries.metricsSla*`, `admin.cash.arqueo.exportBtn`. JSON válido.
+Verificación: ruff + AST OK, servicios RUNNING, curl autenticado de los 3 endpoints, screenshots desktop (paneles poblados) y móvil 390px (sin overflow nuevo).

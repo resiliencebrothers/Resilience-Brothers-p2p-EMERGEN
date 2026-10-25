@@ -1213,6 +1213,46 @@ async def admin_courier_arqueo_history(request: Request,
     return {"items": items}
 
 
+@router.get("/admin/courier-cash/arqueo/export.csv")
+async def admin_courier_arqueo_export(request: Request,
+                                      courier_id: Optional[str] = None,
+                                      currency: Optional[str] = None) -> Any:
+    """Exporta a CSV el historial de arqueos físicos para auditoría contable."""
+    await require_permission(request, "deliveries")
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    q: dict = {}
+    if courier_id:
+        q["courier_id"] = courier_id
+    if currency:
+        q["currency"] = (currency or "").strip().upper()
+    rows = await db.courier_cash_arqueos.find(q, {"_id": 0}).sort(
+        "at", -1).to_list(20000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Fecha", "Mensajero", "Moneda", "Total contado",
+                "Total esperado", "Pendiente", "Diferencia vs esperado",
+                "Diferencia vs pendiente", "Diferencias por billete",
+                "Nota", "Registrado por"])
+    for r in rows:
+        diffs = r.get("diff_by_denom") or {}
+        diff_str = "; ".join(f"{k}:{'+' if v > 0 else ''}{v}"
+                             for k, v in diffs.items())
+        w.writerow([r.get("at", ""),
+                    r.get("courier_name") or r.get("courier_id") or "",
+                    r.get("currency", ""), r.get("counted_total", ""),
+                    r.get("expected_total", ""), r.get("pending", ""),
+                    r.get("total_diff", ""), r.get("pending_diff", ""),
+                    diff_str, r.get("note", ""),
+                    r.get("by_name") or r.get("by") or ""])
+    buf.seek(0)
+    fname = f"arqueos_{(courier_id or 'todos')}_{(currency or 'todas')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @router.get("/vip/deliveries/track")
 async def track_my_deliveries(request: Request) -> Any:
     """iter207 — el cliente sigue sus entregas en curso: estado, mensajero
@@ -1288,6 +1328,96 @@ async def admin_set_sla_hours(payload: dict, request: Request) -> Any:
                      summary=f"SLA de mensajería fijado en {hours} h",
                      details={"delivery_sla_hours": hours})
     return {"ok": True, "delivery_sla_hours": hours}
+
+
+@router.get("/admin/deliveries/sla-compliance")
+async def admin_sla_compliance(request: Request,
+                               date_from: Optional[str] = None,
+                               date_to: Optional[str] = None,
+                               courier_id: Optional[str] = None) -> Any:
+    """Cumplimiento del SLA: porcentaje de entregas COMPLETADAS dentro del
+    límite de horas, por mensajero y por semana (ISO). El tiempo se mide desde
+    la creación hasta la entrega (timeline `delivered`, o la confirmación si no
+    hubiera marca de entrega)."""
+    await require_permission(request, "deliveries")
+    from datetime import datetime, timedelta
+    from services.deliveries import get_delivery_sla_hours
+    sla_hours = await get_delivery_sla_hours()
+    q: dict = {"status": {"$in": ["delivered", "confirmed"]}}
+    if date_from:
+        q.setdefault("created_at", {})["$gte"] = date_from[:10]
+    if date_to:
+        try:
+            nxt = (datetime.strptime(date_to[:10], "%Y-%m-%d")
+                   + timedelta(days=1)).strftime("%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400,
+                                detail="fecha inválida (YYYY-MM-DD)")
+        q.setdefault("created_at", {})["$lt"] = nxt
+    if courier_id:
+        q["courier_id"] = courier_id
+    cursor = db.deliveries.find(q, {
+        "_id": 0, "id": 1, "created_at": 1, "updated_at": 1, "timeline": 1,
+        "courier_id": 1, "courier_name": 1, "status": 1}).batch_size(1000)
+
+    def _parse(s: Any) -> Optional[datetime]:
+        try:
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+
+    def _completion_at(d: dict) -> Any:
+        tl = d.get("timeline") or []
+        for want in ("delivered", "confirmed"):
+            for e in tl:
+                if e.get("status") == want:
+                    return e.get("at")
+        return d.get("updated_at")
+
+    sla_seconds = sla_hours * 3600.0
+    total = 0
+    within = 0
+    per_courier: dict = {}
+    per_week: dict = {}
+    async for d in cursor:
+        created = _parse(d.get("created_at"))
+        done = _parse(_completion_at(d))
+        if not created or not done:
+            continue
+        ok = (done - created).total_seconds() <= sla_seconds
+        total += 1
+        within += 1 if ok else 0
+        cid = d.get("courier_id") or "—"
+        pc = per_courier.setdefault(
+            cid, {"courier_id": cid, "courier_name": d.get("courier_name") or "—",
+                  "total": 0, "within": 0})
+        pc["total"] += 1
+        pc["within"] += 1 if ok else 0
+        iso_year, iso_week, _ = created.isocalendar()
+        wk = f"{iso_year}-W{iso_week:02d}"
+        pw = per_week.setdefault(wk, {"week": wk, "total": 0, "within": 0})
+        pw["total"] += 1
+        pw["within"] += 1 if ok else 0
+
+    def _pct(w: int, t: int) -> float:
+        return round(w * 100.0 / t, 1) if t else 0.0
+
+    courier_rows = sorted(per_courier.values(),
+                          key=lambda r: r["total"], reverse=True)
+    for r in courier_rows:
+        r["pct"] = _pct(r["within"], r["total"])
+    week_rows = sorted(per_week.values(), key=lambda r: r["week"])
+    for r in week_rows:
+        r["pct"] = _pct(r["within"], r["total"])
+    return {
+        "sla_hours": sla_hours,
+        "total_completed": total,
+        "within_sla": within,
+        "breached": total - within,
+        "pct_within": _pct(within, total),
+        "by_courier": courier_rows,
+        "by_week": week_rows,
+    }
 
 
 _INCIDENT_ORIGIN_COLL = {"withdrawal": "withdrawals",
@@ -2110,6 +2240,72 @@ async def admin_confirm_delivery(did: str, payload: dict, request: Request) -> A
     return await do_confirm_delivery(d, actor)
 
 
+async def _execute_cancel(did: str, d: dict, actor: dict, *, note: str,
+                          expected_status: str, euid: Any) -> Any:
+    """Núcleo de la cancelación (CAS por estado+ciclo), reutilizado por la
+    cancelación individual y la cancelación masiva por SLA. Devuelve el
+    documento actualizado o lanza 409 si el estado/ciclo cambió. Para envíos de
+    empresa reconcilia la devolución de tarifa+inventario al origen."""
+    now = iso(now_utc())
+    flt: Dict[str, Any] = {
+        "id": did,
+        "status": expected_status,
+        "payout_credited": {"$ne": True},
+        "assignment_uid": euid if euid else {"$exists": False},
+    }
+    res = await db.deliveries.update_one(
+        flt, {
+            "$set": {"status": "cancelled", "updated_at": now},
+            "$unset": {"active_key": ""},
+            "$push": {"timeline": {"status": "cancelled", "at": now,
+                                   "by": actor["user_id"],
+                                   "note": note}},
+        })
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("La entrega cambió de estado, de mensajero o de ciclo "
+                    "(¿reasignada o aceptada?); recarga y vuelve a decidir."))
+    if d.get("kind") == "company_delivery":
+        try:
+            from services.company_delivery_recovery import reconcile_cancelled_request
+            creq = await db.company_delivery_requests.find_one(
+                {"id": d.get("ref_id")}, {"_id": 0})
+            if creq and creq.get("status") != "cancelled":
+                await reconcile_cancelled_request(creq)
+        except Exception as e:
+            logger.error(f"company_delivery admin-cancel reconcile failed: {e}")
+    try:
+        from services.deliveries import publish_delivery_event
+        await publish_delivery_event(
+            did, "cancelled",
+            courier_ids=None if d["status"] == "available"
+            else [d.get("courier_id"), d.get("assigned_to_courier_id")])
+    except Exception:
+        pass
+    await log_action(db, actor, "delivery.cancel", "delivery", did,
+                     summary=f"Entrega {did[:8]} cancelada")
+    recipient = d.get("courier_id") or d.get("assigned_to_courier_id")
+    if recipient:
+        try:
+            from routes.notifications import _insert_notification
+            from push_service import (send_push_to_user,
+                                      build_generic_admin_alert_payload)
+            ctitle = "Entrega cancelada"
+            cbody = (f"La entrega de {d.get('client_name', '')} "
+                     f"({d.get('amount_label', '')}) fue cancelada por el equipo.")
+            await _insert_notification(
+                recipient_user_id=recipient, type="delivery_cancelled",
+                title=ctitle, message=cbody, data={"delivery_id": did})
+            await send_push_to_user(
+                db, recipient, build_generic_admin_alert_payload(
+                    title=ctitle, body=cbody, url="/dashboard/deliveries",
+                    tag=f"delivery-cancelled-{did}"))
+        except Exception as e:
+            logger.error(f"cancel notify failed: {e}")
+    return await db.deliveries.find_one({"id": did}, {"_id": 0})
+
+
 @router.post("/admin/deliveries/{did}/cancel")
 async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> Any:
     actor = await require_permission(request, "deliveries")
@@ -2118,7 +2314,6 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
         raise HTTPException(status_code=404, detail="No encontrado")
     if d["status"] in ("confirmed", "cancelled"):
         raise HTTPException(status_code=409, detail=f"Ya está {d['status']}")
-    now = iso(now_utc())
     # OP01/MEN22 — la cancelación debe ligarse al CICLO y ESTADO que VIO el
     # operador, no al que lee el servidor. Por eso AMBOS campos son OBLIGATORIOS:
     #  - `expected_status`: el estado observado en la tarjeta (p. ej. available).
@@ -2151,68 +2346,46 @@ async def admin_cancel_delivery(did: str, payload: dict, request: Request) -> An
         raise HTTPException(status_code=400,
                             detail="note inválido: debe ser texto.")
     note = (note_raw or "")[:200]
-    flt: Dict[str, Any] = {
-        "id": did,
-        "status": expected_status,
-        "payout_credited": {"$ne": True},
-        "assignment_uid": euid if euid else {"$exists": False},
-    }
-    res = await db.deliveries.update_one(
-        flt, {
-            "$set": {"status": "cancelled", "updated_at": now},
-            "$unset": {"active_key": ""},
-            "$push": {"timeline": {"status": "cancelled", "at": now,
-                                   "by": actor["user_id"],
-                                   "note": note}},
-        })
-    if res.matched_count == 0:
-        raise HTTPException(
-            status_code=409,
-            detail=("La entrega cambió de estado, de mensajero o de ciclo "
-                    "(¿reasignada o aceptada?); recarga y vuelve a decidir."))
-    # E34-06 — si es un envío de EMPRESA, reconcilia su solicitud AHORA (reembolso
-    # de tarifa + devolución de inventario), sin esperar a que la Empresa abra su
-    # pantalla. Es idempotente y el worker del scheduler lo reintenta si falla.
-    if d.get("kind") == "company_delivery":
+    return await _execute_cancel(did, d, actor, note=note,
+                                 expected_status=expected_status, euid=euid)
+
+
+@router.post("/admin/deliveries/cancel-overdue")
+async def admin_cancel_overdue(request: Request) -> Any:
+    """Cancelación masiva de las entregas que superan el SLA: tras la
+    confirmación del admin, cancela cada entrega vencida y devuelve el
+    dinero/mercancía al origen (reusa el núcleo de cancelación individual).
+    Omite las que cambiaron de estado/ciclo entre tanto (409) sin abortar."""
+    actor = await require_permission(request, "deliveries")
+    from services.deliveries import find_attention_items
+    items = await find_attention_items()
+    overdue = items.get("overdue", [])
+    sla_hours = items["thresholds"]["sla_hours"]
+    sla_label = (f"{int(sla_hours)}" if float(sla_hours).is_integer()
+                 else f"{sla_hours:g}")
+    cancelled = 0
+    skipped: list = []
+    for od in overdue:
+        d = await db.deliveries.find_one({"id": od["id"]}, {"_id": 0})
+        if not d:
+            skipped.append({"id": od["id"], "reason": "not_found"})
+            continue
+        if d["status"] not in _CANCELABLE_STATUSES:
+            skipped.append({"id": od["id"], "reason": f"status_{d['status']}"})
+            continue
         try:
-            from services.company_delivery_recovery import reconcile_cancelled_request
-            creq = await db.company_delivery_requests.find_one(
-                {"id": d.get("ref_id")}, {"_id": 0})
-            if creq and creq.get("status") != "cancelled":
-                await reconcile_cancelled_request(creq)
+            await _execute_cancel(
+                d["id"], d, actor,
+                note=f"Cancelación automática por superar el SLA de {sla_label} h",
+                expected_status=d["status"], euid=d.get("assignment_uid"))
+            cancelled += 1
+        except HTTPException as e:
+            skipped.append({"id": od["id"], "reason": f"conflict_{e.status_code}"})
         except Exception as e:
-            logger.error(f"company_delivery admin-cancel reconcile failed: {e}")
-    # MSG10 — el panel del mensajero ve la cancelación en vivo.
-    try:
-        from services.deliveries import publish_delivery_event
-        await publish_delivery_event(
-            did, "cancelled",
-            courier_ids=None if d["status"] == "available"
-            else [d.get("courier_id"), d.get("assigned_to_courier_id")])
-    except Exception:
-        pass
-    await log_action(db, actor, "delivery.cancel", "delivery", did,
-                     summary=f"Entrega {did[:8]} cancelada")
-    # Avisa al mensajero del ciclo EFECTIVAMENTE cancelado: el aceptado si lo
-    # había, o el RESERVADO (`assigned_to_courier_id`) si aún no la aceptaba.
-    # Campana + push (patrón de reasignaciones). Se emite SOLO tras ganar la
-    # escritura; un reintento obsoleto responde 409 antes y no duplica avisos.
-    recipient = d.get("courier_id") or d.get("assigned_to_courier_id")
-    if recipient:
-        try:
-            from routes.notifications import _insert_notification
-            from push_service import (send_push_to_user,
-                                      build_generic_admin_alert_payload)
-            ctitle = "Entrega cancelada"
-            cbody = (f"La entrega de {d.get('client_name', '')} "
-                     f"({d.get('amount_label', '')}) fue cancelada por el equipo.")
-            await _insert_notification(
-                recipient_user_id=recipient, type="delivery_cancelled",
-                title=ctitle, message=cbody, data={"delivery_id": did})
-            await send_push_to_user(
-                db, recipient, build_generic_admin_alert_payload(
-                    title=ctitle, body=cbody, url="/dashboard/deliveries",
-                    tag=f"delivery-cancelled-{did}"))
-        except Exception as e:
-            logger.error(f"cancel notify failed: {e}")
-    return await db.deliveries.find_one({"id": did}, {"_id": 0})
+            logger.error(f"cancel-overdue failed for {od['id']}: {e}")
+            skipped.append({"id": od["id"], "reason": "error"})
+    await log_action(db, actor, "delivery.cancel_overdue_bulk", "delivery", "",
+                     summary=f"Cancelación masiva por SLA: {cancelled} entrega(s)",
+                     details={"cancelled": cancelled, "skipped": len(skipped),
+                              "sla_hours": sla_hours})
+    return {"cancelled": cancelled, "skipped": skipped, "total": len(overdue)}

@@ -215,7 +215,7 @@ function handleStaleConflict(e, t, reload) {
 // aceptar (lentas) y las entregas detenidas que detecta el backend
 // (`find_attention_items`), con acciones directas (reasignar/cancelar) sin tener
 // que buscarlas en la tabla. Colapsable; se muestra solo en la vista "Activas".
-function DispatchCenter({ attention, t, canAssign, onReassign, onCancel, onSetSla }) {
+function DispatchCenter({ attention, t, canAssign, onReassign, onCancel, onSetSla, onCancelOverdue }) {
   const [open, setOpen] = useState(true);
   const resv = attention.unanswered_reservations || [];
   const stalled = attention.stalled || [];
@@ -303,8 +303,20 @@ function DispatchCenter({ attention, t, canAssign, onReassign, onCancel, onSetSl
           )}
           {overdue.length > 0 && (
             <div data-testid="attention-overdue">
-              <div className="text-[0.7rem] text-[#EF4444] uppercase tracking-wider mb-1.5 font-semibold">
-                ⏱️ {t("admin.deliveries.dispatch.overdueGroup", { h: slaHours })}
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="text-[0.7rem] text-[#EF4444] uppercase tracking-wider font-semibold">
+                  ⏱️ {t("admin.deliveries.dispatch.overdueGroup", { h: slaHours })}
+                </div>
+                {overdue.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={onCancelOverdue}
+                    data-testid="dispatch-cancel-all-overdue-btn"
+                    className="inline-flex items-center gap-1 text-[0.65rem] text-[#EF4444] border border-[#EF4444]/40 hover:border-[#EF4444]/70 hover:bg-[#EF4444]/10 px-2 py-0.5 uppercase tracking-wider transition-colors"
+                  >
+                    {t("admin.deliveries.dispatch.cancelAllOverdue", { n: overdue.length })}
+                  </button>
+                )}
               </div>
               <ul className="space-y-1.5">
                 {overdue.map((d) => itemRow(d, (
@@ -447,6 +459,8 @@ function DeliveriesTab({ navigate, mode = "active" }) {
   const [pendingConfirm, setPendingConfirm] = useState(null);
   const [detailsRow, setDetailsRow] = useState(null);
   const [reassignRow, setReassignRow] = useState(null);
+  const [bulkCancelOpen, setBulkCancelOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   // iter216 — resumen del día de TODO el equipo.
   // iter217 — con selector de fecha para revisar jornadas pasadas.
   const [summary, setSummary] = useState(null);
@@ -596,6 +610,25 @@ function DeliveriesTab({ navigate, mode = "active" }) {
     }
   };
 
+  const cancelOverdue = async () => {
+    setBulkBusy(true);
+    try {
+      const r = await axios.post(`${API}/admin/deliveries/cancel-overdue`, {},
+        { withCredentials: true });
+      const n = r.data?.cancelled ?? 0;
+      const skipped = (r.data?.skipped || []).length;
+      if (n > 0) toast.success(t("admin.deliveries.dispatch.bulkCancelDone", { n }));
+      if (skipped > 0) toast.message(t("admin.deliveries.dispatch.bulkCancelSkipped", { n: skipped }));
+      if (n === 0 && skipped === 0) toast.message(t("admin.deliveries.dispatch.bulkCancelNone"));
+      setBulkCancelOpen(false);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Mejora #4 / Centro de Despacho — panel accionable único (incluye el
@@ -608,6 +641,7 @@ function DeliveriesTab({ navigate, mode = "active" }) {
           onReassign={setReassignRow}
           onCancel={cancel}
           onSetSla={setSla}
+          onCancelOverdue={() => setBulkCancelOpen(true)}
         />
       )}
 
@@ -928,6 +962,35 @@ function DeliveriesTab({ navigate, mode = "active" }) {
           </div>
         </div>
       )}
+
+      <Dialog open={bulkCancelOpen} onOpenChange={(o) => !o && setBulkCancelOpen(false)}>
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white" data-testid="bulk-cancel-dialog">
+          <DialogHeader>
+            <DialogTitle>{t("admin.deliveries.dispatch.bulkCancelTitle")}</DialogTitle>
+            <DialogDescription className="text-neutral-400">
+              {t("admin.deliveries.dispatch.bulkCancelDesc", { n: attention?.overdue?.length || 0 })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setBulkCancelOpen(false)}
+              data-testid="bulk-cancel-dismiss"
+              className="rounded-none text-neutral-300 hover:text-white"
+            >
+              {t("admin.deliveries.dispatch.bulkCancelDismiss")}
+            </Button>
+            <Button
+              onClick={cancelOverdue}
+              disabled={bulkBusy}
+              data-testid="bulk-cancel-confirm"
+              className="rounded-none bg-[#EF4444] hover:bg-[#dc2626] text-white disabled:opacity-40"
+            >
+              {bulkBusy ? "…" : t("admin.deliveries.dispatch.bulkCancelConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <TotpPromptDialog
         open={!!pendingConfirm}
