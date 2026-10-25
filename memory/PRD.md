@@ -3213,3 +3213,15 @@ Tres mejoras sobre el SLA de 36 h y el arqueo físico:
 
 i18n: nuevas claves ES/EN en `admin.deliveries.dispatch.*` (cancelAllOverdue, bulkCancel*), `admin.deliveries.metricsSla*`, `admin.cash.arqueo.exportBtn`. JSON válido.
 Verificación: ruff + AST OK, servicios RUNNING, curl autenticado de los 3 endpoints, screenshots desktop (paneles poblados) y móvil 390px (sin overflow nuevo).
+
+## EC01 — Idempotencia del traslado de efectivo de mensajería (BUGFIX, 2026-10-25)
+**Severidad:** ALTA. Reintento tras fallo parcial duplicaba el traslado (40.000 CUP movidos vs 20.000 en el ledger).
+**Causa raíz:** `services/courier_cash.py::issue_or_return_cash` solo cortocircuitaba el reintento cuando existían AMBOS (transferencia confirmada + evento). Como el evento se guarda DESPUÉS de confirmar la transferencia y soltar el cerrojo, un fallo al guardar el evento dejaba la transferencia confirmada sin evento; el reintento con la misma clave insertaba una SEGUNDA transferencia.
+**Corrección:**
+- Máquina de estados recuperable por `op_key`: si ya existe un traslado confirmado, se completa el espejo y el evento que falten SOBRE ESE traslado (nunca se inserta otro). Atajo sin cerrojo para el caso confirmado.
+- Reverificación de idempotencia DENTRO del cerrojo (serializa reintentos y concurrencia).
+- Traslados a medias (pending/aborted) se REVIVEN (mismo documento) y se confirman; balance revalidado (los pending/aborted no cuentan en el saldo).
+- Restricción única de persistencia: índice `courier_cash_op_unique` sobre `fund_account_transfers.operation_id` (parcial a `courier_cash_kind`).
+- Rechazo (409) de reutilización de clave con importe, mensajero, moneda, cuenta o tipo distintos (`_assert_same_op`).
+**Verificación:** `tests/test_ec01_cash_idempotency.py` (contra DB real) — 4/4 PASS: fallo de evento+reintento (1 transf 20.000, 1 evento), abort+reintento (revive mismo doc), concurrencia misma clave (1 transf/1 evento), reutilización con parámetros distintos rechazada.
+**Pendiente (no abordado aún):** mejoras SLA solicitadas antes del bug — Alerta temprana a Despacho (aviso al 80% del SLA) y Umbral SLA por zona/servicio.

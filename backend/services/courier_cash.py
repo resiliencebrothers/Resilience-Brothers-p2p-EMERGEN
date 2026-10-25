@@ -120,29 +120,39 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
         raise HTTPException(status_code=400,
                             detail="Cuenta de caja inválida")
 
-    # EF03 — idempotencia: si el traslado de este op_key ya existe, no se
-    # repite (reintento tras respuesta perdida).
-    if op_key:
-        dup = await db.fund_account_transfers.find_one(
-            {"operation_id": op_key, "currency": code,
-             "status": {"$nin": ["pending", "aborted"]}}, {"_id": 0})
-        existing_ev = await db.courier_cash_events.find_one(
-            {"op_key": op_key}, {"_id": 0})
-        if dup and existing_ev:
-            return {"event": existing_ev, "transfer": dup}
+    # Dirección del traslado de custodia (puro, sin tocar la base de datos).
+    if kind == "issued":
+        frm, to = account["id"], custody["id"]
+        frm_label, to_label = account["label"], custody["label"]
+    else:  # returned
+        frm, to = custody["id"], account["id"]
+        frm_label, to_label = custody["label"], account["label"]
+
+    def _assert_same_op(existing: dict) -> None:
+        """EC01 — la clave de operación es INMUTABLE: rechaza reutilizarla con
+        importe, mensajero, moneda, cuenta o tipo distintos."""
+        same = (
+            existing.get("courier_cash_kind") == kind
+            and (existing.get("currency") or "").upper() == code
+            and round(float(existing.get("amount") or 0), 2) == amt
+            and existing.get("courier_id") == courier_id
+            and existing.get("from_account_id") == frm
+            and existing.get("to_account_id") == to
+        )
+        if not same:
+            raise HTTPException(
+                status_code=409,
+                detail=("La clave de operación ya se usó con parámetros "
+                        "distintos (importe, mensajero, moneda, cuenta o tipo)."))
 
     from services import company_fund_budget as fund_budget
     from services.cash_box_sync import mirror_fund_transfer_to_cash_box
-    lock = await fund_budget.acquire_pay_lock_wait(code)
-    if not lock:
-        raise HTTPException(
-            status_code=409,
-            detail=(f"Otra operación del fondo {code} está en curso; "
-                    "inténtalo de nuevo en unos segundos."))
-    try:
+
+    async def _assert_funds_available() -> None:
+        """Valida disponibilidad SOLO al mover dinero (traslado aún sin
+        confirmar). Los traslados pendientes/abortados NO cuentan en el saldo,
+        así que revalidar un reintento es seguro y no se descuenta dos veces."""
         if kind == "issued":
-            frm, to = account["id"], custody["id"]
-            frm_label, to_label = account["label"], custody["label"]
             assigned = await account_assigned_balances(code)
             avail = round(assigned.get(account["id"], 0.0), 2)
             if amt > avail + 1e-9:
@@ -151,8 +161,6 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
                     detail=(f"Saldo insuficiente en «{account['label']}»: "
                             f"disponible {avail:.2f} {code}"))
         else:  # returned
-            frm, to = custody["id"], account["id"]
-            frm_label, to_label = custody["label"], account["label"]
             held = 0.0
             for row in await cash_pending(courier_id):
                 if row["currency"] == code:
@@ -164,44 +172,107 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
                     detail=(f"El mensajero solo tiene {held:.2f} {code} "
                             "por rendir; no puede devolver más."))
 
-        doc = {
-            "id": str(uuid.uuid4()), "currency": code,
-            "from_account_id": frm, "from_label": frm_label,
-            "to_account_id": to, "to_label": to_label,
-            "amount": amt,
-            "note": (f"Efectivo mensajero: {note}".strip())[:200],
-            "denominations": clean_denoms,
-            "actor_id": actor_id, "actor_name": actor_name or "",
-            "created_at": iso(now_utc()), "status": "pending",
-            "operation_id": op_key or "",
-            "courier_cash_kind": kind, "courier_id": courier_id,
-        }
-        if not doc["operation_id"]:
-            doc["operation_id"] = doc["id"]
-        await db.fund_account_transfers.insert_one({**doc})
-        if not await fund_budget.assert_spend_authority(code, lock, doc["id"]):
-            await db.fund_account_transfers.update_one(
-                {"id": doc["id"]},
-                {"$set": {"status": "aborted",
-                          "aborted_reason": "cerrojo de gasto perdido"}})
+    # EC01/EF03 — idempotencia por clave de operación: UN solo traslado por
+    # `op_key`. Atajo sin cerrojo: si ya está confirmado, se completan abajo el
+    # espejo y el evento que falten SOBRE ESE traslado, sin mover dinero otra vez.
+    doc: Optional[dict] = None
+    if op_key:
+        prior = await db.fund_account_transfers.find_one(
+            {"operation_id": op_key, "courier_cash_kind": {"$exists": True}},
+            {"_id": 0})
+        if prior:
+            _assert_same_op(prior)
+            if prior.get("status") == "confirmed":
+                doc = prior
+
+    if doc is None:
+        lock = await fund_budget.acquire_pay_lock_wait(code)
+        if not lock:
             raise HTTPException(
                 status_code=409,
-                detail="La operación perdió su turno; inténtalo de nuevo.")
-        confirmed = await db.fund_account_transfers.update_one(
-            {"id": doc["id"], "status": "pending"},
-            {"$set": {"status": "confirmed", "confirmed_at": iso(now_utc())}})
-        if confirmed.matched_count == 0:
-            persisted = await db.fund_account_transfers.find_one(
-                {"id": doc["id"]}, {"_id": 0})
-            if not persisted or persisted.get("status") != "confirmed":
-                raise HTTPException(
-                    status_code=409,
-                    detail=("La operación fue revocada antes de confirmarse; "
-                            "inténtalo de nuevo."))
-        doc["status"] = "confirmed"
-    finally:
-        await fund_budget.release_pay_lock(code, lock)
+                detail=(f"Otra operación del fondo {code} está en curso; "
+                        "inténtalo de nuevo en unos segundos."))
+        try:
+            # EC01 — reverificación DENTRO del cerrojo: serializa reintentos y
+            # ejecuciones concurrentes de la misma clave (un único traslado).
+            prior = None
+            if op_key:
+                prior = await db.fund_account_transfers.find_one(
+                    {"operation_id": op_key,
+                     "courier_cash_kind": {"$exists": True}}, {"_id": 0})
+            if prior:
+                _assert_same_op(prior)
+                doc = prior
+                if doc.get("status") != "confirmed":
+                    # Traslado a medias (pendiente/abortado): se REVIVE el MISMO
+                    # documento y se confirma; jamás se inserta otro.
+                    await _assert_funds_available()
+                    await db.fund_account_transfers.update_one(
+                        {"id": doc["id"],
+                         "status": {"$in": ["pending", "aborted"]}},
+                        {"$set": {"status": "pending",
+                                  "denominations": clean_denoms},
+                         "$unset": {"aborted_reason": ""}})
+                    doc = await db.fund_account_transfers.find_one(
+                        {"id": doc["id"]}, {"_id": 0})
+            else:
+                await _assert_funds_available()
+                doc = {
+                    "id": str(uuid.uuid4()), "currency": code,
+                    "from_account_id": frm, "from_label": frm_label,
+                    "to_account_id": to, "to_label": to_label,
+                    "amount": amt,
+                    "note": (f"Efectivo mensajero: {note}".strip())[:200],
+                    "denominations": clean_denoms,
+                    "actor_id": actor_id, "actor_name": actor_name or "",
+                    "created_at": iso(now_utc()), "status": "pending",
+                    "operation_id": op_key or "",
+                    "courier_cash_kind": kind, "courier_id": courier_id,
+                }
+                if not doc["operation_id"]:
+                    doc["operation_id"] = doc["id"]
+                try:
+                    await db.fund_account_transfers.insert_one({**doc})
+                except DuplicateKeyError:
+                    # Carrera perdida contra otro reintento con la misma clave:
+                    # reutiliza el traslado ganador en vez de duplicar.
+                    doc = await db.fund_account_transfers.find_one(
+                        {"operation_id": doc["operation_id"],
+                         "courier_cash_kind": {"$exists": True}}, {"_id": 0})
+                    _assert_same_op(doc)
 
+            # Confirmación (solo si el traslado aún no está confirmado).
+            if doc.get("status") != "confirmed":
+                if not await fund_budget.assert_spend_authority(
+                        code, lock, doc["id"]):
+                    await db.fund_account_transfers.update_one(
+                        {"id": doc["id"]},
+                        {"$set": {"status": "aborted",
+                                  "aborted_reason": "cerrojo de gasto perdido"}})
+                    raise HTTPException(
+                        status_code=409,
+                        detail="La operación perdió su turno; inténtalo de nuevo.")
+                confirmed = await db.fund_account_transfers.update_one(
+                    {"id": doc["id"], "status": "pending"},
+                    {"$set": {"status": "confirmed",
+                              "confirmed_at": iso(now_utc())}})
+                if confirmed.matched_count == 0:
+                    persisted = await db.fund_account_transfers.find_one(
+                        {"id": doc["id"]}, {"_id": 0})
+                    if not persisted or persisted.get("status") != "confirmed":
+                        raise HTTPException(
+                            status_code=409,
+                            detail=("La operación fue revocada antes de "
+                                    "confirmarse; inténtalo de nuevo."))
+                    doc = persisted
+                else:
+                    doc["status"] = "confirmed"
+        finally:
+            await fund_budget.release_pay_lock(code, lock)
+
+    # EC01 — espejo (idempotente por id de traslado) y evento (idempotente por
+    # op_key). Un fallo aquí se completa en el PRÓXIMO reintento sobre el MISMO
+    # traslado, nunca creando otro.
     try:
         mov_id = await mirror_fund_transfer_to_cash_box(doc)
         if mov_id:
@@ -230,6 +301,17 @@ async def ensure_indexes() -> None:
     await db.fund_accounts.create_index(
         [("courier_custody_id", 1), ("currency", 1)], unique=True,
         sparse=True)
+    # EC01 — identidad ÚNICA del traslado de efectivo por clave de operación.
+    # Restricción de persistencia: dos reintentos/concurrencias con la misma
+    # `operation_id` jamás crean dos traslados. Parcial a los traslados de
+    # efectivo de mensajería (que SIEMPRE llevan `operation_id` no vacío).
+    try:
+        await db.fund_account_transfers.create_index(
+            "operation_id", unique=True,
+            partialFilterExpression={"courier_cash_kind": {"$exists": True}},
+            name="courier_cash_op_unique")
+    except Exception as exc:  # duplicados históricos no deben romper el arranque
+        logger.error("índice único de op de efectivo no creado: %s", exc)
 
 
 async def record_cash_event(*, courier_id: str, courier_name: str, kind: str,
