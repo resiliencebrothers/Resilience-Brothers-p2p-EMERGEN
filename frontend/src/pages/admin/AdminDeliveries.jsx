@@ -215,16 +215,22 @@ function handleStaleConflict(e, t, reload) {
 // aceptar (lentas) y las entregas detenidas que detecta el backend
 // (`find_attention_items`), con acciones directas (reasignar/cancelar) sin tener
 // que buscarlas en la tabla. Colapsable; se muestra solo en la vista "Activas".
-function DispatchCenter({ attention, t, canAssign, onReassign, onCancel }) {
+function DispatchCenter({ attention, t, canAssign, onReassign, onCancel, onSetSla }) {
   const [open, setOpen] = useState(true);
   const resv = attention.unanswered_reservations || [];
   const stalled = attention.stalled || [];
-  const total = resv.length + stalled.length;
+  const overdue = attention.overdue || [];
+  const total = resv.length + stalled.length + overdue.length;
   const resMin = attention.thresholds?.reservation_min ?? 30;
   const actMin = attention.thresholds?.active_min ?? 90;
+  const slaHours = attention.thresholds?.sla_hours ?? 36;
+  const [slaInput, setSlaInput] = useState(String(slaHours));
+  useEffect(() => { setSlaInput(String(slaHours)); }, [slaHours]);
   const minsAgo = (iso) =>
     Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  const itemRow = (d, extra) => (
+  const hoursAgo = (iso) =>
+    Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 3600000));
+  const itemRow = (d, extra, ago) => (
     <li
       key={d.id}
       data-testid={`dispatch-item-${d.id}`}
@@ -234,7 +240,9 @@ function DispatchCenter({ attention, t, canAssign, onReassign, onCancel }) {
       {d.amount_label && <span className="text-neutral-400">{d.amount_label}</span>}
       {extra}
       <span className="text-neutral-500 font-mono">
-        {t("admin.deliveries.dispatch.minAgo", { n: minsAgo(d.updated_at) })}
+        {ago === "h"
+          ? t("admin.deliveries.dispatch.hAgo", { n: hoursAgo(d.created_at) })
+          : t("admin.deliveries.dispatch.minAgo", { n: minsAgo(d.updated_at) })}
       </span>
     </li>
   );
@@ -265,6 +273,75 @@ function DispatchCenter({ attention, t, canAssign, onReassign, onCancel }) {
           className="px-3 pb-3 space-y-3 border-t border-amber-400/20 pt-2.5"
           data-testid="dispatch-center-body"
         >
+          {/* Protocolo SLA — límite máximo de entrega editable */}
+          <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="sla-config">
+            <span className="text-neutral-400">{t("admin.deliveries.dispatch.slaLabel")}</span>
+            <input
+              type="number"
+              min="1"
+              max="720"
+              value={slaInput}
+              onChange={(e) => setSlaInput(e.target.value)}
+              data-testid="sla-hours-input"
+              className="w-20 bg-[#0a0a0a] border border-white/10 text-white text-xs px-2 h-8 rounded-none font-mono [color-scheme:dark]"
+            />
+            <span className="text-neutral-500">{t("admin.deliveries.dispatch.slaHours")}</span>
+            <button
+              type="button"
+              onClick={() => onSetSla(Number(slaInput))}
+              disabled={!slaInput || Number(slaInput) === slaHours}
+              data-testid="sla-save-btn"
+              className="text-[#8B5CF6] hover:underline disabled:opacity-30 disabled:no-underline"
+            >
+              {t("admin.deliveries.dispatch.slaSave")}
+            </button>
+          </div>
+          {total === 0 && (
+            <div className="text-xs text-neutral-500 py-1" data-testid="dispatch-all-clear">
+              {t("admin.deliveries.dispatch.allClear")}
+            </div>
+          )}
+          {overdue.length > 0 && (
+            <div data-testid="attention-overdue">
+              <div className="text-[0.7rem] text-[#EF4444] uppercase tracking-wider mb-1.5 font-semibold">
+                ⏱️ {t("admin.deliveries.dispatch.overdueGroup", { h: slaHours })}
+              </div>
+              <ul className="space-y-1.5">
+                {overdue.map((d) => itemRow(d, (
+                  <>
+                    <span className="uppercase tracking-wider text-neutral-500">
+                      {t(`courierPanel.status.${d.status}`)}
+                    </span>
+                    {d.courier_name && (
+                      <span className="text-neutral-300">
+                        {t("admin.deliveries.dispatch.courier", { name: d.courier_name })}
+                      </span>
+                    )}
+                    <div className="ml-auto flex items-center gap-3">
+                      {canAssign && (d.status === "available" || d.status === "accepted") && (
+                        <button
+                          type="button"
+                          onClick={() => onReassign(d)}
+                          data-testid={`dispatch-reassign-${d.id}`}
+                          className="text-[#8B5CF6] hover:underline"
+                        >
+                          {t("admin.deliveries.dispatch.reassign")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onCancel(d)}
+                        data-testid={`dispatch-cancel-${d.id}`}
+                        className="text-[#EF4444] hover:underline font-semibold"
+                      >
+                        {t("admin.deliveries.dispatch.cancelReturn")}
+                      </button>
+                    </div>
+                  </>
+                ), "h"))}
+              </ul>
+            </div>
+          )}
           {resv.length > 0 && (
             <div data-testid="attention-reservations">
               <div className="text-[0.7rem] text-amber-300 uppercase tracking-wider mb-1.5">
@@ -508,18 +585,29 @@ function DeliveriesTab({ navigate, mode = "active" }) {
     }
   };
 
+  const setSla = async (hours) => {
+    try {
+      await axios.put(`${API}/admin/deliveries/sla-hours`, { hours },
+        { withCredentials: true });
+      toast.success(t("admin.deliveries.dispatch.slaSaved"));
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {/* Mejora #4 / Centro de Despacho — panel accionable único */}
-      {mode === "active" && attention
-        && (attention.unanswered_reservations?.length > 0
-          || attention.stalled?.length > 0) && (
+      {/* Mejora #4 / Centro de Despacho — panel accionable único (incluye el
+          protocolo SLA de 36 h y las entregas que lo superan) */}
+      {mode === "active" && attention && (
         <DispatchCenter
           attention={attention}
           t={t}
           canAssign={canAssign}
           onReassign={setReassignRow}
           onCancel={cancel}
+          onSetSla={setSla}
         />
       )}
 

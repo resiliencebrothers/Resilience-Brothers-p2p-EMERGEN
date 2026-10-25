@@ -3169,3 +3169,26 @@ Al ejecutar `make test-critical` tras H03-R/H04-R, el ÚNICO fallo fue `test_ite
 - N02: el reverso de reserva propaga fallos (no se marca el rechazo completo hasta confirmarlo); reintento idempotente.
 - R03: `reserve_pct_snapshot` congela el 1% al comprar para inventario propio (no depende de la config al entregar).
 - Regresiones: `tests/test_own_inventory_reserve_e06.py` (6 passed). R02 ya resuelto (iter378). Pendiente: verificar 1% en producción; enlace de banner.
+
+### iter380 — Arqueo físico por denominación + Protocolo SLA de entrega (36 h) ✅ IMPLEMENTADO (2026-10-25)
+Dos requerimientos del usuario, verificados E2E vía curl + screenshots (desktop + móvil 390px).
+
+**1. Arqueo físico de efectivo por denominación**
+- Servicio `services/courier_cash.py`:
+  - `courier_denomination_expectation(courier_id, currency)` → compone el NETO de billetes esperado desde `courier_cash_events` con `denominations` (issued/collected suman; returned/delivered restan), pendiente total fiable y `untracked` (pendiente sin desglose).
+  - `record_courier_arqueo(...)` → cruza el conteo físico real contra lo esperado; calcula `diff_by_denom`, `counted_total`, `total_diff`, `pending_diff`; NO ajusta saldos, deja registro auditable en `courier_cash_arqueos`.
+  - Índice `courier_cash_arqueos(courier_id, at desc)` en `ensure_indexes`.
+- Endpoints (`routes/deliveries.py`, permiso `deliveries`):
+  - `GET /api/admin/courier-cash/arqueo/expected?courier_id&currency`
+  - `POST /api/admin/courier-cash/arqueo` (avisa a admins si hay diferencia; `log_action courier.arqueo`)
+  - `GET /api/admin/courier-cash/arqueo/history?courier_id&currency&limit`
+- UI: tarjeta "Arqueo físico por denominación" en `CourierCashTab.jsx` (selects mensajero/moneda, tabla esperado/contado/diff por billete, totales, pending_diff, hint untracked, historial). data-testid completos (`arqueo-*`).
+
+**2. Protocolo SLA de entrega (máx. 36 h, configurable)**
+- `services/deliveries.py`: `DELIVERY_SLA_HOURS_DEFAULT=36.0`, `SLA_OPEN_STATUSES`, `get_delivery_sla_hours()` (lee `settings.global.delivery_sla_hours`). `find_attention_items` añade grupo `overdue` + `thresholds.sla_hours`. `alert_attention_items` notifica UNA vez por entrega (flag `sla_breach_alerted`) a admins + despachadores, indicando cancelar y devolver el dinero/mercancía al origen.
+- Endpoint `PUT /api/admin/deliveries/sla-hours {hours}` (1–720; persiste en `settings.global`; `log_action delivery.sla_update`).
+- Scheduler existente `delivery_attention` (cada 10 min) ejecuta la detección.
+- UI: editor SLA + grupo "Entregas que superan el SLA de {h} h" con acción "Cancelar y devolver" (reusa flujo de cancelación existente) en `DispatchCenter` (`AdminDeliveries.jsx`). data-testid: `sla-config`, `sla-hours-input`, `sla-save-btn`, `attention-overdue`, `dispatch-cancel-{id}`.
+- i18n ES + EN: `admin.cash.arqueo.*` y `admin.deliveries.dispatch.*` (slaLabel/slaHours/slaSave/slaSaved/allClear/overdueGroup/cancelReturn/hAgo).
+
+Verificación: curl E2E de los 4 endpoints (SLA update persiste y refleja en attention; arqueo POST calcula diff_by_denom y persiste historial) + screenshots de DispatchCenter (SLA 36h + overdue) y tarjeta de arqueo; móvil 390px sin overflow nuevo.

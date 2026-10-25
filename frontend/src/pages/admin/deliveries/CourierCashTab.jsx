@@ -10,7 +10,7 @@ import {
 import { toast } from "sonner";
 import {
   Banknote, AlertTriangle, Download, Scale, Clock, ChevronDown,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Calculator,
 } from "lucide-react";
 
 // Efectivo en tránsito por mensajero: conciliación por moneda, panel de
@@ -49,6 +49,16 @@ export default function CourierCashTab() {
   const [filters, setFilters] = useState({ courier_id: "", currency: "", kind: "" });
   const [page, setPage] = useState(0);
 
+  // Arqueo físico por denominación: cruza el conteo real contra lo esperado.
+  const [arqCourier, setArqCourier] = useState("");
+  const [arqCurrency, setArqCurrency] = useState("");
+  const [arqExp, setArqExp] = useState(null);
+  const [arqCounts, setArqCounts] = useState({});
+  const [arqNote, setArqNote] = useState("");
+  const [arqBusy, setArqBusy] = useState(false);
+  const [arqHistory, setArqHistory] = useState([]);
+  const [arqResult, setArqResult] = useState(null);
+
   const loadTop = useCallback(() => {
     axios.get(`${API}/admin/courier-cash/summary`, { withCredentials: true })
       .then((r) => setSummary(r.data.couriers || [])).catch(() => {});
@@ -79,6 +89,59 @@ export default function CourierCashTab() {
 
   useEffect(() => { loadTop(); }, [loadTop]);
   useEffect(() => { loadEvents(); }, [loadEvents]);
+
+  const loadArqueo = useCallback(() => {
+    if (!arqCourier || !arqCurrency) { setArqExp(null); setArqHistory([]); return; }
+    axios.get(`${API}/admin/courier-cash/arqueo/expected`, {
+      params: { courier_id: arqCourier, currency: arqCurrency },
+      withCredentials: true,
+    }).then((r) => setArqExp(r.data)).catch(() => setArqExp(null));
+    axios.get(`${API}/admin/courier-cash/arqueo/history`, {
+      params: { courier_id: arqCourier, currency: arqCurrency, limit: 5 },
+      withCredentials: true,
+    }).then((r) => setArqHistory(r.data.items || [])).catch(() => setArqHistory([]));
+  }, [arqCourier, arqCurrency]);
+
+  useEffect(() => {
+    loadArqueo();
+    setArqCounts({});
+    setArqResult(null);
+  }, [loadArqueo]);
+
+  const arqDenoms = (arqExp?.denominations && arqExp.denominations.length
+    ? arqExp.denominations
+    : options.denominations[arqCurrency] || []);
+  const arqCountedTotal = useMemo(
+    () => arqDenoms.reduce((s, d) => s + Number(d) * (Number(arqCounts[d]) || 0), 0),
+    [arqCounts, arqDenoms]);
+  const arqExpectedTotal = arqExp?.expected_total ?? 0;
+  const arqPending = arqExp?.pending ?? 0;
+  const arqTotalDiff = Math.round((arqCountedTotal - arqExpectedTotal) * 100) / 100;
+  const arqPendingDiff = Math.round((arqCountedTotal - arqPending) * 100) / 100;
+
+  const submitArqueo = async () => {
+    if (!arqCourier || !arqCurrency) {
+      toast.error(t("admin.cash.arqueo.selectPrompt"));
+      return;
+    }
+    setArqBusy(true);
+    try {
+      const counted = Object.fromEntries(
+        Object.entries(arqCounts).filter(([, q]) => Number(q) > 0)
+          .map(([d, q]) => [d, Number(q)]));
+      const r = await axios.post(`${API}/admin/courier-cash/arqueo`, {
+        courier_id: arqCourier, currency: arqCurrency, counted, note: arqNote,
+      }, { withCredentials: true });
+      setArqResult(r.data);
+      toast.success(t("admin.cash.arqueo.saved"));
+      setArqNote("");
+      loadArqueo();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error");
+    } finally {
+      setArqBusy(false);
+    }
+  };
 
   const accountsForCurrency = options.accounts[form.currency] || [];
   const denomList = options.denominations[form.currency] || [];
@@ -346,6 +409,148 @@ export default function CourierCashTab() {
           <div className="px-3 py-2 text-[0.65rem] text-[#EF4444] border-t border-white/5">
             {t("admin.cash.negativeHint")}
           </div>
+        )}
+      </div>
+
+      {/* Arqueo físico por denominación: cruza el conteo real contra lo esperado */}
+      <div className="tactile-card p-4 space-y-3" data-testid="arqueo-card">
+        <div className="micro-label text-neutral-500 flex items-center gap-2">
+          <Calculator className="w-4 h-4 text-sky-300" /> {t("admin.cash.arqueo.title")}
+        </div>
+        <p className="text-xs text-neutral-500">{t("admin.cash.arqueo.help")}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Select value={arqCourier} onValueChange={setArqCourier}>
+            <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 h-10" data-testid="arqueo-courier-select">
+              <SelectValue placeholder={t("admin.deliveries.colCourier")} />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white max-h-64">
+              {couriers.map((c) => (
+                <SelectItem key={c.user_id} value={c.user_id}>{c.name || c.email}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={arqCurrency} onValueChange={setArqCurrency}>
+            <SelectTrigger className="rounded-none bg-[#0a0a0a] border-white/10 h-10 font-mono" data-testid="arqueo-currency-select">
+              <SelectValue placeholder={t("admin.cash.currencyPh")} />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1730] border-white/10 text-white">
+              {options.currencies.map((cur) => (
+                <SelectItem key={cur} value={cur}>{cur}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {(!arqCourier || !arqCurrency) && (
+          <div className="text-xs text-neutral-500 py-2" data-testid="arqueo-select-prompt">
+            {t("admin.cash.arqueo.selectPrompt")}
+          </div>
+        )}
+
+        {arqCourier && arqCurrency && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[480px]" data-testid="arqueo-table">
+                <thead className="border-b border-white/10 bg-[#0a0a0a]">
+                  <tr className="text-left">
+                    <th className="px-3 py-2 micro-label text-neutral-500">{t("admin.cash.arqueo.colDenom")}</th>
+                    <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.cash.arqueo.colExpected")}</th>
+                    <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.cash.arqueo.colCounted")}</th>
+                    <th className="px-3 py-2 micro-label text-neutral-500 text-right">{t("admin.cash.arqueo.colDiff")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {arqDenoms.map((d) => {
+                    const exp = Number(arqExp?.expected?.[d] || 0);
+                    const cnt = Number(arqCounts[d]) || 0;
+                    const diff = cnt - exp;
+                    return (
+                      <tr key={d} className="border-b border-white/5" data-testid={`arqueo-row-${d}`}>
+                        <td className="px-3 py-1.5 font-mono text-xs">{Number(d).toLocaleString()}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs text-right text-neutral-400" data-testid={`arqueo-expected-${d}`}>{exp}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <Input
+                            value={arqCounts[d] || ""}
+                            onChange={(e) => setArqCounts({ ...arqCounts, [d]: e.target.value.replace(/[^0-9]/g, "") })}
+                            inputMode="numeric"
+                            data-testid={`arqueo-count-${d}`}
+                            className="rounded-none bg-[#0a0a0a] border-white/10 h-8 text-xs font-mono px-1 w-20 ml-auto text-right"
+                          />
+                        </td>
+                        <td className={`px-3 py-1.5 font-mono text-xs text-right ${diff === 0 ? "text-neutral-600" : diff < 0 ? "text-[#EF4444]" : "text-amber-300"}`} data-testid={`arqueo-diff-${d}`}>
+                          {diff > 0 ? `+${diff}` : diff}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+              <ReconCell label={t("admin.cash.arqueo.countedTotal")} value={arqCountedTotal} tone="text-white" testid="arqueo-counted-total" />
+              <ReconCell label={t("admin.cash.arqueo.expectedTotal")} value={arqExpectedTotal} tone="text-neutral-400" testid="arqueo-expected-total" />
+              <ReconCell label={t("admin.cash.arqueo.pending")} value={arqPending} tone="text-[#8B5CF6]" testid="arqueo-pending" />
+              <div data-testid="arqueo-pending-diff">
+                <div className="micro-label text-neutral-500 text-[0.6rem]">{t("admin.cash.arqueo.pendingDiff")}</div>
+                <div className={`font-mono text-sm ${arqPendingDiff === 0 ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
+                  {arqPendingDiff > 0 ? `+${arqPendingDiff.toLocaleString()}` : arqPendingDiff.toLocaleString()}
+                </div>
+              </div>
+            </div>
+            {arqExp && arqExp.untracked > 0 && (
+              <div className="text-[0.65rem] text-amber-300/80" data-testid="arqueo-untracked-hint">
+                {t("admin.cash.arqueo.untrackedHint", { amount: arqExp.untracked.toLocaleString(), currency: arqCurrency })}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={arqNote}
+                onChange={(e) => setArqNote(e.target.value)}
+                placeholder={t("admin.cash.arqueo.notePh")}
+                data-testid="arqueo-note-input"
+                className="rounded-none bg-[#0a0a0a] border-white/10 h-9 text-xs flex-1 min-w-[180px]"
+              />
+              <Button
+                onClick={submitArqueo}
+                disabled={arqBusy}
+                data-testid="arqueo-submit-btn"
+                className="rounded-none bg-sky-500 hover:bg-sky-400 text-white h-9 text-xs disabled:opacity-40"
+              >
+                {arqBusy ? "…" : t("admin.cash.arqueo.saveBtn")}
+              </Button>
+            </div>
+
+            {arqResult && (
+              <div className={`text-xs px-3 py-2 border ${arqResult.total_diff === 0 && arqResult.pending_diff === 0 ? "border-[#22C55E]/40 text-[#22C55E]" : "border-[#EF4444]/40 text-[#EF4444]"}`} data-testid="arqueo-result">
+                {arqResult.total_diff === 0 && arqResult.pending_diff === 0
+                  ? t("admin.cash.arqueo.noDiff")
+                  : t("admin.cash.arqueo.diffSummary", {
+                    pendingDiff: arqResult.pending_diff.toLocaleString(),
+                    currency: arqResult.currency,
+                  })}
+              </div>
+            )}
+
+            {arqHistory.length > 0 && (
+              <div className="border-t border-white/5 pt-2" data-testid="arqueo-history">
+                <div className="micro-label text-neutral-500 mb-1">{t("admin.cash.arqueo.historyTitle")}</div>
+                <div className="space-y-1">
+                  {arqHistory.map((a) => (
+                    <div key={a.id} className="flex flex-wrap items-baseline gap-x-3 text-[0.7rem] text-neutral-400" data-testid={`arqueo-hist-${a.id}`}>
+                      <span className="font-mono">{new Date(a.at).toLocaleString()}</span>
+                      <span className="font-mono text-white">{a.counted_total.toLocaleString()} {a.currency}</span>
+                      <span className={a.pending_diff === 0 ? "text-[#22C55E]" : "text-[#EF4444]"}>
+                        {t("admin.cash.arqueo.pendingDiff")}: {a.pending_diff > 0 ? `+${a.pending_diff}` : a.pending_diff}
+                      </span>
+                      {a.by_name && <span className="text-neutral-500">· {a.by_name}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

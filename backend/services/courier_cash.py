@@ -225,6 +225,7 @@ async def ensure_indexes() -> None:
     await db.courier_cash_events.create_index("op_key", unique=True,
                                               sparse=True)
     await db.courier_cash_events.create_index([("courier_id", 1), ("at", -1)])
+    await db.courier_cash_arqueos.create_index([("courier_id", 1), ("at", -1)])
     # EF01 — identidad de la cuenta de custodia por (mensajero, moneda).
     await db.fund_accounts.create_index(
         [("courier_custody_id", 1), ("currency", 1)], unique=True,
@@ -443,6 +444,93 @@ async def cash_pending(courier_id: Optional[str] = None) -> list:
         out.append(e)
     out.sort(key=lambda x: (-abs(x["pending"]), x["courier_name"]))
     return out
+
+
+async def courier_denomination_expectation(courier_id: str,
+                                           currency: str) -> dict:
+    """Arqueo — composición ESPERADA de billetes que el mensajero debería
+    tener físicamente, como NETO del desglose registrado en sus eventos
+    (issued/collected suman; returned/delivered restan), más el pendiente
+    total fiable. `untracked` = pendiente sin desglose de billetes."""
+    from services.currency_utils import norm_code as _norm_code
+    from services.denominations import get_cash_denominations
+    code = _norm_code(currency)
+    valid = (await get_cash_denominations()).get(code, [])
+    expected: dict = {}
+    events_with_denoms = 0
+    async for ev in db.courier_cash_events.find(
+        {"courier_id": courier_id, "currency": code,
+         "denominations": {"$ne": None}},
+        {"_id": 0, "kind": 1, "denominations": 1},
+    ):
+        dn = ev.get("denominations") or {}
+        if not dn:
+            continue
+        events_with_denoms += 1
+        sign = 1 if ev.get("kind") in ("issued", "collected") else -1
+        for d, q in dn.items():
+            try:
+                expected[str(int(d))] = expected.get(str(int(d)), 0) \
+                    + sign * int(q)
+            except (TypeError, ValueError):
+                continue
+    expected = {d: q for d, q in expected.items() if q != 0}
+    expected_total = round(sum(int(d) * q for d, q in expected.items()), 2)
+    pending = 0.0
+    for row in await cash_pending(courier_id):
+        if row["currency"] == code:
+            pending = round(float(row["pending"]), 2)
+            break
+    return {
+        "courier_id": courier_id, "currency": code,
+        "denominations": valid, "expected": expected,
+        "expected_total": expected_total, "pending": pending,
+        "untracked": round(pending - expected_total, 2),
+        "events_with_denoms": events_with_denoms,
+    }
+
+
+async def record_courier_arqueo(*, courier_id: str, courier_name: str,
+                                currency: str, counted: dict, note: str,
+                                by: str, by_name: str = "") -> dict:
+    """Guarda un arqueo físico: cruza el conteo real de billetes contra la
+    composición esperada y el pendiente, detectando faltantes/sobrantes por
+    denominación. No ajusta saldos: deja un registro auditable."""
+    exp = await courier_denomination_expectation(courier_id, currency)
+    code = exp["currency"]
+    clean: dict = {}
+    for d, q in (counted or {}).items():
+        try:
+            denom, qty = int(d), int(q)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400,
+                                detail="Conteo de billetes inválido")
+        if qty < 0:
+            raise HTTPException(status_code=400,
+                                detail="El conteo no puede ser negativo")
+        if qty:
+            clean[str(denom)] = clean.get(str(denom), 0) + qty
+    counted_total = round(sum(int(d) * q for d, q in clean.items()), 2)
+    diff_by_denom: dict = {}
+    for d in set(clean) | set(exp["expected"]):
+        delta = clean.get(d, 0) - exp["expected"].get(d, 0)
+        if delta != 0:
+            diff_by_denom[d] = delta
+    doc = {
+        "id": str(uuid.uuid4()), "courier_id": courier_id,
+        "courier_name": courier_name or "", "currency": code,
+        "counted": clean, "counted_total": counted_total,
+        "expected": exp["expected"], "expected_total": exp["expected_total"],
+        "pending": exp["pending"],
+        "total_diff": round(counted_total - exp["expected_total"], 2),
+        "pending_diff": round(counted_total - exp["pending"], 2),
+        "diff_by_denom": diff_by_denom,
+        "note": (note or "")[:300], "by": by, "by_name": by_name or "",
+        "at": iso(now_utc()),
+    }
+    await db.courier_cash_arqueos.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
 
 
 async def reconciliation_by_currency() -> list:

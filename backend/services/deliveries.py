@@ -33,6 +33,26 @@ TERMINAL_REF_STATUSES = ("rejected", "cancelled")
 RESERVATION_STALL_MIN = 30
 ACTIVE_STALL_MIN = 90
 
+# Protocolo SLA — tiempo MÁXIMO (horas) que una mensajería puede tardar antes
+# de escalarse para cancelación y devolución al origen (caja/almacén/tienda).
+# Configurable en settings.global.delivery_sla_hours; por defecto 36 h.
+DELIVERY_SLA_HOURS_DEFAULT = 36.0
+# Estados aún "en curso" (sin movimiento físico sellado) susceptibles de
+# cancelarse y devolver el dinero o la mercancía al origen.
+SLA_OPEN_STATUSES = ("available", "accepted", "on_the_way", "arrived")
+
+
+async def get_delivery_sla_hours() -> float:
+    """Horas máximas de SLA de mensajería (settings.global, por defecto 36)."""
+    doc = await db.settings.find_one({"id": "global"},
+                                     {"_id": 0, "delivery_sla_hours": 1}) or {}
+    raw = doc.get("delivery_sla_hours")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return DELIVERY_SLA_HOURS_DEFAULT
+    return val if val > 0 else DELIVERY_SLA_HOURS_DEFAULT
+
 
 async def _origin_refund_committed(kind: str, ref_id: str) -> bool:
     """DR09 v2 — ¿el origen ya PERSISTIÓ su decisión de reembolso/cierre?
@@ -207,9 +227,19 @@ async def find_attention_items() -> dict:
         {"status": {"$in": ["accepted", "on_the_way", "arrived"]},
          "updated_at": {"$lt": act_cutoff}},
         fields).sort("updated_at", 1).to_list(50)
+    # Protocolo SLA — entregas en curso que superan el máximo de horas: deben
+    # cancelarse y devolver el dinero/mercancía al origen.
+    sla_hours = await get_delivery_sla_hours()
+    sla_cutoff = iso(now_dt - timedelta(hours=sla_hours))
+    overdue = await db.deliveries.find(
+        {"status": {"$in": list(SLA_OPEN_STATUSES)},
+         "created_at": {"$lt": sla_cutoff}},
+        fields).sort("created_at", 1).to_list(100)
     return {"unanswered_reservations": unanswered, "stalled": stalled,
+            "overdue": overdue,
             "thresholds": {"reservation_min": RESERVATION_STALL_MIN,
-                           "active_min": ACTIVE_STALL_MIN}}
+                           "active_min": ACTIVE_STALL_MIN,
+                           "sla_hours": sla_hours}}
 
 
 async def _notify_dispatchers(*, title: str, body: str, ntype: str,
@@ -302,6 +332,29 @@ async def alert_attention_items() -> int:
                           f"«{d.get('status')}». Contacta al mensajero."))
             except Exception as e:
                 logger.error(f"stall alert failed: {e}")
+            n += 1
+    sla_hours = items["thresholds"]["sla_hours"]
+    sla_label = (f"{int(sla_hours)}" if float(sla_hours).is_integer()
+                 else f"{sla_hours:g}")
+    for d in items.get("overdue", []):
+        claim = await db.deliveries.update_one(
+            {"id": d["id"], "status": {"$in": list(SLA_OPEN_STATUSES)},
+             "sla_breach_alerted": {"$ne": True}},
+            {"$set": {"sla_breach_alerted": True}})
+        if claim.modified_count:
+            title = f"⏱️ Mensajería supera el límite de {sla_label} h"
+            body = (f"La entrega #{d['id'][:8]} de {d.get('client_name', '')} "
+                    f"lleva más de {sla_label} h sin completarse. Cancélala y "
+                    "devuelve el dinero o la mercancía a la caja, almacén o "
+                    "tienda de origen.")
+            try:
+                await notify_all_admins(db, title=title, body=body,
+                                        url_path="/admin/deliveries")
+                await _notify_dispatchers(ntype="delivery_sla_breach",
+                                          delivery_id=d["id"],
+                                          title=title, body=body)
+            except Exception as e:
+                logger.error(f"sla breach alert failed: {e}")
             n += 1
     return n
 

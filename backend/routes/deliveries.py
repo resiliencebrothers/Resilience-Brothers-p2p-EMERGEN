@@ -1137,6 +1137,82 @@ async def admin_courier_cash_register(payload: dict,
     return ev
 
 
+@router.get("/admin/courier-cash/arqueo/expected")
+async def admin_courier_arqueo_expected(request: Request, courier_id: str,
+                                        currency: str) -> Any:
+    """Arqueo — composición esperada de billetes y pendiente del mensajero,
+    para contrastar contra el conteo físico."""
+    await require_permission(request, "deliveries")
+    if not courier_id or not currency:
+        raise HTTPException(status_code=400,
+                            detail="courier_id y currency requeridos")
+    from services.courier_cash import courier_denomination_expectation
+    return await courier_denomination_expectation(courier_id, currency)
+
+
+@router.post("/admin/courier-cash/arqueo")
+async def admin_courier_arqueo_create(payload: dict, request: Request) -> Any:
+    """Registra un arqueo físico: cruza el conteo real de billetes contra el
+    desglose esperado para detectar faltantes/sobrantes por denominación. No
+    ajusta saldos; si hay diferencia, avisa a los admins."""
+    actor = await require_permission(request, "deliveries")
+    courier_id = (payload.get("courier_id") or "").strip()
+    currency = (payload.get("currency") or "").strip()
+    if not courier_id or not currency:
+        raise HTTPException(status_code=400,
+                            detail="courier_id y currency requeridos")
+    counted = payload.get("counted") or {}
+    if not isinstance(counted, dict):
+        raise HTTPException(status_code=400, detail="counted inválido")
+    c = await db.users.find_one({"user_id": courier_id},
+                                {"_id": 0, "name": 1, "email": 1})
+    if not c:
+        raise HTTPException(status_code=404, detail="Mensajero no encontrado")
+    courier_name = c.get("name") or c.get("email") or ""
+    from services.courier_cash import record_courier_arqueo
+    doc = await record_courier_arqueo(
+        courier_id=courier_id, courier_name=courier_name, currency=currency,
+        counted=counted, note=(payload.get("note") or ""),
+        by=actor["user_id"], by_name=actor.get("name") or "")
+    if doc["total_diff"] != 0 or doc["pending_diff"] != 0:
+        try:
+            from admin_alerts import notify_all_admins
+            await notify_all_admins(
+                db,
+                title="⚠️ Diferencia en arqueo de efectivo de mensajero",
+                body=(f"Arqueo de {courier_name} ({doc['currency']}): contado "
+                      f"{doc['counted_total']}, esperado {doc['expected_total']}"
+                      f", pendiente {doc['pending']}. Diferencia vs pendiente: "
+                      f"{doc['pending_diff']}."),
+                url_path="/admin/deliveries")
+        except Exception as e:
+            logger.error(f"arqueo discrepancy notify failed: {e}")
+    await log_action(db, actor, "courier.arqueo", "user", courier_id,
+                     details={"currency": doc["currency"],
+                              "counted_total": doc["counted_total"],
+                              "pending_diff": doc["pending_diff"],
+                              "total_diff": doc["total_diff"]})
+    return doc
+
+
+@router.get("/admin/courier-cash/arqueo/history")
+async def admin_courier_arqueo_history(request: Request,
+                                       courier_id: Optional[str] = None,
+                                       currency: Optional[str] = None,
+                                       limit: int = 20) -> Any:
+    """Historial de arqueos físicos (auditoría)."""
+    await require_permission(request, "deliveries")
+    q: dict = {}
+    if courier_id:
+        q["courier_id"] = courier_id
+    if currency:
+        q["currency"] = (currency or "").strip().upper()
+    limit = max(1, min(int(limit or 20), 100))
+    items = await db.courier_cash_arqueos.find(q, {"_id": 0}).sort(
+        "at", -1).limit(limit).to_list(limit)
+    return {"items": items}
+
+
 @router.get("/vip/deliveries/track")
 async def track_my_deliveries(request: Request) -> Any:
     """iter207 — el cliente sigue sus entregas en curso: estado, mensajero
@@ -1192,6 +1268,26 @@ async def admin_deliveries_attention(request: Request) -> Any:
     await require_permission(request, "deliveries")
     from services.deliveries import find_attention_items
     return await find_attention_items()
+
+
+@router.put("/admin/deliveries/sla-hours")
+async def admin_set_sla_hours(payload: dict, request: Request) -> Any:
+    """Protocolo SLA — define el máximo de horas que una mensajería puede
+    tardar antes de escalarse para cancelación y devolución al origen."""
+    actor = await require_permission(request, "deliveries")
+    try:
+        hours = float(payload.get("hours"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Horas inválidas")
+    if not (1 <= hours <= 720):
+        raise HTTPException(status_code=400,
+                            detail="Las horas deben estar entre 1 y 720")
+    await db.settings.update_one(
+        {"id": "global"}, {"$set": {"delivery_sla_hours": hours}}, upsert=True)
+    await log_action(db, actor, "delivery.sla_update", "settings", "global",
+                     summary=f"SLA de mensajería fijado en {hours} h",
+                     details={"delivery_sla_hours": hours})
+    return {"ok": True, "delivery_sla_hours": hours}
 
 
 _INCIDENT_ORIGIN_COLL = {"withdrawal": "withdrawals",
