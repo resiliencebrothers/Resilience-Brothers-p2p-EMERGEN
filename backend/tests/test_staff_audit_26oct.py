@@ -249,3 +249,100 @@ def test_staff07r_admin_can_assign_courier_anywhere():
         assert _is_courier(NORMAL) is True
     finally:
         _set(NORMAL, {"is_courier": False})
+
+
+# ------------------------------------------------------------------
+# STAFF-05-R — la suspensión alcanza también el circuito de mensajero
+# ------------------------------------------------------------------
+# Un mensajero (is_courier=true) con account_status blocked/under_review NO
+# puede operar NINGUNA ruta /courier/* (listar, aceptar, actualizar estado,
+# caja...). Rehabilitar a 'active' recupera el acceso. Aplica igual a staff y a
+# clientes-mensajeros; el onboarding normal de clientes (sin is_courier) no se
+# ve afectado porque nunca llegan al guard.
+
+_COURIER_CALLS = [
+    ("get", "/courier/deliveries", None),               # listado
+    ("get", "/courier/deliveries/history", None),       # historial
+    ("post", "/courier/deliveries/fake-id/claim", {}),  # aceptación
+    ("post", "/courier/deliveries/fake-id/status", {"status": "on_the_way"}),  # estado
+    ("post", "/courier/location", {"lat": 23.1, "lng": -82.3}),  # ubicación
+    ("post", "/courier/deliveries/fake-id/incident", {"note": "x"}),  # incidencia
+    ("get", "/courier/cash", None),                     # caja del mensajero
+]
+
+
+def _call(method, path, token, body):
+    fn = getattr(requests, method)
+    kw = {"headers": _hdr(token)}
+    if body is not None:
+        kw["json"] = body
+    return fn(f"{API}{path}", **kw)
+
+
+def test_staff05r_blocked_courier_denied_all_routes():
+    # Mensajero empleado activo → luego suspendido en sesión abierta.
+    _set(EMP, {"is_courier": True, "allowed_permissions": ["deliveries"],
+               "account_status": "blocked"})
+    try:
+        for method, path, body in _COURIER_CALLS:
+            r = _call(method, path, EMPLOYEE_TOKEN, body)
+            assert r.status_code == 403, f"{method} {path} -> {r.status_code} {r.text}"
+            assert "suspend" in r.text.lower() or "revisión" in r.text.lower(), \
+                f"{path}: {r.text}"
+    finally:
+        _set(EMP, {"is_courier": False, "account_status": "active"})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff05r_under_review_courier_denied():
+    _set(EMP, {"is_courier": True, "allowed_permissions": ["deliveries"],
+               "account_status": "under_review"})
+    try:
+        r = _call("get", "/courier/deliveries", EMPLOYEE_TOKEN, None)
+        assert r.status_code == 403, r.text
+        assert "revisión" in r.text.lower() or "suspend" in r.text.lower()
+    finally:
+        _set(EMP, {"is_courier": False, "account_status": "active"})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff05r_rehab_restores_courier_access():
+    # Suspendido → 403; al volver a 'active' recupera el listado (is_courier
+    # sigue concedido).
+    _set(EMP, {"is_courier": True, "allowed_permissions": ["deliveries"],
+               "account_status": "blocked"})
+    try:
+        r = _call("get", "/courier/deliveries", EMPLOYEE_TOKEN, None)
+        assert r.status_code == 403, r.text
+        _set(EMP, {"account_status": "active"})
+        r = _call("get", "/courier/deliveries", EMPLOYEE_TOKEN, None)
+        assert r.status_code == 200, r.text
+    finally:
+        _set(EMP, {"is_courier": False, "account_status": "active"})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff05r_client_courier_blocked_also_denied():
+    # Cliente-mensajero (NORMAL con is_courier) suspendido → también 403.
+    _set(NORMAL, {"is_courier": True, "account_status": "blocked"})
+    try:
+        r = _call("get", "/courier/deliveries", NORMAL_TOKEN, None)
+        assert r.status_code == 403, r.text
+        assert "suspend" in r.text.lower() or "revisión" in r.text.lower()
+    finally:
+        _set(NORMAL, {"is_courier": False, "account_status": "active"})
+
+
+def test_staff05r_normal_onboarding_unaffected():
+    # Control: un cliente normal SIN is_courier nunca entra al circuito de
+    # mensajero — recibe el 403 de "solo mensajeros", NO el de suspensión. Su
+    # account_status (p. ej. under_review de onboarding) es irrelevante aquí.
+    _set(NORMAL, {"is_courier": False, "account_status": "under_review"})
+    try:
+        r = _call("get", "/courier/deliveries", NORMAL_TOKEN, None)
+        assert r.status_code == 403, r.text
+        assert "mensajero" in r.text.lower()
+        assert "suspend" not in r.text.lower() and "revisión" not in r.text.lower()
+    finally:
+        _set(NORMAL, {"account_status": "active"})
+

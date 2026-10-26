@@ -43,9 +43,24 @@ async def _require_courier(request: Request) -> dict:
     # la marca is_courier. Pertenecer a staff (admin/employee) ya NO basta por
     # sí solo: si a alguien se le retira is_courier, pierde el acceso de
     # mensajero de inmediato.
-    if user.get("is_courier"):
-        return user
-    raise HTTPException(status_code=403, detail="Solo mensajeros autorizados")
+    if not user.get("is_courier"):
+        raise HTTPException(status_code=403, detail="Solo mensajeros autorizados")
+    # STAFF-05-R (residual de seguridad) — la suspensión debe alcanzar también
+    # el circuito de mensajero. `_require_courier` solo pasa por `require_user`,
+    # que NO comprueba `account_status`; por eso un mensajero `blocked` o
+    # `under_review` seguía listando y tomando repartos aunque las rutas admin
+    # ya lo bloqueaban (`_enforce_staff_active`). Aquí se exige cuenta ACTIVA al
+    # propio mensajero —sea staff o cliente— sin depender de que el admin retire
+    # is_courier por separado. Como SOLO los usuarios con is_courier llegan a
+    # este guard, el onboarding normal de clientes/Empresa (que nunca son
+    # mensajeros) no se ve afectado. account_status ausente = active (compat).
+    if (user.get("account_status") or "active") != "active":
+        raise HTTPException(
+            status_code=403,
+            detail=("Tu cuenta está suspendida o en revisión. "
+                    "No puedes operar como mensajero. Contacta a un administrador."),
+        )
+    return user
 
 
 def _strip_courier_secret(doc: Any) -> Any:
