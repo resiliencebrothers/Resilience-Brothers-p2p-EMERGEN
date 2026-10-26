@@ -50,6 +50,30 @@ def _vip_uid():
     return s["user_id"]
 
 
+def _cup_cash_box():
+    """Caja física CUP de la empresa (EF04/EC03: method=cash, no custodia)."""
+    fa = _db().fund_accounts.find_one(
+        {"currency": "CUP", "method": "cash",
+         "courier_custody_id": {"$exists": False},
+         "merged_into": {"$exists": False}}, {"_id": 0, "id": 1})
+    assert fa, "no hay caja física CUP configurada"
+    return fa["id"]
+
+
+def _clear_courier_cash(uid):
+    """Limpia por completo el rastro de efectivo del mensajero de prueba:
+    traslados, su espejo en caja, eventos, custodia y el aporte sembrado."""
+    trids = [t["id"] for t in _db().fund_account_transfers.find(
+        {"courier_id": uid}, {"id": 1})]
+    _db().fund_account_transfers.delete_many({"courier_id": uid})
+    if trids:
+        _db().cash_box_movements.delete_many(
+            {"source_transfer_id": {"$in": trids}})
+    _db().courier_cash_events.delete_many({"courier_id": uid})
+    _db().company_fund_adjustments.delete_many({"id": "it289_seed_cup"})
+    _db().fund_accounts.delete_many({"courier_custody_id": uid})
+
+
 def _now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
@@ -288,35 +312,46 @@ def _pending_for(courier_id, currency):
 
 def test_cash_issue_and_return_cycle():
     uid = _vip_uid()
-    r = requests.post(f"{API}/admin/courier-cash", headers=_hdr(),
-                      json={"courier_id": uid, "kind": "issued",
-                            "currency": "cup", "amount": 3000,
-                            "note": f"{MARK} salida matutina"}, timeout=15)
-    assert r.status_code == 200, r.text
-    assert r.json()["currency"] == "CUP"
-    row = _pending_for(uid, "CUP")
-    assert row and row["pending"] == 3000.0 and row["issued"] == 3000.0
-    # rendición parcial con diferencia → evento marcado
-    r = requests.post(f"{API}/admin/courier-cash", headers=_hdr(),
-                      json={"courier_id": uid, "kind": "returned",
-                            "currency": "CUP", "amount": 2900,
-                            "note": f"{MARK} rendición",
-                            "discrepancy_note": "faltan 100 CUP"}, timeout=15)
-    assert r.status_code == 200
-    assert r.json()["discrepancy"] is True
-    row = _pending_for(uid, "CUP")
-    assert row["pending"] == 100.0
-    # el mensajero ve su pendiente y sus eventos
-    mine = requests.get(f"{API}/courier/cash", headers=_hdr(VIP_TOKEN),
-                        timeout=15).json()
-    cup = [p for p in mine["pending"] if p["currency"] == "CUP"]
-    assert cup and cup[0]["pending"] == 100.0
-    assert len(mine["events"]) >= 2
-    # y el panel embebe el pendiente
-    panel = requests.get(f"{API}/courier/deliveries", headers=_hdr(VIP_TOKEN),
-                         timeout=15).json()
-    assert any(c["currency"] == "CUP" and c["pending"] == 100.0
-               for c in panel["cash_pending"])
+    box = _cup_cash_box()
+    _clear_courier_cash(uid)
+    # EF04 — financiar la caja física para poder emitir efectivo al mensajero.
+    _db().company_fund_adjustments.insert_one({
+        "id": "it289_seed_cup", "currency": "CUP", "account_id": box,
+        "amount": 10000, "adjustment_type": "inflow", "created_at": _now()})
+    try:
+        r = requests.post(f"{API}/admin/courier-cash", headers=_hdr(),
+                          json={"courier_id": uid, "kind": "issued",
+                                "currency": "cup", "amount": 3000,
+                                "account_id": box,
+                                "note": f"{MARK} salida matutina"}, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["currency"] == "CUP"
+        row = _pending_for(uid, "CUP")
+        assert row and row["pending"] == 3000.0 and row["issued"] == 3000.0
+        # rendición parcial con diferencia → evento marcado
+        r = requests.post(f"{API}/admin/courier-cash", headers=_hdr(),
+                          json={"courier_id": uid, "kind": "returned",
+                                "currency": "CUP", "amount": 2900,
+                                "account_id": box,
+                                "note": f"{MARK} rendición",
+                                "discrepancy_note": "faltan 100 CUP"}, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["discrepancy"] is True
+        row = _pending_for(uid, "CUP")
+        assert row["pending"] == 100.0
+        # el mensajero ve su pendiente y sus eventos
+        mine = requests.get(f"{API}/courier/cash", headers=_hdr(VIP_TOKEN),
+                            timeout=15).json()
+        cup = [p for p in mine["pending"] if p["currency"] == "CUP"]
+        assert cup and cup[0]["pending"] == 100.0
+        assert len(mine["events"]) >= 2
+        # y el panel embebe el pendiente
+        panel = requests.get(f"{API}/courier/deliveries", headers=_hdr(VIP_TOKEN),
+                             timeout=15).json()
+        assert any(c["currency"] == "CUP" and c["pending"] == 100.0
+                   for c in panel["cash_pending"])
+    finally:
+        _clear_courier_cash(uid)
 
 
 def test_cash_auto_event_on_withdrawal_delivered():
@@ -368,15 +403,18 @@ def test_cash_auto_event_on_deposit_pickup_delivered():
 
 def test_cash_register_validation():
     uid = _vip_uid()
+    box = _cup_cash_box()
     for bad in ({"kind": "collected"},           # solo issued/returned manual
                 {"kind": "issued", "amount": "NaN"},
                 {"kind": "issued", "amount": -5},
                 {"kind": "issued", "amount": 100, "currency": ""}):
-        payload = {"courier_id": uid, "currency": "CUP", **bad}
+        payload = {"courier_id": uid, "currency": "CUP",
+                   "account_id": box, **bad}
         r = requests.post(f"{API}/admin/courier-cash", headers=_hdr(),
                           json=payload, timeout=15)
         assert r.status_code == 400, f"{bad}: {r.status_code} {r.text}"
     r = requests.post(f"{API}/admin/courier-cash", headers=_hdr(),
                       json={"courier_id": "no_existe_x", "kind": "issued",
-                            "currency": "CUP", "amount": 10}, timeout=15)
+                            "currency": "CUP", "amount": 10,
+                            "account_id": box}, timeout=15)
     assert r.status_code == 404

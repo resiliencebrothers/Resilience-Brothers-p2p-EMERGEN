@@ -2291,7 +2291,11 @@
         "confirmed_no_event": "Confirmado sin evento",
         "pending_unconfirmed": "Pendiente de confirmar",
         "aborted": "Abortado (sin mover dinero)"
-      }
+      },
+      "colUnreconciled": "Sin conciliar",
+      "colBoxPhysical": "Caja física",
+      "mirrorDiff": "Descuadre de espejo: {{v}}",
+      "mirrorOk": "Espejo cuadrado"
     }
   },
   "adminOverview": {

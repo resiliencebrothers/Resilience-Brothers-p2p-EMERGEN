@@ -1329,8 +1329,11 @@ async def admin_set_sla_hours(payload: dict, request: Request) -> Any:
     """Protocolo SLA — define el máximo de horas que una mensajería puede
     tardar antes de escalarse para cancelación y devolución al origen."""
     actor = await require_permission(request, "deliveries")
+    raw = payload.get("hours")
+    if raw is None:
+        raise HTTPException(status_code=400, detail="Horas inválidas")
     try:
-        hours = float(payload.get("hours"))
+        hours = float(raw)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Horas inválidas")
     if not (1 <= hours <= 720):

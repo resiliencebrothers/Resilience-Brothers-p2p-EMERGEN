@@ -47,6 +47,8 @@ async def get_delivery_sla_hours() -> float:
     doc = await db.settings.find_one({"id": "global"},
                                      {"_id": 0, "delivery_sla_hours": 1}) or {}
     raw = doc.get("delivery_sla_hours")
+    if raw is None:
+        return DELIVERY_SLA_HOURS_DEFAULT
     try:
         val = float(raw)
     except (TypeError, ValueError):

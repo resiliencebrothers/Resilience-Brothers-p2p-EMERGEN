@@ -3251,3 +3251,26 @@ Verificación: ruff + AST OK, servicios RUNNING, curl autenticado de los 3 endpo
 - Ruta `POST /admin/courier-cash`: valida que el destinatario sea mensajero habilitado (`is_courier` o rol admin/employee), mismo criterio que la (re)asignación.
 **Verificación:** `tests/test_ec01_cash_idempotency.py::test_ec03_resolve_company_cash_box` (rechaza banco, custodia ajena, inactiva, moneda distinta e inexistente; acepta la caja física real). Ruta vía curl: destinatario no-mensajero → 400 "no es un mensajero habilitado"; caja inexistente → 400 "Cuenta de caja no encontrada".
 **Nota (no abordado, pre-existente):** el índice único `(courier_custody_id, currency)` sparse (EF01) también impide crear una 2ª cuenta de efectivo no-custodia de la misma moneda → `POST /admin/company-funds/accounts` devuelve 500 para una 2ª caja CUP (causa de fallos pre-existentes en test_iter277/iter205, ajenos a EC01/EC02/EC03).
+
+## CI + EF01 índice + EC04 (2026-10-26)
+### CI corregido
+- **mypy (3 errores):** `services/deliveries.py` (guard None antes de `float(raw)`), `routes/deliveries.py` (guard None antes de `float(payload.get("hours"))`), `services/courier_cash.py` (`norm_code(...) or ""` antes de `.get(code, [])`). mypy: Success.
+- **ESLint:** `AdminDeliveries.jsx` DialogContent del diálogo de cancelación masiva ahora lleva `max-h-[85vh] overflow-y-auto` (regla `rb-local/no-dialog-without-scroll`). 0 errores en todo `src`.
+
+### EF01 — índice de cajas (BUGFIX, solicitado)
+- El índice `(courier_custody_id, currency)` era `sparse` compuesto: indexaba también las cajas no-custodia como (null, moneda) → impedía una 2ª caja física de la misma moneda (error 500). Migrado en `ensure_indexes()` a índice **parcial** `courier_custody_unique` (`partialFilterExpression {courier_custody_id: {$exists: true}}`): conserva la unicidad de la custodia y permite varias cajas físicas por moneda.
+- **Verificado:** `test_iter277_denoms_sync` 11/11 PASS (antes 7 fallaban al crear la 2ª caja).
+
+### EC04 — billetes y conciliación (HARDENING, MEDIA)
+- `record_courier_arqueo`: valida que cada billete pertenezca a las denominaciones configuradas de la moneda y que denominación/cantidad sean ENTEROS reales (rechaza floats no enteros y texto); ya no trunca silenciosamente.
+- `reconciliation_by_currency`: ya no etiqueta `ledger−transit` como "recogido pendiente". Devuelve `unreconciled_diff` (diferencia sin conciliar, para revisión) + `box_physical` (saldo real de `cash_box_movements`) + `box_mirror_diff` (detecta fallos del espejo). No presenta el agregado contable como prueba física. Frontend: celda "Sin conciliar" + fila "Caja física"/"Descuadre de espejo".
+- **Verificado:** test directo (arqueo rechaza denom inválida/no-entera; reconciliación expone los campos nuevos y elimina `collected_unconfirmed`) + captura del panel (muestra descuadres reales CUP/USD en rojo).
+
+### Pruebas del ciclo de efectivo
+- `tests/test_ec01_cash_idempotency.py` cubre caja→mensajero→rendición con fallos intermedios (EC01/EC02/EC03) contra DB real — 7/7 PASS.
+- `test_iter289_fase_a_mejoras.py`: tests de efectivo legados actualizados a la API actual (requieren `account_id` + caja física + mensajero habilitado); ciclo issued→returned con diferencia ahora verde. 11/11 PASS.
+
+### Notas / fuera de alcance
+- CUSTODY_EPOCH=2026-10-24 y la divergencia histórica caja física↔contable se SURFACEAN ahora vía `box_mirror_diff` (no se auto-aplica el histórico contra caja; es tarea de conciliación operativa).
+- `collected_unconfirmed` real desde depósitos recogidos-no-confirmados: pendiente (requiere el dominio de depósitos); hoy se muestra honestamente como `unreconciled_diff` a revisar.
+- Fallos de `test_iter205` (`courier_fee_status`): dependientes de config de tarifas de mensajería por municipio; ajenos a EC01-04/índice/CI.

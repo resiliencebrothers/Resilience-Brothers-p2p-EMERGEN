@@ -369,10 +369,23 @@ async def ensure_indexes() -> None:
                                               sparse=True)
     await db.courier_cash_events.create_index([("courier_id", 1), ("at", -1)])
     await db.courier_cash_arqueos.create_index([("courier_id", 1), ("at", -1)])
-    # EF01 — identidad de la cuenta de custodia por (mensajero, moneda).
-    await db.fund_accounts.create_index(
-        [("courier_custody_id", 1), ("currency", 1)], unique=True,
-        sparse=True)
+    # EF01 — unicidad de la cuenta de CUSTODIA por (mensajero, moneda). El
+    # índice antiguo era `sparse` compuesto: como las cajas no-custodia también
+    # llevan `currency`, quedaban indexadas como (null, moneda) y una 2ª caja
+    # física de la MISMA moneda chocaba (error 500 al crearla). Se migra a un
+    # índice PARCIAL que solo aplica a documentos CON `courier_custody_id`, de
+    # modo que puede haber varias cajas físicas por moneda sin perder la
+    # unicidad de la custodia.
+    try:
+        info = await db.fund_accounts.index_information()
+        if "courier_custody_id_1_currency_1" in info:
+            await db.fund_accounts.drop_index("courier_custody_id_1_currency_1")
+        await db.fund_accounts.create_index(
+            [("courier_custody_id", 1), ("currency", 1)], unique=True,
+            partialFilterExpression={"courier_custody_id": {"$exists": True}},
+            name="courier_custody_unique")
+    except Exception as exc:  # no debe romper el arranque
+        logger.error("índice de custodia (EF01) no migrado: %s", exc)
     # EC01 — identidad ÚNICA del traslado de efectivo por clave de operación.
     # Restricción de persistencia: dos reintentos/concurrencias con la misma
     # `operation_id` jamás crean dos traslados. Parcial a los traslados de
@@ -608,7 +621,7 @@ async def courier_denomination_expectation(courier_id: str,
     total fiable. `untracked` = pendiente sin desglose de billetes."""
     from services.currency_utils import norm_code as _norm_code
     from services.denominations import get_cash_denominations
-    code = _norm_code(currency)
+    code = _norm_code(currency) or ""
     valid = (await get_cash_denominations()).get(code, [])
     expected: dict = {}
     events_with_denoms = 0
@@ -652,16 +665,48 @@ async def record_courier_arqueo(*, courier_id: str, courier_name: str,
     denominación. No ajusta saldos: deja un registro auditable."""
     exp = await courier_denomination_expectation(courier_id, currency)
     code = exp["currency"]
-    clean: dict = {}
-    for d, q in (counted or {}).items():
+    from services.denominations import get_cash_denominations
+    valid = set((await get_cash_denominations()).get(code, []))
+
+    def _strict_int(x: Any, what: str) -> int:
+        """EC04 — exige un entero REAL: rechaza booleanos, floats no enteros y
+        texto no entero (p. ej. '20.5'), en vez de truncar silenciosamente."""
+        if isinstance(x, bool):
+            raise HTTPException(status_code=400, detail=f"{what} inválido")
+        if isinstance(x, int):
+            return x
+        if isinstance(x, float):
+            if not x.is_integer():
+                raise HTTPException(status_code=400,
+                                    detail=f"{what} debe ser un número entero")
+            return int(x)
         try:
-            denom, qty = int(d), int(q)
+            f = float(str(x).strip())
         except (TypeError, ValueError):
             raise HTTPException(status_code=400,
-                                detail="Conteo de billetes inválido")
+                                detail=f"{what} inválido: {x}")
+        if not f.is_integer():
+            raise HTTPException(status_code=400,
+                                detail=f"{what} debe ser un número entero: {x}")
+        return int(f)
+
+    clean: dict = {}
+    for d, q in (counted or {}).items():
+        denom = _strict_int(d, "Denominación")
+        qty = _strict_int(q, "Cantidad")
         if qty < 0:
             raise HTTPException(status_code=400,
                                 detail="El conteo no puede ser negativo")
+        # EC04 — cada billete contado debe pertenecer a las denominaciones
+        # configuradas para la moneda; no se admite texto libre.
+        if valid and denom not in valid:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"El billete de {denom} no existe en {code}. Válidos: "
+                        f"{', '.join(str(x) for x in sorted(valid, reverse=True))}"))
+        if not valid and denom <= 0:
+            raise HTTPException(status_code=400,
+                                detail=f"Denominación inválida: {denom}")
         if qty:
             clean[str(denom)] = clean.get(str(denom), 0) + qty
     counted_total = round(sum(int(d) * q for d, q in clean.items()), 2)
@@ -688,16 +733,30 @@ async def record_courier_arqueo(*, courier_id: str, courier_name: str,
 
 
 async def reconciliation_by_currency() -> list:
-    """Conciliación por moneda (sección 8 del informe): distingue efectivo en
-    CAJA física, en TRÁNSITO (custodia confirmada) y recogido PENDIENTE de
-    confirmar. `in_transit` es la custodia contable (cuentas de custodia);
-    `ledger_pending` es la vista operativa (ledger de eventos); su diferencia es
-    el efectivo recogido aún sin confirmar su depósito."""
+    """Conciliación por moneda (sección 8 del informe), SIN presentar agregados
+    contables como prueba de conciliación física:
+    - `box` = saldo CONTABLE de las cuentas de caja (no-custodia).
+    - `box_physical` = saldo FÍSICO real de la caja de empresa, derivado de los
+      movimientos (`cash_box_movements`); `box_mirror_diff = box − box_physical`
+      detecta fallos del espejo (EC04). Si no es ~0, hay que revisar el espejo.
+    - `in_transit` = custodia confirmada (cuentas de custodia).
+    - `ledger_pending` = pendiente operativo del ledger de eventos.
+    - `unreconciled_diff` = `ledger_pending − in_transit`: diferencia SIN
+      conciliar. NO se afirma que sea un depósito recogido pendiente: puede
+      contener legado, operaciones a medias o errores (p. ej. EC01). Se muestra
+      aparte, para revisión, no como efectivo confirmado por depositar."""
     from services.fund_accounts import account_assigned_balances
+    from services.cash_box_sync import (fund_for_currency,
+                                         get_or_create_company_cash_box)
     pend_by_cur: dict = {}
     for r in await cash_pending():
         pend_by_cur[r["currency"]] = round(
             pend_by_cur.get(r["currency"], 0.0) + r["pending"], 2)
+    try:
+        box_doc = await get_or_create_company_cash_box()
+        box_id_phys = box_doc["id"]
+    except Exception:  # la caja física aún no existe: se omite la comparación
+        box_id_phys = None
     out = []
     for code in sorted(await physical_cash_currencies()):
         assigned = await account_assigned_balances(code)
@@ -715,10 +774,25 @@ async def reconciliation_by_currency() -> list:
         transit = round(sum(v for k, v in assigned.items()
                             if k in custody_ids), 2)
         ledger = round(pend_by_cur.get(code, 0.0), 2)
+        # EC04 — saldo físico real de la caja de empresa (entradas − salidas).
+        box_physical = None
+        fund = fund_for_currency(code)
+        if box_id_phys and fund:
+            sums: dict = {}
+            async for g in db.cash_box_movements.aggregate([
+                {"$match": {"box_id": box_id_phys, "fund": fund}},
+                {"$group": {"_id": "$type", "t": {"$sum": "$amount"}}},
+            ]):
+                sums[g["_id"]] = g["t"]
+            box_physical = round(sums.get("entrada", 0.0)
+                                 - sums.get("salida", 0.0), 2)
         out.append({
             "currency": code, "box": box, "in_transit": transit,
             "ledger_pending": ledger,
-            "collected_unconfirmed": round(ledger - transit, 2),
+            "box_physical": box_physical,
+            "box_mirror_diff": (None if box_physical is None
+                                else round(box - box_physical, 2)),
+            "unreconciled_diff": round(ledger - transit, 2),
             "total": round(box + transit, 2),
         })
     return out

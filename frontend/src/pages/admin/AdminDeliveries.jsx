@@ -964,7 +964,7 @@ function DeliveriesTab({ navigate, mode = "active" }) {
       )}
 
       <Dialog open={bulkCancelOpen} onOpenChange={(o) => !o && setBulkCancelOpen(false)}>
-        <DialogContent className="bg-[#1A1730] border-white/10 text-white" data-testid="bulk-cancel-dialog">
+        <DialogContent className="bg-[#1A1730] border-white/10 text-white max-h-[85vh] overflow-y-auto" data-testid="bulk-cancel-dialog">
           <DialogHeader>
             <DialogTitle>{t("admin.deliveries.dispatch.bulkCancelTitle")}</DialogTitle>
             <DialogDescription className="text-neutral-400">

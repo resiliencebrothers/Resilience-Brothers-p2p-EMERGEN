@@ -2291,7 +2291,11 @@
         "confirmed_no_event": "Confirmed without event",
         "pending_unconfirmed": "Pending confirmation",
         "aborted": "Aborted (no money moved)"
-      }
+      },
+      "colUnreconciled": "Unreconciled",
+      "colBoxPhysical": "Physical box",
+      "mirrorDiff": "Mirror mismatch: {{v}}",
+      "mirrorOk": "Mirror balanced"
     }
   },
   "adminOverview": {
