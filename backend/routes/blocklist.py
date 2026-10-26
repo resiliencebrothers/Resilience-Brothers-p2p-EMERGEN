@@ -23,7 +23,7 @@ from pydantic import BaseModel, EmailStr, Field
 from db_client import db
 from auth_utils import (
     require_staff, normalize_phone, now_utc, iso, _enforce_totp_step_up,
-    strip_credential_fields,
+    redact_user_for_actor,
 )
 from audit_log import log_action
 from services.anti_scam import mark_user_under_review, mark_user_active
@@ -297,7 +297,8 @@ async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
             },
         )
     if target.get("phone_verified") and target.get("account_status") == "active":
-        return {"ok": True, "already_verified": True, "user": strip_credential_fields(target)}
+        return {"ok": True, "already_verified": True,
+                "user": redact_user_for_actor(requester, target)}
     await mark_user_active(user_id)
     fresh = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     try:
@@ -317,7 +318,8 @@ async def admin_verify_user_phone(user_id: str, request: Request) -> Any:
         summary=f"Teléfono verificado manualmente para {target.get('email','')} ({target.get('phone')})",
         details={"email": target.get("email"), "phone": target.get("phone")},
     )
-    return {"ok": True, "already_verified": False, "user": strip_credential_fields(fresh)}
+    return {"ok": True, "already_verified": False,
+            "user": redact_user_for_actor(requester, fresh)}
 
 
 @router.post("/admin/users/{user_id}/reject-phone")
@@ -359,4 +361,4 @@ async def admin_reject_user_phone(user_id: str, payload: RejectPhonePayload, req
         summary=f"Rechazó teléfono y bloqueó a {target.get('email','')} ({phone})",
         details={"phone": phone, "reason": payload.reason},
     )
-    return {"ok": True, "user": strip_credential_fields(fresh)}
+    return {"ok": True, "user": redact_user_for_actor(requester, fresh)}

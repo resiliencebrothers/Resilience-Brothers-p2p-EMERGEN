@@ -81,6 +81,35 @@ def strip_credential_fields(doc: Optional[dict]) -> Optional[dict]:
     return doc
 
 
+# STAFF-03-R (auditoría residual) — campos de PERFIL sensibles (teléfono,
+# saldos y FUNCIONES) que SOLO ve un actor con el permiso `view_user_sensitive`.
+# El catálogo describe `users` como lectura SIN datos sensibles ni funciones,
+# así que TODA respuesta admin sobre OTRO usuario (listado y mutaciones:
+# verify-email, verify-phone, reject-phone, update) debe pasar por el redactor
+# dependiente del actor para que ninguna exponga de más que el listado.
+SENSITIVE_PROFILE_FIELDS = (
+    "phone", "phone_verified_at", "vip_balances",
+    "vip_balance_usd", "vip_balance_usdt",
+    "allowed_currencies", "allowed_permissions",
+    "applied_templates", "market_perms",
+)
+
+
+def redact_user_for_actor(requester: dict, doc: Optional[dict]) -> Optional[dict]:
+    """Serializa un doc de usuario SEGÚN el actor: siempre sin credenciales y,
+    si el actor carece de `view_user_sensitive`, también sin datos sensibles de
+    perfil/funciones. Mismo filtro que el listado — reutilizado en todas las
+    respuestas de mutación de usuario."""
+    if not doc:
+        return doc
+    strip_credential_fields(doc)
+    from services.permissions import _has_permission
+    if not _has_permission(requester, "view_user_sensitive"):
+        for k in SENSITIVE_PROFILE_FIELDS:
+            doc.pop(k, None)
+    return doc
+
+
 async def _create_session(user_id: str, response: Response, ttl_hours: int = SESSION_MAX_HOURS,
                           session_token: Optional[str] = None):
     """Issue a session_token + set cookie. Hard-capped at 24 hours by policy.

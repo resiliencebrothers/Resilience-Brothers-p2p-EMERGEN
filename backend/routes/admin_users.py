@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from db_client import db
 from auth_utils import (require_staff, require_permission,
                         _enforce_totp_step_up, iso, now_utc,
-                        strip_credential_fields)
+                        strip_credential_fields, redact_user_for_actor,
+                        SENSITIVE_PROFILE_FIELDS)
 from audit_log import log_action
 from services.balances import build_rate_lookup, convert_to_usdt
 
@@ -128,11 +129,9 @@ async def list_users(request: Request, q: Optional[str] = None,
     from services.permissions import _has_permission
     if not _has_permission(requester, "view_user_sensitive"):
         for d in docs:
-            # Wipe every field the operator explicitly listed as sensitive.
-            for k in ("phone", "phone_verified_at", "vip_balances",
-                      "vip_balance_usd", "vip_balance_usdt",
-                      "allowed_currencies", "allowed_permissions",
-                      "applied_templates", "market_perms"):
+            # Wipe every field the operator explicitly listed as sensitive
+            # (single source of truth with redact_user_for_actor — STAFF-03-R).
+            for k in SENSITIVE_PROFILE_FIELDS:
                 d.pop(k, None)
     return JSONResponse(
         content=docs,
@@ -305,7 +304,7 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
                      details={"changes": update,
                               "prev_role": old_user.get("role") if old_user else None,
                               "balance_edit": any(k in update for k in ("vip_balance_usd", "vip_balances"))})
-    return strip_credential_fields(new_user)
+    return redact_user_for_actor(requester, new_user)
 
 
 # iter55.16 — Permission catalog endpoint. Any staff can read the catalog to
@@ -330,8 +329,10 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if target.get("email_verified"):
         # iter260(E01) — NUNCA devolver credenciales en respuestas anidadas.
+        # STAFF-03-R — y tampoco datos sensibles si el actor no los ve en el
+        # listado (serializer dependiente del actor).
         return {"ok": True, "already_verified": True,
-                "user": strip_credential_fields(target)}
+                "user": redact_user_for_actor(requester, target)}
     await db.users.update_one(
         {"user_id": user_id},
         {"$set": {"email_verified": True},
@@ -342,7 +343,7 @@ async def admin_verify_user_email(user_id: str, request: Request) -> Any:
                      summary=f"Email verificado manualmente para {target.get('email', '')}",
                      details={"email": target.get("email")})
     return {"ok": True, "already_verified": False,
-            "user": strip_credential_fields(fresh)}
+            "user": redact_user_for_actor(requester, fresh)}
 
 
 @router.get("/admin/email-health")
