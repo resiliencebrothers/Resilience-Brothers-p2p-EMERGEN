@@ -13,7 +13,7 @@ from pymongo import MongoClient
 
 from tests.conftest import (
     BASE_URL, ADMIN_TOKEN, EMPLOYEE_TOKEN, NORMAL_TOKEN,
-    with_totp_employee,
+    with_totp_employee, with_totp_admin,
 )
 
 API = f"{BASE_URL}/api"
@@ -161,3 +161,91 @@ def test_staff06_normal_user_live_stream_ok():
         assert r.status_code == 200, r.text
     finally:
         r.close()
+
+
+
+# ------------------------------------------------------------------
+# STAFF-07-R — is_courier sujeta a las restricciones de objetivo/autoedición
+# ------------------------------------------------------------------
+# Un empleado con 'users' + 'deliveries' (sin 'user_functions') NO puede
+# reponer/alterar la marca is_courier sobre SÍ MISMO ni sobre otra cuenta de
+# staff/admin; sí puede designar mensajeros CLIENTES. El admin puede sobre todos.
+
+def _is_courier(uid):
+    return bool((_db().users.find_one({"user_id": uid}, {"is_courier": 1, "_id": 0})
+                 or {}).get("is_courier"))
+
+
+def test_staff07r_employee_cannot_self_enable_courier():
+    # El admin le retira is_courier pero conserva users+deliveries.
+    _set(EMP, {"is_courier": False, "allowed_permissions": ["users", "deliveries"]})
+    try:
+        r = requests.put(f"{API}/admin/users/{EMP}", headers=_hdr(EMPLOYEE_TOKEN),
+                         json=with_totp_employee({"is_courier": True}))
+        assert r.status_code == 403, r.text
+        assert "mensajero" in r.text.lower()
+        assert _is_courier(EMP) is False, "la marca NO debe haberse escrito"
+    finally:
+        _set(EMP, {"is_courier": False})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff07r_employee_cannot_set_courier_on_admin():
+    _set(EMP, {"allowed_permissions": ["users", "deliveries"]})
+    _set(ADMIN, {"is_courier": False})
+    try:
+        r = requests.put(f"{API}/admin/users/{ADMIN}", headers=_hdr(EMPLOYEE_TOKEN),
+                         json=with_totp_employee({"is_courier": True}))
+        assert r.status_code == 403, r.text
+        assert "staff" in r.text.lower()
+        assert _is_courier(ADMIN) is False, "la marca NO debe haberse escrito sobre el admin"
+    finally:
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff07r_employee_cannot_set_courier_on_other_staff():
+    # Objetivo = otro empleado (cuenta de staff) → prohibido.
+    _set(EMP, {"allowed_permissions": ["users", "deliveries"]})
+    _db().users.update_one(
+        {"user_id": "user_test_employee02"},
+        {"$setOnInsert": {"email": "emp2.staff07r@test.local", "role": "employee",
+                          "account_status": "active"}},
+        upsert=True,
+    )
+    _set("user_test_employee02", {"role": "employee", "is_courier": False})
+    try:
+        r = requests.put(f"{API}/admin/users/user_test_employee02",
+                         headers=_hdr(EMPLOYEE_TOKEN),
+                         json=with_totp_employee({"is_courier": True}))
+        assert r.status_code == 403, r.text
+        assert "staff" in r.text.lower()
+        assert _is_courier("user_test_employee02") is False
+    finally:
+        _unset(EMP, ["allowed_permissions"])
+        _db().users.delete_one({"user_id": "user_test_employee02"})
+
+
+def test_staff07r_employee_can_designate_normal_client_courier():
+    # Caso positivo: designar a un CLIENTE normal como mensajero sí se permite.
+    _set(EMP, {"allowed_permissions": ["users", "deliveries"]})
+    _set(NORMAL, {"is_courier": False})
+    try:
+        r = requests.put(f"{API}/admin/users/{NORMAL}", headers=_hdr(EMPLOYEE_TOKEN),
+                         json=with_totp_employee({"is_courier": True}))
+        assert r.status_code == 200, r.text
+        assert _is_courier(NORMAL) is True
+    finally:
+        _unset(EMP, ["allowed_permissions"])
+        _set(NORMAL, {"is_courier": False})
+
+
+def test_staff07r_admin_can_assign_courier_anywhere():
+    # Asignación legítima por administrador (sobre un cliente normal).
+    _set(NORMAL, {"is_courier": False})
+    try:
+        r = requests.put(f"{API}/admin/users/{NORMAL}", headers=_hdr(ADMIN_TOKEN),
+                         json=with_totp_admin({"is_courier": True}))
+        assert r.status_code == 200, r.text
+        assert _is_courier(NORMAL) is True
+    finally:
+        _set(NORMAL, {"is_courier": False})

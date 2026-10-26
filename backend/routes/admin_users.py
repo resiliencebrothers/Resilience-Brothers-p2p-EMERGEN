@@ -184,6 +184,27 @@ def _assert_user_update_authz(requester: dict, target: dict, update: dict) -> No
             status_code=403,
             detail="Acceso restringido. Necesitas el permiso 'Mensajería' para designar mensajeros.",
         )
+    # STAFF-07-R (residual de seguridad) — `is_courier` es una CAPACIDAD de staff
+    # (habilita el panel/ejecución de mensajero vía _require_courier). A propósito
+    # NO está en FUNCTIONS_FIELDS ni ADMIN_ONLY_FIELDS: un empleado con 'deliveries'
+    # debe poder designar mensajeros CLIENTES sin 'user_functions'. Pero esa misma
+    # omisión dejaba fuera del guard STAFF-07 la marca sobre cuentas de STAFF y
+    # sobre SÍ MISMO, permitiendo que un empleado se auto-rehabilitara como
+    # mensajero (o alterara a otro staff/admin) tras un retiro del admin. Aquí se
+    # cierra: un empleado NO puede tocar is_courier sobre staff/admin ni sobre su
+    # propia cuenta. Los admins (rol raíz) quedan exentos.
+    if "is_courier" in update and requester.get("role") == "employee":
+        if target.get("role") in ("admin", "employee"):
+            raise HTTPException(
+                status_code=403,
+                detail=("No puedes designar como mensajero a una cuenta de staff. "
+                        "Pídeselo a un administrador."),
+            )
+        if target.get("user_id") == requester.get("user_id"):
+            raise HTTPException(
+                status_code=403,
+                detail="No puedes modificar tu propia marca de mensajero.",
+            )
     if requester.get("role") == "employee" and update.get("role") in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
     # STAFF-07 (auditoría 26-10-2026) — un gestor empleado (con 'user_functions')
