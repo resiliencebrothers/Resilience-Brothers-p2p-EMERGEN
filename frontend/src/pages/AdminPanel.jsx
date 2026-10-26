@@ -36,6 +36,34 @@ import InstallAppButton from "@/components/InstallAppButton";
 import { useSupportUnreadCount } from "@/hooks/useSupportUnreadCount";
 import { useAdminPendingCounts } from "@/hooks/useAdminPendingCounts";
 
+// STAFF-08 — ÚNICA fuente de verdad de la matriz de capacidades de la UI.
+// El MENÚ lateral, el guardado de rutas (direct URL) y las sub-pestañas usan
+// ESTE mapa, de modo que no puedan divergir (fue así como `vip_requests` se
+// quedó fuera del menú de Usuarios aunque la ruta sí lo permitía). Cada sección
+// lista los códigos que la abren; deny-by-default: sin ninguno → sin acceso
+// (los admins pasan todo). Debe coincidir con los `require_permission` del
+// backend por sección.
+const SECTION_PERMS = {
+  queue: ["quick_view"],
+  orders: ["orders", "transactions"],
+  "vip-batches": ["orders"],
+  transactions: ["transactions"],
+  withdrawals: ["withdrawals"],
+  deliveries: ["deliveries"],
+  reconciliation: ["reconciliation"],
+  currencies: ["currencies", "rates", "payment_accounts"],
+  rates: ["rates"],
+  "payment-accounts": ["payment_accounts"],
+  products: ["products"],
+  users: ["users", "appeals", "kyc", "profile_changes", "support",
+          "blocked_contacts", "company_requests", "vip_requests"],
+  "user-stats": ["user_stats"],
+  support: ["support"],
+  "blocked-contacts": ["blocked_contacts"],
+  referrals: ["users"],
+  "company-funds": ["company_funds", "profitability"],
+};
+
 export default function AdminPanel() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -50,7 +78,9 @@ export default function AdminPanel() {
   // STAFF-08 / STAFF-01 — DENY-BY-DEFAULT: los admins pasan todo; un empleado
   // solo pasa los códigos concedidos EXPLÍCITAMENTE. Lista vacía/ausente = SIN
   // acceso (ya NO significa «acceso total»), idéntico a la política del backend.
-  const hasPerm = (code) => isAdmin || userPerms.includes(code);
+  // Predicado UNIFICADO para secciones (una o varias capacidades las abren);
+  // menú y guardado de rutas lo comparten vía SECTION_PERMS.
+  const hasAny = (codes) => isAdmin || (codes || []).some((c) => userPerms.includes(c));
 
   // iter107.1 — Live count of unread client support tickets, used as a
   // red pill next to the "Usuarios" sidebar entry so staff notice new
@@ -64,12 +94,13 @@ export default function AdminPanel() {
   // render. `hasPerm` is inlined so ESLint can statically verify deps.
   const items = useMemo(() => {
     const has = (code) => isAdmin || userPerms.includes(code);
+    const anyOf = (codes) => isAdmin || codes.some((c) => userPerms.includes(c));
     return [
       { to: "/admin", icon: ListChecks, label: t("sidebar.admin.overview"), end: true, id: "admin-nav-overview", hasSubsections: true },
-      ...(has("quick_view") ? [
+      ...(anyOf(SECTION_PERMS.queue) ? [
         { to: "/admin/queue", icon: Inbox, label: t("sidebar.admin.queue"), id: "admin-nav-queue", highlight: true },
       ] : []),
-      ...(has("orders") || has("transactions") ? [
+      ...(anyOf(SECTION_PERMS.orders) ? [
         {
           to: "/admin/orders", icon: ListChecks, label: t("sidebar.admin.orders"),
           id: "admin-nav-orders",
@@ -87,22 +118,22 @@ export default function AdminPanel() {
           ],
         },
       ] : []),
-      ...(has("withdrawals") ? [
+      ...(anyOf(SECTION_PERMS.withdrawals) ? [
         { to: "/admin/withdrawals", icon: ArrowDownToLine, label: t("sidebar.admin.withdrawals"), id: "admin-nav-withdrawals",
           badge: pendingCounts.withdrawals_hub > 0 ? pendingCounts.withdrawals_hub : null },
       ] : []),
       // iter202 — Mensajería tiene permiso dedicado (antes iba con Retiros).
-      ...(has("deliveries") ? [
+      ...(anyOf(SECTION_PERMS.deliveries) ? [
         { to: "/admin/deliveries", icon: Truck, label: t("sidebar.admin.deliveries"), id: "admin-nav-deliveries" },
       ] : []),
       // iter167 — bank statement reconciliation module (dedicated permission).
-      ...(has("reconciliation") ? [
+      ...(anyOf(SECTION_PERMS.reconciliation) ? [
         { to: "/admin/reconciliation", icon: Landmark, label: t("sidebar.admin.reconciliation"), id: "admin-nav-reconciliation",
           badge: pendingCounts.reconciliation > 0 ? pendingCounts.reconciliation : null },
       ] : []),
       // iter102.1 — Monedas + Tasas agrupadas: la Rate table es una vista
       // secundaria del catálogo de monedas, no una sección independiente.
-      ...(has("currencies") || has("rates") || has("payment_accounts") ? [
+      ...(anyOf(SECTION_PERMS.currencies) ? [
         {
           to: "/admin/currencies", icon: Coins, label: t("sidebar.admin.currencies"),
           id: "admin-nav-currencies",
@@ -116,7 +147,7 @@ export default function AdminPanel() {
           ],
         },
       ] : []),
-      ...(has("products") ? [
+      ...(anyOf(SECTION_PERMS.products) ? [
         { to: "/admin/products", icon: Package, label: t("sidebar.admin.products"), id: "admin-nav-products",
           children: [
             { to: "/admin/inventory", icon: ClipboardList, label: t("sidebar.admin.inventory"), id: "admin-nav-inventory" },
@@ -125,10 +156,10 @@ export default function AdminPanel() {
       ] : []),
       // iter102.1 — Usuarios agrupa Soporte + Bloqueos: los tres son
       // vinculantes (tickets salen de un usuario, bloqueos aplican a
-      // teléfonos/emails asociados a usuarios).
-      ...(has("users") || has("appeals") || has("kyc")
-         || has("profile_changes") || has("support")
-         || has("blocked_contacts") || has("company_requests") ? [
+      // teléfonos/emails asociados a usuarios). STAFF-08 — la condición del
+      // GRUPO usa SECTION_PERMS.users (incluye vip_requests) para coincidir con
+      // el guardado de ruta y evitar que una URL abra algo que el menú oculta.
+      ...(anyOf(SECTION_PERMS.users) ? [
         {
           to: "/admin/users", icon: Users, label: t("sidebar.admin.users"),
           id: "admin-nav-users",
@@ -151,12 +182,12 @@ export default function AdminPanel() {
           ],
         },
       ] : []),
-      ...((has("company_funds") || has("profitability")) ? [
+      ...(anyOf(SECTION_PERMS["company-funds"]) ? [
         { to: "/admin/company-funds", icon: Wallet, label: t("sidebar.admin.companyFunds"), id: "admin-nav-company-funds",
           hasSubsections: user?.role === "admin" },
       ] : []),
       // iter112 — Referral leaderboard + bonus config.
-      ...(has("users") ? [
+      ...(anyOf(SECTION_PERMS.referrals) ? [
         { to: "/admin/referrals", icon: Gift, label: t("sidebar.admin.referrals"), id: "admin-nav-referrals" },
       ] : []),
       // iter102.1 — Seguridad agrupa Salud + Auditoría: todas son vistas
@@ -278,31 +309,12 @@ export default function AdminPanel() {
     </>
   );
 
-  // STAFF-08 — Matriz de capacidades para el guardado de rutas. Usa los MISMOS
-  // códigos que los menús, de modo que una URL tecleada a mano no deje entrar a
-  // una sección que el usuario no puede operar: si no aparece en el menú,
-  // tampoco se abre — se redirige al panel general (siempre accesible).
-  const routeAllowed = {
-    queue: hasPerm("quick_view"),
-    orders: hasPerm("orders") || hasPerm("transactions"),
-    "vip-batches": hasPerm("orders"),
-    transactions: hasPerm("transactions"),
-    withdrawals: hasPerm("withdrawals"),
-    deliveries: hasPerm("deliveries"),
-    reconciliation: hasPerm("reconciliation"),
-    currencies: hasPerm("currencies") || hasPerm("rates") || hasPerm("payment_accounts"),
-    rates: hasPerm("rates"),
-    "payment-accounts": hasPerm("payment_accounts"),
-    products: hasPerm("products"),
-    users: hasPerm("users") || hasPerm("appeals") || hasPerm("kyc")
-      || hasPerm("profile_changes") || hasPerm("support") || hasPerm("blocked_contacts")
-      || hasPerm("company_requests") || hasPerm("vip_requests"),
-    "user-stats": hasPerm("user_stats"),
-    support: hasPerm("support"),
-    "blocked-contacts": hasPerm("blocked_contacts"),
-    referrals: hasPerm("users"),
-    "company-funds": hasPerm("company_funds") || hasPerm("profitability"),
-  };
+  // STAFF-08 — Guardado de rutas (direct URL) DERIVADO de la MISMA matriz que el
+  // menú, de modo que nunca puedan divergir: si la sección no aparece en el menú,
+  // su URL tampoco se abre — se redirige al panel general (siempre accesible).
+  const routeAllowed = Object.fromEntries(
+    Object.entries(SECTION_PERMS).map(([section, codes]) => [section, hasAny(codes)]),
+  );
   const guard = (ok, element) => (ok ? element : <Navigate to="/admin" replace />);
 
   return (
