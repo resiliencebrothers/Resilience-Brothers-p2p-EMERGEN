@@ -24,7 +24,8 @@ class TestRoleFilteredPublish:
             publish as bus_publish,
         )
         sub_admin = await bus_subscribe("admin_u", role="admin")
-        sub_employee = await bus_subscribe("employee_u", role="employee")
+        sub_employee = await bus_subscribe("employee_u", role="employee",
+                                           allowed_permissions=["orders"])
         sub_normal = await bus_subscribe("normal_u", role="normal")
         try:
             await bus_publish(

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from auth_utils import require_user, get_session_user, _enforce_staff_active
-from services.live_bus import event_iterator, subscribe, unsubscribe
+from services.live_bus import event_iterator, subscribe, unsubscribe, update_authz
 
 log = logging.getLogger("live_stream")
 router = APIRouter(prefix="/live", tags=["Live"])
@@ -56,7 +56,11 @@ async def live_stream(request: Request) -> Any:
     _enforce_staff_active(user)
     user_id = user["user_id"]
 
-    sub = await subscribe(user_id, role=user.get("role"))
+    # STAFF-06-R — sella capacidades y ámbito de moneda en la suscripción para
+    # que el bus autorice los feeds OPERATIVOS por permiso (no solo por rol).
+    sub = await subscribe(user_id, role=user.get("role"),
+                          allowed_permissions=user.get("allowed_permissions"),
+                          allowed_currencies=user.get("allowed_currencies"))
 
     async def gen() -> AsyncGenerator[str, None]:
         # Immediate hello so the client's `onopen` fires even before the
@@ -98,6 +102,16 @@ async def live_stream(request: Request) -> Any:
                     if fresh.get("role") in ("admin", "employee") and \
                             (fresh.get("account_status") or "active") != "active":
                         break  # staff suspendido en caliente
+                    # STAFF-06-R — refresca permisos/monedas EN CALIENTE sin
+                    # cortar el socket: si al staff se le retira un permiso
+                    # (p. ej. 'orders') o se le acota la moneda, el bus deja de
+                    # entregarle ese feed desde el próximo evento, sin esperar a
+                    # que reconecte. La revalidación ocurre una vez por ciclo
+                    # (no es un corte instantáneo: depende del próximo evento/
+                    # heartbeat), por eso NO se promete un plazo máximo en red.
+                    update_authz(sub, fresh.get("role"),
+                                 fresh.get("allowed_permissions"),
+                                 fresh.get("allowed_currencies"))
                 try:
                     chunk = await asyncio.wait_for(
                         heartbeat_queue.get(), timeout=HEARTBEAT_INTERVAL + 5,
