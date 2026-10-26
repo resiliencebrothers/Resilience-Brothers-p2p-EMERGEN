@@ -26,7 +26,7 @@ function hasSupportPerm(user) {
   if (user.role === "admin") return true;
   if (user.role !== "employee") return false;
   const perms = user.allowed_permissions || [];
-  return perms.length === 0 || perms.includes("support");
+  return perms.includes("support");
 }
 
 export function useSupportUnreadCount() {

@@ -41,17 +41,16 @@ export default function AdminPanel() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isStaff = user?.role === "admin" || user?.role === "employee";
   const isAdmin = user?.role === "admin";
   // iter107.2 — Memoise so useMemo hooks below have a stable identity.
   const userPerms = useMemo(
     () => user?.allowed_permissions || [],
     [user?.allowed_permissions],
   );
-  // iter55.16 — Admins pass everything. Employees with an empty list pass
-  // everything (backward compat). Employees with a specific list only pass
-  // when the code is present.
-  const hasPerm = (code) => isAdmin || userPerms.length === 0 || userPerms.includes(code);
+  // STAFF-08 / STAFF-01 — DENY-BY-DEFAULT: los admins pasan todo; un empleado
+  // solo pasa los códigos concedidos EXPLÍCITAMENTE. Lista vacía/ausente = SIN
+  // acceso (ya NO significa «acceso total»), idéntico a la política del backend.
+  const hasPerm = (code) => isAdmin || userPerms.includes(code);
 
   // iter107.1 — Live count of unread client support tickets, used as a
   // red pill next to the "Usuarios" sidebar entry so staff notice new
@@ -64,7 +63,7 @@ export default function AdminPanel() {
   // depend on it (`groupIds`, `initialOpen`) don't rebuild on every
   // render. `hasPerm` is inlined so ESLint can statically verify deps.
   const items = useMemo(() => {
-    const has = (code) => isAdmin || userPerms.length === 0 || userPerms.includes(code);
+    const has = (code) => isAdmin || userPerms.includes(code);
     return [
       { to: "/admin", icon: ListChecks, label: t("sidebar.admin.overview"), end: true, id: "admin-nav-overview", hasSubsections: true },
       ...(has("quick_view") ? [
@@ -279,6 +278,33 @@ export default function AdminPanel() {
     </>
   );
 
+  // STAFF-08 — Matriz de capacidades para el guardado de rutas. Usa los MISMOS
+  // códigos que los menús, de modo que una URL tecleada a mano no deje entrar a
+  // una sección que el usuario no puede operar: si no aparece en el menú,
+  // tampoco se abre — se redirige al panel general (siempre accesible).
+  const routeAllowed = {
+    queue: hasPerm("quick_view"),
+    orders: hasPerm("orders") || hasPerm("transactions"),
+    "vip-batches": hasPerm("orders"),
+    transactions: hasPerm("transactions"),
+    withdrawals: hasPerm("withdrawals"),
+    deliveries: hasPerm("deliveries"),
+    reconciliation: hasPerm("reconciliation"),
+    currencies: hasPerm("currencies") || hasPerm("rates") || hasPerm("payment_accounts"),
+    rates: hasPerm("rates"),
+    "payment-accounts": hasPerm("payment_accounts"),
+    products: hasPerm("products"),
+    users: hasPerm("users") || hasPerm("appeals") || hasPerm("kyc")
+      || hasPerm("profile_changes") || hasPerm("support") || hasPerm("blocked_contacts")
+      || hasPerm("company_requests") || hasPerm("vip_requests"),
+    "user-stats": hasPerm("user_stats"),
+    support: hasPerm("support"),
+    "blocked-contacts": hasPerm("blocked_contacts"),
+    referrals: hasPerm("users"),
+    "company-funds": hasPerm("company_funds") || hasPerm("profitability"),
+  };
+  const guard = (ok, element) => (ok ? element : <Navigate to="/admin" replace />);
+
   return (
     <div className="min-h-screen bg-[#14101F] text-white flex">
       {/* Desktop sidebar */}
@@ -374,34 +400,34 @@ export default function AdminPanel() {
           <Routes>
             <Route index element={<AdminOverviewHub />} />
             <Route path="quick" element={<Navigate to="/admin?tab=quick" replace />} />
-            <Route path="queue" element={<AdminQueue />} />
-            <Route path="company-funds" element={<AdminCompanyFundsHub />} />
-            <Route path="company-funds/client-debts" element={<ClientDebtsPage />} />
-            <Route path="orders" element={<AdminOrders />} />
-            <Route path="vip-batches" element={<AdminVipBatches />} />
-            <Route path="withdrawals" element={<AdminDepositsWithdrawalsHub />} />
-            <Route path="deliveries" element={<AdminDeliveries />} />
-            <Route path="reconciliation" element={<AdminReconciliation />} />
-            <Route path="currencies" element={<AdminCurrencies />} />
-            <Route path="rates" element={<AdminRates />} />
-            {hasPerm("payment_accounts") && <Route path="payment-accounts" element={<AdminPaymentAccounts />} />}
-            <Route path="products" element={<AdminProducts />} />
-            <Route path="inventory" element={<AdminInventory />} />
-            <Route path="users" element={<AdminUsersHub />} />
-            <Route path="users/:userId/stats" element={<AdminUserStatsPage />} />
-            <Route path="blocked-contacts" element={<AdminBlockedContacts />} />
+            <Route path="queue" element={guard(routeAllowed.queue, <AdminQueue />)} />
+            <Route path="company-funds" element={guard(routeAllowed["company-funds"], <AdminCompanyFundsHub />)} />
+            <Route path="company-funds/client-debts" element={guard(routeAllowed["company-funds"], <ClientDebtsPage />)} />
+            <Route path="orders" element={guard(routeAllowed.orders, <AdminOrders />)} />
+            <Route path="vip-batches" element={guard(routeAllowed["vip-batches"], <AdminVipBatches />)} />
+            <Route path="withdrawals" element={guard(routeAllowed.withdrawals, <AdminDepositsWithdrawalsHub />)} />
+            <Route path="deliveries" element={guard(routeAllowed.deliveries, <AdminDeliveries />)} />
+            <Route path="reconciliation" element={guard(routeAllowed.reconciliation, <AdminReconciliation />)} />
+            <Route path="currencies" element={guard(routeAllowed.currencies, <AdminCurrencies />)} />
+            <Route path="rates" element={guard(routeAllowed.rates, <AdminRates />)} />
+            <Route path="payment-accounts" element={guard(routeAllowed["payment-accounts"], <AdminPaymentAccounts />)} />
+            <Route path="products" element={guard(routeAllowed.products, <AdminProducts />)} />
+            <Route path="inventory" element={guard(routeAllowed.products, <AdminInventory />)} />
+            <Route path="users" element={guard(routeAllowed.users, <AdminUsersHub />)} />
+            <Route path="users/:userId/stats" element={guard(routeAllowed["user-stats"], <AdminUserStatsPage />)} />
+            <Route path="blocked-contacts" element={guard(routeAllowed["blocked-contacts"], <AdminBlockedContacts />)} />
             {/* iter55.31 — legacy routes redirect into the consolidated hub. */}
             <Route path="appeals" element={<Navigate to="/admin/users?tab=appeals" replace />} />
             <Route path="kyc" element={<Navigate to="/admin/users?tab=kyc" replace />} />
             <Route path="profile-change-requests" element={<Navigate to="/admin/users?tab=changes" replace />} />
-            <Route path="security" element={<AdminSecurity />} />
+            <Route path="security" element={guard(isAdmin, <AdminSecurity />)} />
             {user?.role === "admin" && <Route path="revenue" element={<Navigate to="/admin/company-funds?tab=revenue" replace />} />}
             {user?.role === "admin" && <Route path="capital-requests" element={<Navigate to="/admin/withdrawals?tab=requests" replace />} />}
-            {user?.role === "admin" && <Route path="health" element={<AdminHealth />} />}
-            {isStaff && <Route path="transactions" element={<AdminTransactions />} />}
-            {isStaff && <Route path="support" element={<AdminSupport />} />}
-            {hasPerm("users") && <Route path="referrals" element={<AdminReferrals />} />}
-            {user?.role === "admin" && <Route path="audit" element={<AdminAuditHub />} />}
+            <Route path="health" element={guard(isAdmin, <AdminHealth />)} />
+            <Route path="transactions" element={guard(routeAllowed.transactions, <AdminTransactions />)} />
+            <Route path="support" element={guard(routeAllowed.support, <AdminSupport />)} />
+            <Route path="referrals" element={guard(routeAllowed.referrals, <AdminReferrals />)} />
+            <Route path="audit" element={guard(isAdmin, <AdminAuditHub />)} />
           </Routes>
         </div>
       </main>

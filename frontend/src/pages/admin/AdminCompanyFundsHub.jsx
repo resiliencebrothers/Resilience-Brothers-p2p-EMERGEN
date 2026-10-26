@@ -37,7 +37,7 @@ export default function AdminCompanyFundsHub() {
   const navigate = useNavigate();
   const tabs = useMemo(() => {
     const perms = user?.allowed_permissions || [];
-    const can = (code) => user?.role === "admin" || perms.length === 0 || perms.includes(code);
+    const can = (code) => user?.role === "admin" || perms.includes(code);
     return TAB_META.filter((tt) => can(tt.perm));
   }, [user]);
   const activeId = params.get("tab") || tabs[0]?.id || "funds";

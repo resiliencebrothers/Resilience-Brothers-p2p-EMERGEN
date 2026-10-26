@@ -51,7 +51,7 @@ function hasPerm(user, code) {
   if (user.role === "admin") return true;
   if (user.role !== "employee") return false;
   const perms = user.allowed_permissions || [];
-  return perms.length === 0 || perms.includes(code);
+  return perms.includes(code);
 }
 
 export default function AdminUsersHub() {
