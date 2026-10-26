@@ -1110,6 +1110,11 @@ async def admin_courier_cash_register(payload: dict,
                                  "is_courier": 1})
     if not c:
         raise HTTPException(status_code=404, detail="Mensajero no encontrado")
+    # EC03 — el destinatario debe ser un mensajero habilitado (o staff), no un
+    # usuario cualquiera que exista. Mismo criterio que la (re)asignación.
+    if not (c.get("is_courier") or c.get("role") in ("admin", "employee")):
+        raise HTTPException(status_code=400,
+                            detail="Ese usuario no es un mensajero habilitado")
     courier_name = c.get("name") or c.get("email") or ""
     discrepancy_note = (payload.get("discrepancy_note") or "").strip()
     from services.courier_cash import issue_or_return_cash

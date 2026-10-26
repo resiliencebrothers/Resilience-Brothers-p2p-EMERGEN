@@ -105,6 +105,46 @@ async def courier_held_cash(courier_id: str, code: str) -> float:
     return round(held, 2)
 
 
+async def resolve_company_cash_box(account_id: str, code: str) -> dict:
+    """EC03 — la cuenta de origen/destino de un traslado de efectivo de
+    mensajería DEBE ser una CAJA FÍSICA de la empresa en la misma moneda: ha de
+    existir, estar activa, tener `method=cash`, NO ser una cuenta de custodia de
+    NINGÚN mensajero y no estar fusionada. El filtrado del formulario (que ya
+    excluye bancos y custodias) NO sustituye esta comprobación en el servidor:
+    una petición directa podría elegir una cuenta bancaria de la misma moneda o
+    una custodia ajena."""
+    from services.currency_utils import norm_code as _norm_code
+    fa = await db.fund_accounts.find_one({"id": account_id}, {"_id": 0})
+    hops = 0
+    while fa and fa.get("merged_into") and hops < 3:
+        fa = await db.fund_accounts.find_one(
+            {"id": fa["merged_into"]}, {"_id": 0})
+        hops += 1
+    if not fa:
+        raise HTTPException(status_code=400,
+                            detail="Cuenta de caja no encontrada")
+    label = fa.get("name") or fa["id"]
+    if fa.get("courier_custody_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede operar contra la cuenta de custodia de un "
+                   "mensajero; elige una caja física.")
+    if (fa.get("method") or "") != "cash":
+        raise HTTPException(
+            status_code=400,
+            detail=f"La cuenta «{label}» no es una caja de efectivo física.")
+    if not fa.get("is_active", True):
+        raise HTTPException(
+            status_code=400, detail=f"La caja «{label}» está desactivada.")
+    acc_code = _norm_code(fa.get("currency"))
+    if acc_code != code:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"La caja «{label}» es de {acc_code or '—'}, no de {code}."))
+    return {"id": fa["id"], "label": label}
+
+
+
 
 async def issue_or_return_cash(*, courier_id: str, courier_name: str,
                                kind: str, currency: str, amount: Any,
@@ -144,14 +184,12 @@ async def issue_or_return_cash(*, courier_id: str, courier_name: str,
         clean_denoms = _validate_denominations(
             code, denominations, amt, valid_denoms)
 
-    from services.fund_accounts import (resolve_payout_account,
-                                         account_assigned_balances)
-    account = await resolve_payout_account(account_id, code)  # existe/activa/moneda
+    from services.fund_accounts import account_assigned_balances
+    # EC03 — exigir caja física permitida (no banco, no custodia ajena) en el
+    # servidor; el filtrado del formulario no basta.
+    account = await resolve_company_cash_box(account_id, code)
     custody = await get_or_create_courier_custody_account(
         courier_id, courier_name, code)
-    if account["id"] == custody["id"]:
-        raise HTTPException(status_code=400,
-                            detail="Cuenta de caja inválida")
 
     # Dirección del traslado de custodia (puro, sin tocar la base de datos).
     if kind == "issued":

@@ -77,6 +77,59 @@ def _return(op_key, amount):
         actor_id="admin_test", actor_name="Admin Test", op_key=op_key)
 
 
+async def _fake_cash_box(account_id, code):
+    """Stub aislado para los tests de idempotencia EC01/EC02: evita tocar la
+    única caja física real (índice único por moneda). La validación real de
+    caja se prueba aparte en test_ec03_resolve_company_cash_box."""
+    return {"id": ACCT, "label": "Caja EC01 Test"}
+
+
+async def _expect_400(coro, needle):
+    try:
+        await coro
+    except HTTPException as e:
+        assert e.status_code == 400, f"status {e.status_code}"
+        assert needle.lower() in e.detail.lower(), e.detail
+        return
+    raise AssertionError(f"debió rechazar con 400 ({needle})")
+
+
+async def test_ec03_resolve_company_cash_box():
+    """EC03: la caja de un traslado debe ser FÍSICA (method=cash), activa, en la
+    moneda correcta y NO custodia de ningún mensajero. Rechaza banco, custodia
+    ajena, inactiva, moneda distinta e inexistente; acepta la caja física real."""
+    ids = ["ec03_bank", "ec03_cust", "ec03_inact", "ec03_wrong"]
+    await db.fund_accounts.delete_many({"id": {"$in": ids}})
+    await db.fund_accounts.insert_many([
+        {"id": "ec03_bank", "name": "Banco X", "currency": "ZZB",
+         "method": "bank", "is_active": True},
+        {"id": "ec03_cust", "name": "Custodia ajena", "currency": "CUP",
+         "method": "cash", "is_active": True,
+         "courier_custody_id": "otro_mensajero_ec03"},
+        {"id": "ec03_inact", "name": "Caja apagada", "currency": "ZZI",
+         "method": "cash", "is_active": False},
+        {"id": "ec03_wrong", "name": "Caja ZZW", "currency": "ZZW",
+         "method": "cash", "is_active": True},
+    ])
+    try:
+        await _expect_400(cc.resolve_company_cash_box("ec03_bank", "ZZB"),
+                          "caja de efectivo física")
+        await _expect_400(cc.resolve_company_cash_box("ec03_cust", "CUP"),
+                          "custodia")
+        await _expect_400(cc.resolve_company_cash_box("ec03_inact", "ZZI"),
+                          "desactivada")
+        await _expect_400(cc.resolve_company_cash_box("ec03_wrong", "CUP"),
+                          "no de CUP")
+        await _expect_400(cc.resolve_company_cash_box("no_existe", "CUP"),
+                          "no encontrada")
+        box = await cc.resolve_company_cash_box("facc_80351159b1ef", "CUP")
+        assert box["id"] == "facc_80351159b1ef", box
+        print("PASS test_ec03_resolve_company_cash_box → rechaza banco/custodia"
+              " ajena/inactiva/moneda/inexistente, acepta caja física")
+    finally:
+        await db.fund_accounts.delete_many({"id": {"$in": ids}})
+
+
 async def test_event_failure_then_retry():
     """EC01 núcleo: transferencia+espejo OK, evento falla, reintento con la
     MISMA clave → UN traslado (20.000, no 40.000) y UN evento (20.000)."""
@@ -255,15 +308,21 @@ async def test_ec02_return_blocked_when_transfer_confirmed_event_pending():
 
 
 async def main():
+    orig_resolver = cc.resolve_company_cash_box
     try:
+        # EC03 usa el resolver REAL (sin stub).
+        await test_ec03_resolve_company_cash_box()
+        # EC01/EC02 aíslan la caja con un stub para no tocar la caja física real.
+        cc.resolve_company_cash_box = _fake_cash_box
         await test_event_failure_then_retry()
         await test_abort_then_retry()
         await test_concurrent_same_key()
         await test_key_reuse_different_params_rejected()
         await test_ec02_concurrent_returns_no_overdraw()
         await test_ec02_return_blocked_when_transfer_confirmed_event_pending()
-        print("\nALL EC01/EC02 TESTS PASSED")
+        print("\nALL EC01/EC02/EC03 TESTS PASSED")
     finally:
+        cc.resolve_company_cash_box = orig_resolver
         await _reset()
 
 
