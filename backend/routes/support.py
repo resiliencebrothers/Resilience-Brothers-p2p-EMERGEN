@@ -314,13 +314,21 @@ async def client_reply(ticket_id: str, payload: ReplyPayload, request: Request) 
                             detail="Este ticket está cerrado. Abre uno nuevo si necesitas ayuda.")
     images = _upload_message_images(payload.images)
     msg = _new_message("client", user, payload.text, images)
-    await db.support_tickets.update_one(
-        {"id": ticket_id},
+    # STAFF-09 — escritura CONDICIONAL: no reabrir un ticket cerrado entre la
+    # lectura y la escritura (cierre simultáneo del staff).
+    result = await db.support_tickets.update_one(
+        {"id": ticket_id, "user_id": user["user_id"], "status": {"$ne": "closed"}},
         {"$push": {"messages": msg},
          "$set": {"status": "open", "unread_by_staff": True,
                   "unread_by_client": False,
                   "updated_at": iso(now_utc())}},
     )
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("Este ticket fue cerrado mientras escribías. "
+                    "Abre uno nuevo si necesitas más ayuda."),
+        )
     fresh = await db.support_tickets.find_one({"id": ticket_id}, {"_id": 0})
     await _notify_staff_new_ticket(fresh)  # reuse: same tag, staff sees updated ticket
     await _publish_ticket_sse(fresh, "support_ticket_updated")
@@ -396,14 +404,24 @@ async def admin_reply(ticket_id: str, payload: ReplyPayload, request: Request) -
         raise HTTPException(status_code=400, detail="Este ticket está cerrado.")
     images = _upload_message_images(payload.images)
     msg = _new_message("staff", actor, payload.text, images)
-    await db.support_tickets.update_one(
-        {"id": ticket_id},
+    # STAFF-09 — escritura CONDICIONAL: solo responde si el ticket NO está cerrado.
+    # Evita que una respuesta en vuelo sobrescriba un cierre simultáneo (que lo
+    # reabriría a "answered"). Si otro cerró entre la lectura y la escritura,
+    # matched_count==0 → 409 claro para el perdedor, sin notificar ni publicar.
+    result = await db.support_tickets.update_one(
+        {"id": ticket_id, "status": {"$ne": "closed"}},
         {"$push": {"messages": msg},
          "$set": {"status": "answered",
                   "unread_by_staff": False,
                   "unread_by_client": True,
                   "updated_at": iso(now_utc())}},
     )
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=("Este ticket fue cerrado por otra persona mientras respondías. "
+                    "Recárgalo para ver el estado actual."),
+        )
     fresh = await db.support_tickets.find_one({"id": ticket_id}, {"_id": 0})
     await _notify_client_staff_reply(fresh, actor.get("name") or "Soporte")
     await _publish_ticket_sse(fresh, "support_ticket_updated")
@@ -416,8 +434,12 @@ async def admin_close(ticket_id: str, request: Request) -> Any:
     t = await db.support_tickets.find_one({"id": ticket_id}, {"_id": 0})
     if not t:
         raise HTTPException(status_code=404, detail="Ticket no encontrado.")
+    # STAFF-09 — cierre CONDICIONAL e idempotente: solo escribe si el ticket NO
+    # estaba ya cerrado, de modo que un doble-cierre concurrente conserva al
+    # PRIMER cerrador (closed_by/closed_at no se sobrescriben). Si ya estaba
+    # cerrado, matched_count==0 y devolvemos el ticket vigente sin tocarlo.
     await db.support_tickets.update_one(
-        {"id": ticket_id},
+        {"id": ticket_id, "status": {"$ne": "closed"}},
         {"$set": {"status": "closed",
                   "closed_at": iso(now_utc()),
                   "closed_by": actor.get("user_id"),

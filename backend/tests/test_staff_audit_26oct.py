@@ -8,6 +8,8 @@
   una cuenta de staff NI sus propias funciones/alcance (auto-escalada).
 """
 import os
+import uuid
+import concurrent.futures
 import requests
 from pymongo import MongoClient
 
@@ -22,8 +24,16 @@ ADMIN = "user_test_admin01"
 NORMAL = "user_test_normal01"
 
 
+_DB_CLIENT = None
+
+
 def _db():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    # Cliente cacheado a nivel de módulo: abrir uno nuevo por llamada agota los
+    # puertos efímeros al correr junto a toda la batería (AutoReconnect).
+    global _DB_CLIENT
+    if _DB_CLIENT is None:
+        _DB_CLIENT = MongoClient(os.environ["MONGO_URL"])
+    return _DB_CLIENT[os.environ["DB_NAME"]]
 
 
 def _hdr(tok):
@@ -346,3 +356,162 @@ def test_staff05r_normal_onboarding_unaffected():
     finally:
         _set(NORMAL, {"account_status": "active"})
 
+
+
+# ------------------------------------------------------------------
+# STAFF-09 — dos decisiones sobre el mismo trabajo (apelaciones + soporte)
+# ------------------------------------------------------------------
+# Escritura condicional por estado esperado (compare-and-swap): dos revisores
+# que leyeron el mismo estado NO pueden grabar ambas decisiones. Se prueba con
+# BARRERAS DE CONCURRENCIA reales (hilos), no solo ejecuciones consecutivas.
+
+def _mk_pending_appeal():
+    aid = "s09a_" + uuid.uuid4().hex[:12]
+    _db().appeals.insert_one({
+        "id": aid, "user_id": NORMAL, "user_email": "n@t", "user_name": "N",
+        "user_phone": "", "message": "please review my account now please",
+        "status": "pending", "staff_response": None, "resolved_by": None,
+        "resolved_by_email": None, "resolved_at": None,
+        "created_at": "2026-01-01T00:00:00+00:00",
+    })
+    return aid
+
+
+def test_staff09_appeal_loser_cannot_overwrite_decision():
+    # Reviewer-1 ya ganó (estado ya NO es pending) → la 2ª decisión recibe 409
+    # y NO sobrescribe la decisión vigente.
+    _set(EMP, {"allowed_permissions": ["appeals"]})
+    aid = _mk_pending_appeal()
+    try:
+        _db().appeals.update_one({"id": aid}, {"$set": {
+            "status": "resolved", "resolved_by": "reviewer1",
+            "resolved_by_email": "r1@t", "staff_response": "R1 original"}})
+        r = requests.post(f"{API}/admin/appeals/{aid}/reject",
+                          headers=_hdr(EMPLOYEE_TOKEN),
+                          json={"response": "R2 intenta pisar"})
+        assert r.status_code == 409, r.text
+        doc = _db().appeals.find_one({"id": aid}, {"_id": 0})
+        assert doc["status"] == "resolved"
+        assert doc["resolved_by"] == "reviewer1"
+        assert doc["staff_response"] == "R1 original"
+    finally:
+        _db().appeals.delete_one({"id": aid})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff09_appeal_concurrent_two_reviewers_exactly_one_wins():
+    _set(EMP, {"allowed_permissions": ["appeals"]})
+    aid = _mk_pending_appeal()
+    try:
+        def decide(kind):
+            return requests.post(f"{API}/admin/appeals/{aid}/{kind}",
+                                 headers=_hdr(EMPLOYEE_TOKEN),
+                                 json={"response": f"decision {kind}"}).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            f1 = ex.submit(decide, "resolve")
+            f2 = ex.submit(decide, "reject")
+            codes = sorted([f1.result(), f2.result()])
+        assert codes == [200, 409], f"debe haber exactamente un ganador: {codes}"
+        doc = _db().appeals.find_one({"id": aid}, {"_id": 0})
+        assert doc["status"] in ("resolved", "rejected")
+        assert doc["resolved_by"] == EMP
+    finally:
+        _db().appeals.delete_one({"id": aid})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def _mk_ticket(status="open"):
+    tid = "s09t_" + uuid.uuid4().hex[:12]
+    _db().support_tickets.insert_one({
+        "id": tid, "user_id": NORMAL, "subject": "concurrency", "category": "other",
+        "status": status, "messages": [{"sender": "client", "text": "hi", "images": []}],
+        "unread_by_staff": True, "unread_by_client": False,
+        "closed_at": None, "closed_by": None,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    })
+    return tid
+
+
+def test_staff09_support_reply_cannot_land_on_closed():
+    # Una respuesta del staff NO puede caer sobre un ticket ya cerrado (ni
+    # reabrirlo ni añadir el mensaje).
+    _set(EMP, {"allowed_permissions": ["support"]})
+    tid = _mk_ticket("closed")
+    _db().support_tickets.update_one({"id": tid}, {"$set": {
+        "closed_by": "first_closer", "closed_at": "2026-01-01T00:00:00+00:00"}})
+    try:
+        r = requests.post(f"{API}/admin/support/tickets/{tid}/reply",
+                          headers=_hdr(EMPLOYEE_TOKEN), json={"text": "late reply"})
+        assert r.status_code in (400, 409), r.text
+        doc = _db().support_tickets.find_one({"id": tid}, {"_id": 0})
+        assert doc["status"] == "closed"
+        assert len(doc["messages"]) == 1  # no se añadió la respuesta tardía
+        assert doc["closed_by"] == "first_closer"
+    finally:
+        _db().support_tickets.delete_one({"id": tid})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff09_client_reply_cannot_reopen_closed():
+    tid = _mk_ticket("closed")
+    try:
+        r = requests.post(f"{API}/support/tickets/{tid}/reply",
+                          headers=_hdr(NORMAL_TOKEN), json={"text": "reopen pls"})
+        assert r.status_code in (400, 409), r.text
+        doc = _db().support_tickets.find_one({"id": tid}, {"_id": 0})
+        assert doc["status"] == "closed"
+        assert len(doc["messages"]) == 1
+    finally:
+        _db().support_tickets.delete_one({"id": tid})
+
+
+def test_staff09_support_close_vs_inflight_reply_barrier():
+    # Barrera de concurrencia cierre-vs-respuesta: si el cierre tiene éxito, el
+    # ticket queda cerrado (una respuesta en vuelo NO lo reabre).
+    _set(EMP, {"allowed_permissions": ["support"]})
+    tid = _mk_ticket("open")
+    try:
+        def reply():
+            return requests.post(f"{API}/admin/support/tickets/{tid}/reply",
+                                 headers=_hdr(EMPLOYEE_TOKEN),
+                                 json={"text": "inflight reply"}).status_code
+
+        def close():
+            return requests.post(f"{API}/admin/support/tickets/{tid}/close",
+                                 headers=_hdr(EMPLOYEE_TOKEN)).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            fr = ex.submit(reply)
+            fc = ex.submit(close)
+            rc, cc = fr.result(), fc.result()
+        assert cc == 200, f"close debe ser 200 (idempotente): {cc}"
+        # La respuesta gana (200) o PIERDE: 409 (cierre entre lectura y escritura,
+        # CAS) o 400 (ya estaba cerrado al leer). Cualquier pérdida es válida.
+        assert rc in (200, 400, 409), f"reply inesperado: {rc}"
+        doc = _db().support_tickets.find_one({"id": tid}, {"_id": 0})
+        assert doc["status"] == "closed", f"estado final debe ser closed: {doc['status']}"
+    finally:
+        _db().support_tickets.delete_one({"id": tid})
+        _unset(EMP, ["allowed_permissions"])
+
+
+def test_staff09_support_double_close_preserves_first_closer():
+    # Dos cierres concurrentes: el segundo es no-op idempotente; closed_by del
+    # PRIMERO no se sobrescribe.
+    _set(EMP, {"allowed_permissions": ["support"]})
+    tid = _mk_ticket("open")
+    try:
+        r1 = requests.post(f"{API}/admin/support/tickets/{tid}/close",
+                           headers=_hdr(EMPLOYEE_TOKEN))
+        assert r1.status_code == 200, r1.text
+        first = _db().support_tickets.find_one({"id": tid}, {"_id": 0})
+        first_closer, first_at = first["closed_by"], first["closed_at"]
+        r2 = requests.post(f"{API}/admin/support/tickets/{tid}/close",
+                           headers=_hdr(ADMIN_TOKEN))
+        assert r2.status_code == 200, r2.text  # idempotente
+        again = _db().support_tickets.find_one({"id": tid}, {"_id": 0})
+        assert again["closed_by"] == first_closer
+        assert again["closed_at"] == first_at
+    finally:
+        _db().support_tickets.delete_one({"id": tid})
+        _unset(EMP, ["allowed_permissions"])

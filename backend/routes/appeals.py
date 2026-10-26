@@ -165,8 +165,13 @@ async def _resolve_appeal_internal(
             detail=f"Esta apelación ya fue procesada (estado actual: {appeal['status']}).",
         )
     resolved_at = iso(now_utc())
-    await db.appeals.update_one(
-        {"id": appeal_id},
+    # STAFF-09 — escritura CONDICIONAL por estado esperado (compare-and-swap).
+    # Dos revisores que leyeron "pending" NO pueden grabar ambas decisiones: solo
+    # gana quien encuentra la apelación AÚN en "pending". El filtro incluye el
+    # estado esperado, así que la segunda escritura no coincide (matched_count 0)
+    # y se rechaza con 409 — sin notificar ni auditar una decisión fantasma.
+    result = await db.appeals.update_one(
+        {"id": appeal_id, "status": "pending"},
         {"$set": {
             "status": new_status,
             "staff_response": payload.response.strip(),
@@ -175,8 +180,16 @@ async def _resolve_appeal_internal(
             "resolved_at": resolved_at,
         }},
     )
+    if result.matched_count == 0:
+        current = await db.appeals.find_one({"id": appeal_id}, {"_id": 0})
+        cur = (current or {}).get("status", "desconocido")
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Otra persona ya procesó esta apelación (estado actual: {cur}). "
+                    "Recárgala para ver la decisión vigente."),
+        )
     fresh = await db.appeals.find_one({"id": appeal_id}, {"_id": 0})
-    # Notify the user that their appeal was reviewed.
+    # Notify the user that their appeal was reviewed (solo tras ganar la carrera).
     try:
         from routes.notifications import notify_user_appeal_reviewed
         await notify_user_appeal_reviewed(fresh)

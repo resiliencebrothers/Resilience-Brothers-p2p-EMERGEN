@@ -159,6 +159,18 @@ FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
                     "market_perms", "account_status", "allowed_batch_pairs",
                     "applied_templates"}
 
+# STAFF-08b — DEPENDENCIAS DEL PERMISO 'products'. El permiso `products` abre el
+# catálogo/inventario/tienda/POS, pero las ACCIONES núcleo de un producto están
+# tras estos flags admin-only (ver routes/market.py `_check_employee_product_perms`
+# y delete_product). Sin ellos, conceder `products` deja un product manager A
+# MEDIAS: puede abrir la sección pero recibe 403 al poner precio/imagen o borrar.
+# Al CONCEDER `products` se activan por defecto (el admin puede desmarcarlos luego).
+PRODUCT_DEPENDENCY_FLAGS = (
+    "can_edit_product_prices",
+    "can_upload_product_images",
+    "can_delete_products",
+)
+
 
 def _assert_user_update_authz(requester: dict, target: dict, update: dict) -> None:
     """Gates de autorización del PUT /admin/users/{id} (solo lanza 403)."""
@@ -297,6 +309,17 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     _assert_user_update_authz(requester, old_user, update)
     _sanitize_staff_grants(requester, update)
+    # STAFF-08b — al CONCEDER `products` (añadirlo donde antes no estaba), activar
+    # también las acciones que el flujo de productos requiere, para que no quede a
+    # medias. Solo en la TRANSICIÓN a concedido y sin pisar un flag que el admin
+    # fije explícitamente en el MISMO request. Conceder `allowed_permissions` ya es
+    # admin-only, así que aquí el requester es admin y puede tocar estos flags.
+    if "allowed_permissions" in update:
+        granting_products = ("products" in update["allowed_permissions"]
+                             and "products" not in (old_user.get("allowed_permissions") or []))
+        if granting_products:
+            for flag in PRODUCT_DEPENDENCY_FLAGS:
+                update.setdefault(flag, True)
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await log_action(db, requester, "user.update", "user", user_id,

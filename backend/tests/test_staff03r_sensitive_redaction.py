@@ -27,8 +27,14 @@ CREDS = ("password_hash", "password", "totp_secret_encrypted",
          "totp_recovery_codes", "verification_token")
 
 
+_DB_CLIENT = None
+
+
 def _db():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    global _DB_CLIENT
+    if _DB_CLIENT is None:
+        _DB_CLIENT = MongoClient(os.environ["MONGO_URL"])
+    return _DB_CLIENT[os.environ["DB_NAME"]]
 
 
 def _hdr(tok):
