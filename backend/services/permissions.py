@@ -6,14 +6,14 @@ but every employee had access to every staff function (orders, KYC, withdrawals,
 company funds, etc.). This iter introduces a fine-grained capability system so
 admins can assign focused responsibilities to each team member.
 
-Semantics:
+Semantics (STAFF-01 — DENY-BY-DEFAULT desde la auditoría 26-10-2026):
 - Admins always pass (they are the root role).
-- Employees with `allowed_permissions=[]` (empty list OR field absent) pass
-  everything — **backward compatible** default. Existing employees keep working
-  without any admin action.
-- Employees with a non-empty list pass ONLY the codes in the list. Everything
-  else returns 403 with a clear message so they know which permission is
-  missing.
+- Employees pass ONLY the codes granted EXPLÍCITAMENTE in `allowed_permissions`.
+  An empty list OR an absent field = NO access. Removing the last permission no
+  longer widens access — it leaves the employee with no functions until an admin
+  grants new ones.
+- Any missing code returns 403 naming the permission that is missing so the
+  admin can grant it in one click.
 
 The catalog below is the single source of truth. Any admin route that needs
 a gate should call `await require_permission(request, "code")` — the HTTP
@@ -55,28 +55,26 @@ PERMISSION_CATALOG: List[Dict[str, str]] = [
 
 VALID_CODES = {p["code"] for p in PERMISSION_CATALOG}
 
-# MEN-01 — Permisos SENSIBLES que NUNCA entran en el default de compatibilidad
-# "lista vacía = acceso total". Un empleado debe tenerlos concedidos de forma
-# EXPLÍCITA en su `allowed_permissions` (los admins siguen pasando siempre).
-# Esto separa "hacer entregas" (permiso `deliveries`) de "asignar/reservar
-# repartos a un mensajero" (`deliveries_assign`): un mensajero-empleado sin
-# concesión explícita NO debe poder autoasignarse ni delegar trabajos.
+# MEN-01 (histórico) — antes, la «lista vacía = acceso total» excluía estos
+# códigos sensibles. Desde STAFF-01 el modelo es DENY-BY-DEFAULT: TODO código,
+# incluido `deliveries_assign`, requiere concesión explícita. Se conserva la
+# constante por compatibilidad de importación/semántica de negocio.
 EXPLICIT_GRANT_CODES = {"deliveries_assign"}
 
 
 def _has_permission(user: dict, code: str) -> bool:
-    """Pure predicate — testable without HTTP context."""
+    """Pure predicate — testable without HTTP context.
+
+    STAFF-01 (auditoría 26-10-2026) — DENY-BY-DEFAULT: un empleado solo pasa los
+    códigos concedidos EXPLÍCITAMENTE en `allowed_permissions`. Una lista vacía o
+    ausente = SIN acceso (ya NO significa «acceso total»). Los admins, como rol
+    raíz, siguen pasando siempre."""
     role = user.get("role")
     if role == "admin":
         return True
     if role != "employee":
         return False
-    # Empty / missing list = "no restriction" (backward compatible default)…
-    perms = user.get("allowed_permissions") or []
-    if not perms:
-        # …EXCEPTO los permisos sensibles que exigen concesión explícita (MEN-01).
-        return code not in EXPLICIT_GRANT_CODES
-    return code in perms
+    return code in (user.get("allowed_permissions") or [])
 
 
 def permission_label(code: str) -> str:

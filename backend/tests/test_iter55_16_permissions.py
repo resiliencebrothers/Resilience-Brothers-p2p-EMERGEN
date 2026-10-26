@@ -2,18 +2,18 @@
 
 Covers:
 1.  Permission catalog endpoint returns the 12 codes.
-2.  `_has_permission()` predicate logic: admin passes / employee-empty passes /
+2.  `_has_permission()` predicate logic: admin passes / employee-empty DENIED /
     employee-with-code passes / employee-without-code fails / normal fails.
 3.  PATCH /admin/users/{id} accepts `allowed_permissions` (admin only).
 4.  Employees CANNOT modify other employees' permissions (only admins can).
 5.  Sanitization rejects unknown permission codes.
 6.  End-to-end gate on `require_permission`-protected routes:
       - Admin passes all.
-      - Employee with empty list passes all (backward compat).
+      - Employee with empty list is DENIED (STAFF-01 deny-by-default).
       - Employee with narrow list (e.g. ["kyc"]) passes /admin/kyc/* only.
       - Employee without "kyc" gets 403 with a helpful message.
-7.  Legacy `can_manage_blocklist=false` employees still work as before when
-    they get `allowed_permissions=[]` (backward compat).
+7.  Granular `blocked_contacts` permission grants blocklist access regardless
+    of the legacy `can_manage_blocklist` boolean (STAFF-02).
 """
 import os
 import asyncio
@@ -147,9 +147,9 @@ def test_has_permission_predicate():
     assert _has_permission(admin, "kyc") is True
     assert _has_permission(admin, "orders") is True
 
-    employee_open = {"role": "employee", "allowed_permissions": []}
-    assert _has_permission(employee_open, "kyc") is True
-    assert _has_permission(employee_open, "orders") is True
+    employee_empty = {"role": "employee", "allowed_permissions": []}
+    assert _has_permission(employee_empty, "kyc") is False
+    assert _has_permission(employee_empty, "orders") is False
 
     employee_kyc = {"role": "employee", "allowed_permissions": ["kyc"]}
     assert _has_permission(employee_kyc, "kyc") is True
@@ -244,12 +244,12 @@ def test_employee_without_kyc_perm_gets_403_on_kyc_queue():
     _reset_perms()
 
 
-def test_employee_with_empty_perms_backward_compatible():
-    """Regression — existing employees with allowed_permissions unset/empty
-    must retain access to all staff pages (backward compat rule)."""
+def test_employee_with_empty_perms_denied_by_default():
+    """STAFF-01 — un empleado con allowed_permissions vacío/ausente ya NO
+    tiene acceso a las páginas de staff (deny-by-default)."""
     _reset_perms()
     r = requests.get(f"{API}/admin/kyc/queue", headers=_hdr(EMPLOYEE_TOKEN))
-    assert r.status_code == 200
+    assert r.status_code == 403
 
 
 def test_admin_never_gated_regardless_of_perms():

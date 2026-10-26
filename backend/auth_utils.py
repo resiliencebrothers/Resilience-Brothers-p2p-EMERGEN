@@ -178,6 +178,7 @@ async def require_admin(request: Request) -> dict:
     user = await require_user(request)
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
+    _enforce_staff_active(user)
     _enforce_staff_2fa_enabled(user, request)
     return user
 
@@ -187,6 +188,7 @@ async def require_staff(request: Request) -> dict:
     user = await require_user(request)
     if user.get("role") not in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Staff only")
+    _enforce_staff_active(user)
     _enforce_staff_2fa_enabled(user, request)
     return user
 
@@ -239,15 +241,36 @@ def _enforce_staff_2fa_enabled(user: dict, request: Request) -> None:
         )
 
 
+# STAFF-05 (auditoría 26-10-2026) — una cuenta de staff (admin/employee)
+# suspendida o en revisión pierde el acceso de inmediato, aunque su sesión siga
+# viva. account_status ausente se trata como "active" (compatibilidad). Los
+# clientes/Empresa NO pasan por aquí (su under_review es legítimo durante el
+# onboarding y se gestiona en require_company).
+_STAFF_ACTIVE_STATUSES = frozenset({"active"})
+
+
+def _enforce_staff_active(user: dict) -> None:
+    if user.get("role") not in ("admin", "employee"):
+        return
+    status = user.get("account_status") or "active"
+    if status not in _STAFF_ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=403,
+            detail=("Tu cuenta de staff está suspendida o en revisión. "
+                    "Contacta a un administrador."),
+        )
+
+
 # iter55.16 — HTTP gate for per-staff permissions. The catalog + pure
 # predicate live in `services.permissions` (data-only, zero FastAPI deps);
 # the actual HTTP gate lives HERE so we don't cycle with `require_user`.
 async def require_permission(request: Request, code: str) -> dict:
     """Gate an admin/staff endpoint by a specific permission code.
 
-    Admins bypass. Employees pass if their `allowed_permissions` is empty OR
-    contains the code. Everything else → 403 with a message that names the
-    missing permission (so the admin can grant it in 1 click).
+    Admins bypass. Employees pass ONLY if their `allowed_permissions` contains
+    the code (STAFF-01 deny-by-default: an empty list grants nothing).
+    Everything else → 403 with a message that names the missing permission (so
+    the admin can grant it in 1 click).
 
     Usage:
         actor = await require_permission(request, "kyc")
@@ -257,6 +280,7 @@ async def require_permission(request: Request, code: str) -> dict:
         raise HTTPException(status_code=500, detail=f"unknown_permission_code:{code}")
 
     user = await require_user(request)
+    _enforce_staff_active(user)
     _enforce_staff_2fa_enabled(user, request)
     if _has_perm(user, code):
         return user

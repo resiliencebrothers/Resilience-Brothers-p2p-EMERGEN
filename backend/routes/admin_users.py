@@ -161,7 +161,7 @@ FUNCTIONS_FIELDS = {"role", "allowed_currencies", "allowed_permissions",
                     "applied_templates"}
 
 
-def _assert_user_update_authz(requester: dict, update: dict) -> None:
+def _assert_user_update_authz(requester: dict, target: dict, update: dict) -> None:
     """Gates de autorización del PUT /admin/users/{id} (solo lanza 403)."""
     from services.permissions import _has_permission
     touched_admin_only = sorted(ADMIN_ONLY_FIELDS & set(update))
@@ -186,6 +186,24 @@ def _assert_user_update_authz(requester: dict, update: dict) -> None:
         )
     if requester.get("role") == "employee" and update.get("role") in ("admin", "employee"):
         raise HTTPException(status_code=403, detail="Solo un admin puede asignar este rol")
+    # STAFF-07 (auditoría 26-10-2026) — un gestor empleado (con 'user_functions')
+    # NO puede: (a) tocar funciones/concesiones de una cuenta de STAFF, lo que
+    # evitaría degradar o suspender a otro empleado o a un admin; ni (b)
+    # modificar SUS PROPIAS funciones/alcance (auto-escalada de rol, permisos,
+    # monedas o estado). Los admins (rol raíz) quedan exentos.
+    if requester.get("role") == "employee" \
+            and (FUNCTIONS_FIELDS | ADMIN_ONLY_FIELDS) & set(update):
+        if target.get("role") in ("admin", "employee"):
+            raise HTTPException(
+                status_code=403,
+                detail=("No puedes modificar las funciones de una cuenta de staff. "
+                        "Pídeselo a un administrador."),
+            )
+        if target.get("user_id") == requester.get("user_id"):
+            raise HTTPException(
+                status_code=403,
+                detail="No puedes modificar tus propias funciones, permisos o alcance.",
+            )
 
 
 def _clean_template_record(rec: Any) -> Optional[dict]:
@@ -254,9 +272,11 @@ async def update_user(user_id: str, payload: UserUpdate, request: Request) -> An
     update = {k: v for k, v in payload.model_dump(exclude={"totp_code"}).items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nada para actualizar")
-    _assert_user_update_authz(requester, update)
-    _sanitize_staff_grants(requester, update)
     old_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not old_user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    _assert_user_update_authz(requester, old_user, update)
+    _sanitize_staff_grants(requester, update)
     await db.users.update_one({"user_id": user_id}, {"$set": update})
     new_user = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     await log_action(db, requester, "user.update", "user", user_id,
@@ -341,7 +361,9 @@ async def admin_user_email_events(user_id: str, request: Request,
                                   limit: int = 10) -> Any:
     """iter147 — delivery ledger for support: what emails did we (try to)
     send this user and did the provider accept them?"""
-    await require_staff(request)
+    # STAFF-03 — consultar el historial de correos de un usuario exige el
+    # permiso 'users' (antes bastaba cualquier staff).
+    await require_permission(request, "users")
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0, "email": 1})
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -363,7 +385,8 @@ async def admin_resend_email_event(event_id: str, request: Request) -> Any:
     """iter196 — 1-click resend of any historical email that still has its
     rendered HTML persisted. Staff-only. Records a new `email_events` row
     with a `retried_from` reference so the ledger keeps the causal chain."""
-    requester = await require_staff(request)
+    # STAFF-03 — reenviar correos exige el permiso 'users'.
+    requester = await require_permission(request, "users")
     ev = await db.email_events.find_one({"id": event_id}, {"_id": 0})
     if not ev:
         raise HTTPException(status_code=404, detail="Email no encontrado")
@@ -397,7 +420,9 @@ async def admin_resend_verification(user_id: str, request: Request) -> Any:
     """iter147 — staff-triggered resend of the verification email (support
     flow for 'no me llegó el correo'). 60s cooldown shared with the
     user-initiated resend."""
-    requester = await require_staff(request)
+    # STAFF-03 — reenviar verificación es una acción de soporte sobre el
+    # usuario: exige el permiso 'users'.
+    requester = await require_permission(request, "users")
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -451,7 +476,9 @@ async def admin_user_balance_ledger(user_id: str, request: Request) -> Any:
     """Admin/staff drill-down: list every `accumulate` order that contributed
     to this user's balance, grouped by destination currency. Useful to resolve
     disputes (e.g. "I sent Zelle twice but only one was credited")."""
-    await require_staff(request)
+    # STAFF-03 — el libro de saldo es información financiera sensible del
+    # cliente: exige el permiso 'user_stats'.
+    await require_permission(request, "user_stats")
     from routes.orders import _build_balance_ledger
     return await _build_balance_ledger(user_id)
 

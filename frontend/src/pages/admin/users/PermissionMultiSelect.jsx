@@ -17,7 +17,7 @@ import {
  * Props:
  *  - userId: string
  *  - catalog: [{code, category, label, description}] from /api/admin/permissions/catalog
- *  - selected: string[] of codes (empty = "todos los permisos staff")
+ *  - selected: string[] of codes (empty = SIN acceso — deny-by-default, STAFF-01)
  *  - onToggle: (code, boolValue) => void
  *  - onSave: () => void
  *  - onClear: () => void
@@ -54,7 +54,7 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
 
   const triggerLabel =
     selectedSet.size === 0
-      ? "Todos (sin restricción)"
+      ? "Sin acceso"
       : selectedSet.size <= 2
         ? Array.from(selectedSet).map((c) => catalog?.find((p) => p.code === c)?.label || c).join(", ")
         : `${selectedSet.size} permisos`;
@@ -153,9 +153,9 @@ export function PermissionMultiSelect({ userId, catalog, selected, onToggle, onS
               onClick={onClear}
               data-testid={`clear-permissions-${userId}`}
               className="text-xs text-neutral-400 hover:text-[#EF4444]"
-              title="Vacío = acceso completo staff (backward compat)"
+              title="Vacío = SIN acceso (deny-by-default). Marca las funciones a autorizar."
             >
-              Limpiar (todos)
+              Limpiar (sin acceso)
             </button>
             <Button
               size="sm"

@@ -19,12 +19,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from auth_utils import require_user
+from auth_utils import require_user, get_session_user, _enforce_staff_active
 from services.live_bus import event_iterator, subscribe, unsubscribe
 
 log = logging.getLogger("live_stream")
@@ -32,6 +33,14 @@ router = APIRouter(prefix="/live", tags=["Live"])
 
 
 HEARTBEAT_INTERVAL = 20  # seconds
+
+# STAFF-06 (auditoría 26-10-2026) — una suscripción SSE sella el rol en el
+# momento de conectar y los feeds restringidos por rol (ledger_changed, soporte,
+# solicitudes de empresa) se entregaban a ese rol para siempre. Revalidamos la
+# sesión/rol/estado de cuenta periódicamente: si el rol cambió, la cuenta de
+# staff se suspendió o la sesión se invalidó (reset de contraseña / logout),
+# cerramos el stream para que el cliente reconecte y vuelva a autorizarse.
+REAUTH_INTERVAL = 30  # seconds
 
 
 def _sse_frame(event: str, payload: dict) -> str:
@@ -43,6 +52,8 @@ def _sse_frame(event: str, payload: dict) -> str:
 @router.get("/stream")
 async def live_stream(request: Request) -> Any:
     user = await require_user(request)
+    # STAFF-05/06 — una cuenta de staff suspendida o en revisión no abre feed.
+    _enforce_staff_active(user)
     user_id = user["user_id"]
 
     sub = await subscribe(user_id, role=user.get("role"))
@@ -71,9 +82,22 @@ async def live_stream(request: Request) -> Any:
             heartbeat_task = asyncio.create_task(_heartbeat_loop())
             stream_task = asyncio.create_task(_stream_loop())
 
+            last_reauth = time.monotonic()
             while True:
                 if await request.is_disconnected():
                     break
+                # STAFF-06 — revalidación periódica de sesión/rol/estado.
+                now = time.monotonic()
+                if now - last_reauth >= REAUTH_INTERVAL:
+                    last_reauth = now
+                    fresh = await get_session_user(request)
+                    if fresh is None:
+                        break  # sesión revocada / reset de contraseña / logout
+                    if (fresh.get("role") or None) != (sub.role or None):
+                        break  # rol cambió → reconecta y re-sella el rol
+                    if fresh.get("role") in ("admin", "employee") and \
+                            (fresh.get("account_status") or "active") != "active":
+                        break  # staff suspendido en caliente
                 try:
                     chunk = await asyncio.wait_for(
                         heartbeat_queue.get(), timeout=HEARTBEAT_INTERVAL + 5,

@@ -124,7 +124,9 @@ def test_staff_with_none_sees_no_batch_items_and_cannot_approve():
         "updated_at": "2026-06-01T00:00:00+00:00",
     })
     try:
-        _set_employee(perms=[], pairs=["none"])
+        # STAFF-01 — se concede `orders` para alcanzar la ruta; el filtrado
+        # se prueba SOLO con allowed_batch_pairs (RBAC de pares ortogonal).
+        _set_employee(perms=["orders"], pairs=["none"])
         # La cola llega vacía para este staff.
         r = requests.get(f"{API}/admin/vip-batches", headers=_hdr(EMPLOYEE_TOKEN))
         assert r.status_code == 200, r.text
@@ -134,8 +136,8 @@ def test_staff_with_none_sees_no_batch_items_and_cannot_approve():
         r = requests.post(f"{API}/admin/vip-batches/items/{item_id}/approve",
                           headers=_hdr(EMPLOYEE_TOKEN), json={})
         assert r.status_code == 403, r.text
-        # Lista vacía (legacy) sigue viendo el ítem — compat sin cambios.
-        _set_employee(perms=[], pairs=[])
+        # pairs vacío = TODOS los pares (RBAC de lotes): vuelve a ver el ítem.
+        _set_employee(perms=["orders"], pairs=[])
         r = requests.get(f"{API}/admin/vip-batches", headers=_hdr(EMPLOYEE_TOKEN))
         assert r.status_code == 200, r.text
         ids = {it["id"] for it in r.json()["items"]}

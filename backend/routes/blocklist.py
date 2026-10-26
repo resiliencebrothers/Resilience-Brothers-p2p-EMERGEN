@@ -45,12 +45,11 @@ async def _assert_can_manage_blocklist(actor: dict) -> Any:
     if actor.get("role") == "admin":
         return
     if actor.get("role") == "employee":
-        # iter55.16 — the new per-staff permission system supersedes the legacy
-        # can_manage_blocklist boolean. Either grants access.
-        perms = actor.get("allowed_permissions") or []
-        if not perms or "blocked_contacts" in perms:
-            return
-        if actor.get("can_manage_blocklist"):
+        # STAFF-02 (auditoría 26-10-2026) — fuente ÚNICA de verdad: el permiso
+        # granular `blocked_contacts`. El booleano heredado
+        # `can_manage_blocklist` ya NO otorga acceso, y una lista de permisos
+        # vacía tampoco (deny-by-default, STAFF-01).
+        if "blocked_contacts" in (actor.get("allowed_permissions") or []):
             return
     raise HTTPException(
         status_code=403,

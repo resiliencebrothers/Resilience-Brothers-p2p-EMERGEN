@@ -169,12 +169,27 @@ class TestPermissionGating:
             assert r.status_code == 403, f"{method} {url} returned {r.status_code}: {r.text}"
 
     def test_employee_with_perm_can_list(self):
+        # STAFF-02 — el acceso ahora viene del permiso granular
+        # `blocked_contacts`, NO del booleano heredado can_manage_blocklist.
+        db = _db()
+        db.users.update_one({"user_id": "user_test_employee01"},
+                            {"$set": {"allowed_permissions": ["blocked_contacts"]}})
+        try:
+            r = requests.get(f"{API}/admin/blocked-contacts", headers=_h(EMPLOYEE))
+            assert r.status_code == 200, r.text
+        finally:
+            db.users.update_one({"user_id": "user_test_employee01"},
+                                {"$set": {"allowed_permissions": ["orders"]}})
+
+    def test_employee_legacy_boolean_no_longer_grants(self):
+        # STAFF-02 — el booleano heredado can_manage_blocklist=True YA NO
+        # concede acceso por sí solo.
         db = _db()
         db.users.update_one({"user_id": "user_test_employee01"},
                             {"$set": {"can_manage_blocklist": True}})
         try:
             r = requests.get(f"{API}/admin/blocked-contacts", headers=_h(EMPLOYEE))
-            assert r.status_code == 200, r.text
+            assert r.status_code == 403, r.text
         finally:
             db.users.update_one({"user_id": "user_test_employee01"},
                                 {"$unset": {"can_manage_blocklist": ""}})

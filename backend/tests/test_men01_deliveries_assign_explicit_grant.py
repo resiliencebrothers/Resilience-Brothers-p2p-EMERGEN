@@ -3,17 +3,15 @@
 Antes de este fix, un empleado con `allowed_permissions=[]` (o sin el campo)
 pasaba el default de compatibilidad "acceso total" y podía ASIGNAR/RESERVAR
 repartos a mensajeros — justamente la escalada de privilegios que el informe
-previo advertía. Separa "hacer entregas" (`deliveries`) de "asignar repartos"
-(`deliveries_assign`).
+previo advertía. Desde STAFF-01 (auditoría 26-10-2026) el modelo es
+DENY-BY-DEFAULT: la lista vacía/ausente NO concede NADA.
 
-Casos del informe:
-- admin → permitido.
-- empleado perms=["deliveries"] → bloqueado (403).
-- empleado perms=["deliveries","deliveries_assign"] → permitido.
-- empleado perms=[] → bloqueado (EL FIX).
-- empleado SIN campo allowed_permissions → bloqueado (EL FIX).
+Casos:
+- admin → permitido (rol raíz).
+- empleado perms=["deliveries"] → gestiona entregas pero NO asigna (403).
+- empleado perms=["deliveries","deliveries_assign"] → asigna.
+- empleado perms=[] o sin el campo → bloqueado en TODO (STAFF-01).
 - cliente / mensajero no-empleado → bloqueado (control).
-- Compatibilidad: empleado perms=[] SIGUE pasando el resto de módulos.
 """
 import os
 import requests
@@ -67,18 +65,17 @@ def test_predicate_explicit_grant_for_deliveries_assign():
     # …pero SÍ puede gestionar entregas.
     assert _has_permission(emp_only_deliveries, "deliveries") is True
 
-    # empleado con lista vacía → NO asigna (EL FIX)…
+    # empleado con lista vacía → STAFF-01 deny-by-default: NO pasa NADA.
     emp_empty = {"role": "employee", "allowed_permissions": []}
     assert _has_permission(emp_empty, "deliveries_assign") is False
-    # …pero conserva el acceso heredado al resto (compatibilidad).
-    assert _has_permission(emp_empty, "deliveries") is True
-    assert _has_permission(emp_empty, "orders") is True
-    assert _has_permission(emp_empty, "kyc") is True
+    assert _has_permission(emp_empty, "deliveries") is False
+    assert _has_permission(emp_empty, "orders") is False
+    assert _has_permission(emp_empty, "kyc") is False
 
-    # empleado SIN el campo → NO asigna (EL FIX).
+    # empleado SIN el campo → igual que lista vacía: NADA.
     emp_absent = {"role": "employee"}
     assert _has_permission(emp_absent, "deliveries_assign") is False
-    assert _has_permission(emp_absent, "deliveries") is True
+    assert _has_permission(emp_absent, "deliveries") is False
 
     # cliente / mensajero no-empleado → NO (control).
     assert _has_permission({"role": "normal"}, "deliveries_assign") is False
@@ -131,9 +128,13 @@ def test_non_staff_blocked_from_assign():
     assert r.status_code == 403, r.text
 
 
-def test_employee_empty_perms_still_manages_deliveries():
-    """Compatibilidad: la lista vacía NO retira el acceso a gestionar
-    entregas (permiso `deliveries`) — solo bloquea el asignar."""
+def test_employee_needs_deliveries_perm_to_manage():
+    """STAFF-01 deny-by-default: la lista vacía NO da acceso a gestionar
+    entregas; el empleado necesita el permiso `deliveries` concedido."""
     _unset_perms("user_test_employee01")
     r = requests.get(f"{API}/admin/deliveries", headers=_hdr(EMPLOYEE_TOKEN), timeout=15)
+    assert r.status_code == 403, r.text
+    _set_perms("user_test_employee01", ["deliveries"])
+    r = requests.get(f"{API}/admin/deliveries", headers=_hdr(EMPLOYEE_TOKEN), timeout=15)
     assert r.status_code == 200, r.text
+    _unset_perms("user_test_employee01")

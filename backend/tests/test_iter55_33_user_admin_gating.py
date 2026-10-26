@@ -177,19 +177,16 @@ def test_staff_with_user_stats_perm_can_read_stats():
         _cleanup()
 
 
-def test_empty_permissions_grants_full_access_backward_compat():
-    """iter55.16 semantics preserved: an employee with allowed_permissions=[]
-    still gets full access (no stripping, no 403). This protects existing
-    employees whose docs pre-date iter55.33."""
-    _setup_gated_staff([])  # legacy: empty list = full access
+def test_empty_permissions_denied_by_default():
+    """STAFF-01 — un empleado con allowed_permissions=[] ya NO tiene acceso:
+    deny-by-default. Debe recibir 403 en rutas de staff."""
+    _setup_gated_staff([])  # deny-by-default: empty list = no access
     try:
         r = requests.get(f"{API}/admin/users/user_test_vip01/stats",
                           headers=_hdr(STAFF_TOKEN))
-        assert r.status_code == 200, r.text
+        assert r.status_code == 403, r.text
         r2 = requests.get(f"{API}/admin/users", headers=_hdr(STAFF_TOKEN))
-        docs = r2.json()
-        any_with_balance = any("vip_balance_usdt" in d for d in docs)
-        assert any_with_balance
+        assert r2.status_code == 403, r2.text
     finally:
         _cleanup()
 

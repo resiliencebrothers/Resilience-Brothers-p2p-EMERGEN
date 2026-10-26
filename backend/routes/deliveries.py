@@ -39,7 +39,11 @@ _TRANSITIONS = {
 
 async def _require_courier(request: Request) -> dict:
     user = await require_user(request)
-    if user.get("is_courier") or user.get("role") in ("admin", "employee"):
+    # STAFF-04 (auditoría 26-10-2026) — ejecutar entregas como mensajero exige
+    # la marca is_courier. Pertenecer a staff (admin/employee) ya NO basta por
+    # sí solo: si a alguien se le retira is_courier, pierde el acceso de
+    # mensajero de inmediato.
+    if user.get("is_courier"):
         return user
     raise HTTPException(status_code=403, detail="Solo mensajeros autorizados")
 

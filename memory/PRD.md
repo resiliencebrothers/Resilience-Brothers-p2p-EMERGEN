@@ -3274,3 +3274,24 @@ Verificación: ruff + AST OK, servicios RUNNING, curl autenticado de los 3 endpo
 - CUSTODY_EPOCH=2026-10-24 y la divergencia histórica caja física↔contable se SURFACEAN ahora vía `box_mirror_diff` (no se auto-aplica el histórico contra caja; es tarea de conciliación operativa).
 - `collected_unconfirmed` real desde depósitos recogidos-no-confirmados: pendiente (requiere el dominio de depósitos); hoy se muestra honestamente como `unreconciled_diff` a revisar.
 - Fallos de `test_iter205` (`courier_fee_status`): dependientes de config de tarifas de mensajería por municipio; ajenos a EC01-04/índice/CI.
+
+## Auditoría Staff/Permisos — bloque prioritario (2026-10-26)
+Política decidida por el usuario: **sin permisos = sin acceso** (deny-by-default; el usuario reasigna permisos), **solo quien esté marcado como mensajero** puede ejecutar entregas, y **primero la seguridad del staff** (depósitos después).
+
+Implementado y verificado (76/76 tests PASS — `tests/test_staff_audit_26oct.py` + suites afectadas):
+- **STAFF-01** `services/permissions.py` + `PermissionMultiSelect.jsx`: `allowed_permissions` vacío/ausente ya NO concede acceso (deny-by-default). El multiselect indica "sin acceso" en vez de "todo el acceso". Admin sigue con bypass.
+- **STAFF-02** `routes/blocklist.py`: la gestión de bloqueos exige el permiso granular (el flag booleano antiguo ya no concede acceso).
+- **STAFF-03** `routes/admin_users.py` + `auth_utils.py`: rutas de gestión de usuarios pasan de `require_staff` genérico a `require_permission` específico (`users`/`user_stats`); `balance-ledger` ahora exige `user_stats`.
+- **STAFF-04** `routes/deliveries.py` `_require_courier`: ejecutar como mensajero (`/courier/*`) exige `is_courier=True`; ser admin/employee ya no basta.
+- **STAFF-05** `auth_utils.py` `_enforce_staff_active`: una cuenta de staff `blocked`/`under_review` recibe 403 inmediato en `require_admin`/`require_staff`/`require_permission`, aunque su sesión siga viva (`account_status` ausente = active, compat).
+- **STAFF-06** `routes/live.py`: el feed SSE exige cuenta de staff activa al conectar y **revalida sesión/rol/estado cada 30 s**; si el rol cambia, se suspende la cuenta o se invalida la sesión (reset de contraseña/logout), cierra el stream para forzar reconexión y re-sellado del rol. (Pendiente refinamiento: filtrar feeds por permiso fino, no solo por rol.)
+- **STAFF-07** `routes/admin_users.py` `update_user`: un empleado con `user_functions` NO puede editar funciones de otra cuenta de staff (admin/employee) ni las suyas propias (anti auto-escalada). Cliente normal sí es editable (control).
+
+Pendiente del mismo informe (prioridad media, sin abordar):
+- **STAFF-08** (media) matriz de capacidades efectivas por operación + dependencias en plantillas + menús basados en la misma política (`routes/market.py`, `AdminPanel.jsx`, `AdminUsersHub.jsx`).
+- **STAFF-09** (media) decisiones concurrentes se pisan en apelaciones/soporte (`routes/appeals.py`, `routes/support.py`): condicionar transición de estado a la versión/estado esperado.
+
+Nota CI: no existe la colisión de `test_negativos.py` en este preview (era de un SHA distinto del repo GitHub); no se tocó.
+
+### Depósitos sin Confirmar (diferido, próximo)
+Sigue pendiente calcular "Depósitos sin Confirmar" desde registros reales de depósitos (recogido-no-confirmado) y mostrarlo SEPARADO de `unreconciled_diff` en `CourierCashTab.jsx`. Archivos: `services/courier_cash.py`, `routes/deposits.py` (modelo/estados de depósito), `CourierCashTab.jsx`, `i18n es.json/en.json`.
