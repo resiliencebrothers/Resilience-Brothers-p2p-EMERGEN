@@ -837,6 +837,88 @@ async def reconciliation_by_currency() -> list:
 
 
 
+UNCONFIRMED_ALERT_HOURS = 12
+
+
+def _deposit_age_hours(iso_ts, now=None) -> Optional[float]:
+    """Horas transcurridas desde `iso_ts` (string ISO) hasta ahora."""
+    if not iso_ts:
+        return None
+    from datetime import datetime, timezone as _tz
+    try:
+        dt = datetime.fromisoformat(str(iso_ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    return round(((now or now_utc()) - dt).total_seconds() / 3600, 1)
+
+
+async def collected_unconfirmed_deposits_detail(
+        courier_id: Optional[str] = None) -> dict:
+    """EF — lista DETALLADA por moneda de los depósitos en efectivo YA recogidos
+    por un mensajero pero pendientes de confirmación del admin. Cada fila trae
+    el mensajero, el importe, el cliente y la antigüedad desde la recogida, para
+    confirmarlos uno a uno desde la pestaña de Caja. Con `courier_id` se limita
+    a los que ese mensajero tiene en custodia."""
+    now = now_utc()
+    out: dict = {}
+    async for d in db.deposits.find(
+        {"method": "cash", "status": "pending", "courier_custody_inflow": True},
+        {"_id": 0, "id": 1, "currency": 1, "amount": 1, "user_name": 1,
+         "user_email": 1, "created_at": 1},
+    ).sort("created_at", 1):
+        cur = str(d.get("currency") or "").upper()
+        if not cur:
+            continue
+        job = await db.deliveries.find_one(
+            {"kind": "deposit", "ref_id": d["id"],
+             "status": {"$ne": "cancelled"}},
+            {"_id": 0, "id": 1, "courier_id": 1, "courier_name": 1}) or {}
+        if courier_id and job.get("courier_id") != courier_id:
+            continue
+        picked = None
+        if job.get("id"):
+            ev = await db.courier_cash_events.find_one(
+                {"delivery_id": job["id"], "kind": "collected"},
+                {"_id": 0, "at": 1}, sort=[("at", 1)])
+            picked = (ev or {}).get("at")
+        picked = picked or d.get("created_at")
+        out.setdefault(cur, []).append({
+            "id": d["id"],
+            "amount": round(float(d.get("amount") or 0), 2),
+            "currency": cur,
+            "courier_id": job.get("courier_id"),
+            "courier_name": job.get("courier_name") or "—",
+            "client_name": d.get("user_name") or d.get("user_email") or "—",
+            "picked_up_at": picked,
+            "age_hours": _deposit_age_hours(picked, now),
+        })
+    return out
+
+
+async def courier_unconfirmed_held_cash(courier_id: str) -> dict:
+    """EF — efectivo que ESTE mensajero recogió y sigue pendiente de que el
+    admin lo confirme; se usa para alertarle cuando lo retiene desde hace más
+    de `UNCONFIRMED_ALERT_HOURS` horas."""
+    detail = await collected_unconfirmed_deposits_detail(courier_id=courier_id)
+    items = [r for rows in detail.values() for r in rows]
+    totals: dict = {}
+    for r in items:
+        totals[r["currency"]] = round(totals.get(r["currency"], 0.0)
+                                      + r["amount"], 2)
+    oldest = max((r["age_hours"] or 0.0) for r in items) if items else 0.0
+    return {
+        "items": sorted(items, key=lambda r: r["age_hours"] or 0, reverse=True),
+        "count": len(items),
+        "totals_by_currency": [{"currency": k, "amount": v}
+                               for k, v in sorted(totals.items())],
+        "oldest_age_hours": round(oldest, 1),
+        "alert_threshold_hours": UNCONFIRMED_ALERT_HOURS,
+        "alert": bool(items) and oldest >= UNCONFIRMED_ALERT_HOURS,
+    }
+
+
 async def incomplete_cash_transfers(limit: int = 100) -> list:
     """Auditoría de traslados — reintentos de efectivo A MEDIAS que el operador
     debería revisar: traslados PENDIENTES de confirmar, ABORTADOS (perdieron el

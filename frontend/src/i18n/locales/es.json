@@ -2298,7 +2298,12 @@
       "mirrorOk": "Espejo cuadrado",
       "depositsUnconfirmedTitle": "Recogido sin confirmar",
       "depositsUnconfirmedCount": "{{count}} depósito(s) por confirmar",
-      "depositsUnconfirmedHint": "Efectivo de depósitos que el mensajero ya recogió del cliente pero el admin aún no confirma (aparte del descuadre sin conciliar)."
+      "depositsUnconfirmedHint": "Efectivo de depósitos que el mensajero ya recogió del cliente pero el admin aún no confirma (aparte del descuadre sin conciliar).",
+      "depositsUnconfirmedListHint": "Toca para ver y confirmar cada depósito recogido.",
+      "confirm": "Confirmar",
+      "confirming": "Confirmando…",
+      "depositConfirmed": "Depósito confirmado — saldo acreditado al cliente",
+      "depositConfirmError": "No se pudo confirmar el depósito"
     }
   },
   "adminOverview": {
@@ -3224,6 +3229,11 @@
     },
     "cashPendingTitle": "Efectivo a rendir",
     "cashPendingHint": "Entrega este efectivo en caja — el admin registrará tu rendición.",
+    "cashUnconfirmedTitle": "Efectivo pendiente de confirmar",
+    "cashUnconfirmedHint": "Recogiste este efectivo; el admin aún no lo confirma. Entrégalo en caja cuanto antes.",
+    "cashUnconfirmedAlert": "Llevas efectivo sin confirmar desde hace más de {{h}}h — entrégalo en caja cuanto antes.",
+    "cashUnconfirmedAge": "hace {{age}}",
+    "cashUnconfirmedFrom": "de {{client}}",
     "gpsActive": "GPS activo",
     "gpsInactive": "GPS inactivo — el cliente no puede seguirte. Actívalo al salir.",
     "gpsLastSent": "posición enviada hace {{min}} min",

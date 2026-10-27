@@ -48,8 +48,19 @@ def _run(async_fn):
 
 class _Sandbox:
     def setup_method(self, _):
-        self._orig_usd = _db().users.find_one(
+        db = _db()
+        self._orig_usd = db.users.find_one(
             {"user_id": UID}, {"_id": 0, "vip_balances": 1, "vip_balance_usd": 1})
+        # Autocontenido: parte SIEMPRE de un estado RC249 limpio en el usuario
+        # compartido, sin depender de lo que otra prueba (o el orden de
+        # ejecución) dejara. Espeja el teardown para aislar la aserción de
+        # saldo absoluto (`_bal() == 5.0`).
+        db.users.update_one({"user_id": UID},
+                            {"$unset": {f"vip_balances.{CUR}": ""}})
+        db.deposits.delete_many({"id": {"$regex": "^dep_t249"}})
+        db.orders.delete_many({"id": {"$regex": "^ord_t249"}})
+        db.withdrawals.delete_many({"id": {"$regex": "^w_t249"}})
+        db.capital_requests.delete_many({"id": {"$regex": "^cr_t249"}})
 
     def teardown_method(self, _):
         db = _db()

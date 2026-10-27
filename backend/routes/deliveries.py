@@ -157,8 +157,9 @@ async def courier_deliveries(request: Request) -> Any:
     ]).to_list(1)
     pending = float((pending_agg[0] if pending_agg else {}).get("s") or 0)
     # Mejora #1 — efectivo a rendir del mensajero (por moneda).
-    from services.courier_cash import cash_pending
+    from services.courier_cash import cash_pending, courier_unconfirmed_held_cash
     my_cash = [c for c in await cash_pending(uid) if c["pending"] != 0]
+    cash_unconfirmed = await courier_unconfirmed_held_cash(uid)
     for d in available_docs + mine + history:
         _strip_courier_secret(d)
     return {
@@ -166,6 +167,7 @@ async def courier_deliveries(request: Request) -> Any:
         "mine": mine,
         "history": history,
         "cash_pending": my_cash,
+        "cash_unconfirmed": cash_unconfirmed,
         "earnings": {
             "confirmed_usdt": round(earned, 2),
             "pending_usdt": round(pending, 2),
@@ -994,6 +996,16 @@ async def admin_courier_cash_reconciliation(request: Request) -> Any:
     await require_permission(request, "deliveries")
     from services.courier_cash import reconciliation_by_currency
     return {"rows": await reconciliation_by_currency()}
+
+
+@router.get("/admin/courier-cash/collected-unconfirmed")
+async def admin_courier_cash_collected_unconfirmed(request: Request) -> Any:
+    """EF — depósitos en efectivo YA recogidos por mensajeros pero pendientes de
+    confirmar (por moneda), con mensajero, importe, cliente y antigüedad; para
+    confirmarlos uno a uno desde la pestaña de Caja."""
+    await require_permission(request, "deliveries")
+    from services.courier_cash import collected_unconfirmed_deposits_detail
+    return {"by_currency": await collected_unconfirmed_deposits_detail()}
 
 
 @router.get("/admin/courier-cash/incomplete-transfers")

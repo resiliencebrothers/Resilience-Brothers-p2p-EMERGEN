@@ -652,6 +652,33 @@ export default function CourierPanel({ embedded = false }) {
         </div>
       )}
 
+      {/* EF — efectivo recogido pendiente de confirmación del admin, con aviso por antigüedad */}
+      {(data.cash_unconfirmed?.count || 0) > 0 && (
+        <div
+          className={`tactile-card p-4 border ${data.cash_unconfirmed?.alert ? "border-red-400/40 bg-red-400/5" : "border-amber-400/30 bg-amber-400/5"}`}
+          data-testid="courier-cash-unconfirmed"
+        >
+          <div className={`micro-label flex items-center gap-2 ${data.cash_unconfirmed?.alert ? "text-red-300" : "text-amber-300"}`}>
+            {data.cash_unconfirmed?.alert ? <AlertTriangle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+            {t("courierPanel.cashUnconfirmedTitle")}
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2">
+            {(data.cash_unconfirmed?.totals_by_currency || []).map((c) => (
+              <div key={c.currency} className={`font-mono text-lg ${data.cash_unconfirmed?.alert ? "text-red-300" : "text-amber-300"}`} data-testid={`courier-unconfirmed-${c.currency}`}>
+                {c.amount.toLocaleString()} <span className="text-xs text-neutral-400">{c.currency}</span>
+              </div>
+            ))}
+          </div>
+          {data.cash_unconfirmed?.alert ? (
+            <div className="text-[0.7rem] text-red-300/90 mt-1.5" data-testid="courier-cash-unconfirmed-alert">
+              {t("courierPanel.cashUnconfirmedAlert", { h: data.cash_unconfirmed?.alert_threshold_hours })}
+            </div>
+          ) : (
+            <div className="text-[0.65rem] text-neutral-500 mt-1.5">{t("courierPanel.cashUnconfirmedHint")}</div>
+          )}
+        </div>
+      )}
+
       <div className="flex gap-2 border-b border-white/10">
         {tabs.map((tb) => (
           <button

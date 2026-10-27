@@ -2298,7 +2298,12 @@
       "mirrorOk": "Mirror balanced",
       "depositsUnconfirmedTitle": "Collected, pending confirmation",
       "depositsUnconfirmedCount": "{{count}} deposit(s) to confirm",
-      "depositsUnconfirmedHint": "Cash from deposits the courier already collected from the client but the admin hasn't confirmed yet (separate from the unreconciled gap)."
+      "depositsUnconfirmedHint": "Cash from deposits the courier already collected from the client but the admin hasn't confirmed yet (separate from the unreconciled gap).",
+      "depositsUnconfirmedListHint": "Tap to view and confirm each collected deposit.",
+      "confirm": "Confirm",
+      "confirming": "Confirming…",
+      "depositConfirmed": "Deposit confirmed — balance credited to the client",
+      "depositConfirmError": "Could not confirm the deposit"
     }
   },
   "adminOverview": {
@@ -3224,6 +3229,11 @@
     },
     "cashPendingTitle": "Cash to hand in",
     "cashPendingHint": "Hand this cash in at the cash box — the admin will record your settlement.",
+    "cashUnconfirmedTitle": "Cash pending confirmation",
+    "cashUnconfirmedHint": "You collected this cash; the admin hasn't confirmed it yet. Hand it in at the cash box soon.",
+    "cashUnconfirmedAlert": "You've held unconfirmed cash for over {{h}}h — hand it in at the cash box soon.",
+    "cashUnconfirmedAge": "{{age}} ago",
+    "cashUnconfirmedFrom": "from {{client}}",
     "gpsActive": "GPS active",
     "gpsInactive": "GPS off — the client cannot track you. Turn it on when you leave.",
     "gpsLastSent": "position sent {{min}} min ago",

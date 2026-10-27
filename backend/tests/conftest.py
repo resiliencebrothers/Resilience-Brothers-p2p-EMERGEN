@@ -50,6 +50,40 @@ def _pooled_mongo_client(*args, **kwargs):
 if not os.environ.get("NO_MONGO_POOL"):
     _pymongo.MongoClient = _pooled_mongo_client
 
+# ---------------------------------------------------------------------------
+# Persistent session event loop for the sync `_run(...)` helpers (prevents
+# intermittent socket hangs in `make test-critical`)
+# ---------------------------------------------------------------------------
+# ~61 test files wrap async service calls in a helper that does
+# `asyncio.new_event_loop()` + `run_until_complete(...)` + `loop.close()` on
+# EVERY call. Creating and tearing down a fresh loop per call leaves motor's
+# `AsyncIOMotorClient` bound to a now-closed loop whose executor / pooled
+# sockets are in a stale state; a later `run_until_complete` then blocks
+# forever on a socket read (e.g. iter269 TestV02's 2nd backfill), so the
+# single-process `test-critical` run never finishes. We hand every
+# `new_event_loop()` call ONE persistent loop and make its `close()` a no-op,
+# so motor binds once to a loop that lives for the whole session. Tests run
+# sequentially (`run_until_complete` blocks), so a shared loop is safe; the
+# `_reset_motor_client_loop_binding` autouse fixture still rebinds motor to it
+# cleanly before each test.
+import asyncio as _asyncio  # noqa: E402
+
+_PERSISTENT_LOOP = None
+_REAL_NEW_EVENT_LOOP = _asyncio.new_event_loop
+
+
+def _persistent_new_event_loop():
+    global _PERSISTENT_LOOP
+    if _PERSISTENT_LOOP is None or _PERSISTENT_LOOP.is_closed():
+        _PERSISTENT_LOOP = _REAL_NEW_EVENT_LOOP()
+        _PERSISTENT_LOOP.close = lambda *a, **k: None  # type: ignore[method-assign]
+    return _PERSISTENT_LOOP
+
+
+if not os.environ.get("NO_LOOP_POOL"):
+    _asyncio.new_event_loop = _persistent_new_event_loop
+
+
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
 
 

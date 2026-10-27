@@ -30,11 +30,21 @@ const daysSince = (iso) => {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 };
 
+const ageLabel = (h) => {
+  if (h == null) return "—";
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`;
+  if (h < 48) return `${Math.round(h)}h`;
+  return `${Math.round(h / 24)}d`;
+};
+
 export default function CourierCashTab() {
   const { t } = useTranslation();
   const [summary, setSummary] = useState([]);
   const [reconcile, setReconcile] = useState([]);
   const [incomplete, setIncomplete] = useState([]);
+  const [unconfirmed, setUnconfirmed] = useState({});
+  const [expandedCur, setExpandedCur] = useState(null);
+  const [confirmingId, setConfirmingId] = useState(null);
   const [events, setEvents] = useState({ items: [], total: 0 });
   const [couriers, setCouriers] = useState([]);
   const [options, setOptions] = useState({ currencies: [], accounts: {}, denominations: {} });
@@ -67,6 +77,8 @@ export default function CourierCashTab() {
       .then((r) => setReconcile(r.data.rows || [])).catch(() => {});
     axios.get(`${API}/admin/courier-cash/incomplete-transfers`, { withCredentials: true })
       .then((r) => setIncomplete(r.data.rows || [])).catch(() => {});
+    axios.get(`${API}/admin/courier-cash/collected-unconfirmed`, { withCredentials: true })
+      .then((r) => setUnconfirmed(r.data.by_currency || {})).catch(() => {});
     axios.get(`${API}/admin/couriers`, { withCredentials: true })
       .then((r) => setCouriers(r.data || [])).catch(() => {});
     axios.get(`${API}/admin/courier-cash/options`, { withCredentials: true })
@@ -92,6 +104,21 @@ export default function CourierCashTab() {
 
   useEffect(() => { loadTop(); }, [loadTop]);
   useEffect(() => { loadEvents(); }, [loadEvents]);
+
+  const confirmDeposit = useCallback(async (depId) => {
+    setConfirmingId(depId);
+    try {
+      await axios.post(`${API}/admin/deposits/${depId}/confirm`, {},
+        { withCredentials: true });
+      toast.success(t("admin.cash.depositConfirmed"));
+      loadTop();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      toast.error(typeof d === "string" ? d : t("admin.cash.depositConfirmError"));
+    } finally {
+      setConfirmingId(null);
+    }
+  }, [t, loadTop]);
 
   const loadArqueo = useCallback(() => {
     if (!arqCourier || !arqCurrency) { setArqExp(null); setArqHistory([]); return; }
@@ -243,16 +270,55 @@ export default function CourierCashTab() {
                 </div>
               )}
               {r.deposits_collected_unconfirmed > 0 && (
-                <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-xs" data-testid={`recon-deposits-unconfirmed-${r.currency}`} title={t("admin.cash.depositsUnconfirmedHint")}>
-                  <span className="text-neutral-500 flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-amber-300" /> {t("admin.cash.depositsUnconfirmedTitle")}
-                  </span>
-                  <span className="text-amber-300 font-mono">
-                    {r.deposits_collected_unconfirmed.toLocaleString()}
-                    <span className="text-neutral-500 ml-1 font-sans">
-                      ({t("admin.cash.depositsUnconfirmedCount", { count: r.deposits_collected_unconfirmed_count })})
+                <div className="mt-2 pt-2 border-t border-white/10" data-testid={`recon-deposits-unconfirmed-${r.currency}`}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedCur(expandedCur === r.currency ? null : r.currency)}
+                    className="w-full flex items-center justify-between text-xs"
+                    title={t("admin.cash.depositsUnconfirmedListHint")}
+                    data-testid={`recon-deposits-unconfirmed-toggle-${r.currency}`}
+                  >
+                    <span className="text-neutral-500 flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-amber-300" /> {t("admin.cash.depositsUnconfirmedTitle")}
                     </span>
-                  </span>
+                    <span className="text-amber-300 font-mono flex items-center gap-1">
+                      {r.deposits_collected_unconfirmed.toLocaleString()}
+                      <span className="text-neutral-500 ml-1 font-sans">
+                        ({t("admin.cash.depositsUnconfirmedCount", { count: r.deposits_collected_unconfirmed_count })})
+                      </span>
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedCur === r.currency ? "rotate-180" : ""}`} />
+                    </span>
+                  </button>
+                  {expandedCur === r.currency && (
+                    <div className="mt-2 space-y-1.5" data-testid={`recon-deposits-unconfirmed-list-${r.currency}`}>
+                      {(unconfirmed[r.currency] || []).map((d) => (
+                        <div key={d.id} className="flex items-center justify-between gap-2 rounded-md bg-amber-400/5 border border-amber-400/15 px-2 py-1.5" data-testid={`unconfirmed-deposit-${d.id}`}>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs text-white truncate">
+                              <span className="font-mono text-amber-300">{d.amount.toLocaleString()}</span>
+                              <span className="text-neutral-500"> · {d.courier_name}</span>
+                            </div>
+                            <div className="text-[0.65rem] text-neutral-500 truncate flex items-center gap-1">
+                              <Clock className="w-2.5 h-2.5" /> {ageLabel(d.age_hours)} · {d.client_name}
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-xs border-emerald-400/40 text-emerald-300 hover:bg-emerald-400/10 shrink-0"
+                            disabled={confirmingId === d.id}
+                            onClick={() => confirmDeposit(d.id)}
+                            data-testid={`confirm-deposit-${d.id}`}
+                          >
+                            {confirmingId === d.id ? t("admin.cash.confirming") : t("admin.cash.confirm")}
+                          </Button>
+                        </div>
+                      ))}
+                      {(unconfirmed[r.currency] || []).length === 0 && (
+                        <div className="text-[0.65rem] text-neutral-500 py-1">{t("admin.cash.empty")}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
