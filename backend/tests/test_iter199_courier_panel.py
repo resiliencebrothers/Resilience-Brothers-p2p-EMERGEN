@@ -217,8 +217,11 @@ def test_manual_delivery_for_free_withdrawal():
                        json={"kind": "withdrawal", "ref_id": wid},
                        headers=_hdr(ADMIN_TOKEN))
     assert r2.status_code == 409
-    # cancel works
-    r3 = requests.post(f"{API}/admin/deliveries/{d['id']}/cancel", json={},
+    # cancel works — OP01/MEN22: la cancelación exige declarar el estado y el
+    # ciclo observados (CAS). Una entrega manual libre está 'available' sin ciclo.
+    r3 = requests.post(f"{API}/admin/deliveries/{d['id']}/cancel",
+                       json={"expected_status": d["status"],
+                             "expected_uid": d.get("assignment_uid")},
                        headers=_hdr(ADMIN_TOKEN))
     assert r3.status_code == 200
     _cleanup(wid, d["id"])

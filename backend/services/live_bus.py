@@ -59,6 +59,12 @@ _STAFF_EVENT_CAP: dict[str, str] = {
     "company_request_updated": "company_requests",
     "support_ticket_created": "support",
     "support_ticket_updated": "support",
+    # pickups_changed — señal operativa del panel de recogidas (Inventario →
+    # Tiendas). Lo consume SOLO personal con 'products' (los endpoints
+    # verify/confirm/pickup-ready usan require_permission("products")); antes se
+    # difundía a TODOS los usuarios (broadcast sin roles). Ahora es feed de
+    # staff gated por capacidad, igual que el resto.
+    "pickups_changed": "products",
 }
 
 # Campos del payload que acotan el evento a una moneda (ámbito de recurso).

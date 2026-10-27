@@ -912,7 +912,8 @@ async def redemption_on_my_way(rid: str, request: Request) -> Any:
         logger.error(f"on-my-way admin notify failed: {e}")
     try:
         from services.live_bus import publish as live_publish
-        await live_publish("pickups_changed", {"redemption_id": rid})
+        await live_publish("pickups_changed", {"redemption_id": rid},
+                           roles=("admin", "employee"))
     except Exception as e:
         logger.error(f"pickups_changed publish failed: {e}")
     return await db.redemptions.find_one({"id": rid}, {"_id": 0})

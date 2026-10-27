@@ -325,3 +325,29 @@ async def test_staff06r2_admin_pending_event_always_passes():
         assert reauthorize_event(sub, pending[0]) is True
     finally:
         await bus_unsubscribe(sub)
+
+
+# ------------------------------------------------------------------
+# pickups_changed — antes broadcast-a-todos; ahora feed de staff gated por
+# 'products' (lo consume SOLO el panel Inventario→Tiendas). Un cliente ya NO
+# lo recibe; un empleado SIN 'products' tampoco; con 'products' sí; admin sí.
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pickups_changed_gated_to_products_capability():
+    s_admin = await bus_subscribe("s06r_pk_admin", role="admin")
+    s_prod = await bus_subscribe("s06r_pk_prod", role="employee",
+                                 allowed_permissions=["products"])
+    s_noprod = await bus_subscribe("s06r_pk_noprod", role="employee",
+                                   allowed_permissions=["orders", "withdrawals"])
+    s_client = await bus_subscribe("s06r_pk_client", role="normal")
+    try:
+        await bus_publish("pickups_changed", {"redemption_id": "r1"},
+                          roles=("admin", "employee"))
+        assert await _got(s_admin) is True        # admin ve el panel
+        assert await _got(s_prod) is True          # empleado CON 'products'
+        assert await _got(s_noprod) is False       # empleado SIN 'products' → NO
+        assert await _got(s_client) is False       # cliente ya NO lo recibe
+    finally:
+        for s in (s_admin, s_prod, s_noprod, s_client):
+            await bus_unsubscribe(s)

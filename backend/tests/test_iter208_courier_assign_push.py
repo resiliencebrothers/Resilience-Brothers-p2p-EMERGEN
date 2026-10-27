@@ -13,6 +13,7 @@ sí verificamos:
 import os
 import uuid
 
+import pytest
 import requests
 from pymongo import MongoClient
 
@@ -20,6 +21,7 @@ from tests.conftest import BASE_URL, ADMIN_TOKEN
 
 API = f"{BASE_URL}/api"
 COURIER_ID = "user_test_vip01"  # tiene is_courier=true (iter199)
+ADMIN_ID = "user_test_admin01"
 
 
 def _hdr(tok):
@@ -28,6 +30,22 @@ def _hdr(tok):
 
 def _db():
     return MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _enable_couriers():
+    """iter208 asigna a vip01 (mensajero) y, en los tests de claim/rechazo de
+    reserva, opera como ADMIN sobre rutas /courier/* — que exigen is_courier
+    (_require_courier, STAFF-05-R). Se habilitan ambos aquí para que la suite
+    sea independiente del orden de ejecución; vip01 se mantiene mensajero (su
+    default) y admin01 se restaura a NO-mensajero al terminar."""
+    db = _db()
+    db.users.update_one({"user_id": COURIER_ID},
+                        {"$set": {"is_courier": True, "account_status": "active"}})
+    db.users.update_one({"user_id": ADMIN_ID},
+                        {"$set": {"is_courier": True, "account_status": "active"}})
+    yield
+    db.users.update_one({"user_id": ADMIN_ID}, {"$set": {"is_courier": False}})
 
 
 def _seed_available_delivery(kind: str = "withdrawal"):

@@ -11,6 +11,7 @@ Verifica:
 import os
 import uuid
 
+import pytest
 import requests
 from pymongo import MongoClient
 
@@ -29,6 +30,19 @@ def _hdr(tok):
 
 def _db():
     return MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _enable_staff_courier():
+    """iter215 marca entregas vía /courier/* con el empleado como MENSAJERO,
+    que exige is_courier=True + cuenta activa (_require_courier, STAFF-05-R).
+    Se habilita aquí para que la suite sea independiente del orden de ejecución
+    y se restaura al default (is_courier=False) al terminar."""
+    db = _db()
+    db.users.update_one({"user_id": COURIER_ID},
+                        {"$set": {"is_courier": True, "account_status": "active"}})
+    yield
+    db.users.update_one({"user_id": COURIER_ID}, {"$set": {"is_courier": False}})
 
 
 def _usdt(uid):

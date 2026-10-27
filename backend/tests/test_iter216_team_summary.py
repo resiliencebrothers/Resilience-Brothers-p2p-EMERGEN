@@ -7,6 +7,7 @@ desglose por mensajero.
 import os
 import uuid
 
+import pytest
 import requests
 from pymongo import MongoClient
 
@@ -22,6 +23,20 @@ def _hdr(tok):
 
 def _db():
     return MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _grant_deliveries_perm():
+    """iter216 comprueba que un empleado CON permiso 'deliveries' también ve el
+    resumen del equipo (GET /admin/deliveries/summary). Se concede aquí para
+    que la suite sea independiente del orden de ejecución (deny-by-default:
+    sin el permiso el endpoint responde 403) y se restaura al terminar."""
+    db = _db()
+    db.users.update_one({"user_id": "user_test_employee01"},
+                        {"$set": {"allowed_permissions": ["deliveries"]}})
+    yield
+    db.users.update_one({"user_id": "user_test_employee01"},
+                        {"$unset": {"allowed_permissions": ""}})
 
 
 def _seed(status, courier, share, platform, fee, updated):

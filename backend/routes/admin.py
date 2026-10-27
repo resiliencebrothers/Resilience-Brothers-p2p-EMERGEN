@@ -755,7 +755,8 @@ async def _notify_pickup_and_publish(user_id: str, ntype: str, title: str,
     try:
         from services.live_bus import publish as live_publish
         await live_publish("pickups_changed",
-                           {"redemption_id": data.get("redemption_id")})
+                           {"redemption_id": data.get("redemption_id")},
+                           roles=("admin", "employee"))
     except Exception as e:
         logger.error(f"pickups_changed publish failed: {e}")
 
