@@ -1129,9 +1129,13 @@ async def admin_courier_cash_register(payload: dict,
                                  "is_courier": 1})
     if not c:
         raise HTTPException(status_code=404, detail="Mensajero no encontrado")
-    # EC03 — el destinatario debe ser un mensajero habilitado (o staff), no un
-    # usuario cualquiera que exista. Mismo criterio que la (re)asignación.
-    if not (c.get("is_courier") or c.get("role") in ("admin", "employee")):
+    # EC03 — política UNIFICADA con _require_courier (STAFF-04/05-R): la custodia
+    # de efectivo pertenece a un MENSAJERO HABILITADO (is_courier). Pertenecer al
+    # staff (admin/employee) NO basta: si se le retiró is_courier, ya no se le
+    # puede emitir ni recibir efectivo de custodia, igual que pierde el panel de
+    # mensajero. Así no se emite efectivo a quien perdió la habilitación aunque
+    # conserve rol de personal.
+    if not c.get("is_courier"):
         raise HTTPException(status_code=400,
                             detail="Ese usuario no es un mensajero habilitado")
     courier_name = c.get("name") or c.get("email") or ""

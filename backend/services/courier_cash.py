@@ -74,35 +74,42 @@ async def get_or_create_courier_custody_account(courier_id: str,
 
 
 async def courier_held_cash(courier_id: str, code: str) -> float:
-    """EC02 — efectivo que el mensajero tiene por rendir en `code`, de forma
-    ATÓMICA respecto al dinero ya movido. Parte del pendiente del ledger
-    (eventos) y lo AJUSTA con los traslados de custodia YA CONFIRMADOS que aún
-    no tienen su evento escrito (ventana entre confirmar el traslado y registrar
-    el evento). Sin este ajuste, dos rendiciones concurrentes leerían el mismo
-    pendiente anterior y podrían sobre-rendir. No se apoya solo en la proyección
-    del ledger, que se actualiza DESPUÉS de soltar el cerrojo."""
-    held = 0.0
-    for row in await cash_pending(courier_id):
-        if row["currency"] == code:
-            held = round(float(row["pending"]), 2)
-            break
+    """EC02 — efectivo que el mensajero tiene por rendir en `code`, sobre una
+    VISTA CONSISTENTE. Los eventos del ledger se leen UNA sola vez y de esa MISMA
+    lectura se derivan (a) el pendiente y (b) el conjunto de `op_key` ya
+    reflejadas. Antes eran dos lecturas de eventos separadas (`cash_pending` y
+    luego las claves): si una rendición escribía su evento ENTRE ambas, el
+    traslado quedaba fuera del pendiente (leído antes) y también se omitía del
+    ajuste (su clave ya existía) → se perdía, sobre-estimando lo disponible y
+    permitiendo sobre-rendir. Con la lectura única, cada traslado confirmado se
+    cuenta EXACTAMENTE una vez: vía pendiente si su evento estaba en la lectura,
+    o vía ajuste si aún no. No se trunca el conjunto de eventos ni de traslados
+    que determina la disponibilidad (antes `to_list(5000)` podía dejar fuera un
+    traslado sin evento)."""
+    pending = 0.0
+    evented_ops: set = set()
+    async for e in db.courier_cash_events.find(
+            {"courier_id": courier_id, "currency": code},
+            {"_id": 0, "kind": 1, "amount": 1, "op_key": 1}):
+        amt = round(float(e.get("amount") or 0), 2)
+        k = e.get("kind")
+        if k in ("issued", "collected"):
+            pending += amt
+        elif k in ("delivered_to_recipient", "returned"):
+            pending -= amt
+        if e.get("op_key"):
+            evented_ops.add(e["op_key"])
     trs = await db.fund_account_transfers.find(
         {"courier_id": courier_id, "currency": code, "status": "confirmed",
          "courier_cash_kind": {"$in": ["issued", "returned"]}},
         {"_id": 0, "operation_id": 1, "courier_cash_kind": 1, "amount": 1},
-    ).to_list(5000)
-    op_keys = [t["operation_id"] for t in trs if t.get("operation_id")]
-    evented: set = set()
-    if op_keys:
-        async for e in db.courier_cash_events.find(
-                {"op_key": {"$in": op_keys}}, {"_id": 0, "op_key": 1}):
-            evented.add(e["op_key"])
+    ).to_list(None)
     for t in trs:
-        if t.get("operation_id") in evented:
-            continue  # ya reflejado en el ledger (eventos); no re-contar
+        if t.get("operation_id") in evented_ops:
+            continue  # ya reflejado en el pendiente (misma lectura de eventos)
         amt = round(float(t.get("amount") or 0), 2)
-        held += amt if t.get("courier_cash_kind") == "issued" else -amt
-    return round(held, 2)
+        pending += amt if t.get("courier_cash_kind") == "issued" else -amt
+    return round(pending, 2)
 
 
 async def resolve_company_cash_box(account_id: str, code: str) -> dict:

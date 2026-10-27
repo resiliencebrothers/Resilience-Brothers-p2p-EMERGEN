@@ -17,6 +17,7 @@ from services.live_bus import (
     unsubscribe as bus_unsubscribe,
     publish as bus_publish,
     update_authz,
+    reauthorize_event,
 )
 
 
@@ -228,3 +229,99 @@ async def test_explicit_require_perm_override():
     finally:
         await bus_unsubscribe(s_ok)
         await bus_unsubscribe(s_no)
+
+
+# ------------------------------------------------------------------
+# STAFF-06-R2 — eventos PENDIENTES re-autorizados en la ENTREGA FINAL
+# ------------------------------------------------------------------
+# Un evento encolado bajo el snapshot ANTERIOR (publish usa el snapshot vigente)
+# NO debe salir si el permiso se retira mientras el evento está pendiente en
+# cualquiera de las dos colas. La compuerta final `reauthorize_event` lo descarta.
+
+async def _drain(sub):
+    out = []
+    while not sub.queue.empty():
+        out.append(sub.queue.get_nowait())
+    return out
+
+
+@pytest.mark.asyncio
+async def test_staff06r2_pending_staff_event_dropped_after_revocation():
+    # R01 — evento pendiente en Subscription.queue tras revocar el permiso.
+    sub = await bus_subscribe("s06r2_a", role="employee", allowed_permissions=["orders"])
+    try:
+        await bus_publish("order_status_changed",
+                          {"order_id": "after-revoke-1", "amount_from": 202,
+                           "from_code": "USD", "to_code": "CUP"},
+                          roles=("admin", "employee"))
+        pending = await _drain(sub)
+        assert len(pending) == 1 and pending[0]["staff"] is True
+        # El permiso se retira (revalidación en caliente) ANTES de entregar.
+        update_authz(sub, "employee", [], [])
+        # Compuerta final: el frame pendiente NO puede salir.
+        assert reauthorize_event(sub, pending[0]) is False
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06r2_two_pending_events_both_dropped():
+    # R02 — dos eventos encolados bajo el snapshot viejo; tras el refresco a []
+    # NINGUNO debe entregarse (modela frames en ambas colas).
+    sub = await bus_subscribe("s06r2_b", role="employee", allowed_permissions=["orders"])
+    try:
+        for i in (1, 2):
+            await bus_publish("order_status_changed",
+                              {"order_id": f"after-revoke-{i}", "amount_from": 200 + i},
+                              roles=("admin", "employee"))
+        pending = await _drain(sub)
+        assert len(pending) == 2
+        update_authz(sub, "employee", [], [])
+        assert all(reauthorize_event(sub, ev) is False for ev in pending)
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06r2_personal_event_survives_revocation():
+    # Feed PERSONAL del dueño (user_id=...) no se re-chequea por capacidad: debe
+    # entregarse aunque el usuario no tenga permisos de staff.
+    sub = await bus_subscribe("s06r2_owner", role="normal")
+    try:
+        await bus_publish("order_status_changed",
+                          {"order_id": "mine", "from_code": "USD", "to_code": "CUP"},
+                          user_id="s06r2_owner")
+        pending = await _drain(sub)
+        assert len(pending) == 1 and pending[0]["staff"] is False
+        update_authz(sub, "normal", [], [])
+        assert reauthorize_event(sub, pending[0]) is True
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06r2_still_authorized_event_passes_gate():
+    # Si el permiso se conserva, el evento pendiente SÍ sale.
+    sub = await bus_subscribe("s06r2_keep", role="employee", allowed_permissions=["orders"])
+    try:
+        await bus_publish("order_created", {"id": "x", "from_code": "USD", "to_code": "CUP"},
+                          roles=("admin", "employee"))
+        pending = await _drain(sub)
+        assert reauthorize_event(sub, pending[0]) is True  # sigue con 'orders'
+        # Y al acotar la moneda fuera de ámbito, se descarta en la compuerta.
+        update_authz(sub, "employee", ["orders"], ["EUR"])
+        assert reauthorize_event(sub, pending[0]) is False
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06r2_admin_pending_event_always_passes():
+    sub = await bus_subscribe("s06r2_admin", role="admin")
+    try:
+        await bus_publish("order_created", {"id": "x"}, roles=("admin", "employee"))
+        pending = await _drain(sub)
+        update_authz(sub, "admin", [], [])  # admin sigue viendo todo
+        assert reauthorize_event(sub, pending[0]) is True
+    finally:
+        await bus_unsubscribe(sub)

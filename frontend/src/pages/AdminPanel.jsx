@@ -45,7 +45,12 @@ import { useAdminPendingCounts } from "@/hooks/useAdminPendingCounts";
 // backend por sección.
 const SECTION_PERMS = {
   queue: ["quick_view"],
-  orders: ["orders", "transactions"],
+  // STAFF-08-R2 — `orders` aquí es el permiso de la PÁGINA /admin/orders (su API
+  // exige `orders`). La VISIBILIDAD del grupo "Órdenes" (que también contiene el
+  // hijo Transacciones) se calcula aparte como orders∪transactions en el menú, de
+  // modo que un contable (solo `transactions`) vea el grupo pero NO cargue la
+  // pantalla de Órdenes, que respondería 403.
+  orders: ["orders"],
   "vip-batches": ["orders"],
   transactions: ["transactions"],
   withdrawals: ["withdrawals"],
@@ -100,11 +105,17 @@ export default function AdminPanel() {
       ...(anyOf(SECTION_PERMS.queue) ? [
         { to: "/admin/queue", icon: Inbox, label: t("sidebar.admin.queue"), id: "admin-nav-queue", highlight: true },
       ] : []),
-      ...(anyOf(SECTION_PERMS.orders) ? [
+      ...((has("orders") || has("transactions")) ? [
         {
-          to: "/admin/orders", icon: ListChecks, label: t("sidebar.admin.orders"),
+          // STAFF-08-R2 — grupo visible con orders O transactions, pero el
+          // enlace PADRE apunta a la página que el perfil SÍ puede cargar: si no
+          // tiene `orders` (p. ej. un contable con solo `transactions`) apunta al
+          // hijo autorizado /admin/transactions en vez de /admin/orders (que
+          // daría 403). El guardado de ruta de /admin/orders exige `orders`.
+          to: has("orders") ? "/admin/orders" : "/admin/transactions",
+          icon: ListChecks, label: t("sidebar.admin.orders"),
           id: "admin-nav-orders",
-          badge: pendingCounts.orders > 0 ? pendingCounts.orders : null,
+          badge: (has("orders") && pendingCounts.orders > 0) ? pendingCounts.orders : null,
           children: [
             ...(has("orders") ? [
               { to: "/admin/vip-batches", icon: Layers, label: t("sidebar.admin.vipBatches"), id: "admin-nav-vip-batches", highlight: true,

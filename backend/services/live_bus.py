@@ -161,11 +161,18 @@ async def unsubscribe(sub: Subscription) -> None:
              sub.user_id, len(_broadcast_subs))
 
 
-def _push(sub: Subscription, event_type: str, data: dict) -> None:
+def _push(sub: Subscription, event_type: str, data: dict, staff_feed: bool = False) -> None:
     """Enqueue an event on a single subscription queue, dropping the
-    oldest item if the consumer fell behind (>128 unread)."""
+    oldest item if the consumer fell behind (>128 unread).
+
+    `staff_feed=True` marks events that were authorized as an OPERATIVE STAFF
+    feed (roles=...). STAFF-06-R2 — ese flag viaja con el evento para poder
+    RE-AUTORIZARLO en el punto de entrega final (ver reauthorize_event): si el
+    permiso se retira mientras el evento está pendiente en CUALQUIER cola, se
+    descarta en vez de entregarse con un snapshot viejo."""
+    item = {"type": event_type, "data": data, "ts": time.time(), "staff": staff_feed}
     try:
-        sub.queue.put_nowait({"type": event_type, "data": data, "ts": time.time()})
+        sub.queue.put_nowait(item)
     except asyncio.QueueFull:
         # Drop oldest to make room; a stale event is worse than
         # blocking the publisher.
@@ -174,9 +181,21 @@ def _push(sub: Subscription, event_type: str, data: dict) -> None:
         except Exception:
             pass
         try:
-            sub.queue.put_nowait({"type": event_type, "data": data, "ts": time.time()})
+            sub.queue.put_nowait(item)
         except Exception:
             pass
+
+
+def reauthorize_event(sub: Subscription, ev: dict) -> bool:
+    """STAFF-06-R2 — compuerta de ENTREGA FINAL. Un evento pendiente (en
+    Subscription.queue o ya convertido en frame en heartbeat_queue) debe volver
+    a autorizarse contra el snapshot ACTUAL de la suscripción antes de salir.
+    Solo re-chequea feeds OPERATIVOS de staff (`staff=True`); los eventos
+    personales del dueño (user_id=...) y los broadcasts públicos se entregan
+    siempre. Así, si el permiso/moneda se revocó tras encolar, el frame NO sale."""
+    if not ev.get("staff"):
+        return True
+    return _staff_authorized(sub, ev.get("type"), ev.get("data") or {}, None)
 
 
 async def publish(
@@ -206,12 +225,15 @@ async def publish(
             targets = [s for s in candidates
                        if s.role in roles
                        and _staff_authorized(s, event_type, data, require_perm)]
+            for sub in targets:
+                _push(sub, event_type, data, staff_feed=True)
+            return
         else:
             targets = candidates
     else:
         targets = list(_subs.get(user_id, ()))
     for sub in targets:
-        _push(sub, event_type, data)
+        _push(sub, event_type, data, staff_feed=False)
 
 
 async def event_iterator(sub: Subscription) -> AsyncIterator[dict]:

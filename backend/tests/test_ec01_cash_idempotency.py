@@ -307,6 +307,34 @@ async def test_ec02_return_blocked_when_transfer_confirmed_event_pending():
     print("PASS test_ec02_return_blocked_when_transfer_confirmed_event_pending")
 
 
+async def test_ec02_held_cash_single_consistent_read():
+    """EC02 (fix del intercalado): courier_held_cash YA NO usa la lectura
+    separada `cash_pending`; deriva pendiente y claves de UNA sola lectura de
+    eventos, eliminando la ventana entre dos lecturas que permitía perder un
+    traslado confirmado (y sobre-rendir). Verifica además held=5000 con el
+    traslado de rendición confirmado y su evento presente."""
+    await _setup()
+    await _issue("EC02-1READ-ISSUE", amount=20000.0)
+    await _return("EC02-1READ-RET", amount=15000.0)  # confirmado + evento presente
+
+    orig_cp = cc.cash_pending
+    cp_calls = {"n": 0}
+
+    async def counting_cp(*a, **k):
+        cp_calls["n"] += 1
+        return await orig_cp(*a, **k)
+
+    cc.cash_pending = counting_cp
+    try:
+        held = await cc.courier_held_cash(COURIER, CODE)
+    finally:
+        cc.cash_pending = orig_cp
+    assert held == 5000.0, f"held {held} != 5000"
+    assert cp_calls["n"] == 0, \
+        "courier_held_cash ya no debe depender de cash_pending (vista única)"
+    print("PASS test_ec02_held_cash_single_consistent_read → sin cash_pending, held 5000")
+
+
 async def main():
     orig_resolver = cc.resolve_company_cash_box
     try:
@@ -320,6 +348,7 @@ async def main():
         await test_key_reuse_different_params_rejected()
         await test_ec02_concurrent_returns_no_overdraw()
         await test_ec02_return_blocked_when_transfer_confirmed_event_pending()
+        await test_ec02_held_cash_single_consistent_read()
         print("\nALL EC01/EC02/EC03 TESTS PASSED")
     finally:
         cc.resolve_company_cash_box = orig_resolver
