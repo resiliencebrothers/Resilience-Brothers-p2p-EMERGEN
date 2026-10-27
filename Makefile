@@ -198,6 +198,7 @@ test-critical: ## Run critical regression subset (~6 min, ~300 tests incl. IPV F
 		tests/test_staff06r_live_capability_authz.py \
 		tests/test_staff08b_product_dependencies.py \
 		tests/test_ec03_courier_cash_enablement.py \
+		tests/test_ef_deposits_collected_unconfirmed.py \
 		tests/test_iter98_admin_queue_sse.py \
 		-q --tb=line
 

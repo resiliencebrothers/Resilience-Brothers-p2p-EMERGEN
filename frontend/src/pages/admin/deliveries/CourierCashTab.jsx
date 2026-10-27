@@ -242,6 +242,19 @@ export default function CourierCashTab() {
                   </span>
                 </div>
               )}
+              {r.deposits_collected_unconfirmed > 0 && (
+                <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-xs" data-testid={`recon-deposits-unconfirmed-${r.currency}`} title={t("admin.cash.depositsUnconfirmedHint")}>
+                  <span className="text-neutral-500 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-amber-300" /> {t("admin.cash.depositsUnconfirmedTitle")}
+                  </span>
+                  <span className="text-amber-300 font-mono">
+                    {r.deposits_collected_unconfirmed.toLocaleString()}
+                    <span className="text-neutral-500 ml-1 font-sans">
+                      ({t("admin.cash.depositsUnconfirmedCount", { count: r.deposits_collected_unconfirmed_count })})
+                    </span>
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </div>

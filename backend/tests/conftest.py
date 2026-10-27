@@ -15,6 +15,41 @@ _ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(_ROOT / "backend" / ".env")
 load_dotenv(_ROOT / "frontend" / ".env")
 
+# ---------------------------------------------------------------------------
+# Pooled MongoClient for the whole test session (prevents port exhaustion)
+# ---------------------------------------------------------------------------
+# Most test helpers build a FRESH `MongoClient(os.environ["MONGO_URL"])` on
+# every `_db()` call. In a large single-process run (`make test-critical`,
+# ~180 files) that opens thousands of short-lived connection pools and
+# exhausts the local ephemeral ports → `AutoReconnect: [Errno 99] Cannot
+# assign requested address`, turning dozens of otherwise-passing tests red
+# (and flaky depending on order). We cache ONE shared client per URI at the
+# driver level so every helper reuses the same pool, and neutralise `.close()`
+# on the shared client so the files that close their own handle in teardown
+# don't tear the pool down for the rest of the session. conftest is imported
+# before any test module, so their `from pymongo import MongoClient` binds the
+# pooled constructor.
+import pymongo as _pymongo  # noqa: E402
+
+_MONGO_CLIENT_CACHE: dict = {}
+_REAL_MONGO_CLIENT = _pymongo.MongoClient
+
+
+def _pooled_mongo_client(*args, **kwargs):
+    if len(args) == 1 and not kwargs and isinstance(args[0], str):
+        uri = args[0]
+        cli = _MONGO_CLIENT_CACHE.get(uri)
+        if cli is None:
+            cli = _REAL_MONGO_CLIENT(uri)
+            cli.close = lambda *a, **k: None  # type: ignore[method-assign]
+            _MONGO_CLIENT_CACHE[uri] = cli
+        return cli
+    return _REAL_MONGO_CLIENT(*args, **kwargs)
+
+
+if not os.environ.get("NO_MONGO_POOL"):
+    _pymongo.MongoClient = _pooled_mongo_client
+
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "").rstrip("/")
 
 

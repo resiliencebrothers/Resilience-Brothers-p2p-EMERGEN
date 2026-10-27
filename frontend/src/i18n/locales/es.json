@@ -2295,7 +2295,10 @@
       "colUnreconciled": "Sin conciliar",
       "colBoxPhysical": "Caja física",
       "mirrorDiff": "Descuadre de espejo: {{v}}",
-      "mirrorOk": "Espejo cuadrado"
+      "mirrorOk": "Espejo cuadrado",
+      "depositsUnconfirmedTitle": "Recogido sin confirmar",
+      "depositsUnconfirmedCount": "{{count}} depósito(s) por confirmar",
+      "depositsUnconfirmedHint": "Efectivo de depósitos que el mensajero ya recogió del cliente pero el admin aún no confirma (aparte del descuadre sin conciliar)."
     }
   },
   "adminOverview": {

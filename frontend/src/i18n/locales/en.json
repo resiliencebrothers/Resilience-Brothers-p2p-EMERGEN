@@ -2295,7 +2295,10 @@
       "colUnreconciled": "Unreconciled",
       "colBoxPhysical": "Physical box",
       "mirrorDiff": "Mirror mismatch: {{v}}",
-      "mirrorOk": "Mirror balanced"
+      "mirrorOk": "Mirror balanced",
+      "depositsUnconfirmedTitle": "Collected, pending confirmation",
+      "depositsUnconfirmedCount": "{{count}} deposit(s) to confirm",
+      "depositsUnconfirmedHint": "Cash from deposits the courier already collected from the client but the admin hasn't confirmed yet (separate from the unreconciled gap)."
     }
   },
   "adminOverview": {

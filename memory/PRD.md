@@ -3316,5 +3316,19 @@ Nota CI: no existe la colisión de `test_negativos.py` en este preview (era de u
   - Verificado: las 5 suites (iter199/208/209/215/216) pasan STANDALONE desde baseline limpio (empleado sin permisos, admin no-mensajero) → 20/20, ya sin depender del orden.
   - NOTA: el resto de `test-critical` (región iter55/247-309: permisos, cajas, conciliación, parsers) tiene fallos/cuelgues PRE-EXISTENTES en corrida full-suite de un solo proceso (no relacionados con la auditoría de staff/efectivo ni con estos cambios); queda como esfuerzo aparte.
 
-### Depósitos sin Confirmar (diferido, próximo)
-Sigue pendiente calcular "Depósitos sin Confirmar" desde registros reales de depósitos (recogido-no-confirmado) y mostrarlo SEPARADO de `unreconciled_diff` en `CourierCashTab.jsx`. Archivos: `services/courier_cash.py`, `routes/deposits.py` (modelo/estados de depósito), `CourierCashTab.jsx`, `i18n es.json/en.json`.
+### Depósitos sin Confirmar ✅ HECHO (2026-10-27)
+"Efectivo recogido-no-confirmado" calculado desde registros REALES de depósitos y mostrado SEPARADO del descuadre contable (`unreconciled_diff`).
+- **Backend** `services/courier_cash.py::reconciliation_by_currency()` agrega por moneda los depósitos pendientes de confirmación (`method="cash"`, `courier_custody_inflow=True`, `status="pending"`, con vínculo de custodia) y añade a cada fila: `deposits_collected_unconfirmed` (suma) + `deposits_collected_unconfirmed_count` (nº de depósitos). Es una lista REAL de depósitos a confirmar, no la diferencia contable `unreconciled_diff`.
+- **Frontend** `pages/admin/deliveries/CourierCashTab.jsx`: nueva línea ámbar con reloj "Recogido sin confirmar — {importe} ({n} depósito(s) por confirmar)", visualmente separada de la celda SIN CONCILIAR.
+- **i18n** `es.json`/`en.json`: etiquetas nuevas, paridad de claves verificada (es==en).
+- **Test** `tests/test_ef_deposits_collected_unconfirmed.py` 2/2 (siembra depósito pendiente por moneda y verifica el agregado + aislamiento del descuadre); AÑADIDO a `Makefile::test-critical`.
+- **Verificación UI** (cookie admin, `/admin/deliveries`→pestaña Cash): la tarjeta CUP muestra "Collected, pending confirmation 10,700 (2 deposit(s) to confirm)" como línea aparte de UNRECONCILED (-50,000). Seeds de UI limpiados.
+- ruff OK, eslint 0 errores (3 warnings pre-existentes), ambos servicios 200.
+
+### CI — causa raíz del `test-critical` inestable: agotamiento de puertos (2026-10-27)
+- **Root cause (ARREGLADO)**: 108 de 112 archivos de test construyen un `MongoClient(MONGO_URL)` NUEVO en cada llamada a `_db()`. En la corrida completa de un proceso (`make test-critical`, ~180 archivos) eso abre miles de pools de conexión efímeros y agota los puertos locales → `pymongo.errors.AutoReconnect: [Errno 99] Cannot assign requested address`, volviendo rojas (y flaky según el orden) decenas de pruebas que de otro modo pasan. **Confirmado en vivo** (batch iter247-257: 2 failed + 2 errors AutoReconnect).
+- **Fix de UN SOLO punto** en `tests/conftest.py`: se cachea UN `MongoClient` por URI a nivel del driver (`pymongo.MongoClient` envuelto) y se neutraliza `.close()` en el cliente compartido (los ~40 archivos que cierran su propio handle en teardown ya no tiran el pool para el resto). conftest se importa antes que cualquier módulo de test, así que su `from pymongo import MongoClient` toma el constructor pooled. Guard `NO_MONGO_POOL=1` para desactivarlo en debug. **Verificado**: el mismo batch pasó de 2F+2E → 1F/0E; 38 pruebas de las suites tocadas (EF + staff06r + courier iter199/208/209/215/216) verdes; sin regresión.
+- **PENDIENTE (deuda pre-existente, NO resuelta — full green NO logrado)**:
+  1. **Cuelgue real** en archivos con el patrón `_run`/concurrencia (ej. `test_iter269_verificacion_caja_fixes.py::TestV02`): la pila de timeout muestra socket pymongo/motor bloqueado en `_receive_data_on_socket`/`_check_with_socket`; reproduce EN AISLAMIENTO e INDEPENDIENTE de mis cambios (reproduce con pooling desactivado). Detiene la corrida de un solo proceso. Requiere refactor async/concurrencia por archivo.
+  2. **Flaky de estado** `test_iter249_credit_recovery.py::test_same_op_id_credits_once`: pasa solo, falla en batch (interferencia de bucle de eventos/estado entre archivos `_run`).
+  Ambos son deuda PRE-EXISTENTE, no regresiones de esta sesión; quedan como esfuerzo aparte file-by-file.

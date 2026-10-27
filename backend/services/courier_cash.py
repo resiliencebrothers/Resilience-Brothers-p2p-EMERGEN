@@ -739,6 +739,30 @@ async def record_courier_arqueo(*, courier_id: str, courier_name: str,
     return doc
 
 
+async def collected_unconfirmed_deposits_by_currency() -> dict:
+    """EF — efectivo RECOGIDO por mensajeros pero AÚN NO confirmado por el admin,
+    derivado de REGISTROS REALES de depósitos (no un residual contable): depósitos
+    `method=cash` que un mensajero ya recogió físicamente (`courier_custody_inflow`)
+    y que siguen en estado `pending`. Es dinero concreto, atribuible a depósitos
+    específicos — se presenta APARTE de `unreconciled_diff` (que es opaco y puede
+    contener legado/errores)."""
+    out: dict = {}
+    async for g in db.deposits.aggregate([
+        {"$match": {"method": "cash", "status": "pending",
+                    "courier_custody_inflow": True}},
+        {"$group": {"_id": "$currency",
+                    "amount": {"$sum": "$amount"},
+                    "count": {"$sum": 1}}},
+    ]):
+        if not g.get("_id"):
+            continue
+        out[str(g["_id"]).upper()] = {
+            "amount": round(float(g.get("amount") or 0), 2),
+            "count": int(g.get("count") or 0),
+        }
+    return out
+
+
 async def reconciliation_by_currency() -> list:
     """Conciliación por moneda (sección 8 del informe), SIN presentar agregados
     contables como prueba de conciliación física:
@@ -759,6 +783,7 @@ async def reconciliation_by_currency() -> list:
     for r in await cash_pending():
         pend_by_cur[r["currency"]] = round(
             pend_by_cur.get(r["currency"], 0.0) + r["pending"], 2)
+    collected_unconf = await collected_unconfirmed_deposits_by_currency()
     try:
         box_doc = await get_or_create_company_cash_box()
         box_id_phys = box_doc["id"]
@@ -800,6 +825,12 @@ async def reconciliation_by_currency() -> list:
             "box_mirror_diff": (None if box_physical is None
                                 else round(box - box_physical, 2)),
             "unreconciled_diff": round(ledger - transit, 2),
+            # EF — recogido-no-confirmado desde depósitos reales (aparte del
+            # descuadre opaco `unreconciled_diff`).
+            "deposits_collected_unconfirmed":
+                (collected_unconf.get(code) or {}).get("amount", 0.0),
+            "deposits_collected_unconfirmed_count":
+                (collected_unconf.get(code) or {}).get("count", 0),
             "total": round(box + transit, 2),
         })
     return out
