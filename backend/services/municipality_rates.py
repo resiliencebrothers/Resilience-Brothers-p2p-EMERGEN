@@ -103,28 +103,45 @@ async def get_rates(active_only: bool = False,
     return rows
 
 
-async def get_rate_by_key(key: str) -> Optional[dict]:
-    """Busca por id o por nombre normalizado (solo activas)."""
+async def get_rate_by_key(key: str,
+                          province: Optional[str] = None) -> Optional[dict]:
+    """Busca por id (exacto) o por nombre normalizado (solo activas).
+    Con municipios homónimos en provincias distintas, `province` desambigua
+    la coincidencia por nombre; si no se pasa (o no hay match en esa
+    provincia) cae al primer municipio con ese nombre (compat.)."""
     await seed_if_empty()
     row = await db.courier_municipality_rates.find_one(
         {"id": key, "active": True}, {"_id": 0})
     if row:
         return row
     norm = normalize_text(key)
+    pnorm = normalize_text(province) if province else None
+    fallback = None
     for r in await get_rates(active_only=True):
         if normalize_text(r["municipality"]) == norm:
-            return r
-    return None
+            if pnorm and normalize_text(r.get("province")) == pnorm:
+                return r
+            if fallback is None:
+                fallback = r
+    return fallback
 
 
-async def match_municipality(text: str) -> Optional[dict]:
+async def match_municipality(text: str,
+                             province: Optional[str] = None) -> Optional[dict]:
     """Detecta el municipio dentro de un texto de dirección (normalizado,
-    coincidencia por palabra completa, términos más largos primero)."""
+    coincidencia por palabra completa, términos más largos primero).
+    Si se pasa `province`, la detección se limita a esa provincia (si la
+    provincia no tiene municipios, cae al conjunto completo)."""
     norm = normalize_text(text)
     if not norm:
         return None
+    rows = await get_rates(active_only=True)
+    pnorm = normalize_text(province) if province else None
+    if pnorm:
+        scoped = [r for r in rows if normalize_text(r.get("province")) == pnorm]
+        rows = scoped or rows
     terms = []
-    for r in await get_rates(active_only=True):
+    for r in rows:
         for term in [r["municipality"], *(r.get("aliases") or [])]:
             nt = normalize_text(term)
             if nt:

@@ -9,6 +9,7 @@
 """
 import logging
 import math
+import re
 import uuid
 from typing import Any
 
@@ -67,12 +68,14 @@ async def list_active_rates(request: Request, province: str = "") -> Any:
 async def municipality_quote(request: Request, address: str = "",
                              currency: str = "USD",
                              amount: float = 0.0,
-                             municipality: str = "") -> Any:
+                             municipality: str = "",
+                             province: str = "") -> Any:
     await require_user(request)
     from services.courier_fee import municipality_fallback_quote
     mq = await municipality_fallback_quote(
         address, currency, amount,
-        municipality_key=municipality.strip() or None)
+        municipality_key=municipality.strip() or None,
+        province=province.strip() or None)
     if not mq:
         return {"matched": False}
     return {"matched": True, **mq}
@@ -95,8 +98,8 @@ async def admin_create_rate(payload: dict, request: Request) -> Any:
     # Unicidad por (provincia, municipio): el mismo nombre puede existir en
     # provincias distintas, pero no dos veces en la misma provincia.
     if await db.courier_municipality_rates.find_one(
-            {"municipality": {"$regex": f"^{name}$", "$options": "i"},
-             "province": {"$regex": f"^{province}$", "$options": "i"}}):
+            {"municipality": {"$regex": f"^{re.escape(name)}$", "$options": "i"},
+             "province": {"$regex": f"^{re.escape(province)}$", "$options": "i"}}):
         raise HTTPException(status_code=409,
                             detail="Ese municipio ya existe en esa provincia.")
     doc: dict = {

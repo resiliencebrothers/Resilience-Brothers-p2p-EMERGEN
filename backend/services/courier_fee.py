@@ -155,18 +155,21 @@ async def route_quote(lat: float, lon: float, currency: str, amount: float) -> d
 
 async def municipality_fallback_quote(address_text: str, currency: str,
                                       amount: float,
-                                      municipality_key: Optional[str] = None) -> Optional[dict]:
+                                      municipality_key: Optional[str] = None,
+                                      province: Optional[str] = None) -> Optional[dict]:
     """iter211 — Tarifa fija por municipio detectado en el texto de la
     dirección. Se usa cuando el mapa no logró ubicar al cliente.
     iter212 — `municipality_key`: elección explícita del cliente (selector);
     gana sobre la detección por texto.
+    Prop. Tarifa-Municipio — `province` desambigua municipios homónimos en
+    provincias distintas.
     None si no hay coincidencia (→ queda en revisión manual)."""
     from services.municipality_rates import match_municipality, get_rate_by_key
     m = None
     if municipality_key:
-        m = await get_rate_by_key(municipality_key)
+        m = await get_rate_by_key(municipality_key, province=province)
     if not m:
-        m = await match_municipality(address_text or "")
+        m = await match_municipality(address_text or "", province=province)
     if not m:
         return None
     # MSG11 — un precio no finito guardado en datos viejos jamás cotiza.

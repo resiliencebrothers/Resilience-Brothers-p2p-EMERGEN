@@ -775,7 +775,7 @@
         "todayBtn": "Back to today"
       },
       "muniRates": {
-        "hint": "Flat courier prices per municipality (USDT). Used automatically when the map can't locate the client's address: the municipality is detected in the address text and this rate is charged. Aliases help detection (e.g. neighborhoods or name variants).",
+        "hint": "Flat courier prices per municipality (USDT). This is the primary home-delivery method for the Marketplace: the client picks their province and municipality and this flat rate is charged (GPS is optional, just a reference for the courier). Aliases help detect the municipality in the address text (e.g. neighborhoods or name variants).",
         "colMunicipality": "Municipality",
         "colProvince": "Province",
         "provincePlaceholder": "e.g. La Habana",

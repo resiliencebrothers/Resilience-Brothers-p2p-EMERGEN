@@ -73,7 +73,7 @@ export default function MunicipalDeliveryPicker({
     (async () => {
       try {
         const r = await axios.get(`${API}/vip/courier-municipality-quote`, {
-          params: { municipality: muniId, currency, amount: amount || 0 },
+          params: { municipality: muniId, province, currency, amount: amount || 0 },
           withCredentials: true,
         });
         if (!active) return;

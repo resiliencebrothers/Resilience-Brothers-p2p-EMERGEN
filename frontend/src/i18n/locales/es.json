@@ -775,7 +775,7 @@
         "todayBtn": "Volver a hoy"
       },
       "muniRates": {
-        "hint": "Precios fijos de mensajería por municipio (USDT). Se usan automáticamente cuando el mapa no logra ubicar la dirección del cliente: se detecta el municipio en el texto de la dirección y se cobra esta tarifa. Los alias ayudan a detectar el municipio (ej.: barrios o variantes del nombre).",
+        "hint": "Precios fijos de mensajería por municipio (USDT). Es el método principal de entrega a domicilio del Marketplace: el cliente elige su provincia y municipio y se cobra esta tarifa fija (el GPS es opcional, solo referencia para el mensajero). Los alias ayudan a detectar el municipio en el texto de la dirección (ej.: barrios o variantes del nombre).",
         "colMunicipality": "Municipio",
         "colProvince": "Provincia",
         "provincePlaceholder": "ej.: La Habana",

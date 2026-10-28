@@ -1,0 +1,37 @@
+{
+  "summary": "Tested the Marketplace delivery change from geocode-first to fixed rates per municipality, on both backend and frontend. Backend: new suite test_iter373_municipality_delivery.py passes 14/14 after one fix. Related regression suites also pass: iter198/211/212/marketplace_redeem_e2e (26/26) and iter205/209/ec03 courier-cash/withdrawal (12/12). Frontend (Playwright, cookie sessions): the municipality picker, Vedado fee of 3 USDT (grand total 303), free delivery at >=1000, optional GPS, the no-coverage flow, admin creation of a new province, and the client province selector with 2 provinces all work. VIP withdrawal still uses CourierQuotePicker, not the municipality picker.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/admin/courier/municipality-rates", "issue": "FIXED by testing agent: the uniqueness check put municipality and province into $regex without re.escape. A name like 'Bad (name' caused a 500 (invalid regex), and '.' acted as a wildcard. Now uses re.escape."},
+      {"endpoint": "POST /api/vip/redeem", "issue": "payload.courier_province is accepted but never used. get_rate_by_key falls back to a name-only lookup that ignores province, and match_municipality text detection also ignores province. With homonymous municipalities in different provinces (now allowed), a name or address-text match picks the first one in sort order. The UI sends the id, so the UI flow is not affected."},
+      {"endpoint": "POST /api/vip/redeem", "issue": "A municipality with price_usdt=0 gives mq fee 0, which falls into the 'manual_review' branch instead of being treated as a free/charged-0 municipality."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "No coverage -> pickup", "issue": "'Recoger en tienda' (no-coverage-pickup-btn) only renders when stores.length > 0. For products not stocked in any store, only 'Escribir al equipo' is offered. This is by design in the code, but the no-coverage text still says 'Puedes recoger en tienda'.", "affected_selectors": ["no-coverage-pickup-btn", "delivery-no-coverage"]}
+    ],
+    "design_issues": [
+      {"screen": "Admin > Deliveries > Municipality rates", "issues": ["Header copy (en.json) still says the rates are 'Used automatically when the map can't locate the client's address'. Municipality is now the primary method for Marketplace, so the text is outdated."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter373_municipality_delivery.py", "/app/backend/tests/seed_iter373_ui.py", "/app/test_reports/pytest/iter373.xml"],
+  "action_items": [
+    "Optional: use payload.courier_province in /vip/redeem name-based lookups (get_rate_by_key / match_municipality) to resolve homonyms across provinces.",
+    "Optional: treat a municipality with price 0 as free delivery rather than manual_review.",
+    "Optional: update the no-coverage copy when no pickup store is available, and the admin rates tab description."
+  ],
+  "critical_code_review_comments": [
+    "routes/municipality_rates.py: unescaped $regex in the duplicate check (fixed).",
+    "routes/orders.py: the courier_province field is dead input; the name/text matching is province-agnostic.",
+    "MarketplaceView.jsx is 793 lines (>700); consider extracting the redeem dialog."
+  ],
+  "updated_files": ["/app/backend/routes/municipality_rates.py", "/app/backend/tests/test_iter373_municipality_delivery.py", "/app/backend/tests/seed_iter373_ui.py"],
+  "success_rate": {"backend": "100% (14/14 new after fix, 38/38 regression)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Products TEST_ui373_cheap (300 USDT) and TEST_ui373_big (1200 USDT) were created by tests/seed_iter373_ui.py and are now set is_active=false; re-run the seed to reactivate them. TEST_ municipality rates were deleted, so provinces are back to ['La Habana']. A few redemptions were created for user_test_vip01, whose USDT balance is now low; re-seed with seed_muni_smoke.py.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use cookie sessions muni_smoke_vip and muni_smoke_admin (seed_muni_smoke.py). Marketplace route is /dashboard/marketplace (redeem-<pid> button). VIP withdrawal is at /dashboard/vip -> action-withdraw-btn -> method-option-cash -> cash-mode-courier, which shows courier-quote-picker. The full withdrawal submit was not completed in the UI (2FA field plus test-currency balance); withdrawal creation is covered by the backend regression suites."
+}

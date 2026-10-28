@@ -615,7 +615,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             if payload.courier_municipality:
                 mref = await municipality_fallback_quote(
                     payload.delivery_address or "", "USDT", total,
-                    municipality_key=payload.courier_municipality)
+                    municipality_key=payload.courier_municipality,
+                    province=(payload.courier_province or "").strip() or None)
                 if mref:
                     courier_muni = mref.get("municipality")
                     courier_muni_id = mref.get("municipality_id")
@@ -630,7 +631,8 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
             muni_key = (payload.courier_municipality or "").strip()
             mq = await municipality_fallback_quote(
                 payload.delivery_address or "", "USDT", total,
-                municipality_key=muni_key or None)
+                municipality_key=muni_key or None,
+                province=(payload.courier_province or "").strip() or None)
             if mq and mq.get("fee_usdt", 0) > 0:
                 courier_status = "charged"
                 courier_km = 0.0

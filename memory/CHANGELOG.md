@@ -1,3 +1,17 @@
+## Changelog — 28 Oct 2026 (Marketplace: entrega por MUNICIPIO, no por geocodificación)
+
+Nuevo flujo de entrega a domicilio del Marketplace basado en `Propuesta_Tarifa_Municipio_Resilience_28-10-2026.txt`. El comprador elige **provincia + municipio** y el sistema cotiza con las tarifas municipales ya configuradas (gratis al superar el umbral). GPS/mapa es solo referencia opcional para el mensajero y nunca bloquea la compra. Sin cobertura ⇒ el carrito se conserva y se ofrece recoger en tienda o escribir al equipo. **El flujo de retiro de efectivo VIP (CourierQuotePicker) quedó intacto.** Sin nuevas integraciones de terceros.
+
+- **Cotización municipal (backend)** [`services/courier_fee.py::municipality_fallback_quote`, `routes/municipality_rates.py`]: devuelve municipio, `municipality_id`, **provincia**, tarifa, umbral/gratis y datos compatibles con `manual_review`. La provincia participa en la resolución de homónimos (municipios del mismo nombre en provincias distintas). Endpoints verificados por URL externa: `GET /api/courier/delivery-provinces` → `["La Habana"]`; La Habana lista 15 tarifas; Vedado a 390 USDT → 3.0 USDT; Vedado a 1800 USDT → gratis (`fee_usdt: 0.0`).
+- **Redención Marketplace (backend)** [`routes/orders.py` ~591–760]: bloque de entrega conmutado a municipio-primero; aplica `fee_currency_amount`, `municipality`, `municipality_id`, `province` al snapshot de la redención (preserva precio histórico tras cambios de tarifa). Compatibilidad: si no hay municipio explícito ni detectable por texto en `/api/vip/redeem`, se conserva el comportamiento previo (redención `manual_review`, tarifa 0, sin bloqueo duro) para no romper contratos/tests existentes. Flujo VIP posterior preservado.
+- **Seguridad regex (admin CRUD)** [`routes/municipality_rates.py`]: `re.escape(...)` en los patrones de verificación de duplicados de municipio/provincia (el testing agent detectó regex sin escapar; `TEST_Bad (name` ahora responde creación o conflicto, no fallo de regex).
+- **UI** [`components/MunicipalDeliveryPicker.jsx` (nuevo, 222 líneas), `pages/dashboard/MarketplaceView.jsx`]: selector provincia/municipio con cotización municipal, GPS opcional, estado de cotización y estado de **sin cobertura** (recoger en tienda / escribir al equipo vía navegación/soporte existente). Reemplaza a `CourierQuotePicker` SOLO en Marketplace; tarifa mostrada en USDT. `MarketplaceView.redeem()` valida dirección + cotización y envía municipio/provincia.
+- **Admin** [`pages/admin/deliveries/MunicipalityRatesTab.jsx`]: alta y tabla de tarifas incluyen **provincia**; copy actualizado a selección municipio-primero.
+- **i18n**: claves `municipalDelivery.*` y etiquetas de provincia en `es.json`/`en.json` (JSON OK).
+- **Tests**: `tests/test_iter373_municipality_delivery.py` **15/15** (incl. test nuevo de homónimos por provincia); suite de entrega/regresión **38/38** (25.08 s). Frontend compila (solo 23 warnings preexistentes de `html5-qrcode`). Testing agent: `/app/test_reports/iteration_373.json` — flujos Marketplace backend+frontend aprobados y aislamiento VIP confirmado a nivel UI.
+
+
+
 ## Changelog — 21 Oct 2026 (Comisiones: vista por empresa + filtro)
 
 Dos ampliaciones del Panel de Comisiones (Fondo Empresa). Aditivas y de solo lectura. Verificadas por curl (agrupación, filtros name/id, revertidas, sub-céntimo) y screenshot de la vista "Por empresa".
