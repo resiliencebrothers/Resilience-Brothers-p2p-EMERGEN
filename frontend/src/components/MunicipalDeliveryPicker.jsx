@@ -17,6 +17,7 @@ const NOT_LISTED = "__not_listed__";
 // mensajero. Nunca bloquea la compra por no poder geolocalizar la dirección.
 export default function MunicipalDeliveryPicker({
   currency = "USDT", amount, onQuote, onCoords, onMunicipality, onNoCoverage,
+  suppressNoCoverageNote = false,
 }) {
   const { t } = useTranslation();
   const [provinces, setProvinces] = useState(null);
@@ -191,12 +192,13 @@ export default function MunicipalDeliveryPicker({
         )
       )}
 
-      {(noCoverage || emptyProvince) && !quoting && (
+      {(((!suppressNoCoverageNote && noCoverage) || emptyProvince)) && !quoting && (
         <p className="text-[0.72rem] text-amber-300 border border-amber-400/30 bg-amber-400/5 px-3 py-2" data-testid="delivery-no-coverage">
           {t("municipalDelivery.noCoverage")}
         </p>
       )}
 
+      {!noCoverage && (
       <div>
         <Button
           type="button"
@@ -216,6 +218,7 @@ export default function MunicipalDeliveryPicker({
         {geoError && <p className="text-[0.7rem] text-amber-400 mt-1" data-testid="delivery-geo-error">{geoError}</p>}
         <p className="text-[0.62rem] text-neutral-500 mt-1">{t("municipalDelivery.gpsHint")}</p>
       </div>
+      )}
     </div>
   );
 }

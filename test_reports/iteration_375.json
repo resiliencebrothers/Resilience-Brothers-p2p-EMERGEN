@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend-only test of the 'Aviso en el Carrito' no-coverage warning, run as a VIP shopper (cookie test_session_vip_X) at 1920x800 and 390x844. Product tested: Arroz Guyanes 1kg (800 USDT). (1) Choosing 'Mi municipio no aparece' shows redeem-no-coverage-warning. It is amber (border-amber-400/40, bg-amber-400/10) with an AlertTriangle icon. The text is the es noCoverageWarnNoPickup string, which is correct because the product has no stores. redeem-no-coverage-actions is visible. no-coverage-contact-btn is visible and no-coverage-pickup-btn is absent, as expected. confirm-redeem is DISABLED. (2) Choosing a covered La Habana municipality (10 de Octubre, 15 options) removes the warning, shows delivery-quote-result with a 2 USDT courier fee, and ENABLES confirm-redeem. Switching back to 'not listed' brings the warning back and disables confirm again. (3) The contact button closes the dialog and goes to /dashboard/support. The SWITCH-TO-PICKUP path could NOT be tested: GET /api/stores returns [] and every product returns 0 stores, so no product supports pickup (fulfillment-delivery-btn is also not rendered, since the toggle only shows when stores > 0). No order was submitted and delivery rates were not changed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Redeem dialog - no coverage state", "issues": [
+        "Two amber notes say almost the same thing. The picker's own note (delivery-no-coverage) says 'Puedes recoger en tienda o escribirnos', but the new banner (correctly) says this product can't be picked up in store. When stores.length === 0 the two contradict each other. Suggest hiding the picker note when the parent shows the new banner, or making it depend on stores.",
+        "The new warning sits below the optional 'Compartir mi ubicación' GPS button. In no-coverage mode that button is pointless, and it pushes the warning and the contact button below the fold at 1920x800. Suggest hiding the GPS button when noCoverage is true, or moving the banner right under the municipality select."
+      ]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: remove or reconcile the duplicate, contradictory delivery-no-coverage note from MunicipalDeliveryPicker when the product has no stores.",
+    "Optional: hide the GPS share button in the no-coverage state so the warning and actions are visible without scrolling.",
+    "To validate the switch-to-pickup path, seed at least one store linked to a product. /api/stores is currently empty."
+  ],
+  "critical_code_review_comments": [
+    "The confirm-redeem disable logic is correct: noCoverage blocks checkout only when fulfillment !== 'pickup'.",
+    "The no-coverage pickup button's onClick resets coords, quote and noCoverage. That looks correct but could not be exercised (no stores exist).",
+    "A ResizeObserver 'loop completed with undelivered notifications' dev-overlay error appeared on mobile. It is benign and dev-only (CRA overlay); consider suppressing it."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100% of testable flows (pickup switch untestable - no stores in DB)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth: add cookie session_token=test_session_vip_X before goto. Product 5e72a1b1-f95d-415e-900e-062f3c951355 (Arroz Guyanes) was used. There are no stores in the DB, so pickup UI never renders. Only the 15 La Habana rates exist (10 de Octubre = 2 USDT)."
+}

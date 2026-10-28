@@ -1,3 +1,10 @@
+## Changelog — 28 Oct 2026 (Aviso en el carrito: municipio sin cobertura antes del checkout)
+
+Mejora sobre la compra con entrega a domicilio del Marketplace. Cuando el comprador elige entrega pero su municipio no tiene cobertura (opción "mi municipio no aparece" o municipio no configurado), ahora ve un **aviso claro antes de pagar** con las alternativas, y el botón de confirmar queda bloqueado. Verificado por testing agent (iteration_375, 100% de los flujos comprobables; el cambio a recoger-en-tienda no se pudo ejercitar porque la DB no tiene tiendas sembradas).
+
+- **Banner de no-cobertura** [`pages/dashboard/MarketplaceView.jsx`, bloque `redeem-no-coverage-block`]: aviso ámbar con icono (`redeem-no-coverage-warning`) + acciones (`redeem-no-coverage-actions`): botón "recoger en tienda" (`no-coverage-pickup-btn`, solo si el producto tiene tiendas) y "escribir al equipo" (`no-coverage-contact-btn`). Mensaje consciente de stock de tiendas: `marketplace.noCoverageWarnPickup` (hay tiendas) vs `marketplace.noCoverageWarnNoPickup` (sin tiendas). `confirm-redeem` deshabilitado mientras `noCoverage` y fulfillment !== pickup.
+- **Limpieza del selector** [`components/MunicipalDeliveryPicker.jsx`]: nueva prop `suppressNoCoverageNote` para que el selector no muestre su nota genérica de no-cobertura (evita el mensaje duplicado/contradictorio con el banner del padre); la nota de "provincia sin municipios" se conserva. Además el botón de GPS opcional se oculta cuando no hay cobertura, para que el aviso y las acciones queden visibles sin scroll.
+
 ## Changelog — 28 Oct 2026 (Aviso de cobertura + herramienta "Añadir provincia completa")
 
 Dos funciones nuevas sobre el flujo de entrega por municipio. Sin integraciones de terceros. La **Conciliación entre Cajas** ya estaba resuelta y verificada (`tests/test_recon_box_mirror_scope.py`, 2 passed): `box_mirror_diff` compara la caja física del sistema contra su propia cuenta contable, así que varias cajas de la misma moneda no generan un descuadre falso — no requirió cambios.

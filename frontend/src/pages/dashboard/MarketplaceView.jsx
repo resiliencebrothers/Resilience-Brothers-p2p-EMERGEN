@@ -664,6 +664,7 @@ export default function MarketplaceView() {
                   onQuote={setCourierQuote}
                   onMunicipality={setDeliveryMunicipality}
                   onNoCoverage={setNoCoverage}
+                  suppressNoCoverageNote
                 />
                 {noCoverage && (
                   <div className="space-y-2" data-testid="redeem-no-coverage-block">
