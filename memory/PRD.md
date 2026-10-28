@@ -1,5 +1,8 @@
 # Resilience Brothers — P2P Trading Platform
 
+> **[28 Oct 2026 — Aviso de cobertura + Añadir provincia completa]** Entregas del Marketplace: (1) botón "Ver cobertura de entrega" en el catálogo que muestra, antes de llenar el carrito, las provincias/municipios con entrega y su precio; (2) herramienta de admin "Añadir provincia completa" para activar cualquier provincia de Cuba con precio por municipio. Backend: catálogo `services/cuba_admin_divisions.py` + endpoints bulk/catalog en `routes/municipality_rates.py`. Conciliación entre Cajas: ya resuelta previamente (scope alineado caja física↔cuenta contable; `tests/test_recon_box_mirror_scope.py` verde), sin cambios.
+
+
 ## Original Problem Statement
 Plataforma web para empresa de comercio P2P "Resilience Brothers". Conecta empresas y clientes mediante una plataforma global de comercio P2P. Dos secciones: intercambio de criptomonedas por dinero Fiat, y marketplace de mercancías para clientes VIP. Admin gestiona monedas (cripto + fiat) y tasas de cambio. Diferenciación clientes VIP (sin comisión, tasas preferenciales, saldo acumulado, canje por mercancía) vs Normales (5% comisión).
 

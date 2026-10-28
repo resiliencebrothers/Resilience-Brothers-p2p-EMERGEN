@@ -796,7 +796,7 @@
         "bulkProvincePlaceholder": "Selecciona una provincia",
         "bulkLoading": "Cargando municipios…",
         "bulkConfigured": "Ya configurado",
-        "bulkPricePlaceholder": "Precio USDT",
+        "bulkPricePlaceholder": "USDT",
         "bulkSave": "Activar {{count}} municipio(s)",
         "bulkSaved": "{{created}} añadidos, {{updated}} actualizados",
         "bulkNothing": "Pon el precio de al menos un municipio para activarlo."

@@ -219,7 +219,7 @@ function BulkProvinceDialog({ onDone }) {
                   onChange={(e) => setPrice(m.municipality, e.target.value)}
                   placeholder={t("admin.deliveries.muniRates.bulkPricePlaceholder")}
                   data-testid={`muni-bulk-price-${m.municipality}`}
-                  className="rounded-none bg-[#0a0a0a] border-white/10 h-8 font-mono text-xs w-28"
+                  className="rounded-none bg-[#0a0a0a] border-white/10 h-8 font-mono text-xs w-36"
                 />
               </div>
             ))}

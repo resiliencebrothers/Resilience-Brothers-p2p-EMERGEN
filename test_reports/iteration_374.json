@@ -1,0 +1,27 @@
+{
+  "summary": "I tested the frontend only for Delivery Coverage (shopper) and the Bulk Province admin tool, end to end. Everything passed. Admin flow: Municipality rates tab -> 'Add a whole province' opens the dialog. The province Select lists all 16 Cuban provinces. Picking Artemisa renders 11 municipality rows with price inputs. The save button stays disabled until a price is entered, then reads 'Enable 2 municipality(ies)'. Saving showed the toast '2 added, 0 updated', closed the dialog and refreshed the table from 15 to 17 rows (Artemisa/Alquízar 4.5, Artemisa/Artemisa 6). Reopening the dialog shows the 'ALREADY SET' badge and the saved prices filled in. Re-saving changed prices showed '0 added, 2 updated'. La Habana shows all 15 rows as configured. Shopper flow (VIP): /dashboard/marketplace shows the 'Ver cobertura de entrega' button next to the search bar. The dialog groups municipalities by province, sorted alphabetically: Artemisa (2) and La Habana (15), with USDT prices. The pickup/contact note and the optional-GPS note are shown. The layout works at 1920px and 390px wide. Cleanup: both Artemisa rates were deleted through the table delete button. The DB now holds only the 15 La Habana rates, confirmed through the API.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Bulk province dialog", "issues": ["The per-municipality price input is w-28 and cuts off the placeholder 'Price USDT' to 'Price USD', which looks like the wrong currency. Widen the input slightly or shorten the placeholder to 'USDT'."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: widen the bulk price input (w-28) or shorten its placeholder so 'USDT' is not cut off.",
+    "Note: the data-testids in the review request do not match the code. The code uses muni-bulk-open-btn, muni-bulk-dialog, muni-bulk-province, muni-bulk-prov-opt-<Province>, muni-bulk-price-<Municipality>, muni-bulk-save-btn and muni-bulk-configured-<Municipality>. The request listed bulk-province-btn, bulk-province-dialog, bulk-province-select, bulk-province-save and bulk-muni-price-<name>. The admin tab id is admin-tab-muni-rates; muni-rates-tab is the tab content container. Either rename them or keep the docs in sync."
+  ],
+  "critical_code_review_comments": [
+    "DeliveryCoverageDialog fetches only once per mount (the `groups === null` guard), so data stays stale until the page reloads. This is acceptable for read-only data. On a fetch error it shows the 'empty coverage' message instead of an error message.",
+    "BulkProvinceDialog: if the province-catalog fetch fails it silently sets an empty list and shows no error toast. The user would see an empty Select with no explanation.",
+    "MunicipalityRatesTab: an empty table and a load error both render the same '…' row, with no explicit loading or error state."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend only)", "frontend": "100%"},
+  "seed_data_creation": "I created 2 Artemisa rates (Alquízar, Artemisa) and then deleted them. The DB is left with only the 15 La Habana rates.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Admin route: /admin/deliveries -> click [data-testid=admin-tab-muni-rates]. Shopper route: /dashboard/marketplace -> [data-testid=delivery-coverage-btn]. Setting the cookie before goto worked fine (no CARGANDO issue). The table delete button uses window.confirm, so accept the browser dialog."
+}

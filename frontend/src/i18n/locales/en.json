@@ -796,7 +796,7 @@
         "bulkProvincePlaceholder": "Select a province",
         "bulkLoading": "Loading municipalities…",
         "bulkConfigured": "Already set",
-        "bulkPricePlaceholder": "Price USDT",
+        "bulkPricePlaceholder": "USDT",
         "bulkSave": "Enable {{count}} municipality(ies)",
         "bulkSaved": "{{created}} added, {{updated}} updated",
         "bulkNothing": "Set a price for at least one municipality to enable it."
