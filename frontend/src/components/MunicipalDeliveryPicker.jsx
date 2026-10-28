@@ -70,6 +70,14 @@ export default function MunicipalDeliveryPicker({
   useEffect(() => {
     if (!muniId || muniId === NOT_LISTED) return;
     let active = true;
+    // MUNI-03 — al cambiar de municipio, invalidar de INMEDIATO la cotización
+    // y el municipio ya aceptados: el padre deshabilita "Confirmar" hasta que
+    // llegue una cotización NUEVA para esta selección (jamás se autoriza una
+    // compra con la tarifa del municipio anterior mientras se recotiza).
+    setQuote(null);
+    if (onQuote) onQuote(null);
+    if (onMunicipality) onMunicipality(null);
+    if (onNoCoverage) onNoCoverage(false);
     setQuoting(true);
     (async () => {
       try {
@@ -78,7 +86,7 @@ export default function MunicipalDeliveryPicker({
           withCredentials: true,
         });
         if (!active) return;
-        if (r.data?.matched && (r.data.free || Number(r.data.fee_usdt) > 0 || r.data.enabled === false)) {
+        if (r.data?.matched && (r.data.free || Number(r.data.fee_usdt) > 0)) {
           setQuote(r.data);
           if (onQuote) onQuote(r.data);
           if (onNoCoverage) onNoCoverage(false);
@@ -173,9 +181,9 @@ export default function MunicipalDeliveryPicker({
       )}
 
       {quote && !quoting && (
-        (quote.free || quote.enabled === false) ? (
+        quote.free ? (
           <p className="text-[0.7rem] text-[#22C55E] border border-[#22C55E]/30 bg-[#22C55E]/5 px-3 py-2" data-testid="delivery-quote-free">
-            {quote.free ? t("courier.freeQuote", { min: quote.free_min_usdt }) : t("municipalDelivery.noChargeNote")}
+            {t("courier.freeQuote", { min: quote.free_min_usdt })}
           </p>
         ) : (
           <div className="text-[0.7rem] text-neutral-300 border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 px-3 py-2 space-y-0.5" data-testid="delivery-quote-result">

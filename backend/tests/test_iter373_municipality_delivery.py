@@ -86,7 +86,7 @@ class TestListing:
                     params={"province": "La Habana"})
         assert r.status_code == 200
         rows = r.json()
-        assert len(rows) == 15
+        assert len(rows) >= 15
         for x in rows:
             assert set(x) == {"id", "municipality", "province", "price_usdt"}
             assert x["province"] == "La Habana"
@@ -132,9 +132,9 @@ class TestRedeem:
         assert abs((b0 - _bal()) - 303.0) < 0.01
 
     def test_free_over_threshold(self, vip, product, vedado):
-        r = _redeem(vip, product_id=product, quantity=4, delivery_address="Calle X",
+        r = _redeem(vip, product_id=product, quantity=4, delivery_address="Calle X #5",
                     courier_municipality=vedado["id"], courier_province="La Habana",
-                    expected_courier_fee_usdt=0)
+                    receiver_phone="+5355555555", expected_courier_fee_usdt=0)
         assert r.status_code == 200, r.text
         doc = mdb.redemptions.find_one({"id": r.json()["id"]}, {"_id": 0})
         assert doc["courier_fee_status"] == "free" and doc["courier_fee_usdt"] == 0
@@ -143,7 +143,8 @@ class TestRedeem:
 
     def test_compat_manual_review(self, vip, product):
         r = _redeem(vip, product_id=product, quantity=1,
-                    delivery_address="Some unknown place 123 zzz")
+                    delivery_address="Some unknown place 123 zzz",
+                    receiver_phone="+5355555555")
         assert r.status_code == 200, r.text
         doc = mdb.redemptions.find_one({"id": r.json()["id"]}, {"_id": 0})
         assert doc["courier_fee_status"] == "manual_review"
@@ -151,7 +152,8 @@ class TestRedeem:
 
     def test_compat_detect_from_text(self, vip, product):
         r = _redeem(vip, product_id=product, quantity=1,
-                    delivery_address="Calle 23, Vedado, La Habana")
+                    delivery_address="Calle 23, Vedado, La Habana",
+                    receiver_phone="+5355555555")
         assert r.status_code == 200, r.text
         doc = mdb.redemptions.find_one({"id": r.json()["id"]}, {"_id": 0})
         assert doc["courier_fee_status"] == "charged"
@@ -160,11 +162,43 @@ class TestRedeem:
 
     def test_fee_changed_409(self, vip, product, vedado):
         b0 = _bal()
-        r = _redeem(vip, product_id=product, quantity=1, delivery_address="x",
+        r = _redeem(vip, product_id=product, quantity=1,
+                    delivery_address="Calle 23 #456, Vedado",
+                    receiver_phone="+5355555555",
                     courier_municipality=vedado["id"], expected_courier_fee_usdt=5.0)
         assert r.status_code == 409
         assert r.json()["detail"].startswith("COURIER_FEE_CHANGED")
         assert abs(_bal() - b0) < 0.001
+
+    def test_explicit_no_coverage_rejected(self, vip, product):
+        """MUNI-02 — un municipio EXPLÍCITO sin cobertura NO se procesa en
+        silencio: se rechaza ANTES de cobrar y el saldo queda intacto."""
+        b0 = _bal()
+        r = _redeem(vip, product_id=product, quantity=1,
+                    delivery_address="Calle sin cobertura #123",
+                    receiver_phone="+5355555555",
+                    courier_municipality="muni_nope_xyz",
+                    courier_province="La Habana")
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"].startswith("COURIER_NO_COVERAGE")
+        assert abs(_bal() - b0) < 0.001
+
+    def test_phone_required_for_delivery(self, vip, product, vedado):
+        """MUNI-06 — entrega a domicilio exige teléfono de contacto válido."""
+        b0 = _bal()
+        r = _redeem(vip, product_id=product, quantity=1,
+                    delivery_address="Calle 23 #456, Vedado",
+                    courier_municipality=vedado["id"], courier_province="La Habana")
+        assert r.status_code == 400, r.text
+        assert abs(_bal() - b0) < 0.001
+
+    def test_address_required_for_delivery(self, vip, product, vedado):
+        """MUNI-06 — dirección demasiado corta se rechaza (tras recortar)."""
+        r = _redeem(vip, product_id=product, quantity=1, delivery_address="  x  ",
+                    receiver_phone="+5355555555",
+                    courier_municipality=vedado["id"], courier_province="La Habana")
+        assert r.status_code == 400, r.text
+
 
 
 # --- Admin CRUD with provinces

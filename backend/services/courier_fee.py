@@ -167,8 +167,12 @@ async def municipality_fallback_quote(address_text: str, currency: str,
     from services.municipality_rates import match_municipality, get_rate_by_key
     m = None
     if municipality_key:
+        # MUNI-02 — elección EXPLÍCITA del cliente: se resuelve SOLO por esa
+        # clave (id/nombre + provincia). Si no tiene cobertura, NO se sustituye
+        # en silencio por un municipio detectado en el texto de la dirección
+        # (eso cobraría otra tarifa que el cliente nunca eligió).
         m = await get_rate_by_key(municipality_key, province=province)
-    if not m:
+    else:
         m = await match_municipality(address_text or "", province=province)
     if not m:
         return None
@@ -182,7 +186,11 @@ async def municipality_fallback_quote(address_text: str, currency: str,
             "municipality_id": m.get("id"),
             "province": m.get("province") or "La Habana",
             "municipality_price_usdt": round(float(m["price_usdt"]), 2)}
-    if q["free"] or not q["enabled"]:
+    # MUNI-01 — la tarifa FIJA por municipio es independiente del interruptor
+    # de precio por km (ese solo rige la cotización por distancia del reparto
+    # en efectivo). Solo el umbral de envío gratis por valor del pedido la pone
+    # a 0; con tarifa configurada SIEMPRE se cobra el envío a domicilio.
+    if q["free"]:
         return base
     fee_usdt = round(float(m["price_usdt"]), 2)
     fee_cur = await fee_in_currency(fee_usdt, q["currency"])

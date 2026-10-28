@@ -107,8 +107,9 @@ async def get_rate_by_key(key: str,
                           province: Optional[str] = None) -> Optional[dict]:
     """Busca por id (exacto) o por nombre normalizado (solo activas).
     Con municipios homónimos en provincias distintas, `province` desambigua
-    la coincidencia por nombre; si no se pasa (o no hay match en esa
-    provincia) cae al primer municipio con ese nombre (compat.)."""
+    la coincidencia por nombre. MUNI-02 — si se pasa `province` y NO hay match
+    en esa provincia, devuelve None (nunca cae a un homónimo de otra). Sin
+    `province`, cae al primer municipio con ese nombre (compat.)."""
     await seed_if_empty()
     row = await db.courier_municipality_rates.find_one(
         {"id": key, "active": True}, {"_id": 0})
@@ -118,11 +119,17 @@ async def get_rate_by_key(key: str,
     pnorm = normalize_text(province) if province else None
     fallback = None
     for r in await get_rates(active_only=True):
-        if normalize_text(r["municipality"]) == norm:
-            if pnorm and normalize_text(r.get("province")) == pnorm:
+        if normalize_text(r["municipality"]) != norm:
+            continue
+        # MUNI-02 — con provincia indicada, la coincidencia por NOMBRE debe
+        # pertenecer a ESA provincia: nunca se devuelve un homónimo de otra
+        # provincia (eso cobraría una tarifa de otro territorio).
+        if pnorm:
+            if normalize_text(r.get("province")) == pnorm:
                 return r
-            if fallback is None:
-                fallback = r
+            continue
+        if fallback is None:
+            fallback = r
     return fallback
 
 

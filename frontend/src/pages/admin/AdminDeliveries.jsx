@@ -1196,6 +1196,10 @@ function CouriersTab({ navigate }) {
 export default function AdminDeliveries() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  // MUNI-05 — editar TARIFAS municipales es exclusivo de admin; el staff con
+  // permiso operativo "deliveries" gestiona entregas pero no cambia precios.
+  const isAdmin = user?.role === "admin";
   const [tab, setTab] = useState("deliveries");
   // iter209 — El staff/admin también puede ser mensajero: pestaña "Mis
   // entregas" con el mismo flujo Aceptar/Rechazar del panel del mensajero.
@@ -1314,6 +1318,7 @@ export default function AdminDeliveries() {
         >
           {t("admin.deliveries.tabMetrics")}
         </button>
+        {isAdmin && (
         <button
           onClick={() => setTab("rates")}
           data-testid="admin-tab-muni-rates"
@@ -1321,6 +1326,7 @@ export default function AdminDeliveries() {
         >
           {t("admin.deliveries.tabMuniRates")}
         </button>
+        )}
         <button
           onClick={() => setTab("company-fee")}
           data-testid="admin-tab-company-fee"
@@ -1341,7 +1347,7 @@ export default function AdminDeliveries() {
         : tab === "pending" ? <div data-testid="admin-deliveries-pending"><DeliveriesTab navigate={navigate} mode="pending" /></div>
         : tab === "history" ? <div data-testid="admin-deliveries-history"><DeliveriesTab navigate={navigate} mode="history" /></div>
         : tab === "my" ? <div data-testid="admin-my-deliveries"><CourierPanel embedded /></div>
-        : tab === "rates" ? <MunicipalityRatesTab />
+        : tab === "rates" && isAdmin ? <MunicipalityRatesTab />
         : tab === "company-fee" ? <CompanyDeliveryFeeTab />
         : tab === "incidents" ? <DeliveryIncidentsTab />
         : tab === "cash" ? <CourierCashTab />

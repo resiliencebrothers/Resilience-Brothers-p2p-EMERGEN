@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from db_client import db
-from auth_utils import require_user, require_permission
+from auth_utils import require_user, require_admin, require_permission
 from audit_log import log_action
 from services.municipality_rates import get_rates, get_provinces, normalize_text
 from services.cuba_admin_divisions import CUBA_PROVINCES
@@ -90,7 +90,10 @@ async def admin_list_rates(request: Request) -> Any:
 
 @router.post("/admin/courier/municipality-rates")
 async def admin_create_rate(payload: dict, request: Request) -> Any:
-    actor = await require_permission(request, "deliveries")
+    # MUNI-05 — editar TARIFAS globales es exclusivo de admin. El permiso
+    # operativo "deliveries" (mensajeros/staff) sirve para ver y gestionar
+    # entregas, pero NO para cambiar precios que afectan a todos los clientes.
+    actor = await require_admin(request)
     name = (payload.get("municipality") or "").strip()
     if len(name) < 3:
         raise HTTPException(status_code=400,
@@ -163,7 +166,7 @@ async def admin_bulk_create_rates(payload: dict, request: Request) -> Any:
     """Activa en lote los municipios de una provincia. Cada ítem trae su PRECIO
     (uno a uno): los que ya existen en esa provincia se actualizan y reactivan;
     los nuevos se crean. Los municipios sin precio no se envían (se omiten)."""
-    actor = await require_permission(request, "deliveries")
+    actor = await require_admin(request)
     province = (payload.get("province") or "").strip()
     if len(province) < 3:
         raise HTTPException(status_code=400, detail="Provincia requerida.")
@@ -193,7 +196,7 @@ async def admin_bulk_create_rates(payload: dict, request: Request) -> Any:
                 {"$set": {"price_usdt": price, "active": True}})
             updated.append(name)
         else:
-            doc = {
+            doc: dict = {
                 "id": f"muni_{uuid.uuid4().hex[:10]}",
                 "municipality": name,
                 "province": province,
@@ -217,7 +220,7 @@ async def admin_bulk_create_rates(payload: dict, request: Request) -> Any:
 
 @router.put("/admin/courier/municipality-rates/{mid}")
 async def admin_update_rate(mid: str, payload: dict, request: Request) -> Any:
-    actor = await require_permission(request, "deliveries")
+    actor = await require_admin(request)
     row = await db.courier_municipality_rates.find_one({"id": mid}, {"_id": 0})
     if not row:
         raise HTTPException(status_code=404, detail="No encontrado.")
@@ -249,7 +252,7 @@ async def admin_update_rate(mid: str, payload: dict, request: Request) -> Any:
 
 @router.delete("/admin/courier/municipality-rates/{mid}")
 async def admin_delete_rate(mid: str, request: Request) -> Any:
-    actor = await require_permission(request, "deliveries")
+    actor = await require_admin(request)
     row = await db.courier_municipality_rates.find_one({"id": mid}, {"_id": 0})
     if not row:
         raise HTTPException(status_code=404, detail="No encontrado.")

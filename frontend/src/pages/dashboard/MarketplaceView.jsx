@@ -242,7 +242,9 @@ export default function MarketplaceView() {
         return toast.error(t("marketplace.pickupStoreInsufficient"));
       }
     }
-    if (!pickup && !addr) return toast.error(t("marketplace.addressRequired"));
+    if (!pickup && addr.trim().length < 6) return toast.error(t("marketplace.addressTooShort"));
+    // MUNI-06 — teléfono de contacto obligatorio y válido para entrega.
+    if (!pickup && phone.replace(/\D/g, "").length < 8) return toast.error(t("marketplace.phoneRequired"));
     // Prop. Tarifa-Municipio — entrega a domicilio exige municipio con tarifa.
     if (!pickup && noCoverage) return toast.error(t("marketplace.noCoverageToast"));
     if (!pickup && !deliveryMunicipality) return toast.error(t("marketplace.municipalityRequired"));
@@ -256,16 +258,21 @@ export default function MarketplaceView() {
           ? { fulfillment: "store_pickup", store_id: storeId }
           : {
             delivery_address: addr,
-            ...(phone.trim() ? { receiver_phone: phone.trim() } : {}),
+            receiver_phone: phone.trim(),
             ...(deliveryCoords
               ? { delivery_latitude: deliveryCoords.lat, delivery_longitude: deliveryCoords.lon }
               : {}),
             ...(deliveryMunicipality
               ? { courier_municipality: deliveryMunicipality.id, courier_province: deliveryMunicipality.province }
               : {}),
-            ...(courierQuote && !courierQuote.free && Number(courierQuote.fee_usdt) > 0
-              ? { expected_courier_fee_usdt: Number(courierQuote.fee_usdt) }
-              : {}),
+            // MUNI-04 — SIEMPRE enviar el importe de mensajería aceptado (0 si
+            // era gratis): el backend compara y rechaza con 409 si cambió, así
+            // un envío mostrado como gratis nunca se convierte en cargo sin que
+            // el cliente lo vuelva a confirmar.
+            expected_courier_fee_usdt:
+              courierQuote && !courierQuote.free && Number(courierQuote.fee_usdt) > 0
+                ? Number(courierQuote.fee_usdt)
+                : 0,
           }),
       }, { withCredentials: true });
       toast.success(t("marketplace.successPending"));
@@ -775,7 +782,7 @@ export default function MarketplaceView() {
                 </p>
               )}
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote || (fulfillment !== "pickup" && (noCoverage || !deliveryMunicipality || !(courierQuote && (courierQuote.free || Number(courierQuote.fee_usdt) > 0 || courierQuote.enabled === false))))} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote || (fulfillment !== "pickup" && (noCoverage || !deliveryMunicipality || !(courierQuote && (courierQuote.free || Number(courierQuote.fee_usdt) > 0))))} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
               {busy ? t("marketplace.processing") : stockBlocked ? t("marketplace.stockBlockedBtn") : quoteLoading ? t("marketplace.calculating") : quoteError ? t("marketplace.quoteUnavailable") : t("marketplace.confirmRedeem")}
             </Button>
           </div>

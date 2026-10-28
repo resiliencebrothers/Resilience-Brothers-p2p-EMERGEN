@@ -3338,6 +3338,8 @@
     "stockBlockedToast": "Not enough stock for that quantity.",
     "invalidQty": "Invalid quantity",
     "addressRequired": "Address required",
+    "addressTooShort": "Enter a complete delivery address.",
+    "phoneRequired": "Enter a valid contact phone for the delivery.",
     "switchToPickup": "Pick up in store",
     "contactTeam": "Write to the team",
     "municipalityRequired": "Choose the delivery municipality to continue.",
