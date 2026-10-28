@@ -3378,7 +3378,9 @@
     "coverageLoading": "Loading coverage…",
     "coverageEmpty": "No municipalities have delivery set up yet. You can pick up in store or write to us.",
     "coverageMuniCount": "{{count}} municipalities",
-    "coveragePickupNote": "Don't see your municipality? You can pick up in store or write to us to arrange delivery. GPS is optional and doesn't change the price."
+    "coveragePickupNote": "Don't see your municipality? You can pick up in store or write to us to arrange delivery. GPS is optional and doesn't change the price.",
+    "noCoverageWarnPickup": "Your municipality doesn't have home delivery yet. You can't pay for shipping here, but you can pick it up in store (free) or message the team.",
+    "noCoverageWarnNoPickup": "Your municipality doesn't have home delivery yet and this product can't be picked up in store. Message the team to arrange it."
   },
   "kyc": {
     "eyebrow": "/ Identity Verification",

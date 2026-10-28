@@ -3378,7 +3378,9 @@
     "coverageLoading": "Cargando cobertura…",
     "coverageEmpty": "Aún no hay municipios con entrega configurada. Puedes recoger en tienda o escribirnos.",
     "coverageMuniCount": "{{count}} municipios",
-    "coveragePickupNote": "¿Tu municipio no aparece? Puedes recoger en tienda o escribirnos para coordinar la entrega. El GPS es opcional y no cambia el precio."
+    "coveragePickupNote": "¿Tu municipio no aparece? Puedes recoger en tienda o escribirnos para coordinar la entrega. El GPS es opcional y no cambia el precio.",
+    "noCoverageWarnPickup": "Tu municipio aún no tiene entrega a domicilio. No podrás pagar el envío aquí, pero puedes recogerlo en tienda (gratis) o escribirle al equipo.",
+    "noCoverageWarnNoPickup": "Tu municipio aún no tiene entrega a domicilio y este producto no se puede recoger en tienda. Escríbele al equipo para coordinar."
   },
   "kyc": {
     "eyebrow": "/ Verificación de identidad",

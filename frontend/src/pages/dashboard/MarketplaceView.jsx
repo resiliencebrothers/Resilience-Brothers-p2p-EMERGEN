@@ -666,27 +666,37 @@ export default function MarketplaceView() {
                   onNoCoverage={setNoCoverage}
                 />
                 {noCoverage && (
-                  <div className="flex flex-wrap gap-2" data-testid="redeem-no-coverage-actions">
-                    {stores.length > 0 && (
+                  <div className="space-y-2" data-testid="redeem-no-coverage-block">
+                    <div className="flex items-start gap-2 text-xs text-amber-200 border border-amber-400/40 bg-amber-400/10 px-3 py-2.5" data-testid="redeem-no-coverage-warning">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                      <span>
+                        {stores.length > 0
+                          ? t("marketplace.noCoverageWarnPickup")
+                          : t("marketplace.noCoverageWarnNoPickup")}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2" data-testid="redeem-no-coverage-actions">
+                      {stores.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          data-testid="no-coverage-pickup-btn"
+                          onClick={() => { setFulfillment("pickup"); setDeliveryCoords(null); setCourierQuote(null); setNoCoverage(false); }}
+                          className="rounded-none border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 h-9 text-xs"
+                        >
+                          <Store className="w-3.5 h-3.5 mr-1.5" /> {t("marketplace.switchToPickup")}
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
-                        data-testid="no-coverage-pickup-btn"
-                        onClick={() => { setFulfillment("pickup"); setDeliveryCoords(null); setCourierQuote(null); setNoCoverage(false); }}
-                        className="rounded-none border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 h-9 text-xs"
+                        data-testid="no-coverage-contact-btn"
+                        onClick={() => { setOpen(null); navigate("/dashboard/support"); }}
+                        className="rounded-none border-amber-400/40 text-amber-300 hover:bg-amber-400/10 h-9 text-xs"
                       >
-                        <Store className="w-3.5 h-3.5 mr-1.5" /> {t("marketplace.switchToPickup")}
+                        {t("marketplace.contactTeam")}
                       </Button>
-                    )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      data-testid="no-coverage-contact-btn"
-                      onClick={() => { setOpen(null); navigate("/dashboard/support"); }}
-                      className="rounded-none border-amber-400/40 text-amber-300 hover:bg-amber-400/10 h-9 text-xs"
-                    >
-                      {t("marketplace.contactTeam")}
-                    </Button>
+                    </div>
                   </div>
                 )}
               </>
