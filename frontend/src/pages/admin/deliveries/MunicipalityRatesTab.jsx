@@ -50,6 +50,7 @@ function RateRow({ r, onSaved, onDeleted }) {
 
   return (
     <tr className={`border-b border-white/5 ${r.active ? "" : "opacity-50"}`} data-testid={`muni-rate-row-${r.id}`}>
+      <td className="px-3 py-2.5 text-sm text-neutral-400" data-testid={`muni-province-${r.id}`}>{r.province || "La Habana"}</td>
       <td className="px-3 py-2.5 text-sm">{r.municipality}</td>
       <td className="px-3 py-2.5">
         <Input
@@ -106,6 +107,7 @@ export default function MunicipalityRatesTab() {
   const { t } = useTranslation();
   const [rows, setRows] = useState([]);
   const [newName, setNewName] = useState("");
+  const [newProvince, setNewProvince] = useState("La Habana");
   const [newPrice, setNewPrice] = useState("");
 
   const load = useCallback(() => {
@@ -118,7 +120,7 @@ export default function MunicipalityRatesTab() {
   const add = async () => {
     try {
       await axios.post(`${API}/admin/courier/municipality-rates`,
-        { municipality: newName.trim(), price_usdt: parseFloat(newPrice) },
+        { municipality: newName.trim(), province: newProvince.trim() || "La Habana", price_usdt: parseFloat(newPrice) },
         { withCredentials: true });
       toast.success(t("admin.deliveries.muniRates.created"));
       setNewName(""); setNewPrice("");
@@ -135,6 +137,16 @@ export default function MunicipalityRatesTab() {
       </p>
 
       <div className="tactile-card p-4 flex flex-wrap items-end gap-2">
+        <div className="w-40">
+          <label className="micro-label text-neutral-500">{t("admin.deliveries.muniRates.colProvince")}</label>
+          <Input
+            value={newProvince}
+            onChange={(e) => setNewProvince(e.target.value)}
+            placeholder={t("admin.deliveries.muniRates.provincePlaceholder")}
+            data-testid="muni-new-province"
+            className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 h-10"
+          />
+        </div>
         <div className="flex-1 min-w-[180px]">
           <label className="micro-label text-neutral-500">{t("admin.deliveries.muniRates.colMunicipality")}</label>
           <Input
@@ -171,6 +183,7 @@ export default function MunicipalityRatesTab() {
         <table className="w-full text-sm min-w-[720px]">
           <thead className="border-b border-white/10 bg-[#0a0a0a]">
             <tr className="text-left">
+              <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.muniRates.colProvince")}</th>
               <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.muniRates.colMunicipality")}</th>
               <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.muniRates.colAliases")}</th>
               <th className="px-3 py-3 micro-label text-neutral-500">{t("admin.deliveries.muniRates.colPrice")}</th>
@@ -180,7 +193,7 @@ export default function MunicipalityRatesTab() {
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan="5" className="text-center text-neutral-500 py-8">…</td></tr>
+              <tr><td colSpan="6" className="text-center text-neutral-500 py-8">…</td></tr>
             )}
             {rows.map((r) => (
               <RateRow key={`${r.id}-${r.price_usdt}-${r.active}`} r={r} onSaved={load} onDeleted={load} />

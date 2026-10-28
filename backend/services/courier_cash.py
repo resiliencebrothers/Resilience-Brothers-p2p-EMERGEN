@@ -767,10 +767,17 @@ async def collected_unconfirmed_deposits_by_currency() -> dict:
 async def reconciliation_by_currency() -> list:
     """Conciliación por moneda (sección 8 del informe), SIN presentar agregados
     contables como prueba de conciliación física:
-    - `box` = saldo CONTABLE de las cuentas de caja (no-custodia).
-    - `box_physical` = saldo FÍSICO real de la caja de empresa, derivado de los
-      movimientos (`cash_box_movements`); `box_mirror_diff = box − box_physical`
-      detecta fallos del espejo (EC04). Si no es ~0, hay que revisar el espejo.
+    - `box` = saldo CONTABLE de las cuentas de caja (no-custodia), TODAS las
+      cuentas de efectivo de la moneda (total en caja / IN BOX).
+    - `box_physical` = saldo FÍSICO real de la caja de empresa del sistema
+      (Fondo Resilience), derivado de los movimientos (`cash_box_movements`).
+    - `box_system_ledger` = saldo CONTABLE de ESA MISMA caja del sistema (su
+      cuenta `system_purpose=company_cash`). `box_mirror_diff =
+      box_system_ledger − box_physical` compara conjuntos ALINEADOS (la caja del
+      sistema contra su propia cuenta), NO el total `box` contra la caja del
+      sistema. Así no aparece una diferencia falsa cuando hay varias cuentas o
+      cajas físicas en la misma moneda; si no es ~0, el espejo de la caja del
+      sistema está desalineado (EC04), no es necesariamente pérdida de dinero.
     - `in_transit` = custodia confirmada (cuentas de custodia).
     - `ledger_pending` = pendiente operativo del ledger de eventos.
     - `unreconciled_diff` = `ledger_pending − in_transit`: diferencia SIN
@@ -779,7 +786,8 @@ async def reconciliation_by_currency() -> list:
       aparte, para revisión, no como efectivo confirmado por depositar."""
     from services.fund_accounts import account_assigned_balances
     from services.cash_box_sync import (fund_for_currency,
-                                         get_or_create_company_cash_box)
+                                         get_or_create_company_cash_box,
+                                         SYSTEM_PURPOSE, COMPANY_BOX_NAME)
     pend_by_cur: dict = {}
     for r in await cash_pending():
         pend_by_cur[r["currency"]] = round(
@@ -807,6 +815,25 @@ async def reconciliation_by_currency() -> list:
         transit = round(sum(v for k, v in assigned.items()
                             if k in custody_ids), 2)
         ledger = round(pend_by_cur.get(code, 0.0), 2)
+        # Conciliación entre cajas (auditoría) — el ESPEJO debe comparar
+        # conjuntos ALINEADOS: la caja FÍSICA del sistema (Fondo Resilience,
+        # vía cash_box_movements) contra SU PROPIA cuenta contable
+        # (system_purpose=company_cash), NO contra la suma de todas las cuentas
+        # de efectivo. Con varias cajas/cuentas físicas en la misma moneda, el
+        # viejo `box − box_physical` comparaba conjuntos distintos y podía
+        # mostrar una diferencia falsa aunque la caja del sistema estuviera
+        # correcta. `box` se conserva como total contable (para el total/IN BOX),
+        # pero el descuadre del espejo se mide solo sobre la caja del sistema.
+        sys_acc = await db.fund_accounts.find_one(
+            {"system_purpose": SYSTEM_PURPOSE, "currency": code},
+            {"_id": 0, "id": 1})
+        if not sys_acc:
+            sys_acc = await db.fund_accounts.find_one(
+                {"name": COMPANY_BOX_NAME, "method": "cash", "currency": code},
+                {"_id": 0, "id": 1})
+        sys_acc_id = sys_acc["id"] if sys_acc else None
+        box_system_ledger = (round(assigned.get(sys_acc_id, 0.0), 2)
+                             if sys_acc_id else None)
         # EC04 — saldo físico real de la caja de empresa (entradas − salidas).
         box_physical = None
         fund = fund_for_currency(code)
@@ -823,8 +850,12 @@ async def reconciliation_by_currency() -> list:
             "currency": code, "box": box, "in_transit": transit,
             "ledger_pending": ledger,
             "box_physical": box_physical,
-            "box_mirror_diff": (None if box_physical is None
-                                else round(box - box_physical, 2)),
+            # Cuenta contable de la caja del sistema (mismo alcance que
+            # box_physical); el espejo se mide entre AMBAS, no contra `box`.
+            "box_system_ledger": box_system_ledger,
+            "box_mirror_diff": (
+                None if (box_physical is None or box_system_ledger is None)
+                else round(box_system_ledger - box_physical, 2)),
             "unreconciled_diff": round(ledger - transit, 2),
             # EF — recogido-no-confirmado desde depósitos reales (aparte del
             # descuadre opaco `unreconciled_diff`).

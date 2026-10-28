@@ -90,6 +90,14 @@ class Redemption(BaseModel):
     courier_fee_usd: float = 0.0
     courier_fee_status: Literal["none", "free", "charged", "manual_review"] = "none"
     courier_municipality: Optional[str] = None
+    # Prop. Tarifa-Municipio — snapshot del municipio/provincia elegido y de la
+    # tarifa fija aplicada (método principal de entrega a domicilio). El
+    # mensajero usa municipio/provincia para el reparto; el precio aplicado
+    # queda congelado y no se recalcula si el admin cambia tarifas después.
+    courier_municipality_id: Optional[str] = None
+    courier_province: Optional[str] = None
+    courier_price_usdt_snapshot: float = 0.0
+    courier_fee_method: str = ""
     courier_rate_snapshot: float = 0.0
     courier_min_fee_snapshot: float = 0.0
     # iter217 — canjes de productos de vendedores VIP: snapshot del dueño y
@@ -142,7 +150,13 @@ class RedemptionCreate(BaseModel):
     delivery_latitude: Optional[float] = Field(None, ge=-90, le=90)
     delivery_longitude: Optional[float] = Field(None, ge=-180, le=180)
     # iter212 — municipio elegido por el cliente cuando el mapa falló.
+    # Prop. Tarifa-Municipio — ahora es el método PRINCIPAL de entrega a
+    # domicilio: el municipio (id o nombre) determina la tarifa fija.
     courier_municipality: Optional[str] = Field(None, max_length=60)
+    courier_province: Optional[str] = Field(None, max_length=60)
+    # Tarifa de mensajería (USDT) que vio el cliente en la vista previa. Si el
+    # municipio/tarifa cambió al confirmar, el backend rechaza con 409.
+    expected_courier_fee_usdt: Optional[float] = Field(None, ge=0)
     # iter236 — recogida en tienda física.
     fulfillment: Literal["delivery", "store_pickup"] = "delivery"
     store_id: Optional[str] = None
@@ -582,40 +596,69 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     courier_fee_usd = 0.0
     courier_status: Literal["none", "free", "charged", "manual_review"] = "none"
     courier_muni = None
+    courier_muni_id = None
+    courier_province = None
+    courier_price_snap = 0.0
+    courier_fee_method = ""
     cq = {"rate_usdt_per_km": 0.0, "min_fee_usdt": 0.0}
     if pickup_store is None:
-        from services.courier_fee import quote_courier_fee, route_quote
-        # iter256(S09) — la tarifa se cotiza en la MONEDA DE LIQUIDACIÓN del
-        # canje (USDT): el número cobrado y el umbral gratis usan esa unidad.
+        from services.courier_fee import (quote_courier_fee,
+                                          municipality_fallback_quote)
+        # iter256(S09) — la tarifa se cotiza en la MONEDA DE LIQUIDACIÓN (USDT).
         cq = await quote_courier_fee("USDT", total)
-        if cq["free"]:
-            courier_status = "free"
-        elif not cq["enabled"]:
+        if not cq["enabled"]:
             courier_status = "none"
-        elif payload.delivery_latitude is not None and payload.delivery_longitude is not None:
-            rq = await route_quote(payload.delivery_latitude,
-                                   payload.delivery_longitude, "USDT", total)
-            if rq.get("requires_manual_review") or rq.get("km") is None:
-                courier_status = "manual_review"
-            else:
-                courier_status = "charged"
-                courier_km = rq["km"]
-                courier_fee_usdt = rq["fee_usdt"]
-                courier_fee_usd = rq["fee_currency_amount"]
+        elif cq["free"]:
+            # Envío gratis por valor del pedido (umbral aprobado): igualmente
+            # guardamos el municipio elegido como referencia de reparto.
+            courier_status = "free"
+            if payload.courier_municipality:
+                mref = await municipality_fallback_quote(
+                    payload.delivery_address or "", "USDT", total,
+                    municipality_key=payload.courier_municipality)
+                if mref:
+                    courier_muni = mref.get("municipality")
+                    courier_muni_id = mref.get("municipality_id")
+                    courier_province = mref.get("province")
+                    courier_fee_method = "municipality"
         else:
-            courier_status = "manual_review"
-        # iter211 — fallback por municipio para canjes (mapa no ubicó la dirección).
-        if courier_status == "manual_review":
-            from services.courier_fee import municipality_fallback_quote
+            # Prop. Tarifa-Municipio — TARIFA FIJA POR MUNICIPIO (método
+            # principal de entrega a domicilio): el municipio elegido (o el
+            # detectado en el texto de la dirección) determina el envío. No se
+            # geocodifica ni se mide distancia; el GPS es opcional y solo sirve
+            # de referencia para el mensajero.
+            muni_key = (payload.courier_municipality or "").strip()
             mq = await municipality_fallback_quote(
                 payload.delivery_address or "", "USDT", total,
-                municipality_key=payload.courier_municipality)
+                municipality_key=muni_key or None)
             if mq and mq.get("fee_usdt", 0) > 0:
                 courier_status = "charged"
                 courier_km = 0.0
                 courier_fee_usdt = mq["fee_usdt"]
                 courier_fee_usd = mq["fee_currency_amount"]
                 courier_muni = mq["municipality"]
+                courier_muni_id = mq.get("municipality_id") or muni_key or None
+                courier_province = mq.get("province")
+                courier_price_snap = mq.get("municipality_price_usdt",
+                                            courier_fee_usdt)
+                courier_fee_method = "municipality"
+            else:
+                # Sin municipio con cobertura: la compra a domicilio queda en
+                # revisión manual para que el staff coordine/cotice el reparto
+                # (no se cobra tarifa aquí). La UI del cliente mantiene el
+                # carrito y ofrece recoger en tienda o escribir al equipo, así
+                # que en la práctica solo cae aquí un pedido con dirección no
+                # reconocida (o una llamada directa a la API).
+                courier_status = "manual_review"
+    # Anti-sorpresa de mensajería: si la tarifa del municipio cambió entre la
+    # vista previa y la confirmación, no cobrar el nuevo importe sin avisar.
+    if payload.expected_courier_fee_usdt is not None and \
+            abs(courier_fee_usdt - float(payload.expected_courier_fee_usdt)) > 0.01:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"COURIER_FEE_CHANGED|La mensajería cambió a "
+                    f"{courier_fee_usdt:.2f} USDT. Revisa el nuevo total "
+                    "antes de confirmar."))
     # iter254(R07) — el marketplace liquida en USDT (la UI muestra USDT): el
     # cobro, los reembolsos y los pagos a vendedores usan el saldo USDT.
     if get_user_balance(user, "USDT") < total + courier_fee_usd:
@@ -671,6 +714,10 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         courier_fee_usd=courier_fee_usd,
         courier_fee_status=courier_status,
         courier_municipality=courier_muni,
+        courier_municipality_id=courier_muni_id,
+        courier_province=courier_province,
+        courier_price_usdt_snapshot=courier_price_snap,
+        courier_fee_method=courier_fee_method,
         courier_rate_snapshot=cq["rate_usdt_per_km"],
         courier_min_fee_snapshot=cq["min_fee_usdt"],
         vendor_owner_id=product.get("owner_id") or "",

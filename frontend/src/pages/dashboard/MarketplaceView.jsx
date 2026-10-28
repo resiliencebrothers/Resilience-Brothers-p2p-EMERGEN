@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -15,7 +15,7 @@ import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag, BadgeCheck, 
 import { QRCodeCanvas } from "qrcode.react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
-import CourierQuotePicker from "@/components/CourierQuotePicker";
+import MunicipalDeliveryPicker from "@/components/MunicipalDeliveryPicker";
 import OffersBanner from "@/components/OffersBanner";
 import { extractDetailMessage } from "@/utils/apiErrors";
 import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/units";
@@ -23,6 +23,7 @@ import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/
 export default function MarketplaceView() {
   const { refresh } = useAuth();
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
   const [open, setOpen] = useState(null);
@@ -45,6 +46,10 @@ export default function MarketplaceView() {
   // iter198 — courier fee for the marketplace deliveries.
   const [deliveryCoords, setDeliveryCoords] = useState(null);
   const [courierQuote, setCourierQuote] = useState(null);
+  // Prop. Tarifa-Municipio — municipio elegido (fuente principal del envío a
+  // domicilio) y bandera de "sin cobertura" para ofrecer recoger/contactar.
+  const [deliveryMunicipality, setDeliveryMunicipality] = useState(null);
+  const [noCoverage, setNoCoverage] = useState(false);
   // iter236 — recogida en tienda física.
   const [fulfillment, setFulfillment] = useState("delivery");
   const [stores, setStores] = useState([]);
@@ -237,6 +242,9 @@ export default function MarketplaceView() {
       }
     }
     if (!pickup && !addr) return toast.error(t("marketplace.addressRequired"));
+    // Prop. Tarifa-Municipio — entrega a domicilio exige municipio con tarifa.
+    if (!pickup && noCoverage) return toast.error(t("marketplace.noCoverageToast"));
+    if (!pickup && !deliveryMunicipality) return toast.error(t("marketplace.municipalityRequired"));
     setBusy(true);
     try {
       await axios.post(`${API}/vip/redeem`, {
@@ -251,14 +259,18 @@ export default function MarketplaceView() {
             ...(deliveryCoords
               ? { delivery_latitude: deliveryCoords.lat, delivery_longitude: deliveryCoords.lon }
               : {}),
-            ...(courierQuote?.municipality
-              ? { courier_municipality: courierQuote.municipality }
+            ...(deliveryMunicipality
+              ? { courier_municipality: deliveryMunicipality.id, courier_province: deliveryMunicipality.province }
+              : {}),
+            ...(courierQuote && !courierQuote.free && Number(courierQuote.fee_usdt) > 0
+              ? { expected_courier_fee_usdt: Number(courierQuote.fee_usdt) }
               : {}),
           }),
       }, { withCredentials: true });
       toast.success(t("marketplace.successPending"));
       setOpen(null); setQty("1"); setAddr(""); setPhone("");
       setDeliveryCoords(null); setCourierQuote(null);
+      setDeliveryMunicipality(null); setNoCoverage(false);
       setFulfillment("delivery"); setStoreId("");
       await refresh();
       const p = await axios.get(`${API}/products`, { withCredentials: true }); setProducts(p.data);
@@ -275,6 +287,13 @@ export default function MarketplaceView() {
           setOpen(fresh.data);
           const all = await axios.get(`${API}/products`, { withCredentials: true }); setProducts(all.data);
         } catch { /* producto ya no disponible */ setOpen(null); }
+      } else if (typeof detail === "string" && detail.startsWith("COURIER_FEE_CHANGED")) {
+        toast.warning(detail.split("|")[1] || t("marketplace.courierFeeChanged"));
+      } else if (typeof detail === "string" && detail.startsWith("COURIER_NO_COVERAGE")) {
+        setNoCoverage(true);
+        toast.error(detail.split("|")[1] || t("marketplace.noCoverageToast"));
+      } else if (typeof detail === "string" && detail.startsWith("COURIER_MUNICIPALITY_REQUIRED")) {
+        toast.error(detail.split("|")[1] || t("marketplace.municipalityRequired"));
       } else {
         toast.error(extractDetailMessage(e, "Error al canjear"));
       }
@@ -532,7 +551,7 @@ export default function MarketplaceView() {
         </div>
       </div>
 
-      <Dialog open={!!open} onOpenChange={() => { setOpen(null); setDeliveryCoords(null); setCourierQuote(null); setFulfillment("delivery"); setStoreId(""); }}>
+      <Dialog open={!!open} onOpenChange={() => { setOpen(null); setDeliveryCoords(null); setCourierQuote(null); setDeliveryMunicipality(null); setNoCoverage(false); setFulfillment("delivery"); setStoreId(""); }}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">{t("marketplace.redeem")}: {open?.name}</DialogTitle>
@@ -559,7 +578,7 @@ export default function MarketplaceView() {
                   </button>
                   <button
                     data-testid="fulfillment-pickup-btn"
-                    onClick={() => { setFulfillment("pickup"); setDeliveryCoords(null); setCourierQuote(null); }}
+                    onClick={() => { setFulfillment("pickup"); setDeliveryCoords(null); setCourierQuote(null); setDeliveryMunicipality(null); setNoCoverage(false); }}
                     className={`flex items-center justify-center gap-2 px-3 py-2.5 text-xs uppercase tracking-wider border transition-colors ${
                       fulfillment === "pickup"
                         ? "border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10"
@@ -634,13 +653,38 @@ export default function MarketplaceView() {
                   <Label className="micro-label text-neutral-500">{t("marketplace.redeemPhoneLabel")}</Label>
                   <Input data-testid="redeem-phone" inputMode="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+53 5xxxxxxx" className="rounded-none mt-2 bg-[#0a0a0a] border-white/10 h-11" />
                 </div>
-                <CourierQuotePicker
-                  currency="USD"
+                <MunicipalDeliveryPicker
+                  currency="USDT"
                   amount={quote?.total_usdt != null ? quote.total_usdt : (open?.price_usdt || 0) * qtyNum}
-                  addressText={addr}
                   onCoords={setDeliveryCoords}
                   onQuote={setCourierQuote}
+                  onMunicipality={setDeliveryMunicipality}
+                  onNoCoverage={setNoCoverage}
                 />
+                {noCoverage && (
+                  <div className="flex flex-wrap gap-2" data-testid="redeem-no-coverage-actions">
+                    {stores.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        data-testid="no-coverage-pickup-btn"
+                        onClick={() => { setFulfillment("pickup"); setDeliveryCoords(null); setCourierQuote(null); setNoCoverage(false); }}
+                        className="rounded-none border-[#8B5CF6]/40 text-[#8B5CF6] hover:bg-[#8B5CF6]/10 h-9 text-xs"
+                      >
+                        <Store className="w-3.5 h-3.5 mr-1.5" /> {t("marketplace.switchToPickup")}
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      data-testid="no-coverage-contact-btn"
+                      onClick={() => { setOpen(null); navigate("/dashboard/support"); }}
+                      className="rounded-none border-amber-400/40 text-amber-300 hover:bg-amber-400/10 h-9 text-xs"
+                    >
+                      {t("marketplace.contactTeam")}
+                    </Button>
+                  </div>
+                )}
               </>
             )}
             {stockBlocked && (
@@ -692,15 +736,15 @@ export default function MarketplaceView() {
                   </span>
                 </div>
               )}
-              {courierQuote && fulfillment !== "pickup" && !courierQuote.free && !courierQuote.requires_manual_review && Number(courierQuote.fee_currency_amount) > 0 && (
+              {courierQuote && fulfillment !== "pickup" && !courierQuote.free && !courierQuote.requires_manual_review && Number(courierQuote.fee_usdt) > 0 && (
                 <div className="flex justify-between text-xs" data-testid="redeem-courier-fee-line">
                   <span className="text-neutral-500">{t("marketplace.courierFeeLine")}:</span>
-                  <span className="text-amber-300">+${Number(courierQuote.fee_currency_amount).toFixed(2)}</span>
+                  <span className="text-amber-300">+{Number(courierQuote.fee_usdt).toFixed(2)} USDT</span>
                 </div>
               )}
               {(() => {
                 const feeUsd = (fulfillment !== "pickup" && courierQuote && !courierQuote.free && !courierQuote.requires_manual_review)
-                  ? Number(courierQuote.fee_currency_amount || 0) : 0;
+                  ? Number(courierQuote.fee_usdt || 0) : 0;
                 if (feeUsd <= 0) return null;
                 const productTotal = quote?.total_usdt != null ? quote.total_usdt : (open?.price_usdt || 0) * qtyNum;
                 return (
@@ -716,7 +760,7 @@ export default function MarketplaceView() {
                 </p>
               )}
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote || (fulfillment !== "pickup" && (noCoverage || !deliveryMunicipality || !(courierQuote && (courierQuote.free || Number(courierQuote.fee_usdt) > 0 || courierQuote.enabled === false))))} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
               {busy ? t("marketplace.processing") : stockBlocked ? t("marketplace.stockBlockedBtn") : quoteLoading ? t("marketplace.calculating") : quoteError ? t("marketplace.quoteUnavailable") : t("marketplace.confirmRedeem")}
             </Button>
           </div>

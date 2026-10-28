@@ -259,9 +259,13 @@ export default function CourierCashTab() {
                 <ReconCell label={t("admin.cash.colTransit")} value={r.in_transit} tone="text-[#8B5CF6]" testid={`recon-transit-${r.currency}`} />
                 <ReconCell label={t("admin.cash.colUnreconciled")} value={r.unreconciled_diff} tone={Math.abs(r.unreconciled_diff) > 0.01 ? "text-amber-300" : "text-neutral-500"} testid={`recon-unrec-${r.currency}`} />
               </div>
-              {r.box_physical != null && (
-                <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-xs" data-testid={`recon-physical-${r.currency}`}>
-                  <span className="text-neutral-500">{t("admin.cash.colBoxPhysical")}: <b className="text-neutral-300 font-mono">{r.box_physical.toLocaleString()}</b></span>
+              {r.box_physical != null && r.box_mirror_diff != null && (
+                <div className="mt-2 pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs" data-testid={`recon-physical-${r.currency}`} title={t("admin.cash.mirrorScopeHint")}>
+                  <span className="text-neutral-500">
+                    {t("admin.cash.colBoxSystem")}: <b className="text-neutral-300 font-mono">{(r.box_system_ledger ?? 0).toLocaleString()}</b>
+                    <span className="text-neutral-600"> · {t("admin.cash.colBoxPhysical")}: </span>
+                    <b className="text-neutral-300 font-mono">{r.box_physical.toLocaleString()}</b>
+                  </span>
                   <span className={Math.abs(r.box_mirror_diff) > 0.01 ? "text-red-400" : "text-emerald-400"} data-testid={`recon-mirror-${r.currency}`}>
                     {Math.abs(r.box_mirror_diff) > 0.01
                       ? t("admin.cash.mirrorDiff", { v: r.box_mirror_diff.toLocaleString() })

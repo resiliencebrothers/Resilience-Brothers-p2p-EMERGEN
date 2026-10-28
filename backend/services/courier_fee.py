@@ -176,6 +176,8 @@ async def municipality_fallback_quote(address_text: str, currency: str,
     base = {**q, "km": 0.0, "fee_usdt": 0.0, "fee_currency_amount": 0.0,
             "requires_manual_review": False, "reason": None,
             "municipality": m["municipality"],
+            "municipality_id": m.get("id"),
+            "province": m.get("province") or "La Habana",
             "municipality_price_usdt": round(float(m["price_usdt"]), 2)}
     if q["free"] or not q["enabled"]:
         return base

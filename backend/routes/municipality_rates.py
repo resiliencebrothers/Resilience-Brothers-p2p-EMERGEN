@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from db_client import db
 from auth_utils import require_user, require_permission
 from audit_log import log_action
-from services.municipality_rates import get_rates
+from services.municipality_rates import get_rates, get_provinces
 
 logger = logging.getLogger("municipality_rates")
 
@@ -47,11 +47,19 @@ def _parse_aliases(raw: Any) -> list:
     return [a.strip() for a in raw if a and a.strip()][:15]
 
 
-@router.get("/courier/municipality-rates")
-async def list_active_rates(request: Request) -> Any:
+@router.get("/courier/delivery-provinces")
+async def list_delivery_provinces(request: Request) -> Any:
+    """Provincias con cobertura de mensajería (para el selector de entrega)."""
     await require_user(request)
-    rows = await get_rates(active_only=True)
+    return await get_provinces(active_only=True)
+
+
+@router.get("/courier/municipality-rates")
+async def list_active_rates(request: Request, province: str = "") -> Any:
+    await require_user(request)
+    rows = await get_rates(active_only=True, province=province.strip() or None)
     return [{"id": r["id"], "municipality": r["municipality"],
+             "province": r.get("province") or "La Habana",
              "price_usdt": r["price_usdt"]} for r in rows]
 
 
@@ -83,19 +91,26 @@ async def admin_create_rate(payload: dict, request: Request) -> Any:
     if len(name) < 3:
         raise HTTPException(status_code=400,
                             detail="Nombre del municipio requerido (mín. 3).")
+    province = (payload.get("province") or "La Habana").strip() or "La Habana"
+    # Unicidad por (provincia, municipio): el mismo nombre puede existir en
+    # provincias distintas, pero no dos veces en la misma provincia.
     if await db.courier_municipality_rates.find_one(
-            {"municipality": {"$regex": f"^{name}$", "$options": "i"}}):
-        raise HTTPException(status_code=409, detail="Ese municipio ya existe.")
+            {"municipality": {"$regex": f"^{name}$", "$options": "i"},
+             "province": {"$regex": f"^{province}$", "$options": "i"}}):
+        raise HTTPException(status_code=409,
+                            detail="Ese municipio ya existe en esa provincia.")
     doc: dict = {
         "id": f"muni_{uuid.uuid4().hex[:10]}",
         "municipality": name,
+        "province": province,
         "price_usdt": _parse_price(payload.get("price_usdt")),
         "aliases": _parse_aliases(payload.get("aliases")),
         "active": True,
     }
     await db.courier_municipality_rates.insert_one(dict(doc))
     await log_action(db, actor, "courier_muni_rate.create", "muni_rate", doc["id"],
-                     summary=f"Tarifa municipio {name} = {doc['price_usdt']} USDT",
+                     summary=(f"Tarifa {province} / {name} = "
+                              f"{doc['price_usdt']} USDT"),
                      details=doc)
     return doc
 
@@ -118,6 +133,11 @@ async def admin_update_rate(mid: str, payload: dict, request: Request) -> Any:
         if len(name) < 3:
             raise HTTPException(status_code=400, detail="Nombre inválido.")
         update["municipality"] = name
+    if "province" in payload:
+        prov = (payload.get("province") or "").strip()
+        if len(prov) < 3:
+            raise HTTPException(status_code=400, detail="Provincia inválida.")
+        update["province"] = prov
     if not update:
         raise HTTPException(status_code=400, detail="Nada que actualizar.")
     await db.courier_municipality_rates.update_one({"id": mid}, {"$set": update})

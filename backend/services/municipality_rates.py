@@ -49,23 +49,56 @@ def normalize_text(text: str) -> str:
 
 
 async def seed_if_empty() -> None:
-    if await db.courier_municipality_rates.count_documents({}) > 0:
+    if await db.courier_municipality_rates.count_documents({}) == 0:
+        docs = [{
+            "id": f"muni_{uuid.uuid4().hex[:10]}",
+            "municipality": r["municipality"],
+            "province": r.get("province") or "La Habana",
+            "price_usdt": r["price_usdt"],
+            "aliases": r["aliases"],
+            "active": True,
+        } for r in DEFAULT_RATES]
+        await db.courier_municipality_rates.insert_many(docs)
+    await _ensure_province_backfill()
+
+
+_province_backfilled = False
+
+
+async def _ensure_province_backfill() -> None:
+    """Las tarifas antiguas no tenían provincia (todas eran La Habana). Se
+    rellena una sola vez por proceso para no reescribir en cada consulta."""
+    global _province_backfilled
+    if _province_backfilled:
         return
-    docs = [{
-        "id": f"muni_{uuid.uuid4().hex[:10]}",
-        "municipality": r["municipality"],
-        "price_usdt": r["price_usdt"],
-        "aliases": r["aliases"],
-        "active": True,
-    } for r in DEFAULT_RATES]
-    await db.courier_municipality_rates.insert_many(docs)
+    await db.courier_municipality_rates.update_many(
+        {"$or": [{"province": {"$exists": False}}, {"province": None},
+                 {"province": ""}]},
+        {"$set": {"province": "La Habana"}})
+    _province_backfilled = True
 
 
-async def get_rates(active_only: bool = False) -> list:
+async def get_provinces(active_only: bool = True) -> list:
+    """Provincias con al menos un municipio (activo) con tarifa, ordenadas."""
     await seed_if_empty()
     q = {"active": True} if active_only else {}
-    rows = await db.courier_municipality_rates.find(q, {"_id": 0}).to_list(200)
-    rows.sort(key=lambda r: (float(r.get("price_usdt") or 0),
+    provs = await db.courier_municipality_rates.distinct("province", q)
+    return sorted(p for p in provs if p)
+
+
+async def get_rates(active_only: bool = False,
+                    province: Optional[str] = None) -> list:
+    await seed_if_empty()
+    q: dict = {}
+    if active_only:
+        q["active"] = True
+    if province:
+        q["province"] = {"$regex": f"^{re.escape(province)}$", "$options": "i"}
+    rows = await db.courier_municipality_rates.find(q, {"_id": 0}).to_list(500)
+    for r in rows:
+        r.setdefault("province", "La Habana")
+    rows.sort(key=lambda r: (normalize_text(r.get("province")),
+                             float(r.get("price_usdt") or 0),
                              normalize_text(r.get("municipality"))))
     return rows
 
