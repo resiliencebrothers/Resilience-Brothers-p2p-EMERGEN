@@ -10,6 +10,7 @@ import math
 import re
 import uuid
 from typing import Any, Optional
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
@@ -840,17 +841,17 @@ async def reconciliation_by_currency() -> list:
 UNCONFIRMED_ALERT_HOURS = 12
 
 
-def _deposit_age_hours(iso_ts, now=None) -> Optional[float]:
+def _deposit_age_hours(iso_ts: Optional[str],
+                       now: Optional[datetime] = None) -> Optional[float]:
     """Horas transcurridas desde `iso_ts` (string ISO) hasta ahora."""
     if not iso_ts:
         return None
-    from datetime import datetime, timezone as _tz
     try:
         dt = datetime.fromisoformat(str(iso_ts).replace("Z", "+00:00"))
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_tz.utc)
+        dt = dt.replace(tzinfo=timezone.utc)
     return round(((now or now_utc()) - dt).total_seconds() / 3600, 1)
 
 

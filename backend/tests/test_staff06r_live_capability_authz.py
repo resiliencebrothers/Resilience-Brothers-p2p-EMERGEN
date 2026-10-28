@@ -18,6 +18,7 @@ from services.live_bus import (
     publish as bus_publish,
     update_authz,
     reauthorize_event,
+    event_iterator,
 )
 
 
@@ -351,3 +352,87 @@ async def test_pickups_changed_gated_to_products_capability():
     finally:
         for s in (s_admin, s_prod, s_noprod, s_client):
             await bus_unsubscribe(s)
+
+
+# ------------------------------------------------------------------
+# STAFF-06-O01 — el permiso EFECTIVO del publicador (`require_perm`) viaja hasta
+# la ENTREGA FINAL. Antes `_push` no lo sellaba y `reauthorize_event` volvía al
+# predeterminado del tipo (`_STAFF_EVENT_CAP`), por lo que la compuerta de salida
+# podía comprobar una capacidad DISTINTA de la que eligió el emisor. Ahora el
+# sobre lleva `require_perm` y la compuerta reautoriza contra EXACTAMENTE esa.
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_staff06o01_override_revocation_respected_at_delivery():
+    # O01a — se retira el permiso del OVERRIDE ('kyc') pero se conserva el
+    # predeterminado del tipo ('transactions'). El evento pendiente NO debe
+    # salir: la compuerta reautoriza contra 'kyc', no contra 'transactions'.
+    sub = await bus_subscribe("s06o01_a", role="employee",
+                              allowed_permissions=["kyc", "transactions"])
+    try:
+        await bus_publish("ledger_changed", {"reason": "sensitive"},
+                          roles=("admin", "employee"), require_perm="kyc")
+        pending = await _drain(sub)
+        assert len(pending) == 1 and pending[0]["staff"] is True
+        assert pending[0]["require_perm"] == "kyc"   # sellado en el sobre
+        update_authz(sub, "employee", ["transactions"], [])  # quita kyc, deja tx
+        assert reauthorize_event(sub, pending[0]) is False
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06o01_override_authorized_event_not_dropped():
+    # O01b — aviso legítimo: el empleado conserva 'kyc' (permiso del publicador)
+    # y NO tiene 'transactions'. La compuerta debe ENTREGARLO comprobando 'kyc',
+    # no el predeterminado 'transactions' (que descartaría el evento por error).
+    sub = await bus_subscribe("s06o01_b", role="employee",
+                              allowed_permissions=["kyc"])
+    try:
+        await bus_publish("ledger_changed", {"reason": "sensitive"},
+                          roles=("admin", "employee"), require_perm="kyc")
+        pending = await _drain(sub)
+        assert len(pending) == 1
+        assert pending[0]["require_perm"] == "kyc"
+        assert reauthorize_event(sub, pending[0]) is True   # conserva 'kyc'
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06o01_override_survives_full_generator():
+    # El sobre con `require_perm` sobrevive al generador completo
+    # (event_iterator), igual que routes/live.py lo lleva a heartbeat_queue, y
+    # se reautoriza al salir: autorizado mientras conserve 'kyc', denegado al
+    # retirarlo.
+    sub = await bus_subscribe("s06o01_gen", role="employee",
+                              allowed_permissions=["kyc", "transactions"])
+    try:
+        await bus_publish("ledger_changed", {"reason": "sensitive"},
+                          roles=("admin", "employee"), require_perm="kyc")
+        gen = event_iterator(sub)
+        ev = await asyncio.wait_for(gen.__anext__(), 0.2)
+        assert ev["require_perm"] == "kyc"
+        assert reauthorize_event(sub, ev) is True
+        update_authz(sub, "employee", ["transactions"], [])
+        assert reauthorize_event(sub, ev) is False
+        await gen.aclose()
+    finally:
+        await bus_unsubscribe(sub)
+
+
+@pytest.mark.asyncio
+async def test_staff06o01_personal_same_name_event_not_gated_by_override():
+    # Evento PERSONAL con el MISMO nombre que un feed operativo con override:
+    # no se re-chequea por capacidad y se entrega al dueño; `require_perm` del
+    # sobre es None para feeds personales.
+    owner = await bus_subscribe("s06o01_owner", role="normal")
+    try:
+        await bus_publish("ledger_changed", {"reason": "your balance"},
+                          user_id="s06o01_owner")
+        pending = await _drain(owner)
+        assert len(pending) == 1 and pending[0]["staff"] is False
+        assert pending[0].get("require_perm") is None
+        assert reauthorize_event(owner, pending[0]) is True
+    finally:
+        await bus_unsubscribe(owner)

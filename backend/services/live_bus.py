@@ -167,7 +167,8 @@ async def unsubscribe(sub: Subscription) -> None:
              sub.user_id, len(_broadcast_subs))
 
 
-def _push(sub: Subscription, event_type: str, data: dict, staff_feed: bool = False) -> None:
+def _push(sub: Subscription, event_type: str, data: dict,
+          staff_feed: bool = False, require_perm: Optional[str] = None) -> None:
     """Enqueue an event on a single subscription queue, dropping the
     oldest item if the consumer fell behind (>128 unread).
 
@@ -175,8 +176,14 @@ def _push(sub: Subscription, event_type: str, data: dict, staff_feed: bool = Fal
     feed (roles=...). STAFF-06-R2 — ese flag viaja con el evento para poder
     RE-AUTORIZARLO en el punto de entrega final (ver reauthorize_event): si el
     permiso se retira mientras el evento está pendiente en CUALQUIER cola, se
-    descarta en vez de entregarse con un snapshot viejo."""
-    item = {"type": event_type, "data": data, "ts": time.time(), "staff": staff_feed}
+    descarta en vez de entregarse con un snapshot viejo.
+
+    STAFF-06-O01 — `require_perm` (el permiso EFECTIVO que eligió el publicador,
+    que puede diferir del predeterminado de `_STAFF_EVENT_CAP`) también se sella
+    en el sobre, para que la compuerta de salida reautorice contra EXACTAMENTE
+    la misma capacidad que se usó al encolar, no contra la del tipo de evento."""
+    item = {"type": event_type, "data": data, "ts": time.time(),
+            "staff": staff_feed, "require_perm": require_perm}
     try:
         sub.queue.put_nowait(item)
     except asyncio.QueueFull:
@@ -198,10 +205,25 @@ def reauthorize_event(sub: Subscription, ev: dict) -> bool:
     a autorizarse contra el snapshot ACTUAL de la suscripción antes de salir.
     Solo re-chequea feeds OPERATIVOS de staff (`staff=True`); los eventos
     personales del dueño (user_id=...) y los broadcasts públicos se entregan
-    siempre. Así, si el permiso/moneda se revocó tras encolar, el frame NO sale."""
+    siempre. Así, si el permiso/moneda se revocó tras encolar, el frame NO sale.
+
+    STAFF-06-O01 — reautoriza con el permiso EFECTIVO sellado en el sobre
+    (`require_perm`), el MISMO que usó `publish` al encolar, en vez de volver al
+    predeterminado del tipo. El sobre se valida (fail-closed): un frame de staff
+    sin `type` válido se deniega."""
     if not ev.get("staff"):
         return True
-    return _staff_authorized(sub, ev.get("type"), ev.get("data") or {}, None)
+    event_type = ev.get("type")
+    if not isinstance(event_type, str):
+        log.warning("live_bus: frame de staff sin 'type' válido — denegado "
+                    "(fail-closed)")
+        return False
+    require_perm = ev.get("require_perm")
+    if require_perm is not None and not isinstance(require_perm, str):
+        require_perm = None
+    data = ev.get("data")
+    return _staff_authorized(
+        sub, event_type, data if isinstance(data, dict) else {}, require_perm)
 
 
 async def publish(
@@ -232,7 +254,8 @@ async def publish(
                        if s.role in roles
                        and _staff_authorized(s, event_type, data, require_perm)]
             for sub in targets:
-                _push(sub, event_type, data, staff_feed=True)
+                _push(sub, event_type, data, staff_feed=True,
+                      require_perm=require_perm)
             return
         else:
             targets = candidates
