@@ -525,7 +525,7 @@ export default function MarketplaceView() {
                     ) : h.courier_fee_status === "free" ? (
                       <span className="text-[#22C55E]">{t("marketplace.courierFree")}</span>
                     ) : Number(h.courier_fee_usd) > 0 ? (
-                      <span className="font-mono text-amber-300">-${h.courier_fee_usd}</span>
+                      <span className="font-mono text-amber-300">+{Number(h.courier_fee_usd).toFixed(2)} USDT</span>
                     ) : h.courier_fee_status === "manual_review" ? (
                       <span className="text-neutral-500">{t("marketplace.courierPending")}</span>
                     ) : (
@@ -782,7 +782,7 @@ export default function MarketplaceView() {
                 </p>
               )}
             </div>
-            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote || (fulfillment !== "pickup" && (noCoverage || !deliveryMunicipality || !(courierQuote && (courierQuote.free || Number(courierQuote.fee_usdt) > 0))))} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
+            <Button data-testid="confirm-redeem" onClick={redeem} disabled={busy || quoteLoading || stockBlocked || !validQuote || (fulfillment !== "pickup" && (noCoverage || !deliveryMunicipality || addr.trim().length < 6 || phone.replace(/\D/g, "").length < 8 || !(courierQuote && (courierQuote.free || Number(courierQuote.fee_usdt) > 0))))} className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12 disabled:opacity-50">
               {busy ? t("marketplace.processing") : stockBlocked ? t("marketplace.stockBlockedBtn") : quoteLoading ? t("marketplace.calculating") : quoteError ? t("marketplace.quoteUnavailable") : t("marketplace.confirmRedeem")}
             </Button>
           </div>

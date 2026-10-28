@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only check of MUNI-01, 03, 05 and 06 plus the no-coverage warning, using session_token cookies at 1920x1080. Everything requested passes. MUNI-05: the admin sees admin-tab-muni-rates and it opens a rates table with 15 La Habana municipalities. The deliveries employee has no admin-tab-muni-rates in the DOM but sees every other operational tab. MUNI-01: TEST_UI373 Cheap (300) with Vedado shows delivery-quote-result at 3 USDT, delivery-quote-free is absent, redeem-courier-fee-line shows '+3.00 USDT' and redeem-grand-total shows '303.00 USDT'. TEST_UI373 Big (1200) shows delivery-quote-free with no fee line, as expected. MUNI-06: confirm-redeem stays enabled, but clicking it with an empty address, a short address ('Calle') or a short phone ('+53 55') only shows the matching Spanish toast and the dialog stays open. MUNI-03: switching Vedado to Arroyo Naranjo was tracked with a MutationObserver. The sequence was enabled with quote, then disabled while delivery-quote-loading showed, then enabled with the new 5 USDT quote (grand total 305.00). No-coverage: 'Mi municipio no aparece' shows redeem-no-coverage-block, redeem-no-coverage-warning and no-coverage-contact-btn, and confirm-redeem is disabled. Going back to Vedado enables it again. No redemption was submitted.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Marketplace > Mis Canjes table", "issues": ["The Mensajería column shows a paid courier fee as '-$2.2'. It uses a '$' sign even though the fee is in USDT, and the number is not formatted to 2 decimals. Suggest '+2.20 USDT' or '2.20 USDT', to match the '+3.00 USDT' shown in the redeem dialog."]},
+      {"screen": "Redeem dialog, free-shipping case", "issues": ["The municipality select still says 'Vedado — 3 USDT' while delivery-quote-free says shipping is free. A small 'gratis' hint in the trigger or option would avoid confusion."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: format the history courier fee as 'X.XX USDT' instead of '-$X' (MarketplaceView.jsx around line 528).",
+    "Expected behaviour, not a bug: in the marketplace dialog, delivery-no-coverage is hidden on purpose by suppressNoCoverageNote (a fix from iter375). The parent's redeem-no-coverage-warning replaces it. Update the test spec to expect this.",
+    "Not tested: no-coverage-pickup-btn and fulfillment-delivery-btn, because /api/stores returns no stores and the delivery/pickup toggle only renders when stores > 0. Seed a store with stock for a TEST_ product to cover this path."
+  ],
+  "critical_code_review_comments": [
+    "MUNI-06 is enforced in redeem() with toasts, not by disabling confirm-redeem. This is allowed by the spec, but disabling the button when addr.trim().length < 6 or the phone has fewer than 8 digits would show the requirement earlier.",
+    "MunicipalDeliveryPicker's quote effect catch branch clears the quote but does not call onNoCoverage or onMunicipality. A network error after a valid quote leaves the parent's deliveryMunicipality as null, which is already set at effect start, so it is safe. It does mean no error message is shown to the user."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% of testable checks (pickup button path not testable: no stores)"},
+  "seed_data_creation": "Re-ran /app/backend/tests/seed_iter373_ui.py because TEST_ui373_cheap and TEST_ui373_big had is_active=False and did not show in the marketplace. Some other test's cleanup probably deactivated them.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth: add cookie session_token (muni_smoke_admin, muni_emp_deliv or muni_smoke_vip), secure, sameSite None, on the preview domain. The province select is hidden when there is only one province (La Habana is auto-selected). Municipality options read like 'Vedado — 3 USDT', so match with a regex '^Vedado'. There is no 'Playa' municipality; use Arroyo Naranjo (5 USDT) to see the fee change. If the TEST_UI373 products disappear, run tests/seed_iter373_ui.py."
+}

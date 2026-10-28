@@ -1,3 +1,13 @@
+## Changelog — Jun 2026 (Pulido UX del checkout municipal + fee de mensajería en historial)
+
+Cierre de la auditoría de tarifas municipales (MUNI-01..06, mypy, portabilidad de tests — todo verificado por testing agent, iteration_376, 100% de los flujos comprobables). Dos refinamientos finales de frontend recomendados por el testing agent:
+
+- **Botón confirmar se bloquea antes (MUNI-06 UX)** [`pages/dashboard/MarketplaceView.jsx`, `confirm-redeem` ~línea 785]: además de `noCoverage` / `!deliveryMunicipality`, ahora `confirm-redeem` queda deshabilitado mientras la dirección tenga menos de 6 caracteres (`addr.trim().length < 6`) o el teléfono tenga menos de 8 dígitos (`phone.replace(/\D/g,"").length < 8`) en entrega a domicilio. El requisito se muestra antes (botón apagado) en vez de solo al pulsar y recibir un toast. La validación server-side y los toasts se conservan sin cambios.
+- **Fee de mensajería en "Mis Canjes"** [`MarketplaceView.jsx` ~línea 528]: el fee pagado se muestra como `+X.XX USDT` (ej. `+2.20 USDT`) en vez de `-$2.2`, para coincidir con el formato del diálogo de canje (`+3.00 USDT`). Signo `$` eliminado y dos decimales.
+
+Verificación: frontend compila limpio (exit 0, 23 warnings pre-existentes de `html5-qrcode`, no relacionados). Cambios de bajo riesgo sobre lógica de validación ya verificada y formato de texto.
+
+
 ## Changelog — 28 Oct 2026 (Aviso en el carrito: municipio sin cobertura antes del checkout)
 
 Mejora sobre la compra con entrega a domicilio del Marketplace. Cuando el comprador elige entrega pero su municipio no tiene cobertura (opción "mi municipio no aparece" o municipio no configurado), ahora ve un **aviso claro antes de pagar** con las alternativas, y el botón de confirmar queda bloqueado. Verificado por testing agent (iteration_375, 100% de los flujos comprobables; el cambio a recoger-en-tienda no se pudo ejercitar porque la DB no tiene tiendas sembradas).
