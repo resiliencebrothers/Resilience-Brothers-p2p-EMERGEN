@@ -788,7 +788,18 @@
         "saved": "Rate saved",
         "created": "Municipality added",
         "deleted": "Municipality removed",
-        "deleteConfirm": "Delete the rate for {{name}}?"
+        "deleteConfirm": "Delete the rate for {{name}}?",
+        "bulkBtn": "Add a whole province",
+        "bulkTitle": "Enable delivery in a province",
+        "bulkIntro": "Pick a province and set the delivery price for each municipality you want to enable. Ones you leave blank won't be enabled. Already configured ones show their price and get updated on save.",
+        "bulkProvinceLabel": "Province",
+        "bulkProvincePlaceholder": "Select a province",
+        "bulkLoading": "Loading municipalities…",
+        "bulkConfigured": "Already set",
+        "bulkPricePlaceholder": "Price USDT",
+        "bulkSave": "Enable {{count}} municipality(ies)",
+        "bulkSaved": "{{created}} added, {{updated}} updated",
+        "bulkNothing": "Set a price for at least one municipality to enable it."
       },
       "filterAll": "All",
       "empty": "No deliveries for this filter.",
@@ -3360,7 +3371,14 @@
     "qrTitle": "Show this code at the store",
     "qrHint": "The staff will scan it with the camera and your delivery will be confirmed instantly.",
     "offer": "Offer",
-    "offersChip": "Offers"
+    "offersChip": "Offers",
+    "coverageBtn": "See delivery coverage",
+    "coverageTitle": "Home delivery coverage",
+    "coverageIntro": "These are the municipalities we deliver to and their flat courier rate. Pick yours at checkout.",
+    "coverageLoading": "Loading coverage…",
+    "coverageEmpty": "No municipalities have delivery set up yet. You can pick up in store or write to us.",
+    "coverageMuniCount": "{{count}} municipalities",
+    "coveragePickupNote": "Don't see your municipality? You can pick up in store or write to us to arrange delivery. GPS is optional and doesn't change the price."
   },
   "kyc": {
     "eyebrow": "/ Identity Verification",

@@ -788,7 +788,18 @@
         "saved": "Tarifa guardada",
         "created": "Municipio agregado",
         "deleted": "Municipio eliminado",
-        "deleteConfirm": "¿Eliminar la tarifa de {{name}}?"
+        "deleteConfirm": "¿Eliminar la tarifa de {{name}}?",
+        "bulkBtn": "Añadir provincia completa",
+        "bulkTitle": "Activar entregas en una provincia",
+        "bulkIntro": "Elige una provincia y pon el precio de entrega de cada municipio que quieras activar. Los que dejes en blanco no se activan. Los ya configurados aparecen con su precio y se actualizan al guardar.",
+        "bulkProvinceLabel": "Provincia",
+        "bulkProvincePlaceholder": "Selecciona una provincia",
+        "bulkLoading": "Cargando municipios…",
+        "bulkConfigured": "Ya configurado",
+        "bulkPricePlaceholder": "Precio USDT",
+        "bulkSave": "Activar {{count}} municipio(s)",
+        "bulkSaved": "{{created}} añadidos, {{updated}} actualizados",
+        "bulkNothing": "Pon el precio de al menos un municipio para activarlo."
       },
       "filterAll": "Todas",
       "empty": "No hay entregas con este filtro.",
@@ -3360,7 +3371,14 @@
     "qrTitle": "Muestra este código en la tienda",
     "qrHint": "El personal lo escaneará con la cámara y tu entrega quedará confirmada al instante.",
     "offer": "Oferta",
-    "offersChip": "Ofertas"
+    "offersChip": "Ofertas",
+    "coverageBtn": "Ver cobertura de entrega",
+    "coverageTitle": "Cobertura de entrega a domicilio",
+    "coverageIntro": "Estos son los municipios a los que llevamos tu pedido y su tarifa fija de mensajería. Elígelo al momento de canjear.",
+    "coverageLoading": "Cargando cobertura…",
+    "coverageEmpty": "Aún no hay municipios con entrega configurada. Puedes recoger en tienda o escribirnos.",
+    "coverageMuniCount": "{{count}} municipios",
+    "coveragePickupNote": "¿Tu municipio no aparece? Puedes recoger en tienda o escribirnos para coordinar la entrega. El GPS es opcional y no cambia el precio."
   },
   "kyc": {
     "eyebrow": "/ Verificación de identidad",

@@ -18,7 +18,8 @@ from fastapi import APIRouter, HTTPException, Request
 from db_client import db
 from auth_utils import require_user, require_permission
 from audit_log import log_action
-from services.municipality_rates import get_rates, get_provinces
+from services.municipality_rates import get_rates, get_provinces, normalize_text
+from services.cuba_admin_divisions import CUBA_PROVINCES
 
 logger = logging.getLogger("municipality_rates")
 
@@ -116,6 +117,102 @@ async def admin_create_rate(payload: dict, request: Request) -> Any:
                               f"{doc['price_usdt']} USDT"),
                      details=doc)
     return doc
+
+
+@router.get("/admin/courier/province-catalog")
+async def admin_province_catalog(request: Request) -> Any:
+    """Catálogo de provincias de Cuba para activar una provincia completa."""
+    await require_permission(request, "deliveries")
+    return {"provinces": sorted(CUBA_PROVINCES.keys(),
+                                key=lambda p: normalize_text(p))}
+
+
+@router.get("/admin/courier/province-catalog/municipalities")
+async def admin_province_catalog_munis(request: Request,
+                                       province: str = "") -> Any:
+    """Municipios del catálogo de una provincia, anotados con la tarifa ya
+    configurada (si existe) para no duplicar al activarlos en lote."""
+    await require_permission(request, "deliveries")
+    prov = (province or "").strip()
+    catalog_prov = next(
+        (p for p in CUBA_PROVINCES if normalize_text(p) == normalize_text(prov)),
+        None)
+    if not catalog_prov:
+        raise HTTPException(status_code=404,
+                            detail="Provincia no encontrada en el catálogo.")
+    existing: dict = {}
+    async for r in db.courier_municipality_rates.find(
+            {"province": {"$regex": f"^{re.escape(catalog_prov)}$",
+                          "$options": "i"}}, {"_id": 0}):
+        existing[normalize_text(r["municipality"])] = r
+    munis = []
+    for m in CUBA_PROVINCES[catalog_prov]:
+        ex = existing.get(normalize_text(m))
+        munis.append({
+            "municipality": m,
+            "configured": bool(ex),
+            "rate_id": ex["id"] if ex else None,
+            "price_usdt": ex.get("price_usdt") if ex else None,
+            "active": ex.get("active") if ex else None,
+        })
+    return {"province": catalog_prov, "municipalities": munis}
+
+
+@router.post("/admin/courier/municipality-rates/bulk")
+async def admin_bulk_create_rates(payload: dict, request: Request) -> Any:
+    """Activa en lote los municipios de una provincia. Cada ítem trae su PRECIO
+    (uno a uno): los que ya existen en esa provincia se actualizan y reactivan;
+    los nuevos se crean. Los municipios sin precio no se envían (se omiten)."""
+    actor = await require_permission(request, "deliveries")
+    province = (payload.get("province") or "").strip()
+    if len(province) < 3:
+        raise HTTPException(status_code=400, detail="Provincia requerida.")
+    items = payload.get("items") or []
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400,
+                            detail="Sin municipios para activar.")
+    if len(items) > 200:
+        raise HTTPException(status_code=400,
+                            detail="Demasiados municipios en una sola operación.")
+    existing: dict = {}
+    async for r in db.courier_municipality_rates.find(
+            {"province": {"$regex": f"^{re.escape(province)}$",
+                          "$options": "i"}}, {"_id": 0}):
+        existing[normalize_text(r["municipality"])] = r
+    created: list = []
+    updated: list = []
+    for it in items:
+        name = (it.get("municipality") or "").strip()
+        if len(name) < 3:
+            continue
+        price = _parse_price(it.get("price_usdt"))
+        ex = existing.get(normalize_text(name))
+        if ex:
+            await db.courier_municipality_rates.update_one(
+                {"id": ex["id"]},
+                {"$set": {"price_usdt": price, "active": True}})
+            updated.append(name)
+        else:
+            doc = {
+                "id": f"muni_{uuid.uuid4().hex[:10]}",
+                "municipality": name,
+                "province": province,
+                "price_usdt": price,
+                "aliases": [],
+                "active": True,
+            }
+            await db.courier_municipality_rates.insert_one(dict(doc))
+            created.append(name)
+    if not created and not updated:
+        raise HTTPException(status_code=400,
+                            detail="Pon al menos un precio válido para activar.")
+    await log_action(db, actor, "courier_muni_rate.bulk", "muni_rate", province,
+                     summary=(f"Provincia {province}: {len(created)} creados, "
+                              f"{len(updated)} actualizados"),
+                     details={"province": province, "created": created,
+                              "updated": updated})
+    return {"created": len(created), "updated": len(updated),
+            "created_names": created, "updated_names": updated}
 
 
 @router.put("/admin/courier/municipality-rates/{mid}")

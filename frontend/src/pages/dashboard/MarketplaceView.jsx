@@ -17,6 +17,7 @@ import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import MunicipalDeliveryPicker from "@/components/MunicipalDeliveryPicker";
 import OffersBanner from "@/components/OffersBanner";
+import DeliveryCoverageDialog from "@/components/DeliveryCoverageDialog";
 import { extractDetailMessage } from "@/utils/apiErrors";
 import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/units";
 
@@ -335,15 +336,18 @@ export default function MarketplaceView() {
       <BalanceConverterCard onConverted={loadBalances} />
 
       {/* iter221 — buscador instantáneo de productos */}
-      <div className="relative w-full sm:w-[340px]">
-        <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-        <Input
-          data-testid="marketplace-search-input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t("marketplace.searchPlaceholder")}
-          className="rounded-none pl-9 bg-[#0a0a0a] border-white/10 h-10"
-        />
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative w-full sm:w-[340px]">
+          <Search className="w-4 h-4 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <Input
+            data-testid="marketplace-search-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("marketplace.searchPlaceholder")}
+            className="rounded-none pl-9 bg-[#0a0a0a] border-white/10 h-10"
+          />
+        </div>
+        <DeliveryCoverageDialog />
       </div>
 
       {/* iter222 — chips de categoría · iter326 — chip de Ofertas */}
