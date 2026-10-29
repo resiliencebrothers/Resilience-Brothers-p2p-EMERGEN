@@ -111,12 +111,19 @@ async def get_rate_by_key(key: str,
     en esa provincia, devuelve None (nunca cae a un homónimo de otra). Sin
     `province`, cae al primer municipio con ese nombre (compat.)."""
     await seed_if_empty()
+    pnorm = normalize_text(province) if province else None
     row = await db.courier_municipality_rates.find_one(
         {"id": key, "active": True}, {"_id": 0})
     if row:
+        row.setdefault("province", "La Habana")
+        # MUNI-02-R — la fila hallada por ID debe pertenecer a la provincia
+        # indicada; con provincia incompatible NO se reinterpreta a la tarifa
+        # de otro territorio: se rechaza (None). La validación de provincia ya
+        # no vive solo en la búsqueda por nombre.
+        if pnorm and normalize_text(row.get("province")) != pnorm:
+            return None
         return row
     norm = normalize_text(key)
-    pnorm = normalize_text(province) if province else None
     fallback = None
     for r in await get_rates(active_only=True):
         if normalize_text(r["municipality"]) != norm:

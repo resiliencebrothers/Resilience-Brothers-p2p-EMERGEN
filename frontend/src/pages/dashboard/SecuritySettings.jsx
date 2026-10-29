@@ -2,7 +2,14 @@ import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { useTranslation } from "react-i18next";
 import { API } from "@/App";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
+import { LogOut } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import ProfileSectionTabs from "@/components/ProfileSectionTabs";
 import TwoFAStatusCard from "./security/TwoFAStatusCard";
 import TwoFASetupPanel from "./security/TwoFASetupPanel";
@@ -12,9 +19,11 @@ import PasswordChangeCard from "./security/PasswordChangeCard";
 
 export default function SecuritySettings({ embedded = false }) {
   const { t } = useTranslation();
+  const { logoutAll } = useAuth();
   const [status, setStatus] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [signOutAllBusy, setSignOutAllBusy] = useState(false);
   const [setupData, setSetupData] = useState(null); // { qr_data_url, secret, provisioning_uri }
   const [verifyCode, setVerifyCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -109,6 +118,17 @@ export default function SecuritySettings({ embedded = false }) {
   const copyText = (text) => {
     navigator.clipboard.writeText(text);
     toast.success(t("security.copied"));
+  };
+
+  const signOutEverywhere = async () => {
+    if (signOutAllBusy) return;
+    setSignOutAllBusy(true);
+    try {
+      await logoutAll();   // redirige al inicio al completarse
+    } catch (e) {
+      toast.error(t("security.signOutAll.error"));
+      setSignOutAllBusy(false);
+    }
   };
 
   const submitPasswordChange = async () => {
@@ -248,6 +268,48 @@ export default function SecuritySettings({ embedded = false }) {
         onSubmit={submitPasswordChange}
         onSetSubmit={submitPasswordSet}
       />
+
+      <div className="tactile-card p-5 border border-red-500/20" data-testid="sign-out-all-card">
+        <div className="flex items-start gap-3">
+          <LogOut className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <h2 className="font-display text-lg">{t("security.signOutAll.title")}</h2>
+            <p className="text-neutral-500 text-sm mt-1">{t("security.signOutAll.desc")}</p>
+          </div>
+        </div>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <button
+              type="button"
+              data-testid="sign-out-all-btn"
+              disabled={signOutAllBusy}
+              className="mt-4 px-5 py-2.5 text-sm font-bold uppercase tracking-wider border border-red-500/50 text-red-300 hover:bg-red-500/10 transition-colors rounded-none disabled:opacity-50"
+            >
+              {signOutAllBusy ? t("security.signOutAll.working") : t("security.signOutAll.button")}
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none" data-testid="sign-out-all-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="font-display">{t("security.signOutAll.confirmTitle")}</AlertDialogTitle>
+              <AlertDialogDescription className="text-neutral-400">
+                {t("security.signOutAll.confirmBody")}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="sign-out-all-cancel" className="rounded-none bg-transparent border-white/20 text-white hover:bg-white/5">
+                {t("security.signOutAll.cancel")}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                data-testid="sign-out-all-confirm"
+                onClick={signOutEverywhere}
+                className="rounded-none bg-red-600 hover:bg-red-500 text-white"
+              >
+                {t("security.signOutAll.confirm")}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
     </div>
   );
 }

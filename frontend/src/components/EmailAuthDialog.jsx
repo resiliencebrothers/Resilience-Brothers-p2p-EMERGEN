@@ -15,7 +15,7 @@ import { AuthCredentialsFields } from "./auth/AuthCredentialsFields";
 import { Turnstile } from "@marsidev/react-turnstile";
 import { getTheme } from "@/lib/theme";
 import { roleHome } from "@/lib/roleHome";
-import { User, Building2, ArrowRight } from "lucide-react";
+import { User, Building2, ArrowRight, AlertCircle } from "lucide-react";
 import CompanySignupDialog from "./CompanySignupDialog";
 
 const TITLES = {
@@ -51,6 +51,11 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [remember24h, setRemember24h] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
+  // Error visible EN el formulario (no solo un toast): con captcha el widget
+  // de Cloudflare muestra su propio "¡Operación exitosa!" y el usuario no veía
+  // el aviso de credenciales. Este banner deja claro "email o contraseña
+  // incorrectos" dentro del diálogo.
+  const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
   const [resending, setResending] = useState(false);
   const nameInputRef = useRef(null);
@@ -70,6 +75,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false);
     setName(""); setPhone(""); setRemember24h(false); setLoading(false);
     setSuccessMsg(""); setNotice(null); setMode("login"); setAccountType("personal");
+    setFormError("");
     setCaptchaToken(""); setCaptchaKey((k) => k + 1);
   };
 
@@ -127,7 +133,11 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     const message = typeof detail === "object" ? detail?.message : detail;
     const handler = code && ERROR_CODE_HANDLERS[code];
     if (handler) { handler(message); return; }
-    toast.error(typeof message === "string" ? message : "Error de autenticación");
+    const text = typeof message === "string" ? message : "Error de autenticación";
+    // Aviso INLINE persistente + toast: el usuario ve "email o contraseña
+    // incorrectos" dentro del formulario, no solo el widget de Cloudflare.
+    setFormError(text);
+    toast.error(text);
   };
 
   const submit = async (e) => {
@@ -138,6 +148,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       return;
     }
     setLoading(true);
+    setFormError("");
     try {
       if (mode === "forgot") {
         await axios.post(`${API}/auth/forgot-password`, { email: email.trim() });
@@ -164,10 +175,18 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       onClose?.(); reset();
       navigate(roleHome(confirmed));
     } catch (err) {
+      // R2 — intento de login obsoleto (logout u otro login lo invalidó
+      // mientras esperaba): ignorar en silencio. Sin toast de éxito, sin
+      // redirección y sin mensaje de contraseña incorrecta.
+      if (err?.code === "AUTH_STALE") {
+        return;
+      }
       // AUTH-03 — credentials accepted but session not confirmed (cookie not
       // stored / network): recoverable, NEVER shown as "contraseña incorrecta".
       if (err?.code === "SESSION_UNCONFIRMED") {
-        toast.error("No pudimos confirmar tu sesión. Revisa tu conexión e inténtalo de nuevo.");
+        const msg = "No pudimos confirmar tu sesión. Revisa tu conexión e inténtalo de nuevo.";
+        setFormError(msg);
+        toast.error(msg);
       } else {
         handleAuthError(err);
       }
@@ -216,6 +235,16 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
           />
         ) : (
           <form onSubmit={submit} className="space-y-4">
+            {formError && (
+              <div
+                data-testid="auth-error-banner"
+                role="alert"
+                className="flex items-start gap-2 text-sm text-red-200 border border-red-500/40 bg-red-500/10 px-3 py-2.5 rounded-none"
+              >
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+                <span>{formError}</span>
+              </div>
+            )}
             <AuthNotice
               notice={notice}
               onSwitchToRegister={switchToRegisterFromNotice}
@@ -297,7 +326,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword}
               showPassword={showPassword} setShowPassword={setShowPassword}
               nameInputRef={nameInputRef}
-              onEmailChange={() => { if (notice) setNotice(null); }}
+              onEmailChange={() => { if (notice) setNotice(null); if (formError) setFormError(""); }}
             />
 
             {mode === "login" && (
@@ -344,7 +373,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               <button
                 type="button"
                 data-testid="auth-toggle-mode"
-                onClick={() => setMode(mode === "login" ? "register" : "login")}
+                onClick={() => { setFormError(""); setMode(mode === "login" ? "register" : "login"); }}
                 className="text-xs text-neutral-400 hover:text-[#8B5CF6] underline underline-offset-4"
               >
                 {mode === "register"
@@ -358,7 +387,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                   <button
                     type="button"
                     data-testid="auth-forgot-link"
-                    onClick={() => setMode("forgot")}
+                    onClick={() => { setFormError(""); setMode("forgot"); }}
                     className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4"
                   >
                     ¿Olvidaste tu contraseña?

@@ -3047,6 +3047,17 @@
     }
   },
   "security": {
+    "signOutAll": {
+      "title": "Cerrar sesión en todos los dispositivos",
+      "desc": "Si sospechas que alguien más tiene acceso a tu cuenta, cierra todas las sesiones abiertas. Tendrás que volver a iniciar sesión en cada dispositivo.",
+      "button": "Cerrar todas las sesiones",
+      "working": "Cerrando…",
+      "confirmTitle": "¿Cerrar sesión en todos los dispositivos?",
+      "confirmBody": "Se cerrará tu sesión en este y en cualquier otro dispositivo. Tendrás que iniciar sesión de nuevo.",
+      "cancel": "Cancelar",
+      "confirm": "Sí, cerrar todas",
+      "error": "No pudimos cerrar las sesiones. Inténtalo de nuevo."
+    },
     "loading": "Cargando…",
     "loadError": "Error al cargar estado 2FA",
     "title": "Verificación en Dos Pasos",

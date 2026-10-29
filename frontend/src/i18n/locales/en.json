@@ -3047,6 +3047,17 @@
     }
   },
   "security": {
+    "signOutAll": {
+      "title": "Sign out on all devices",
+      "desc": "If you suspect someone else has access to your account, close every open session. You'll need to sign in again on each device.",
+      "button": "Sign out everywhere",
+      "working": "Signing out…",
+      "confirmTitle": "Sign out on all devices?",
+      "confirmBody": "This signs you out on this and every other device. You'll have to sign in again.",
+      "cancel": "Cancel",
+      "confirm": "Yes, sign out everywhere",
+      "error": "We couldn't close the sessions. Please try again."
+    },
     "loading": "Loading…",
     "loadError": "Error loading 2FA state",
     "title": "Two-Factor Verification",

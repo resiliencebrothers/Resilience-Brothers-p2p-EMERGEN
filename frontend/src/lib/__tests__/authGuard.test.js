@@ -8,6 +8,7 @@ import {
   createAuthGeneration,
   reduceAuthCheck,
   confirmLoginIdentity,
+  signInAttemptVerdict,
 } from "../authGuard";
 
 const VALID = { user_id: "u1", role: "normal" };
@@ -91,8 +92,7 @@ describe("confirmLoginIdentity — confirmación de sesión (AUTH-03)", () => {
   });
 });
 
-describe("escenario compuesto AUTH-01 — /auth/me inicial atrasado no borra el login", () => {
-  // Modela el patrón real de AuthContext: la comprobación inicial captura su
+describe("escenario compuesto AUTH-01 — /auth/me inicial atrasado no borra el login", () => {  // Modela el patrón real de AuthContext: la comprobación inicial captura su
   // generación; el login la bumpea y aplica identidad; la vieja respuesta 401
   // resuelve DESPUÉS y, por ser obsoleta, NO debe tocar el estado.
   test("comprobación inicial pendiente → login correcto → 401 viejo ignorado", () => {
@@ -123,5 +123,68 @@ describe("escenario compuesto AUTH-01 — /auth/me inicial atrasado no borra el 
     // El usuario sigue autenticado; la respuesta vieja no lo expulsó.
     expect(state.user).toEqual(VALID);
     expect(state.status).toBe(AUTH_STATUS.AUTHENTICATED);
+  });
+});
+
+
+describe("signInAttemptVerdict — orden de respuestas del login (R1/R2)", () => {
+  test("login correcto y vigente → confirma e informa éxito", () => {
+    expect(signInAttemptVerdict({ stale: false, outcome: "authok" }))
+      .toEqual({ commit: true, reportSuccess: true, finalize: false, ignore: false });
+  });
+  test("R1 — login fallido (credenciales) vigente → finaliza estado, sin éxito", () => {
+    const v = signInAttemptVerdict({ stale: false, outcome: "httperror" });
+    expect(v.reportSuccess).toBe(false);
+    expect(v.finalize).toBe(true);     // nunca queda checking/loading colgado
+    expect(v.ignore).toBe(false);
+  });
+  test("R1 — confirmación /auth/me fallida vigente → finaliza estado, sin éxito", () => {
+    const v = signInAttemptVerdict({ stale: false, outcome: "unconfirmed" });
+    expect(v.reportSuccess).toBe(false);
+    expect(v.finalize).toBe(true);
+  });
+  test("R2 — intento obsoleto (logout en curso) → se ignora, nunca informa éxito", () => {
+    expect(signInAttemptVerdict({ stale: true, outcome: "authok" }))
+      .toEqual({ commit: false, reportSuccess: false, finalize: false, ignore: true });
+  });
+  test("R2 — obsoleto aun con fallo → se ignora y NO finaliza (lo dueña la nueva generación)", () => {
+    const v = signInAttemptVerdict({ stale: true, outcome: "httperror" });
+    expect(v.ignore).toBe(true);
+    expect(v.finalize).toBe(false);
+    expect(v.reportSuccess).toBe(false);
+  });
+});
+
+describe("escenario compuesto R2 — logout durante la confirmación invalida el login", () => {
+  test("login aceptado → logout bumpea generación → confirmación tardía NO informa éxito", () => {
+    const gen = createAuthGeneration();
+    // 1) signInWithPassword arranca: bump + captura su generación.
+    gen.bump();
+    const attemptGen = gen.current();
+    // 2) POST login OK; mientras espera /auth/me, ocurre un LOGOUT (bump).
+    gen.bump();   // logout invalida la generación del intento
+    // 3) Llega la confirmación tardía: el intento está obsoleto.
+    const stale = gen.isStale(attemptGen);
+    const verdict = signInAttemptVerdict({ stale, outcome: "authok" });
+    expect(stale).toBe(true);
+    expect(verdict.ignore).toBe(true);
+    expect(verdict.reportSuccess).toBe(false);   // sin toast de éxito ni navigate
+  });
+});
+
+describe("escenario compuesto R1 — login 401 no deja el estado colgado", () => {
+  test("comprobación inicial pendiente → login 401 vigente → finaliza (no checking)", () => {
+    const gen = createAuthGeneration();
+    const initialGen = gen.current();   // /auth/me inicial (checking)
+    // signInWithPassword: bump + intento.
+    gen.bump();
+    const attemptGen = gen.current();
+    // POST /auth/login → 401 (credenciales). El intento sigue vigente.
+    const stale = gen.isStale(attemptGen);
+    const verdict = signInAttemptVerdict({ stale, outcome: "httperror" });
+    expect(stale).toBe(false);
+    expect(verdict.finalize).toBe(true);   // dispara una re-resolución (checkAuth)
+    // La respuesta inicial atrasada es obsoleta y no toca el estado.
+    expect(gen.isStale(initialGen)).toBe(true);
   });
 });

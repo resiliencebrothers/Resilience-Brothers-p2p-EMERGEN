@@ -351,6 +351,29 @@ async def auth_logout(request: Request, response: Response) -> Any:
     return {"ok": True}
 
 
+@router.post("/auth/logout-all")
+async def auth_logout_all(request: Request, response: Response) -> Any:
+    """Cierra la sesión en TODOS los dispositivos (sospecha de acceso indebido).
+    Sube `session_version` con `$inc` ATÓMICO (invalida al instante cada sesión
+    emitida — ninguna supera la comprobación de versión en get_session_user) y
+    borra las filas de sesión del usuario como limpieza. La cookie actual queda
+    invalidada y se limpia: hay que volver a iniciar sesión en todas partes."""
+    user = await require_user(request)
+    await db.users.update_one({"user_id": user["user_id"]},
+                              {"$inc": {"session_version": 1}})
+    revoked = await db.user_sessions.delete_many({"user_id": user["user_id"]})
+    response.delete_cookie("session_token", path="/")
+    try:
+        from audit_log import log_action
+        await log_action(
+            db, user, "auth.logout_all", "user", user["user_id"],
+            summary="Cerró sesión en todos los dispositivos",
+            details={"sessions_revoked": revoked.deleted_count})
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"logout_all audit failed: {e}")
+    return {"ok": True, "sessions_revoked": revoked.deleted_count}
+
+
 # ============================================================
 # Email/password auth (iter16+) — register, verify, resend, login, reset
 # ============================================================

@@ -26,6 +26,17 @@ export class SessionUnconfirmedError extends Error {
   }
 }
 
+// R2 — thrown when a sign-in attempt is superseded by a newer generation
+// (logout or another login) while it awaited the network. The form must
+// ignore it silently: no success toast, no redirect, no credentials error.
+export class AuthAttemptStaleError extends Error {
+  constructor(message) {
+    super(message || "AUTH_STALE");
+    this.name = "AuthAttemptStaleError";
+    this.code = "AUTH_STALE";
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(null);
   const [status, setStatus] = useState(AUTH_STATUS.CHECKING);
@@ -79,14 +90,26 @@ export function AuthProvider({ children }) {
 
   const checkAuth = useCallback(async () => {
     const gen = authGen.current();
+    const MAX_ATTEMPTS = 3;
     let outcome;
-    try {
-      const res = await axios.get(`${API}/auth/me`, { withCredentials: true });
-      outcome = { ok: true, user: res.data };
-    } catch (err) {
-      const httpStatus = err?.response?.status;
-      outcome = { ok: false, httpStatus };
-      if (httpStatus !== 401) captureError(err, { stage: "auth_check" });
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await axios.get(`${API}/auth/me`, { withCredentials: true });
+        outcome = { ok: true, user: res.data };
+        break;
+      } catch (err) {
+        const httpStatus = err?.response?.status;
+        outcome = { ok: false, httpStatus };
+        if (httpStatus === 401) break;              // definitive — no retry
+        if (authGen.isStale(gen)) return null;       // a newer login/logout happened
+        // "Sesión más estable" — reintento automático breve ante cortes de red
+        // / 5xx para que el usuario rara vez vea la pantalla de reintento.
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 600 * attempt));
+          continue;
+        }
+        captureError(err, { stage: "auth_check" });  // only after the final try
+      }
     }
     // AUTH-01 — discard a response that predates a newer login/logout.
     if (authGen.isStale(gen)) return null;
@@ -130,6 +153,17 @@ export function AuthProvider({ children }) {
     window.location.href = "/";
   }, [authGen, clearIdentity]);
 
+  // "Cerrar sesión en todos los dispositivos" (sospecha de acceso indebido).
+  // El backend sube session_version (invalida TODA sesión emitida) y borra las
+  // filas de sesión; aquí limpiamos el estado local y volvemos al inicio. Hay
+  // que iniciar sesión de nuevo en todas partes.
+  const logoutAll = useCallback(async () => {
+    authGen.bump();
+    await axios.post(`${API}/auth/logout-all`, {}, { withCredentials: true });
+    clearIdentity(AUTH_STATUS.ANONYMOUS);
+    window.location.href = "/";
+  }, [authGen, clearIdentity]);
+
   const login = useCallback(() => {
     // iter22 — Custom Google OAuth (replaces auth.emergentagent.com).
     // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
@@ -143,30 +177,39 @@ export function AuthProvider({ children }) {
   const signInWithPassword = useCallback(async (body) => {
     authGen.bump();                      // discard any earlier mount /auth/me (AUTH-01)
     const gen = authGen.current();
-
-    // (1) Credentials. HTTP errors (401/403/429…) propagate unchanged so the
-    //     dialog shows the exact server message (wrong password, etc.).
-    const res = await axios.post(`${API}/auth/login`, body, { withCredentials: true });
-
-    // (3) Confirm the session really exists before granting access.
-    let confirmed;
     try {
-      const me = await axios.get(`${API}/auth/me`, { withCredentials: true });
-      confirmed = me.data;
-    } catch (err) {
-      throw new SessionUnconfirmedError("/auth/me did not confirm the session");
-    }
-    const verdict = confirmLoginIdentity(res.data, confirmed);
-    if (!verdict.ok) {
-      throw new SessionUnconfirmedError(verdict.reason);
-    }
-
-    if (!authGen.isStale(gen)) {
+      // (1) Credentials. HTTP errors (401/403/429…) propagate unchanged so the
+      //     dialog shows the exact server message (wrong password, etc.).
+      const res = await axios.post(`${API}/auth/login`, body, { withCredentials: true });
+      // R2 — if a newer generation (logout / another login) took over while we
+      // awaited, this attempt is OBSOLETE: stop now and NEVER report success.
+      if (authGen.isStale(gen)) throw new AuthAttemptStaleError();
+      // (3) Confirm the session really exists before granting access.
+      let confirmed;
+      try {
+        const me = await axios.get(`${API}/auth/me`, { withCredentials: true });
+        confirmed = me.data;
+      } catch (err) {
+        throw new SessionUnconfirmedError("/auth/me did not confirm the session");
+      }
+      if (authGen.isStale(gen)) throw new AuthAttemptStaleError();   // R2 (post-confirm)
+      const verdict = confirmLoginIdentity(res.data, confirmed);
+      if (!verdict.ok) throw new SessionUnconfirmedError(verdict.reason);
       applyIdentity(confirmed);
       setLoading(false);
+      return confirmed;
+    } catch (err) {
+      // R1 — ALWAYS finalize the provider state for this attempt so a protected
+      // route never stays stuck in checking/loading=true. A stale attempt is
+      // left to the newer generation; otherwise re-resolve the real session (a
+      // failed login does not prove there is no prior valid cookie) — checkAuth
+      // sets a definite status + loading=false.
+      if (err?.code !== "AUTH_STALE" && !authGen.isStale(gen)) {
+        checkAuth();
+      }
+      throw err;
     }
-    return confirmed;
-  }, [authGen, applyIdentity]);
+  }, [authGen, applyIdentity, checkAuth]);
 
   // Commit an identity obtained out of band (Google OAuth callback). Bumps the
   // generation and validates the contract just like the password flow.
@@ -187,13 +230,14 @@ export function AuthProvider({ children }) {
       loading,
       setUser,
       logout,
+      logoutAll,
       login,
       signInWithPassword,
       commitSession,
       refresh: checkAuth,
       retry: checkAuth,
     }),
-    [user, status, loading, setUser, logout, login, signInWithPassword, commitSession, checkAuth]
+    [user, status, loading, setUser, logout, logoutAll, login, signInWithPassword, commitSession, checkAuth]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

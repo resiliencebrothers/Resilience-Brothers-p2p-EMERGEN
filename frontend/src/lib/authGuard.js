@@ -69,3 +69,25 @@ export function confirmLoginIdentity(loginUser, meUser) {
   if (loginUser.user_id !== meUser.user_id) return { ok: false, reason: "mismatch" };
   return { ok: true };
 }
+
+/**
+ * R1/R2 — decide what a FINISHING sign-in attempt may do, given whether a newer
+ * generation (logout / another login) took over while it awaited the network.
+ * @param {{stale: boolean, outcome: "authok"|"unconfirmed"|"httperror"}} p
+ * Returns the booleans the AuthProvider + form use so the ordering is testable.
+ */
+export function signInAttemptVerdict({ stale, outcome }) {
+  // R2 — superseded attempt: ignore entirely. Never commit, never report
+  // success (even if the confirmation itself was OK), never finalize state
+  // (the newer generation owns it).
+  if (stale) {
+    return { commit: false, reportSuccess: false, finalize: false, ignore: true };
+  }
+  if (outcome === "authok") {
+    return { commit: true, reportSuccess: true, finalize: false, ignore: false };
+  }
+  // R1 — failure (bad credentials / unconfirmed session): the attempt MUST
+  // finalize the provider state (never leave it stuck in checking/loading) and
+  // surface the error to the user.
+  return { commit: false, reportSuccess: false, finalize: true, ignore: false };
+}
