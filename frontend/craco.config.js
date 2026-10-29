@@ -97,4 +97,16 @@ if (isDevServer) {
   }
 }
 
+// Jest: resolve the "@/..." alias used across the app (mirrors the webpack
+// alias above) so unit tests can import modules by their app-root path.
+webpackConfig.jest = {
+  configure: (jestConfig) => {
+    jestConfig.moduleNameMapper = {
+      ...(jestConfig.moduleNameMapper || {}),
+      "^@/(.*)$": "<rootDir>/src/$1",
+    };
+    return jestConfig;
+  },
+};
+
 module.exports = webpackConfig;

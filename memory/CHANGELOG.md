@@ -2829,3 +2829,25 @@ Entrega del primer frontend para que las Empresas aprobadas ofrezcan **servicios
 - **Decisión de diseño (requisito del operador):** editar un servicio **publicado** NO lo devuelve a `pending` — es exactamente el comportamiento de `vendor_products`/`company` (solo los `rejected` vuelven a revisión al reenviarse). El informe de testing lo marcó como "moderation bypass HIGH", pero se mantiene intencionalmente por consistencia con los productos. Cualquier cambio futuro debe aplicarse a productos Y servicios a la vez.
 - **Verificado:** `tests/test_services_phase1.py` **10/10**; testing agent iteration_379 (7 flujos E2E: alta Empresa, borrador→pendiente→publicado, rechazo+reenvío, categorías CRUD, pestaña Servicios del cliente con filtros). Smoke de navegador en preview (sesión `svc_fork_vip`): pestaña Servicios renderiza, cabecera "Mercado de servicios" correcta, tarjeta + chips OK. Datos sembrados limpiados (0 servicios residuales; 10 categorías admin conservadas).
 - **Fase 2 (backlog):** reserva de turno + cobro en línea (saldo USDT/efectivo), calendario con `blocked_dates` en UI shadcn, i18n EN de los textos de servicios, badge "Pausado" también en la cola admin.
+
+---
+
+## 2026-10-29 — Reverificación de auditorías: login resiliente + tarifa municipal del checkout
+
+Dos auditorías heredadas (commit base `48d0626`) pedían confirmar si sus errores restantes ya estaban corregidos. Respuesta: **no lo estaban**; se corrigieron y verificaron ahora.
+
+### Login (RESILIENCE — Revisión de correcciones de login)
+- **Residual cerrado:** en `frontend/src/context/AuthContext.jsx` `signInWithPassword`, el `catch` exterior reportaba el `SessionUnconfirmedError` interno incluso cuando el intento ya era OBSOLETO (un logout u otro login lo invalidó mientras esperaba el `/auth/me` de confirmación). Ahora la PRIMERA comprobación del catch es la obsolescencia: un intento stale lanza `AuthAttemptStaleError` (`AUTH_STALE`) — que el formulario ignora en silencio — y nunca un `SESSION_UNCONFIRMED` tardío. El intento VIGENTE conserva su comportamiento (re-resuelve sesión vía `checkAuth()` y propaga el error real). Consultado `integration_expert` (cambio de auth) y confirmó el orden exacto.
+- **Prueba de nivel-proveedor (gap señalado por la auditoría):** nuevo `frontend/src/context/__tests__/AuthContext.signin.test.jsx` que ejecuta el `signInWithPassword` REAL con red interpuesta a mano: RESIDUAL (logout a mitad de confirmación → `AUTH_STALE`), CONTROL (fallo de confirmación vigente → `SESSION_UNCONFIRMED`) y HAPPY (autenticado). Añadido alias `@` de Jest en `craco.config.js`. **30/30** pruebas de auth pasan (27 helpers + 3 proveedor); lint limpio.
+
+### Tarifa municipal del marketplace (Reverificación focalizada — checkout)
+Contrato ÚNICO y ESTRICTO para entrega a domicilio en `backend/routes/orders.py` `redeem_product` (se valida el destino ANTES de cualquier efecto económico, igual para envío gratis o de pago):
+- **MUNI-06-R:** dirección (≥6) y teléfono de contacto válidos son OBLIGATORIOS SIEMPRE (ya no dependían de enviar municipio).
+- **MUNI-02-R:** municipio OBLIGATORIO y debe resolver a cobertura ACTIVA; municipio ausente → `COURIER_NO_MUNICIPALITY`; sin cobertura / provincia incoherente → `COURIER_NO_COVERAGE`. Se eliminó el camino `manual_review` y la detección silenciosa por texto en el checkout (omitir un campo ya no abre un contrato económico más laxo).
+- **MUNI-04-R:** aceptación del importe de mensajería OBLIGATORIA (importe finito, incluido 0); ausencia/null → `COURIER_FEE_UNCONFIRMED`; el guard anti-sorpresa existente (409 `COURIER_FEE_CHANGED`) se conserva.
+- **MUNI-Q01 (portabilidad):** `tests/test_iter373_municipality_delivery.py` ahora usa los tokens canónicos sembrados por `conftest` (`VIP_TOKEN`/`ADMIN_TOKEN`, reinyectados antes de cada test) en vez de `muni_smoke_*` sembrados a mano, y fondea/restaura el saldo del VIP para ser REPETIBLE. Sesiones `muni_smoke_*` sueltas eliminadas.
+- **Frontend sin cambios:** `MarketplaceView.jsx` ya exigía municipio explícito + dirección + teléfono + aceptación de tarifa (botón confirmar deshabilitado si no), así que el contrato estricto del servidor no rompe la UI real; sólo cierra la puerta trasera de llamadas directas a la API.
+- **Verificado:** `tests/test_iter373_municipality_delivery.py` **20/20** en dos corridas consecutivas (4 pruebas negativas nuevas: municipio ausente, sólo-texto sin municipio, tarifa no confirmada, provincia incoherente por id). Smoke de navegador: landing + auth renderizan OK tras el cambio de `AuthContext`.
+
+### Pendiente (sin tocar en esta sesión)
+- Fase 2 de Servicios de Empresas (reserva de turno + cobro USDT, calendario shadcn con `blocked_dates`, i18n EN de servicios) sigue en backlog.

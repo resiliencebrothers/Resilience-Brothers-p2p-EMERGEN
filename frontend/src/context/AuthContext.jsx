@@ -202,14 +202,20 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return confirmed;
     } catch (err) {
-      // R1 — ALWAYS finalize the provider state for this attempt so a protected
-      // route never stays stuck in checking/loading=true. A stale attempt is
-      // left to the newer generation; otherwise re-resolve the real session (a
-      // failed login does not prove there is no prior valid cookie) — checkAuth
-      // sets a definite status + loading=false.
-      if (err?.code !== "AUTH_STALE" && !authGen.isStale(gen)) {
-        checkAuth();
+      // RESIDUAL (auditoría login) — un intento OBSOLETO (un logout u otro
+      // login lo invalidó mientras esperaba) NUNCA publica su error tardío:
+      // tanto un POST antiguo fallido como un /auth/me de confirmación fallido
+      // se reportan como AUTH_STALE, de modo que el formulario no muestre aviso
+      // de «sesión no confirmada», toast ni navegación de un intento ya
+      // abandonado. Esta comprobación debe ser lo PRIMERO del catch exterior.
+      if (authGen.isStale(gen)) {
+        throw err?.code === "AUTH_STALE" ? err : new AuthAttemptStaleError();
       }
+      // R1 — solo el intento VIGENTE finaliza el estado del proveedor para que
+      // una ruta protegida nunca quede en checking/loading=true: re-resuelve la
+      // sesión real (un login fallido no prueba que no exista una cookie válida
+      // previa) con estado definitivo + loading=false, y propaga el error real.
+      checkAuth();
       throw err;
     }
   }, [authGen, applyIdentity, checkAuth]);

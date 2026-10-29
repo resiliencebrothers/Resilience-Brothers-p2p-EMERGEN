@@ -607,77 +607,74 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     courier_fee_method = ""
     cq = {"rate_usdt_per_km": 0.0, "min_fee_usdt": 0.0}
     if pickup_store is None:
-        from services.courier_fee import (quote_courier_fee,
-                                          municipality_fallback_quote)
-        # MUNI-06 — entrega a domicilio: dirección completa y teléfono de
-        # contacto válidos son OBLIGATORIOS (el mensajero los necesita). No
-        # aplica a recogida en tienda. Solo rige el flujo NUEVO (con municipio
-        # explícito elegido en el mapa); los flujos legados por texto no cambian.
+        from services.courier_fee import municipality_fallback_quote
+        # Entrega a domicilio — CONTRATO ÚNICO Y ESTRICTO (cierre de auditoría
+        # municipal MUNI-02-R / MUNI-04-R / MUNI-06-R). ANTES de CUALQUIER
+        # efecto económico (crear/reservar/cobrar) se valida SIEMPRE el destino
+        # completo, tanto si el envío resulta gratis como de pago:
+        #   1) MUNI-06-R — dirección y teléfono de contacto (no dependen de que
+        #      se envíe municipio; omitir un campo RECHAZA, no desactiva otro);
+        #   2) MUNI-02-R — municipio ACTIVO con cobertura y provincia coherente
+        #      (destino resuelto por el servidor); ausente o inválido → rechazo;
+        #   3) MUNI-04-R — aceptación EXPLÍCITA del importe de mensajería
+        #      (importe finito, incluido 0); ausencia/null → rechazo.
+        # La consulta sin cobertura vive aparte (endpoints de cotización): omitir
+        # un campo del checkout nunca abre un contrato económico más laxo.
         muni_key = (payload.courier_municipality or "").strip()
         _addr = (payload.delivery_address or "").strip()
-        if muni_key and len(_addr) < 6:
+        _province = (payload.courier_province or "").strip() or None
+        # (1) MUNI-06-R — dirección y teléfono SIEMPRE obligatorios.
+        if len(_addr) < 6:
             raise HTTPException(
                 status_code=400,
                 detail="Escribe una dirección de entrega completa.")
-        if muni_key and not _valid_phone(payload.receiver_phone or ""):
+        if not _valid_phone(payload.receiver_phone or ""):
             raise HTTPException(
                 status_code=400,
                 detail="Escribe un teléfono de contacto válido para la entrega.")
-        # iter256(S09) — la tarifa se cotiza en la MONEDA DE LIQUIDACIÓN (USDT).
-        cq = await quote_courier_fee("USDT", total)
-        if cq["free"]:
-            # Envío gratis por valor del pedido (umbral aprobado): igualmente
-            # guardamos el municipio elegido como referencia de reparto.
+        # (2) MUNI-02-R — municipio de entrega OBLIGATORIO. Sin él no se puede
+        # resolver el destino: se rechaza (no se cae a revisión manual ni a
+        # detección silenciosa por texto, que cobraría una tarifa no elegida).
+        if not muni_key:
+            raise HTTPException(
+                status_code=400,
+                detail=("COURIER_NO_MUNICIPALITY|Elige el municipio de entrega "
+                        "para calcular la mensajería."))
+        # El destino debe resolver a una cobertura ACTIVA; get_rate_by_key
+        # devuelve None si el id/nombre no existe, está inactivo o su provincia
+        # no coincide con la enviada. Vale igual para gratis y de pago: primero
+        # se valida el destino, luego se decide la tarifa.
+        mq = await municipality_fallback_quote(
+            _addr, "USDT", total, municipality_key=muni_key, province=_province)
+        if not mq:
+            raise HTTPException(
+                status_code=400,
+                detail=("COURIER_NO_COVERAGE|Ese municipio aún no tiene "
+                        "entrega a domicilio. Recoge en tienda o "
+                        "escríbenos para coordinar."))
+        # (3) MUNI-04-R — la aceptación del importe de mensajería es obligatoria.
+        if payload.expected_courier_fee_usdt is None:
+            raise HTTPException(
+                status_code=400,
+                detail=("COURIER_FEE_UNCONFIRMED|Confirma el importe de la "
+                        "mensajería antes de pagar."))
+        # Destino válido: ahora se decide gratis vs cobrado con ESA cobertura.
+        # MUNI-01 — el cobro fijo por municipio NO depende del interruptor de
+        # precio por km; solo el umbral de envío gratis por valor lo pone a 0.
+        cq = mq
+        courier_muni = mq.get("municipality")
+        courier_muni_id = mq.get("municipality_id") or muni_key
+        courier_province = mq.get("province")
+        courier_fee_method = "municipality"
+        if mq.get("free"):
             courier_status = "free"
-            if muni_key:
-                mref = await municipality_fallback_quote(
-                    _addr, "USDT", total,
-                    municipality_key=muni_key,
-                    province=(payload.courier_province or "").strip() or None)
-                if mref:
-                    courier_muni = mref.get("municipality")
-                    courier_muni_id = mref.get("municipality_id")
-                    courier_province = mref.get("province")
-                    courier_fee_method = "municipality"
         else:
-            # Prop. Tarifa-Municipio — TARIFA FIJA POR MUNICIPIO (método
-            # principal de entrega a domicilio): el municipio elegido (o el
-            # detectado en el texto de la dirección) determina el envío. No se
-            # geocodifica ni se mide distancia; el GPS es opcional y solo sirve
-            # de referencia para el mensajero. MUNI-01 — el cobro fijo NO
-            # depende del interruptor de precio por km.
-            mq = await municipality_fallback_quote(
-                _addr, "USDT", total,
-                municipality_key=muni_key or None,
-                province=(payload.courier_province or "").strip() or None)
-            if mq and mq.get("fee_usdt", 0) > 0:
-                courier_status = "charged"
-                courier_km = 0.0
-                courier_fee_usdt = mq["fee_usdt"]
-                courier_fee_usd = mq["fee_currency_amount"]
-                courier_muni = mq["municipality"]
-                courier_muni_id = mq.get("municipality_id") or muni_key or None
-                courier_province = mq.get("province")
-                courier_price_snap = mq.get("municipality_price_usdt",
-                                            courier_fee_usdt)
-                courier_fee_method = "municipality"
-            elif muni_key:
-                # MUNI-02 — el cliente eligió un municipio EXPLÍCITO pero no
-                # tiene cobertura (o la tarifa se quitó entre la vista previa y
-                # la confirmación): NO se cobra ni se procesa en silencio. Se
-                # rechaza ANTES de cualquier efecto económico para que la UI
-                # mantenga el carrito y ofrezca recoger en tienda o contactar.
-                raise HTTPException(
-                    status_code=400,
-                    detail=("COURIER_NO_COVERAGE|Ese municipio aún no tiene "
-                            "entrega a domicilio. Recoge en tienda o "
-                            "escríbenos para coordinar."))
-            else:
-                # Compat — sin municipio explícito (detección por texto o
-                # llamada directa a la API): la compra a domicilio queda en
-                # revisión manual para que el staff coordine/cotice el reparto
-                # (no se cobra tarifa aquí).
-                courier_status = "manual_review"
+            courier_status = "charged"
+            courier_km = 0.0
+            courier_fee_usdt = mq["fee_usdt"]
+            courier_fee_usd = mq["fee_currency_amount"]
+            courier_price_snap = mq.get("municipality_price_usdt",
+                                        courier_fee_usdt)
     # Anti-sorpresa de mensajería: si la tarifa del municipio cambió entre la
     # vista previa y la confirmación, no cobrar el nuevo importe sin avisar.
     if payload.expected_courier_fee_usdt is not None and \

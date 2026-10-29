@@ -4,6 +4,11 @@ import uuid
 import pytest
 import requests
 from pymongo import MongoClient
+# MUNI-Q01 (portabilidad) — usar los tokens canónicos que conftest siembra y
+# re-verifica ANTES de cada test (`_autoseed_sessions`), en vez de tokens
+# `muni_smoke_*` que ningún arnés creaba. Así la suite corre en cualquier
+# entorno (local o CI) sin depender de sesiones sembradas a mano.
+from conftest import VIP_TOKEN, ADMIN_TOKEN
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 if not BASE_URL:
@@ -32,12 +37,12 @@ def _s(tok):
 
 @pytest.fixture(scope="module")
 def vip():
-    return _s("muni_smoke_vip")
+    return _s(VIP_TOKEN)
 
 
 @pytest.fixture(scope="module")
 def admin():
-    return _s("muni_smoke_admin")
+    return _s(ADMIN_TOKEN)
 
 
 @pytest.fixture(scope="module")
@@ -64,6 +69,22 @@ def product():
 def _bal():
     u = mdb.users.find_one({"user_id": "user_test_vip01"}, {"_id": 0})
     return float((u.get("vip_balances") or {}).get("USDT", 0))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _fund_vip():
+    """Repetibilidad — los tests de compra GASTAN saldo USDT real de forma
+    irreversible, así que en una 2ª corrida el saldo se agota y fallan. Fijamos
+    un saldo conocido y amplio antes del módulo y restauramos el original al
+    final, dejando la BD como estaba."""
+    u = mdb.users.find_one({"user_id": "user_test_vip01"},
+                           {"_id": 0, "vip_balances": 1}) or {}
+    prev = (u.get("vip_balances") or {}).get("USDT", 0)
+    mdb.users.update_one({"user_id": "user_test_vip01"},
+                         {"$set": {"vip_balances.USDT": 100000.0}})
+    yield
+    mdb.users.update_one({"user_id": "user_test_vip01"},
+                         {"$set": {"vip_balances.USDT": prev}})
 
 
 def _redeem(vip, **kw):
@@ -141,24 +162,57 @@ class TestRedeem:
         assert doc["courier_municipality"] == "Vedado"
         assert doc["courier_province"] == "La Habana"
 
-    def test_compat_manual_review(self, vip, product):
+    def test_missing_municipality_rejected(self, vip, product):
+        """MUNI-02-R — SIN municipio explícito la compra a domicilio se RECHAZA
+        antes de cualquier efecto económico: ya no cae a revisión manual ni a
+        detección silenciosa por texto. El saldo queda intacto."""
+        b0 = _bal()
         r = _redeem(vip, product_id=product, quantity=1,
                     delivery_address="Some unknown place 123 zzz",
-                    receiver_phone="+5355555555")
-        assert r.status_code == 200, r.text
-        doc = mdb.redemptions.find_one({"id": r.json()["id"]}, {"_id": 0})
-        assert doc["courier_fee_status"] == "manual_review"
-        assert doc["courier_fee_usdt"] == 0
+                    receiver_phone="+5355555555", expected_courier_fee_usdt=0)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"].startswith("COURIER_NO_MUNICIPALITY")
+        assert abs(_bal() - b0) < 0.001
 
-    def test_compat_detect_from_text(self, vip, product):
+    def test_text_only_without_municipality_rejected(self, vip, product):
+        """MUNI-02-R — aunque el municipio aparezca en el TEXTO de la dirección,
+        omitir el municipio EXPLÍCITO ya no abre un contrato de cobro: se exige
+        el destino resuelto por el servidor, no la detección por texto."""
+        b0 = _bal()
         r = _redeem(vip, product_id=product, quantity=1,
                     delivery_address="Calle 23, Vedado, La Habana",
-                    receiver_phone="+5355555555")
-        assert r.status_code == 200, r.text
-        doc = mdb.redemptions.find_one({"id": r.json()["id"]}, {"_id": 0})
-        assert doc["courier_fee_status"] == "charged"
-        assert doc["courier_municipality"] == "Vedado"
-        assert doc["courier_fee_usdt"] == 3.0
+                    receiver_phone="+5355555555", expected_courier_fee_usdt=3.0)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"].startswith("COURIER_NO_MUNICIPALITY")
+        assert abs(_bal() - b0) < 0.001
+
+    def test_missing_expected_fee_rejected(self, vip, product, vedado):
+        """MUNI-04-R — la aceptación del importe de mensajería es OBLIGATORIA
+        para entrega a domicilio: omitir expected_courier_fee_usdt se rechaza
+        ANTES de cobrar; el saldo queda intacto."""
+        b0 = _bal()
+        r = _redeem(vip, product_id=product, quantity=1,
+                    delivery_address="Calle 23 #456, Vedado",
+                    receiver_phone="+5355555555",
+                    courier_municipality=vedado["id"], courier_province="La Habana")
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"].startswith("COURIER_FEE_UNCONFIRMED")
+        assert abs(_bal() - b0) < 0.001
+
+    def test_province_mismatch_by_id_rejected(self, vip, product, vedado):
+        """MUNI-02-R — un id de municipio VÁLIDO con una provincia que NO
+        coincide no se reinterpreta a la tarifa de otro territorio: se rechaza
+        como sin cobertura, antes de cobrar. El saldo queda intacto."""
+        b0 = _bal()
+        r = _redeem(vip, product_id=product, quantity=1,
+                    delivery_address="Calle 23 #456, Vedado",
+                    receiver_phone="+5355555555",
+                    courier_municipality=vedado["id"],
+                    courier_province="TEST_Otra Provincia",
+                    expected_courier_fee_usdt=3.0)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"].startswith("COURIER_NO_COVERAGE")
+        assert abs(_bal() - b0) < 0.001
 
     def test_fee_changed_409(self, vip, product, vedado):
         b0 = _bal()
