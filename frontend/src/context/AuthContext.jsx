@@ -3,40 +3,112 @@ import axios from "axios";
 import { API } from "@/App";
 import { setSentryUser, captureError } from "@/sentry";
 import { applyServerLanguage } from "@/lib/langSync";
+import {
+  AUTH_STATUS,
+  isValidUser,
+  createAuthGeneration,
+  reduceAuthCheck,
+  confirmLoginIdentity,
+} from "@/lib/authGuard";
+
+export { AUTH_STATUS };
 
 const AuthContext = createContext(null);
 
+// Thrown when credentials were accepted but the session could not be confirmed
+// (cookie not stored, /auth/me not recognising it, identity drift). The UI
+// shows "No se pudo confirmar la sesión" — never "contraseña incorrecta".
+export class SessionUnconfirmedError extends Error {
+  constructor(message) {
+    super(message || "SESSION_UNCONFIRMED");
+    this.name = "SessionUnconfirmedError";
+    this.code = "SESSION_UNCONFIRMED";
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUserState] = useState(null);
+  const [status, setStatus] = useState(AUTH_STATUS.CHECKING);
   const [loading, setLoading] = useState(true);
+
+  // Mirror of `user` readable inside async closures without re-creating them.
+  const userRef = useRef(null);
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  // AUTH-01 — monotonic auth generation shared by every auth response.
+  const authGenRef = useRef(null);
+  if (authGenRef.current === null) authGenRef.current = createAuthGeneration();
+  const authGen = authGenRef.current;
+
   // iter55.36p — guard against React.StrictMode's intentional double-invoke of
-  // useEffect (dev + preview builds). Without this, /api/auth/me is hit twice on
-  // every hard-refresh, which produces spurious 401 pairs in the browser
-  // console whenever the session cookie hasn't fully propagated yet.
+  // the mount effect so the initial /auth/me does not fire twice.
   const initialAuthChecked = useRef(false);
 
+  const clearIdentity = useCallback((nextStatus) => {
+    setUserState(null);
+    userRef.current = null;
+    setSentryUser(null);
+    setStatus(nextStatus);
+  }, []);
+
+  const applyIdentity = useCallback((data) => {
+    setUserState(data);
+    userRef.current = data;
+    setStatus(AUTH_STATUS.AUTHENTICATED);
+    setSentryUser(data);
+    // iter67/iter154 — follow the user's saved UI language across devices.
+    applyServerLanguage(data);
+  }, []);
+
+  // Raw setter kept for callers that patch an already-authenticated identity in
+  // place (e.g. onboarding flag). It never resets the generation.
+  const setUser = useCallback((next) => {
+    setUserState((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      userRef.current = value;
+      if (isValidUser(value)) {
+        setStatus(AUTH_STATUS.AUTHENTICATED);
+        setSentryUser(value);
+      } else if (value == null) {
+        setStatus(AUTH_STATUS.ANONYMOUS);
+        setSentryUser(null);
+      }
+      return value;
+    });
+  }, []);
+
   const checkAuth = useCallback(async () => {
+    const gen = authGen.current();
+    let outcome;
     try {
       const res = await axios.get(`${API}/auth/me`, { withCredentials: true });
-      setUser(res.data);
-      setSentryUser(res.data);
-      // iter67/iter154 — Sync UI language with the user's server-side
-      // preference so it follows them across devices. Users without a saved
-      // preference adopt the current device language as their global default.
-      applyServerLanguage(res.data);
+      outcome = { ok: true, user: res.data };
     } catch (err) {
-      if (err?.response?.status !== 401) {
-        captureError(err, { stage: "auth_check" });
-      }
-      setUser(null);
-      setSentryUser(null);
-    } finally {
-      setLoading(false);
+      const httpStatus = err?.response?.status;
+      outcome = { ok: false, httpStatus };
+      if (httpStatus !== 401) captureError(err, { stage: "auth_check" });
     }
-  }, []);
+    // AUTH-01 — discard a response that predates a newer login/logout.
+    if (authGen.isStale(gen)) return null;
+    if (outcome.ok && isValidUser(outcome.user)) {
+      applyIdentity(outcome.user);
+      setLoading(false);
+      return outcome.user;
+    }
+    // AUTH-02 — transient errors keep a confirmed session alive.
+    const next = reduceAuthCheck({ user: userRef.current }, outcome);
+    if (next.user) {
+      setStatus(AUTH_STATUS.AUTHENTICATED);
+    } else {
+      clearIdentity(next.status);
+    }
+    setLoading(false);
+    return null;
+  }, [authGen, applyIdentity, clearIdentity]);
 
   useEffect(() => {
     if (window.location.hash?.includes("session_id=")) {
+      // Google OAuth callback handles its own commit; skip the mount check.
       setLoading(false);
       return;
     }
@@ -46,15 +118,17 @@ export function AuthProvider({ children }) {
   }, [checkAuth]);
 
   const logout = useCallback(async () => {
+    // AUTH-01 — invalidate every in-flight auth response before clearing so a
+    // late success cannot restore the just-logged-out identity.
+    authGen.bump();
     try {
       await axios.post(`${API}/auth/logout`, {}, { withCredentials: true });
     } catch (err) {
       captureError(err, { stage: "logout" });
     }
-    setUser(null);
-    setSentryUser(null);
+    clearIdentity(AUTH_STATUS.ANONYMOUS);
     window.location.href = "/";
-  }, []);
+  }, [authGen, clearIdentity]);
 
   const login = useCallback(() => {
     // iter22 — Custom Google OAuth (replaces auth.emergentagent.com).
@@ -62,9 +136,64 @@ export function AuthProvider({ children }) {
     window.location.href = `${API}/auth/google/login`;
   }, []);
 
+  // AUTH-03 — single entry point for email/password sign-in. Announces success
+  // ONLY after (1) the server accepts the credentials, (2) the returned object
+  // matches the user contract, and (3) an authenticated /auth/me confirms the
+  // session cookie persisted and resolves to the SAME identity.
+  const signInWithPassword = useCallback(async (body) => {
+    authGen.bump();                      // discard any earlier mount /auth/me (AUTH-01)
+    const gen = authGen.current();
+
+    // (1) Credentials. HTTP errors (401/403/429…) propagate unchanged so the
+    //     dialog shows the exact server message (wrong password, etc.).
+    const res = await axios.post(`${API}/auth/login`, body, { withCredentials: true });
+
+    // (3) Confirm the session really exists before granting access.
+    let confirmed;
+    try {
+      const me = await axios.get(`${API}/auth/me`, { withCredentials: true });
+      confirmed = me.data;
+    } catch (err) {
+      throw new SessionUnconfirmedError("/auth/me did not confirm the session");
+    }
+    const verdict = confirmLoginIdentity(res.data, confirmed);
+    if (!verdict.ok) {
+      throw new SessionUnconfirmedError(verdict.reason);
+    }
+
+    if (!authGen.isStale(gen)) {
+      applyIdentity(confirmed);
+      setLoading(false);
+    }
+    return confirmed;
+  }, [authGen, applyIdentity]);
+
+  // Commit an identity obtained out of band (Google OAuth callback). Bumps the
+  // generation and validates the contract just like the password flow.
+  const commitSession = useCallback((data) => {
+    authGen.bump();
+    if (!isValidUser(data)) {
+      throw new SessionUnconfirmedError("session response has no valid identity");
+    }
+    applyIdentity(data);
+    setLoading(false);
+    return data;
+  }, [authGen, applyIdentity]);
+
   const value = useMemo(
-    () => ({ user, setUser, loading, logout, login, refresh: checkAuth }),
-    [user, loading, logout, login, checkAuth]
+    () => ({
+      user,
+      status,
+      loading,
+      setUser,
+      logout,
+      login,
+      signInWithPassword,
+      commitSession,
+      refresh: checkAuth,
+      retry: checkAuth,
+    }),
+    [user, status, loading, setUser, logout, login, signInWithPassword, commitSession, checkAuth]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

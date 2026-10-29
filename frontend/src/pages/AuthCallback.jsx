@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function AuthCallback() {
   const navigate = useNavigate();
-  const { setUser } = useAuth();
+  const { commitSession } = useAuth();
   const processed = useRef(false);
 
   useEffect(() => {
@@ -21,14 +21,16 @@ export default function AuthCallback() {
     const session_id = m[1];
     axios.post(`${API}/auth/session`, { session_id }, { withCredentials: true })
       .then((res) => {
-        setUser(res.data);
+        // AUTH-03 — validate the contract + bump the auth generation before
+        // trusting the identity; throws if the response has no valid user.
+        const confirmed = commitSession(res.data);
         window.history.replaceState({}, "", "/dashboard");
-        navigate("/dashboard", { replace: true, state: { user: res.data } });
+        navigate("/dashboard", { replace: true, state: { user: confirmed } });
       })
       .catch(() => {
         navigate("/", { replace: true });
       });
-  }, [navigate, setUser]);
+  }, [navigate, commitSession]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#14101F]">

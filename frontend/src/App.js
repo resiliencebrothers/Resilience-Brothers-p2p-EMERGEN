@@ -17,7 +17,7 @@ import { DefensiveBanner } from "@/components/DefensiveModePanel";
 import AdminPanel from "@/pages/AdminPanel";
 import AuthCallback from "@/pages/AuthCallback";
 import InstallPrompt from "@/components/InstallPrompt";
-import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { AuthProvider, useAuth, AUTH_STATUS } from "@/context/AuthContext";
 import { applyTheme, getTheme } from "@/lib/theme";
 import { roleHome } from "@/lib/roleHome";
 import { currentPanelBase } from "@/lib/profilePaths";
@@ -76,11 +76,34 @@ function AppRouter() {
 }
 
 function ProtectedRoute({ children, staffOnly = false, companyRoute = false }) {
-  const { user, loading } = useAuth();
-  if (loading) {
+  const { user, status, loading, retry } = useAuth();
+  if (loading || status === AUTH_STATUS.CHECKING) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#14101F]">
         <div className="text-neutral-400 micro-label">Cargando...</div>
+      </div>
+    );
+  }
+  // AUTH-02 — a transient network/5xx error while checking the session must NOT
+  // be treated as "logged out". Offer a recoverable retry instead of bouncing
+  // the user to the login screen (which falsely implies their session ended).
+  if (status === AUTH_STATUS.ERROR && !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#14101F] px-6" data-testid="auth-check-error">
+        <div className="text-center max-w-sm">
+          <p className="text-white font-display text-xl mb-2">No se pudo verificar tu sesión</p>
+          <p className="text-neutral-400 text-sm mb-6">
+            Hubo un problema de conexión al comprobar tu sesión. No hemos cerrado tu sesión.
+          </p>
+          <button
+            type="button"
+            data-testid="auth-check-retry-btn"
+            onClick={() => retry?.()}
+            className="px-6 py-3 bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none transition-colors"
+          >
+            Reintentar
+          </button>
+        </div>
       </div>
     );
   }

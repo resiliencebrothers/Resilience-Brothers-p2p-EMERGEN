@@ -3,7 +3,6 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
-import { applyServerLanguage } from "@/lib/langSync";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,7 +38,7 @@ const SUBMIT_LABELS = {
 
 export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const navigate = useNavigate();
-  const { setUser, login } = useAuth();
+  const { signInWithPassword, login } = useAuth();
   const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
   const [email, setEmail] = useState(initialEmail || "");
   const [password, setPassword] = useState("");
@@ -145,13 +144,10 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
         setSuccessMsg("Si la cuenta existe, recibirás un correo con el enlace para crear una nueva contraseña.");
         return;
       }
-      const url = mode === "register" ? "/auth/register" : "/auth/login";
       const captcha = captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {};
-      const body = mode === "register"
-        ? { email: email.trim(), password, name: name.trim(), phone: phone.trim(), account_type: accountType, ...captcha }
-        : { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}), ...captcha };
-      const r = await axios.post(`${API}${url}`, body, { withCredentials: true });
       if (mode === "register") {
+        const body = { email: email.trim(), password, name: name.trim(), phone: phone.trim(), account_type: accountType, ...captcha };
+        const r = await axios.post(`${API}/auth/register`, body, { withCredentials: true });
         // iter17: registration no longer logs in — must verify email first
         const base = r.data.message || "Cuenta creada. Revisa tu correo para verificar.";
         setSuccessMsg(accountType === "business"
@@ -159,14 +155,22 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
           : base);
         return;
       }
-      setUser(r.data);
-      // iter154 — the saved language follows the user to this device.
-      applyServerLanguage(r.data);
+      // AUTH-03 — login is centralised in AuthContext: it validates the user
+      // contract and confirms the session via /auth/me BEFORE we announce
+      // success, so a resolved response alone can never claim "Sesión iniciada".
+      const body = { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}), ...captcha };
+      const confirmed = await signInWithPassword(body);
       toast.success("Sesión iniciada");
       onClose?.(); reset();
-      navigate(roleHome(r.data));
+      navigate(roleHome(confirmed));
     } catch (err) {
-      handleAuthError(err);
+      // AUTH-03 — credentials accepted but session not confirmed (cookie not
+      // stored / network): recoverable, NEVER shown as "contraseña incorrecta".
+      if (err?.code === "SESSION_UNCONFIRMED") {
+        toast.error("No pudimos confirmar tu sesión. Revisa tu conexión e inténtalo de nuevo.");
+      } else {
+        handleAuthError(err);
+      }
       // iter246 — el token Turnstile es de un solo uso: regenerar tras fallo.
       setCaptchaToken("");
       setCaptchaKey((k) => k + 1);
