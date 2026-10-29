@@ -49,6 +49,7 @@ async def company_me(request: Request) -> Any:
     user = await require_company(request)
     stores_count = await db.stores.count_documents({"company_id": user["user_id"]})
     products_count = await db.products.count_documents({"company_id": user["user_id"]})
+    services_count = await db.services.count_documents({"company_id": user["user_id"]})
     return {
         "user_id": user["user_id"],
         "name": user.get("name", ""),
@@ -56,6 +57,8 @@ async def company_me(request: Request) -> Any:
         "account_status": user.get("account_status"),
         "stores_count": stores_count,
         "products_count": products_count,
+        "services_count": services_count,
+        "offers_services": bool(user.get("offers_services")),
         "commission_pct": await get_commission_pct(),
         "delivery_fee_usdt": await billing.get_company_delivery_fee(),
     }

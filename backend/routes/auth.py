@@ -20,6 +20,7 @@ circular imports while routes/auth.py loads.
 import hashlib
 import os
 import uuid
+import secrets
 import logging
 from datetime import timedelta
 from typing import Optional, Any, Literal
@@ -27,6 +28,7 @@ from urllib.parse import urlencode
 
 import httpx
 import requests
+from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, EmailStr
@@ -36,6 +38,7 @@ from auth_utils import (
     now_utc, iso,
     _hash_password, _verify_password, _DUMMY_PASSWORD_HASH,
     _create_session, require_user, strip_credential_fields,
+    _session_expired,
     _too_many_failed_attempts, _record_login_attempt,
     normalize_phone, assert_not_blocked,
     _decode_jwt_payload,
@@ -106,7 +109,7 @@ class ResetPasswordPayload(BaseModel):
 # ============================================================
 
 @router.post("/auth/session")
-async def auth_session(payload: dict, response: Response) -> Any:
+async def auth_session(payload: dict, request: Request, response: Response) -> Any:
     session_id = payload.get("session_id")
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id required")
@@ -149,7 +152,7 @@ async def auth_session(payload: dict, response: Response) -> Any:
     # We forward the upstream Emergent token as-is to keep the bridge stable.
     await _create_session(
         user_doc["user_id"], response,
-        ttl_hours=24, session_token=data["session_token"],
+        ttl_hours=24, session_token=data["session_token"], request=request,
     )
     user_doc.pop("_id", None)
     # iter257(D01) — nunca devolver hashes/tokens/secretos.
@@ -334,7 +337,7 @@ async def google_callback(request: Request, code: Optional[str] = None,
     response = RedirectResponse(url=_safe_post_login_redirect(state_doc.get("redirect")), status_code=302)
     # iter55.37 — All sessions capped at 24h. `_create_session` enforces the
     # cap internally too, but we pass 24 explicitly for auditability.
-    await _create_session(user_id, response, ttl_hours=24)
+    await _create_session(user_id, response, ttl_hours=24, request=request)
     return response
 
 
@@ -372,6 +375,108 @@ async def auth_logout_all(request: Request, response: Response) -> Any:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"logout_all audit failed: {e}")
     return {"ok": True, "sessions_revoked": revoked.deleted_count}
+
+
+def _describe_device(ua: str) -> dict:
+    """Etiqueta amigable (navegador + sistema) desde el user-agent, SOLO para
+    mostrar en 'sesiones activas'. No es una identidad de dispositivo fiable."""
+    low = (ua or "").lower()
+    if "edg/" in low:
+        browser = "Edge"
+    elif "opr/" in low or "opera" in low:
+        browser = "Opera"
+    elif "firefox/" in low or "fxios" in low:
+        browser = "Firefox"
+    elif "chrome/" in low or "crios" in low:
+        browser = "Chrome"
+    elif "safari/" in low:
+        browser = "Safari"
+    else:
+        browser = "Navegador desconocido"
+    if "iphone" in low or "crios" in low or "fxios" in low:
+        os_name = "iPhone"
+    elif "ipad" in low:
+        os_name = "iPad"
+    elif "android" in low:
+        os_name = "Android"
+    elif "windows" in low:
+        os_name = "Windows"
+    elif "mac os" in low or "macintosh" in low:
+        os_name = "Mac"
+    elif "linux" in low:
+        os_name = "Linux"
+    else:
+        os_name = "Dispositivo desconocido"
+    return {"browser": browser, "os": os_name}
+
+
+@router.get("/auth/sessions")
+async def auth_list_sessions(request: Request) -> Any:
+    """Lista las sesiones activas del usuario (dispositivos) para que revise y
+    cierre las que no reconozca. NUNCA expone session_token: cada fila se
+    identifica por su _id (handle opaco). La sesión actual se detecta
+    comparando en el servidor el token de la cookie."""
+    user = await require_user(request)
+    current_token = request.cookies.get("session_token") or ""
+    ver = int(user.get("session_version") or 0)
+    # Igual que get_session_user: tratamos session_version ausente como 0, por
+    # eso filtramos en Python (un $eq en Mongo omitiría docs sin el campo).
+    cursor = db.user_sessions.find({"user_id": user["user_id"]}).sort("created_at", -1)
+    out = []
+    async for s in cursor:
+        if _session_expired(s):
+            continue
+        if int(s.get("session_version") or 0) != ver:
+            continue
+        tok = s.get("session_token") or ""
+        is_current = bool(current_token) and secrets.compare_digest(tok, current_token)
+        dev = _describe_device(s.get("user_agent") or "")
+        out.append({
+            "id": str(s["_id"]),
+            "current": is_current,
+            "browser": dev["browser"],
+            "os": dev["os"],
+            "ip": s.get("ip") or "",
+            "created_at": s.get("created_at"),
+            "expires_at": s.get("expires_at"),
+        })
+    return {"sessions": out}
+
+
+class RevokeSessionBody(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/auth/sessions/revoke")
+async def auth_revoke_session(body: RevokeSessionBody, request: Request,
+                              response: Response) -> Any:
+    """Cierra UNA sesión concreta del propio usuario. El borrado SIEMPRE va
+    acotado por user_id: nadie puede revocar la sesión de otro aunque conozca
+    el _id. Si revoca la sesión actual, se limpia la cookie."""
+    user = await require_user(request)
+    if not ObjectId.is_valid(body.session_id):
+        raise HTTPException(status_code=400, detail="session_id inválido")
+    oid = ObjectId(body.session_id)
+    owned = await db.user_sessions.find_one(
+        {"_id": oid, "user_id": user["user_id"]}, {"session_token": 1})
+    if not owned:
+        # Idempotente: no revela si el handle era de otro o nunca existió.
+        return {"revoked": False, "current_session_ended": False}
+    current_token = request.cookies.get("session_token") or ""
+    is_current = bool(current_token) and secrets.compare_digest(
+        owned.get("session_token") or "", current_token)
+    await db.user_sessions.delete_one({"_id": oid, "user_id": user["user_id"]})
+    if is_current:
+        response.delete_cookie("session_token", path="/")
+    try:
+        from audit_log import log_action
+        await log_action(
+            db, user, "auth.session_revoked", "user", user["user_id"],
+            summary="Cerró una sesión activa",
+            details={"session_id": body.session_id, "was_current": is_current})
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"session_revoke audit failed: {e}")
+    return {"revoked": True, "current_session_ended": is_current}
 
 
 # ============================================================
@@ -625,7 +730,7 @@ async def auth_login(payload: AuthLoginPayload, request: Request, response: Resp
             user["account_status"] = "under_review"
     # iter55.37 — Session TTL is hard-capped at 24h by _create_session policy.
     ttl = payload.remember_hours if payload.remember_hours else 24
-    await _create_session(user["user_id"], response, ttl_hours=ttl)
+    await _create_session(user["user_id"], response, ttl_hours=ttl, request=request)
     # iter257(D01) — nunca devolver hashes/tokens/secretos (antes solo se
     # quitaban dos campos).
     strip_credential_fields(user)
@@ -696,5 +801,5 @@ async def auth_reset_password(payload: ResetPasswordPayload, request: Request, r
     if res.modified_count == 0:
         raise HTTPException(status_code=400, detail="Token inválido")
     await db.user_sessions.delete_many({"user_id": user["user_id"]})
-    await _create_session(user["user_id"], response)
+    await _create_session(user["user_id"], response, request=request)
     return {"ok": True, "message": "Contraseña actualizada"}

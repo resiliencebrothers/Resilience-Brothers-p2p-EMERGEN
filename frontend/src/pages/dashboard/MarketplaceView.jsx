@@ -11,13 +11,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag, BadgeCheck, AlertTriangle } from "lucide-react";
+import { Boxes, Package, Search, Truck, Store, MapPin, QrCode, Tag, BadgeCheck, AlertTriangle, Wrench } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import BalanceConverterCard from "@/components/BalanceConverterCard";
 import VerificationGateBanner from "@/components/VerificationGateBanner";
 import MunicipalDeliveryPicker from "@/components/MunicipalDeliveryPicker";
 import OffersBanner from "@/components/OffersBanner";
 import DeliveryCoverageDialog from "@/components/DeliveryCoverageDialog";
+import ServicesMarketplace from "@/pages/dashboard/ServicesMarketplace";
 import { extractDetailMessage } from "@/utils/apiErrors";
 import { fmtQty, unitAbbr, isFractionUnit, qtyStep, sanitizeQty } from "@/utils/units";
 
@@ -27,6 +28,7 @@ export default function MarketplaceView() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
+  const [marketTab, setMarketTab] = useState("products");
   const [open, setOpen] = useState(null);
   // iter285 — la cantidad vive como texto: el usuario puede borrar el «1»
   // inicial y escribir directamente el número (qtyNum = valor efectivo).
@@ -333,6 +335,22 @@ export default function MarketplaceView() {
           </div>
         </div>
       </div>
+
+      <div className="flex gap-6 border-b border-white/10" data-testid="marketplace-tabs">
+        <button data-testid="market-tab-products" onClick={() => setMarketTab("products")}
+          className={`pb-3 -mb-px text-sm uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${marketTab === "products" ? "border-[#8B5CF6] text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}>
+          <Boxes className="w-4 h-4" /> {t("marketplace.tabProducts", "Productos")}
+        </button>
+        <button data-testid="market-tab-services" onClick={() => setMarketTab("services")}
+          className={`pb-3 -mb-px text-sm uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${marketTab === "services" ? "border-[#8B5CF6] text-white" : "border-transparent text-neutral-500 hover:text-neutral-300"}`}>
+          <Wrench className="w-4 h-4" /> {t("marketplace.tabServices", "Servicios")}
+        </button>
+      </div>
+
+      {marketTab === "services" ? (
+        <ServicesMarketplace />
+      ) : (
+        <>
 
       {/* iter55.36o — full-verification gate applies to both the converter
           widget above and the redeem grid below. Rendered inline so the
@@ -810,6 +828,8 @@ export default function MarketplaceView() {
           )}
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   );
 }

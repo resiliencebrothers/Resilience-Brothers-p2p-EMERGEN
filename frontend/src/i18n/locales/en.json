@@ -3058,6 +3058,19 @@
       "confirm": "Yes, sign out everywhere",
       "error": "We couldn't close the sessions. Please try again."
     },
+    "sessions": {
+      "title": "Active sessions",
+      "desc": "These are the devices where your account is signed in. If you don't recognize one, close it.",
+      "refresh": "Refresh",
+      "loading": "Loading sessions…",
+      "empty": "No other active sessions.",
+      "loadError": "We couldn't load your active sessions.",
+      "thisDevice": "This device",
+      "close": "Close",
+      "closing": "Closing…",
+      "revoked": "Session closed.",
+      "revokeError": "We couldn't close that session. Please try again."
+    },
     "loading": "Loading…",
     "loadError": "Error loading 2FA state",
     "title": "Two-Factor Verification",

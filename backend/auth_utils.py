@@ -111,7 +111,8 @@ def redact_user_for_actor(requester: dict, doc: Optional[dict]) -> Optional[dict
 
 
 async def _create_session(user_id: str, response: Response, ttl_hours: int = SESSION_MAX_HOURS,
-                          session_token: Optional[str] = None):
+                          session_token: Optional[str] = None,
+                          request: Optional[Request] = None):
     """Issue a session_token + set cookie. Hard-capped at 24 hours by policy.
 
     Legacy callers may pass ttl_hours > 24 (e.g. 168 for "remember me 7d") —
@@ -132,13 +133,23 @@ async def _create_session(user_id: str, response: Response, ttl_hours: int = SES
     # instante TODAS las sesiones anteriores.
     owner = await db.users.find_one({"user_id": user_id},
                                     {"_id": 0, "session_version": 1})
-    await db.user_sessions.insert_one({
+    doc = {
         "user_id": user_id,
         "session_token": session_token,
         "session_version": int((owner or {}).get("session_version") or 0),
         "expires_at": iso(expires_at),
         "created_at": iso(now_utc()),
-    })
+    }
+    # Metadatos SOLO para mostrar "sesiones activas" (nunca para autenticar):
+    # user-agent + IP aproximada. XFF es spoofeable salvo tras proxy de confianza.
+    if request is not None:
+        ua = (request.headers.get("user-agent") or "")[:512]
+        xff = request.headers.get("x-forwarded-for") or ""
+        ip = (xff.split(",")[0].strip() if xff else
+              (request.client.host if request.client else "")) or ""
+        doc["user_agent"] = ua
+        doc["ip"] = ip[:128]
+    await db.user_sessions.insert_one(doc)
     response.set_cookie(
         key="session_token", value=session_token, httponly=True,
         secure=os.environ.get("COOKIE_SECURE", "true").lower() != "false",

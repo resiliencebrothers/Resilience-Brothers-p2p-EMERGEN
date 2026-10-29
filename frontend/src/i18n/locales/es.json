@@ -3058,6 +3058,19 @@
       "confirm": "Sí, cerrar todas",
       "error": "No pudimos cerrar las sesiones. Inténtalo de nuevo."
     },
+    "sessions": {
+      "title": "Sesiones activas",
+      "desc": "Estos son los dispositivos donde tu cuenta está conectada. Si no reconoces alguno, ciérralo.",
+      "refresh": "Actualizar",
+      "loading": "Cargando sesiones…",
+      "empty": "No hay otras sesiones activas.",
+      "loadError": "No pudimos cargar tus sesiones activas.",
+      "thisDevice": "Este dispositivo",
+      "close": "Cerrar",
+      "closing": "Cerrando…",
+      "revoked": "Sesión cerrada.",
+      "revokeError": "No pudimos cerrar esa sesión. Inténtalo de nuevo."
+    },
     "loading": "Cargando…",
     "loadError": "Error al cargar estado 2FA",
     "title": "Verificación en Dos Pasos",

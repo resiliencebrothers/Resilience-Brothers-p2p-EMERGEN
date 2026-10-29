@@ -16,6 +16,7 @@ import TwoFASetupPanel from "./security/TwoFASetupPanel";
 import RecoveryCodesPanel from "./security/RecoveryCodesPanel";
 import { DisableTwoFAModal, RegenerateCodesModal } from "./security/TwoFAModals";
 import PasswordChangeCard from "./security/PasswordChangeCard";
+import ActiveSessionsCard from "./security/ActiveSessionsCard";
 
 export default function SecuritySettings({ embedded = false }) {
   const { t } = useTranslation();
@@ -268,6 +269,8 @@ export default function SecuritySettings({ embedded = false }) {
         onSubmit={submitPasswordChange}
         onSetSubmit={submitPasswordSet}
       />
+
+      <ActiveSessionsCard />
 
       <div className="tactile-card p-5 border border-red-500/20" data-testid="sign-out-all-card">
         <div className="flex items-start gap-3">

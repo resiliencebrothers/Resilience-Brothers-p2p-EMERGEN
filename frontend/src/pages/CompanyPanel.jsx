@@ -4,12 +4,13 @@ import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck, AlertTriangle, RefreshCw } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck, AlertTriangle, RefreshCw, CalendarClock } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import CompanyStoresView from "@/pages/company/CompanyStoresView";
 import CompanyProductsView from "@/pages/company/CompanyProductsView";
+import CompanyServicesView from "@/pages/company/CompanyServicesView";
 import CompanyInventoryView from "@/pages/company/CompanyInventoryView";
 import CompanyWalletView from "@/pages/company/CompanyWalletView";
 import CompanyDeliveriesView from "@/pages/company/CompanyDeliveriesView";
@@ -26,6 +27,7 @@ const TABS = [
   { id: "overview", label: "Resumen", icon: LayoutDashboard },
   { id: "stores", label: "Tiendas", icon: Store },
   { id: "products", label: "Productos", icon: Boxes },
+  { id: "services", label: "Servicios", icon: CalendarClock },
   { id: "inventory", label: "Inventario", icon: Warehouse },
   { id: "deliveries", label: "Mensajería", icon: Truck },
   { id: "wallet", label: "Saldo", icon: Wallet },
@@ -225,7 +227,7 @@ export default function CompanyPanel() {
             {tab === "overview" && (
               <div className="space-y-6" data-testid="company-overview">
                 <h1 className="font-display text-3xl">Resumen</h1>
-                <div className="grid sm:grid-cols-3 gap-4">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <button onClick={() => go("stores")} className="tactile-card p-6 text-left hover:border-[#8B5CF6]/40 transition-colors" data-testid="company-stat-stores">
                     <Store className="w-7 h-7 text-[#8B5CF6] mb-3" />
                     <div className="font-display text-3xl">{summary?.stores_count ?? "—"}</div>
@@ -235,6 +237,11 @@ export default function CompanyPanel() {
                     <Boxes className="w-7 h-7 text-[#8B5CF6] mb-3" />
                     <div className="font-display text-3xl">{summary?.products_count ?? "—"}</div>
                     <div className="micro-label text-neutral-500 mt-1">Productos</div>
+                  </button>
+                  <button onClick={() => go("services")} className="tactile-card p-6 text-left hover:border-[#8B5CF6]/40 transition-colors" data-testid="company-stat-services">
+                    <CalendarClock className="w-7 h-7 text-[#8B5CF6] mb-3" />
+                    <div className="font-display text-3xl">{summary?.services_count ?? "—"}</div>
+                    <div className="micro-label text-neutral-500 mt-1">Servicios</div>
                   </button>
                   <div className="tactile-card p-6" data-testid="company-stat-commission">
                     <Building2 className="w-7 h-7 text-[#8B5CF6] mb-3" />
@@ -252,6 +259,7 @@ export default function CompanyPanel() {
 
             {tab === "stores" && <CompanyStoresView onChanged={loadSummary} />}
             {tab === "products" && <CompanyProductsView onChanged={loadSummary} />}
+            {tab === "services" && <CompanyServicesView onChanged={loadSummary} />}
             {tab === "inventory" && <CompanyInventoryView />}
             {tab === "deliveries" && <CompanyDeliveriesView />}
             {tab === "wallet" && <CompanyWalletView />}

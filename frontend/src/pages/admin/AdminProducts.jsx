@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Switch } from "@/components/ui/switch";
 import AdminPageHeader from "@/components/AdminPageHeader";
 import VendorProductsSection from "@/pages/admin/products/VendorProductsSection";
+import AdminServicesSection from "@/pages/admin/products/AdminServicesSection";
 import { Plus, Edit2, Trash2, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { UNIT_OPTIONS, unitAbbr, isFractionUnit, fmtQty } from "@/utils/units";
@@ -154,6 +155,8 @@ export default function AdminProducts() {
       </div>
 
       <VendorProductsSection />
+
+      <AdminServicesSection />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto">
