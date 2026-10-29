@@ -3,12 +3,13 @@ import os
 import uuid
 import pytest
 import requests
+from conftest import VIP_TOKEN, ADMIN_TOKEN
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"
 EMP = {"session_token": "svc_smoke_empresa"}
-ADM = {"session_token": "svc_smoke_admin"}
-VIP = {"session_token": "muni_smoke_vip"}
+ADM = {"session_token": ADMIN_TOKEN}
+VIP = {"session_token": VIP_TOKEN}
 
 created = []
 

@@ -70,7 +70,7 @@ export default function ServicesMarketplace() {
           <Wrench className="w-6 h-6 text-[#8B5CF6]" /> Servicios
         </h2>
         <p className="text-sm text-neutral-400 mt-1">
-          Reserva barbería, limpieza, alquiler, asesoría y más con empresas verificadas.
+          Explora barbería, limpieza, alquiler, asesoría y más de empresas verificadas. La reserva y el pago en línea llegan muy pronto.
         </p>
       </div>
 
@@ -188,17 +188,24 @@ export default function ServicesMarketplace() {
 
                 {(detail.availability?.length > 0) && (
                   <div className="border border-white/10 p-3" data-testid="service-detail-availability">
-                    <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1"><CalendarClock className="w-3.5 h-3.5" /> Disponibilidad</div>
+                    <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1"><CalendarClock className="w-3.5 h-3.5" /> Horario habitual</div>
                     <ul className="text-sm text-neutral-300 space-y-1">
                       {detail.availability.map((w, i) => (
                         <li key={i}>{WD[w.day]}: {w.start}–{w.end}</li>
                       ))}
                     </ul>
+                    {detail.timezone && (
+                      <div className="text-xs text-neutral-500 mt-2" data-testid="service-detail-timezone">Zona horaria: {detail.timezone}</div>
+                    )}
+                    <div className="text-xs text-neutral-500 mt-1">Horario de atención orientativo; los turnos reservables se habilitarán en la próxima fase.</div>
                   </div>
                 )}
 
                 {detail.inclusions && (
                   <div><div className="micro-label text-neutral-500 mb-1">Incluye</div><p className="text-sm text-neutral-300 whitespace-pre-line">{detail.inclusions}</p></div>
+                )}
+                {detail.exclusions && (
+                  <div data-testid="service-detail-exclusions"><div className="micro-label text-neutral-500 mb-1">No incluye</div><p className="text-sm text-neutral-300 whitespace-pre-line">{detail.exclusions}</p></div>
                 )}
                 {detail.requirements && (
                   <div><div className="micro-label text-neutral-500 mb-1">Requisitos</div><p className="text-sm text-neutral-300 whitespace-pre-line">{detail.requirements}</p></div>

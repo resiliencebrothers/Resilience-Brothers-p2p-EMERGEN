@@ -2851,3 +2851,18 @@ Contrato ÚNICO y ESTRICTO para entrega a domicilio en `backend/routes/orders.py
 
 ### Pendiente (sin tocar en esta sesión)
 - Fase 2 de Servicios de Empresas (reserva de turno + cobro USDT, calendario shadcn con `blocked_dates`, i18n EN de servicios) sigue en backlog.
+
+## 2026-10-29 — Auditoría Empresas de Servicios (Resilience_Revision_Servicios) · SV-01..SV-05
+
+Artefacto del usuario: "quedan errores por corregir en el módulo de empresas de servicios". Los 5 hallazgos estaban abiertos; corregidos y verificados. Backend en `backend/routes/services.py`, frontend en `frontend/src/pages/dashboard/ServicesMarketplace.jsx`.
+
+- **SV-01 (MEDIA) — Oferta visible sin comprobar vigencia del propietario:** nuevo helper `_eligible_owner_ids()` (rol `empresa` + `account_status == "active"`); `list_services` filtra el catálogo y `service_detail` devuelve 404 si el propietario ya no está habilitado. Separa habilitación OPERATIVA del badge KYB (verificación documental, que sólo decora). Suspensión/`under_review`, rol cambiado y cuenta eliminada ocultan la oferta; los servicios/reservas NO se borran. Reactivar la cuenta la vuelve a mostrar.
+- **SV-02 (MEDIA) — Precio positivo guardado como cero:** `_validate_price` ahora valida el importe REDONDEADO a 2 decimales (precisión persistida) y rechaza no-finito/no-positivo, así `0.001` (→0.00) se rechaza en crear/editar/enviar; `admin_approve_service` revalida el precio almacenado antes de publicar. «A presupuestar» (`quote`) sigue admitiendo 0.
+- **SV-03 (MEDIA) — Anticipo/config inválidos aceptados:** nuevo `_validate_service_config()` aplicado al crear, editar y enviar: % de anticipo 0–100; anticipo fijo ≤ precio total SÓLO cuando el precio es total conocido (`pricing_type=="fixed"`, no se compara contra una unidad en hora/día/persona); zona horaria IANA válida; `blocked_dates` en ISO `AAAA-MM-DD`; categoría existente y activa (sólo cuando se envía/cambia la categoría).
+- **SV-Q01 (BLOQUEO) — mypy:** 6 errores corregidos (anotación de retorno de `_check_times`, `default_factory` tipado vía `_default_payment_methods`, firmas `Optional` en `_validate_price`). `mypy routes/services.py` → Success; ruff limpio.
+- **SV-05 (BAJA) — Ficha omitía condiciones:** la ficha ahora muestra **No incluye** (exclusions) y **Zona horaria**, renombra «Disponibilidad» → **«Horario habitual»** con aviso de que los turnos reservables llegan en la próxima fase, y el encabezado pasa de «Reserva barbería…» a «Explora … La reserva y el pago en línea llegan muy pronto».
+
+### Pruebas
+- Nuevo `tests/test_services_audit_sv.py` — suite AUTOCONTENIDA y repetible (siembra su propio usuario/sesión Empresa con pymongo, limpia al final): **16/16** en dos corridas (SV-01 activo/suspendido/rol-cambiado/eliminado/reactivado; SV-02 subcéntimo/cero/quote/normal; SV-03 %>100, TZ inválida, fecha inválida, categoría inexistente, anticipo fijo>total, por-hora no comparado, config válida).
+- `tests/test_services_phase1.py` portabilidad: reemplazado el `muni_smoke_vip` (sesión eliminada en el fork municipal) y `svc_smoke_admin` por tokens canónicos `VIP_TOKEN`/`ADMIN_TOKEN` de `conftest`. **Suite servicios 26/26.**
+- SV-05 verificado en navegador (escritorio 1920 + móvil 390): copy del encabezado, «Horario habitual», zona horaria y «No incluye» visibles; sin overflow horizontal.

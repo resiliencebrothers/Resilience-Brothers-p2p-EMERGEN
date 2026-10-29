@@ -32,16 +32,19 @@ Endpoints:
     DELETE /admin/service-categories/{id}
 """
 import re
+import math
 import uuid
 import logging
+from datetime import date
 from typing import Any, Optional, Literal
+from zoneinfo import available_timezones
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from db_client import db
 from auth_utils import (
-    require_company, require_permission, require_user, get_session_user,
+    require_company, require_permission,
     now_utc, iso,
 )
 from audit_log import log_action
@@ -107,12 +110,16 @@ class AvailWindow(BaseModel):
     end: str = Field("17:00", max_length=5)
 
     @model_validator(mode="after")
-    def _check_times(self):
+    def _check_times(self) -> "AvailWindow":
         if not _TIME_RE.match(self.start) or not _TIME_RE.match(self.end):
             raise ValueError("Horario inválido (use formato HH:MM de 24 h).")
         if self.start >= self.end:
             raise ValueError("La hora de inicio debe ser anterior a la de fin.")
         return self
+
+
+def _default_payment_methods() -> list[Literal["balance", "cash"]]:
+    return ["balance"]
 
 
 class ServiceCreate(BaseModel):
@@ -135,7 +142,7 @@ class ServiceCreate(BaseModel):
     inclusions: str = Field("", max_length=1000)
     exclusions: str = Field("", max_length=1000)
     cancellation_policy: str = Field("", max_length=1000)
-    payment_methods: list[Literal["balance", "cash"]] = Field(default_factory=lambda: ["balance"])
+    payment_methods: list[Literal["balance", "cash"]] = Field(default_factory=_default_payment_methods)
     availability: list[AvailWindow] = Field(default_factory=list)
     blocked_dates: list[str] = Field(default_factory=list, max_length=366)
     timezone: str = Field("America/Havana", max_length=60)
@@ -180,12 +187,85 @@ class CategoryPayload(BaseModel):
 
 _SAFE_PUBLIC_FIELDS = {"_id": 0}
 
+_VALID_TIMEZONES = available_timezones()
 
-def _validate_price(pricing_type: str, price: float) -> None:
-    if pricing_type != "quote" and float(price or 0) <= 0:
+
+def _validate_price(pricing_type: Optional[str], price: Optional[float]) -> None:
+    amount = float(price or 0)
+    if not math.isfinite(amount):
+        raise HTTPException(status_code=400, detail="El precio no es un número válido.")
+    # Validamos el importe YA REDONDEADO a 2 decimales: así un precio como
+    # 0.001 (que se guardaría como 0.00) se rechaza en vez de colarse (SV-02).
+    if pricing_type != "quote" and round(amount, 2) <= 0:
         raise HTTPException(
             status_code=400,
             detail="Indica un precio mayor que 0 (o usa 'Presupuesto' si el precio depende del caso).")
+
+
+async def _validate_service_config(
+    *,
+    pricing_type: Optional[str],
+    price: Optional[float],
+    deposit_type: Optional[str],
+    deposit_value: Optional[float],
+    timezone: Optional[str],
+    blocked_dates: Optional[list[str]],
+    category: Optional[str],
+    check_category: bool = True,
+) -> None:
+    """Valida precio, anticipo, zona horaria, fechas bloqueadas y categoría
+    (SV-02/SV-03). Se aplica al crear y editar; el precio además al aprobar."""
+    _validate_price(pricing_type, price)
+    dep = float(deposit_value or 0)
+    if not math.isfinite(dep) or dep < 0:
+        raise HTTPException(status_code=400, detail="El anticipo no es válido.")
+    if deposit_type == "percent" and round(dep, 2) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="El anticipo en porcentaje debe estar entre 0 y 100.")
+    if deposit_type == "fixed" and pricing_type == "fixed":
+        total = round(float(price or 0), 2)
+        if total > 0 and round(dep, 2) > total:
+            raise HTTPException(
+                status_code=400,
+                detail="El anticipo fijo no puede superar el precio total del servicio.")
+    if timezone and timezone not in _VALID_TIMEZONES:
+        raise HTTPException(
+            status_code=400,
+            detail="Zona horaria no válida. Usa una zona IANA, por ejemplo America/Havana.")
+    for d in (blocked_dates or []):
+        try:
+            date.fromisoformat(str(d))
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Fecha bloqueada no válida: «{d}». Usa el formato AAAA-MM-DD.")
+    if check_category and category:
+        await _ensure_categories_seeded()
+        cat = await db.service_categories.find_one({"slug": category})
+        if not cat or not cat.get("active", False):
+            raise HTTPException(
+                status_code=400,
+                detail="La categoría seleccionada no existe o no está activa.")
+
+
+async def _eligible_owner_ids(owner_ids: list[str]) -> set[str]:
+    """Propietarios con habilitación OPERATIVA vigente para ofertar: rol
+    `empresa` y cuenta activa (SV-01). Es independiente del badge KYB
+    (verificación documental). Una suspensión/bloqueo, cambio de rol o cuenta
+    eliminada deja al propietario fuera y oculta su oferta del catálogo; los
+    servicios y reservas históricas se conservan (no se borran)."""
+    ids = list({o for o in owner_ids if o})
+    if not ids:
+        return set()
+    eligible: set[str] = set()
+    cursor = db.users.find(
+        {"user_id": {"$in": ids}},
+        {"_id": 0, "user_id": 1, "role": 1, "account_status": 1})
+    async for u in cursor:
+        if u.get("role") == "empresa" and u.get("account_status", "active") == "active":
+            eligible.add(u["user_id"])
+    return eligible
 
 
 def _upload_images(images: list[str]) -> list[str]:
@@ -239,6 +319,10 @@ async def list_services(
         query["$or"] = [{"title": rx}, {"description": rx}, {"coverage_zone": rx}]
     rows = await db.services.find(query, _SAFE_PUBLIC_FIELDS) \
         .sort("created_at", -1).to_list(500)
+    # SV-01 — solo mostramos ofertas de propietarios habilitados (rol empresa
+    # + cuenta activa). La suspensión oculta la oferta sin borrar el servicio.
+    eligible = await _eligible_owner_ids([r.get("company_id") for r in rows])
+    rows = [r for r in rows if r.get("company_id") in eligible]
     try:
         from services.user_verification import verified_company_owner_ids
         verified = await verified_company_owner_ids(
@@ -256,6 +340,10 @@ async def service_detail(service_id: str) -> Any:
         {"id": service_id, "status": "published", "is_active": True},
         _SAFE_PUBLIC_FIELDS)
     if not doc:
+        raise HTTPException(status_code=404, detail="Servicio no disponible.")
+    # SV-01 — oculta la ficha si el propietario ya no está habilitado.
+    eligible = await _eligible_owner_ids([doc.get("company_id")])
+    if doc.get("company_id") not in eligible:
         raise HTTPException(status_code=404, detail="Servicio no disponible.")
     try:
         from services.user_verification import verified_company_owner_ids
@@ -294,7 +382,11 @@ async def create_my_service(payload: ServiceCreate, request: Request) -> Any:
         raise HTTPException(
             status_code=400,
             detail=f"Límite de {MAX_SERVICES_PER_COMPANY} servicios alcanzado")
-    _validate_price(payload.pricing_type, payload.price_usdt)
+    await _validate_service_config(
+        pricing_type=payload.pricing_type, price=payload.price_usdt,
+        deposit_type=payload.deposit_type, deposit_value=payload.deposit_value,
+        timezone=payload.timezone, blocked_dates=payload.blocked_dates,
+        category=(payload.category.strip() or "otros"))
     now = iso(now_utc())
     status = "pending" if payload.submit else "draft"
     doc = {
@@ -368,9 +460,15 @@ async def update_my_service(service_id: str, payload: ServiceUpdate,
               "inclusions", "exclusions", "cancellation_policy", "category"):
         if s in updates and isinstance(updates[s], str):
             updates[s] = updates[s].strip()
-    new_pricing = updates.get("pricing_type", doc.get("pricing_type"))
-    new_price = updates.get("price_usdt", doc.get("price_usdt"))
-    _validate_price(new_pricing, new_price)
+    await _validate_service_config(
+        pricing_type=updates.get("pricing_type", doc.get("pricing_type")),
+        price=updates.get("price_usdt", doc.get("price_usdt")),
+        deposit_type=updates.get("deposit_type", doc.get("deposit_type")),
+        deposit_value=updates.get("deposit_value", doc.get("deposit_value")),
+        timezone=updates.get("timezone", doc.get("timezone")),
+        blocked_dates=updates.get("blocked_dates", doc.get("blocked_dates")),
+        category=updates.get("category", doc.get("category")),
+        check_category="category" in updates)
     if not updates:
         return doc
     # Un servicio rechazado vuelve a la cola al corregirlo.
@@ -401,7 +499,11 @@ async def submit_my_service(service_id: str, request: Request) -> Any:
     if doc.get("status") not in ("draft", "rejected"):
         raise HTTPException(status_code=400,
                             detail="Solo puedes enviar borradores o servicios rechazados.")
-    _validate_price(doc.get("pricing_type"), doc.get("price_usdt"))
+    await _validate_service_config(
+        pricing_type=doc.get("pricing_type"), price=doc.get("price_usdt"),
+        deposit_type=doc.get("deposit_type"), deposit_value=doc.get("deposit_value"),
+        timezone=doc.get("timezone"), blocked_dates=doc.get("blocked_dates"),
+        category=doc.get("category"), check_category=False)
     await db.services.update_one(
         {"id": service_id, "company_id": user["user_id"]},
         {"$set": {"status": "pending", "rejection_reason": "",
@@ -495,6 +597,8 @@ async def admin_approve_service(service_id: str, request: Request) -> Any:
         raise HTTPException(
             status_code=400,
             detail="Solo puedes aprobar servicios enviados a revisión (pendientes o rechazados).")
+    # SV-02 — revalidamos el precio almacenado antes de publicar.
+    _validate_price(doc.get("pricing_type"), doc.get("price_usdt"))
     await db.services.update_one(
         {"id": service_id},
         {"$set": {"status": "published", "rejection_reason": "",
