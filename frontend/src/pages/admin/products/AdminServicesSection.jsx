@@ -18,8 +18,12 @@ const STATUS_BADGE = {
   pending: "bg-amber-500/10 text-amber-300 border-amber-500/30",
   published: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   rejected: "bg-red-500/10 text-red-400 border-red-500/30",
+  paused: "bg-sky-500/10 text-sky-300 border-sky-500/30",
 };
-const STATUS_LABEL = { draft: "Borrador", pending: "Pendiente", published: "Publicado", rejected: "Rechazado" };
+const STATUS_LABEL = { draft: "Borrador", pending: "Pendiente", published: "Publicado", rejected: "Rechazado", paused: "Pausado" };
+const effStatus = (s) => (s.status === "published" && !s.is_active ? "paused" : s.status);
+const canApprove = (s) => s.status === "pending" || s.status === "rejected";
+const canReject = (s) => s.status === "pending" || s.status === "published";
 
 const priceText = (s) => {
   if (s.pricing_type === "quote") return "A presupuestar";
@@ -128,7 +132,7 @@ export default function AdminServicesSection() {
             <div className="p-4 flex-1 flex flex-col">
               <div className="flex items-center justify-between gap-2">
                 <div className="micro-label text-neutral-500">{catName(s.category)}</div>
-                <span className={`text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${STATUS_BADGE[s.status] || ""}`}>{STATUS_LABEL[s.status]}</span>
+                <span className={`text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${STATUS_BADGE[effStatus(s)] || ""}`}>{STATUS_LABEL[effStatus(s)]}</span>
               </div>
               <h3 className="font-display text-lg mt-1">{s.title}</h3>
               <div className="text-xs text-[#A78BFA] mt-1">{s.owner_name}</div>
@@ -139,11 +143,11 @@ export default function AdminServicesSection() {
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" data-testid={`admin-service-view-${s.id}`} onClick={() => setDetail(s)}
                     className="border-white/15 text-neutral-200 hover:text-white rounded-none h-8">Ver</Button>
-                  {s.status !== "published" && (
+                  {canApprove(s) && (
                     <Button size="sm" data-testid={`admin-service-approve-${s.id}`} onClick={() => approve(s)}
                       className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-none h-8"><Check className="w-4 h-4" /></Button>
                   )}
-                  {s.status !== "rejected" && (
+                  {canReject(s) && (
                     <Button size="sm" variant="outline" data-testid={`admin-service-reject-${s.id}`} onClick={() => { setRejecting(s); setReason(""); }}
                       className="border-red-500/40 text-red-400 hover:bg-red-500/10 rounded-none h-8"><X className="w-4 h-4" /></Button>
                   )}
@@ -200,10 +204,10 @@ export default function AdminServicesSection() {
                 {detail.requirements && <div><div className="micro-label text-neutral-500 mb-1">Requisitos</div><p className="text-sm text-neutral-300 whitespace-pre-line">{detail.requirements}</p></div>}
                 {detail.cancellation_policy && <div><div className="micro-label text-neutral-500 mb-1">Cancelación</div><p className="text-sm text-neutral-300 whitespace-pre-line">{detail.cancellation_policy}</p></div>}
                 <div className="flex gap-2 pt-2">
-                  {detail.status !== "published" && (
+                  {canApprove(detail) && (
                     <Button data-testid="admin-service-detail-approve" onClick={() => approve(detail)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-none h-10"><Check className="w-4 h-4 mr-1" /> Aprobar</Button>
                   )}
-                  {detail.status !== "rejected" && (
+                  {canReject(detail) && (
                     <Button data-testid="admin-service-detail-reject" variant="outline" onClick={() => { setRejecting(detail); setReason(""); }} className="flex-1 border-red-500/40 text-red-400 hover:bg-red-500/10 rounded-none h-10"><X className="w-4 h-4 mr-1" /> Rechazar</Button>
                   )}
                 </div>

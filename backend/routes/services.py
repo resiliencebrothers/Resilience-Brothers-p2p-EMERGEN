@@ -37,7 +37,7 @@ import logging
 from typing import Any, Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from db_client import db
 from auth_utils import (
@@ -54,6 +54,7 @@ router = APIRouter(tags=["Services"])
 MAX_SERVICES_PER_COMPANY = 50
 MODALITIES = ("local", "domicilio", "remoto", "alquiler")
 PRICING_TYPES = ("fixed", "hourly", "daily", "per_person", "quote")
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 _DEFAULT_CATEGORIES = [
     ("barberia", "Barbería y peluquería"),
@@ -104,6 +105,14 @@ class AvailWindow(BaseModel):
     day: int = Field(ge=0, le=6)          # 0=lunes … 6=domingo
     start: str = Field("09:00", max_length=5)
     end: str = Field("17:00", max_length=5)
+
+    @model_validator(mode="after")
+    def _check_times(self):
+        if not _TIME_RE.match(self.start) or not _TIME_RE.match(self.end):
+            raise ValueError("Horario inválido (use formato HH:MM de 24 h).")
+        if self.start >= self.end:
+            raise ValueError("La hora de inicio debe ser anterior a la de fin.")
+        return self
 
 
 class ServiceCreate(BaseModel):
@@ -332,7 +341,7 @@ async def create_my_service(payload: ServiceCreate, request: Request) -> Any:
             await notify_all_admins(
                 db, title="Nuevo servicio Empresa por aprobar",
                 body=f"{user.get('name','')} envió «{doc['title']}» a revisión.",
-                url_path="/admin/services")
+                url_path="/admin/products")
         except Exception as e:  # noqa: BLE001
             logger.error(f"service notify failed: {e}")
     doc.pop("_id", None)
@@ -377,7 +386,7 @@ async def update_my_service(service_id: str, payload: ServiceUpdate,
             await notify_all_admins(
                 db, title="Servicio Empresa re-enviado",
                 body=f"{user.get('name','')} corrigió «{doc['title']}» y espera aprobación.",
-                url_path="/admin/services")
+                url_path="/admin/products")
         except Exception as e:  # noqa: BLE001
             logger.error(f"service resubmit notify failed: {e}")
     await _publish_services_changed(service_id)
@@ -401,7 +410,7 @@ async def submit_my_service(service_id: str, request: Request) -> Any:
         await notify_all_admins(
             db, title="Servicio Empresa por aprobar",
             body=f"{user.get('name','')} envió «{doc['title']}» a revisión.",
-            url_path="/admin/services")
+            url_path="/admin/products")
     except Exception as e:  # noqa: BLE001
         logger.error(f"service submit notify failed: {e}")
     return await db.services.find_one(
@@ -411,7 +420,10 @@ async def submit_my_service(service_id: str, request: Request) -> Any:
 @router.post("/company/services/{service_id}/pause")
 async def pause_my_service(service_id: str, request: Request) -> Any:
     user = await require_company(request)
-    await _owned_service_or_404(service_id, user["user_id"])
+    doc = await _owned_service_or_404(service_id, user["user_id"])
+    if doc.get("status") != "published":
+        raise HTTPException(status_code=400,
+                            detail="Solo puedes pausar servicios publicados.")
     await db.services.update_one(
         {"id": service_id, "company_id": user["user_id"]},
         {"$set": {"is_active": False, "updated_at": iso(now_utc())}})
@@ -423,7 +435,10 @@ async def pause_my_service(service_id: str, request: Request) -> Any:
 @router.post("/company/services/{service_id}/unpause")
 async def unpause_my_service(service_id: str, request: Request) -> Any:
     user = await require_company(request)
-    await _owned_service_or_404(service_id, user["user_id"])
+    doc = await _owned_service_or_404(service_id, user["user_id"])
+    if doc.get("status") != "published":
+        raise HTTPException(status_code=400,
+                            detail="Solo puedes reactivar servicios publicados.")
     await db.services.update_one(
         {"id": service_id, "company_id": user["user_id"]},
         {"$set": {"is_active": True, "updated_at": iso(now_utc())}})
@@ -476,6 +491,10 @@ async def admin_list_services(request: Request, status: Optional[str] = None) ->
 async def admin_approve_service(service_id: str, request: Request) -> Any:
     actor = await require_permission(request, "products")
     doc = await _service_or_404(service_id)
+    if doc.get("status") not in ("pending", "rejected"):
+        raise HTTPException(
+            status_code=400,
+            detail="Solo puedes aprobar servicios enviados a revisión (pendientes o rechazados).")
     await db.services.update_one(
         {"id": service_id},
         {"$set": {"status": "published", "rejection_reason": "",

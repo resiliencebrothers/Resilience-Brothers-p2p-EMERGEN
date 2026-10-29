@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { API } from "@/App";
+import { useLiveEvent } from "@/hooks/useLiveStream";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -36,12 +37,19 @@ export default function ServicesMarketplace() {
   const [modality, setModality] = useState("");
   const [detail, setDetail] = useState(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     axios.get(`${API}/services`, { withCredentials: true })
       .then((r) => setServices(r.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    load();
     axios.get(`${API}/service-categories`, { withCredentials: true })
       .then((r) => setCategories(r.data)).catch(() => {});
-  }, []);
+  }, [load]);
+
+  // Un servicio recién aprobado/pausado/editado aparece sin recargar la página.
+  useLiveEvent("services_changed", load);
 
   const catName = (slug) => categories.find((c) => c.slug === slug)?.name || slug;
   const usedCategories = useMemo(
@@ -74,7 +82,7 @@ export default function ServicesMarketplace() {
         </div>
       </div>
 
-      {(usedCategories.length > 0 || true) && (
+      {usedCategories.length > 0 && (
         <div className="flex gap-2 flex-wrap" data-testid="services-category-chips">
           <button data-testid="services-chip-all" onClick={() => setCategory("")}
             className={`px-3 py-1.5 text-xs uppercase tracking-wider border rounded-full transition-colors ${!category ? "border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10" : "border-white/10 text-neutral-400 hover:text-white"}`}>

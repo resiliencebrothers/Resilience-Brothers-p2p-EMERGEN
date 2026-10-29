@@ -315,7 +315,11 @@ export default function MarketplaceView() {
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div className="micro-label text-[#8B5CF6] mb-2">{t("marketplace.eyebrow")}</div>
-          <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#8B5CF6]" /> {t("marketplace.titleFull")}</h1>
+          {marketTab === "services" ? (
+            <h1 className="font-display text-3xl flex items-center gap-3"><Wrench className="w-8 h-8 text-[#8B5CF6]" /> {t("marketplace.servicesTitle", "Mercado de servicios")}</h1>
+          ) : (
+            <h1 className="font-display text-3xl flex items-center gap-3"><Boxes className="w-8 h-8 text-[#8B5CF6]" /> {t("marketplace.titleFull")}</h1>
+          )}
         </div>
         <div className="tactile-card px-5 py-3 min-w-full sm:min-w-[180px]" data-testid="marketplace-balance-widget">
           <div className="micro-label text-neutral-500">{t("marketplace.balanceLabel")}</div>

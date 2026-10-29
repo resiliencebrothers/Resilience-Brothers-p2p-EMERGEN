@@ -2810,3 +2810,22 @@ Cuatro funciones sobre la pestaña Efectivo (Admin → Courier/Deliveries → Ca
 - `options` ahora incluye el mapa de `denominations` por moneda.
 - **Verificado:** mypy OK; curl de todos los endpoints (reconciliación, paginación 198 eventos, options+denoms, validación de billetes válida/ inválida); testing_agent frontend 100% (conciliación, panel+alertas 32d, desglose con bloqueo por descuadre, paginación 1/8→2/8, filtros, export CSV 200). Sin residuo (0 movimientos creados).
 - Nota: `in_transit`/`total` solo cuentan custodia CONFIRMADA; el recogido sin confirmar se muestra aparte (por diseño). El `box` USD −66 es dato histórico preexistente, fuera de alcance.
+
+## iter379 — Empresas de Servicios · Fase 1 frontend (29 Oct 2026)
+Entrega del primer frontend para que las Empresas aprobadas ofrezcan **servicios** en el marketplace, replicando la arquitectura de productos de Empresa (misma moderación staff/admin).
+- **Backend `routes/services.py`** (registrado en `server.py` como `services_router`):
+  - CRUD de Empresa: crear/editar/borrar/pausar/reanudar/enviar-a-revisión. Estados `draft · pending · published · paused · rejected`.
+  - Moderación staff (permiso `products`): `GET /admin/services`, `POST /admin/services/{id}/approve` (guard: solo `pending`/`rejected`), `POST /admin/services/{id}/reject` (con motivo).
+  - Categorías admin: `GET /service-categories` (público) + CRUD admin (`/admin/service-categories`). 10 categorías sembradas (viajes, alquiler_auto, alquiler_casa, barberia, eventos…).
+  - Descubrimiento público `GET /services` (solo `published` + `is_active`), inyecta `owner_verified` (KYB).
+  - Validación: precio>0 salvo `quote`; disponibilidad `HH:MM` 24h con `start<end` (`AvailWindow._check_times`); imágenes subidas a R2 vía `maybe_upload_proof`.
+  - Avisos a admin con `url_path="/admin/products"` (los servicios viven bajo esa ruta; corregido respecto al `/admin/services` inicial que no existe en el router frontend).
+  - SSE: `_publish_services_changed(id)` emite `services_changed` en approve/reject/pause/unpause/delete/submit.
+- **Frontend**:
+  - `pages/company/CompanyServicesView.jsx` — gestión + formulario con editor de disponibilidad y métodos de pago; wired en el panel de Empresa (`/company/services`).
+  - `pages/dashboard/ServicesMarketplace.jsx` — pestaña **Servicios** del Marketplace (switch Productos/Servicios en `MarketplaceView.jsx`, `market-tab-products`/`market-tab-services`). Búsqueda, chips de categoría (solo las usadas) y de modalidad, ficha de detalle con disponibilidad + pago + nota "reserva/pago próximamente" (CTA deshabilitado). Suscrito a SSE `services_changed` → un servicio aprobado/pausado aparece sin recargar.
+  - `pages/admin/products/AdminServicesSection.jsx` — cola de moderación integrada en `/admin/products`; aprobar restringido a `pending`/`rejected`, rechazar a `pending`/`published`; badge "Pausado" vía `effStatus`.
+  - `hooks/useLiveStream.jsx` — `services_changed` añadido a la lista de eventos reenviados por el EventSource global.
+- **Decisión de diseño (requisito del operador):** editar un servicio **publicado** NO lo devuelve a `pending` — es exactamente el comportamiento de `vendor_products`/`company` (solo los `rejected` vuelven a revisión al reenviarse). El informe de testing lo marcó como "moderation bypass HIGH", pero se mantiene intencionalmente por consistencia con los productos. Cualquier cambio futuro debe aplicarse a productos Y servicios a la vez.
+- **Verificado:** `tests/test_services_phase1.py` **10/10**; testing agent iteration_379 (7 flujos E2E: alta Empresa, borrador→pendiente→publicado, rechazo+reenvío, categorías CRUD, pestaña Servicios del cliente con filtros). Smoke de navegador en preview (sesión `svc_fork_vip`): pestaña Servicios renderiza, cabecera "Mercado de servicios" correcta, tarjeta + chips OK. Datos sembrados limpiados (0 servicios residuales; 10 categorías admin conservadas).
+- **Fase 2 (backlog):** reserva de turno + cobro en línea (saldo USDT/efectivo), calendario con `blocked_dates` en UI shadcn, i18n EN de los textos de servicios, badge "Pausado" también en la cola admin.

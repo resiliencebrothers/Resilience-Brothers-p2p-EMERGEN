@@ -111,6 +111,9 @@ export function LiveStreamProvider({ children, enabled = true }) {
       // cancelación y CONFIRMACIÓN. Sin esto los `useLiveEvent("delivery_changed")`
       // nunca disparaban y el historial del mensajero no se refrescaba solo.
       "delivery_changed",
+      // Empresas de Servicios — un servicio aprobado/pausado/editado/borrado
+      // actualiza en vivo el mercado de servicios y la cola de moderación.
+      "services_changed",
     ].forEach((t) => es.addEventListener(t, forward(t)));
 
     es.addEventListener("error", () => {

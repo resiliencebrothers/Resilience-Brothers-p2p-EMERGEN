@@ -1,0 +1,46 @@
+{
+  "summary": "Ran end-to-end tests of the Services Phase-1 frontend wired to the backend, using cookies set on the preview domain. Accounts: Empresa svc_smoke_empresa, Admin svc_smoke_admin, VIP muni_smoke_vip. All 7 requested flows passed. (1) Company create (title, category limpieza, modality domicilio, fixed price 30, window Miércoles 10:00-14:30, Saldo USDT, zone) gave status Pendiente, and it was saved correctly in the DB. (2) An empty price showed an error toast and the dialog stayed open. Choosing 'A presupuestar' hid the price field and the submit went through. (3) 'Guardar borrador' gave Borrador with a submit icon, and clicking it gave Pendiente. (4) Admin: pending filter, Ver detail (availability 'Mié: 10:00–14:30' and 'Pago: Saldo USDT' shown), approve moved it to Publicado. (5) Reject with reason gave Rechazado with the reason shown to the company; editing and saving re-submitted it as Pendiente and cleared the reason. (6) Category add, toggle off and on, and delete all worked; a duplicate name showed an error toast. (7) VIP marketplace: Servicios tab showed the approved card. Category chips, modality chips (remoto gave the empty message) and search all filter correctly. The detail dialog showed price, availability, a disabled Reservar button and the próximamente note. New backend regression file: 10/10 passing. All test services and categories were cleaned up.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PUT /api/company/services/{id}", "issue": "Moderation bypass: editing a PUBLISHED service (title, price, description, images) keeps status=published and is_active=true, so the change goes live with no staff re-approval. Confirmed by test_edit_published_stays_published_without_review. Suggested fix: when status is published (or always, for content fields) set status=pending or keep a pending_changes copy, and notify admins.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "notify_all_admins url_path='/admin/services'", "issue": "No frontend route /admin/services exists in AdminPanel.jsx (services live under /admin/products), so the admin notification deep-link leads nowhere. Change to '/admin/products'."},
+      {"endpoint": "POST /api/admin/services/{id}/approve", "issue": "Does not check the current status: admin can approve a DRAFT the company never submitted (the UI shows the approve button on the Borrador tab too). Restrict to pending (or pending/rejected)."},
+      {"endpoint": "POST /api/company/services / PUT", "issue": "category is not checked against existing active categories (any string is accepted). Availability start/end are not checked for HH:MM format or start<end. blocked_dates format is not checked."},
+      {"endpoint": "POST /api/company/services/{id}/pause|unpause", "issue": "No status guard. pause on a pending/draft service sets is_active=false, which approve then silently overrides."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Client Services tab live updates", "issue": "ServicesMarketplace fetches /services only on mount and does not subscribe to the services_changed live-bus event, so newly approved or paused services do not appear until reload.", "affected_selectors": ["[data-testid=services-marketplace]"]}
+    ],
+    "design_issues": [
+      {"screen": "/dashboard/marketplace Servicios tab", "issues": ["Page header still reads 'Canjea por Mercancía' while the Servicios tab is active", "All services strings are hardcoded Spanish and ignore the EN language toggle"]},
+      {"screen": "/admin/products Servicios de empresas", "issues": ["Admin UI is in English (VIP vendor products, PENDING...) but the services section and categories block are hardcoded Spanish (no i18n)", "The status badge never shows 'Pausado' for paused published services (effStatus is used only in the company view)"]},
+      {"screen": "Company service form", "issues": ["Blocked dates use a native <input type=date> and the weekday uses a native <select>, while every other picker uses shadcn Select. Consider the shadcn Calendar/Popover for consistency"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_services_phase1.py", "/app/test_reports/pytest/pytest_services_phase1.xml"],
+  "action_items": [
+    "HIGH: In PUT /api/company/services/{id}, send edits of a published service back to review (status=pending + notify admins), or store pending_changes, so edits cannot skip moderation",
+    "Fix the admin notification url_path '/admin/services' -> '/admin/products'",
+    "Restrict admin approve to pending/rejected services; hide the approve button on Borrador cards",
+    "Validate category slug against active categories, and availability HH:MM with start<end",
+    "Optional: subscribe ServicesMarketplace to the services_changed live event; adjust the marketplace header for the Servicios tab; add i18n"
+  ],
+  "critical_code_review_comments": [
+    "routes/services.py update_my_service: published content is mutable without moderation",
+    "routes/services.py pause/unpause and approve lack state-machine guards",
+    "ServicesMarketplace.jsx line 77: `(usedCategories.length > 0 || true)` is dead logic",
+    "Frontend files are all under 500 lines; data-testids are complete for all tested elements"
+  ],
+  "updated_files": ["/app/backend/tests/test_services_phase1.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "None persisted. All TEST_ services and the TEST Fotografia category were deleted after the run.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Cookies svc_smoke_empresa, svc_smoke_admin and muni_smoke_vip were valid (reseed with backend/seed_services_smoke.py). Set the session_token cookie on the preview domain and use wait_until=domcontentloaded. Retest: editing a published service should go back to pending after the fix; the approve guard; the notification link.",
+  "test_credentials": "session_token cookies from the review request; /app/memory/test_credentials.md lists other test_session_* tokens"
+}
