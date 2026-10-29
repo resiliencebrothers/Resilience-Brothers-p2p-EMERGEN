@@ -14,6 +14,18 @@ from typing import Optional
 
 from db_client import db
 
+
+class AmbiguousMunicipalityError(ValueError):
+    """MUNI-02-R2 — un NOMBRE de municipio resolvió a varios territorios
+    activos (homónimos en provincias distintas) sin provincia que desambigüe.
+    Debe rechazarse ANTES de cualquier cobro: elegir el primero cobraría la
+    tarifa de un territorio que el cliente no seleccionó."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"ambiguous municipality name: {key!r}")
+        self.key = key
+
+
 DEFAULT_RATES = [
     {"municipality": "10 de Octubre", "price_usdt": 2.0,
      "aliases": ["diez de octubre"]},
@@ -107,9 +119,11 @@ async def get_rate_by_key(key: str,
                           province: Optional[str] = None) -> Optional[dict]:
     """Busca por id (exacto) o por nombre normalizado (solo activas).
     Con municipios homónimos en provincias distintas, `province` desambigua
-    la coincidencia por nombre. MUNI-02 — si se pasa `province` y NO hay match
-    en esa provincia, devuelve None (nunca cae a un homónimo de otra). Sin
-    `province`, cae al primer municipio con ese nombre (compat.)."""
+    la coincidencia por nombre. MUNI-02-R — si se pasa `province` y NO hay match
+    en esa provincia, devuelve None (nunca cae a un homónimo de otra).
+    MUNI-02-R2 — SIN `province`, un nombre solo resuelve si es inequívoco; con
+    varios homónimos activos lanza AmbiguousMunicipalityError (rechazo previo
+    al cobro). La búsqueda por id estable nunca es ambigua."""
     await seed_if_empty()
     pnorm = normalize_text(province) if province else None
     row = await db.courier_municipality_rates.find_one(
@@ -124,20 +138,24 @@ async def get_rate_by_key(key: str,
             return None
         return row
     norm = normalize_text(key)
-    fallback = None
-    for r in await get_rates(active_only=True):
-        if normalize_text(r["municipality"]) != norm:
-            continue
-        # MUNI-02 — con provincia indicada, la coincidencia por NOMBRE debe
-        # pertenecer a ESA provincia: nunca se devuelve un homónimo de otra
-        # provincia (eso cobraría una tarifa de otro territorio).
-        if pnorm:
+    matches = [r for r in await get_rates(active_only=True)
+               if normalize_text(r["municipality"]) == norm]
+    # MUNI-02 — con provincia indicada, la coincidencia por NOMBRE debe
+    # pertenecer a ESA provincia: nunca se devuelve un homónimo de otra
+    # provincia (eso cobraría una tarifa de otro territorio).
+    if pnorm:
+        for r in matches:
             if normalize_text(r.get("province")) == pnorm:
                 return r
-            continue
-        if fallback is None:
-            fallback = r
-    return fallback
+        return None
+    # MUNI-02-R2 — SIN provincia, un NOMBRE solo resuelve si es inequívoco.
+    # Con homónimos activos en provincias distintas NO se elige el primero
+    # (cobraría la tarifa de un territorio que el cliente no eligió): se
+    # señala ambigüedad para RECHAZAR antes de cualquier cobro. Un id estable
+    # se resolvió arriba sin pasar por aquí, y un nombre único sigue valiendo.
+    if len(matches) > 1:
+        raise AmbiguousMunicipalityError(key)
+    return matches[0] if matches else None
 
 
 async def match_municipality(text: str,

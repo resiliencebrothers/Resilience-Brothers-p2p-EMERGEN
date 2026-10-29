@@ -20,10 +20,19 @@ BASE_URL = BASE_URL.rstrip("/")
 
 
 def _env(key):
-    with open("/app/backend/.env") as f:
-        for ln in f:
-            if ln.startswith(key + "="):
-                return ln.split("=", 1)[1].strip().strip('"')
+    # MUNI-Q01 (portabilidad) — primero el entorno del arnés (os.environ, que
+    # conftest/CI definen); el fichero .env queda como APOYO opcional de
+    # desarrollo, no requisito: su ausencia ya no rompe la suite (FileNotFound).
+    val = os.environ.get(key)
+    if val:
+        return val
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for ln in f:
+                if ln.startswith(key + "="):
+                    return ln.split("=", 1)[1].strip().strip('"')
+    return None
 
 
 mdb = MongoClient(_env("MONGO_URL"))[_env("DB_NAME")]
@@ -89,6 +98,25 @@ def _fund_vip():
 
 def _redeem(vip, **kw):
     return vip.post(f"{BASE_URL}/api/vip/redeem", json=kw)
+
+
+@pytest.fixture(scope="module")
+def homonym(admin):
+    """MUNI-02-R2 — dos municipios ACTIVOS con el MISMO nombre normalizado en
+    provincias distintas y precios distintos. El nombre, SIN provincia, es
+    AMBIGUO y debe rechazarse antes de cobrar."""
+    name = f"TEST_Ambig_{uuid.uuid4().hex[:4]}"
+    a = admin.post(f"{BASE_URL}/api/admin/courier/municipality-rates",
+                   json={"municipality": name, "province": "TEST_AmbigA",
+                         "price_usdt": 4})
+    b = admin.post(f"{BASE_URL}/api/admin/courier/municipality-rates",
+                   json={"municipality": name, "province": "TEST_AmbigB",
+                         "price_usdt": 8})
+    assert a.status_code == 200 and b.status_code == 200, (a.text, b.text)
+    ids = [a.json()["id"], b.json()["id"]]
+    yield {"name": name, "id_a": ids[0], "id_b": ids[1]}
+    for mid in ids:
+        mdb.courier_municipality_rates.delete_one({"id": mid})
 
 
 # --- Public (auth) listing endpoints
@@ -252,6 +280,41 @@ class TestRedeem:
                     receiver_phone="+5355555555",
                     courier_municipality=vedado["id"], courier_province="La Habana")
         assert r.status_code == 400, r.text
+
+    def test_ambiguous_name_without_province_rejected(self, vip, product, homonym):
+        """MUNI-02-R2 — enviar el NOMBRE homónimo sin provincia NO elige un
+        territorio al azar: se rechaza (ambigüedad) ANTES de cobrar; el saldo
+        queda intacto. Sin provincia, con cadena vacía y con espacios, igual."""
+        for prov in (None, "", "   "):
+            b0 = _bal()
+            kw = dict(product_id=product, quantity=1,
+                      delivery_address="Calle Ambigua #10",
+                      receiver_phone="+5355555555",
+                      courier_municipality=homonym["name"],
+                      expected_courier_fee_usdt=4.0)
+            if prov is not None:
+                kw["courier_province"] = prov
+            r = _redeem(vip, **kw)
+            assert r.status_code == 400, (prov, r.text)
+            assert r.json()["detail"].startswith(
+                "COURIER_AMBIGUOUS_MUNICIPALITY"), (prov, r.text)
+            assert abs(_bal() - b0) < 0.001
+
+    def test_ambiguous_name_with_province_resolves(self, vip, product, homonym):
+        """MUNI-02-R2 — el MISMO nombre homónimo CON su provincia resuelve a la
+        tarifa de ESE territorio (nunca la primera global): cobro correcto."""
+        b0 = _bal()
+        r = _redeem(vip, product_id=product, quantity=1,
+                    delivery_address="Calle Ambigua #20",
+                    receiver_phone="+5355555555",
+                    courier_municipality=homonym["name"],
+                    courier_province="TEST_AmbigB",
+                    expected_courier_fee_usdt=8.0)
+        assert r.status_code == 200, r.text
+        doc = mdb.redemptions.find_one({"id": r.json()["id"]}, {"_id": 0})
+        assert doc["courier_province"] == "TEST_AmbigB"
+        assert doc["courier_fee_usdt"] == 8.0
+        assert abs((b0 - _bal()) - (300.0 + 8.0)) < 0.01
 
 
 

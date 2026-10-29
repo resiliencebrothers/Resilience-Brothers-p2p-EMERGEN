@@ -204,8 +204,17 @@ async def price_charge_municipality_or_raise(muni_key: str, currency: str,
                                              op_label: str) -> tuple:
     """iter211 — cobro staff por tarifa fija de municipio.
     Returns (quote, fee_usdt, fee_in_currency, muni_doc)."""
-    from services.municipality_rates import get_rate_by_key
-    m = await get_rate_by_key(muni_key)
+    from services.municipality_rates import (
+        AmbiguousMunicipalityError, get_rate_by_key)
+    try:
+        m = await get_rate_by_key(muni_key)
+    except AmbiguousMunicipalityError:
+        # MUNI-02-R2 — el staff envió un nombre presente en varias provincias:
+        # no se cobra una tarifa adivinada, se exige desambiguar por provincia.
+        raise HTTPException(
+            status_code=409,
+            detail=("Hay varios municipios con ese nombre. Elige la provincia "
+                    "o usa el identificador del municipio."))
     if not m:
         raise HTTPException(
             status_code=404,

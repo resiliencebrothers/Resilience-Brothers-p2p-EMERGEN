@@ -608,6 +608,7 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
     cq = {"rate_usdt_per_km": 0.0, "min_fee_usdt": 0.0}
     if pickup_store is None:
         from services.courier_fee import municipality_fallback_quote
+        from services.municipality_rates import AmbiguousMunicipalityError
         # Entrega a domicilio — CONTRATO ÚNICO Y ESTRICTO (cierre de auditoría
         # municipal MUNI-02-R / MUNI-04-R / MUNI-06-R). ANTES de CUALQUIER
         # efecto económico (crear/reservar/cobrar) se valida SIEMPRE el destino
@@ -644,8 +645,19 @@ async def redeem_product(payload: RedemptionCreate, request: Request) -> Any:
         # devuelve None si el id/nombre no existe, está inactivo o su provincia
         # no coincide con la enviada. Vale igual para gratis y de pago: primero
         # se valida el destino, luego se decide la tarifa.
-        mq = await municipality_fallback_quote(
-            _addr, "USDT", total, municipality_key=muni_key, province=_province)
+        mq = None
+        try:
+            mq = await municipality_fallback_quote(
+                _addr, "USDT", total, municipality_key=muni_key,
+                province=_province)
+        except AmbiguousMunicipalityError:
+            # MUNI-02-R2 — el nombre enviado existe en varias provincias y no
+            # se eligió una: no se adivina el territorio, se pide la provincia
+            # ANTES de cualquier cobro (saldo/stock/pedido quedan sin efectos).
+            raise HTTPException(
+                status_code=400,
+                detail=("COURIER_AMBIGUOUS_MUNICIPALITY|Hay varios municipios "
+                        "con ese nombre. Elige la provincia del destino."))
         if not mq:
             raise HTTPException(
                 status_code=400,
@@ -1203,10 +1215,17 @@ async def create_withdrawal(payload: WithdrawalCreate, request: Request) -> Any:
     courier_muni = None
     if payload.method == "cash" and courier_status == "manual_review":
         from services.courier_fee import municipality_fallback_quote
-        mq = await municipality_fallback_quote(
-            f"{payload.details or ''} {province or ''}",
-            currency, payload.amount_usd,
-            municipality_key=payload.courier_municipality)
+        from services.municipality_rates import AmbiguousMunicipalityError
+        try:
+            mq = await municipality_fallback_quote(
+                f"{payload.details or ''} {province or ''}",
+                currency, payload.amount_usd,
+                municipality_key=payload.courier_municipality)
+        except AmbiguousMunicipalityError:
+            # MUNI-02-R2 — nombre homónimo sin provincia en el flujo heredado
+            # de efectivo: no se cobra una tarifa adivinada, queda en revisión
+            # manual (comportamiento seguro, sin cargo automático erróneo).
+            mq = None
         if mq and mq.get("fee_usdt", 0) > 0:
             courier_status = "charged"
             courier_km = 0.0

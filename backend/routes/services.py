@@ -229,7 +229,10 @@ async def _validate_service_config(
             raise HTTPException(
                 status_code=400,
                 detail="El anticipo fijo no puede superar el precio total del servicio.")
-    if timezone and timezone not in _VALID_TIMEZONES:
+    # SV-R1 — una cadena VACÍA (no omitida) es un valor inválido explícito, no
+    # un "sin cambios": hay que rechazarla en vez de saltarse la comprobación.
+    tz_val = (timezone or "").strip()
+    if not tz_val or tz_val not in _VALID_TIMEZONES:
         raise HTTPException(
             status_code=400,
             detail="Zona horaria no válida. Usa una zona IANA, por ejemplo America/Havana.")
@@ -240,9 +243,14 @@ async def _validate_service_config(
             raise HTTPException(
                 status_code=400,
                 detail=f"Fecha bloqueada no válida: «{d}». Usa el formato AAAA-MM-DD.")
-    if check_category and category:
+    if check_category:
+        cat_slug = (category or "").strip()
+        if not cat_slug:
+            raise HTTPException(
+                status_code=400,
+                detail="Selecciona una categoría válida para el servicio.")
         await _ensure_categories_seeded()
-        cat = await db.service_categories.find_one({"slug": category})
+        cat = await db.service_categories.find_one({"slug": cat_slug})
         if not cat or not cat.get("active", False):
             raise HTTPException(
                 status_code=400,
@@ -503,7 +511,7 @@ async def submit_my_service(service_id: str, request: Request) -> Any:
         pricing_type=doc.get("pricing_type"), price=doc.get("price_usdt"),
         deposit_type=doc.get("deposit_type"), deposit_value=doc.get("deposit_value"),
         timezone=doc.get("timezone"), blocked_dates=doc.get("blocked_dates"),
-        category=doc.get("category"), check_category=False)
+        category=doc.get("category"), check_category=True)
     await db.services.update_one(
         {"id": service_id, "company_id": user["user_id"]},
         {"$set": {"status": "pending", "rejection_reason": "",
@@ -597,13 +605,28 @@ async def admin_approve_service(service_id: str, request: Request) -> Any:
         raise HTTPException(
             status_code=400,
             detail="Solo puedes aprobar servicios enviados a revisión (pendientes o rechazados).")
-    # SV-02 — revalidamos el precio almacenado antes de publicar.
-    _validate_price(doc.get("pricing_type"), doc.get("price_usdt"))
-    await db.services.update_one(
-        {"id": service_id},
+    # SV-R2 — revalidamos TODA la configuración almacenada (no solo el precio)
+    # sobre la revisión EXACTA que se va a publicar: un registro creado antes
+    # de las correcciones (anticipo 250 %, zona o categoría inválida) no debe
+    # publicarse sin corregirse. Si falla, el admin lo devuelve a corrección.
+    await _validate_service_config(
+        pricing_type=doc.get("pricing_type"), price=doc.get("price_usdt"),
+        deposit_type=doc.get("deposit_type"), deposit_value=doc.get("deposit_value"),
+        timezone=doc.get("timezone"), blocked_dates=doc.get("blocked_dates"),
+        category=doc.get("category"), check_category=True)
+    # Publicamos SOLO la revisión que acabamos de validar: si una edición
+    # concurrente cambió el documento (otro `updated_at`), abortamos para no
+    # publicar campos sin revisar; el admin reintenta sobre la nueva revisión.
+    res = await db.services.update_one(
+        {"id": service_id, "status": doc.get("status"),
+         "updated_at": doc.get("updated_at")},
         {"$set": {"status": "published", "rejection_reason": "",
                   "is_active": True, "approved_at": iso(now_utc()),
                   "updated_at": iso(now_utc())}})
+    if res.matched_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="El servicio cambió mientras lo revisabas. Vuelve a abrirlo y apruébalo de nuevo.")
     await log_action(db, actor, "service.approve", "service", service_id,
                      summary=f"Servicio aprobado: {doc['title']} ({doc.get('owner_name','')})")
     await _notify_owner(
