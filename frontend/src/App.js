@@ -77,6 +77,7 @@ function AppRouter() {
 
 function ProtectedRoute({ children, staffOnly = false, companyRoute = false }) {
   const { user, status, loading, retry } = useAuth();
+  const [retrying, setRetrying] = useState(false);
   if (loading || status === AUTH_STATUS.CHECKING) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#14101F]">
@@ -88,6 +89,11 @@ function ProtectedRoute({ children, staffOnly = false, companyRoute = false }) {
   // be treated as "logged out". Offer a recoverable retry instead of bouncing
   // the user to the login screen (which falsely implies their session ended).
   if (status === AUTH_STATUS.ERROR && !user) {
+    const onRetry = async () => {
+      if (retrying) return;
+      setRetrying(true);
+      try { await retry?.(); } finally { setRetrying(false); }
+    };
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#14101F] px-6" data-testid="auth-check-error">
         <div className="text-center max-w-sm">
@@ -98,10 +104,11 @@ function ProtectedRoute({ children, staffOnly = false, companyRoute = false }) {
           <button
             type="button"
             data-testid="auth-check-retry-btn"
-            onClick={() => retry?.()}
-            className="px-6 py-3 bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none transition-colors"
+            onClick={onRetry}
+            disabled={retrying}
+            className="px-6 py-3 bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none transition-colors disabled:opacity-50"
           >
-            Reintentar
+            {retrying ? "Reintentando..." : "Reintentar"}
           </button>
         </div>
       </div>

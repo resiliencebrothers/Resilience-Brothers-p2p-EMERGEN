@@ -1,3 +1,15 @@
+## Changelog — Jun 2026 (Auditoría de inicio de sesión: AUTH-01/02/03)
+
+Corrección de los tres hallazgos del auditor (archivo `Resilience_Revision_Inicio_Sesion.txt`, commit 14d1b33). El backend `/api/auth/login` ya era correcto (contraseña mala → 401 `INVALID_CREDENTIALS`; buena → 200 + cookie `session_token`; `/api/auth/me` con cookie → 200) y NO se tocó. Los arreglos son de la capa de estado de autenticación en el frontend.
+
+- **Lógica pura y testeable** [`lib/authGuard.js`]: `createAuthGeneration` (generación monótona), `reduceAuthCheck` (máquina de estados checking/authenticated/anonymous/error), `isValidUser` (contrato user_id+role), `confirmLoginIdentity`. Cubierto por 20 tests Jest en `lib/__tests__/authGuard.test.js` (full suite 101/101).
+- **AUTH-01 (ALTA) — respuesta atrasada no borra un login nuevo** [`context/AuthContext.jsx`]: cada login/logout hace `authGen.bump()`; `checkAuth` captura la generación y descarta la respuesta de `/auth/me` si quedó obsoleta. Así un 401 (o un éxito antiguo) que resuelve después del login/logout no expulsa ni restaura al usuario.
+- **AUTH-02 (MEDIA) — errores transitorios ya no cierran sesión** [`AuthContext.jsx` `checkAuth` + `App.js` `ProtectedRoute`]: solo un 401 definitivo marca anónimo; red/5xx mantiene la sesión ya confirmada. En el arranque sin identidad confirmada, un fallo transitorio muestra pantalla recuperable `[data-testid=auth-check-error]` con botón `[data-testid=auth-check-retry-btn]` (con estado "Reintentando...") en vez de rebotar al login.
+- **AUTH-03 (MEDIA) — éxito solo tras confirmar identidad** [`AuthContext.jsx` `signInWithPassword` + `components/EmailAuthDialog.jsx`]: el login se centraliza en el contexto; valida el contrato del usuario y confirma con `/auth/me` (misma identidad) ANTES de anunciar "Sesión iniciada" y navegar. Si la sesión no se puede confirmar (cookie no persistida/red) lanza `SessionUnconfirmedError` → toast "No pudimos confirmar tu sesión…" (NUNCA "contraseña incorrecta"). `AuthCallback.jsx` (Google) usa `commitSession` con la misma validación.
+
+Verificación: 20 tests unitarios + full suite 101/101; backend por curl (401/200/cookie/me); integración en navegador real por testing agent (iteration_377, 3/3 PASS: happy-path sin logout espurio, pantalla recuperable AUTH-02, y retry→401→landing). Nota: el formulario de email está protegido por captcha Turnstile ENFORCED, por lo que el E2E de AUTH-03 en navegador no es posible; su lógica queda cubierta por los tests unitarios.
+
+
 ## Changelog — Jun 2026 (Pulido UX del checkout municipal + fee de mensajería en historial)
 
 Cierre de la auditoría de tarifas municipales (MUNI-01..06, mypy, portabilidad de tests — todo verificado por testing agent, iteration_376, 100% de los flujos comprobables). Dos refinamientos finales de frontend recomendados por el testing agent:
