@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only browser test (Playwright, desktop 1920x1080) of two auth features. Both pass 100%. (1) LOGIN ERROR BANNER: with captcha config mocked to disabled, /api/auth/login mocked to 401 INVALID_CREDENTIALS and /api/auth/me mocked to 401, clicking header-login-btn opened email-auth-dialog; the submit button was enabled. Submitting the email and password fired exactly 1 login request. The inline banner auth-error-banner rendered 'Correo o contraseña incorrectos.' and was still visible 1.5s later. A toast with the same text also showed. The dialog stayed open and the URL stayed '/' (no dashboard navigation). Editing auth-email-input cleared the banner. (2) SIGN OUT EVERYWHERE: with the seeded session_token cookie and /api/auth/logout-all mocked to 200, /dashboard/security rendered sign-out-all-card and sign-out-all-btn. The button opened sign-out-all-dialog. Cancel closed the dialog, sent 0 requests and kept the URL. Confirm sent exactly 1 POST to the mocked logout-all and redirected to '/', where header-login-btn is visible. The real seeded session was not revoked: /api/auth/me still returns 200 with that cookie after the test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login dialog / Security page", "issues": ["The language selector shows ES, but the landing hero and the Security page render in English while the login dialog renders in Spanish. Mixed-language UI; probably the i18n locale is not applied the same way everywhere (pre-existing, not part of this fix).", "In the screenshot the sign-out-all AlertDialog looked partly see-through, with background text showing through. This is probably the fade-in animation caught mid-way; worth a visual check that bg-[#1A1730] is fully opaque."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: make the UI language match the selected ES locale on the landing and Security pages.",
+    "Optional: in AuthContext.logoutAll, authGen.bump() runs before the POST. If the POST fails, the user stays logged in, but any in-flight auth checks are invalidated. Consider bumping only after the POST succeeds."
+  ],
+  "critical_code_review_comments": [
+    "SecuritySettings.confirmSignOutAll handles errors correctly: it shows an error toast and resets the busy flag.",
+    "The EmailAuthDialog banner is cleared on email change, as required."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "100%"},
+  "seed_data_creation": "None. The existing seeded cookie audit_bounce_test_sess (user_test_admin01) was valid; /api/auth/me returned 200 before and after the test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Banner test: mock **/api/captcha/config (disabled), **/api/auth/login (401), **/api/auth/me (401) before goto('/'). Sign-out test: add the session_token cookie and mock **/api/auth/logout-all before goto('/dashboard/security'). Never call the real logout-all."
+}

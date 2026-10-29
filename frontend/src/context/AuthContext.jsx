@@ -158,8 +158,11 @@ export function AuthProvider({ children }) {
   // filas de sesión; aquí limpiamos el estado local y volvemos al inicio. Hay
   // que iniciar sesión de nuevo en todas partes.
   const logoutAll = useCallback(async () => {
-    authGen.bump();
+    // Revoke on the server FIRST; only once it succeeds do we invalidate
+    // in-flight checks and clear local state. If the POST fails the caller
+    // shows an error and the user stays logged in with checks intact.
     await axios.post(`${API}/auth/logout-all`, {}, { withCredentials: true });
+    authGen.bump();
     clearIdentity(AUTH_STATUS.ANONYMOUS);
     window.location.href = "/";
   }, [authGen, clearIdentity]);
