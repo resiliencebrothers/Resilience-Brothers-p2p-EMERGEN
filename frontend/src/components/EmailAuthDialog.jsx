@@ -21,6 +21,9 @@ import CompanySignupDialog from "./CompanySignupDialog";
 
 export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const { t, i18n } = useTranslation();
+  // Idioma actual de la UI → se envía al backend para que los correos
+  // (verificación, recuperación) lleguen en el idioma elegido por el usuario.
+  const langQS = (i18n.language || "es").split("-")[0];
   const navigate = useNavigate();
   const { signInWithPassword, login } = useAuth();
   const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
@@ -89,20 +92,20 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const handleResendVerification = async () => {
     const target = email.trim();
     if (!target) {
-      toast.error("Ingresa tu email primero");
+      toast.error(t("auth.resend.needEmail"));
       return;
     }
     if (resending) return;
     setResending(true);
     try {
-      const r = await axios.post(`${API}/auth/resend-verification`, { email: target });
+      const r = await axios.post(`${API}/auth/resend-verification?lang=${langQS}`, { email: target });
       toast.success(
-        r.data?.message || "Si la cuenta existe y no está verificada, te reenviamos el correo.",
+        r.data?.message || t("auth.resend.successFallback"),
         { duration: 6000 }
       );
     } catch (err) {
       const detail = err.response?.data?.detail;
-      const msg = typeof detail === "string" ? detail : "No pudimos reenviar el correo. Intenta de nuevo.";
+      const msg = typeof detail === "string" ? detail : t("auth.resend.failed");
       toast.error(msg);
     } finally {
       setResending(false);
@@ -172,14 +175,14 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     setFormErrorKind("");
     try {
       if (mode === "forgot") {
-        await axios.post(`${API}/auth/forgot-password`, { email: email.trim() });
+        await axios.post(`${API}/auth/forgot-password?lang=${langQS}`, { email: email.trim() });
         setSuccessMsg(t("auth.success.forgotSent"));
         return;
       }
       const captcha = captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {};
       if (mode === "register") {
         const body = { email: email.trim(), password, name: name.trim(), phone: phone.trim(), account_type: accountType, ...captcha };
-        await axios.post(`${API}/auth/register`, body, { withCredentials: true });
+        await axios.post(`${API}/auth/register?lang=${langQS}`, body, { withCredentials: true });
         // iter17: registration no longer logs in — must verify email first
         const base = t("auth.success.registerDefault");
         setSuccessMsg(accountType === "business"

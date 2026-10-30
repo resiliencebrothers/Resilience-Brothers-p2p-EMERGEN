@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -22,12 +23,13 @@ import { useLiveEvent } from "@/hooks/useLiveStream";
 // (/vip/balances, /deposits, /vip/withdraw). Las ventas del marketplace se
 // acreditan aquí netas de comisión; los retiros SON la liquidación con Resilience.
 const ACTIONS = [
-  { key: "deposit", icon: ArrowDownToLine, label: "Depositar", accent: "text-emerald-400", ring: "border-emerald-500/50" },
-  { key: "withdraw", icon: ArrowUpFromLine, label: "Retirar / Liquidar", accent: "text-amber-400", ring: "border-amber-500/50" },
-  { key: "convert", icon: ArrowRightLeft, label: "Convertir", accent: "text-[#8B5CF6]", ring: "border-[#8B5CF6]/50" },
+  { key: "deposit", icon: ArrowDownToLine, labelKey: "actionDeposit", accent: "text-emerald-400", ring: "border-emerald-500/50" },
+  { key: "withdraw", icon: ArrowUpFromLine, labelKey: "actionWithdraw", accent: "text-amber-400", ring: "border-amber-500/50" },
+  { key: "convert", icon: ArrowRightLeft, labelKey: "actionConvert", accent: "text-[#8B5CF6]", ring: "border-[#8B5CF6]/50" },
 ];
 
 export default function CompanyWalletView() {
+  const { t } = useTranslation();
   const { refresh } = useAuth();
   const [balances, setBalances] = useState({ balances: [], total_usdt: 0, frozen_total_usdt: 0 });
   const [withdrawals, setWithdrawals] = useState([]);
@@ -57,9 +59,9 @@ export default function CompanyWalletView() {
       a.download = `cierre_empresa_${slug}.pdf`;
       document.body.appendChild(a); a.click(); a.remove();
       window.URL.revokeObjectURL(url);
-      toast.success("Cierre contable descargado");
+      toast.success(t("company.wallet.closingDownloaded"));
     } catch {
-      toast.error("No se pudo generar el cierre contable");
+      toast.error(t("company.wallet.closingFailed"));
     } finally { setDownloading(false); }
   };
 
@@ -102,29 +104,27 @@ export default function CompanyWalletView() {
     <div className="space-y-6" data-testid="company-wallet-view">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="micro-label text-[#8B5CF6] mb-2">Empresa</div>
+          <div className="micro-label text-[#8B5CF6] mb-2">{t("company.wallet.sectionLabel")}</div>
           <h2 className="font-display text-2xl flex items-center gap-3">
-            <Wallet className="w-6 h-6 text-[#8B5CF6]" /> Saldo y liquidación
+            <Wallet className="w-6 h-6 text-[#8B5CF6]" /> {t("company.wallet.title")}
           </h2>
           <p className="text-sm text-neutral-500 mt-1 max-w-2xl">
-            Tu sub-saldo. Las ventas del marketplace se acreditan aquí netas de la
-            comisión de Resilience. Deposita, convierte y retira (la retirada es la
-            liquidación con Resilience).
+            {t("company.wallet.subtitle")}
           </p>
         </div>
         <button type="button" onClick={() => setHistoryOpen(true)}
           data-testid="company-wallet-history-btn"
           className="flex items-center gap-2 border border-white/15 hover:border-[#8B5CF6]/60 hover:bg-white/5 text-neutral-400 hover:text-white px-3 h-9 text-[0.65rem] uppercase tracking-widest font-mono transition-colors shrink-0"
-          title="Historial de depósitos y retiros">
+          title={t("company.wallet.historyBtnTitle")}>
           <History className="w-4 h-4" />
-          <span className="hidden sm:inline">Historial</span>
+          <span className="hidden sm:inline">{t("company.wallet.historyBtn")}</span>
         </button>
       </div>
 
       <div className="relative overflow-hidden bg-gradient-to-b from-[#181628] to-[#1A1730] border border-white/[0.08] rounded-2xl p-8 shadow-2xl shadow-black/50">
         <div className="absolute -top-24 -right-24 w-64 h-64 bg-violet-500/20 blur-[100px] rounded-full pointer-events-none" />
         <Wallet className="w-8 h-8 text-violet-400 mb-3 relative" />
-        <div className="text-xs font-semibold tracking-[0.22em] text-violet-300/70 uppercase mb-3 block relative">Saldo disponible</div>
+        <div className="text-xs font-semibold tracking-[0.22em] text-violet-300/70 uppercase mb-3 block relative">{t("company.wallet.availableBalance")}</div>
         <div className="text-5xl sm:text-6xl font-mono tabular-nums tracking-tight font-semibold text-white relative" data-testid="company-wallet-total">
           <FlashNumber value={balances.total_usdt || 0} testid="company-wallet-total-flash">
             {Number(balances.total_usdt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
@@ -134,13 +134,13 @@ export default function CompanyWalletView() {
         {Number(balances.frozen_total_usdt) > 0 && (
           <div className="flex items-center gap-2 text-sm text-amber-400/90 mt-3 relative" data-testid="company-wallet-frozen-total">
             <Lock className="w-4 h-4" />
-            Retenido en retiros pendientes: ≈ {Number(balances.frozen_total_usdt).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
+            {t("company.wallet.frozenPrefix")} {Number(balances.frozen_total_usdt).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT
           </div>
         )}
       </div>
 
       <div className="grid grid-cols-3 gap-3" data-testid="company-wallet-actions">
-        {ACTIONS.map(({ key, icon: Icon, label, accent, ring }) => {
+        {ACTIONS.map(({ key, icon: Icon, labelKey, accent, ring }) => {
           const active = action === key;
           return (
             <button key={key} type="button" onClick={() => toggleAction(key)}
@@ -149,7 +149,7 @@ export default function CompanyWalletView() {
               <span className={`w-11 h-11 rounded-full border border-white/10 bg-black/40 flex items-center justify-center ${accent}`}>
                 <Icon className="w-5 h-5" />
               </span>
-              <span className={`text-xs sm:text-sm font-semibold uppercase tracking-widest ${active ? "text-white" : "text-neutral-300"}`}>{label}</span>
+              <span className={`text-xs sm:text-sm font-semibold uppercase tracking-widest ${active ? "text-white" : "text-neutral-300"}`}>{t(`company.wallet.${labelKey}`)}</span>
             </button>
           );
         })}
@@ -176,12 +176,10 @@ export default function CompanyWalletView() {
       )}
 
       <section data-testid="company-wallet-balances">
-        <div className="micro-label text-neutral-500 mb-3">Saldo por moneda</div>
+        <div className="micro-label text-neutral-500 mb-3">{t("company.wallet.balancesByCurrency")}</div>
         <VipBalancesGrid balances={balances} ledger={ledger} onDrillDown={handleDrillDown} />
         <p className="text-xs text-neutral-500 mt-3">
-          El saldo mostrado es el <strong>disponible</strong>. Lo retenido por
-          retiros pendientes aparece marcado en cada moneda y vuelve a estar
-          disponible si el retiro se rechaza o cancela.
+          {t("company.wallet.balancesNotePre")}<strong>{t("company.wallet.balancesNoteBold")}</strong>{t("company.wallet.balancesNotePost")}
         </p>
       </section>
 
@@ -190,22 +188,21 @@ export default function CompanyWalletView() {
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
               <h2 className="font-display text-xl flex items-center gap-2">
-                <FileDown className="w-5 h-5 text-[#8B5CF6]" /> Cierre contable
+                <FileDown className="w-5 h-5 text-[#8B5CF6]" /> {t("company.wallet.closingTitle")}
               </h2>
               <p className="text-sm text-neutral-400 mt-1 max-w-xl">
-                Descarga un PDF con tus movimientos (depósitos, retiros, ventas y
-                conversiones) y el saldo por rango de fechas. Sin fechas: histórico completo.
+                {t("company.wallet.closingDesc")}
               </p>
             </div>
             <div className="flex items-end gap-3 flex-wrap">
               <div className="flex flex-col">
-                <label className="micro-label text-neutral-500 mb-1">Desde</label>
+                <label className="micro-label text-neutral-500 mb-1">{t("company.wallet.from")}</label>
                 <Input data-testid="company-closing-since-input" type="date"
                   value={closingSince} onChange={(e) => setClosingSince(e.target.value)}
                   className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-40" />
               </div>
               <div className="flex flex-col">
-                <label className="micro-label text-neutral-500 mb-1">Hasta</label>
+                <label className="micro-label text-neutral-500 mb-1">{t("company.wallet.to")}</label>
                 <Input data-testid="company-closing-until-input" type="date"
                   value={closingUntil} onChange={(e) => setClosingUntil(e.target.value)}
                   className="rounded-none bg-[#0a0a0a] border-white/10 h-11 font-mono w-40" />
@@ -214,7 +211,7 @@ export default function CompanyWalletView() {
                 disabled={downloading}
                 className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none h-11">
                 <FileDown className="w-4 h-4 mr-2" />
-                {downloading ? "Generando…" : "Descargar PDF"}
+                {downloading ? t("company.wallet.generating") : t("company.wallet.downloadBtn")}
               </Button>
             </div>
           </div>

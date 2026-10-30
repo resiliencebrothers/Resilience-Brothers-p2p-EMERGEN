@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,10 +10,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Warehouse, Store, ArrowRightLeft, PackagePlus, Undo2, History, SlidersHorizontal, Bell } from "lucide-react";
 import { toast } from "sonner";
 
-// Inventario por ubicación: almacén central (= total − distribuido) + tiendas.
-const MOVE_LABEL = { receive: "Recibido en central", distribute: "Distribuido a tienda", return: "Devuelto al central", dispatch: "Despachado (envío)", dispatch_return: "Devuelto (envío cancelado)", dispatch_return_central: "Devuelto al central (tienda cerrada)", adjust: "Ajuste de total", release: "Devuelto por cierre de tienda" };
-
 export default function CompanyInventoryView() {
+  const { t, i18n } = useTranslation();
   const [rows, setRows] = useState([]);
   const [stores, setStores] = useState([]);
   const [moves, setMoves] = useState([]);
@@ -20,6 +19,8 @@ export default function CompanyInventoryView() {
   const [qty, setQty] = useState("");
   const [storeId, setStoreId] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const moveLabel = (type) => t(`company.inventory.move.${type}`, { defaultValue: type });
 
   const load = useCallback(() => {
     axios.get(`${API}/company/inventory`, { withCredentials: true }).then((r) => setRows(r.data)).catch(() => {});
@@ -42,13 +43,13 @@ export default function CompanyInventoryView() {
     const n = parseFloat(qty);
     const { mode, product } = dialog;
     if (mode === "adjust") {
-      if (isNaN(n) || n < 0) return toast.error("Total inválido");
+      if (isNaN(n) || n < 0) return toast.error(t("company.inventory.invalidTotal"));
     } else if (mode === "storemin") {
-      if (isNaN(n) || n < 0) return toast.error("Mínimo inválido");
+      if (isNaN(n) || n < 0) return toast.error(t("company.inventory.invalidMin"));
     } else if (!n || n <= 0) {
-      return toast.error("Cantidad inválida");
+      return toast.error(t("company.inventory.invalidQty"));
     }
-    if ((mode === "distribute" || mode === "return") && !storeId) return toast.error("Elige una tienda");
+    if ((mode === "distribute" || mode === "return") && !storeId) return toast.error(t("company.inventory.chooseStore"));
     setBusy(true);
     // F2-02 — clave estable de operación: se genera UNA vez y se conserva en el
     // reintento por pérdida de respuesta, para que el servidor deduplique.
@@ -58,7 +59,11 @@ export default function CompanyInventoryView() {
     else if (mode === "adjust") body = { product_id: product.product_id, new_total: n, expected_total: product.total, op_id: opId };
     else if (mode === "storemin") body = { product_id: product.product_id, store_id: storeId, min_stock: n };
     else body = { product_id: product.product_id, store_id: storeId, qty: n, op_id: opId };
-    const okMsg = mode === "receive" ? "Mercancía recibida" : mode === "distribute" ? "Distribuido a la tienda" : mode === "return" ? "Devuelto al central" : mode === "storemin" ? "Mínimo de la tienda actualizado" : "Stock ajustado";
+    const okMsg = mode === "receive" ? t("company.inventory.received")
+      : mode === "distribute" ? t("company.inventory.distributedOk")
+      : mode === "return" ? t("company.inventory.returnedOk")
+      : mode === "storemin" ? t("company.inventory.storeMinUpdatedOk")
+      : t("company.inventory.stockAdjustedOk");
     const endpoint = mode === "storemin" ? "store-min" : mode;
     const doPost = () => axios.post(`${API}/company/inventory/${endpoint}`, body, { withCredentials: true });
     try {
@@ -71,29 +76,29 @@ export default function CompanyInventoryView() {
       toast.success(okMsg);
       setDialog(null); load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudo completar la operación");
+      toast.error(e.response?.data?.detail || t("company.inventory.opFailed"));
     } finally { setBusy(false); }
   };
 
-  const title = dialog?.mode === "receive" ? "Recibir en almacén central"
-    : dialog?.mode === "distribute" ? "Distribuir a una tienda"
-    : dialog?.mode === "adjust" ? "Ajustar total (inventario físico)"
-    : dialog?.mode === "storemin" ? "Umbral de stock bajo de la tienda"
-    : "Devolver al almacén central";
+  const title = dialog?.mode === "receive" ? t("company.inventory.dialogReceive")
+    : dialog?.mode === "distribute" ? t("company.inventory.dialogDistribute")
+    : dialog?.mode === "adjust" ? t("company.inventory.dialogAdjust")
+    : dialog?.mode === "storemin" ? t("company.inventory.dialogStoremin")
+    : t("company.inventory.dialogReturn");
 
   return (
     <div className="space-y-6" data-testid="company-inventory-view">
       <div>
-        <div className="micro-label text-[#8B5CF6] mb-2">Empresa</div>
+        <div className="micro-label text-[#8B5CF6] mb-2">{t("company.inventory.sectionLabel")}</div>
         <h2 className="font-display text-2xl flex items-center gap-3">
-          <Warehouse className="w-6 h-6 text-[#8B5CF6]" /> Inventario por ubicación
+          <Warehouse className="w-6 h-6 text-[#8B5CF6]" /> {t("company.inventory.title")}
         </h2>
-        <p className="text-sm text-neutral-500 mt-1">El almacén central es lo distribuible (total − distribuido). Reparte existencias a tus tiendas.</p>
+        <p className="text-sm text-neutral-500 mt-1">{t("company.inventory.subtitle")}</p>
       </div>
 
       {rows.length === 0 && (
         <p className="text-neutral-500 text-center py-12 tactile-card" data-testid="company-inventory-empty">
-          No tienes productos todavía. Crea un producto para gestionar su inventario.
+          {t("company.inventory.empty")}
         </p>
       )}
 
@@ -104,14 +109,14 @@ export default function CompanyInventoryView() {
               <div>
                 <h3 className="font-display text-lg">{p.name}</h3>
                 <div className="flex items-center gap-4 mt-2 text-sm">
-                  <span className="text-neutral-400">Total: <span className="text-white font-mono" data-testid={`company-inv-total-${p.product_id}`}>{p.total}</span></span>
+                  <span className="text-neutral-400">{t("company.inventory.total")} <span className="text-white font-mono" data-testid={`company-inv-total-${p.product_id}`}>{p.total}</span></span>
                   <span className="flex items-center gap-1 text-[#8B5CF6]">
-                    <Warehouse className="w-4 h-4" /> Central: <span className="font-mono" data-testid={`company-inv-central-${p.product_id}`}>{p.central}</span>
+                    <Warehouse className="w-4 h-4" /> {t("company.inventory.central")} <span className="font-mono" data-testid={`company-inv-central-${p.product_id}`}>{p.central}</span>
                   </span>
-                  {p.over_distributed && <span className="text-amber-400 text-xs">(sobre-distribuido)</span>}
+                  {p.over_distributed && <span className="text-amber-400 text-xs">{t("company.inventory.overDistributed")}</span>}
                   {p.low && (
                     <span className="flex items-center gap-1 text-amber-300 text-xs border border-amber-500/30 bg-amber-500/10 px-2 py-0.5" data-testid={`company-inv-low-${p.product_id}`}>
-                      Stock bajo (mín. {p.min_stock})
+                      {t("company.inventory.lowStock", { n: p.min_stock })}
                     </span>
                   )}
                 </div>
@@ -120,17 +125,17 @@ export default function CompanyInventoryView() {
                 <Button data-testid={`company-inv-receive-${p.product_id}`} size="sm" variant="outline"
                   onClick={() => openDialog("receive", p)}
                   className="rounded-none border-white/15 hover:border-[#8B5CF6] text-white">
-                  <PackagePlus className="w-4 h-4 mr-1" /> Recibir
+                  <PackagePlus className="w-4 h-4 mr-1" /> {t("company.inventory.receive")}
                 </Button>
                 <Button data-testid={`company-inv-distribute-${p.product_id}`} size="sm"
                   onClick={() => openDialog("distribute", p)}
                   className="rounded-none bg-[#8B5CF6] hover:bg-[#A78BFA] text-white">
-                  <ArrowRightLeft className="w-4 h-4 mr-1" /> Distribuir
+                  <ArrowRightLeft className="w-4 h-4 mr-1" /> {t("company.inventory.distribute")}
                 </Button>
                 <Button data-testid={`company-inv-adjust-${p.product_id}`} size="sm" variant="outline"
                   onClick={() => openDialog("adjust", p)}
                   className="rounded-none border-white/15 hover:border-amber-400 text-white">
-                  <SlidersHorizontal className="w-4 h-4 mr-1" /> Ajustar
+                  <SlidersHorizontal className="w-4 h-4 mr-1" /> {t("company.inventory.adjust")}
                 </Button>
               </div>
             </div>
@@ -142,19 +147,19 @@ export default function CompanyInventoryView() {
                     <span className="text-neutral-300">{s.store_name}</span>
                     <span className={`font-mono ${s.low ? "text-amber-300" : "text-white"}`} data-testid={`company-inv-store-qty-${p.product_id}-${s.store_id}`}>{s.qty}</span>
                     {s.min > 0 && (
-                      <span className="text-[0.6rem] text-neutral-500" data-testid={`company-inv-store-min-${p.product_id}-${s.store_id}`}>mín {s.min}</span>
+                      <span className="text-[0.6rem] text-neutral-500" data-testid={`company-inv-store-min-${p.product_id}-${s.store_id}`}>{t("company.inventory.storeMinShort", { n: s.min })}</span>
                     )}
                     {s.low && (
-                      <span className="text-[0.6rem] text-amber-300" data-testid={`company-inv-store-low-${p.product_id}-${s.store_id}`}>bajo</span>
+                      <span className="text-[0.6rem] text-amber-300" data-testid={`company-inv-store-low-${p.product_id}-${s.store_id}`}>{t("company.inventory.lowShort")}</span>
                     )}
                     <button data-testid={`company-inv-storemin-${p.product_id}-${s.store_id}`}
                       onClick={() => openDialog("storemin", p, s.store_id, s.min)}
-                      className="text-neutral-500 hover:text-amber-300" title="Umbral de stock bajo">
+                      className="text-neutral-500 hover:text-amber-300" title={t("company.inventory.storeMinTooltip")}>
                       <Bell className="w-3.5 h-3.5" />
                     </button>
                     <button data-testid={`company-inv-return-${p.product_id}-${s.store_id}`}
                       onClick={() => openDialog("return", p, s.store_id)}
-                      className="text-neutral-500 hover:text-[#8B5CF6]" title="Devolver al central">
+                      className="text-neutral-500 hover:text-[#8B5CF6]" title={t("company.inventory.returnTooltip")}>
                       <Undo2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -167,14 +172,14 @@ export default function CompanyInventoryView() {
 
       {moves.length > 0 && (
         <div className="tactile-card p-4" data-testid="company-inventory-moves">
-          <h3 className="font-display text-base flex items-center gap-2 mb-3"><History className="w-4 h-4 text-[#8B5CF6]" /> Movimientos recientes</h3>
+          <h3 className="font-display text-base flex items-center gap-2 mb-3"><History className="w-4 h-4 text-[#8B5CF6]" /> {t("company.inventory.movesTitle")}</h3>
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {moves.map((m) => (
               <div key={m.id} className="flex items-center justify-between text-xs text-neutral-400 border-b border-white/5 py-1.5">
-                <span>{MOVE_LABEL[m.type] || m.type}{m.store_name ? ` · ${m.store_name}` : ""}</span>
+                <span>{moveLabel(m.type)}{m.store_name ? ` · ${m.store_name}` : ""}</span>
                 <span className="flex items-center gap-3">
                   <span className="font-mono text-white">{m.qty}</span>
-                  <span className="text-neutral-600">{new Date(m.created_at).toLocaleString("es")}</span>
+                  <span className="text-neutral-600">{new Date(m.created_at).toLocaleString(i18n.language || "es")}</span>
                 </span>
               </div>
             ))}
@@ -188,17 +193,17 @@ export default function CompanyInventoryView() {
           {dialog && (
             <div className="space-y-3">
               {dialog.mode === "adjust" ? (
-                <p className="text-sm text-neutral-400">{dialog.product.name} · total actual: <span className="font-mono text-white">{dialog.product.total}</span> · distribuido: <span className="font-mono text-white">{dialog.product.distributed}</span></p>
+                <p className="text-sm text-neutral-400">{dialog.product.name} · {t("company.inventory.adjustTotalCurrent")}: <span className="font-mono text-white">{dialog.product.total}</span> · {t("company.inventory.distributedLabel")}: <span className="font-mono text-white">{dialog.product.distributed}</span></p>
               ) : (
-                <p className="text-sm text-neutral-400">{dialog.product.name} · central disponible: <span className="font-mono text-white">{dialog.product.central}</span></p>
+                <p className="text-sm text-neutral-400">{dialog.product.name} · {t("company.inventory.centralAvailable")}: <span className="font-mono text-white">{dialog.product.central}</span></p>
               )}
               {(dialog.mode === "distribute" || dialog.mode === "return" || dialog.mode === "storemin") && (
                 <div>
-                  <Label className="micro-label text-neutral-500">Tienda</Label>
+                  <Label className="micro-label text-neutral-500">{t("company.inventory.store")}</Label>
                   {dialog.mode === "distribute" ? (
                     <Select value={storeId} onValueChange={setStoreId}>
                       <SelectTrigger data-testid="company-inv-store-select" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10">
-                        <SelectValue placeholder="Selecciona una tienda" />
+                        <SelectValue placeholder={t("company.inventory.storePlaceholder")} />
                       </SelectTrigger>
                       <SelectContent className="bg-[#1A1730] border-white/10 text-white">
                         {stores.map((s) => (
@@ -212,19 +217,19 @@ export default function CompanyInventoryView() {
                 </div>
               )}
               <div>
-                <Label className="micro-label text-neutral-500">{dialog.mode === "adjust" ? "Nuevo total" : dialog.mode === "storemin" ? "Mínimo de la tienda" : "Cantidad"}</Label>
+                <Label className="micro-label text-neutral-500">{dialog.mode === "adjust" ? t("company.inventory.newTotalLabel") : dialog.mode === "storemin" ? t("company.inventory.storeMinLabel") : t("company.inventory.qtyLabel")}</Label>
                 <Input data-testid="company-inv-qty" type="number" step="any" min="0" value={qty}
                   onChange={(e) => setQty(e.target.value)} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" autoFocus />
                 {dialog.mode === "adjust" && (
-                  <p className="text-xs text-neutral-500 mt-1">No puede ser menor que lo distribuido ({dialog.product.distributed}). Se registra como un ajuste auditado.</p>
+                  <p className="text-xs text-neutral-500 mt-1">{t("company.inventory.adjustHint", { n: dialog.product.distributed })}</p>
                 )}
                 {dialog.mode === "storemin" && (
-                  <p className="text-xs text-neutral-500 mt-1">Avisaremos cuando esta tienda baje a/por debajo de este mínimo. 0 = avisar solo cuando se agote.</p>
+                  <p className="text-xs text-neutral-500 mt-1">{t("company.inventory.storeMinHint")}</p>
                 )}
               </div>
               <Button data-testid="company-inv-submit" onClick={submit} disabled={busy}
                 className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
-                {busy ? "…" : "Confirmar"}
+                {busy ? t("company.inventory.saving") : t("company.inventory.confirm")}
               </Button>
             </div>
           )}

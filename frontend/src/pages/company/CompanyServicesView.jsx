@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
-import { es as dfEs } from "date-fns/locale";
+import { es as dfEs, enUS as dfEn } from "date-fns/locale";
 import { Wrench, Plus, Edit2, Trash2, Send, Pause, Play, Clock, MapPin, CalendarClock, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,30 +18,14 @@ import { toast } from "sonner";
 // configuración de calendario (ventanas de disponibilidad, fechas bloqueadas)
 // y de pago (tipo de precio, anticipo, métodos) que la siguiente fase usará
 // para reservas y cobros. Flujo: borrador → pendiente → (admin) publicado.
-const WD = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
-const MODALITY = [
-  { v: "local", l: "En el local" },
-  { v: "domicilio", l: "A domicilio" },
-  { v: "remoto", l: "Remoto / Online" },
-  { v: "alquiler", l: "Alquiler" },
-];
-const PRICING = [
-  { v: "fixed", l: "Precio fijo" },
-  { v: "hourly", l: "Por hora" },
-  { v: "daily", l: "Por día" },
-  { v: "per_person", l: "Por persona" },
-  { v: "quote", l: "A presupuestar" },
-];
+const MODALITY = ["local", "domicilio", "remoto", "alquiler"];
+const PRICING = ["fixed", "hourly", "daily", "per_person", "quote"];
 const STATUS_BADGE = {
   draft: "bg-neutral-500/10 text-neutral-300 border-neutral-500/30",
   pending: "bg-amber-500/10 text-amber-300 border-amber-500/30",
   published: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   rejected: "bg-red-500/10 text-red-400 border-red-500/30",
   paused: "bg-sky-500/10 text-sky-300 border-sky-500/30",
-};
-const STATUS_LABEL = {
-  draft: "Borrador", pending: "Pendiente", published: "Publicado",
-  rejected: "Rechazado", paused: "Pausado",
 };
 
 const emptyForm = {
@@ -58,12 +43,15 @@ const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 
 export default function CompanyServicesView({ onChanged }) {
+  const { t, i18n } = useTranslation();
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
+  const WD = t("company.services.weekdays", { returnObjects: true });
+  const dfLocale = (i18n.language || "es").split("-")[0] === "en" ? dfEn : dfEs;
 
   const load = useCallback(() => {
     axios.get(`${API}/company/services`, { withCredentials: true })
@@ -80,7 +68,7 @@ export default function CompanyServicesView({ onChanged }) {
 
   const onImageFile = (file) => {
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) return toast.error("La imagen supera 4 MB");
+    if (file.size > 4 * 1024 * 1024) return toast.error(t("company.services.imageTooLarge"));
     const reader = new FileReader();
     reader.onload = () => setForm((f) => ({ ...f, image_url: reader.result }));
     reader.readAsDataURL(file);
@@ -135,10 +123,10 @@ export default function CompanyServicesView({ onChanged }) {
 
   const validate = () => {
     if (!form.title || form.title.trim().length < 2) {
-      toast.error("El título es obligatorio"); return false;
+      toast.error(t("company.services.titleRequired")); return false;
     }
     if (form.pricing_type !== "quote" && !(parseFloat(form.price_usdt) > 0)) {
-      toast.error("Indica un precio mayor que 0 (o elige «A presupuestar»)"); return false;
+      toast.error(t("company.services.priceRequired")); return false;
     }
     return true;
   };
@@ -150,16 +138,16 @@ export default function CompanyServicesView({ onChanged }) {
       if (editing) {
         await axios.put(`${API}/company/services/${editing.id}`, buildPayload(),
           { withCredentials: true });
-        toast.success("Servicio actualizado");
+        toast.success(t("company.services.updated"));
       } else {
         await axios.post(`${API}/company/services`, { ...buildPayload(), submit },
           { withCredentials: true });
-        toast.success(submit ? "Servicio enviado a revisión" : "Borrador guardado");
+        toast.success(submit ? t("company.services.sentReview") : t("company.services.draftSaved"));
       }
       setOpen(false); setEditing(null); setForm(emptyForm);
       load(); onChanged?.();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudo guardar el servicio");
+      toast.error(e.response?.data?.detail || t("company.services.saveFailed"));
     } finally { setBusy(false); }
   };
 
@@ -184,24 +172,25 @@ export default function CompanyServicesView({ onChanged }) {
     try {
       await axios.post(`${API}/company/services/${s.id}/${action}`, {}, { withCredentials: true });
       toast.success(
-        action === "submit" ? "Enviado a revisión"
-          : action === "pause" ? "Servicio pausado" : "Servicio reactivado");
+        action === "submit" ? t("company.services.sentReviewShort")
+          : action === "pause" ? t("company.services.paused") : t("company.services.reactivated"));
       load(); onChanged?.();
-    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+    } catch (e) { toast.error(e.response?.data?.detail || t("company.services.genericError")); }
   };
 
   const remove = async (s) => {
-    if (!window.confirm(`¿Eliminar «${s.title}»?`)) return;
+    if (!window.confirm(t("company.services.confirmDelete", { title: s.title }))) return;
     try {
       await axios.delete(`${API}/company/services/${s.id}`, { withCredentials: true });
-      toast.success("Servicio eliminado");
+      toast.success(t("company.services.deleted"));
       load(); onChanged?.();
-    } catch (e) { toast.error(e.response?.data?.detail || "No se pudo eliminar"); }
+    } catch (e) { toast.error(e.response?.data?.detail || t("company.services.deleteFailed")); }
   };
 
   const priceText = (s) => {
-    if (s.pricing_type === "quote") return "A presupuestar";
-    const unit = { hourly: "/hora", daily: "/día", per_person: "/persona" }[s.pricing_type] || "";
+    if (s.pricing_type === "quote") return t("company.services.pricing.quote");
+    const hasUnit = ["hourly", "daily", "per_person"].includes(s.pricing_type);
+    const unit = hasUnit ? t(`company.services.priceUnit.${s.pricing_type}`) : "";
     return `${s.price_usdt} USDT${unit}`;
   };
 
@@ -209,29 +198,25 @@ export default function CompanyServicesView({ onChanged }) {
     <div className="space-y-6" data-testid="company-services-view">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="micro-label text-[#8B5CF6] mb-2">Empresa</div>
+          <div className="micro-label text-[#8B5CF6] mb-2">{t("company.services.sectionLabel")}</div>
           <h2 className="font-display text-2xl flex items-center gap-3">
-            <Wrench className="w-6 h-6 text-[#8B5CF6]" /> Mis servicios
+            <Wrench className="w-6 h-6 text-[#8B5CF6]" /> {t("company.services.title")}
           </h2>
         </div>
         <Button data-testid="company-service-new-btn"
           onClick={() => { setEditing(null); setForm(emptyForm); setOpen(true); }}
           className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-semibold rounded-none">
-          <Plus className="w-4 h-4 mr-1" /> Nuevo servicio
+          <Plus className="w-4 h-4 mr-1" /> {t("company.services.newBtn")}
         </Button>
       </div>
 
       <div className="border-l-4 border-[#8B5CF6] bg-[#8B5CF6]/5 px-4 py-3 text-sm text-neutral-300" data-testid="company-services-note">
-        Describe el servicio, su disponibilidad y cómo se paga. Al enviarlo, el
-        equipo de Resilience lo revisa y, una vez aprobado, aparece en la
-        pestaña <span className="text-[#8B5CF6]">Servicios</span> del mercado.
-        Los clientes pueden reservar turno y pagar en línea; gestionas cada
-        reserva desde la pestaña <span className="text-[#8B5CF6]">Reservas</span>.
+        {t("company.services.notePre")}<span className="text-[#8B5CF6]">{t("company.services.noteServicesTab")}</span>{t("company.services.noteMid")}<span className="text-[#8B5CF6]">{t("company.services.noteBookingsTab")}</span>{t("company.services.notePost")}
       </div>
 
       {items.length === 0 && (
         <p className="text-neutral-500 text-center py-12 tactile-card" data-testid="company-services-empty">
-          Aún no tienes servicios. Crea el primero y envíalo a revisión.
+          {t("company.services.empty")}
         </p>
       )}
 
@@ -251,37 +236,37 @@ export default function CompanyServicesView({ onChanged }) {
                 <div className="flex items-center justify-between gap-2">
                   <div className="micro-label text-neutral-500">{catName(s.category)}</div>
                   <span className={`text-[0.6rem] uppercase tracking-wider px-2 py-0.5 border ${STATUS_BADGE[st] || ""}`} data-testid={`company-service-status-${s.id}`}>
-                    {STATUS_LABEL[st]}
+                    {t(`company.services.status.${st}`, { defaultValue: st })}
                   </span>
                 </div>
                 <h3 className="font-display text-lg mt-1">{s.title}</h3>
                 <div className="text-xs text-neutral-500 mt-1 flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> {MODALITY.find((m) => m.v === s.modality)?.l}
+                  <MapPin className="w-3 h-3" /> {t(`company.services.modality.${s.modality}`, { defaultValue: s.modality })}
                   {s.coverage_zone ? ` · ${s.coverage_zone}` : ""}
                 </div>
                 {s.status === "rejected" && s.rejection_reason && (
-                  <div className="text-xs text-red-400 mt-1" data-testid={`company-service-reason-${s.id}`}>Motivo: {s.rejection_reason}</div>
+                  <div className="text-xs text-red-400 mt-1" data-testid={`company-service-reason-${s.id}`}>{t("company.services.rejectionPrefix")} {s.rejection_reason}</div>
                 )}
                 <div className="mt-auto pt-3 flex items-center justify-between">
                   <div className="font-display text-lg text-[#8B5CF6]">{priceText(s)}</div>
                   <div className="flex gap-2">
                     {(s.status === "draft" || s.status === "rejected") && (
                       <button data-testid={`company-service-submit-${s.id}`} onClick={() => act(s, "submit")}
-                        className="text-neutral-400 hover:text-emerald-400" title="Enviar a revisión"><Send className="w-4 h-4" /></button>
+                        className="text-neutral-400 hover:text-emerald-400" title={t("company.services.submitTitle")}><Send className="w-4 h-4" /></button>
                     )}
                     {s.status === "published" && (
                       s.is_active ? (
                         <button data-testid={`company-service-pause-${s.id}`} onClick={() => act(s, "pause")}
-                          className="text-neutral-400 hover:text-sky-300" title="Pausar"><Pause className="w-4 h-4" /></button>
+                          className="text-neutral-400 hover:text-sky-300" title={t("company.services.pauseTitle")}><Pause className="w-4 h-4" /></button>
                       ) : (
                         <button data-testid={`company-service-unpause-${s.id}`} onClick={() => act(s, "unpause")}
-                          className="text-neutral-400 hover:text-emerald-400" title="Reactivar"><Play className="w-4 h-4" /></button>
+                          className="text-neutral-400 hover:text-emerald-400" title={t("company.services.unpauseTitle")}><Play className="w-4 h-4" /></button>
                       )
                     )}
                     <button data-testid={`company-service-edit-${s.id}`} onClick={() => openEdit(s)}
-                      className="text-neutral-400 hover:text-[#8B5CF6]" title="Editar"><Edit2 className="w-4 h-4" /></button>
+                      className="text-neutral-400 hover:text-[#8B5CF6]" title={t("company.services.editTitle")}><Edit2 className="w-4 h-4" /></button>
                     <button data-testid={`company-service-delete-${s.id}`} onClick={() => remove(s)}
-                      className="text-neutral-400 hover:text-[#EF4444]" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
+                      className="text-neutral-400 hover:text-[#EF4444]" title={t("company.services.deleteTitle")}><Trash2 className="w-4 h-4" /></button>
                   </div>
                 </div>
               </div>
@@ -293,16 +278,16 @@ export default function CompanyServicesView({ onChanged }) {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[88vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="font-display">{editing ? "Editar servicio" : "Nuevo servicio"}</DialogTitle>
+            <DialogTitle className="font-display">{editing ? t("company.services.dialogEditTitle") : t("company.services.dialogNewTitle")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label className="micro-label text-neutral-500">Título</Label>
+              <Label className="micro-label text-neutral-500">{t("company.services.titleLabel")}</Label>
               <Input data-testid="service-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="micro-label text-neutral-500">Categoría</Label>
+                <Label className="micro-label text-neutral-500">{t("company.services.categoryLabel")}</Label>
                 <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
                   <SelectTrigger data-testid="service-category" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-[#1A1730] border-white/10 text-white">
@@ -313,23 +298,23 @@ export default function CompanyServicesView({ onChanged }) {
                 </Select>
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Modalidad</Label>
+                <Label className="micro-label text-neutral-500">{t("company.services.modalityLabel")}</Label>
                 <Select value={form.modality} onValueChange={(v) => setForm({ ...form, modality: v })}>
                   <SelectTrigger data-testid="service-modality" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
                   <SelectContent className="bg-[#1A1730] border-white/10 text-white">
                     {MODALITY.map((m) => (
-                      <SelectItem key={m.v} value={m.v} data-testid={`service-modality-${m.v}`}>{m.l}</SelectItem>
+                      <SelectItem key={m} value={m} data-testid={`service-modality-${m}`}>{t(`company.services.modality.${m}`)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Descripción</Label>
+              <Label className="micro-label text-neutral-500">{t("company.services.descLabel")}</Label>
               <Textarea data-testid="service-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
             </div>
             <div>
-              <Label className="micro-label text-neutral-500">Imagen</Label>
+              <Label className="micro-label text-neutral-500">{t("company.services.imageLabel")}</Label>
               <input data-testid="service-image" type="file" accept="image/*" onChange={(e) => onImageFile(e.target.files?.[0])}
                 className="mt-1 block w-full text-xs text-neutral-400 file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-[#8B5CF6] file:text-white file:text-xs" />
               {form.image_url && <img src={form.image_url} alt="preview" className="mt-2 h-24 object-cover border border-white/10" />}
@@ -337,55 +322,55 @@ export default function CompanyServicesView({ onChanged }) {
 
             {/* Precio y pago */}
             <div className="border-t border-white/10 pt-3">
-              <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Precio y pago</div>
+              <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {t("company.services.priceSection")}</div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="micro-label text-neutral-500">Tipo de precio</Label>
+                  <Label className="micro-label text-neutral-500">{t("company.services.pricingTypeLabel")}</Label>
                   <Select value={form.pricing_type} onValueChange={(v) => setForm({ ...form, pricing_type: v })}>
                     <SelectTrigger data-testid="service-pricing-type" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-[#1A1730] border-white/10 text-white">
                       {PRICING.map((p) => (
-                        <SelectItem key={p.v} value={p.v} data-testid={`service-pricing-${p.v}`}>{p.l}</SelectItem>
+                        <SelectItem key={p} value={p} data-testid={`service-pricing-${p}`}>{t(`company.services.pricing.${p}`)}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 {form.pricing_type !== "quote" && (
                   <div>
-                    <Label className="micro-label text-neutral-500">Precio (USDT)</Label>
+                    <Label className="micro-label text-neutral-500">{t("company.services.priceLabel")}</Label>
                     <Input data-testid="service-price" type="number" step="any" min="0" value={form.price_usdt} onChange={(e) => setForm({ ...form, price_usdt: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
                   </div>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-3 mt-3">
                 <div>
-                  <Label className="micro-label text-neutral-500">Anticipo</Label>
+                  <Label className="micro-label text-neutral-500">{t("company.services.depositLabel")}</Label>
                   <Select value={form.deposit_type} onValueChange={(v) => setForm({ ...form, deposit_type: v })}>
                     <SelectTrigger data-testid="service-deposit-type" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10"><SelectValue /></SelectTrigger>
                     <SelectContent className="bg-[#1A1730] border-white/10 text-white">
-                      <SelectItem value="none" data-testid="service-deposit-none">Sin anticipo</SelectItem>
-                      <SelectItem value="percent" data-testid="service-deposit-percent">% del precio</SelectItem>
-                      <SelectItem value="fixed" data-testid="service-deposit-fixed">Monto fijo (USDT)</SelectItem>
+                      <SelectItem value="none" data-testid="service-deposit-none">{t("company.services.depositNone")}</SelectItem>
+                      <SelectItem value="percent" data-testid="service-deposit-percent">{t("company.services.depositPercent")}</SelectItem>
+                      <SelectItem value="fixed" data-testid="service-deposit-fixed">{t("company.services.depositFixed")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 {form.deposit_type !== "none" && (
                   <div>
-                    <Label className="micro-label text-neutral-500">{form.deposit_type === "percent" ? "Anticipo (%)" : "Anticipo (USDT)"}</Label>
+                    <Label className="micro-label text-neutral-500">{form.deposit_type === "percent" ? t("company.services.depositPercentLabel") : t("company.services.depositFixedLabel")}</Label>
                     <Input data-testid="service-deposit-value" type="number" step="any" min="0" value={form.deposit_value} onChange={(e) => setForm({ ...form, deposit_value: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
                   </div>
                 )}
               </div>
               <div className="mt-3">
-                <Label className="micro-label text-neutral-500">Métodos de pago aceptados</Label>
+                <Label className="micro-label text-neutral-500">{t("company.services.paymentMethodsLabel")}</Label>
                 <div className="flex gap-4 mt-2">
                   <label htmlFor="pay-balance" className="flex items-center gap-2 text-sm text-neutral-300 cursor-pointer">
                     <Checkbox id="pay-balance" data-testid="service-pay-balance" checked={form.payment_methods.includes("balance")} onCheckedChange={() => togglePayment("balance")}
-                      className="border-white/30 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:border-[#8B5CF6]" /> Saldo USDT
+                      className="border-white/30 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:border-[#8B5CF6]" /> {t("company.services.payBalance")}
                   </label>
                   <label htmlFor="pay-cash" className="flex items-center gap-2 text-sm text-neutral-300 cursor-pointer">
                     <Checkbox id="pay-cash" data-testid="service-pay-cash" checked={form.payment_methods.includes("cash")} onCheckedChange={() => togglePayment("cash")}
-                      className="border-white/30 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:border-[#8B5CF6]" /> Efectivo
+                      className="border-white/30 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:border-[#8B5CF6]" /> {t("company.services.payCash")}
                   </label>
                 </div>
               </div>
@@ -393,18 +378,18 @@ export default function CompanyServicesView({ onChanged }) {
 
             {/* Calendario */}
             <div className="border-t border-white/10 pt-3">
-              <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1"><CalendarClock className="w-3.5 h-3.5" /> Disponibilidad</div>
+              <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1"><CalendarClock className="w-3.5 h-3.5" /> {t("company.services.availabilitySection")}</div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <Label className="micro-label text-neutral-500">Duración (min)</Label>
+                  <Label className="micro-label text-neutral-500">{t("company.services.durationLabel")}</Label>
                   <Input data-testid="service-duration" type="number" min="0" value={form.duration_minutes} onChange={(e) => setForm({ ...form, duration_minutes: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
                 </div>
                 <div>
-                  <Label className="micro-label text-neutral-500">Aviso mín. (h)</Label>
+                  <Label className="micro-label text-neutral-500">{t("company.services.minNoticeLabel")}</Label>
                   <Input data-testid="service-min-notice" type="number" min="0" value={form.min_notice_hours} onChange={(e) => setForm({ ...form, min_notice_hours: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
                 </div>
                 <div>
-                  <Label className="micro-label text-neutral-500">Cupos/turno</Label>
+                  <Label className="micro-label text-neutral-500">{t("company.services.capacityLabel")}</Label>
                   <Input data-testid="service-capacity" type="number" min="1" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10 font-mono" />
                 </div>
               </div>
@@ -423,15 +408,15 @@ export default function CompanyServicesView({ onChanged }) {
                 ))}
                 <Button type="button" variant="outline" data-testid="service-add-window"
                   onClick={addWindow} className="border-white/15 text-neutral-300 hover:text-white rounded-none h-9">
-                  <Plus className="w-4 h-4 mr-1" /> Añadir horario
+                  <Plus className="w-4 h-4 mr-1" /> {t("company.services.addWindow")}
                 </Button>
               </div>
               <div className="mt-3">
-                <Label className="micro-label text-neutral-500">Fechas bloqueadas (no disponibles)</Label>
-                <p className="text-xs text-neutral-500 mt-1">Toca los días en los que NO atiendes; vuelve a tocarlos para liberarlos.</p>
+                <Label className="micro-label text-neutral-500">{t("company.services.blockedLabel")}</Label>
+                <p className="text-xs text-neutral-500 mt-1">{t("company.services.blockedHint")}</p>
                 <div className="mt-2 inline-flex bg-[#0a0a0a] border border-white/10" data-testid="service-blocked-calendar">
                   <Calendar mode="multiple" selected={form.blocked_dates.map((d) => new Date(d + "T00:00:00"))}
-                    onSelect={setBlocked} fromDate={startOfToday()} locale={dfEs} weekStartsOn={1} />
+                    onSelect={setBlocked} fromDate={startOfToday()} locale={dfLocale} weekStartsOn={1} />
                 </div>
                 {form.blocked_dates.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -449,19 +434,19 @@ export default function CompanyServicesView({ onChanged }) {
             {/* Condiciones */}
             <div className="border-t border-white/10 pt-3 space-y-3">
               <div>
-                <Label className="micro-label text-neutral-500">Zona de cobertura (municipios)</Label>
-                <Input data-testid="service-zone" value={form.coverage_zone} onChange={(e) => setForm({ ...form, coverage_zone: e.target.value })} placeholder="Ej: Vedado, Playa, Centro Habana" className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
+                <Label className="micro-label text-neutral-500">{t("company.services.zoneLabel")}</Label>
+                <Input data-testid="service-zone" value={form.coverage_zone} onChange={(e) => setForm({ ...form, coverage_zone: e.target.value })} placeholder={t("company.services.zonePlaceholder")} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Qué incluye</Label>
+                <Label className="micro-label text-neutral-500">{t("company.services.inclusionsLabel")}</Label>
                 <Textarea data-testid="service-inclusions" value={form.inclusions} onChange={(e) => setForm({ ...form, inclusions: e.target.value })} rows={2} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Requisitos del cliente</Label>
+                <Label className="micro-label text-neutral-500">{t("company.services.requirementsLabel")}</Label>
                 <Textarea data-testid="service-requirements" value={form.requirements} onChange={(e) => setForm({ ...form, requirements: e.target.value })} rows={2} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
               </div>
               <div>
-                <Label className="micro-label text-neutral-500">Política de cancelación</Label>
+                <Label className="micro-label text-neutral-500">{t("company.services.cancellationLabel")}</Label>
                 <Textarea data-testid="service-cancellation" value={form.cancellation_policy} onChange={(e) => setForm({ ...form, cancellation_policy: e.target.value })} rows={2} className="rounded-none mt-1 bg-[#0a0a0a] border-white/10" />
               </div>
             </div>
@@ -470,15 +455,15 @@ export default function CompanyServicesView({ onChanged }) {
               {!editing && (
                 <Button data-testid="service-save-draft" onClick={() => save(false)} disabled={busy}
                   variant="outline" className="flex-1 border-white/15 text-neutral-200 hover:text-white rounded-none h-11">
-                  Guardar borrador
+                  {t("company.services.saveDraft")}
                 </Button>
               )}
               <Button data-testid="service-save-submit" onClick={() => save(editing ? null : true)} disabled={busy}
                 className="flex-1 bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
-                {busy ? "…" : editing ? "Guardar cambios" : "Enviar a revisión"}
+                {busy ? t("company.services.saving") : editing ? t("company.services.saveChanges") : t("company.services.submitReview")}
               </Button>
             </div>
-            {!editing && <p className="text-xs text-neutral-500">El servicio queda pendiente hasta que un administrador lo apruebe.</p>}
+            {!editing && <p className="text-xs text-neutral-500">{t("company.services.pendingHint")}</p>}
           </div>
         </DialogContent>
       </Dialog>
