@@ -70,6 +70,7 @@ from routes.company import router as company_router  # noqa: E402
 from routes.vendor_products import router as vendor_products_router  # noqa: E402
 from routes.pos import router as pos_router  # noqa: E402
 from routes.services import router as services_router  # noqa: E402
+from routes.service_bookings import router as service_bookings_router  # noqa: E402
 from services import storage as storage_service  # noqa: E402
 
 storage_service.init_storage()
@@ -154,6 +155,7 @@ api_router.include_router(company_router)
 api_router.include_router(vendor_products_router)
 api_router.include_router(pos_router)
 api_router.include_router(services_router)
+api_router.include_router(service_bookings_router)
 
 app.include_router(api_router)
 

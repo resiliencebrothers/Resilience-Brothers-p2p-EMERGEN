@@ -1,0 +1,8 @@
+crons:
+  - name: bookings-tick
+    description: "Expires & refunds un-answered service bookings and releases funds for completed appointments"
+    cron: "*/15 * * * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/bookings-tick"
+    method: POST
+    enabled: true

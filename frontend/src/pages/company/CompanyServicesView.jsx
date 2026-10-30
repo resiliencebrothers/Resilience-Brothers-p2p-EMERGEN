@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
 import { Wrench, Plus, Edit2, Trash2, Send, Pause, Play, Clock, MapPin, CalendarClock, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,6 +53,8 @@ const emptyForm = {
 };
 
 const effStatus = (s) => (s.status === "published" && !s.is_active ? "paused" : s.status);
+const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 
 export default function CompanyServicesView({ onChanged }) {
   const [items, setItems] = useState([]);
@@ -60,7 +63,6 @@ export default function CompanyServicesView({ onChanged }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
-  const [newBlocked, setNewBlocked] = useState("");
 
   const load = useCallback(() => {
     axios.get(`${API}/company/services`, { withCredentials: true })
@@ -100,11 +102,9 @@ export default function CompanyServicesView({ onChanged }) {
     ...f, availability: f.availability.filter((_, idx) => idx !== i),
   }));
 
-  const addBlocked = () => {
-    if (!newBlocked || form.blocked_dates.includes(newBlocked)) return;
-    setForm((f) => ({ ...f, blocked_dates: [...f.blocked_dates, newBlocked].sort() }));
-    setNewBlocked("");
-  };
+  const setBlocked = (dates) => setForm((f) => ({
+    ...f, blocked_dates: [...new Set((dates || []).map(toISODate))].sort(),
+  }));
   const rmBlocked = (d) => setForm((f) => ({
     ...f, blocked_dates: f.blocked_dates.filter((x) => x !== d),
   }));
@@ -224,7 +224,8 @@ export default function CompanyServicesView({ onChanged }) {
         Describe el servicio, su disponibilidad y cómo se paga. Al enviarlo, el
         equipo de Resilience lo revisa y, una vez aprobado, aparece en la
         pestaña <span className="text-[#8B5CF6]">Servicios</span> del mercado.
-        Las reservas y el cobro en línea llegan en la próxima fase.
+        Los clientes pueden reservar turno y pagar en línea; gestionas cada
+        reserva desde la pestaña <span className="text-[#8B5CF6]">Reservas</span>.
       </div>
 
       {items.length === 0 && (
@@ -426,16 +427,17 @@ export default function CompanyServicesView({ onChanged }) {
               </div>
               <div className="mt-3">
                 <Label className="micro-label text-neutral-500">Fechas bloqueadas (no disponibles)</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <Input type="date" data-testid="service-blocked-input" value={newBlocked} onChange={(e) => setNewBlocked(e.target.value)} className="rounded-none bg-[#0a0a0a] border-white/10 h-9 w-[170px]" />
-                  <Button type="button" data-testid="service-blocked-add" onClick={addBlocked} className="bg-[#8B5CF6]/20 hover:bg-[#8B5CF6]/30 text-[#A78BFA] rounded-none h-9">Añadir</Button>
+                <p className="text-xs text-neutral-500 mt-1">Toca los días en los que NO atiendes; vuelve a tocarlos para liberarlos.</p>
+                <div className="mt-2 inline-flex bg-[#0a0a0a] border border-white/10" data-testid="service-blocked-calendar">
+                  <Calendar mode="multiple" selected={form.blocked_dates.map((d) => new Date(d + "T00:00:00"))}
+                    onSelect={setBlocked} fromDate={startOfToday()} />
                 </div>
                 {form.blocked_dates.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
                     {form.blocked_dates.map((d) => (
                       <span key={d} data-testid={`service-blocked-${d}`} className="inline-flex items-center gap-1 text-xs bg-white/5 border border-white/10 px-2 py-1">
                         {d}
-                        <button onClick={() => rmBlocked(d)} className="text-neutral-500 hover:text-[#EF4444]"><X className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => rmBlocked(d)} className="text-neutral-500 hover:text-[#EF4444]"><X className="w-3 h-3" /></button>
                       </span>
                     ))}
                   </div>

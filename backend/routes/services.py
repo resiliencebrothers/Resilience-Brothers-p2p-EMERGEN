@@ -276,6 +276,24 @@ async def _eligible_owner_ids(owner_ids: list[str]) -> set[str]:
     return eligible
 
 
+async def _attach_next_slots(rows: list[dict]) -> None:
+    """Fase 2 — añade `next_slot` (próximo turno libre) a cada ficha para que
+    el cliente vea de un vistazo cuándo puede reservar. Fallo aislado: una
+    ficha sin horario o con error simplemente queda sin `next_slot`."""
+    try:
+        from services.booking_slots import next_free_slot
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"next_slot import failed: {e}")
+        return
+    for r in rows:
+        if not (r.get("availability") or []):
+            continue
+        try:
+            r["next_slot"] = await next_free_slot(r)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"next_slot calc failed for {r.get('id')}: {e}")
+
+
 def _upload_images(images: list[str]) -> list[str]:
     out: list[str] = []
     for img in (images or [])[:8]:
@@ -339,6 +357,7 @@ async def list_services(
             r["owner_verified"] = bool(r.get("company_id")) and r["company_id"] in verified
     except Exception as e:  # noqa: BLE001
         logger.error(f"service verified-badge failed: {e}")
+    await _attach_next_slots(rows)
     return rows
 
 
@@ -359,6 +378,7 @@ async def service_detail(service_id: str) -> Any:
         doc["owner_verified"] = bool(doc.get("company_id")) and doc["company_id"] in verified
     except Exception as e:  # noqa: BLE001
         logger.error(f"service detail badge failed: {e}")
+    await _attach_next_slots([doc])
     return doc
 
 

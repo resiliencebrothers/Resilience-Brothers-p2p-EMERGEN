@@ -352,7 +352,7 @@ export default function MarketplaceView() {
       </div>
 
       {marketTab === "services" ? (
-        <ServicesMarketplace />
+        <ServicesMarketplace onBooked={loadBalances} />
       ) : (
         <>
 

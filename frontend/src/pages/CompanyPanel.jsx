@@ -4,13 +4,14 @@ import axios from "axios";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck, AlertTriangle, RefreshCw, CalendarClock } from "lucide-react";
+import { Building2, Store, Boxes, LayoutDashboard, LogOut, Clock, Warehouse, Wallet, Truck, IdCard, ShieldCheck, Wrench, BadgeCheck, AlertTriangle, RefreshCw, CalendarClock, CalendarCheck } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import { CompactLanguageSwitcher } from "@/components/CompactLanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import CompanyStoresView from "@/pages/company/CompanyStoresView";
 import CompanyProductsView from "@/pages/company/CompanyProductsView";
 import CompanyServicesView from "@/pages/company/CompanyServicesView";
+import CompanyBookingsView from "@/pages/company/CompanyBookingsView";
 import CompanyInventoryView from "@/pages/company/CompanyInventoryView";
 import CompanyWalletView from "@/pages/company/CompanyWalletView";
 import CompanyDeliveriesView from "@/pages/company/CompanyDeliveriesView";
@@ -28,6 +29,7 @@ const TABS = [
   { id: "stores", label: "Tiendas", icon: Store },
   { id: "products", label: "Productos", icon: Boxes },
   { id: "services", label: "Servicios", icon: CalendarClock },
+  { id: "bookings", label: "Reservas", icon: CalendarCheck },
   { id: "inventory", label: "Inventario", icon: Warehouse },
   { id: "deliveries", label: "Mensajería", icon: Truck },
   { id: "wallet", label: "Saldo", icon: Wallet },
@@ -260,6 +262,7 @@ export default function CompanyPanel() {
             {tab === "stores" && <CompanyStoresView onChanged={loadSummary} />}
             {tab === "products" && <CompanyProductsView onChanged={loadSummary} />}
             {tab === "services" && <CompanyServicesView onChanged={loadSummary} />}
+            {tab === "bookings" && <CompanyBookingsView onChanged={loadSummary} />}
             {tab === "inventory" && <CompanyInventoryView />}
             {tab === "deliveries" && <CompanyDeliveriesView />}
             {tab === "wallet" && <CompanyWalletView />}
