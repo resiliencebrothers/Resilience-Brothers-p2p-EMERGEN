@@ -1,3 +1,17 @@
+## Changelog — 30 Oct 2026 (Login: el cliente NO recibía ningún aviso al intentar entrar — botón "Iniciar sesión" inerte por el captcha)
+
+Reporte del usuario (vídeo WhatsApp, 2.ª vez): "sigue sin avisarle al cliente que está poniendo una contraseña incorrecta". El arreglo anterior (banner rojo + `interaction-only`) era correcto PERO no era la causa raíz.
+
+- **Causa raíz real (reproducida en navegador)**: con Cloudflare Turnstile **enforced**, a muchos clientes (IP de Cuba / VPN) se les muestra el reto interactivo "Verifique que es un ser humano". El botón **"Iniciar sesión" estaba DESHABILITADO** hasta marcar esa casilla (`disabled={... || !captchaToken}`). El cliente escribía su contraseña, pulsaba el botón gris **y no pasaba NADA** (sin request, sin banner, sin toast). Lo interpretaba como "la app no me avisa que la contraseña está mal".
+- **Fix** [`components/EmailAuthDialog.jsx`]:
+  1. El botón ya NO se deshabilita por falta de captcha (`disabled={loading}`). Siempre es pulsable.
+  2. Guard al enviar: si el captcha no está completado, se muestra un banner rojo claro + toast — "Completa la verificación \"No soy un robot\" (marca la casilla de Cloudflare) para continuar." (`formErrorKind="captcha"`), guiando al cliente a la casilla visible.
+  3. Etiqueta "Verificación de seguridad" sobre el widget; al resolver el captcha (`onSuccess`) se limpia automáticamente el aviso de captcha.
+  4. Resultado: el cliente SIEMPRE recibe feedback — "completa la verificación", o "Correo o contraseña incorrectos." (una vez resuelto el captcha), o el aviso "Esta cuenta fue creada con Google" si corresponde.
+- **Verificado en navegador (mobile 390 + desktop 1920, sin overflow)**: (a) captcha mock OFF + login 401 → banner "Correo o contraseña incorrectos." + ayuda + "¿Olvidaste tu contraseña?"; (b) captcha real sin resolver + click → banner "Completa la verificación…" + toast, botón pulsable; (c) Cloudflare bloquea la automatización ("La verificación falló") — esperado: un humano sí marca la casilla. El submit real contra el reto no es automatizable (Cloudflare bloquea bots), pero la lógica de error es idéntica con/sin token (probada con captcha OFF).
+- **Nota de despliegue**: el fix está en PREVIEW. El deploy que se inició antes de este reporte NO lo incluye; hay que **volver a publicar** para que llegue a `p2p.resiliencebrothers.com`.
+
+
 ## Changelog — 30 Oct 2026 (Mercado de Servicios · Fase 2b: valoración, respuesta de empresa, saldo congelado, aviso de login)
 
 Cuatro mejoras del operador sobre el Mercado de Servicios. Backend + frontend + i18n (es/en). Backend `tests/test_booking_phase2b.py` 17/17 verde; frontend E2E por testing agent (iteration_382.json) 100%; curl E2E verde.

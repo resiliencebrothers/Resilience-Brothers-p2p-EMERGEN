@@ -163,6 +163,15 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       toast.error("Las contraseñas no coinciden");
       return;
     }
+    // Captcha obligatorio: si la verificación "No soy un robot" aún no se ha
+    // completado, NO dejamos el botón inerte sin feedback (el usuario creía que
+    // su contraseña estaba mal). Mostramos un aviso claro que lo guía al widget.
+    if (captchaCfg?.enabled && captchaCfg?.enforced && mode !== "forgot" && !captchaToken) {
+      setFormError("Completa la verificación \u201cNo soy un robot\u201d (marca la casilla de Cloudflare) para continuar.");
+      setFormErrorKind("captcha");
+      toast.error("Completa la verificación de seguridad para continuar.");
+      return;
+    }
     setLoading(true);
     setFormError("");
     setFormErrorKind("");
@@ -388,22 +397,27 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
             )}
 
             {captchaCfg?.enabled && mode !== "forgot" && (
-              <div className="flex justify-center" data-testid="captcha-widget">
-                <Turnstile
-                  key={captchaKey}
-                  siteKey={captchaCfg.site_key}
-                  options={{ theme: getTheme() === "light" ? "light" : "dark", language: "es", appearance: "interaction-only" }}
-                  onSuccess={(t) => setCaptchaToken(t)}
-                  onExpire={() => setCaptchaToken("")}
-                  onError={() => setCaptchaToken("")}
-                />
+              <div className="space-y-1.5" data-testid="captcha-widget">
+                <p className="text-[0.7rem] text-neutral-500 text-center">
+                  Verificación de seguridad
+                </p>
+                <div className="flex justify-center">
+                  <Turnstile
+                    key={captchaKey}
+                    siteKey={captchaCfg.site_key}
+                    options={{ theme: getTheme() === "light" ? "light" : "dark", language: "es", appearance: "interaction-only" }}
+                    onSuccess={(t) => { setCaptchaToken(t); if (formErrorKind === "captcha") { setFormError(""); setFormErrorKind(""); } }}
+                    onExpire={() => setCaptchaToken("")}
+                    onError={() => setCaptchaToken("")}
+                  />
+                </div>
               </div>
             )}
 
             <Button
               type="submit"
               data-testid="auth-submit"
-              disabled={loading || (captchaCfg?.enforced && mode !== "forgot" && !captchaToken)}
+              disabled={loading}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
             >
               {loading ? "..." : SUBMIT_LABELS[mode]}
