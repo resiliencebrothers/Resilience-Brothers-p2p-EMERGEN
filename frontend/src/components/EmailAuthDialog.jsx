@@ -59,6 +59,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   const [notice, setNotice] = useState(null); // {kind: 'register'|'google', message}
   const [resending, setResending] = useState(false);
   const nameInputRef = useRef(null);
+  const errorRef = useRef(null);
   // iter246 — verificación "No soy un robot" (Cloudflare Turnstile).
   const [captchaCfg, setCaptchaCfg] = useState(null);
   const [captchaToken, setCaptchaToken] = useState("");
@@ -70,6 +71,13 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       .then((r) => setCaptchaCfg(r.data))
       .catch(() => setCaptchaCfg({ enabled: false }));
   }, [open, captchaCfg]);
+
+  // Un fallo de credenciales debe ser imposible de ignorar: con captcha el
+  // widget de Cloudflare dibuja su propio "¡Operación exitosa!" (su check de
+  // "no soy un robot"), así que llevamos el banner rojo a la vista.
+  useEffect(() => {
+    if (formError) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [formError]);
 
   const reset = () => {
     setEmail(""); setPassword(""); setConfirmPassword(""); setShowPassword(false);
@@ -238,6 +246,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
             {formError && (
               <div
                 data-testid="auth-error-banner"
+                ref={errorRef}
                 role="alert"
                 className="flex items-start gap-2 text-sm text-red-200 border border-red-500/40 bg-red-500/10 px-3 py-2.5 rounded-none"
               >
@@ -350,7 +359,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 <Turnstile
                   key={captchaKey}
                   siteKey={captchaCfg.site_key}
-                  options={{ theme: getTheme() === "light" ? "light" : "dark", language: "es" }}
+                  options={{ theme: getTheme() === "light" ? "light" : "dark", language: "es", appearance: "interaction-only" }}
                   onSuccess={(t) => setCaptchaToken(t)}
                   onExpire={() => setCaptchaToken("")}
                   onError={() => setCaptchaToken("")}

@@ -1,3 +1,12 @@
+## Changelog — 30 Oct 2026 (Login: el error de contraseña quedaba oculto tras el captcha)
+
+Reporte del usuario (vídeo WhatsApp): al introducir una contraseña incorrecta, el cliente no veía que estaba mal. Causa raíz: con Cloudflare Turnstile **enforced**, tras un login fallido el widget se re-montaba (`setCaptchaKey`) y mostraba su propio "**¡Operación exitosa!**" verde (su check de "no soy un robot"), que eclipsaba el banner rojo de credenciales y confundía al usuario. El backend y el banner ya eran correctos (401 `INVALID_CREDENTIALS` → banner "Correo o contraseña incorrectos.").
+
+- **`appearance: "interaction-only"`** en el widget Turnstile [`components/EmailAuthDialog.jsx`]: el widget (y su "¡Operación exitosa!") solo aparece si de verdad hace falta un reto; en el caso normal pasa en silencio, así que el único feedback tras enviar una contraseña mala es el banner rojo.
+- **Scroll del banner de error a la vista** (`block:"center"`) cuando hay `formError`, para que sea imposible de ignorar en móvil / formularios largos.
+- Verificado: banner renderiza el mensaje exacto del backend (401 mockeado), y el "¡Operación exitosa!" verde ya no aparece al abrir el diálogo (captcha real). El submit real contra el reto de Cloudflare no es automatizable en headless (Cloudflare bloquea automatización), pero el flujo es determinista por código.
+
+
 ## Changelog — Jun 2026 (Auditoría de inicio de sesión: AUTH-01/02/03)
 
 Corrección de los tres hallazgos del auditor (archivo `Resilience_Revision_Inicio_Sesion.txt`, commit 14d1b33). El backend `/api/auth/login` ya era correcto (contraseña mala → 401 `INVALID_CREDENTIALS`; buena → 200 + cookie `session_token`; `/api/auth/me` con cookie → 200) y NO se tocó. Los arreglos son de la capa de estado de autenticación en el frontend.
