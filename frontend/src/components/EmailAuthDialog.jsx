@@ -146,13 +146,16 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     const handler = code && ERROR_CODE_HANDLERS[code];
     if (handler) { handler(message); return; }
     const text = typeof message === "string" ? message : "Error de autenticación";
+    // Los errores de captcha (CAPTCHA_REQUIRED / CAPTCHA_FAILED) NO son de
+    // credenciales: se muestran sin la ayuda de "¿olvidaste tu contraseña?".
+    const isCaptcha = code === "CAPTCHA_REQUIRED" || code === "CAPTCHA_FAILED";
     // Aviso INLINE persistente + toast: el usuario ve "email o contraseña
     // incorrectos" dentro del formulario, no solo el widget de Cloudflare.
-    // Además marcamos el error como de credenciales para ofrecer recuperación
+    // Para credenciales marcamos el error para ofrecer recuperación
     // (¿olvidaste tu contraseña?) y reforzarla tras varios intentos fallidos.
     setFormError(text);
-    setFormErrorKind("credentials");
-    setFailCount((c) => c + 1);
+    setFormErrorKind(isCaptcha ? "captcha" : "credentials");
+    if (!isCaptcha) setFailCount((c) => c + 1);
     toast.error(text);
   };
 
