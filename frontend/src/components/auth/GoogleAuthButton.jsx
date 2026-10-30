@@ -1,4 +1,7 @@
+import { useTranslation } from "react-i18next";
+
 export function GoogleAuthButton({ onClick }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -12,7 +15,7 @@ export function GoogleAuthButton({ onClick }) {
         <path fill="#4CAF50" d="M24 44c5.3 0 10.1-2 13.8-5.4l-6.4-5.4C29.2 35 26.7 36 24 36c-5.1 0-9.5-3.2-11.2-7.8l-6.5 5C9.6 39.6 16.3 44 24 44z" />
         <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.2 5.7l6.4 5.4C42 35 44 30 44 24c0-1.3-.1-2.4-.4-3.5z" />
       </svg>
-      Continuar con Google
+      {t("auth.google")}
     </button>
   );
 }

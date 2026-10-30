@@ -5396,5 +5396,92 @@
       "deleteConfirm": "Delete this scenario?",
       "empty": "No saved scenarios yet. Adjust the calculator and press Save."
     }
+  },
+  "auth": {
+    "title": {
+      "login": "Sign in with email",
+      "register": "Create account",
+      "forgot": "Reset password"
+    },
+    "desc": {
+      "login": "Sign in with your email and password.",
+      "register": "Don't have a Resilience account yet? Sign up with your email.",
+      "forgot": "We'll send you a link to create a new password."
+    },
+    "submit": {
+      "login": "Sign in",
+      "register": "Create account",
+      "forgot": "Send link",
+      "loading": "..."
+    },
+    "google": "Continue with Google",
+    "or": "or",
+    "accountType": {
+      "label": "Account type",
+      "personal": "Personal",
+      "business": "Business",
+      "businessHint": "Business registration is done in a single form (details + documents). The account is activated once the team approves the request and you verify your email."
+    },
+    "business": {
+      "continue": "Continue with business registration",
+      "trackStatus": "Already submitted your request? Check its status"
+    },
+    "fields": {
+      "name": "Name",
+      "namePlaceholder": "Your name",
+      "phone": "Phone",
+      "phonePlaceholder": "+5350123456 (with country code)",
+      "phoneHint": "A staff member will verify your number before enabling withdrawals.",
+      "email": "Email",
+      "emailPlaceholder": "you@email.com",
+      "password": "Password",
+      "passwordPlaceholderLogin": "Your password",
+      "passwordPlaceholderRegister": "min. 8 characters",
+      "confirmPassword": "Confirm password",
+      "confirmPlaceholder": "Repeat the password",
+      "passwordMismatch": "Passwords don't match.",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password"
+    },
+    "remember24h": "Keep me signed in for 24 hours (log in once a day)",
+    "captchaLabel": "Security verification",
+    "toggle": {
+      "haveAccount": "I already have an account, sign in",
+      "backToLogin": "Back to sign in",
+      "noAccount": "Don't have an account? Create one"
+    },
+    "forgotLink": "Forgot your password?",
+    "resend": "Didn't get the verification email?",
+    "resending": "Resending...",
+    "errors": {
+      "invalidCredentials": "Incorrect email or password.",
+      "credentialsHelp": "Check that the email and password are correct (watch out for uppercase).",
+      "forgotCta": "Forgot your password? Reset it here",
+      "repeated": "You've had {{count}} failed attempts. We recommend resetting your password or signing in with Google.",
+      "captchaRequired": "Complete the “I'm not a robot” verification.",
+      "captchaIncomplete": "Complete the “I'm not a robot” verification (check the Cloudflare box) to continue.",
+      "captchaIncompleteToast": "Complete the security verification to continue.",
+      "captchaFailed": "We couldn't verify that you're not a robot. Reload the page and try again.",
+      "sessionUnconfirmed": "We couldn't confirm your session. Check your connection and try again.",
+      "passwordsNoMatch": "Passwords don't match",
+      "rateLimited": "Too many failed attempts. Please wait 15 minutes.",
+      "generic": "Authentication error"
+    },
+    "success": {
+      "login": "Signed in",
+      "registerDefault": "Account created. Check your email to verify it.",
+      "businessPending": "Your Business account will remain under review until an administrator approves it.",
+      "forgotSent": "If the account exists, you'll receive an email with the link to create a new password.",
+      "emailNotVerified": "Verify your email before signing in."
+    },
+    "notice": {
+      "googleAccount": "This account was created with Google.",
+      "registerCta": "→ Create an account with this email",
+      "googleCta": "→ Continue with Google"
+    },
+    "successPanel": {
+      "resendPrompt": "Didn't get the email? Resend",
+      "understood": "Got it"
+    }
   }
 }

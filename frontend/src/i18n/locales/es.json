@@ -5396,5 +5396,92 @@
       "deleteConfirm": "¿Borrar este escenario?",
       "empty": "Aún no has guardado escenarios. Ajusta la calculadora y pulsa Guardar."
     }
+  },
+  "auth": {
+    "title": {
+      "login": "Iniciar con email",
+      "register": "Crear cuenta",
+      "forgot": "Recuperar contraseña"
+    },
+    "desc": {
+      "login": "Acceso con email y contraseña.",
+      "register": "¿Aún no tienes cuenta en Resilience? Regístrate con tu email.",
+      "forgot": "Te enviaremos un enlace para crear una nueva contraseña."
+    },
+    "submit": {
+      "login": "Iniciar sesión",
+      "register": "Crear cuenta",
+      "forgot": "Enviar enlace",
+      "loading": "..."
+    },
+    "google": "Continuar con Google",
+    "or": "o",
+    "accountType": {
+      "label": "Tipo de cuenta",
+      "personal": "Personal",
+      "business": "Empresa",
+      "businessHint": "El registro de Empresa se hace en un solo formulario (datos + documentos). La cuenta se activa cuando el equipo aprueba la solicitud y verificas tu correo."
+    },
+    "business": {
+      "continue": "Continuar con el registro de Empresa",
+      "trackStatus": "¿Ya enviaste tu solicitud? Consulta su estado"
+    },
+    "fields": {
+      "name": "Nombre",
+      "namePlaceholder": "Tu nombre",
+      "phone": "Teléfono",
+      "phonePlaceholder": "+5350123456 (con código de país)",
+      "phoneHint": "Un miembro del staff verificará tu número antes de habilitar retiros.",
+      "email": "Email",
+      "emailPlaceholder": "tu@email.com",
+      "password": "Contraseña",
+      "passwordPlaceholderLogin": "Tu contraseña",
+      "passwordPlaceholderRegister": "mín. 8 caracteres",
+      "confirmPassword": "Confirmar contraseña",
+      "confirmPlaceholder": "Repite la contraseña",
+      "passwordMismatch": "Las contraseñas no coinciden.",
+      "showPassword": "Mostrar contraseña",
+      "hidePassword": "Ocultar contraseña"
+    },
+    "remember24h": "Mantener sesión 24 horas (entrar 1 vez al día)",
+    "captchaLabel": "Verificación de seguridad",
+    "toggle": {
+      "haveAccount": "Ya tengo cuenta, iniciar sesión",
+      "backToLogin": "Volver a iniciar sesión",
+      "noAccount": "¿No tienes cuenta? Crear una"
+    },
+    "forgotLink": "¿Olvidaste tu contraseña?",
+    "resend": "¿No recibiste el correo de verificación?",
+    "resending": "Reenviando...",
+    "errors": {
+      "invalidCredentials": "Correo o contraseña incorrectos.",
+      "credentialsHelp": "Revisa que el email y la contraseña sean correctos (ojo a las mayúsculas).",
+      "forgotCta": "¿Olvidaste tu contraseña? Restablécela aquí",
+      "repeated": "Llevas {{count}} intentos fallidos. Te recomendamos restablecer tu contraseña o entrar con Google.",
+      "captchaRequired": "Completa la verificación “No soy un robot”.",
+      "captchaIncomplete": "Completa la verificación “No soy un robot” (marca la casilla de Cloudflare) para continuar.",
+      "captchaIncompleteToast": "Completa la verificación de seguridad para continuar.",
+      "captchaFailed": "No pudimos verificar que no eres un robot. Recarga la página e inténtalo de nuevo.",
+      "sessionUnconfirmed": "No pudimos confirmar tu sesión. Revisa tu conexión e inténtalo de nuevo.",
+      "passwordsNoMatch": "Las contraseñas no coinciden",
+      "rateLimited": "Demasiados intentos fallidos. Espera 15 minutos.",
+      "generic": "Error de autenticación"
+    },
+    "success": {
+      "login": "Sesión iniciada",
+      "registerDefault": "Cuenta creada. Revisa tu correo para verificar.",
+      "businessPending": "Tu cuenta Empresa quedará en revisión hasta que un administrador la apruebe.",
+      "forgotSent": "Si la cuenta existe, recibirás un correo con el enlace para crear una nueva contraseña.",
+      "emailNotVerified": "Verifica tu correo antes de iniciar sesión."
+    },
+    "notice": {
+      "googleAccount": "Esta cuenta fue creada con Google.",
+      "registerCta": "→ Crear cuenta con este email",
+      "googleCta": "→ Continuar con Google"
+    },
+    "successPanel": {
+      "resendPrompt": "¿No recibiste el correo? Reenviar",
+      "understood": "Entendido"
+    }
   }
 }

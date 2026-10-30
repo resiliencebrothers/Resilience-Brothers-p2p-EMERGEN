@@ -1,7 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Mail } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export function AuthSuccessPanel({ message, mode, resending, onResend, onClose }) {
+  const { t } = useTranslation();
   return (
     <div className="py-4 text-center" data-testid="auth-success-state">
       <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#22C55E]/10 flex items-center justify-center">
@@ -16,14 +18,14 @@ export function AuthSuccessPanel({ message, mode, resending, onResend, onClose }
           disabled={resending}
           className="block mx-auto mb-4 text-xs text-[#8B5CF6] hover:text-[#A78BFA] underline underline-offset-4 disabled:opacity-50"
         >
-          {resending ? "Reenviando..." : "¿No recibiste el correo? Reenviar"}
+          {resending ? t("auth.resending") : t("auth.successPanel.resendPrompt")}
         </button>
       )}
       <Button
         onClick={onClose}
         className="bg-[#8B5CF6] hover:bg-[#A78BFA] text-white rounded-none"
       >
-        Entendido
+        {t("auth.successPanel.understood")}
       </Button>
     </div>
   );

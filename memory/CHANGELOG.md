@@ -1,3 +1,16 @@
+## Changelog — 30 Oct 2026 (Login: aviso de contraseña ilegible en modo claro + diálogo no traducía a inglés)
+
+Reporte del usuario (foto): (1) el aviso "Correo o contraseña incorrectos" se ve **borroso** y (2) al elegir **inglés** antes de entrar, el diálogo de login y el mensaje de error **seguían en español**.
+
+- **Causa 1 — contraste**: en modo claro, `html.light` convierte el fondo del diálogo (`bg-[#1A1730]`) en **blanco**, pero el texto del banner usaba `text-red-200` (rosa muy claro) → casi invisible sobre blanco.
+  - Fix [`index.css`]: nueva clase `.auth-error-box` (+ `.auth-error-icon/help/cta/repeat`) con colores propios por tema. Claro → texto rojo oscuro `#991B1B` sobre `#FEE2E2`; oscuro → `#FCA5A5` sobre rojo tenue. Verificado: color computado `rgb(153,27,27)` sobre `rgb(254,226,226)` en claro, legible.
+- **Causa 2 — i18n**: `EmailAuthDialog` y sus subcomponentes (`AuthCredentialsFields`, `GoogleAuthButton`, `AuthSuccessPanel`, `AuthNotice`) tenían TODO el texto fijo en español y no usaban `useTranslation`; además los mensajes de error venían del backend (siempre español).
+  - Fix: nuevo namespace `auth` en `i18n/locales/es.json` + `en.json` (títulos, descripciones, campos, botones, checkbox, captcha, toggles, éxitos y **errores**). Todos los componentes del diálogo usan ahora `t("auth.*")`.
+  - Los errores del backend se traducen **en el frontend por código**: `handleAuthError` mapea `INVALID_CREDENTIALS`/`CAPTCHA_REQUIRED`/`CAPTCHA_FAILED` → claves i18n, y el 429 (límite de intentos) → `auth.errors.rateLimited`. `EMAIL_NOT_VERIFIED` y `USE_GOOGLE_LOGIN` también traducidos. El widget Turnstile ahora toma el idioma de `i18n.language`.
+- **Verificado en navegador (390px)**: EN+claro → título "Sign in with email", error "Incorrect email or password." legible (rojo oscuro sobre rojo claro); ES+oscuro → "Correo o contraseña incorrectos." legible (rosa sobre fondo oscuro). Sin errores de compilación; ningún test referencia las cadenas cambiadas.
+- **Nota de despliegue**: en PREVIEW. Requiere **volver a publicar** para que llegue a producción (el deploy anterior no incluye estos cambios).
+
+
 ## Changelog — 30 Oct 2026 (Login: el cliente NO recibía ningún aviso al intentar entrar — botón "Iniciar sesión" inerte por el captcha)
 
 Reporte del usuario (vídeo WhatsApp, 2.ª vez): "sigue sin avisarle al cliente que está poniendo una contraseña incorrecta". El arreglo anterior (banner rojo + `interaction-only`) era correcto PERO no era la causa raíz.

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { API } from "@/App";
 import { useAuth } from "@/context/AuthContext";
@@ -18,25 +19,8 @@ import { roleHome } from "@/lib/roleHome";
 import { User, Building2, ArrowRight, AlertCircle } from "lucide-react";
 import CompanySignupDialog from "./CompanySignupDialog";
 
-const TITLES = {
-  register: "Crear cuenta",
-  forgot: "Recuperar contraseña",
-  login: "Iniciar con email",
-};
-
-const DESCRIPTIONS = {
-  register: "¿Aún no tienes cuenta en Resilience? Regístrate con tu email.",
-  forgot: "Te enviaremos un enlace para crear una nueva contraseña.",
-  login: "Acceso con email y contraseña.",
-};
-
-const SUBMIT_LABELS = {
-  register: "Crear cuenta",
-  forgot: "Enviar enlace",
-  login: "Iniciar sesión",
-};
-
 export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { signInWithPassword, login } = useAuth();
   const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
@@ -130,13 +114,17 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
   // generic INVALID_CREDENTIALS for both "no account" and "wrong password" to
   // prevent account enumeration — so there is no per-code register prompt here.
   const ERROR_CODE_HANDLERS = {
-    EMAIL_NOT_VERIFIED: (msg) =>
-      setSuccessMsg(msg || "Verifica tu correo antes de iniciar sesión."),
-    USE_GOOGLE_LOGIN: (msg) =>
-      setNotice({
-        kind: "google",
-        message: msg || "Esta cuenta fue creada con Google.",
-      }),
+    EMAIL_NOT_VERIFIED: () => setSuccessMsg(t("auth.success.emailNotVerified")),
+    USE_GOOGLE_LOGIN: () =>
+      setNotice({ kind: "google", message: t("auth.notice.googleAccount") }),
+  };
+
+  // Backend error code → clave i18n (el mensaje se traduce en el FRONTEND según
+  // el idioma elegido; el backend siempre responde en español).
+  const ERROR_CODE_MESSAGES = {
+    INVALID_CREDENTIALS: "auth.errors.invalidCredentials",
+    CAPTCHA_REQUIRED: "auth.errors.captchaRequired",
+    CAPTCHA_FAILED: "auth.errors.captchaFailed",
   };
 
   const handleAuthError = (err) => {
@@ -145,7 +133,11 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     const message = typeof detail === "object" ? detail?.message : detail;
     const handler = code && ERROR_CODE_HANDLERS[code];
     if (handler) { handler(message); return; }
-    const text = typeof message === "string" ? message : "Error de autenticación";
+    // Traducimos por código; el 429 (límite de intentos) llega como string.
+    let text;
+    if (code && ERROR_CODE_MESSAGES[code]) text = t(ERROR_CODE_MESSAGES[code]);
+    else if (err.response?.status === 429) text = t("auth.errors.rateLimited");
+    else text = typeof message === "string" ? message : t("auth.errors.generic");
     // Los errores de captcha (CAPTCHA_REQUIRED / CAPTCHA_FAILED) NO son de
     // credenciales: se muestran sin la ayuda de "¿olvidaste tu contraseña?".
     const isCaptcha = code === "CAPTCHA_REQUIRED" || code === "CAPTCHA_FAILED";
@@ -163,16 +155,16 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     e?.preventDefault?.();
     if (loading) return;
     if (mode === "register" && password !== confirmPassword) {
-      toast.error("Las contraseñas no coinciden");
+      toast.error(t("auth.errors.passwordsNoMatch"));
       return;
     }
     // Captcha obligatorio: si la verificación "No soy un robot" aún no se ha
     // completado, NO dejamos el botón inerte sin feedback (el usuario creía que
     // su contraseña estaba mal). Mostramos un aviso claro que lo guía al widget.
     if (captchaCfg?.enabled && captchaCfg?.enforced && mode !== "forgot" && !captchaToken) {
-      setFormError("Completa la verificación \u201cNo soy un robot\u201d (marca la casilla de Cloudflare) para continuar.");
+      setFormError(t("auth.errors.captchaIncomplete"));
       setFormErrorKind("captcha");
-      toast.error("Completa la verificación de seguridad para continuar.");
+      toast.error(t("auth.errors.captchaIncompleteToast"));
       return;
     }
     setLoading(true);
@@ -181,17 +173,17 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
     try {
       if (mode === "forgot") {
         await axios.post(`${API}/auth/forgot-password`, { email: email.trim() });
-        setSuccessMsg("Si la cuenta existe, recibirás un correo con el enlace para crear una nueva contraseña.");
+        setSuccessMsg(t("auth.success.forgotSent"));
         return;
       }
       const captcha = captchaCfg?.enabled && captchaToken ? { captcha_token: captchaToken } : {};
       if (mode === "register") {
         const body = { email: email.trim(), password, name: name.trim(), phone: phone.trim(), account_type: accountType, ...captcha };
-        const r = await axios.post(`${API}/auth/register`, body, { withCredentials: true });
+        await axios.post(`${API}/auth/register`, body, { withCredentials: true });
         // iter17: registration no longer logs in — must verify email first
-        const base = r.data.message || "Cuenta creada. Revisa tu correo para verificar.";
+        const base = t("auth.success.registerDefault");
         setSuccessMsg(accountType === "business"
-          ? `${base} Tu cuenta Empresa quedará en revisión hasta que un administrador la apruebe.`
+          ? `${base} ${t("auth.success.businessPending")}`
           : base);
         return;
       }
@@ -200,7 +192,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       // success, so a resolved response alone can never claim "Sesión iniciada".
       const body = { email: email.trim(), password, ...(remember24h ? { remember_hours: 24 } : {}), ...captcha };
       const confirmed = await signInWithPassword(body);
-      toast.success("Sesión iniciada");
+      toast.success(t("auth.success.login"));
       onClose?.(); reset();
       navigate(roleHome(confirmed));
     } catch (err) {
@@ -213,7 +205,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
       // AUTH-03 — credentials accepted but session not confirmed (cookie not
       // stored / network): recoverable, NEVER shown as "contraseña incorrecta".
       if (err?.code === "SESSION_UNCONFIRMED") {
-        const msg = "No pudimos confirmar tu sesión. Revisa tu conexión e inténtalo de nuevo.";
+        const msg = t("auth.errors.sessionUnconfirmed");
         setFormError(msg);
         setFormErrorKind("session");
         toast.error(msg);
@@ -249,9 +241,9 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
         className="bg-[#1A1730] border-white/10 text-white rounded-none max-w-md max-h-[85vh] overflow-y-auto"
       >
         <DialogHeader>
-          <DialogTitle className="font-display text-2xl">{TITLES[mode]}</DialogTitle>
+          <DialogTitle className="font-display text-2xl">{t(`auth.title.${mode}`)}</DialogTitle>
           <DialogDescription className="text-neutral-500 text-xs">
-            {DESCRIPTIONS[mode]}
+            {t(`auth.desc.${mode}`)}
           </DialogDescription>
         </DialogHeader>
 
@@ -270,28 +262,27 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 data-testid="auth-error-banner"
                 ref={errorRef}
                 role="alert"
-                className="flex items-start gap-2 text-sm text-red-200 border border-red-500/40 bg-red-500/10 px-3 py-2.5 rounded-none"
+                className="auth-error-box flex items-start gap-2 text-sm px-3 py-2.5 rounded-none"
               >
-                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+                <AlertCircle className="auth-error-icon w-4 h-4 mt-0.5 shrink-0" />
                 <div className="min-w-0">
-                  <span>{formError}</span>
+                  <span className="font-medium">{formError}</span>
                   {formErrorKind === "credentials" && (
                     <div className="mt-2 flex flex-col gap-1.5" data-testid="auth-error-help">
-                      <span className="text-xs text-red-200/80">
-                        Revisa que el email y la contraseña sean correctos (ojo a las mayúsculas).
+                      <span className="auth-error-help text-xs">
+                        {t("auth.errors.credentialsHelp")}
                       </span>
                       <button
                         type="button"
                         data-testid="auth-error-forgot"
                         onClick={() => { setFormError(""); setFormErrorKind(""); setMode("forgot"); }}
-                        className="self-start text-xs font-semibold text-amber-300 hover:text-amber-200 underline underline-offset-4"
+                        className="auth-error-cta self-start text-xs font-semibold underline underline-offset-4"
                       >
-                        ¿Olvidaste tu contraseña? Restablécela aquí
+                        {t("auth.errors.forgotCta")}
                       </button>
                       {failCount >= 2 && (
-                        <span data-testid="auth-error-repeated" className="text-xs text-amber-200/90">
-                          Llevas {failCount} intentos fallidos. Te recomendamos restablecer tu contraseña
-                          o entrar con Google.
+                        <span data-testid="auth-error-repeated" className="auth-error-repeat text-xs">
+                          {t("auth.errors.repeated", { count: failCount })}
                         </span>
                       )}
                     </div>
@@ -310,14 +301,14 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
             {!businessRegister && (
               <div className="relative flex items-center text-[0.65rem] text-neutral-600 micro-label">
                 <div className="flex-1 h-px bg-white/10" />
-                <span className="px-3">o</span>
+                <span className="px-3">{t("auth.or")}</span>
                 <div className="flex-1 h-px bg-white/10" />
               </div>
             )}
 
             {mode === "register" && (
               <div data-testid="account-type-selector">
-                <div className="micro-label text-neutral-500 mb-2">Tipo de cuenta</div>
+                <div className="micro-label text-neutral-500 mb-2">{t("auth.accountType.label")}</div>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -329,7 +320,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                         : "border-white/10 text-neutral-400 hover:text-white"
                     }`}
                   >
-                    <User className="w-4 h-4" /> Personal
+                    <User className="w-4 h-4" /> {t("auth.accountType.personal")}
                   </button>
                   <button
                     type="button"
@@ -341,12 +332,12 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                         : "border-white/10 text-neutral-400 hover:text-white"
                     }`}
                   >
-                    <Building2 className="w-4 h-4" /> Empresa
+                    <Building2 className="w-4 h-4" /> {t("auth.accountType.business")}
                   </button>
                 </div>
                 {accountType === "business" && (
                   <p className="text-xs text-neutral-500 mt-2" data-testid="account-type-business-hint">
-                    El registro de Empresa se hace en un solo formulario (datos + documentos). La cuenta se activa cuando el equipo aprueba la solicitud y verificas tu correo.
+                    {t("auth.accountType.businessHint")}
                   </p>
                 )}
               </div>
@@ -360,12 +351,12 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                   onClick={() => { onClose?.(); reset(); setCompanyOpen(true); }}
                   className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
                 >
-                  Continuar con el registro de Empresa <ArrowRight className="w-4 h-4 ml-2" />
+                  {t("auth.business.continue")} <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
                 <div className="text-center mt-3">
                   <a href="/empresa/seguimiento" data-testid="company-track-status-link"
                     className="text-xs text-neutral-400 hover:text-[#8B5CF6]">
-                    ¿Ya enviaste tu solicitud? Consulta su estado
+                    {t("auth.business.trackStatus")}
                   </a>
                 </div>
               </div>
@@ -395,21 +386,21 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                   onCheckedChange={(v) => setRemember24h(v === true)}
                   className="border-white/30 data-[state=checked]:bg-[#8B5CF6] data-[state=checked]:text-white data-[state=checked]:border-[#8B5CF6]"
                 />
-                Mantener sesión 24 horas (entrar 1 vez al día)
+                {t("auth.remember24h")}
               </label>
             )}
 
             {captchaCfg?.enabled && mode !== "forgot" && (
               <div className="space-y-1.5" data-testid="captcha-widget">
                 <p className="text-[0.7rem] text-neutral-500 text-center">
-                  Verificación de seguridad
+                  {t("auth.captchaLabel")}
                 </p>
                 <div className="flex justify-center">
                   <Turnstile
                     key={captchaKey}
                     siteKey={captchaCfg.site_key}
-                    options={{ theme: getTheme() === "light" ? "light" : "dark", language: "es", appearance: "interaction-only" }}
-                    onSuccess={(t) => { setCaptchaToken(t); if (formErrorKind === "captcha") { setFormError(""); setFormErrorKind(""); } }}
+                    options={{ theme: getTheme() === "light" ? "light" : "dark", language: (i18n.language || "es").split("-")[0], appearance: "interaction-only" }}
+                    onSuccess={(tok) => { setCaptchaToken(tok); if (formErrorKind === "captcha") { setFormError(""); setFormErrorKind(""); } }}
                     onExpire={() => setCaptchaToken("")}
                     onError={() => setCaptchaToken("")}
                   />
@@ -423,7 +414,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
               disabled={loading}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-12"
             >
-              {loading ? "..." : SUBMIT_LABELS[mode]}
+              {loading ? t("auth.submit.loading") : t(`auth.submit.${mode}`)}
             </Button>
               </>
             )}
@@ -436,10 +427,10 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                 className="text-xs text-neutral-400 hover:text-[#8B5CF6] underline underline-offset-4"
               >
                 {mode === "register"
-                  ? "Ya tengo cuenta, iniciar sesión"
+                  ? t("auth.toggle.haveAccount")
                   : mode === "forgot"
-                    ? "Volver a iniciar sesión"
-                    : "¿No tienes cuenta? Crear una"}
+                    ? t("auth.toggle.backToLogin")
+                    : t("auth.toggle.noAccount")}
               </button>
               {mode === "login" && (
                 <>
@@ -449,7 +440,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                     onClick={() => { setFormError(""); setFormErrorKind(""); setMode("forgot"); }}
                     className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4"
                   >
-                    ¿Olvidaste tu contraseña?
+                    {t("auth.forgotLink")}
                   </button>
                   <button
                     type="button"
@@ -458,7 +449,7 @@ export default function EmailAuthDialog({ open, onClose, initialEmail = "" }) {
                     disabled={resending}
                     className="text-xs text-neutral-500 hover:text-[#8B5CF6] underline underline-offset-4 disabled:opacity-50"
                   >
-                    {resending ? "Reenviando..." : "¿No recibiste el correo de verificación?"}
+                    {resending ? t("auth.resending") : t("auth.resend")}
                   </button>
                 </>
               )}

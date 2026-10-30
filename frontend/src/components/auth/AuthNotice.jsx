@@ -1,4 +1,7 @@
+import { useTranslation } from "react-i18next";
+
 export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
+  const { t } = useTranslation();
   if (!notice) return null;
   return (
     <div
@@ -17,7 +20,7 @@ export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
           onClick={onSwitchToRegister}
           className="text-[#8B5CF6] hover:text-[#A78BFA] font-semibold underline underline-offset-4"
         >
-          → Crear cuenta con este email
+          {t("auth.notice.registerCta")}
         </button>
       )}
       {notice.kind === "google" && (
@@ -27,7 +30,7 @@ export function AuthNotice({ notice, onSwitchToRegister, onUseGoogle }) {
           onClick={onUseGoogle}
           className="text-[#60A5FA] hover:text-[#93C5FD] font-semibold underline underline-offset-4"
         >
-          → Continuar con Google
+          {t("auth.notice.googleCta")}
         </button>
       )}
     </div>

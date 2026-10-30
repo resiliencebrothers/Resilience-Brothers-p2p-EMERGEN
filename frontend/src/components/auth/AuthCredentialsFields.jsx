@@ -1,5 +1,6 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useTranslation } from "react-i18next";
 import { Mail, Lock, User as UserIcon, Eye, EyeOff, Phone } from "lucide-react";
 
 export function AuthCredentialsFields({
@@ -13,6 +14,7 @@ export function AuthCredentialsFields({
   nameInputRef,
   onEmailChange,
 }) {
+  const { t } = useTranslation();
   const isRegister = mode === "register";
   const isForgot = mode === "forgot";
 
@@ -20,7 +22,7 @@ export function AuthCredentialsFields({
     <>
       {isRegister && (
         <div>
-          <Label className="micro-label text-neutral-500">Nombre</Label>
+          <Label className="micro-label text-neutral-500">{t("auth.fields.name")}</Label>
           <div className="relative mt-1">
             <UserIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
             <Input
@@ -30,7 +32,7 @@ export function AuthCredentialsFields({
               minLength={2}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Tu nombre"
+              placeholder={t("auth.fields.namePlaceholder")}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
             />
           </div>
@@ -39,7 +41,7 @@ export function AuthCredentialsFields({
 
       {isRegister && (
         <div>
-          <Label className="micro-label text-neutral-500">Teléfono</Label>
+          <Label className="micro-label text-neutral-500">{t("auth.fields.phone")}</Label>
           <div className="relative mt-1">
             <Phone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
             <Input
@@ -49,19 +51,19 @@ export function AuthCredentialsFields({
               inputMode="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              placeholder="+5350123456 (con código de país)"
+              placeholder={t("auth.fields.phonePlaceholder")}
               autoComplete="tel"
               className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9 font-mono"
             />
           </div>
           <p className="text-[0.65rem] text-neutral-600 mt-1">
-            Un miembro del staff verificará tu número antes de habilitar retiros.
+            {t("auth.fields.phoneHint")}
           </p>
         </div>
       )}
 
       <div>
-        <Label className="micro-label text-neutral-500">Email</Label>
+        <Label className="micro-label text-neutral-500">{t("auth.fields.email")}</Label>
         <div className="relative mt-1">
           <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
           <Input
@@ -70,7 +72,7 @@ export function AuthCredentialsFields({
             required
             value={email}
             onChange={(e) => { setEmail(e.target.value); onEmailChange?.(); }}
-            placeholder="tu@email.com"
+            placeholder={t("auth.fields.emailPlaceholder")}
             autoComplete="email"
             className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9"
           />
@@ -79,7 +81,7 @@ export function AuthCredentialsFields({
 
       {!isForgot && (
         <div>
-          <Label className="micro-label text-neutral-500">Contraseña</Label>
+          <Label className="micro-label text-neutral-500">{t("auth.fields.password")}</Label>
           <div className="relative mt-1">
             <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
             <Input
@@ -89,7 +91,7 @@ export function AuthCredentialsFields({
               minLength={isRegister ? 8 : 1}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={isRegister ? "mín. 8 caracteres" : "Tu contraseña"}
+              placeholder={isRegister ? t("auth.fields.passwordPlaceholderRegister") : t("auth.fields.passwordPlaceholderLogin")}
               autoComplete={isRegister ? "new-password" : "current-password"}
               className="rounded-none bg-[#0a0a0a] border-white/10 h-11 pl-9 pr-10"
             />
@@ -97,7 +99,7 @@ export function AuthCredentialsFields({
               type="button"
               data-testid="auth-toggle-password-visibility"
               onClick={() => setShowPassword((v) => !v)}
-              aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+              aria-label={showPassword ? t("auth.fields.hidePassword") : t("auth.fields.showPassword")}
               className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-neutral-500 hover:text-[#8B5CF6] transition-colors"
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -108,7 +110,7 @@ export function AuthCredentialsFields({
 
       {isRegister && (
         <div>
-          <Label className="micro-label text-neutral-500">Confirmar contraseña</Label>
+          <Label className="micro-label text-neutral-500">{t("auth.fields.confirmPassword")}</Label>
           <div className="relative mt-1">
             <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
             <Input
@@ -118,7 +120,7 @@ export function AuthCredentialsFields({
               minLength={8}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Repite la contraseña"
+              placeholder={t("auth.fields.confirmPlaceholder")}
               autoComplete="new-password"
               className={`rounded-none bg-[#0a0a0a] h-11 pl-9 ${
                 confirmPassword && confirmPassword !== password
@@ -129,7 +131,7 @@ export function AuthCredentialsFields({
           </div>
           {confirmPassword && confirmPassword !== password && (
             <p data-testid="auth-password-mismatch" className="text-[0.7rem] text-[#EF4444] mt-1">
-              Las contraseñas no coinciden.
+              {t("auth.fields.passwordMismatch")}
             </p>
           )}
         </div>
