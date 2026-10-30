@@ -1,11 +1,14 @@
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-load_dotenv("/app/backend/.env")
+# Load the repo-local backend/.env for local runs; in CI the file is absent and
+# MONGO_URL/DB_NAME come from the job environment instead.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 db = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 now = datetime.now(timezone.utc)
 exp = (now + timedelta(days=5)).isoformat()

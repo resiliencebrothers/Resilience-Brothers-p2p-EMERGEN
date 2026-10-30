@@ -80,6 +80,9 @@ jobs:
       REACT_APP_BACKEND_URL: http://localhost:8001
       # Test-only secrets — never reuse outside CI.
       EMERGENT_LLM_KEY: ci-placeholder
+      # Cron secret shared by the uvicorn backend and the booking tests that
+      # POST to /api/cron/bookings-tick (settlement/reminder suites).
+      WEBHOOK_CRON_SECRET: ci-cron-secret-test-only
       TOTP_MASTER_KEY: DCsJczEUBaU7PrVwn3qe7HIM0yaOaQwxc2a2STel5Ps=
       JWT_SECRET: ci_jwt_secret_change_me
       APP_PUBLIC_URL: http://localhost:8001

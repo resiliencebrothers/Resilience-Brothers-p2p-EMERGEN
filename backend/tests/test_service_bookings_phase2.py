@@ -1,19 +1,22 @@
 # Service Marketplace Phase 2 — USDT appointment bookings (slots, escrow debit, accept/reject/cancel refunds, cron auth, next_slot)
 import os
 import subprocess
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 import requests
-from dotenv import dotenv_values
 from pymongo import MongoClient
 
-FE_ENV = dotenv_values("/app/frontend/.env")
-BE_ENV = dotenv_values("/app/backend/.env")
-BASE_URL = FE_ENV["REACT_APP_BACKEND_URL"].rstrip("/")
-CRON_SECRET = BE_ENV["WEBHOOK_CRON_SECRET"]
+# Portable config: conftest.py loads the repo-local .env files into os.environ
+# for local runs; CI provides these as real environment variables. Never read
+# absolute /app paths or index dotenv_values() directly (breaks the CI checkout).
+BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
+CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "")
 VIP = "user_test_vip01"
-mdb = MongoClient(BE_ENV["MONGO_URL"])[BE_ENV["DB_NAME"]]
+mdb = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+SEED = str(Path(__file__).resolve().parents[1] / "seed_booking_smoke.py")
 
 
 def _client(token):
@@ -24,7 +27,7 @@ def _client(token):
 
 @pytest.fixture(scope="module")
 def service_id():
-    out = subprocess.run(["python", "/app/backend/seed_booking_smoke.py"],
+    out = subprocess.run([sys.executable, SEED],
                          capture_output=True, text=True, check=True).stdout
     sid = [l.split()[1] for l in out.splitlines() if l.startswith("SERVICE_ID")][0]
     yield sid
