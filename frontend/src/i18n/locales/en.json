@@ -108,7 +108,8 @@
       "submit": "Submit review",
       "submitted": "Thanks for your review!",
       "edit": "Edit review",
-      "placeholder": "How was your experience?"
+      "placeholder": "How was your experience?",
+      "update": "Update review"
     }
   },
   "offers": {

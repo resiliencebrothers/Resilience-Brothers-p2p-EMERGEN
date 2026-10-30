@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend E2E tests of partial deposit booking, public service reviews and the company Ingresos panel (cookie auth, Playwright, 1920x1080). All 4 requested flows work. There is one minor stale-state bug: after a review is submitted, the rating on the card and in the detail header only shows up after a page reload.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ServicesMarketplace ReviewDialog/onDone", "issue": "After a review is submitted, the services list is not reloaded. onDone=afterBooking only reloads bookings and balance, and the backend does not publish services_changed after a review. So [data-testid=service-rating-{id}] on the card and [data-testid=service-detail-rating] in the detail stay hidden until a full page reload. The ServiceReviews list itself does update right away because it refetches on mount.", "selector": "[data-testid^='service-rating-'], [data-testid='service-detail-rating']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mis reservas", "issues": ["The 'Valorar servicio' button looks the same after the user has already reviewed. Consider showing 'Editar reseña' or the existing stars (GET /bookings/my-reviews exists)."]},
+      {"screen": "Company Ingresos", "issues": ["'Por liberar' shows the full 100 USDT while only the 30 USDT deposit is actually held. The remaining 70 is charged later and could fail if the customer's balance is short. Consider showing the deposit and the pending remainder separately."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In ServicesMarketplace.jsx, call load() (the services refetch) after a review is submitted, e.g. pass onDone={() => { onChanged(); load(); }} to MyBookings/ReviewDialog. Or emit services_changed from POST /services/{id}/reviews.",
+    "Optional: show an already-reviewed state on the Mis reservas review button."
+  ],
+  "critical_code_review_comments": [
+    "ReviewDialog resets to rating 5 and an empty comment on every open, so editing an existing review does not prefill the previous values.",
+    "The booking 'canPay' variable is actually an 'insufficient' flag (payNow > balance). The logic is correct but the name is misleading."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "95%"},
+  "seed_data_creation": "Through the UI: created 1 booking (VIP, Corte de pelo QA, 2026-10-30 10:00), which the company then accepted (status accepted). VIP USDT balance is now 4970. Created review 8f2492d9 (5 stars, comment 'TEST_ Excelente corte, muy puntual'). Service TEST_BK_04622c63 now has rating_count=1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Server date is 2026-10-30. Service id TEST_BK_04622c63, settled booking UIQA_SETTLED_4c9917. The company /company Reservas tab is data-testid=company-tab-bookings; the marketplace services tab is market-tab-services. Verified: booking-total=100, booking-paynow=30, the deposit note is shown, the toast appears, the balance went 5000→4970 (confirmed through the API), and Mis reservas shows the deposit line. The review submits and appears publicly. Company panel: held 30 → after accept held 0 / upcoming 100 / settled 100, and the schedule lists 2026-10-30 10:00."
+}

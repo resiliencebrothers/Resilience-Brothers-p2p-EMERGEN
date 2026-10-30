@@ -108,7 +108,8 @@
       "submit": "Enviar reseña",
       "submitted": "¡Gracias por tu reseña!",
       "edit": "Editar reseña",
-      "placeholder": "¿Cómo fue tu experiencia?"
+      "placeholder": "¿Cómo fue tu experiencia?",
+      "update": "Actualizar reseña"
     }
   },
   "offers": {

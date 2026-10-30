@@ -114,7 +114,7 @@ export default function ServicesMarketplace({ onBooked }) {
       norm(s.description).includes(norm(query)) || norm(s.coverage_zone).includes(norm(query))));
 
   const afterBooking = () => {
-    loadBookings(); loadBalance(); onBooked?.();
+    loadBookings(); loadBalance(); load(); onBooked?.();
   };
 
   return (
@@ -524,7 +524,16 @@ function ReviewDialog({ booking, onClose, onDone, t }) {
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (booking) { setRating(5); setComment(""); } }, [booking]);
+  const [existing, setExisting] = useState(false);
+  useEffect(() => {
+    if (!booking) return;
+    setRating(5); setComment(""); setExisting(false);
+    axios.get(`${API}/bookings/my-reviews`, { withCredentials: true })
+      .then((r) => {
+        const mine = (r.data || {})[booking.service_id];
+        if (mine) { setRating(mine.rating || 5); setComment(mine.comment || ""); setExisting(true); }
+      }).catch(() => {});
+  }, [booking]);
 
   const submit = async () => {
     if (!booking) return;
@@ -541,7 +550,7 @@ function ReviewDialog({ booking, onClose, onDone, t }) {
   return (
     <Dialog open={!!booking} onOpenChange={(v) => !v && onClose?.()}>
       <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto sm:max-w-md" data-testid="service-review-dialog">
-        <DialogHeader><DialogTitle className="font-display">{t("svcMarket.reviews.rate")}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="font-display">{existing ? t("svcMarket.reviews.edit") : t("svcMarket.reviews.rate")}</DialogTitle></DialogHeader>
         {booking && (
           <div className="space-y-4">
             <div className="text-sm text-neutral-300">{booking.service_title} · {booking.company_name}</div>
@@ -556,7 +565,7 @@ function ReviewDialog({ booking, onClose, onDone, t }) {
             </div>
             <Button data-testid="service-review-submit" onClick={submit} disabled={busy}
               className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
-              {busy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> …</>) : t("svcMarket.reviews.submit")}
+              {busy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> …</>) : (existing ? t("svcMarket.reviews.update") : t("svcMarket.reviews.submit"))}
             </Button>
           </div>
         )}
