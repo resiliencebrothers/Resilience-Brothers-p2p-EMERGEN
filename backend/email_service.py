@@ -11,6 +11,7 @@ import base64
 import logging
 import time
 import uuid as _uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import resend
 
@@ -731,7 +732,35 @@ def notify_password_changed(to: str, name: str, lang: str = "es") -> bool:
                  _base_template(_L("Contraseña cambiada", "Password changed", lang), body, lang))
 
 
-from dataclasses import dataclass
+
+def notify_booking_reminder(to: str, name: str, service_title: str,
+                            when_text: str, role: str = "customer",
+                            lang: str = "es") -> bool:
+    """Fase 2 — recordatorio ~24 h antes del turno (cliente y empresa)."""
+    if role == "company":
+        intro = _L(
+            f"Hola {name or ''},<br><br>Tienes una cita confirmada de "
+            f"<strong style='color:#fff;'>{service_title}</strong> con un cliente.",
+            f"Hi {name or ''},<br><br>You have a confirmed appointment for "
+            f"<strong style='color:#fff;'>{service_title}</strong> with a client.", lang)
+    else:
+        intro = _L(
+            f"Hola {name or ''},<br><br>Te recordamos tu cita de "
+            f"<strong style='color:#fff;'>{service_title}</strong>.",
+            f"Hi {name or ''},<br><br>A reminder for your "
+            f"<strong style='color:#fff;'>{service_title}</strong> appointment.", lang)
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">{intro}</p>
+      <div style="border-left:3px solid #8B5CF6;background:#120f1f;padding:14px 18px;margin:12px 0 22px;">
+        <p style="color:#A78BFA;font-size:13px;font-weight:bold;margin:0 0 6px;">{_L("Cuándo", "When", lang)}</p>
+        <p style="color:#fff;font-size:16px;margin:0;">{when_text}</p>
+      </div>
+      <p style="color:#666;font-size:12px;margin:0;">{_L("Gestiona tu reserva desde la app.", "Manage your booking in the app.", lang)}</p>
+    """
+    return _send(to, _L(f"Recordatorio: {service_title} · {when_text}",
+                        f"Reminder: {service_title} · {when_text}", lang),
+                 _base_template(_L("Recordatorio de cita", "Appointment reminder", lang), body, lang),
+                 kind="booking_reminder")
 
 
 @dataclass

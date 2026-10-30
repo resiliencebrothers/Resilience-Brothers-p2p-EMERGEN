@@ -6,14 +6,30 @@
     "searchPlaceholder": "Search services, area…",
     "allCategories": "All",
     "allModalities": "All modalities",
-    "modality": { "local": "At the venue", "domicilio": "At your place", "remoto": "Remote / Online", "alquiler": "Rental" },
+    "modality": {
+      "local": "At the venue",
+      "domicilio": "At your place",
+      "remoto": "Remote / Online",
+      "alquiler": "Rental"
+    },
     "verified": "Verified",
     "by": "By",
     "nextSlot": "Next slot",
     "noUpcomingSlot": "No upcoming slots",
-    "price": { "quote": "By quote", "perHour": "/hour", "perDay": "/day", "perPerson": "/person" },
-    "deposit": { "percent": "{{value}}% deposit", "fixed": "{{value}} USDT deposit" },
-    "tabs": { "browse": "Browse", "mine": "My bookings" },
+    "price": {
+      "quote": "By quote",
+      "perHour": "/hour",
+      "perDay": "/day",
+      "perPerson": "/person"
+    },
+    "deposit": {
+      "percent": "{{value}}% deposit",
+      "fixed": "{{value}} USDT deposit"
+    },
+    "tabs": {
+      "browse": "Browse",
+      "mine": "My bookings"
+    },
     "detail": {
       "details": "Details",
       "duration": "Duration: {{min}} min",
@@ -50,7 +66,10 @@
       "error": "Could not book. Please try again.",
       "note": "Note for the business (optional)",
       "heldInfo": "It is charged from your balance now and held. If the business rejects it or does not confirm in time, we refund you automatically.",
-      "quoteInfo": "This service is by quote: you book the appointment with no charge and agree the price with the business."
+      "quoteInfo": "This service is by quote: you book the appointment with no charge and agree the price with the business.",
+      "payNow": "Pay now (deposit)",
+      "restLater": "Rest on the appointment day",
+      "depositInfo": "You only pay the deposit now; the rest is charged automatically from your balance on the appointment day."
     },
     "mine": {
       "none": "You have no bookings yet. Browse the services and book your first appointment.",
@@ -58,7 +77,8 @@
       "cancel": "Cancel",
       "cancelConfirm": "Cancel this booking? You will be refunded.",
       "cancelled": "Booking cancelled; your amount was refunded.",
-      "rejectReason": "Reason: {{reason}}"
+      "rejectReason": "Reason: {{reason}}",
+      "deposit": "Deposit {{paid}} USDT paid · {{rest}} USDT due on the appointment day"
     },
     "status": {
       "pending": "Pending",
@@ -68,7 +88,28 @@
       "expired": "Not confirmed",
       "settled": "Completed"
     },
-    "weekdays": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    "weekdays": [
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat",
+      "Sun"
+    ],
+    "reviews": {
+      "title": "Reviews",
+      "none": "No reviews yet.",
+      "count_one": "{{count}} review",
+      "count_other": "{{count}} reviews",
+      "rate": "Rate this service",
+      "yourRating": "Your rating",
+      "comment": "Comment (optional)",
+      "submit": "Submit review",
+      "submitted": "Thanks for your review!",
+      "edit": "Edit review",
+      "placeholder": "How was your experience?"
+    }
   },
   "offers": {
     "title": "Offers & deals",

@@ -6,14 +6,30 @@
     "searchPlaceholder": "Buscar servicios, zona…",
     "allCategories": "Todas",
     "allModalities": "Todas las modalidades",
-    "modality": { "local": "En el local", "domicilio": "A domicilio", "remoto": "Remoto / Online", "alquiler": "Alquiler" },
+    "modality": {
+      "local": "En el local",
+      "domicilio": "A domicilio",
+      "remoto": "Remoto / Online",
+      "alquiler": "Alquiler"
+    },
     "verified": "Verificada",
     "by": "Por",
     "nextSlot": "Próximo turno",
     "noUpcomingSlot": "Sin turnos próximos",
-    "price": { "quote": "A presupuestar", "perHour": "/hora", "perDay": "/día", "perPerson": "/persona" },
-    "deposit": { "percent": "Anticipo del {{value}}%", "fixed": "Anticipo de {{value}} USDT" },
-    "tabs": { "browse": "Explorar", "mine": "Mis reservas" },
+    "price": {
+      "quote": "A presupuestar",
+      "perHour": "/hora",
+      "perDay": "/día",
+      "perPerson": "/persona"
+    },
+    "deposit": {
+      "percent": "Anticipo del {{value}}%",
+      "fixed": "Anticipo de {{value}} USDT"
+    },
+    "tabs": {
+      "browse": "Explorar",
+      "mine": "Mis reservas"
+    },
     "detail": {
       "details": "Detalles",
       "duration": "Duración: {{min}} min",
@@ -50,7 +66,10 @@
       "error": "No se pudo reservar. Intenta de nuevo.",
       "note": "Nota para la empresa (opcional)",
       "heldInfo": "Se descuenta ahora de tu saldo y queda retenido. Si la empresa rechaza o no confirma a tiempo, te lo devolvemos automáticamente.",
-      "quoteInfo": "Este servicio es a presupuestar: reservas el turno sin cobro y acuerdas el precio con la empresa."
+      "quoteInfo": "Este servicio es a presupuestar: reservas el turno sin cobro y acuerdas el precio con la empresa.",
+      "payNow": "Pagas ahora (anticipo)",
+      "restLater": "Resto el día de la cita",
+      "depositInfo": "Pagas solo el anticipo ahora; el resto se cobra automáticamente de tu saldo el día de la cita."
     },
     "mine": {
       "none": "Aún no tienes reservas. Explora los servicios y reserva tu primer turno.",
@@ -58,7 +77,8 @@
       "cancel": "Cancelar",
       "cancelConfirm": "¿Cancelar esta reserva? Se te devolverá el importe.",
       "cancelled": "Reserva cancelada; se devolvió tu importe.",
-      "rejectReason": "Motivo: {{reason}}"
+      "rejectReason": "Motivo: {{reason}}",
+      "deposit": "Anticipo {{paid}} USDT pagado · resto {{rest}} USDT el día de la cita"
     },
     "status": {
       "pending": "Pendiente",
@@ -68,7 +88,28 @@
       "expired": "No confirmada",
       "settled": "Completada"
     },
-    "weekdays": ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+    "weekdays": [
+      "Lun",
+      "Mar",
+      "Mié",
+      "Jue",
+      "Vie",
+      "Sáb",
+      "Dom"
+    ],
+    "reviews": {
+      "title": "Reseñas",
+      "none": "Aún no hay reseñas.",
+      "count_one": "{{count}} reseña",
+      "count_other": "{{count}} reseñas",
+      "rate": "Valorar servicio",
+      "yourRating": "Tu valoración",
+      "comment": "Comentario (opcional)",
+      "submit": "Enviar reseña",
+      "submitted": "¡Gracias por tu reseña!",
+      "edit": "Editar reseña",
+      "placeholder": "¿Cómo fue tu experiencia?"
+    }
   },
   "offers": {
     "title": "Ofertas y rebajas",

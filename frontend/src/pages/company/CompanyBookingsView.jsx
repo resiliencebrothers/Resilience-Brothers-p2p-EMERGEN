@@ -4,7 +4,7 @@ import { API } from "@/App";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarCheck, Check, X, Clock, User } from "lucide-react";
+import { CalendarCheck, Check, X, Clock, User, Wallet, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 
 // Reservas recibidas por la Empresa (Fase 2). La empresa acepta o rechaza cada
@@ -31,6 +31,7 @@ const FILTERS = [
 
 export default function CompanyBookingsView({ onChanged }) {
   const [items, setItems] = useState([]);
+  const [earnings, setEarnings] = useState(null);
   const [filter, setFilter] = useState("");
   const [rejecting, setRejecting] = useState(null);
   const [reason, setReason] = useState("");
@@ -40,6 +41,8 @@ export default function CompanyBookingsView({ onChanged }) {
     const q = filter ? `?status=${filter}` : "";
     axios.get(`${API}/company/bookings${q}`, { withCredentials: true })
       .then((r) => setItems(r.data)).catch(() => {});
+    axios.get(`${API}/company/bookings/earnings`, { withCredentials: true })
+      .then((r) => setEarnings(r.data)).catch(() => {});
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
@@ -80,11 +83,47 @@ export default function CompanyBookingsView({ onChanged }) {
       </div>
 
       <div className="border-l-4 border-[#8B5CF6] bg-[#8B5CF6]/5 px-4 py-3 text-sm text-neutral-300" data-testid="company-bookings-note">
-        El cliente ya pagó el importe, que queda <span className="text-[#8B5CF6]">retenido</span>.
+        El cliente ya pagó por adelantado (anticipo o importe completo) y queda <span className="text-[#8B5CF6]">retenido</span>.
         Acepta para confirmar el turno; recházalo y se le devuelve automáticamente.
         Si no decides a tiempo, se cancela y reembolsa solo. El pago se te libera
         <span className="text-[#8B5CF6]"> después de la fecha de la cita</span>.
       </div>
+
+      {earnings && (
+        <div className="tactile-card p-4" data-testid="company-earnings-panel">
+          <div className="micro-label text-[#8B5CF6] mb-3 flex items-center gap-1"><Wallet className="w-3.5 h-3.5" /> Ingresos</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="border border-white/10 p-3">
+              <div className="text-xs text-neutral-400">Anticipos retenidos</div>
+              <div className="font-display text-2xl text-amber-300" data-testid="earnings-held">{earnings.held_pending} USDT</div>
+              <div className="text-[0.7rem] text-neutral-500 mt-1">Reservas pendientes de aceptar</div>
+            </div>
+            <div className="border border-white/10 p-3">
+              <div className="text-xs text-neutral-400">Por liberar</div>
+              <div className="font-display text-2xl text-emerald-400" data-testid="earnings-upcoming">{earnings.upcoming_release} USDT</div>
+              <div className="text-[0.7rem] text-neutral-500 mt-1">Citas confirmadas · se libera tras cada cita</div>
+            </div>
+            <div className="border border-white/10 p-3">
+              <div className="text-xs text-neutral-400">Ya cobrado</div>
+              <div className="font-display text-2xl text-sky-300" data-testid="earnings-settled">{earnings.settled_total} USDT</div>
+              <div className="text-[0.7rem] text-neutral-500 mt-1">Citas completadas</div>
+            </div>
+          </div>
+          {earnings.upcoming?.length > 0 && (
+            <div className="mt-4">
+              <div className="text-xs text-neutral-400 mb-2 flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> Próximas liberaciones por fecha de cita</div>
+              <ul className="space-y-1.5" data-testid="earnings-schedule">
+                {earnings.upcoming.map((u) => (
+                  <li key={u.id} className="flex items-center justify-between gap-3 text-sm border-b border-white/5 pb-1.5 last:border-0">
+                    <span className="text-neutral-300 truncate">{u.slot_date} · {u.slot_start} · <span className="text-neutral-500">{u.service_title}</span></span>
+                    <span className="font-mono text-emerald-300 shrink-0">{u.amount_usdt} USDT</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-2 flex-wrap">
         {FILTERS.map((f) => (
@@ -120,6 +159,11 @@ export default function CompanyBookingsView({ onChanged }) {
               <div className="text-xs text-neutral-500 mt-0.5">
                 {b.quantity > 1 ? `${b.quantity}× · ` : ""}{b.amount_usdt > 0 ? `${b.amount_usdt} USDT` : "A presupuestar"}
               </div>
+              {b.remainder_usdt > 0 && ["pending", "accepted", "settled"].includes(b.status) && (
+                <div className="text-[0.7rem] text-emerald-300/80 mt-0.5" data-testid={`company-booking-deposit-${b.id}`}>
+                  Anticipo {b.deposit_usdt} USDT · resto {b.remainder_usdt} USDT {b.status === "settled" ? "cobrado tras la cita" : "el día de la cita"}
+                </div>
+              )}
               {b.note && <div className="text-xs text-neutral-400 mt-1 italic">“{b.note}”</div>}
             </div>
             {b.status === "pending" && (
@@ -143,7 +187,7 @@ export default function CompanyBookingsView({ onChanged }) {
           <DialogHeader><DialogTitle className="font-display">Rechazar reserva</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-neutral-300">
-              Se devolverá al cliente {rejecting?.amount_usdt > 0 ? `${rejecting.amount_usdt} USDT` : "el importe"}. Puedes indicar un motivo (opcional).
+              Se devolverá al cliente {rejecting?.deposit_usdt > 0 ? `${rejecting.deposit_usdt} USDT` : "el importe"}. Puedes indicar un motivo (opcional).
             </p>
             <Textarea data-testid="company-booking-reject-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={3}
               placeholder="Ej: no tenemos disponibilidad ese día" className="rounded-none bg-[#0a0a0a] border-white/10" />

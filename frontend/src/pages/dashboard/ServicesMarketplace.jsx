@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { es as dfEs, enUS as dfEn } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Wrench, Search, MapPin, Clock, BadgeCheck, CalendarClock, CreditCard, Loader2, CalendarCheck2 } from "lucide-react";
+import { Wrench, Search, MapPin, Clock, BadgeCheck, CalendarClock, CreditCard, Loader2, CalendarCheck2, Star } from "lucide-react";
 import { toast } from "sonner";
 
 // Pestaña SERVICIOS del mercado (cliente). Fase 2: reserva de turnos con pago
@@ -19,6 +19,27 @@ import { toast } from "sonner";
 const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+
+// Anticipo cobrado al reservar (refleja la lógica del backend _deposit_now).
+const depositNow = (s, total) => {
+  const dv = Number(s.deposit_value || 0);
+  if (!(total > 0) || !dv) return total;
+  if (s.deposit_type === "percent") return Math.round(Math.min(total, total * dv / 100) * 100) / 100;
+  if (s.deposit_type === "fixed") return Math.round(Math.min(total, dv) * 100) / 100;
+  return total;
+};
+
+function Stars({ value = 0, size = "w-3.5 h-3.5", onPick }) {
+  return (
+    <span className="inline-flex items-center gap-0.5" data-testid="stars">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <Star key={n} onClick={onPick ? () => onPick(n) : undefined}
+          data-testid={onPick ? `star-pick-${n}` : undefined}
+          className={`${size} ${onPick ? "cursor-pointer transition-transform hover:scale-110" : ""} ${n <= Math.round(value) ? "fill-amber-400 text-amber-400" : "text-neutral-600"}`} />
+      ))}
+    </span>
+  );
+}
 
 const STATUS_BADGE = {
   pending: "bg-amber-500/10 text-amber-300 border-amber-500/30",
@@ -186,6 +207,12 @@ export default function ServicesMarketplace({ onBooked }) {
                   <div className="text-xs text-neutral-500 mt-1 flex items-center gap-1">
                     <MapPin className="w-3 h-3" /> {modalityLabel(s.modality)}{s.coverage_zone ? ` · ${s.coverage_zone}` : ""}
                   </div>
+                  {s.rating_count > 0 && (
+                    <div className="flex items-center gap-1.5 mt-1.5" data-testid={`service-rating-${s.id}`}>
+                      <Stars value={s.rating_avg} />
+                      <span className="text-[0.7rem] text-neutral-400">{s.rating_avg} · {t("svcMarket.reviews.count", { count: s.rating_count })}</span>
+                    </div>
+                  )}
                   {s.next_slot ? (
                     <div className="text-[0.7rem] text-emerald-300/90 mt-1.5 flex items-center gap-1" data-testid={`service-nextslot-${s.id}`}>
                       <CalendarClock className="w-3 h-3" /> {t("svcMarket.nextSlot")}: {s.next_slot.date} · {s.next_slot.start}
@@ -222,6 +249,12 @@ export default function ServicesMarketplace({ onBooked }) {
                   <div className="font-display text-2xl text-[#8B5CF6]" data-testid="service-detail-price">{priceText(detail)}</div>
                 </div>
                 <div className="text-sm text-neutral-300">{t("svcMarket.by")} <span className="text-neutral-100">{detail.owner_name}</span>{detail.coverage_zone ? ` · ${detail.coverage_zone}` : ""}</div>
+                {detail.rating_count > 0 && (
+                  <div className="flex items-center gap-2" data-testid="service-detail-rating">
+                    <Stars value={detail.rating_avg} size="w-4 h-4" />
+                    <span className="text-sm text-neutral-300">{detail.rating_avg} · {t("svcMarket.reviews.count", { count: detail.rating_count })}</span>
+                  </div>
+                )}
                 {detail.description && <p className="text-sm text-neutral-300 whitespace-pre-line">{detail.description}</p>}
 
                 <div className="grid sm:grid-cols-2 gap-3">
@@ -271,6 +304,8 @@ export default function ServicesMarketplace({ onBooked }) {
 
                 <BookingPanel service={detail} balance={balance} t={t} locale={dfLocale}
                   onBooked={() => { afterBooking(); setDetail(null); setTab("mine"); }} />
+
+                <ServiceReviews serviceId={detail.id} t={t} />
               </div>
             </>
           )}
@@ -293,6 +328,9 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
   const isQuote = service.pricing_type === "quote";
   const unit = isQuote ? 0 : Number(service.price_usdt || 0);
   const total = Math.round(unit * Math.max(1, qty) * 100) / 100;
+  const payNow = depositNow(service, total);
+  const hasDeposit = !isQuote && payNow < total;
+  const rest = Math.round((total - payNow) * 100) / 100;
   const availDays = useMemo(
     () => new Set((service.availability || []).map((w) => w.day)), [service]);
   const blocked = useMemo(
@@ -337,7 +375,7 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
   };
 
   if (!hasSchedule) return null;
-  const canPay = !isQuote && total > balance;
+  const canPay = !isQuote && payNow > balance;
 
   return (
     <div className="border border-[#8B5CF6]/30 bg-[#8B5CF6]/5 p-4 space-y-4" data-testid="booking-panel">
@@ -385,6 +423,11 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
               <div className="text-right">
                 <div className="text-xs text-neutral-400">{t("svcMarket.booking.total")}</div>
                 <div className="font-display text-2xl text-[#8B5CF6]" data-testid="booking-total">{total} USDT</div>
+                {hasDeposit && (
+                  <div className="text-[0.7rem] text-emerald-300 mt-0.5" data-testid="booking-paynow">
+                    {t("svcMarket.booking.payNow")}: {payNow} USDT
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -396,7 +439,7 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
           </div>
 
           <div className="text-xs text-neutral-400 border-l-2 border-[#8B5CF6]/40 pl-3">
-            {isQuote ? t("svcMarket.booking.quoteInfo") : t("svcMarket.booking.heldInfo")}
+            {isQuote ? t("svcMarket.booking.quoteInfo") : hasDeposit ? t("svcMarket.booking.depositInfo") : t("svcMarket.booking.heldInfo")}
           </div>
           {!isQuote && (
             <div className="text-xs text-neutral-500" data-testid="booking-balance">{t("svcMarket.booking.yourBalance", { amount: balance.toLocaleString(undefined, { maximumFractionDigits: 2 }) })}</div>
@@ -417,6 +460,7 @@ function BookingPanel({ service, balance, onBooked, t, locale }) {
 
 // ---------- Mis reservas (cliente) ----------
 function MyBookings({ bookings, onChanged, t }) {
+  const [reviewing, setReviewing] = useState(null);
   const cancel = async (b) => {
     if (!window.confirm(t("svcMarket.mine.cancelConfirm"))) return;
     try {
@@ -445,18 +489,112 @@ function MyBookings({ bookings, onChanged, t }) {
             </div>
             <div className="text-xs text-neutral-400 mt-1">{t("svcMarket.mine.when", { date: b.slot_date, start: b.slot_start, end: b.slot_end })}</div>
             <div className="text-xs text-neutral-500 mt-0.5">{b.company_name} · {b.quantity > 1 ? `${b.quantity}× · ` : ""}{b.amount_usdt > 0 ? `${b.amount_usdt} USDT` : t("svcMarket.price.quote")}</div>
+            {["pending", "accepted"].includes(b.status) && b.remainder_usdt > 0 && (
+              <div className="text-[0.7rem] text-emerald-300/80 mt-0.5" data-testid={`svc-booking-deposit-${b.id}`}>
+                {t("svcMarket.mine.deposit", { paid: b.deposit_usdt, rest: b.remainder_usdt })}
+              </div>
+            )}
             {b.status === "rejected" && b.reject_reason && (
               <div className="text-xs text-red-400 mt-1">{t("svcMarket.mine.rejectReason", { reason: b.reject_reason })}</div>
             )}
           </div>
-          {canCancel(b) && (
-            <Button data-testid={`svc-booking-cancel-${b.id}`} onClick={() => cancel(b)} variant="outline"
-              className="border-white/15 text-neutral-300 hover:text-red-400 rounded-none h-9">
-              {t("svcMarket.mine.cancel")}
-            </Button>
-          )}
+          <div className="flex gap-2">
+            {b.status === "settled" && (
+              <Button data-testid={`svc-booking-review-${b.id}`} onClick={() => setReviewing(b)} variant="outline"
+                className="border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-none h-9">
+                <Star className="w-4 h-4 mr-1" /> {t("svcMarket.reviews.rate")}
+              </Button>
+            )}
+            {canCancel(b) && (
+              <Button data-testid={`svc-booking-cancel-${b.id}`} onClick={() => cancel(b)} variant="outline"
+                className="border-white/15 text-neutral-300 hover:text-red-400 rounded-none h-9">
+                {t("svcMarket.mine.cancel")}
+              </Button>
+            )}
+          </div>
         </div>
       ))}
+      <ReviewDialog booking={reviewing} onClose={() => setReviewing(null)} onDone={onChanged} t={t} />
+    </div>
+  );
+}
+
+// ---------- Diálogo para valorar un servicio completado ----------
+function ReviewDialog({ booking, onClose, onDone, t }) {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (booking) { setRating(5); setComment(""); } }, [booking]);
+
+  const submit = async () => {
+    if (!booking) return;
+    setBusy(true);
+    try {
+      await axios.post(`${API}/services/${booking.service_id}/reviews`,
+        { rating, comment }, { withCredentials: true });
+      toast.success(t("svcMarket.reviews.submitted"));
+      onClose?.(); onDone?.();
+    } catch (e) { toast.error(e.response?.data?.detail || "Error"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={!!booking} onOpenChange={(v) => !v && onClose?.()}>
+      <DialogContent className="bg-[#1A1730] border-white/10 text-white rounded-none max-h-[85vh] overflow-y-auto sm:max-w-md" data-testid="service-review-dialog">
+        <DialogHeader><DialogTitle className="font-display">{t("svcMarket.reviews.rate")}</DialogTitle></DialogHeader>
+        {booking && (
+          <div className="space-y-4">
+            <div className="text-sm text-neutral-300">{booking.service_title} · {booking.company_name}</div>
+            <div>
+              <div className="text-xs text-neutral-400 mb-1.5">{t("svcMarket.reviews.yourRating")}</div>
+              <Stars value={rating} size="w-7 h-7" onPick={setRating} />
+            </div>
+            <div>
+              <div className="text-xs text-neutral-400 mb-1">{t("svcMarket.reviews.comment")}</div>
+              <Textarea data-testid="service-review-comment" value={comment} onChange={(e) => setComment(e.target.value)} rows={3}
+                placeholder={t("svcMarket.reviews.placeholder")} className="rounded-none bg-[#0a0a0a] border-white/10" />
+            </div>
+            <Button data-testid="service-review-submit" onClick={submit} disabled={busy}
+              className="w-full bg-[#8B5CF6] hover:bg-[#A78BFA] text-white font-bold rounded-none h-11">
+              {busy ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> …</>) : t("svcMarket.reviews.submit")}
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------- Reseñas públicas de un servicio (en el detalle) ----------
+function ServiceReviews({ serviceId, t }) {
+  const [reviews, setReviews] = useState([]);
+  useEffect(() => {
+    if (!serviceId) return;
+    axios.get(`${API}/services/${serviceId}/reviews`, { withCredentials: true })
+      .then((r) => setReviews(r.data || [])).catch(() => setReviews([]));
+  }, [serviceId]);
+
+  return (
+    <div className="border border-white/10 p-3" data-testid="service-reviews">
+      <div className="micro-label text-[#8B5CF6] mb-2 flex items-center gap-1">
+        <Star className="w-3.5 h-3.5" /> {t("svcMarket.reviews.title")}
+        {reviews.length > 0 && <span className="text-neutral-500">· {t("svcMarket.reviews.count", { count: reviews.length })}</span>}
+      </div>
+      {reviews.length === 0 ? (
+        <div className="text-sm text-neutral-500" data-testid="service-reviews-empty">{t("svcMarket.reviews.none")}</div>
+      ) : (
+        <ul className="space-y-3">
+          {reviews.map((rv) => (
+            <li key={rv.id} className="border-b border-white/5 pb-2 last:border-0" data-testid={`service-review-${rv.id}`}>
+              <div className="flex items-center gap-2">
+                <Stars value={rv.rating} />
+                <span className="text-xs text-neutral-300">{rv.customer_name}</span>
+              </div>
+              {rv.comment && <p className="text-sm text-neutral-300 mt-1 whitespace-pre-line">{rv.comment}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
