@@ -763,6 +763,57 @@ def notify_booking_reminder(to: str, name: str, service_title: str,
                  kind="booking_reminder")
 
 
+def notify_booking_accepted(to: str, name: str, service_title: str,
+                            when_text: str, lang: str = "es") -> bool:
+    """Fase 2b — la empresa confirmó el turno (correo al cliente)."""
+    intro = _L(
+        f"Hola {name or ''},<br><br>La empresa confirmó tu turno de "
+        f"<strong style='color:#fff;'>{service_title}</strong>. ¡Te esperan!",
+        f"Hi {name or ''},<br><br>The business confirmed your appointment for "
+        f"<strong style='color:#fff;'>{service_title}</strong>. See you there!", lang)
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">{intro}</p>
+      <div style="border-left:3px solid #22C55E;background:#0f1a12;padding:14px 18px;margin:12px 0 22px;">
+        <p style="color:#4ADE80;font-size:13px;font-weight:bold;margin:0 0 6px;">{_L("Cuándo", "When", lang)}</p>
+        <p style="color:#fff;font-size:16px;margin:0;">{when_text}</p>
+      </div>
+      <p style="color:#666;font-size:12px;margin:0;">{_L("Gestiona tu reserva desde la app.", "Manage your booking in the app.", lang)}</p>
+    """
+    return _send(to, _L(f"Reserva confirmada: {service_title} · {when_text}",
+                        f"Booking confirmed: {service_title} · {when_text}", lang),
+                 _base_template(_L("Reserva confirmada", "Booking confirmed", lang), body, lang),
+                 kind="booking_accepted")
+
+
+def notify_booking_rejected(to: str, name: str, service_title: str,
+                            slot_date: str, refund_amount: float,
+                            reason: str = "", lang: str = "es") -> bool:
+    """Fase 2b — la empresa rechazó el turno; reembolso emitido (correo al cliente)."""
+    intro = _L(
+        f"Hola {name or ''},<br><br>Lamentablemente la empresa no pudo tomar tu turno de "
+        f"<strong style='color:#fff;'>{service_title}</strong> del {slot_date}. "
+        f"Ya te devolvimos <strong style='color:#fff;'>{refund_amount} USDT</strong>.",
+        f"Hi {name or ''},<br><br>Unfortunately the business could not take your "
+        f"<strong style='color:#fff;'>{service_title}</strong> appointment on {slot_date}. "
+        f"We've refunded <strong style='color:#fff;'>{refund_amount} USDT</strong>.", lang)
+    reason_box = ""
+    if reason:
+        reason_box = f"""
+      <div style="border-left:3px solid #8B5CF6;background:#120f1f;padding:14px 18px;margin:12px 0 22px;">
+        <p style="color:#A78BFA;font-size:13px;font-weight:bold;margin:0 0 6px;">{_L("Motivo", "Reason", lang)}</p>
+        <p style="color:#fff;font-size:15px;margin:0;">{reason}</p>
+      </div>"""
+    body = f"""
+      <p style="color:#A3A3A3;font-size:14px;line-height:1.7;margin:0 0 20px;">{intro}</p>
+      {reason_box}
+      <p style="color:#666;font-size:12px;margin:0;">{_L("Puedes reservar otro turno desde la app.", "You can book another slot from the app.", lang)}</p>
+    """
+    return _send(to, _L("Reserva rechazada — reembolso emitido",
+                        "Booking declined — refund issued", lang),
+                 _base_template(_L("Reserva rechazada", "Booking declined", lang), body, lang),
+                 kind="booking_rejected")
+
+
 @dataclass
 class VipLedgerEmailContext:
     """iter111 — payload for `notify_vip_ledger_statement`.

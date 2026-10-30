@@ -353,6 +353,17 @@ async def accept_booking(booking_id: str, request: Request) -> Any:
         message=(f"La empresa confirmó tu turno de «{doc.get('service_title','')}» "
                  f"el {doc['slot_date']} a las {doc['slot_start']}."),
         booking_id=booking_id)
+    try:
+        import email_service
+        ce, cn, cl = await _user_contact(doc["customer_id"])
+        if ce:
+            when = (f"{doc['slot_date']} {doc['slot_start']}–{doc['slot_end']} "
+                    f"({doc.get('timezone', '')})")
+            await asyncio.to_thread(
+                email_service.notify_booking_accepted,
+                ce, cn, doc.get("service_title", ""), when, cl)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"booking accepted email failed: {e}")
     return await db.service_bookings.find_one({"id": booking_id}, {"_id": 0})
 
 
@@ -384,6 +395,16 @@ async def reject_booking(booking_id: str, payload: RejectBody,
                  f"del {doc['slot_date']}. Te devolvimos {_refund_amount(doc)} USDT."
                  + (f" Motivo: {reason}" if reason else "")),
         booking_id=booking_id)
+    try:
+        import email_service
+        ce, cn, cl = await _user_contact(doc["customer_id"])
+        if ce:
+            await asyncio.to_thread(
+                email_service.notify_booking_rejected,
+                ce, cn, doc.get("service_title", ""), doc.get("slot_date", ""),
+                _refund_amount(doc), reason, cl)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"booking rejected email failed: {e}")
     return await db.service_bookings.find_one({"id": booking_id}, {"_id": 0})
 
 
@@ -698,8 +719,8 @@ REMINDER_LEAD_HOURS = 24
 async def _user_contact(user_id: str) -> tuple:
     u = await db.users.find_one(
         {"user_id": user_id},
-        {"_id": 0, "email": 1, "name": 1, "language": 1}) or {}
-    return u.get("email"), u.get("name"), (u.get("language") or "es")
+        {"_id": 0, "email": 1, "name": 1, "preferred_language": 1}) or {}
+    return u.get("email"), u.get("name"), (u.get("preferred_language") or "es")
 
 
 async def send_due_reminders(now: Optional[datetime] = None) -> dict:
