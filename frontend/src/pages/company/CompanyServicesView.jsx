@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
+import { es as dfEs } from "date-fns/locale";
 import { Wrench, Plus, Edit2, Trash2, Send, Pause, Play, Clock, MapPin, CalendarClock, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -430,7 +431,7 @@ export default function CompanyServicesView({ onChanged }) {
                 <p className="text-xs text-neutral-500 mt-1">Toca los días en los que NO atiendes; vuelve a tocarlos para liberarlos.</p>
                 <div className="mt-2 inline-flex bg-[#0a0a0a] border border-white/10" data-testid="service-blocked-calendar">
                   <Calendar mode="multiple" selected={form.blocked_dates.map((d) => new Date(d + "T00:00:00"))}
-                    onSelect={setBlocked} fromDate={startOfToday()} />
+                    onSelect={setBlocked} fromDate={startOfToday()} locale={dfEs} weekStartsOn={1} />
                 </div>
                 {form.blocked_dates.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">

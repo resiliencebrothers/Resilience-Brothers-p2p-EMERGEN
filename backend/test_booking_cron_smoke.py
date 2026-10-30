@@ -9,10 +9,11 @@ load_dotenv("/app/backend/.env")
 
 from db_client import db  # noqa: E402
 from routes.service_bookings import process_due_bookings  # noqa: E402
+from services.balances import debit_balance_idempotent  # noqa: E402
 
 VIP = "user_test_vip01"
 EMP = "user_test_empresa_e2e"
-SID = "TEST_BK_efdfc4f0"
+SID = "TEST_BK_b701140b"
 
 
 async def bal(uid, code="USDT"):
@@ -45,18 +46,20 @@ def mk(status, amount, *, deadline_past=False, end_past=False):
 async def main():
     await db.service_bookings.delete_many({"service_id": SID, "customer_name": "VIP"})
 
-    # --- Expire test: pending, deadline past, customer already debited ---
     v0 = await bal(VIP)
+    c0 = await bal(EMP)
+
+    # Expire path: pending, deadline past, REALLY charged at booking.
     b_exp = mk("pending", 30.0, deadline_past=True)
     await db.service_bookings.insert_one(dict(b_exp))
-    # simulate the customer was charged at booking
-    await db.users.update_one({"user_id": VIP}, {"$inc": {"vip_balances.USDT": -30.0}})
-    v_after_charge = await bal(VIP)
+    await debit_balance_idempotent(VIP, "USDT", 30.0, b_exp["pay_op_id"])
 
-    # --- Settle test: accepted, appointment ended ---
-    c0 = await bal(EMP)
+    # Settle path: accepted, appointment ended, REALLY charged at booking.
     b_set = mk("accepted", 40.0, end_past=True)
     await db.service_bookings.insert_one(dict(b_set))
+    await debit_balance_idempotent(VIP, "USDT", 40.0, b_set["pay_op_id"])
+
+    v_after_charge = await bal(VIP)   # expect v0 - 70
 
     r1 = await process_due_bookings()
     v1 = await bal(VIP)
@@ -65,20 +68,22 @@ async def main():
     set_doc = await db.service_bookings.find_one({"id": b_set["id"]}, {"_id": 0})
     print("cron run1:", r1)
     print("expired status:", exp_doc["status"], "refund_op:", bool(exp_doc["refund_op_id"]))
-    print(f"vip refunded: charged={v_after_charge} -> after_cron={v1} (expect {v0})")
+    print(f"vip: start={v0} charged={v_after_charge} after_cron={v1} "
+          f"(expect {v0 - 40.0}: b_exp refunded, b_set held->company)")
     print("settled status:", set_doc["status"], "settle_op:", bool(set_doc["settle_op_id"]))
     print(f"company credited: {c0} -> {c1} (expect {c0 + 40.0})")
 
-    # --- Idempotency: run cron again, balances must NOT change ---
     r2 = await process_due_bookings()
     v2 = await bal(VIP)
     c2 = await bal(EMP)
     print("cron run2 (idempotent):", r2, "vip", v2, "company", c2,
           "OK" if (abs(v2 - v1) < 1e-9 and abs(c2 - c1) < 1e-9) else "FAIL")
 
-    # cleanup
+    # cleanup — restore balances and remove synthetic bookings
     await db.service_bookings.delete_many({"id": {"$in": [b_exp["id"], b_set["id"]]}})
+    await db.users.update_one({"user_id": VIP}, {"$set": {"vip_balances.USDT": v0}})
     await db.users.update_one({"user_id": EMP}, {"$set": {"vip_balances.USDT": c0}})
+    await db.credit_ops.delete_many({"op_id": {"$regex": f":{b_exp['id']}:|:{b_set['id']}:"}})
 
 
 asyncio.run(main())

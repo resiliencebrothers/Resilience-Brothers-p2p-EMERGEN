@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from db_client import db
 from auth_utils import require_user, require_company, now_utc, iso
 from services.balances import (
-    debit_balance_idempotent, credit_balance_idempotent,
+    debit_balance_idempotent, credit_balance_idempotent, op_was_applied,
     assert_account_active, assert_not_defensive,
 )
 from services.booking_slots import (
@@ -292,6 +292,12 @@ async def accept_booking(booking_id: str, request: Request) -> Any:
         raise HTTPException(
             status_code=400,
             detail="El turno ya pasó; no se puede aceptar.")
+    deadline = _parse(doc.get("accept_deadline_utc"))
+    if deadline and deadline <= now_utc():
+        raise HTTPException(
+            status_code=400,
+            detail=("El plazo para confirmar esta reserva venció; se cancelará "
+                    "y reembolsará automáticamente."))
     res = await db.service_bookings.update_one(
         {"id": booking_id, "status": "pending"},
         {"$set": {"status": "accepted", "decided_at": iso(now_utc()),
@@ -315,6 +321,11 @@ async def reject_booking(booking_id: str, payload: RejectBody,
     if doc["status"] not in ("pending", "accepted"):
         raise HTTPException(
             status_code=400, detail="Esta reserva ya no se puede rechazar.")
+    start_dt = _parse(doc.get("slot_start_utc"))
+    if start_dt and start_dt <= now_utc():
+        raise HTTPException(
+            status_code=400,
+            detail="La cita ya ocurrió; no se puede rechazar.")
     reason = payload.reason.strip()
     res = await db.service_bookings.update_one(
         {"id": booking_id, "status": doc["status"]},
@@ -342,6 +353,12 @@ async def _refund(doc: dict) -> None:
     amount = round(float(doc.get("amount_usdt") or 0), 2)
     if amount <= 0:
         return
+    # Robustez: solo devolvemos si el COBRO llegó a aplicarse. Si una caída
+    # entre el insert y el débito dejó una reserva sin pagar, un rechazo/cron
+    # posterior NUNCA debe acreditar dinero que jamás se cobró.
+    pay_op = doc.get("pay_op_id")
+    if pay_op and not await op_was_applied(doc["customer_id"], pay_op):
+        return
     op = f"svcbk:{doc['id']}:refund"
     ok = await credit_balance_idempotent(
         doc["customer_id"], doc.get("currency", _BOOKING_CODE), amount, op)
@@ -352,10 +369,14 @@ async def _refund(doc: dict) -> None:
 
 
 async def _settle(doc: dict) -> None:
-    """Abona a la empresa el importe de una reserva ya cumplida (idempotente)."""
+    """Abona a la empresa el importe de una reserva ya cumplida (idempotente).
+    Simetría del depósito: solo movemos dinero a la empresa si REALMENTE se
+    cobró al cliente (una reserva huérfana sin cobro no genera abono)."""
     amount = round(float(doc.get("amount_usdt") or 0), 2)
     op = f"svcbk:{doc['id']}:settle"
-    if amount > 0:
+    pay_op = doc.get("pay_op_id")
+    paid = (not pay_op) or await op_was_applied(doc["customer_id"], pay_op)
+    if amount > 0 and paid:
         await credit_balance_idempotent(
             doc["company_id"], doc.get("currency", _BOOKING_CODE), amount, op)
     await db.service_bookings.update_one(

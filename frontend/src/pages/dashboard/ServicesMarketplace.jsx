@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
+import { es as dfEs, enUS as dfEn } from "date-fns/locale";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Wrench, Search, MapPin, Clock, BadgeCheck, CalendarClock, CreditCard, Loader2, CalendarCheck2 } from "lucide-react";
 import { toast } from "sonner";
@@ -29,7 +30,8 @@ const STATUS_BADGE = {
 };
 
 export default function ServicesMarketplace({ onBooked }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const dfLocale = (i18n.language || "es").startsWith("en") ? dfEn : dfEs;
   const [tab, setTab] = useState("browse");
   const [services, setServices] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -267,7 +269,7 @@ export default function ServicesMarketplace({ onBooked }) {
                   <div><div className="micro-label text-neutral-500 mb-1">{t("svcMarket.detail.cancellation")}</div><p className="text-sm text-neutral-300 whitespace-pre-line">{detail.cancellation_policy}</p></div>
                 )}
 
-                <BookingPanel service={detail} balance={balance} t={t}
+                <BookingPanel service={detail} balance={balance} t={t} locale={dfLocale}
                   onBooked={() => { afterBooking(); setDetail(null); setTab("mine"); }} />
               </div>
             </>
@@ -279,7 +281,7 @@ export default function ServicesMarketplace({ onBooked }) {
 }
 
 // ---------- Panel de reserva (calendario + horarios + cantidad + cobro) ----------
-function BookingPanel({ service, balance, onBooked, t }) {
+function BookingPanel({ service, balance, onBooked, t, locale }) {
   const [date, setDate] = useState(null);
   const [slots, setSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -344,7 +346,7 @@ function BookingPanel({ service, balance, onBooked, t }) {
       <div>
         <div className="text-xs text-neutral-400 mb-2">{t("svcMarket.booking.pickDate")}</div>
         <div className="flex justify-center bg-[#0a0a0a] border border-white/10" data-testid="booking-calendar">
-          <Calendar mode="single" selected={date} onSelect={setDate} disabled={disabledDate} fromDate={startOfToday()} />
+          <Calendar mode="single" selected={date} onSelect={setDate} disabled={disabledDate} fromDate={startOfToday()} locale={locale} weekStartsOn={1} />
         </div>
       </div>
 
@@ -442,7 +444,7 @@ function MyBookings({ bookings, onChanged, t }) {
               </span>
             </div>
             <div className="text-xs text-neutral-400 mt-1">{t("svcMarket.mine.when", { date: b.slot_date, start: b.slot_start, end: b.slot_end })}</div>
-            <div className="text-xs text-neutral-500 mt-0.5">{b.company_name} · {b.amount_usdt > 0 ? `${b.amount_usdt} USDT` : t("svcMarket.price.quote")}{b.quantity > 1 ? ` ×${b.quantity}` : ""}</div>
+            <div className="text-xs text-neutral-500 mt-0.5">{b.company_name} · {b.quantity > 1 ? `${b.quantity}× · ` : ""}{b.amount_usdt > 0 ? `${b.amount_usdt} USDT` : t("svcMarket.price.quote")}</div>
             {b.status === "rejected" && b.reject_reason && (
               <div className="text-xs text-red-400 mt-1">{t("svcMarket.mine.rejectReason", { reason: b.reject_reason })}</div>
             )}

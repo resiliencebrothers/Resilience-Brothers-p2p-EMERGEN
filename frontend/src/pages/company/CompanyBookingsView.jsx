@@ -25,6 +25,8 @@ const STATUS_LABEL = {
 const FILTERS = [
   { v: "", l: "Todas" }, { v: "pending", l: "Pendientes" },
   { v: "accepted", l: "Confirmadas" }, { v: "settled", l: "Completadas" },
+  { v: "rejected", l: "Rechazadas" }, { v: "cancelled", l: "Canceladas" },
+  { v: "expired", l: "No confirmadas" },
 ];
 
 export default function CompanyBookingsView({ onChanged }) {
@@ -116,7 +118,7 @@ export default function CompanyBookingsView({ onChanged }) {
                 <User className="w-3 h-3" /> {b.customer_name || "Cliente"}
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                {b.amount_usdt > 0 ? `${b.amount_usdt} USDT` : "A presupuestar"}{b.quantity > 1 ? ` · ×${b.quantity}` : ""}
+                {b.quantity > 1 ? `${b.quantity}× · ` : ""}{b.amount_usdt > 0 ? `${b.amount_usdt} USDT` : "A presupuestar"}
               </div>
               {b.note && <div className="text-xs text-neutral-400 mt-1 italic">“{b.note}”</div>}
             </div>

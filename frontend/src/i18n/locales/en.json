@@ -3388,6 +3388,9 @@
   "marketplace": {
     "eyebrow": "/ Marketplace",
     "title": "Redeem your balance",
+    "servicesTitle": "Services marketplace",
+    "tabProducts": "Products",
+    "tabServices": "Services",
     "subtitle": "Turn your USD balance into products with home delivery.",
     "myBalanceLabel": "USDT balance",
     "productsHeading": "Available products",

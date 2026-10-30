@@ -3388,6 +3388,9 @@
   "marketplace": {
     "eyebrow": "/ Marketplace",
     "title": "Canjea tu saldo",
+    "servicesTitle": "Mercado de servicios",
+    "tabProducts": "Productos",
+    "tabServices": "Servicios",
     "subtitle": "Convierte tu saldo en USD en productos con entrega a domicilio.",
     "myBalanceLabel": "Saldo USDT",
     "productsHeading": "Productos disponibles",

@@ -1,0 +1,41 @@
+{
+  "summary": "Service Marketplace Phase 2 (USDT appointment bookings) tested end-to-end. Backend: new pytest suite test_service_bookings_phase2.py — 14/14 pass (slots incl. past/blocked/unauth, next_slot on list+detail, book qty2=20 USDT debit, slot occupancy + double-book 400, accept, reject+exact refund, 2nd reject 400 no double refund, cancel pending+accepted with refund, cancel-again 400, insufficient 400 with no orphan doc/no balance change, own-service booking blocked, customer blocked from company endpoints, invalid slot/past date 400, qty 0 -> 422, cron 401 no/bad auth and 200 with secret). test_booking_cron_smoke.py re-run: expire->refund, settle->company credit, 2nd run idempotent — OK. Frontend: customer card next-slot badge, detail dialog calendar -> slots -> qty/total(20 USDT) -> confirm -> success toast, booking in Mis reservas as PENDIENTE, balance header 5000->4980; company RESERVAS list, Aceptar -> CONFIRMADA, Rechazar dialog -> RECHAZADA + refund toast, reason shown to customer; customer Cancelar on accepted booking -> CANCELADA + refund (balance back to 5000); company Nuevo servicio blocked-dates Shadcn calendar adds/toggles chips; EN switch translates services surface with no raw key leaks. All requested flows PASS. Only minor i18n/design issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/bookings", "issue": "Booking doc is inserted with status 'pending' BEFORE the USDT debit. If the process crashes/raises between insert_one and debit_balance_idempotent (non-'insufficient' failure), an UNPAID pending booking remains; a later reject/cancel/cron-expire calls _refund and credits money that was never charged. Suggest inserting with a transient status (e.g. 'reserving', counted as occupied) and flipping to 'pending' only after debit 'applied'/'duplicate', and/or having _refund verify the pay op_id was applied before crediting."},
+      {"endpoint": "POST /api/company/bookings/{id}/accept", "issue": "Accept only checks slot start, not accept_deadline_utc. For slots >48h away, a company can accept after the 48h deadline if the cron hasn't run yet (race with auto-expire). Consider rejecting accept when now > accept_deadline_utc."},
+      {"endpoint": "POST /api/company/bookings/{id}/reject", "issue": "Reject of an ACCEPTED booking has no time check — company can reject (refund customer) after the appointment has passed but before the settle cron runs. UI hides Rechazar for accepted bookings, so backend/UI are inconsistent; decide policy and enforce in backend."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Booking calendar (customer dialog) + service-blocked-calendar (company form)", "issues": ["react-day-picker not localized: shows 'October 2026' and 'Su Mo Tu…' even when app language is Spanish; pass locale (date-fns es/enUS) based on i18n language", "Week starts on Sunday while availability convention is Mon-first (consider weekStartsOn=1)"]},
+      {"screen": "Marketplace shell /dashboard/marketplace in EN", "issues": ["Outer page header 'Mercado de servicios' and 'PRODUCTOS / SERVICIOS' tabs remain Spanish after switching to English", "Category chip/label 'BARBERÍA Y PELUQUERÍA' not translated (category names come from data)"]},
+      {"screen": "Mis reservas card / company booking card", "issues": ["'20 USDT ×2' reads like 20 each; amount is the total — consider '2 × 10 = 20 USDT'"]},
+      {"screen": "Mis reservas cancel", "issues": ["Uses native window.confirm instead of a Shadcn AlertDialog (inconsistent with company reject dialog)"]},
+      {"screen": "Company bookings filters", "issues": ["No filter chips for Rechazadas/Canceladas/Expiradas (only Todas/Pendientes/Confirmadas/Completadas)"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_service_bookings_phase2.py", "/app/test_reports/pytest/pytest_bookings_phase2.xml", "/app/backend/test_booking_cron_smoke.py"],
+  "action_items": [
+    "Harden create_booking ordering (insert as transient status, or guard _refund by verified pay op) to prevent refund of an unpaid booking after a crash",
+    "Enforce accept_deadline_utc in accept endpoint; decide/enforce time rule for rejecting accepted bookings",
+    "Localize Shadcn Calendar (locale + weekStartsOn=1) in BookingPanel and CompanyServicesView",
+    "Translate marketplace outer header/tabs and category labels for EN"
+  ],
+  "critical_code_review_comments": [
+    "service_bookings.py: insert-then-debit ordering can leave unpaid pending bookings on crash -> refundable money (see minor backend issue).",
+    "process_due_bookings scans ALL pending/accepted docs every tick with no index-backed filter on deadline/end time; add query filters on accept_deadline_utc/slot_end_utc (ISO strings sort lexicographically) + index for scale.",
+    "/api/bookings/mine limited to 300 and /company/bookings to 500 with no pagination."
+  ],
+  "updated_files": ["/app/backend/tests/test_service_bookings_phase2.py"],
+  "success_rate": {"backend": "100% (14/14 + cron smoke)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Ran seed_booking_smoke.py (current SERVICE_ID TEST_BK_039e59cc). All TEST bookings deleted after testing; VIP USDT balance back to 5000. Cron smoke credited user_test_empresa_e2e +40 USDT (TEST user). pytest fixture re-seeds and cleans its own bookings.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest /app/backend/tests/test_service_bookings_phase2.py (self-seeds). For UI: cookie session_token=bk_smoke_vip (customer) / bk_smoke_emp (company) on preview domain. Language must be switched via data-testid=dashboard-lang-switcher (localStorage alone is overridden by user preferred_language). Mis reservas cancel uses window.confirm -> register a dialog handler (import asyncio). Container clock was 2026-10-30.",
+  "rca of the issue": "No blocking bugs. Lang override note: langSync applies server preferred_language on load, overriding localStorage — expected behavior."
+}
